@@ -1049,6 +1049,26 @@ impl App {
         self.begin_shutdown_with_window_open_barrier(false);
     }
 
+    /// Starts the same terminal shutdown used by a native platform quit callback.
+    ///
+    /// Native process-level integration workers use this test-only entry point to prove that the
+    /// application shutdown fence and native ingress have both reached terminal before asking the
+    /// platform message loop to return.
+    #[doc(hidden)]
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn shutdown_for_native_exit_test(&mut self) {
+        self.begin_shutdown_with_window_open_barrier(true);
+    }
+
+    /// Returns whether terminal native shutdown owns no remaining application-bound authority.
+    #[doc(hidden)]
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn native_exit_authority_is_settled_for_test(&self) -> bool {
+        self.this
+            .upgrade()
+            .is_none_or(|app| app.native_exit_authority_is_settled_for_test())
+    }
+
     pub(super) fn shutdown_from_native_quit(&mut self) {
         self.begin_shutdown_with_window_open_barrier(true);
     }

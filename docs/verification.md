@@ -1885,14 +1885,17 @@ the gate. Do not skip the job, move it to `windows-latest`, or replace system in
 `SendMessageW` / `PostMessageW`. Escalate an unavailable or incapable runner through a repository
 infrastructure issue assigned to `@Latias94`.
 
-The workflow verifies the exact `github.sha` for pull-request merge commits, merge-queue commits,
-and trusted pushes. Manual dispatch requires a full `commit_sha`; checkout is rejected unless HEAD
-matches that object exactly. Pull-request code may run only on a separate immutable one-job Windows
-runner registered with `--ephemeral`. The runner must have no repository or organization secrets,
-no reusable credentials, and no access to privileged internal resources, and its machine or VM must
-be destroyed or returned to a known-clean image after the job. A persistent self-hosted desktop
-must never carry the ephemeral label or execute this workflow. Runner logs must be forwarded before
-the disposable runner is destroyed.
+The self-hosted workflow is not triggered by `pull_request`. It accepts only merge-queue commits,
+trusted pushes to the primary branch, or a maintainer `workflow_dispatch` with a full `commit_sha`;
+checkout is rejected unless HEAD matches that object exactly. Pull-request candidates receive this
+evidence through the merge queue or a maintainer-owned trusted-branch reproduction, never by running
+their head revision directly on the self-hosted desktop. Every third-party action in this workflow is
+pinned to an immutable full Git object id. The runner must be a separate immutable one-job Windows
+host registered with `--ephemeral`, with no repository or organization secrets, no reusable
+credentials, and no access to privileged internal resources. Its machine or VM must be destroyed or
+returned to a known-clean image after the job. A persistent self-hosted desktop must never carry the
+ephemeral label or execute this workflow. Runner logs must be forwarded before the disposable runner
+is destroyed.
 
 The runner must provide all of the following:
 
@@ -1903,7 +1906,25 @@ The runner must provide all of the following:
 - a functioning native renderer/GPU path;
 - permission to foreground the sentinel HWND without human interaction;
 - one-job ephemeral registration and a clean disposable host; and
-- no credentials or network reachability that untrusted pull-request code could retain or abuse.
+- no credentials or unrestricted network reachability that candidate code could retain or abuse.
+
+Before checkout, the workflow reads the following machine-level attestations directly from the
+runner host and fails closed if any are absent or inconsistent:
+
+| Machine environment variable | Required evidence |
+| --- | --- |
+| `OPEN_GPUI_NATIVE_RUNNER_EPHEMERAL` | exact value `1` |
+| `OPEN_GPUI_NATIVE_RUNNER_ONE_JOB` | exact value `1` |
+| `OPEN_GPUI_NATIVE_RUNNER_CLEAN_IMAGE_ID` | immutable image/build identifier for the disposable host |
+| `OPEN_GPUI_NATIVE_RUNNER_ACCOUNT_SID` | exact SID of the dedicated low-privilege interactive account |
+| `OPEN_GPUI_NATIVE_RUNNER_NETWORK_POLICY` | exact value `deny-default-v1` |
+
+The preflight also requires `Environment.UserInteractive`, a non-zero Windows session id, and a
+current process SID matching the attested account. These facts are provisioned in the machine image,
+not through repository variables, workflow inputs, or secrets. The workflow grants only read-only
+repository contents and references no repository or organization secret. Infrastructure owns image
+destruction and network-policy enforcement; the repository gate verifies their machine-stamped
+identities before any candidate checkout or Cargo execution.
 
 The preflight opens a rendered GPUI window, waits for a non-empty framework frame to receive a
 `Submitted` renderer outcome, records and later restores the foreground window and system cursor,
@@ -1922,44 +1943,79 @@ Run the sentinel only on that dedicated runner:
 ```powershell
 $env:CARGO_BUILD_JOBS = '1'
 $env:OPEN_GPUI_NATIVE_INTERACTIVE = '1'
-cargo nextest run -p open-gpui-windows --locked --run-ignored only -E 'test(/native_interactive_runner_sentinel_proves_system_pointer_delivery_and_capture/)' --no-fail-fast
+cargo nextest run -p open-gpui-windows --locked --run-ignored only -E 'test(=platform::native_test_support::native_interactive_runner_sentinel_proves_system_pointer_delivery_and_capture)' --no-fail-fast
 ```
 
-The sentinel is the phase-zero runner proof. The same workflow then runs the Dock-owned scenario
-`native.u27.source-capture`:
+The sentinel is the phase-zero runner proof. The native Dock manifest
+`examples/docking-native/tests/native_windows_interactive.native-scenarios.toml` binds eight stable
+scenario ids to one exact ignored worker test, one U27-U29 requirement owner, one behavior dispatch,
+and the typed native observation domains that worker must cross:
+
+| Scenario id | Owner | Required observation domains | Exact native worker responsibility |
+| --- | --- | --- | --- |
+| `native.u27.source-capture` | U27 | `system-input`, `wnd-proc`, `capture`, `point-stack`, `presentation` | source-owned `GetCapture`, OS-routed move/up, target preview, and committed host drop |
+| `native.u27.opaque-occlusion` | U27 | `system-input`, `wnd-proc`, `capture`, `point-stack`, `presentation` | ordinary opaque HWND barrier, point-scoped Z-order, and no hidden-host targeting |
+| `native.u27.surface-shutdown` | U27 | `system-input`, `wnd-proc`, `capture`, `presentation`, `lifetime` | capture cancellation plus dependent-window and ticket convergence after anchor close |
+| `native.u29.provisional-same-hwnd-promotion` | U29 | `system-input`, `wnd-proc`, `capture`, `point-stack`, `presentation` | one continuous proof of visible non-empty provisional presentation, pre-release interaction rejection with no replay, and durable same-HWND promotion |
+| `native.u29.committed-loss-recovery` | U29 | `system-input`, `wnd-proc`, `capture`, `point-stack`, `presentation`, `lifetime` | committed promoted-window loss, one visible recovery entry, real native activation of its `Restore` control, exact topology/revision recovery, and HWND retirement |
+| `native.u28.process-convergence` | U28 | `system-input`, `wnd-proc`, `capture`, `presentation`, `lifetime` | active captured surface shutdown, live pre-exit HWND census, and whole worker process-tree convergence under a kill-on-close Job Object |
+| `native.u28.no-input-pass-through` | U28 | `system-input`, `wnd-proc`, `capture`, `point-stack`, `presentation` | two consecutive no-input GPUI HWNDs pass through to a lower GPUI HWND, stop at a lower external opaque HWND, and reject a generation-changing sample |
+| `native.u28.mixed-dpi-client-bounds` | U28 | `system-input`, `wnd-proc`, `capture`, `point-stack`, `presentation`, `lifetime` | captured desktop tear-off from one real DPI domain to another, same-HWND provisional promotion, and exact target-side physical client bounds; missing dual-DPI hardware is a gate failure |
+
+The non-ignored registry test parses schema 3 of that manifest and proves that every compiled behavior
+dispatch is selected by exactly one row. Scenario ids, owners, exact worker coordinates, and typed
+observation-domain sets exist only in the manifest; Rust workers receive the selected row through
+`OPEN_GPUI_NATIVE_SCENARIO_ID` instead of maintaining a second metadata table. The workflow invokes one
+typed runner entry, and the runner builds one exact `nextest` process per manifest row. The workflow
+does not contain a second list of selectors, so an alias worker cannot satisfy two scenario ids. The
+CI-negative fixtures exercise the scanner's fail-closed manifest and workflow-entry checks before the
+interactive workers run.
+
+The dedicated workflow entry is:
 
 ```powershell
 $env:CARGO_BUILD_JOBS = '1'
 $env:OPEN_GPUI_NATIVE_INTERACTIVE = '1'
-cargo nextest run -p open-gpui-docking-native --locked --run-ignored only -E 'test(/native_interactive_two_hwnd_captured_drag_routes_preview_and_drop/)' --test-threads=1 --no-fail-fast
+cargo run --locked -p xtask -- native-windows-interactive
 ```
 
-That scenario opens two distinct rendered Dock HWNDs, derives source and target points from their
-committed debug-selector bounds and actual client-to-screen scale, and injects an unaddressed
-system drag. It requires the source HWND to acquire and retain `GetCapture()` while the system
-cursor crosses the target HWND, requires the source framework observer to receive the captured
-move/up while the target observer receives no mouse event, waits for a non-empty target
-drop-preview frame, and then requires one newer durable surface revision in which the payload moved
-from the source space to the target space. The sentinel separately proves the canary-tagged WndProc
-boundary. The test restores the cursor, foreground window, button state, and matching capture
-during normal completion and unwinding.
+The typed runner first executes the Windows system-input sentinel, the Windows backend baseline, and
+the non-ignored native scenario registry. It then runs each manifest row independently with an exact
+`test(=...)` selector, `--run-ignored only`, `--test-threads=1`, and `--no-tests fail`, followed by
+the rendered native Dock baseline. A scenario failure therefore cannot be hidden by a broad regex,
+an alias worker, or an accidentally skipped ignored test.
+
+Each worker uses a two-phase, nonce-bound pipe protocol. The parent creates the child with piped
+stdin/stdout, assigns it to a Windows Job Object configured with
+`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, and only then sends `START <nonce>`. After the scenario shuts
+down its surface, the worker waits for the application/platform event loop to return, writes exactly
+one `OPEN_GPUI_NATIVE_DOCK_REPORT <nonce> <json>` line to stdout, and remains alive waiting for
+`RELEASE <nonce>` on stdin. The typed pre-exit census includes the logical window registry, active
+drag, surface session/runtime terminal state, capture ownership, every observed native generation
+and its terminal acknowledgement, and the worker's ordinary and message-only HWND sets. The parent
+independently enumerates the same PID while the worker is still alive, compares both census views
+with the pre-application baseline, and verifies that the Job still owns exactly one active process.
+Only then does it send the release acknowledgement. A timeout or unwind terminates the entire Job,
+and successful exit must leave its active-process count at zero. No temporary file carries start,
+report, release, or liveness authority. The former post-exit `EnumWindows` assertion is removed
+because process termination would make it pass without proving framework-owned retirement.
+
+The `native.u27.source-capture` row opens two distinct rendered Dock HWNDs, derives source and target
+points from their committed debug-selector bounds and actual client-to-screen scale, and injects an
+unaddressed system drag. It requires the source HWND to acquire and retain `GetCapture()` while the
+system cursor crosses the target HWND, requires the source framework observer to receive the captured
+move/up while the target observer receives no mouse event, waits for a non-empty target drop-preview
+frame, and then requires one newer durable surface revision in which the payload moved from the source
+space to the target space. The sentinel separately proves the canary-tagged WndProc boundary. The
+test restores the cursor, foreground window, button state, and matching capture during normal
+completion and unwinding.
 
 This two-HWND scenario proves captured routing, preview, and committed-host drop. It does not by
 itself claim desktop live-undock, provisional-content reveal, or same-HWND promotion completion;
-those remain separate native scenarios rather than being inferred from this gate.
+those remain separate manifest rows rather than being inferred from this gate.
 
-The same runner also executes the two complementary lifecycle scenarios:
-
-```powershell
-$env:CARGO_BUILD_JOBS = '1'
-$env:OPEN_GPUI_NATIVE_INTERACTIVE = '1'
-cargo nextest run -p open-gpui-docking-native --locked --run-ignored only `
-  -E 'test(/native_interactive_(provisional_is_presented_before_release_and_promotes_same_hwnd|anchor_close_releases_capture_and_retires_dependent_hwnds)/)' `
-  --test-threads=1 --no-fail-fast
-```
-
-`native_interactive_provisional_is_presented_before_release_and_promotes_same_hwnd` moves a
-captured payload to a runner-selected point outside both test HWND rectangles and keeps the
+`native_interactive_provisional_gate_presents_and_promotes_same_hwnd` moves a captured payload to a
+runner-selected point outside both test HWND rectangles and keeps the
 physical button down. It requires a third, runtime-opening, natively visible HWND with a submitted
 non-empty frame containing the payload before release, while the provisional remains gated for
 pointer input, activation, and focus. It then releases the locked point and requires the same HWND
@@ -1968,19 +2024,55 @@ and one graph ownership transfer. A framework mouse observer is installed as soo
 provisional window appears and proves that the captured move/down/up stream is not replayed into
 that window.
 
-`native_interactive_anchor_close_releases_capture_and_retires_dependent_hwnds` begins the same
-real captured drag, posts `WM_CLOSE` to the primary anchor, and waits for the typed surface session
+`native_interactive_no_input_prefix_passes_through_and_fails_closed_on_generation_drift` creates two
+real GPUI top-level windows above the lower Dock host and commits `accepts_pointer_input = false` on
+both. The owning Windows hit stack must traverse both `HTTRANSPARENT` windows and publish a target
+preview for the lower GPUI HWND. A one-shot typed backend hook advances one exact no-input observation
+generation between the first and verifying samples; that event must publish no preview. The same
+prefix is then placed above an ordinary external opaque HWND, which must terminate routing before the
+lower GPUI host.
+
+`native_interactive_mixed_dpi_final_client_bounds_are_exact` enumerates physical monitor facts through
+the Windows test-support module and requires source and target monitors with distinct effective DPI.
+It begins one real captured payload drag on the source monitor, opens and presents the provisional on
+that source DPI, moves the still-captured system pointer to an open desktop point on the target
+monitor, and releases there. The same provisional HWND must converge to the target display identity,
+scale, and exact physical client bounds before release, promote without replacement, and retain those
+facts through a subsequent accepted frame. A runner without two distinct-DPI displays fails
+capability preconditions; the scenario never converts missing hardware into a skip.
+
+`native_interactive_opaque_occlusion_blocks_underlay_and_preserves_same_hwnd` adds an ordinary
+opaque top-level HWND over the final point. It requires independent frontmost verification to keep
+that barrier above the visible provisional while final placement and same-HWND promotion remain
+exact-session scoped.
+
+`native_interactive_committed_destination_loss_retires_runtime_authority` completes the exact
+same-HWND promotion, closes that committed native destination, and waits until its registration,
+runtime ownership, capture, GPUI window, and HWND retire. It then requires exactly one visible
+`LostViewportRecovery` entry in a surviving window, locates that entry's committed `Restore` control,
+and activates it through real system mouse move/down/up. The test accepts success only after the
+entry disappears, the payload moves into the anchor recovery space, the lost space no longer owns
+it, and the surface publishes exactly one loss revision followed by exactly one recovery revision.
+Deterministic AccessKit tests separately own focus and action-tree semantics; this native row does
+not claim operating-system assistive-technology E2E.
+
+`native_interactive_anchor_close_releases_capture_and_retires_dependent_hwnds` and
+`native_interactive_process_converges_after_active_surface_shutdown` begin the same
+real captured drag, post `WM_CLOSE` to the primary anchor, and wait for the typed surface session
 to reach `Closed`, the viewport runtime and GPUI window registry to empty, native capture to clear,
 the active drag to disappear, all terminal tickets to settle without failure, and the source and
-anchor HWNDs to be destroyed. This scenario proves final convergence, not the exact
-`WM_NCDESTROY` ordering. The test restores the physical button state through an unwind-safe guard;
-a separate 30-second process watchdog sends a best-effort button-up and aborts a deadlocked worker
-instead of leaving the runner in a global drag until the workflow timeout.
+anchor HWNDs to be destroyed. The typed native observation stream proves presentation quiescence
+before destruction, `WM_NCDESTROY` before native terminal acknowledgement for each window, and the
+dependent `WM_NCDESTROY` before anchor destruction begins. The test restores the physical button
+state through an unwind-safe guard; a separate 60-second parent watchdog sends a best-effort
+button-up, terminates the worker Job, and reports its captured artifacts instead of leaving the
+runner in a global drag or a descendant process alive until the workflow timeout.
 
-These scenarios are separate assertions, not a claim that every U28 matrix cell is covered. DPI
-divergence, opaque foreign-window occlusion, two-surface isolation, renderer fault injection, and
-all native terminal-order permutations remain covered by the deterministic and subprocess suites
-listed below and must not be inferred from this runner gate alone.
+These scenarios are separate assertions, not a claim that one worker proves every U28 matrix cell.
+Two-surface isolation, renderer fault injection, and terminal-order permutations continue to have
+deterministic or subprocess coverage listed below and must not be inferred from a different native
+scenario id. Mixed-DPI placement receives native credit only from its dedicated dual-DPI manifest
+row.
 
 The docking native example exercises the public multi-window setup: applications build one
 `DockController`, wrap it in a `DockViewportRuntimeHandle`, register window-close cleanup, and open

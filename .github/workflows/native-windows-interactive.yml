@@ -1,10 +1,6 @@
 name: Windows native interactive
 
 on:
-  pull_request:
-    branches:
-      - master
-      - main
   merge_group:
   push:
     branches:
@@ -41,8 +37,39 @@ jobs:
     timeout-minutes: 45
 
     steps:
+      - name: Verify ephemeral interactive runner attestation
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $machine = [EnvironmentVariableTarget]::Machine
+          $required = @{
+            OPEN_GPUI_NATIVE_RUNNER_EPHEMERAL = '1'
+            OPEN_GPUI_NATIVE_RUNNER_ONE_JOB = '1'
+            OPEN_GPUI_NATIVE_RUNNER_NETWORK_POLICY = 'deny-default-v1'
+          }
+          foreach ($entry in $required.GetEnumerator()) {
+            $actual = [Environment]::GetEnvironmentVariable($entry.Key, $machine)
+            if ($actual -ne $entry.Value) {
+              throw "Native runner attestation $($entry.Key) must be '$($entry.Value)', got '$actual'"
+            }
+          }
+
+          $imageId = [Environment]::GetEnvironmentVariable('OPEN_GPUI_NATIVE_RUNNER_CLEAN_IMAGE_ID', $machine)
+          if ($imageId -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$') {
+            throw "Native runner clean-image attestation is missing or malformed"
+          }
+          $expectedSid = [Environment]::GetEnvironmentVariable('OPEN_GPUI_NATIVE_RUNNER_ACCOUNT_SID', $machine)
+          $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+          if ([string]::IsNullOrWhiteSpace($expectedSid) -or $currentSid -ne $expectedSid) {
+            throw "Native runner account SID does not match its machine attestation"
+          }
+          $sessionId = [Diagnostics.Process]::GetCurrentProcess().SessionId
+          if (-not [Environment]::UserInteractive -or $sessionId -eq 0) {
+            throw "Native runner must execute in a non-service interactive Windows session"
+          }
+
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ env.OPEN_GPUI_NATIVE_CANDIDATE_SHA }}
           persist-credentials: false
@@ -61,36 +88,16 @@ jobs:
           }
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
         with:
           components: rustfmt
 
       - name: Install nextest
-        uses: taiki-e/install-action@nextest
+        uses: taiki-e/install-action@9e3720000324bf314ab081346108fc3bab8d6b74 # nextest
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
 
-      - name: Prove interactive desktop, system input, WndProc, capture, and renderer
+      - name: Run the manifest-owned native Dock gate
         shell: pwsh
-        run: >-
-          cargo nextest run -p open-gpui-windows --locked --run-ignored only
-          -E 'test(/native_interactive_runner_sentinel_proves_system_pointer_delivery_and_capture/)'
-          --test-threads=1 --no-fail-fast
-
-      - name: Run Windows backend baseline after preflight
-        shell: pwsh
-        run: >-
-          cargo nextest run -p open-gpui-windows --locked
-          --test-threads=1 --no-fail-fast
-
-      - name: Prove real Dock capture, provisional presentation, promotion, and shutdown
-        shell: pwsh
-        run: >-
-          cargo nextest run -p open-gpui-docking-native --locked --run-ignored only
-          -E 'test(/native_interactive_(two_hwnd_captured_drag_routes_preview_and_drop|provisional_is_presented_before_release_and_promotes_same_hwnd|anchor_close_releases_capture_and_retires_dependent_hwnds)/)'
-          --test-threads=1 --no-fail-fast
-
-      - name: Run rendered native Docking baseline after preflight
-        shell: pwsh
-        run: cargo nextest run -p open-gpui-docking-native --locked --no-fail-fast
+        run: cargo run --locked -p xtask -- native-windows-interactive

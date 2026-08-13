@@ -20,6 +20,9 @@ workspace = true
 path = "src/lib.rs"
 doctest = false
 
+[features]
+test-support = []
+
 [dependencies]
 open_gpui.workspace = true
 open_gpui_motion.workspace = true

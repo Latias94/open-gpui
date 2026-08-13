@@ -380,8 +380,12 @@ impl DockGraph {
     ) -> Result<bool, DockGraphMutationError> {
         let before = self.clone();
         let before_layout = before.export_layout();
+        let retention = before.capture_mutation_retention();
         let mut next = before.clone();
         let changed = next.apply_op_unchecked(plan.op);
+        if changed {
+            next.finalize_checked_mutation(retention);
+        }
         let next_layout = next.export_layout();
 
         if !changed {

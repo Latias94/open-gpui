@@ -1413,6 +1413,16 @@ impl AppCell {
             || self.shutdown_fence.borrow().is_some()
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub(super) fn native_exit_authority_is_settled_for_test(&self) -> bool {
+        self.native_events.is_terminated()
+            && !self.shutdown_fence_owns_effect_flush()
+            && self.shutdown_completion_queued.get().is_none()
+            && self.pointer_capture_release_barriers_are_clear()
+            && self.native_window_retirement_barriers_are_clear()
+            && self.native_events.owned_local_tasks_are_idle_for_test()
+    }
+
     fn active_shutdown_generation(&self) -> Option<u64> {
         self.active_shutdown_completion_generation
             .get()

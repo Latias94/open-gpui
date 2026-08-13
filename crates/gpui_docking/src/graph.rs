@@ -340,23 +340,6 @@ impl DockGraph {
         self.nodes.get(id)
     }
 
-    pub(in crate::graph) fn remove_subtree(&mut self, root: DockNodeId) {
-        let Some(node) = self.nodes.remove(root) else {
-            return;
-        };
-        match node {
-            DockNode::Tabs { .. } => {
-                self.tab_selection_history.remove(&root);
-            }
-            DockNode::Floating { child } => self.remove_subtree(child),
-            DockNode::Split { children, .. } => {
-                for child in children {
-                    self.remove_subtree(child);
-                }
-            }
-        }
-    }
-
     /// Sets the root node for a dock space.
     pub fn set_root(&mut self, space: DockSpaceId, root: DockNodeId) {
         self.roots.insert(space, root);

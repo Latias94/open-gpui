@@ -4,6 +4,10 @@ use std::collections::HashSet;
 
 use super::{DockGraph, DockNode, SplitAxis};
 
+pub(in crate::graph) struct DockGraphMutationRetention {
+    staging_roots: HashSet<DockNodeId>,
+}
+
 impl DockGraph {
     /// Simplifies every tree in one dock space into canonical form.
     ///
@@ -15,24 +19,74 @@ impl DockGraph {
         self.simplify_space_structure(space);
     }
 
-    /// Simplifies one space after a committed graph mutation and reclaims only nodes that the
-    /// mutation detached from that space.
+    /// Simplifies one affected space inside a checked graph mutation.
     ///
-    /// Unattached staging roots and their transitive dependencies remain authoritative. This keeps
-    /// the public insert-then-attach construction window intact while preventing ordinary runtime
-    /// mutations from accumulating the nodes they replace.
+    /// Physical node reclamation is deliberately deferred to the enclosing mutation transaction,
+    /// which owns the pre-mutation staging snapshot and performs one graph-wide sweep.
     pub(crate) fn simplify_space_after_mutation(&mut self, space: &DockSpaceId) {
-        let globally_reachable_before = self.reachable_node_ids();
-        let staged_roots = self
+        self.simplify_space_structure(space);
+    }
+
+    /// Captures the roots of pre-existing unattached staging authorities before a checked mutation.
+    ///
+    /// Dependencies are deliberately not retained as independent roots. A staging root may be
+    /// edited by the mutation; the final sweep must follow its current children so detached old
+    /// dependencies can be reclaimed.
+    pub(in crate::graph) fn capture_mutation_retention(&self) -> DockGraphMutationRetention {
+        let live = self.reachable_node_ids();
+        let staging_nodes = self
             .nodes
             .keys()
-            .filter(|node| !globally_reachable_before.contains(node))
-            .collect::<Vec<_>>();
-        let staged_dependencies = self.reachable_node_ids_from(staged_roots);
-        let previously_reachable = self.reachable_node_ids_for_space(space);
+            .filter(|node| !live.contains(node))
+            .collect::<HashSet<_>>();
+        let mut referenced_by_staging = HashSet::new();
+        for node in staging_nodes.iter().copied() {
+            match self.nodes.get(node) {
+                Some(DockNode::Split { children, .. }) => {
+                    children
+                        .iter()
+                        .copied()
+                        .filter(|child| staging_nodes.contains(child))
+                        .for_each(|child| {
+                            referenced_by_staging.insert(child);
+                        });
+                }
+                Some(DockNode::Floating { child }) => {
+                    if staging_nodes.contains(child) {
+                        referenced_by_staging.insert(*child);
+                    }
+                }
+                Some(DockNode::Tabs { .. }) | None => {}
+            }
+        }
+        let staging_roots = staging_nodes
+            .difference(&referenced_by_staging)
+            .copied()
+            .collect();
+        DockGraphMutationRetention { staging_roots }
+    }
 
-        self.simplify_space_structure(space);
-        self.remove_nodes_detached_from(previously_reachable, &staged_dependencies);
+    /// Completes one checked mutation with a single mark-and-sweep.
+    ///
+    /// The final graph keeps current live topology and the current dependency closure of each
+    /// staging root that still exists. Everything else was either detached by this transaction or
+    /// created speculatively and is reclaimed exactly once.
+    pub(in crate::graph) fn finalize_checked_mutation(
+        &mut self,
+        retention: DockGraphMutationRetention,
+    ) {
+        let mut retained = self.reachable_node_ids();
+        retained.extend(
+            self.reachable_node_ids_from(
+                retention
+                    .staging_roots
+                    .iter()
+                    .copied()
+                    .filter(|node| self.nodes.contains_key(*node))
+                    .collect(),
+            ),
+        );
+        self.prune_nodes_not_in(&retained);
     }
 
     /// Canonicalizes a fully assembled graph and removes every unattached node.
@@ -91,47 +145,21 @@ impl DockGraph {
 
     fn prune_unreachable_nodes(&mut self) {
         let reachable = self.reachable_node_ids();
-        let unreachable = self
+        self.prune_nodes_not_in(&reachable);
+    }
+
+    fn prune_nodes_not_in(&mut self, retained: &HashSet<DockNodeId>) {
+        let removed = self
             .nodes
             .keys()
-            .filter(|node| !reachable.contains(node))
+            .filter(|node| !retained.contains(node))
             .collect::<Vec<_>>();
-
-        for node in unreachable {
+        for node in removed {
             self.nodes.remove(node);
             self.tab_selection_history.remove(&node);
         }
         self.tab_selection_history
             .retain(|node, _| self.nodes.contains_key(*node));
-    }
-
-    fn remove_nodes_detached_from(
-        &mut self,
-        candidates: HashSet<DockNodeId>,
-        staged_dependencies: &HashSet<DockNodeId>,
-    ) {
-        let still_reachable = self.reachable_node_ids();
-        for node in candidates
-            .difference(&still_reachable)
-            .filter(|node| !staged_dependencies.contains(node))
-            .copied()
-        {
-            self.nodes.remove(node);
-            self.tab_selection_history.remove(&node);
-        }
-    }
-
-    fn reachable_node_ids_for_space(&self, space: &DockSpaceId) -> HashSet<DockNodeId> {
-        self.reachable_node_ids_from(
-            self.root(space)
-                .into_iter()
-                .chain(
-                    self.floating_containers(space)
-                        .iter()
-                        .map(|floating| floating.node),
-                )
-                .collect(),
-        )
     }
 
     fn reachable_node_ids(&self) -> HashSet<DockNodeId> {
@@ -348,5 +376,62 @@ impl DockGraph {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{DockItemId, DockNode, DockSpaceId};
+
+    #[test]
+    fn mutation_retention_recomputes_current_staging_dependencies() {
+        let mut graph = DockGraph::new();
+        let space = DockSpaceId::from("main");
+        let live_left = graph.insert_node(DockNode::Tabs {
+            items: vec![DockItemId::from("left")],
+            selected: Some(DockItemId::from("left")),
+        });
+        let live_right = graph.insert_node(DockNode::Tabs {
+            items: vec![DockItemId::from("right")],
+            selected: Some(DockItemId::from("right")),
+        });
+        let live_root = graph.insert_node(DockNode::Split {
+            axis: SplitAxis::Horizontal,
+            children: vec![live_left, live_right],
+            fractions: vec![0.5, 0.5],
+        });
+        graph.set_root(space, live_root);
+
+        let staging_dependency = graph.insert_node(DockNode::Tabs {
+            items: vec![DockItemId::from("staged")],
+            selected: Some(DockItemId::from("staged")),
+        });
+        let staging_root = graph.insert_node(DockNode::Split {
+            axis: SplitAxis::Vertical,
+            children: vec![staging_dependency, live_root],
+            fractions: vec![0.5, 0.5],
+        });
+        let retention = graph.capture_mutation_retention();
+        assert_eq!(retention.staging_roots, HashSet::from([staging_root]));
+
+        let DockNode::Split { children, .. } = graph
+            .nodes
+            .get_mut(staging_root)
+            .expect("staging root should exist")
+        else {
+            panic!("staging root should be a split");
+        };
+        children.retain(|child| *child != staging_dependency);
+        graph.finalize_checked_mutation(retention);
+
+        assert!(graph.node(staging_root).is_some());
+        assert!(graph.node(live_root).is_some());
+        assert!(graph.node(live_left).is_some());
+        assert!(graph.node(live_right).is_some());
+        assert!(
+            graph.node(staging_dependency).is_none(),
+            "a dependency detached from the current staging closure must be reclaimed"
+        );
     }
 }

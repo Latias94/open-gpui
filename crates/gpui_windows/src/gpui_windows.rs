@@ -12,6 +12,10 @@ mod display;
 mod events;
 mod keyboard;
 #[cfg(any(test, feature = "test-support"))]
+mod native_test_foreground;
+#[cfg(feature = "test-support")]
+mod native_test_harness;
+#[cfg(any(test, feature = "test-support"))]
 mod native_test_observation;
 mod platform;
 mod system_settings;
@@ -46,6 +50,14 @@ pub use native_test_observation::{
     NativeWindowTestIdentity, NativeWindowTestMessage, NativeWindowTestMessageDisposition,
     NativeWindowTestObservation, NativeWindowTestObservationGuard, NativeWindowTestPoint,
     begin_native_window_test_observation,
+};
+
+#[cfg(feature = "test-support")]
+#[doc(hidden)]
+pub use native_test_harness::{
+    NativeNoInputGenerationDriftGuard, NativeTestDisplay, NativeTestOpaqueWindow,
+    NativeTestProcessWindowCensus, arm_native_no_input_generation_drift,
+    native_test_acquire_foreground_window, native_test_displays, native_test_process_window_census,
 };
 
 pub(crate) use windows::Win32::Foundation::HWND;

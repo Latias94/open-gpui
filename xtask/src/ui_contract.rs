@@ -11,7 +11,21 @@ use open_gpui_ui_components::component_contract::{
 };
 use serde::Deserialize;
 
+use crate::native_windows_interactive::{
+    NATIVE_SCENARIO_MANIFEST_PATH, NATIVE_SCENARIO_WORKFLOW_ENTRY, NativeObservationDomain,
+    NativeScenarioManifest, load_native_scenario_manifest, native_manifest_failures,
+};
+
 const SCENARIO_ARTIFACT_SUFFIX: &str = ".scenarios.toml";
+const NATIVE_SCENARIO_WORKFLOW_PATH: &str = ".github/workflows/native-windows-interactive.yml";
+const REQUIRED_NATIVE_OBSERVATION_DOMAINS: &[NativeObservationDomain] = &[
+    NativeObservationDomain::SystemInput,
+    NativeObservationDomain::WndProc,
+    NativeObservationDomain::Capture,
+    NativeObservationDomain::PointStack,
+    NativeObservationDomain::Presentation,
+    NativeObservationDomain::Lifetime,
+];
 const DOC_PROJECTION_BEGIN: &str = "<!-- BEGIN COMPONENT CONTRACT PROJECTION -->";
 const DOC_PROJECTION_END: &str = "<!-- END COMPONENT CONTRACT PROJECTION -->";
 const REMOVED_PRESENTATION_AUTHORITIES: &[&str] = &[
@@ -97,6 +111,7 @@ pub(crate) fn scan_ui_contract(root: &Path) -> Result<(), ()> {
         COMPONENT_CONTRACT_GLOBAL_SCENARIOS,
         &registrations,
     ));
+    failures.extend(native_scenario_binding_failures(root));
     failures.extend(documentation_projection_failures(root));
     failures.extend(presentation_documentation_failures(root));
     failures.extend(old_authority_residue_failures(root));
@@ -479,6 +494,64 @@ fn scenario_binding_failures(
         }
     }
 
+    failures
+}
+
+fn native_scenario_binding_failures(root: &Path) -> Vec<String> {
+    let mut failures = Vec::new();
+    let manifest = match load_native_scenario_manifest(root) {
+        Ok(manifest) => manifest,
+        Err(error) => {
+            failures.push(error);
+            return failures;
+        }
+    };
+    let workflow = match fs::read_to_string(root.join(NATIVE_SCENARIO_WORKFLOW_PATH)) {
+        Ok(source) => Some(source),
+        Err(error) => {
+            failures.push(format!(
+                "{NATIVE_SCENARIO_WORKFLOW_PATH}: failed to read native scenario workflow: {error}"
+            ));
+            None
+        }
+    };
+    failures.extend(native_scenario_contract_failures(
+        manifest,
+        workflow.as_deref(),
+    ));
+
+    failures
+}
+
+fn native_scenario_contract_failures(
+    manifest: NativeScenarioManifest,
+    workflow: Option<&str>,
+) -> Vec<String> {
+    let mut failures = native_manifest_failures(&manifest);
+    let mut observed_domains = BTreeSet::new();
+    for scenario in &manifest.scenario {
+        observed_domains.extend(scenario.observation_domains.iter().copied());
+    }
+    for domain in REQUIRED_NATIVE_OBSERVATION_DOMAINS {
+        if !observed_domains.contains(domain) {
+            failures.push(format!(
+                "{NATIVE_SCENARIO_MANIFEST_PATH}: native scenario matrix is missing required `{}` observation",
+                domain.as_str()
+            ));
+        }
+    }
+
+    if let Some(workflow) = workflow {
+        let entry_count = workflow
+            .lines()
+            .filter(|line| line.trim() == format!("run: {NATIVE_SCENARIO_WORKFLOW_ENTRY}"))
+            .count();
+        if entry_count != 1 {
+            failures.push(format!(
+                "{NATIVE_SCENARIO_WORKFLOW_PATH}: workflow must invoke the typed manifest runner exactly once as `run: {NATIVE_SCENARIO_WORKFLOW_ENTRY}`; found {entry_count}"
+            ));
+        }
+    }
     failures
 }
 
@@ -1331,6 +1404,43 @@ fn repo_relative_path(root: &Path, path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::native_windows_interactive::{
+        NATIVE_SCENARIO_RUNNER, NATIVE_SCENARIO_SUITE, NativeScenarioDeclaration,
+    };
+
+    fn native_manifest_fixture() -> NativeScenarioManifest {
+        NativeScenarioManifest {
+            schema: 3,
+            suite: NATIVE_SCENARIO_SUITE.to_owned(),
+            runner: NATIVE_SCENARIO_RUNNER.to_owned(),
+            scenario: vec![
+                NativeScenarioDeclaration {
+                    id: "native.u27.input".to_owned(),
+                    requirement_owner: "U27".to_owned(),
+                    test: "native_interactive_tests::native_input_worker".to_owned(),
+                    observation_domains: BTreeSet::from([
+                        NativeObservationDomain::SystemInput,
+                        NativeObservationDomain::WndProc,
+                        NativeObservationDomain::Capture,
+                        NativeObservationDomain::PointStack,
+                        NativeObservationDomain::Presentation,
+                    ]),
+                    behavior: "input".to_owned(),
+                },
+                NativeScenarioDeclaration {
+                    id: "native.u28.lifetime".to_owned(),
+                    requirement_owner: "U28".to_owned(),
+                    test: "native_interactive_tests::native_lifetime_worker".to_owned(),
+                    observation_domains: BTreeSet::from([NativeObservationDomain::Lifetime]),
+                    behavior: "lifetime".to_owned(),
+                },
+            ],
+        }
+    }
+
+    fn native_workflow_fixture() -> String {
+        format!("run: {NATIVE_SCENARIO_WORKFLOW_ENTRY}")
+    }
 
     fn contract_row(id: &'static str, required_scenarios: &'static [&'static str]) -> ContractRow {
         ContractRow {
@@ -1339,6 +1449,83 @@ mod tests {
             family: "test",
             required_scenarios,
         }
+    }
+
+    #[test]
+    fn native_gate_rejects_visual_test_only_fixture() {
+        let mut manifest = native_manifest_fixture();
+        for scenario in &mut manifest.scenario {
+            scenario.observation_domains = BTreeSet::from([NativeObservationDomain::VisualTest]);
+        }
+
+        let failures = native_scenario_contract_failures(manifest, None).join("\n");
+        assert!(failures.contains("VisualTest evidence cannot satisfy"));
+        for domain in REQUIRED_NATIVE_OBSERVATION_DOMAINS {
+            assert!(
+                failures.contains(&format!(
+                    "missing required `{}` observation",
+                    domain.as_str()
+                )),
+                "missing fail-closed diagnostic for {}: {failures}",
+                domain.as_str()
+            );
+        }
+    }
+
+    #[test]
+    fn native_gate_accepts_typed_independent_native_fixture() {
+        let failures = native_scenario_contract_failures(
+            native_manifest_fixture(),
+            Some(&native_workflow_fixture()),
+        );
+        assert!(failures.is_empty(), "{failures:#?}");
+    }
+
+    #[test]
+    fn native_gate_repository_contract_is_consistent() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("xtask must remain a direct workspace child");
+        let failures = native_scenario_binding_failures(root);
+        assert!(failures.is_empty(), "{failures:#?}");
+    }
+
+    #[test]
+    fn native_gate_rejects_missing_point_stack_presentation_and_lifetime_fixture() {
+        let mut manifest = native_manifest_fixture();
+        for scenario in &mut manifest.scenario {
+            scenario
+                .observation_domains
+                .remove(&NativeObservationDomain::PointStack);
+            scenario
+                .observation_domains
+                .remove(&NativeObservationDomain::Presentation);
+            scenario
+                .observation_domains
+                .remove(&NativeObservationDomain::Lifetime);
+        }
+
+        let failures = native_scenario_contract_failures(manifest, None).join("\n");
+        for domain in ["point-stack", "presentation", "lifetime"] {
+            assert!(
+                failures.contains(&format!("missing required `{domain}` observation")),
+                "missing fail-closed diagnostic for {domain}: {failures}"
+            );
+        }
+    }
+
+    #[test]
+    fn native_gate_requires_independent_workers_and_single_typed_runner_entry() {
+        let mut manifest = native_manifest_fixture();
+        let alias = manifest.scenario[0].test.clone();
+        manifest.scenario[1].test = alias;
+        let workflow = native_workflow_fixture().replace(
+            &format!("run: {NATIVE_SCENARIO_WORKFLOW_ENTRY}"),
+            "run: cargo nextest run -p open-gpui-docking-native -E 'test(=native_interactive_tests::native_input_worker)'",
+        );
+        let failures = native_scenario_contract_failures(manifest, Some(&workflow)).join("\n");
+        assert!(failures.contains("one alias worker cannot satisfy two native scenarios"));
+        assert!(failures.contains("typed manifest runner exactly once"));
     }
 
     fn registration(id: &str, contracts: &[&str], owner_path: &str) -> ScenarioRegistration {

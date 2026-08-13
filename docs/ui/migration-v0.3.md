@@ -573,6 +573,9 @@ For custom platform backends:
   avoid activation, preserve native hit transparency, and call
   `WindowProvisionalSession::record_native_reveal` with observed visibility, foreground, hit-test,
   identity, and z-order facts before reporting acceptance.
+  `RevealDeferredInitialPresentation` now also carries a required `reveal_point` in device pixels;
+  custom backends must use that point for the point-scoped reveal and must not infer it from a
+  later pointer or window movement.
 - If the backend can own native pointer capture, construct the dispatcher with
   `PlatformWindowCommandDispatcher::new_with_pointer_capture_release`. Its preparer may only
   snapshot the exact native owner for the supplied release generation; the retained operation
@@ -724,20 +727,29 @@ provisional window and carries its non-zero immutable session generation plus sa
 coverage and client geometry.
 
 `PlatformWindowHitObservation` no longer exposes one untyped hit slice whose final element must be
-inferred by the consumer. Read the exact front-to-back provisional prefix with
-`provisional_pass_throughs()` and then match the typed `PlatformWindowHitTerminus` returned by
-`terminus()`. A complete observation has this shape:
+inferred by the consumer. Read the exact front-to-back pass-through prefix with
+`pass_throughs()` and then match the typed `PlatformWindowHitTerminus` returned by `terminus()`.
+`PlatformWindowHit::is_provisional_pass_through()` is replaced by the wider
+`PlatformWindowHit::is_pass_through()`, which returns `true` for both provisional and no-input
+entries. Callers whose policy applies only to gated provisional windows must instead match
+`PlatformWindowHit::ProvisionalPassThrough { .. }` explicitly.
+The prefix may contain both `ProvisionalPassThrough` and `NoInputPassThrough` entries. A
+`NoInputPassThrough` entry carries the native window's committed pointer-input generation and
+coverage; it is a transparent routing fact, not an opaque or terminal barrier. Backends must
+continue the same point-scoped Z-order enumeration below every pass-through entry and fail closed
+if any pass-through generation or coverage changes during the observation. A complete observation
+has this shape:
 
 ```text
-ProvisionalPassThrough* -> OpenDesktop
-ProvisionalPassThrough* -> Window(RegisteredApplication | OpaqueBarrier)
+PassThrough* -> OpenDesktop
+PassThrough* -> Window(RegisteredApplication | OpaqueBarrier)
 ```
 
 This is an intentional contract expansion: verified open desktop may now follow a non-empty
-provisional pass-through prefix. An empty open-desktop observation remains valid, but emptiness is
+pass-through prefix. An empty open-desktop observation remains valid, but emptiness is
 not the desktop authority. `PlatformWindowHitTerminus::OpenDesktop` is the authority. Missing
 windows, incomplete enumeration, stale generation identity, a point outside any reported coverage,
-an unclassified native top-level below a provisional window, or any ordering ambiguity must return
+an unclassified native top-level below a pass-through window, or any ordering ambiguity must return
 `PlatformWindowHitStack::Unavailable` instead. The trait's default implementation already returns
 `Unavailable`, so backends that do not support classified point-hit stacks may keep that
 fail-closed behavior.
@@ -745,11 +757,14 @@ fail-closed behavior.
 Update consumers as follows:
 
 ```rust
-for hit in observation.provisional_pass_throughs() {
-    let PlatformWindowHit::ProvisionalPassThrough { .. } = hit else {
-        unreachable!("checked observations contain only provisional prefix entries");
-    };
-    // Continue only after validating every exact provisional session.
+for hit in observation.pass_throughs() {
+    match hit {
+        PlatformWindowHit::ProvisionalPassThrough { .. }
+        | PlatformWindowHit::NoInputPassThrough { .. } => {
+            // Continue only after validating every exact pass-through generation.
+        }
+        _ => unreachable!("checked observations contain only pass-through prefix entries"),
+    }
 }
 
 match observation.terminus() {
@@ -765,15 +780,27 @@ match observation.terminus() {
     PlatformWindowHitTerminus::Window(PlatformWindowHit::ProvisionalPassThrough { .. }) => {
         unreachable!("checked observations cannot terminate at a provisional entry");
     }
+    PlatformWindowHitTerminus::Window(PlatformWindowHit::NoInputPassThrough { .. }) => {
+        unreachable!("checked observations cannot terminate at a no-input entry");
+    }
 }
 ```
 
 Use `PlatformWindowHitObservation::try_new` or `PlatformWindowHitStack::try_available` for a
 window-terminated observation. Use `PlatformWindowHitObservation::try_open_desktop` or
 `PlatformWindowHitStack::try_available_open_desktop` only after independently proving that native
-hit testing continued through every supplied provisional entry to desktop. The checked constructors
-reject malformed coverage, zero provisional generations, non-prefix pass-through entries, and
+hit testing continued through every supplied pass-through entry to desktop. The checked constructors
+reject malformed coverage, zero authority generations, non-prefix pass-through entries, and
 window-terminated observations without exactly one terminal entry.
+
+`PlatformWindow` also adds the hidden
+`is_current_pointer_input_observation(accepts_pointer_input, generation)` validation hook. Its
+default implementation supports only the immutable generation-1 capability used by backends that
+never mutate pointer-input admission. A backend that publishes later
+`NoInputPassThrough.pointer_input_generation` values must override the hook and compare both the
+sampled boolean and exact generation against one coherent current native fact. Returning true from
+only the current boolean is insufficient because a false-to-true-to-false ABA must invalidate a
+queued hit observation.
 
 ## Deterministic Collection Typeahead
 

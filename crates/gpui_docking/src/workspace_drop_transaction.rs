@@ -35,6 +35,10 @@ impl DockWorkspacePreparedLockedPayloadDrop {
         self.commit_id
     }
 
+    pub(crate) fn changed(&self) -> bool {
+        self.outcome.changed()
+    }
+
     pub(crate) fn space_is_empty(&self, space: &DockSpaceId) -> bool {
         self.graph.collect_items_in_space(space).is_empty()
     }

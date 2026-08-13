@@ -2,7 +2,7 @@ use std::{
     cell::{Cell, RefCell},
     collections::VecDeque,
     panic::{AssertUnwindSafe, catch_unwind, resume_unwind},
-    rc::Weak,
+    rc::{Rc, Weak},
     sync::Arc,
 };
 
@@ -277,8 +277,12 @@ pub(super) struct NativeEventIngress {
     unwind_recovery_scheduled: Cell<bool>,
     terminated: Cell<bool>,
     shutdown_generation: Cell<Option<u64>>,
+    delayed_wake_tasks: RefCell<Vec<Task<()>>>,
     #[cfg(not(target_family = "wasm"))]
     accessibility_wake_sender: async_channel::Sender<()>,
+    #[cfg(not(target_family = "wasm"))]
+    accessibility_wake_task: RefCell<Option<Task<()>>>,
+    owned_local_task_count: Rc<Cell<usize>>,
     foreground_executor: ForegroundExecutor,
     app: Weak<AppCell>,
     diagnostics: NativeBoundaryDiagnostics,
@@ -287,23 +291,24 @@ pub(super) struct NativeEventIngress {
 impl NativeEventIngress {
     pub(super) fn new(foreground_executor: ForegroundExecutor, app: Weak<AppCell>) -> Self {
         let sequencer = Arc::new(Mutex::new(NativeSequenceAuthority::new()));
+        let owned_local_task_count = Rc::new(Cell::new(0));
         #[cfg(not(target_family = "wasm"))]
         let (accessibility_wake_sender, accessibility_wake_receiver) =
             async_channel::bounded::<()>(1);
         #[cfg(not(target_family = "wasm"))]
-        {
+        let accessibility_wake_task = {
             let app = app.clone();
-            foreground_executor
-                .spawn(async move {
-                    while accessibility_wake_receiver.recv().await.is_ok() {
-                        let Some(app) = app.upgrade() else {
-                            break;
-                        };
-                        app.import_native_accessibility_events();
-                    }
-                })
-                .detach();
-        }
+            let lease = NativeOwnedLocalTaskLease::acquire(Rc::clone(&owned_local_task_count));
+            foreground_executor.spawn(async move {
+                let _lease = lease;
+                while accessibility_wake_receiver.recv().await.is_ok() {
+                    let Some(app) = app.upgrade() else {
+                        break;
+                    };
+                    app.import_native_accessibility_events();
+                }
+            })
+        };
         Self {
             sequencer,
             pending: RefCell::new(VecDeque::new()),
@@ -314,8 +319,12 @@ impl NativeEventIngress {
             unwind_recovery_scheduled: Cell::new(false),
             terminated: Cell::new(false),
             shutdown_generation: Cell::new(None),
+            delayed_wake_tasks: RefCell::new(Vec::new()),
             #[cfg(not(target_family = "wasm"))]
             accessibility_wake_sender,
+            #[cfg(not(target_family = "wasm"))]
+            accessibility_wake_task: RefCell::new(Some(accessibility_wake_task)),
+            owned_local_task_count,
             foreground_executor,
             app,
             diagnostics: NativeBoundaryDiagnostics::default(),
@@ -382,14 +391,15 @@ impl NativeEventIngress {
         retry_epoch: u8,
     ) {
         let app = self.app.clone();
-        self.foreground_executor
-            .spawn(async move {
-                timer.await;
-                if let Some(app) = app.upgrade() {
-                    app.retry_native_pointer_capture_release_from_wake(token, retry_epoch);
-                }
-            })
-            .detach();
+        let lease = self.acquire_owned_local_task();
+        let wake = self.foreground_executor.spawn(async move {
+            let _lease = lease;
+            timer.await;
+            if let Some(app) = app.upgrade() {
+                app.retry_native_pointer_capture_release_from_wake(token, retry_epoch);
+            }
+        });
+        self.retain_delayed_wake(wake);
     }
 
     pub(super) fn schedule_window_retirement_retry(
@@ -398,14 +408,15 @@ impl NativeEventIngress {
         retirement: NativeWindowRetirement,
     ) {
         let app = self.app.clone();
-        self.foreground_executor
-            .spawn(async move {
-                timer.await;
-                if let Some(app) = app.upgrade() {
-                    app.retry_native_window_retirement(retirement);
-                }
-            })
-            .detach();
+        let lease = self.acquire_owned_local_task();
+        let wake = self.foreground_executor.spawn(async move {
+            let _lease = lease;
+            timer.await;
+            if let Some(app) = app.upgrade() {
+                app.retry_native_window_retirement(retirement);
+            }
+        });
+        self.retain_delayed_wake(wake);
     }
 
     pub(super) fn schedule_shutdown_completion_retry(
@@ -415,14 +426,32 @@ impl NativeEventIngress {
         retry_epoch: u8,
     ) {
         let app = self.app.clone();
-        self.foreground_executor
-            .spawn(async move {
-                timer.await;
-                if let Some(app) = app.upgrade() {
-                    app.retry_shutdown_completion_from_wake(generation, retry_epoch);
-                }
-            })
-            .detach();
+        let lease = self.acquire_owned_local_task();
+        let wake = self.foreground_executor.spawn(async move {
+            let _lease = lease;
+            timer.await;
+            if let Some(app) = app.upgrade() {
+                app.retry_shutdown_completion_from_wake(generation, retry_epoch);
+            }
+        });
+        self.retain_delayed_wake(wake);
+    }
+
+    fn retain_delayed_wake(&self, wake: Task<()>) {
+        let mut wakes = self.delayed_wake_tasks.borrow_mut();
+        wakes.retain(|wake| !wake.is_ready());
+        wakes.push(wake);
+    }
+
+    fn acquire_owned_local_task(&self) -> NativeOwnedLocalTaskLease {
+        NativeOwnedLocalTaskLease::acquire(Rc::clone(&self.owned_local_task_count))
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(super) fn owned_local_tasks_are_idle_for_test(&self) -> bool {
+        let mut wakes = self.delayed_wake_tasks.borrow_mut();
+        wakes.retain(|wake| !wake.is_ready());
+        wakes.is_empty() && self.owned_local_task_count.get() == 0
     }
 
     pub(super) fn enqueue_captured_drag_release_completion(
@@ -825,6 +854,12 @@ impl NativeEventIngress {
         if self.terminated.replace(true) {
             return;
         }
+        // Delayed native wakes own local futures. Cancel them on the application thread before
+        // the platform message loop can return; otherwise a timer thread could become the final
+        // owner of a !Send future after the main-thread dispatch destination has gone away.
+        self.delayed_wake_tasks.borrow_mut().clear();
+        #[cfg(not(target_family = "wasm"))]
+        self.accessibility_wake_task.borrow_mut().take();
         #[cfg(not(target_family = "wasm"))]
         let staged = self.sequencer.lock().terminate();
         #[cfg(target_family = "wasm")]
@@ -1031,6 +1066,33 @@ impl NativeEventIngress {
                 executing_command: false,
             });
         }
+    }
+}
+
+struct NativeOwnedLocalTaskLease {
+    active: Rc<Cell<usize>>,
+}
+
+impl NativeOwnedLocalTaskLease {
+    fn acquire(active: Rc<Cell<usize>>) -> Self {
+        active.set(
+            active
+                .get()
+                .checked_add(1)
+                .expect("native ingress owned-local-task count overflowed"),
+        );
+        Self { active }
+    }
+}
+
+impl Drop for NativeOwnedLocalTaskLease {
+    fn drop(&mut self) {
+        self.active.set(
+            self.active
+                .get()
+                .checked_sub(1)
+                .expect("native ingress owned-local-task count underflowed"),
+        );
     }
 }
 

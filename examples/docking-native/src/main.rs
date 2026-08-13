@@ -1287,6 +1287,7 @@ pub fn docking_native_headless_status(generation: u64) -> DockViewportRuntimeSta
             facts: WindowPlatformFacts {
                 bounds: observed_bounds,
                 coordinate_space: WindowCoordinateSpace::WindowLocal,
+                physical_geometry: None,
                 window_bounds: WindowBounds::Windowed(observed_bounds),
                 inner_window_bounds: WindowBounds::Windowed(observed_bounds),
                 content_size: observed_bounds.size,

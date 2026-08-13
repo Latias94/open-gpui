@@ -5509,6 +5509,17 @@ impl Window {
         self.platform_facts.accepts_pointer_input
     }
 
+    /// Returns whether a generation-bound platform pointer-input observation is still current.
+    #[doc(hidden)]
+    pub fn is_current_pointer_input_observation(
+        &self,
+        accepts_pointer_input: bool,
+        generation: u64,
+    ) -> bool {
+        self.platform_window
+            .is_current_pointer_input_observation(accepts_pointer_input, generation)
+    }
+
     /// Updates whether this platform window receives pointer input when the backend supports it.
     pub fn set_accepts_pointer_input(
         &mut self,

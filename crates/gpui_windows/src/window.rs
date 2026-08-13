@@ -406,6 +406,7 @@ pub struct WindowsWindowState {
     pub input_dispatch: Cell<WindowsInputDispatchState>,
     pub pressed_caption_button: Cell<Option<WindowsCaptionButtonAction>>,
     accepts_pointer_input: Cell<bool>,
+    pointer_input_observation_generation: Cell<u64>,
     activation_policy: Cell<WindowActivationPolicy>,
     taskbar_visible: bool,
 
@@ -566,6 +567,7 @@ impl WindowsWindowState {
         let native_placement_epoch = Cell::new(0);
         let placement_mutation_generation = Cell::new(None);
         let pointer_input_mutation_generation = Cell::new(None);
+        let pointer_input_observation_generation = Cell::new(1);
         let activation_policy_mutation_generation = Cell::new(None);
         let deferred_placement_mutation = Cell::new(None);
 
@@ -600,6 +602,7 @@ impl WindowsWindowState {
             input_dispatch,
             pressed_caption_button: Cell::new(pressed_caption_button),
             accepts_pointer_input: Cell::new(accepts_pointer_input),
+            pointer_input_observation_generation,
             activation_policy: Cell::new(activation_policy),
             taskbar_visible,
             display: Cell::new(display),
@@ -2347,7 +2350,8 @@ impl WindowsWindowInner {
                 }
             }
 
-            let rect = calculate_window_rect(request.client_bounds(), &self.state.border_offset);
+            let rect =
+                self.initial_window_rect_for_physical_client_bounds(request.client_bounds())?;
             let style = WINDOW_STYLE(
                 self.get_window_long_checked(GWL_STYLE, "failed to read window style")? as u32,
             );
@@ -2357,7 +2361,8 @@ impl WindowsWindowInner {
                 y: rect.top,
                 cx: rect.right - rect.left,
                 cy: rect.bottom - rect.top,
-            })
+            })?;
+            self.settle_physical_client_bounds_exactly(request.client_bounds())
         })();
 
         if let Err(error) = result {
@@ -2388,7 +2393,7 @@ impl WindowsWindowInner {
             "final provisional placement requires an accepted native reveal"
         );
         let rollback = self.capture_provisional_placement_rollback()?;
-        let rect = self.window_rect_for_physical_client_bounds(request.client_bounds())?;
+        let rect = self.initial_window_rect_for_physical_client_bounds(request.client_bounds())?;
         let requested_rect = NativeRect::try_from_rect(rect)
             .context("final provisional placement is empty or inverted")?;
         let prepared = self.prepare_provisional_z_order_band(
@@ -2417,6 +2422,15 @@ impl WindowsWindowInner {
             if let Err(rollback_error) = self.restore_provisional_placement_rollback(rollback) {
                 return Err(error).context(format!(
                     "provisional placement rollback also failed: {rollback_error:#}"
+                ));
+            }
+            return Err(error);
+        }
+
+        if let Err(error) = self.settle_physical_client_bounds_exactly(request.client_bounds()) {
+            if let Err(rollback_error) = self.restore_provisional_placement_rollback(rollback) {
+                return Err(error).context(format!(
+                    "provisional DPI convergence rollback also failed: {rollback_error:#}"
                 ));
             }
             return Err(error);
@@ -2668,7 +2682,7 @@ impl WindowsWindowInner {
 
     fn set_accepts_pointer_input_now(&self, accepts_pointer_input: bool) -> Result<()> {
         let current = self.native_accepts_pointer_input()?;
-        self.state.accepts_pointer_input.set(current);
+        self.observe_accepts_pointer_input(current);
         if current == accepts_pointer_input {
             return Ok(());
         }
@@ -2740,7 +2754,7 @@ impl WindowsWindowInner {
                 };
             }
             if let Ok(actual) = self.native_accepts_pointer_input() {
-                self.state.accepts_pointer_input.set(actual);
+                self.observe_accepts_pointer_input(actual);
             }
             if let Err(rollback_error) = rollback_result {
                 return Err(error).context(format!(
@@ -2750,13 +2764,45 @@ impl WindowsWindowInner {
             return Err(error);
         }
         let actual = self.native_accepts_pointer_input()?;
-        self.state.accepts_pointer_input.set(actual);
+        self.observe_accepts_pointer_input(actual);
         if actual != accepts_pointer_input {
             return Err(anyhow::anyhow!(
                 "native pointer-input style did not match the requested value"
             ));
         }
         Ok(())
+    }
+
+    fn observe_accepts_pointer_input(&self, actual: bool) {
+        let previous = self.state.accepts_pointer_input.replace(actual);
+        if previous != actual {
+            let generation = self
+                .state
+                .pointer_input_observation_generation
+                .get()
+                .checked_add(1)
+                .expect("pointer-input observation generation exhausted");
+            self.state
+                .pointer_input_observation_generation
+                .set(generation);
+        }
+    }
+
+    pub(crate) fn pointer_input_observation_generation(&self) -> u64 {
+        self.state.pointer_input_observation_generation.get()
+    }
+
+    #[cfg(feature = "test-support")]
+    pub(crate) fn invalidate_pointer_input_observation_for_native_test(&self) {
+        let generation = self
+            .state
+            .pointer_input_observation_generation
+            .get()
+            .checked_add(1)
+            .expect("pointer-input observation generation exhausted");
+        self.state
+            .pointer_input_observation_generation
+            .set(generation);
     }
 
     fn get_window_long_checked(
@@ -3180,7 +3226,24 @@ impl WindowsWindowInner {
         ))
     }
 
-    fn window_rect_for_physical_client_bounds(
+    fn initial_window_rect_for_physical_client_bounds(
+        &self,
+        client_bounds: Bounds<DevicePixels>,
+    ) -> Result<RECT> {
+        let target_dpi = target_monitor_dpi_for_physical_client_bounds(client_bounds)?;
+        let style = WINDOW_STYLE(
+            self.get_window_long_checked(GWL_STYLE, "failed to read native window style")? as u32,
+        );
+        let extended_style =
+            WINDOW_EX_STYLE(self.get_window_long_checked(
+                GWL_EXSTYLE,
+                "failed to read native extended window style",
+            )? as u32);
+        let has_menu = !unsafe { GetMenu(self.hwnd) }.is_invalid();
+        adjusted_window_rect_for_dpi(client_bounds, style, extended_style, has_menu, target_dpi)
+    }
+
+    fn window_rect_for_current_physical_frame(
         &self,
         client_bounds: Bounds<DevicePixels>,
     ) -> Result<RECT> {
@@ -3188,25 +3251,39 @@ impl WindowsWindowInner {
         let mut current_window = RECT::default();
         unsafe { GetWindowRect(self.hwnd, &mut current_window) }
             .context("failed to read the current native window frame")?;
-        let left_offset = current_client.origin.x.0 - current_window.left;
-        let top_offset = current_client.origin.y.0 - current_window.top;
-        let right_offset = current_window.right - current_client.right().0;
-        let bottom_offset = current_window.bottom - current_client.bottom().0;
+        window_rect_from_observed_frame(client_bounds, current_client, current_window)
+    }
+
+    fn settle_physical_client_bounds_exactly(
+        &self,
+        client_bounds: Bounds<DevicePixels>,
+    ) -> Result<()> {
+        if self.physical_client_bounds_observation()? == client_bounds {
+            return Ok(());
+        }
+
+        // Crossing a DPI boundary synchronously dispatches WM_DPICHANGED. The handler applies
+        // Windows' suggested frame before the outer SetWindowPos returns, so derive one exact
+        // correction from the now-current target-DPI frame instead of retrying on a timer.
+        let corrected = self.window_rect_for_current_physical_frame(client_bounds)?;
+        unsafe {
+            SetWindowPos(
+                self.hwnd,
+                None,
+                corrected.left,
+                corrected.top,
+                corrected.right - corrected.left,
+                corrected.bottom - corrected.top,
+                SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOZORDER,
+            )
+        }
+        .context("failed to converge the native client bounds at the target DPI")?;
+
         anyhow::ensure!(
-            left_offset >= 0 && top_offset >= 0 && right_offset >= 0 && bottom_offset >= 0,
-            "native window frame offsets were invalid"
+            self.physical_client_bounds_observation()? == client_bounds,
+            "native physical client bounds did not converge exactly at the target DPI"
         );
-        let rect = RECT {
-            left: client_bounds.origin.x.0 - left_offset,
-            top: client_bounds.origin.y.0 - top_offset,
-            right: client_bounds.right().0 + right_offset,
-            bottom: client_bounds.bottom().0 + bottom_offset,
-        };
-        anyhow::ensure!(
-            rect.left < rect.right && rect.top < rect.bottom,
-            "native physical client placement produced an empty window frame"
-        );
-        Ok(rect)
+        Ok(())
     }
 
     fn physical_scale_factor_observation(&self) -> Result<f32> {
@@ -4072,7 +4149,7 @@ impl WindowsWindow {
                 return PlatformWindowDispatch::Rejected;
             }
         };
-        self.state.accepts_pointer_input.set(current);
+        self.observe_accepts_pointer_input(current);
         if current == accepts_pointer_input {
             return PlatformWindowDispatch::Unchanged;
         }
@@ -4329,6 +4406,15 @@ impl PlatformWindow for WindowsWindow {
 
     fn accepts_pointer_input(&self) -> bool {
         self.state.accepts_pointer_input.get()
+    }
+
+    fn is_current_pointer_input_observation(
+        &self,
+        accepts_pointer_input: bool,
+        generation: u64,
+    ) -> bool {
+        self.state.accepts_pointer_input.get() == accepts_pointer_input
+            && self.0.pointer_input_observation_generation() == generation
     }
 
     fn creation_facts(&self) -> WindowCreationFacts {
@@ -5422,6 +5508,89 @@ fn calculate_client_rect(
     }
 }
 
+fn target_monitor_dpi_for_physical_client_bounds(
+    client_bounds: Bounds<DevicePixels>,
+) -> Result<u32> {
+    let client_rect = RECT {
+        left: client_bounds.origin.x.0,
+        top: client_bounds.origin.y.0,
+        right: client_bounds.right().0,
+        bottom: client_bounds.bottom().0,
+    };
+    anyhow::ensure!(
+        client_rect.left < client_rect.right && client_rect.top < client_rect.bottom,
+        "physical client placement requires non-empty bounds"
+    );
+    let monitor = unsafe { MonitorFromRect(&client_rect, MONITOR_DEFAULTTONEAREST) };
+    anyhow::ensure!(
+        !monitor.is_invalid(),
+        "physical client placement did not resolve a target monitor"
+    );
+
+    let mut dpi_x = 0;
+    let mut dpi_y = 0;
+    unsafe { GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y) }
+        .context("failed to read the target monitor DPI")?;
+    anyhow::ensure!(
+        dpi_x != 0 && dpi_x == dpi_y,
+        "target monitor returned an invalid or non-square DPI"
+    );
+    Ok(dpi_x)
+}
+
+fn adjusted_window_rect_for_dpi(
+    client_bounds: Bounds<DevicePixels>,
+    style: WINDOW_STYLE,
+    extended_style: WINDOW_EX_STYLE,
+    has_menu: bool,
+    dpi: u32,
+) -> Result<RECT> {
+    anyhow::ensure!(dpi != 0, "physical client placement requires a target DPI");
+    let mut rect = RECT {
+        left: client_bounds.origin.x.0,
+        top: client_bounds.origin.y.0,
+        right: client_bounds.right().0,
+        bottom: client_bounds.bottom().0,
+    };
+    anyhow::ensure!(
+        rect.left < rect.right && rect.top < rect.bottom,
+        "physical client placement requires non-empty bounds"
+    );
+    unsafe { AdjustWindowRectExForDpi(&mut rect, style, has_menu, extended_style, dpi) }
+        .context("failed to calculate the native frame at the target monitor DPI")?;
+    anyhow::ensure!(
+        rect.left < rect.right && rect.top < rect.bottom,
+        "target-DPI adjustment produced an empty native window frame"
+    );
+    Ok(rect)
+}
+
+fn window_rect_from_observed_frame(
+    client_bounds: Bounds<DevicePixels>,
+    observed_client: Bounds<DevicePixels>,
+    observed_window: RECT,
+) -> Result<RECT> {
+    let left_offset = observed_client.origin.x.0 - observed_window.left;
+    let top_offset = observed_client.origin.y.0 - observed_window.top;
+    let right_offset = observed_window.right - observed_client.right().0;
+    let bottom_offset = observed_window.bottom - observed_client.bottom().0;
+    anyhow::ensure!(
+        left_offset >= 0 && top_offset >= 0 && right_offset >= 0 && bottom_offset >= 0,
+        "native window frame offsets were invalid"
+    );
+    let rect = RECT {
+        left: client_bounds.origin.x.0 - left_offset,
+        top: client_bounds.origin.y.0 - top_offset,
+        right: client_bounds.right().0 + right_offset,
+        bottom: client_bounds.bottom().0 + bottom_offset,
+    };
+    anyhow::ensure!(
+        rect.left < rect.right && rect.top < rect.bottom,
+        "native physical client placement produced an empty window frame"
+    );
+    Ok(rect)
+}
+
 fn retrieve_window_placement(
     hwnd: HWND,
     display: WindowsDisplay,
@@ -5534,7 +5703,8 @@ mod tests {
     use super::{
         ClickState, NativeRect, StyleAndBounds, WindowOpenState,
         WindowsNativePointerPhysicalFrameScope, WindowsNativePointerPhysicalFrameState,
-        non_rude_hwnd_for_fullscreen, with_windows_callback,
+        adjusted_window_rect_for_dpi, non_rude_hwnd_for_fullscreen,
+        window_rect_from_observed_frame, with_windows_callback,
     };
     use open_gpui::{
         Bounds, DevicePixels, MouseButton, PlatformNativePointerPhysicalFrame,
@@ -5546,7 +5716,68 @@ mod tests {
         panic::{AssertUnwindSafe, catch_unwind},
         rc::Rc,
     };
-    use windows::Win32::UI::WindowsAndMessaging::WINDOW_STYLE;
+    use windows::Win32::{
+        Foundation::RECT,
+        UI::WindowsAndMessaging::{WINDOW_EX_STYLE, WINDOW_STYLE, WS_OVERLAPPEDWINDOW},
+    };
+
+    #[test]
+    fn target_dpi_changes_the_prepared_native_frame() {
+        let client_bounds = Bounds::new(
+            point(DevicePixels(2_000), DevicePixels(200)),
+            size(DevicePixels(800), DevicePixels(600)),
+        );
+        let frame_at_96 = adjusted_window_rect_for_dpi(
+            client_bounds,
+            WS_OVERLAPPEDWINDOW,
+            WINDOW_EX_STYLE(0),
+            false,
+            96,
+        )
+        .unwrap();
+        let frame_at_144 = adjusted_window_rect_for_dpi(
+            client_bounds,
+            WS_OVERLAPPEDWINDOW,
+            WINDOW_EX_STYLE(0),
+            false,
+            144,
+        )
+        .unwrap();
+
+        assert!(frame_at_144.left < frame_at_96.left);
+        assert!(frame_at_144.top < frame_at_96.top);
+        assert!(frame_at_144.right > frame_at_96.right);
+        assert!(frame_at_144.bottom > frame_at_96.bottom);
+    }
+
+    #[test]
+    fn target_side_frame_offsets_produce_an_exact_client_rect_correction() {
+        let observed_client = Bounds::new(
+            point(DevicePixels(120), DevicePixels(170)),
+            size(DevicePixels(800), DevicePixels(600)),
+        );
+        let observed_window = RECT {
+            left: 108,
+            top: 125,
+            right: 932,
+            bottom: 782,
+        };
+        let requested_client = Bounds::new(
+            point(DevicePixels(1_800), DevicePixels(-300)),
+            size(DevicePixels(640), DevicePixels(480)),
+        );
+
+        assert_eq!(
+            window_rect_from_observed_frame(requested_client, observed_client, observed_window)
+                .unwrap(),
+            RECT {
+                left: 1_788,
+                top: -345,
+                right: 2_452,
+                bottom: 192,
+            }
+        );
+    }
 
     #[test]
     fn native_rect_subtraction_distinguishes_partial_and_full_occlusion() {

@@ -4,7 +4,7 @@ use open_gpui::{
     AnyWindowHandle, AppContext as _, Application, Context, DevicePixels, Empty, IntoElement,
     NativeBoundaryDiagnosticCursor, NativeBoundaryDisposition, NativeBoundaryGeneration,
     NativeBoundaryKind, NativeBoundaryTarget, NativeCallbackKind, NativePlatformCommandKind,
-    ParentElement, PlatformInput, PlatformWindowPresentOutcome, PointerCancelEvent,
+    ParentElement, Platform, PlatformInput, PlatformWindowPresentOutcome, PointerCancelEvent,
     PointerCancelReason, QuitMode, Render, Styled, Window, WindowActivationPolicy, WindowBounds,
     WindowId, WindowKind, WindowMouseEvent, WindowMutationDispatch, WindowMutationOutcome,
     WindowOptions, WindowProvisionalPlacementOutcome, WindowProvisionalPlacementRequest,
@@ -22,7 +22,6 @@ use windows::Win32::{
     Foundation::{HWND, LPARAM, POINT, RECT, WPARAM},
     Graphics::Gdi::{ClientToScreen, RDW_INVALIDATE, RedrawWindow},
     System::SystemServices::MK_LBUTTON,
-    System::Threading::{AttachThreadInput, GetCurrentThreadId},
     UI::{
         Controls::WM_MOUSELEAVE,
         Input::KeyboardAndMouse::{
@@ -32,18 +31,17 @@ use windows::Win32::{
             ReleaseCapture, SendInput, SetActiveWindow, VK_LBUTTON,
         },
         WindowsAndMessaging::{
-            BringWindowToTop, CreateWindowExW, DestroyWindow, DispatchMessageW, GW_HWNDFIRST,
-            GW_HWNDNEXT, GW_HWNDPREV, GW_OWNER, GWL_EXSTYLE, GetClientRect, GetCursorPos,
-            GetForegroundWindow, GetMessageExtraInfo, GetSystemMetrics, GetWindow, GetWindowRect,
-            GetWindowThreadProcessId, HTTRANSPARENT, HWND_MESSAGE, HWND_TOPMOST, IsWindow,
-            IsWindowVisible, IsZoomed, MA_NOACTIVATE, MA_NOACTIVATEANDEAT, MSG, PM_REMOVE,
-            PeekMessageW, PostMessageW, SIZE_MINIMIZED, SIZE_RESTORED, SM_CXVIRTUALSCREEN,
-            SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SWP_NOACTIVATE,
-            SWP_SHOWWINDOW, SendMessageW, SetCursorPos, SetForegroundWindow, SetWindowPos,
-            TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE, WM_CLOSE, WM_KEYDOWN, WM_KEYUP,
-            WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_MOVE, WM_NCHITTEST,
-            WM_PAINT, WM_QUIT, WM_SIZE, WM_SYSKEYDOWN, WM_SYSKEYUP, WS_EX_NOACTIVATE,
-            WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
+            CreateWindowExW, DestroyWindow, DispatchMessageW, GW_HWNDFIRST, GW_HWNDNEXT,
+            GW_HWNDPREV, GW_OWNER, GWL_EXSTYLE, GetClientRect, GetCursorPos, GetForegroundWindow,
+            GetMessageExtraInfo, GetSystemMetrics, GetWindow, GetWindowRect, HTTRANSPARENT,
+            HWND_MESSAGE, HWND_TOPMOST, IsWindow, IsWindowVisible, IsZoomed, MA_NOACTIVATE,
+            MA_NOACTIVATEANDEAT, MSG, PM_REMOVE, PeekMessageW, PostMessageW, SIZE_MINIMIZED,
+            SIZE_RESTORED, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
+            SM_YVIRTUALSCREEN, SWP_NOACTIVATE, SWP_SHOWWINDOW, SendMessageW, SetCursorPos,
+            SetForegroundWindow, SetWindowPos, TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE,
+            WM_CLOSE, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE,
+            WM_MOUSEMOVE, WM_MOVE, WM_NCHITTEST, WM_PAINT, WM_QUIT, WM_SIZE, WM_SYSKEYDOWN,
+            WM_SYSKEYUP, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
         },
     },
 };
@@ -157,39 +155,6 @@ fn pump_messages_until(description: &str, mut converged: impl FnMut() -> bool) -
         "{description} did not converge within {MAX_MESSAGE_PUMP_ATTEMPTS} message-pump attempts; dispatched={:x?}",
         trace.message_ids()
     );
-}
-
-fn acquire_foreground_window(hwnd: HWND) -> bool {
-    let current_thread = unsafe { GetCurrentThreadId() };
-    let foreground_thread = unsafe {
-        let foreground = GetForegroundWindow();
-        (foreground != HWND::default()).then(|| GetWindowThreadProcessId(foreground, None))
-    }
-    .unwrap_or_default();
-    let target_thread = unsafe { GetWindowThreadProcessId(hwnd, None) };
-    let mut attached_threads = Vec::new();
-
-    for thread in [foreground_thread, target_thread] {
-        if thread != 0
-            && thread != current_thread
-            && !attached_threads.contains(&thread)
-            && unsafe { AttachThreadInput(current_thread, thread, true).as_bool() }
-        {
-            attached_threads.push(thread);
-        }
-    }
-
-    let acquired = unsafe {
-        let _ = BringWindowToTop(hwnd);
-        let _ = SetActiveWindow(hwnd);
-        SetForegroundWindow(hwnd).as_bool()
-    };
-
-    for thread in attached_threads {
-        let _ = unsafe { AttachThreadInput(current_thread, thread, false) };
-    }
-
-    acquired && unsafe { GetForegroundWindow() == hwnd }
 }
 
 fn pump_messages_until_with_delay(
@@ -2871,7 +2836,7 @@ fn native_interactive_runner_sentinel_proves_system_pointer_delivery_and_capture
     });
 
     assert!(
-        acquire_foreground_window(hwnd),
+        crate::native_test_foreground::acquire_foreground_window(hwnd).is_ok(),
         "interactive native runner could not foreground the sentinel HWND"
     );
     pump_messages_until("interactive native sentinel foreground", || unsafe {
@@ -3886,6 +3851,101 @@ fn app_and_platform_drop_destroy_child_and_message_windows_synchronously() {
         unsafe { !IsWindow(Some(platform_hwnd)).as_bool() },
         "dropping the platform must synchronously destroy its message HWND"
     );
+}
+
+#[test]
+fn returning_test_platform_exits_message_loop_after_retiring_native_resources() {
+    discard_stale_quit_messages();
+
+    let platform = Rc::new(
+        WindowsPlatform::new_returning_for_test(true)
+            .expect("returning Windows test platform should initialize"),
+    );
+    let platform_hwnd = platform.handle;
+    let quit_callbacks = Rc::new(Cell::new(0));
+    platform.on_quit(Box::new({
+        let quit_callbacks = Rc::clone(&quit_callbacks);
+        move || quit_callbacks.set(quit_callbacks.get() + 1)
+    }));
+
+    let platform_for_launch = Rc::clone(&platform);
+    platform.run(Box::new(move || platform_for_launch.quit()));
+
+    assert_eq!(quit_callbacks.get(), 1);
+    assert!(
+        platform.inner.native_retirement_is_settled(),
+        "returning from the message loop must settle platform-owned native retirement"
+    );
+    assert!(
+        unsafe { !IsWindow(Some(platform_hwnd)).as_bool() },
+        "the returning loop must retire its message HWND before releasing the message pump"
+    );
+    drop(platform);
+}
+
+#[test]
+fn returning_test_platform_finishes_retryable_native_retirement_before_returning() {
+    discard_stale_quit_messages();
+
+    let platform = Rc::new(
+        WindowsPlatform::new_returning_for_test(true)
+            .expect("returning Windows test platform should initialize"),
+    );
+    let platform_hwnd = platform.handle;
+    let lifecycle_probe = platform.lifecycle_test_probe.clone();
+    lifecycle_probe.fail_next_platform_destroy();
+
+    let platform_for_launch = Rc::clone(&platform);
+    platform.run(Box::new(move || platform_for_launch.quit()));
+
+    assert_eq!(
+        lifecycle_probe.platform_destroy_attempts(),
+        2,
+        "the returning loop must keep pumping until a retryable platform HWND retirement converges"
+    );
+    assert!(platform.inner.native_retirement_is_settled());
+    assert!(
+        unsafe { !IsWindow(Some(platform_hwnd)).as_bool() },
+        "the returning loop must retire the platform message HWND before releasing its message pump"
+    );
+    assert_eq!(lifecycle_probe.ole_uninitialize_count(), 1);
+    drop(platform);
+}
+
+#[test]
+fn returning_test_platform_keeps_retry_transport_until_fallible_cleanup_converges() {
+    discard_stale_quit_messages();
+
+    let platform = Rc::new(
+        WindowsPlatform::new_returning_for_test(true)
+            .expect("returning Windows test platform should initialize"),
+    );
+    platform.on_system_wake(Box::new(|| {}));
+    assert!(
+        platform.suspend_resume_notification.borrow().is_some(),
+        "the test must own a real suspend/resume registration"
+    );
+    let platform_hwnd = platform.handle;
+    let lifecycle_probe = platform.lifecycle_test_probe.clone();
+    lifecycle_probe.fail_next_suspend_resume_unregister();
+
+    let platform_for_launch = Rc::clone(&platform);
+    platform.run(Box::new(move || platform_for_launch.quit()));
+
+    assert_eq!(
+        lifecycle_probe.suspend_resume_unregister_attempts(),
+        2,
+        "returning finalization must retry the fallible notification cleanup"
+    );
+    assert_eq!(
+        lifecycle_probe.platform_destroy_attempts(),
+        1,
+        "the message HWND must not be destroyed before fallible cleanup succeeds"
+    );
+    assert!(platform.inner.native_retirement_is_settled());
+    assert!(unsafe { !IsWindow(Some(platform_hwnd)).as_bool() });
+    assert_eq!(lifecycle_probe.ole_uninitialize_count(), 1);
+    drop(platform);
 }
 
 #[test]

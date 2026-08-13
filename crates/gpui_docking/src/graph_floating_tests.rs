@@ -229,6 +229,74 @@ fn merge_floating_tabs_preserves_selected_item() {
 }
 
 #[test]
+fn floating_merge_preserves_preexisting_staging_dependencies() {
+    let mut graph = DockGraph::new();
+    let root = graph.insert_node(DockNode::Tabs {
+        items: vec![item("root")],
+        selected: Some(item("root")),
+    });
+    graph.set_root(space(), root);
+
+    let floating_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("floating")],
+        selected: Some(item("floating")),
+    });
+    let floating = graph.insert_node(DockNode::Floating {
+        child: floating_tabs,
+    });
+    graph
+        .floating_containers_mut(space())
+        .push(DockFloatingContainer {
+            node: floating,
+            bounds: dock_bounds(10.0, 20.0, 300.0, 200.0),
+        });
+
+    let staged_leaf = graph.insert_node(DockNode::Tabs {
+        items: vec![item("staged")],
+        selected: Some(item("staged")),
+    });
+    let staged_root = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![floating, staged_leaf],
+        fractions: vec![0.5, 0.5],
+    });
+
+    assert!(
+        graph
+            .apply_op_checked(&DockOp::MoveFloating {
+                source_space: space(),
+                floating,
+                target_space: space(),
+                target: DockGraphDropTarget::center(root),
+            })
+            .expect("merging the live floating subtree should commit")
+    );
+
+    let DockNode::Split { children, .. } = graph
+        .node(staged_root)
+        .expect("the preexisting staging root must remain present")
+    else {
+        panic!("the staging root should remain a Split node")
+    };
+    assert_eq!(children, &vec![floating, staged_leaf]);
+
+    let DockNode::Floating { child } = graph
+        .node(floating)
+        .expect("the shared floating dependency must not be physically deleted")
+    else {
+        panic!("the shared staging dependency should remain a Floating node")
+    };
+    assert_eq!(*child, floating_tabs);
+    assert!(
+        graph.node(floating_tabs).is_some(),
+        "the transitive staged tabs dependency must remain present"
+    );
+    graph
+        .validate()
+        .expect("reachable runtime topology should remain valid after the merge");
+}
+
+#[test]
 fn merge_floating_tabs_into_tab_bar_uses_insert_index() {
     let mut graph = DockGraph::new();
     let root = graph.insert_node(DockNode::Tabs {
@@ -564,7 +632,60 @@ fn move_floating_to_empty_space_promotes_child_as_root() {
     };
     assert_eq!(items, &vec![item("a"), item("c")]);
     assert_eq!(selected.as_ref(), items.get(1));
+    assert!(
+        graph.node(floating).is_none(),
+        "the detached floating wrapper must be reclaimed by the mutation transaction"
+    );
+    assert_eq!(graph.stored_node_count(), graph.reachable_node_count());
     graph.assert_canonical_space(&detached);
+}
+
+#[test]
+fn repeated_float_and_redock_does_not_accumulate_nodes() {
+    let (mut graph, _) = root_tabs_graph(&["a", "b"]);
+
+    for iteration in 0..128 {
+        let source_tabs = graph
+            .root(&space())
+            .expect("each iteration should begin with a rooted tabs node");
+        assert!(
+            graph
+                .apply_op_checked(&DockOp::FloatTabsInWindow {
+                    source_space: space(),
+                    source_tabs,
+                    target_space: space(),
+                    bounds: dock_bounds(10.0, 20.0, 300.0, 200.0),
+                })
+                .expect("floating the live tabs should commit")
+        );
+        let floating = graph.floating_containers(&space())[0].node;
+        let DockNode::Floating { child } = graph
+            .node(floating)
+            .expect("the floating wrapper should exist before redock")
+        else {
+            panic!("runtime floating root should be a Floating node")
+        };
+        let floating_tabs = *child;
+
+        assert!(
+            graph
+                .apply_op_checked(&DockOp::MoveFloating {
+                    source_space: space(),
+                    floating,
+                    target_space: space(),
+                    target: DockGraphDropTarget::empty_space(),
+                })
+                .expect("promoting the floating tabs back to the empty root should commit")
+        );
+        assert!(graph.node(source_tabs).is_none());
+        assert!(graph.node(floating).is_none());
+        assert_eq!(graph.root(&space()), Some(floating_tabs));
+        assert_eq!(
+            graph.stored_node_count(),
+            graph.reachable_node_count(),
+            "iteration {iteration} leaked detached graph nodes"
+        );
+    }
 }
 
 #[test]

@@ -125,6 +125,19 @@ impl WindowsDisplay {
     pub fn physical_bounds(&self) -> Bounds<DevicePixels> {
         self.physical_bounds
     }
+
+    #[cfg(feature = "test-support")]
+    pub(crate) fn scale_factor(&self) -> f32 {
+        self.scale_factor
+    }
+
+    #[cfg(feature = "test-support")]
+    pub(crate) fn available_for_native_test() -> Vec<Self> {
+        available_monitors()
+            .into_iter()
+            .filter_map(|handle| Self::new(Self::display_id_for_monitor(handle)))
+            .collect()
+    }
 }
 
 impl PlatformDisplay for WindowsDisplay {

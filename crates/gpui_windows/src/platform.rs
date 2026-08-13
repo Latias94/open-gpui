@@ -74,6 +74,14 @@ impl RegisteredWindow {
     }
 }
 
+impl PartialEq for RegisteredWindow {
+    fn eq(&self, other: &Self) -> bool {
+        self.matches(*other)
+    }
+}
+
+impl Eq for RegisteredWindow {}
+
 static NEXT_NATIVE_WINDOW_GENERATION: AtomicUsize = AtomicUsize::new(1);
 
 fn next_native_window_generation() -> usize {
@@ -83,6 +91,13 @@ fn next_native_window_generation() -> usize {
         "native window generation exhausted process-wide uniqueness"
     );
     generation
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WindowsPlatformRunExit {
+    TerminateProcess,
+    #[cfg(any(test, feature = "test-support"))]
+    ReturnToCaller,
 }
 
 pub struct WindowsPlatform {
@@ -104,6 +119,7 @@ pub struct WindowsPlatform {
     handle: HWND,
     suspend_resume_notification: RefCell<Option<HPOWERNOTIFY>>,
     native_finalization_started: Cell<bool>,
+    run_exit: WindowsPlatformRunExit,
     disable_direct_composition: bool,
     #[cfg(test)]
     lifecycle_test_probe: Rc<NativeWindowLifecycleTestProbe>,
@@ -388,8 +404,10 @@ pub(crate) struct NativeWindowLifecycleTestProbe {
     fail_after_drag_drop_registration: Cell<bool>,
     fail_next_destroy: Cell<usize>,
     fail_next_platform_destroy: Cell<usize>,
+    fail_next_suspend_resume_unregister: Cell<usize>,
     fail_next_initial_presentation: Cell<bool>,
     platform_destroy_attempts: Cell<usize>,
+    suspend_resume_unregister_attempts: Cell<usize>,
     ole_uninitialize_count: Cell<usize>,
     last_created_hwnd: Cell<Option<HWND>>,
     hidden_before_map: Cell<Option<bool>>,
@@ -455,6 +473,36 @@ impl NativeWindowLifecycleTestProbe {
 
     pub(crate) fn platform_destroy_attempts(&self) -> usize {
         self.platform_destroy_attempts.get()
+    }
+
+    pub(crate) fn fail_next_suspend_resume_unregister(&self) {
+        self.fail_next_suspend_resume_unregister.set(
+            self.fail_next_suspend_resume_unregister
+                .get()
+                .saturating_add(1),
+        );
+    }
+
+    pub(crate) fn take_fail_next_suspend_resume_unregister(&self) -> bool {
+        let attempts = self.fail_next_suspend_resume_unregister.get();
+        if attempts == 0 {
+            false
+        } else {
+            self.fail_next_suspend_resume_unregister.set(attempts - 1);
+            true
+        }
+    }
+
+    pub(crate) fn record_suspend_resume_unregister_attempt(&self) {
+        self.suspend_resume_unregister_attempts.set(
+            self.suspend_resume_unregister_attempts
+                .get()
+                .saturating_add(1),
+        );
+    }
+
+    pub(crate) fn suspend_resume_unregister_attempts(&self) -> usize {
+        self.suspend_resume_unregister_attempts.get()
     }
 
     pub(crate) fn record_ole_uninitialize(&self) {
@@ -547,6 +595,22 @@ impl WindowsPlatformState {
 
 impl WindowsPlatform {
     pub fn new(headless: bool) -> Result<Self> {
+        Self::new_with_run_exit(headless, WindowsPlatformRunExit::TerminateProcess)
+    }
+
+    /// Creates a Windows platform whose event loop returns to its test host after `WM_QUIT`.
+    ///
+    /// Production Windows applications deliberately terminate with `ExitProcess` after the event
+    /// loop to avoid a known aws-lc/loader-lock teardown deadlock. Native integration tests need
+    /// the process to remain alive long enough to publish an exact pre-exit HWND census, so this
+    /// constructor preserves every ordinary platform behavior except that final process exit.
+    #[doc(hidden)]
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn new_returning_for_test(headless: bool) -> Result<Self> {
+        Self::new_with_run_exit(headless, WindowsPlatformRunExit::ReturnToCaller)
+    }
+
+    fn new_with_run_exit(headless: bool, run_exit: WindowsPlatformRunExit) -> Result<Self> {
         let mut construction_guard = WindowsPlatformConstructionGuard::initialize()?;
         let (directx_devices, text_system, direct_write_text_system) = if !headless {
             let devices = DirectXDevices::new().context("Creating DirectX devices")?;
@@ -660,6 +724,7 @@ impl WindowsPlatform {
             direct_write_text_system,
             suspend_resume_notification: RefCell::new(None),
             native_finalization_started: Cell::new(false),
+            run_exit,
             disable_direct_composition,
             drop_target_helper,
             invalidate_devices: Arc::new(AtomicBool::new(false)),
@@ -680,6 +745,51 @@ impl WindowsPlatform {
             self.handle,
             self.suspend_resume_notification.borrow_mut().take(),
             true,
+        );
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    fn finish_native_finalization_before_return(&self) {
+        const MAX_ATTEMPTS: usize = 10_000;
+        const MAX_MESSAGES_PER_ATTEMPT: usize = 256;
+
+        self.begin_native_finalization();
+        for _ in 0..MAX_ATTEMPTS {
+            if self.inner.native_retirement_is_settled() {
+                return;
+            }
+
+            let mut processed_message = false;
+            for _ in 0..MAX_MESSAGES_PER_ATTEMPT {
+                let mut message = MSG::default();
+                let has_message = unsafe { PeekMessageW(&mut message, None, 0, 0, PM_REMOVE) };
+                if !has_message.as_bool() {
+                    break;
+                }
+                processed_message = true;
+                if message.message == WM_QUIT {
+                    continue;
+                }
+                if translate_accelerator(&message).is_none() {
+                    _ = unsafe { TranslateMessage(&message) };
+                    unsafe { DispatchMessageW(&message) };
+                }
+                if self.inner.native_retirement_is_settled() {
+                    return;
+                }
+            }
+
+            if !processed_message {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        }
+
+        let coordinator = self.inner.native_retirement.borrow();
+        panic!(
+            "returning Windows test platform could not converge native finalization: pending_windows={}, finalization={}, retry_scheduled={}",
+            coordinator.pending_windows.len(),
+            coordinator.finalization.is_some(),
+            coordinator.retry.scheduled,
         );
     }
 
@@ -1064,7 +1174,15 @@ impl PartialEq for NativeProvisionalWindowObservation {
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum NativeCoveringWindowRole {
     ProvisionalPassThrough(NativeProvisionalWindowObservation),
+    NoInputPassThrough(NativeNoInputWindowObservation),
     Terminal,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct NativeNoInputWindowObservation {
+    registered: RegisteredWindow,
+    window: AnyWindowHandle,
+    pointer_input_generation: u64,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1095,7 +1213,7 @@ impl NativeCoveringWindowObservation {
 #[derive(Clone, Copy, Debug)]
 enum RegisteredPointHitInspection {
     ProvisionalPassThrough(NativeProvisionalWindowObservation),
-    NoInputPassThrough,
+    NoInputPassThrough(NativeNoInputWindowObservation),
     Terminal,
     Failed,
 }
@@ -1110,6 +1228,7 @@ fn inspect_registered_window_for_point(
     let first_snapshot = window.provisional_session_snapshot();
     let first_requires_hit_transparency = window.provisional_requires_hit_transparency();
     let first_accepts_pointer_input = window.state.accepts_pointer_input();
+    let first_pointer_input_generation = window.pointer_input_observation_generation();
     let provisional_geometry = match first_snapshot {
         Some(snapshot)
             if snapshot.window_id() == Some(registered.window_id())
@@ -1141,6 +1260,7 @@ fn inspect_registered_window_for_point(
         || current_window.provisional_session_snapshot() != first_snapshot
         || current_window.provisional_requires_hit_transparency() != first_requires_hit_transparency
         || current_window.state.accepts_pointer_input() != first_accepts_pointer_input
+        || current_window.pointer_input_observation_generation() != first_pointer_input_generation
     {
         return RegisteredPointHitInspection::Failed;
     }
@@ -1155,7 +1275,11 @@ fn inspect_registered_window_for_point(
             },
         ),
         None if first_accepts_pointer_input => RegisteredPointHitInspection::Terminal,
-        None => RegisteredPointHitInspection::NoInputPassThrough,
+        None => RegisteredPointHitInspection::NoInputPassThrough(NativeNoInputWindowObservation {
+            registered,
+            window: window.handle,
+            pointer_input_generation: first_pointer_input_generation,
+        }),
     }
 }
 
@@ -1271,10 +1395,16 @@ fn classify_point_bound_window_candidate(
             observation.role = NativeCoveringWindowRole::ProvisionalPassThrough(provisional);
             PointBoundWindowInspection::PassThrough(observation)
         }
-        Some(
-            RegisteredPointHitInspection::NoInputPassThrough
-            | RegisteredPointHitInspection::Terminal,
-        ) => PointBoundWindowInspection::Terminal(observation),
+        Some(RegisteredPointHitInspection::NoInputPassThrough(no_input)) => {
+            if is_native_target {
+                return PointBoundWindowInspection::Failed;
+            }
+            observation.role = NativeCoveringWindowRole::NoInputPassThrough(no_input);
+            PointBoundWindowInspection::PassThrough(observation)
+        }
+        Some(RegisteredPointHitInspection::Terminal) => {
+            PointBoundWindowInspection::Terminal(observation)
+        }
         Some(RegisteredPointHitInspection::Failed) => PointBoundWindowInspection::Failed,
     }
 }
@@ -1287,21 +1417,39 @@ fn classify_covering_windows(
     observations
         .iter()
         .map(|observation| {
-            if let NativeCoveringWindowRole::ProvisionalPassThrough(expected) = observation.role {
-                let RegisteredPointHitInspection::ProvisionalPassThrough(current) =
-                    inspect_registered_window_for_point(platform, expected.registered)
-                else {
-                    return None;
-                };
-                if current != expected {
-                    return None;
+            match observation.role {
+                NativeCoveringWindowRole::ProvisionalPassThrough(expected) => {
+                    let RegisteredPointHitInspection::ProvisionalPassThrough(current) =
+                        inspect_registered_window_for_point(platform, expected.registered)
+                    else {
+                        return None;
+                    };
+                    if current != expected {
+                        return None;
+                    }
+                    return Some(PlatformWindowHit::ProvisionalPassThrough {
+                        window: expected.window,
+                        session_generation: expected.session_generation,
+                        coverage: observation.coverage,
+                        geometry: expected.geometry,
+                    });
                 }
-                return Some(PlatformWindowHit::ProvisionalPassThrough {
-                    window: expected.window,
-                    session_generation: expected.session_generation,
-                    coverage: observation.coverage,
-                    geometry: expected.geometry,
-                });
+                NativeCoveringWindowRole::NoInputPassThrough(expected) => {
+                    let RegisteredPointHitInspection::NoInputPassThrough(current) =
+                        inspect_registered_window_for_point(platform, expected.registered)
+                    else {
+                        return None;
+                    };
+                    if current != expected {
+                        return None;
+                    }
+                    return Some(PlatformWindowHit::NoInputPassThrough {
+                        window: expected.window,
+                        pointer_input_generation: expected.pointer_input_generation,
+                        coverage: observation.coverage,
+                    });
+                }
+                NativeCoveringWindowRole::Terminal => {}
             }
             if observation.cloak == NativeWindowCloak::Unknown {
                 return Some(PlatformWindowHit::OpaqueBarrier {
@@ -1321,6 +1469,43 @@ fn classify_covering_windows(
             registered_application_window_hit(platform, registered, observation.coverage)
         })
         .collect()
+}
+
+#[cfg(feature = "test-support")]
+fn apply_native_no_input_generation_drift_after_first_classification(
+    platform: &WindowsPlatform,
+    observations: &[NativeCoveringWindowObservation],
+) {
+    let Some(target) =
+        crate::native_test_harness::pending_native_no_input_generation_drift_target()
+    else {
+        return;
+    };
+    let Some(expected) = observations
+        .iter()
+        .find_map(|observation| match observation.role {
+            NativeCoveringWindowRole::NoInputPassThrough(expected)
+                if expected.window.window_id() == target =>
+            {
+                Some(expected)
+            }
+            NativeCoveringWindowRole::ProvisionalPassThrough(_)
+            | NativeCoveringWindowRole::NoInputPassThrough(_)
+            | NativeCoveringWindowRole::Terminal => None,
+        })
+    else {
+        return;
+    };
+    let Some(request) = crate::native_test_harness::take_native_no_input_generation_drift(target)
+    else {
+        return;
+    };
+    let Some(window) = current_registered_window(platform, expected.registered) else {
+        request.mark_target_missing();
+        return;
+    };
+    window.invalidate_pointer_input_observation_for_native_test();
+    request.mark_applied();
 }
 
 fn stabilized_window_hit_stack(
@@ -1427,8 +1612,23 @@ fn classification_is_complete_through_first_terminal(
                     && expected.session_generation == session_generation
                     && expected.geometry == geometry
             }
+            (
+                NativeCoveringWindowRole::NoInputPassThrough(expected),
+                PlatformWindowHit::NoInputPassThrough {
+                    window,
+                    pointer_input_generation,
+                    ..
+                },
+            ) => {
+                expected.window == window
+                    && expected.pointer_input_generation == pointer_input_generation
+            }
             (NativeCoveringWindowRole::Terminal, hit) => hit.is_terminal(),
-            (NativeCoveringWindowRole::ProvisionalPassThrough(_), _) => false,
+            (
+                NativeCoveringWindowRole::ProvisionalPassThrough(_)
+                | NativeCoveringWindowRole::NoInputPassThrough(_),
+                _,
+            ) => false,
         }
     })
 }
@@ -1776,15 +1976,28 @@ impl Platform for WindowsPlatform {
         self.inner
             .with_callback(|callbacks| &callbacks.quit, |callback| callback());
 
-        // Bypass the CRT exit logic, which runs atexit handlers before calling ExitProcess.
-        // aws-lc registers an atexit handler that intentionally acquires a lock without releasing it.
-        // aws-lc also has thread_local objects which acquire this lock in their destructor.
-        // Destructors for thread_locals run under the loader lock, so there is a race condition
-        // where, if a thread exits after atexit handlers have run, the TLS destructors will block
-        // indefinitely on this lock while holding the loader lock. Since ExitProcess also requires
-        // the loader lock, process teardown will deadlock.
-        unsafe {
-            windows::Win32::System::Threading::ExitProcess(0);
+        match self.run_exit {
+            #[cfg(any(test, feature = "test-support"))]
+            WindowsPlatformRunExit::ReturnToCaller => {
+                // A returning test host keeps the process alive after WM_QUIT. Finish the
+                // platform-owned native retirement while this thread still owns the Win32
+                // message pump; otherwise a retryable DestroyWindow/resource cleanup would
+                // enqueue a foreground wake that no longer has a consumer.
+                self.finish_native_finalization_before_return();
+            }
+            WindowsPlatformRunExit::TerminateProcess => {
+                // Bypass the CRT exit logic, which runs atexit handlers before calling ExitProcess.
+                // aws-lc registers an atexit handler that intentionally acquires a lock without
+                // releasing it. aws-lc also has thread_local objects which acquire this lock in
+                // their destructor. Destructors for thread_locals run under the loader lock, so
+                // there is a race condition where, if a thread exits after atexit handlers have
+                // run, the TLS destructors will block indefinitely on this lock while holding the
+                // loader lock. Since ExitProcess also requires the loader lock, process teardown
+                // will deadlock.
+                unsafe {
+                    windows::Win32::System::Threading::ExitProcess(0);
+                }
+            }
         }
     }
 
@@ -1907,11 +2120,25 @@ impl Platform for WindowsPlatform {
 
     fn window_hit_stack_at(&self, point: Point<DevicePixels>) -> PlatformWindowHitStack {
         let registered_windows = self.raw_window_handles.read().clone();
+        #[cfg(feature = "test-support")]
+        let mut first_classification = true;
         sample_stabilized_window_hit_stack(
             point,
             || point_covering_windows_in_z_order(self, point, registered_windows.as_slice()),
             |observations| {
-                classify_covering_windows(self, observations, registered_windows.as_slice())
+                let hits =
+                    classify_covering_windows(self, observations, registered_windows.as_slice());
+                #[cfg(feature = "test-support")]
+                if first_classification {
+                    first_classification = false;
+                    if hits.is_some() {
+                        apply_native_no_input_generation_drift_after_first_classification(
+                            self,
+                            observations,
+                        );
+                    }
+                }
+                hits
             },
             || independently_verified_point_covering_windows(self, point),
         )
@@ -2314,6 +2541,14 @@ impl WindowsPlatformInner {
         }))
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    fn native_retirement_is_settled(&self) -> bool {
+        let coordinator = self.native_retirement.borrow();
+        coordinator.pending_windows.is_empty()
+            && coordinator.finalization.is_none()
+            && !coordinator.retry.scheduled
+    }
+
     pub(crate) fn enqueue_construction_native_window(
         self: &Rc<Self>,
         window: Rc<WindowsWindowInner>,
@@ -2600,6 +2835,31 @@ impl WindowsPlatformInner {
         &self,
         resources: &mut PlatformNativeRetirementResources,
     ) -> bool {
+        if let Some(notification) = resources.suspend_resume_notification {
+            #[cfg(test)]
+            {
+                self.lifecycle_test_probe
+                    .record_suspend_resume_unregister_attempt();
+                if self
+                    .lifecycle_test_probe
+                    .take_fail_next_suspend_resume_unregister()
+                {
+                    log::error!(
+                        "injected suspend/resume notification unregistration failure; retaining platform retirement authority"
+                    );
+                    return false;
+                }
+            }
+            // SAFETY: notification was returned by RegisterSuspendResumeNotification.
+            if let Err(error) = unsafe { UnregisterSuspendResumeNotification(notification) } {
+                log::error!("failed to unregister suspend/resume notification: {error}");
+                return false;
+            }
+            resources.suspend_resume_notification = None;
+        }
+
+        // Keep the message HWND alive until every fallible platform-resource cleanup has
+        // completed. It is the foreground retry transport for returning test applications.
         if unsafe { IsWindow(Some(resources.platform_handle)).as_bool() } {
             #[cfg(test)]
             {
@@ -2619,14 +2879,6 @@ impl WindowsPlatformInner {
             }
         }
 
-        if let Some(notification) = resources.suspend_resume_notification {
-            // SAFETY: notification was returned by RegisterSuspendResumeNotification.
-            if let Err(error) = unsafe { UnregisterSuspendResumeNotification(notification) } {
-                log::error!("failed to unregister suspend/resume notification: {error}");
-                return false;
-            }
-            resources.suspend_resume_notification = None;
-        }
         if resources.ole_initialized {
             unsafe { OleUninitialize() };
             #[cfg(test)]
@@ -3738,6 +3990,43 @@ mod tests {
         }
     }
 
+    fn no_input_observation(
+        hwnd: HWND,
+        native_generation: usize,
+        window: AnyWindowHandle,
+        pointer_input_generation: u64,
+        coverage: PlatformWindowPhysicalCoverage,
+    ) -> super::NativeCoveringWindowObservation {
+        super::NativeCoveringWindowObservation {
+            hwnd,
+            child_root: None,
+            coverage,
+            cloak: super::NativeWindowCloak::Uncloaked,
+            role: super::NativeCoveringWindowRole::NoInputPassThrough(
+                super::NativeNoInputWindowObservation {
+                    registered: super::RegisteredWindow::new(
+                        hwnd,
+                        native_generation,
+                        window.window_id(),
+                    ),
+                    window,
+                    pointer_input_generation,
+                },
+            ),
+        }
+    }
+
+    fn no_input_hit(observation: super::NativeCoveringWindowObservation) -> PlatformWindowHit {
+        let super::NativeCoveringWindowRole::NoInputPassThrough(no_input) = observation.role else {
+            panic!("test observation should be no-input pass-through")
+        };
+        PlatformWindowHit::NoInputPassThrough {
+            window: no_input.window,
+            pointer_input_generation: no_input.pointer_input_generation,
+            coverage: observation.coverage,
+        }
+    }
+
     fn stabilize_identical_observations(
         sampled_point: open_gpui::Point<DevicePixels>,
         observations: &[super::NativeCoveringWindowObservation],
@@ -3830,11 +4119,6 @@ mod tests {
             point(DevicePixels(0), DevicePixels(0)),
             size(DevicePixels(100), DevicePixels(100)),
         );
-        let first_geometry = checked_geometry(
-            point(DevicePixels(2), DevicePixels(2)),
-            size(DevicePixels(90), DevicePixels(90)),
-            1.0,
-        );
         let second_geometry = checked_geometry(
             point(DevicePixels(4), DevicePixels(4)),
             size(DevicePixels(80), DevicePixels(80)),
@@ -3851,13 +4135,12 @@ mod tests {
             AnyWindowHandle::from(WindowHandle::<Empty>::new(WindowId::from(202_u64)));
         let terminal_window =
             AnyWindowHandle::from(WindowHandle::<Empty>::new(WindowId::from(203_u64)));
-        let first = provisional_observation(
+        let first = no_input_observation(
             HWND(0xc1usize as *mut core::ffi::c_void),
             21,
             first_window,
             31,
             coverage,
-            first_geometry,
         );
         let second = provisional_observation(
             HWND(0xc2usize as *mut core::ffi::c_void),
@@ -3884,7 +4167,7 @@ mod tests {
         assert_eq!(observations, vec![first, second, terminal]);
 
         let hits = vec![
-            provisional_hit(first),
+            no_input_hit(first),
             provisional_hit(second),
             PlatformWindowHit::RegisteredApplication {
                 window: terminal_window,
@@ -4153,6 +4436,42 @@ mod tests {
                 &base_observations,
                 base_hits.clone(),
                 &[verifier_generation_drift, terminal],
+            ),
+            PlatformWindowHitStack::Unavailable
+        );
+    }
+
+    #[test]
+    fn hit_stack_stabilization_rejects_no_input_generation_drift() {
+        let sampled_point = point(DevicePixels(20), DevicePixels(20));
+        let coverage = checked_coverage(
+            point(DevicePixels(0), DevicePixels(0)),
+            size(DevicePixels(100), DevicePixels(100)),
+        );
+        let window = AnyWindowHandle::from(WindowHandle::<Empty>::new(WindowId::from(213_u64)));
+        let hwnd = HWND(0xd3usize as *mut core::ffi::c_void);
+        let terminal = covering_observation(HWND(0xd4usize as *mut core::ffi::c_void), coverage);
+        let base = no_input_observation(hwnd, 43, window, 53, coverage);
+        let changed = no_input_observation(hwnd, 43, window, 54, coverage);
+        let base_hits = vec![
+            no_input_hit(base),
+            PlatformWindowHit::OpaqueBarrier { coverage },
+        ];
+        let changed_hits = vec![
+            no_input_hit(changed),
+            PlatformWindowHit::OpaqueBarrier { coverage },
+        ];
+
+        assert_eq!(
+            super::stabilized_window_hit_stack(
+                sampled_point,
+                &[base, terminal],
+                &base_hits,
+                &[changed, terminal],
+                &changed_hits,
+                &[changed, terminal],
+                changed_hits.clone(),
+                &[changed, terminal],
             ),
             PlatformWindowHitStack::Unavailable
         );
@@ -4625,6 +4944,7 @@ mod tests {
             assert_eq!(committed_window_facts(&mut app, window), observed.facts);
         }
 
+        let mut first_no_input_generation = None;
         for accepts_pointer_input in [false, true] {
             let observed = observe_native_mutation(
                 &platform,
@@ -4637,12 +4957,28 @@ mod tests {
             assert_eq!(committed_window_facts(&mut app, window), observed.facts);
             let registered_inspection =
                 super::inspect_registered_window_for_point(&platform, registered_window);
+            if let super::RegisteredPointHitInspection::NoInputPassThrough(observation) =
+                registered_inspection
+            {
+                first_no_input_generation = Some(observation.pointer_input_generation);
+                let current = app.update_for_test(|cx| {
+                    window
+                        .update(cx, |_, window, _| {
+                            window.is_current_pointer_input_observation(
+                                false,
+                                observation.pointer_input_generation,
+                            )
+                        })
+                        .expect("native test window should remain open")
+                });
+                assert!(current);
+            }
             assert!(
                 matches!(
                     (accepts_pointer_input, registered_inspection),
                     (
                         false,
-                        super::RegisteredPointHitInspection::NoInputPassThrough
+                        super::RegisteredPointHitInspection::NoInputPassThrough(_)
                     ) | (true, super::RegisteredPointHitInspection::Terminal)
                 ),
                 "the stable point sampler must match the committed pointer-input fact"
@@ -4665,12 +5001,47 @@ mod tests {
             assert!(
                 matches!(
                     (accepts_pointer_input, point_inspection),
-                    (false, super::PointBoundWindowInspection::Terminal(_))
+                    (false, super::PointBoundWindowInspection::PassThrough(_))
                         | (true, super::PointBoundWindowInspection::Terminal(_))
                 ),
-                "a committed no-input HWND remains a terminal point-stack fact"
+                "a committed no-input HWND must remain a pass-through point-stack fact"
             );
         }
+
+        let first_no_input_generation =
+            first_no_input_generation.expect("the no-input mutation must publish a generation");
+        let observed = observe_native_mutation(
+            &platform,
+            &mut app,
+            window,
+            WindowMutationRequest::PointerInput(false),
+        );
+        assert_eq!(observed.outcome, WindowMutationOutcome::Exact);
+        let super::RegisteredPointHitInspection::NoInputPassThrough(current_no_input) =
+            super::inspect_registered_window_for_point(&platform, registered_window)
+        else {
+            panic!("the second no-input mutation must publish a pass-through observation");
+        };
+        assert_ne!(
+            current_no_input.pointer_input_generation, first_no_input_generation,
+            "a false -> true -> false ABA must advance the pointer-input authority generation"
+        );
+        let (stale_rejected, current_accepted) = app.update_for_test(|cx| {
+            window
+                .update(cx, |_, window, _| {
+                    (
+                        window
+                            .is_current_pointer_input_observation(false, first_no_input_generation),
+                        window.is_current_pointer_input_observation(
+                            false,
+                            current_no_input.pointer_input_generation,
+                        ),
+                    )
+                })
+                .expect("native test window should remain open")
+        });
+        assert!(!stale_rejected);
+        assert!(current_accepted);
 
         for activation_policy in [
             WindowActivationPolicy {

@@ -27,7 +27,6 @@ pub(crate) struct DockViewportCommittedLiveUndockHostDrop {
     runtime_update: DockViewportRuntimeUpdate,
     window_effects: DockViewportCommittedWindowEffects,
     controller: Entity<DockController>,
-    graph_changed: bool,
 }
 
 impl DockViewportPreflightedLiveUndockHostDrop {
@@ -63,10 +62,6 @@ impl DockViewportCommittedLiveUndockHostDrop {
 
     pub(crate) fn controller(&self) -> &Entity<DockController> {
         &self.controller
-    }
-
-    pub(crate) const fn graph_changed(&self) -> bool {
-        self.graph_changed
     }
 }
 
@@ -124,7 +119,14 @@ impl DockViewportRuntimeHandle {
                     .preflight_atomic_locked_payload_drop(sampled, cx)
             }
             Err(error) => Err(error),
-        };
+        }
+        .and_then(|prepared| {
+            if prepared.graph_changed() {
+                Ok(prepared)
+            } else {
+                Err(DockActionApplyError::DropTargetUnavailable)
+            }
+        });
         match result {
             Ok(prepared) => Ok(DockViewportPreflightedLiveUndockHostDrop { prepared }),
             Err(error) => {
@@ -147,7 +149,10 @@ impl DockViewportRuntimeHandle {
         cx: &mut App,
     ) -> DockViewportCommittedLiveUndockHostDrop {
         let workspace = preflighted.prepared.commit_workspace(cx);
-        let graph_changed = workspace.outcome().changed();
+        debug_assert!(
+            workspace.outcome().changed(),
+            "a preflighted live-undock host drop must change workspace topology",
+        );
         let controller = preflighted.prepared.controller().clone();
         let committed = self
             .runtime
@@ -164,7 +169,6 @@ impl DockViewportRuntimeHandle {
             runtime_update,
             window_effects,
             controller,
-            graph_changed,
         }
     }
 
@@ -181,11 +185,9 @@ impl DockViewportRuntimeHandle {
         committed: &DockViewportCommittedLiveUndockHostDrop,
         cx: &mut App,
     ) {
-        if committed.graph_changed() {
-            cx.update_entity(committed.controller(), |_, controller_cx| {
-                controller_cx.notify();
-            });
-        }
+        cx.update_entity(committed.controller(), |_, controller_cx| {
+            controller_cx.notify();
+        });
     }
 
     pub(crate) fn accept_live_undock_host_drop_window_effects(

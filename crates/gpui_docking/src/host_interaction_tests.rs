@@ -315,6 +315,38 @@ fn configure_native_registered_window_hit_with_target_size(
     );
 }
 
+fn configure_native_source_window_hit(
+    cx: &TestAppContext,
+    source_window: AnyWindowHandle,
+    source_point: Point<Pixels>,
+) {
+    advertise_native_drag_hysteresis(cx);
+    let source_bounds = Bounds::new(
+        point(DevicePixels(0), DevicePixels(0)),
+        size(DevicePixels(720), DevicePixels(440)),
+    );
+    cx.set_platform_window_physical_client_geometry(source_window, Some(source_bounds), 2.0);
+    let sampled_point = point(
+        DevicePixels((source_point.x.as_f32() * 2.0).round() as i32),
+        DevicePixels((source_point.y.as_f32() * 2.0).round() as i32),
+    );
+    let coverage = PlatformWindowPhysicalCoverage::try_new(source_bounds)
+        .expect("source coverage should be representable");
+    let geometry = PlatformWindowPhysicalGeometry::try_new(source_bounds, 2.0)
+        .expect("source physical geometry should be representable");
+    cx.set_platform_window_hit_stack(
+        PlatformWindowHitStack::try_available(
+            sampled_point,
+            vec![PlatformWindowHit::RegisteredApplication {
+                window: source_window,
+                coverage,
+                geometry,
+            }],
+        )
+        .expect("registered source hit observation should be valid"),
+    );
+}
+
 fn advertise_native_drag_hysteresis(cx: &TestAppContext) {
     cx.set_platform_native_drag_hysteresis(Some(
         PlatformNativeDragHysteresis::try_new(DevicePixels(4), DevicePixels(4))
@@ -651,6 +683,104 @@ fn live_source_projection_republishes_accepted_route_scene(cx: &mut TestAppConte
             .is_some()),
         "the fresh source projection route must retain accepted-frame proof"
     );
+}
+
+#[open_gpui::test]
+fn live_undock_release_back_to_source_host_restores_without_committing_unchanged_promotion(
+    cx: &mut TestAppContext,
+) {
+    let mut fixture = native_captured_source_fixture(cx);
+    let revision = cx.read(|app| fixture.surface.revision(app));
+    begin_native_live_undock_with_released_source(&mut fixture, cx);
+    fixture.source_visual = VisualTestContext::from_window(fixture.source_window, cx);
+
+    configure_native_source_window_hit(cx, fixture.source_window, fixture.start);
+    fixture
+        .source_visual
+        .simulate_mouse_move(fixture.start, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    let routed = fixture.runtime.runtime_status();
+    assert!(matches!(
+        routed.last_route.as_ref().map(|route| &route.target),
+        Some(crate::DockViewportRouteTarget::Local {
+            space,
+            window_id,
+            ..
+        }) if space == &DockSpaceId::from("main")
+            && *window_id == fixture.source_window.window_id()
+    ));
+    assert_eq!(
+        routed
+            .last_route
+            .as_ref()
+            .and_then(|route| route.selection_source),
+        Some(crate::DockViewportRouteSelectionRecord::CapturedNativeHitStack),
+        "the source no-op must be classified from exact captured-native route proof",
+    );
+    fixture
+        .source_visual
+        .simulate_mouse_up(fixture.start, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+
+    cx.read_entity(fixture.surface.owner(), |owner, _| {
+        assert_eq!(
+            owner.live_undock_phase(),
+            crate::surface::live_undock::DockLiveUndockPhase::Idle,
+            "an unchanged source-host release must restore instead of crossing the promotion boundary",
+        );
+        assert_eq!(
+            owner.live_undock_runtime().execution_count_for_test(),
+            0,
+            "source restoration must retire the rejected promotion execution",
+        );
+        assert_eq!(
+            owner.visible_payload_recovery_count_for_test(
+                crate::surface::payload_recovery::DockPayloadRecoveryReason::LostViewportRecovery,
+            ),
+            0,
+            "a reversible no-op must restore the source without entering committed recovery",
+        );
+    });
+    assert_eq!(
+        fixture
+            .runtime
+            .active_payload_drag_session(&fixture.payload),
+        None,
+        "source restoration must release the exact payload drag session",
+    );
+    assert_eq!(
+        cx.read(|app| fixture.surface.revision(app)),
+        revision,
+        "an unchanged source-host release must not publish a surface transaction",
+    );
+    assert_eq!(
+        fixture.runtime.runtime_status().last_activation,
+        None,
+        "the no-op route must not publish its otherwise-valid focus activation",
+    );
+    assert_eq!(
+        cx.windows(),
+        vec![fixture.source_window],
+        "the rejected promotion must not retain a provisional destination window",
+    );
+    cx.read_entity(&fixture.controller, |controller, _| {
+        assert_eq!(
+            controller.workspace().locked_payload_drop_commit_count(),
+            0,
+            "the no-op promotion must be rejected before the workspace commit ledger",
+        );
+        assert_eq!(
+            controller
+                .graph()
+                .collect_items_in_space(&DockSpaceId::from("main")),
+            vec![item("a"), item("b")],
+        );
+    });
+    cx.read_entity(&fixture.source_host, |host, _| {
+        assert!(host.live_presentation_state().is_none());
+        assert!(host.live_source_semantic_proxy().is_none());
+        assert!(host.native_drag_transport_proxy().is_none());
+    });
 }
 
 #[open_gpui::test]
@@ -6224,7 +6354,7 @@ fn surface_owned_native_captured_desktop_release_promotes_exact_visible_provisio
 }
 
 #[open_gpui::test]
-fn same_window_post_swap_graph_mutation_is_a_new_transaction(cx: &mut TestAppContext) {
+fn same_window_post_swap_graph_replacement_recovers_before_semantics(cx: &mut TestAppContext) {
     let mut fixture = native_captured_source_fixture(cx);
     begin_native_live_undock_with_released_source(&mut fixture, cx);
     fixture.source_visual = VisualTestContext::from_window(fixture.source_window, cx);
@@ -6270,8 +6400,8 @@ fn same_window_post_swap_graph_mutation_is_a_new_transaction(cx: &mut TestAppCon
     cx.run_until_parked();
 
     assert!(
-        destination_window.update(cx, |_, _, _| ()).is_ok(),
-        "a graph mutation queued after the final swap must not be mistaken for partial commit failure"
+        destination_window.update(cx, |_, _, _| ()).is_err(),
+        "a successor graph that replaces the payload must prevent destination semantics"
     );
     cx.read_entity(&fixture.controller, |controller, _| {
         assert_eq!(
@@ -6295,12 +6425,19 @@ fn same_window_post_swap_graph_mutation_is_a_new_transaction(cx: &mut TestAppCon
         assert_eq!(
             phase,
             crate::surface::live_undock::DockLiveUndockPhase::Idle,
-            "the final swap and its queued successor transaction must both settle; execution_count={execution_count}"
+            "the superseded promotion must settle through committed-destination recovery; execution_count={execution_count}"
         );
         assert_eq!(
             execution_count,
             0,
             "post-commit publication must retire the exact promotion execution"
+        );
+        assert_eq!(
+            owner.visible_payload_recovery_count_for_test(
+                crate::surface::payload_recovery::DockPayloadRecoveryReason::LostViewportRecovery,
+            ),
+            1,
+            "the replaced payload projection must remain discoverable through recovery"
         );
     });
     assert!(
@@ -6321,7 +6458,9 @@ fn same_window_post_swap_graph_mutation_is_a_new_transaction(cx: &mut TestAppCon
 }
 
 #[open_gpui::test]
-fn same_window_post_swap_graph_aba_does_not_replay_or_rollback_promotion(cx: &mut TestAppContext) {
+fn same_window_missing_graph_receipt_before_semantics_recovers_committed_destination(
+    cx: &mut TestAppContext,
+) {
     let mut fixture = native_captured_source_fixture(cx);
     begin_native_live_undock_with_released_source(&mut fixture, cx);
     fixture.source_visual = VisualTestContext::from_window(fixture.source_window, cx);
@@ -6331,24 +6470,98 @@ fn same_window_post_swap_graph_aba_does_not_replay_or_rollback_promotion(cx: &mu
     let live_runtime = cx.read_entity(fixture.surface.owner(), |owner, _| {
         owner.live_undock_runtime()
     });
-    live_runtime.after_same_window_graph_commit_for_test({
+    live_runtime.retire_next_same_window_graph_commit_before_semantics_ack_for_test();
+
+    cx.set_next_window_placement_dispatch(destination_window, PlatformWindowDispatch::Queued);
+    cx.set_platform_window_hit_stack(
+        PlatformWindowHitStack::try_available_open_desktop(
+            point(DevicePixels(1880), DevicePixels(1880)),
+            Vec::new(),
+        )
+        .expect("the moved desktop release observation should be valid"),
+    );
+    fixture.source_visual.simulate_mouse_up(
+        point(px(940.0), px(940.0)),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    let drained_without_advancing_deadline = (0..10_000).any(|_| !cx.background_executor.tick());
+    assert!(drained_without_advancing_deadline);
+    assert!(cx.flush_window_mutation(destination_window, WindowMutationDomain::Placement));
+    cx.run_until_parked();
+
+    assert!(
+        destination_window.update(cx, |_, _, _| ()).is_err(),
+        "a missing graph receipt must never open the destination for interaction"
+    );
+    cx.read_entity(&fixture.controller, |controller, _| {
+        assert_eq!(
+            controller
+                .graph()
+                .collect_items_in_space(&DockSpaceId::from("main")),
+            vec![item("b")]
+        );
+        assert_eq!(
+            controller
+                .graph()
+                .collect_items_in_space(&destination_space),
+            vec![item("a")],
+            "recovery must not roll back the committed graph topology"
+        );
+    });
+    cx.read_entity(fixture.surface.owner(), |owner, _| {
+        assert_eq!(
+            owner.live_undock_phase(),
+            crate::surface::live_undock::DockLiveUndockPhase::Idle
+        );
+        assert_eq!(owner.live_undock_runtime().execution_count_for_test(), 0);
+        assert_eq!(
+            owner.visible_payload_recovery_count_for_test(
+                crate::surface::payload_recovery::DockPayloadRecoveryReason::LostViewportRecovery,
+            ),
+            1,
+            "a missing graph receipt must enter committed-destination recovery"
+        );
+    });
+    assert!(
+        fixture
+            .runtime
+            .active_payload_drag_session(&fixture.payload)
+            .is_none(),
+        "post-commit settlement must release the exact payload drag generation"
+    );
+}
+
+#[open_gpui::test]
+fn same_window_superseded_graph_before_interaction_admission_recovers_committed_destination(
+    cx: &mut TestAppContext,
+) {
+    let mut fixture = native_captured_source_fixture(cx);
+    begin_native_live_undock_with_released_source(&mut fixture, cx);
+    fixture.source_visual = VisualTestContext::from_window(fixture.source_window, cx);
+    let (destination_window, _destination_host, destination_space) =
+        reveal_live_undock_provisional_destination(&fixture, cx);
+
+    let live_runtime = cx.read_entity(fixture.surface.owner(), |owner, _| {
+        owner.live_undock_runtime()
+    });
+    let interaction_activated = Rc::new(Cell::new(false));
+    live_runtime.install_before_destination_interaction_activation_hook_for_test({
+        let interaction_activated = interaction_activated.clone();
+        move |_| interaction_activated.set(true)
+    });
+    live_runtime.install_before_destination_interaction_admission_hook_for_test({
         let controller = fixture.controller.clone();
         let destination_space = destination_space.clone();
         move |cx| {
             cx.update_entity(&controller, |controller, controller_cx| {
-                let committed = controller.graph().clone();
-                let mut intervening = committed.clone();
-                let replacement = intervening.insert_node(DockNode::Tabs {
+                let mut graph = controller.graph().clone();
+                let replacement = graph.insert_node(DockNode::Tabs {
                     items: vec![item("c")],
                     selected: Some(item("c")),
                 });
-                intervening.set_root(destination_space, replacement);
-                intervening.canonicalize();
-                intervening
-                    .validate()
-                    .expect("the intervening graph should remain valid");
-                controller.workspace_mut().set_graph(intervening);
-                controller.workspace_mut().set_graph(committed);
+                graph.set_root(destination_space, replacement);
+                controller.workspace_mut().set_graph(graph);
                 controller_cx.notify();
             });
         }
@@ -6373,8 +6586,12 @@ fn same_window_post_swap_graph_aba_does_not_replay_or_rollback_promotion(cx: &mu
     cx.run_until_parked();
 
     assert!(
-        destination_window.update(cx, |_, _, _| ()).is_ok(),
-        "an ABA after the final swap is a later graph transaction, not a failed promotion"
+        destination_window.update(cx, |_, _, _| ()).is_err(),
+        "a graph superseded immediately before admission must not publish interaction"
+    );
+    assert!(
+        !interaction_activated.get(),
+        "a non-exact graph projection must fail before destination interaction activation"
     );
     cx.read_entity(&fixture.controller, |controller, _| {
         assert_eq!(
@@ -6387,8 +6604,8 @@ fn same_window_post_swap_graph_aba_does_not_replay_or_rollback_promotion(cx: &mu
             controller
                 .graph()
                 .collect_items_in_space(&destination_space),
-            vec![item("a")],
-            "the ABA must not cause the committed promotion graph to replay twice"
+            vec![item("c")],
+            "the successor graph must remain the topology authority"
         );
     });
     cx.read_entity(fixture.surface.owner(), |owner, _| {
@@ -6397,13 +6614,20 @@ fn same_window_post_swap_graph_aba_does_not_replay_or_rollback_promotion(cx: &mu
             crate::surface::live_undock::DockLiveUndockPhase::Idle
         );
         assert_eq!(owner.live_undock_runtime().execution_count_for_test(), 0);
+        assert_eq!(
+            owner.visible_payload_recovery_count_for_test(
+                crate::surface::payload_recovery::DockPayloadRecoveryReason::LostViewportRecovery,
+            ),
+            1,
+            "admission must recover the committed payload after graph loss"
+        );
     });
     assert!(
         fixture
             .runtime
             .active_payload_drag_session(&fixture.payload)
             .is_none(),
-        "post-commit settlement must release the exact payload drag generation"
+        "committed-destination recovery must release the exact payload drag generation"
     );
 }
 
@@ -6969,6 +7193,111 @@ fn same_window_promotion_can_commit_failure_restores_without_durable_swap(cx: &m
         assert!(host.live_source_semantic_proxy().is_none());
         assert!(host.native_drag_transport_proxy().is_none());
     });
+}
+
+#[open_gpui::test]
+fn same_window_destination_semantics_can_commit_after_more_than_four_watchdog_wakes(
+    cx: &mut TestAppContext,
+) {
+    let mut fixture = native_captured_source_fixture(cx);
+    begin_native_live_undock_with_released_source(&mut fixture, cx);
+    fixture.source_visual = VisualTestContext::from_window(fixture.source_window, cx);
+    let (destination_window, _destination_host, destination_space) =
+        reveal_live_undock_provisional_destination(&fixture, cx);
+    let live_runtime = cx.read_entity(fixture.surface.owner(), |owner, _| {
+        owner.live_undock_runtime()
+    });
+    live_runtime.suppress_same_window_destination_semantics_frames_for_test(u32::MAX);
+
+    cx.set_next_window_placement_dispatch(destination_window, PlatformWindowDispatch::Queued);
+    cx.set_platform_window_hit_stack(
+        PlatformWindowHitStack::try_available_open_desktop(
+            point(DevicePixels(1880), DevicePixels(1880)),
+            Vec::new(),
+        )
+        .expect("the moved desktop release observation should be valid"),
+    );
+    fixture.source_visual.simulate_mouse_up(
+        point(px(940.0), px(940.0)),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    let drained_without_advancing_deadline = (0..10_000).any(|_| !cx.background_executor.tick());
+    assert!(drained_without_advancing_deadline);
+    assert!(cx.flush_window_mutation(destination_window, WindowMutationDomain::Placement));
+    cx.run_until_parked();
+
+    assert_eq!(
+        cx.read_entity(fixture.surface.owner(), |owner, _| owner
+            .live_undock_phase()),
+        crate::surface::live_undock::DockLiveUndockPhase::Bound,
+        "a missing destination-semantics frame must remain visibly gated before the watchdog expires"
+    );
+    for _ in 0..5 {
+        cx.executor().advance_clock(
+            crate::surface::live_undock_runtime::LIVE_UNDOCK_DESTINATION_SEMANTICS_WATCHDOG_INTERVAL,
+        );
+        cx.run_until_parked();
+    }
+
+    assert!(
+        destination_window.update(cx, |_, _, _| ()).is_ok(),
+        "elapsed watchdog wakes must not close a destination whose exact authority remains live"
+    );
+    assert_eq!(
+        cx.read_entity(fixture.surface.owner(), |owner, _| owner
+            .live_undock_phase()),
+        crate::surface::live_undock::DockLiveUndockPhase::Bound,
+        "the destination must remain gated while semantics are pending"
+    );
+
+    live_runtime.suppress_same_window_destination_semantics_frames_for_test(0);
+    destination_window
+        .update(cx, |_, window, _| window.refresh())
+        .expect("the exact destination must remain refreshable after delayed semantics");
+    for _ in 0..8 {
+        cx.executor().advance_clock(
+            crate::surface::live_undock_runtime::LIVE_UNDOCK_DESTINATION_SEMANTICS_WATCHDOG_INTERVAL,
+        );
+        cx.run_until_parked();
+        if cx.read_entity(fixture.surface.owner(), |owner, _| {
+            owner.live_undock_phase()
+        }) == crate::surface::live_undock::DockLiveUndockPhase::Idle
+        {
+            break;
+        }
+    }
+
+    assert!(destination_window.update(cx, |_, _, _| ()).is_ok());
+    cx.read_entity(&fixture.controller, |controller, _| {
+        assert_eq!(
+            controller
+                .graph()
+                .collect_items_in_space(&destination_space),
+            vec![item("a")]
+        );
+    });
+    cx.read_entity(fixture.surface.owner(), |owner, _| {
+        assert_eq!(
+            owner.live_undock_phase(),
+            crate::surface::live_undock::DockLiveUndockPhase::Idle
+        );
+        assert_eq!(owner.live_undock_runtime().execution_count_for_test(), 0);
+        assert_eq!(
+            owner.visible_payload_recovery_count_for_test(
+                crate::surface::payload_recovery::DockPayloadRecoveryReason::LostViewportRecovery,
+            ),
+            0,
+            "a delayed but healthy destination must not create a recovery entry"
+        );
+    });
+    assert!(
+        fixture
+            .runtime
+            .active_payload_drag_session(&fixture.payload)
+            .is_none(),
+        "successful delayed semantics must settle the exact payload drag authority"
+    );
 }
 
 #[open_gpui::test]

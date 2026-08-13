@@ -4228,8 +4228,11 @@ dependencies = [
  "open-gpui-platform",
  "open-gpui-ui-components",
  "open-gpui-ui-core",
+ "open-gpui-windows",
  "raw-window-handle",
+ "serde",
  "serde_json",
+ "toml 1.1.2+spec-1.1.0",
  "windows 0.62.2",
 ]
 

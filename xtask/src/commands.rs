@@ -8,9 +8,9 @@ use clap::{Args, Parser, Subcommand};
 use crate::{
     dependency_health::dependency_health, devtools::DevtoolsArgs, devtools::devtools,
     doc_links::scan_doc_links, import_boundary::scan_import_boundary,
-    public_api_snapshot::scan_public_api, release_docs::verify_release_docs,
-    theme_drift::scan_theme_drift, theme_schema::scan_theme_schema, ui_contract::scan_ui_contract,
-    web_smoke::web_smoke,
+    native_windows_interactive::native_windows_interactive, public_api_snapshot::scan_public_api,
+    release_docs::verify_release_docs, theme_drift::scan_theme_drift,
+    theme_schema::scan_theme_schema, ui_contract::scan_ui_contract, web_smoke::web_smoke,
 };
 
 #[derive(Parser, Debug)]
@@ -29,6 +29,8 @@ enum XtaskCommand {
     DependencyHealth,
     /// Run the complete native WGPU package test suite.
     RendererSmoke,
+    /// Run the manifest-owned Windows native interactive Dock gate.
+    NativeWindowsInteractive,
     /// Verify changelog, release notes, README versions, and breaking inventory.
     VerifyReleaseDocs(ForwardArgs),
     /// Scan public documentation relative links.
@@ -81,6 +83,7 @@ pub fn run_from_env() -> ExitCode {
         XtaskCommand::Verify => verify(root),
         XtaskCommand::DependencyHealth => dependency_health(root),
         XtaskCommand::RendererSmoke => renderer_smoke(root),
+        XtaskCommand::NativeWindowsInteractive => native_windows_interactive(root),
         XtaskCommand::VerifyReleaseDocs(args) => verify_release_docs(root, &args.args),
         XtaskCommand::ScanDocLinks => scan_doc_links(root),
         XtaskCommand::ScanThemeDrift => scan_theme_drift(root),

@@ -414,7 +414,6 @@ impl DockGraph {
         ) {
             return false;
         }
-        self.remove_subtree(source_root);
         self.simplify_space_after_mutation(source_space);
         self.simplify_space_after_mutation(target_space);
         true

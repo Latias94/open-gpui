@@ -28,6 +28,8 @@ use open_gpui::{
     PlatformWindowHitTerminus, Point, PointerCancelReason, PreparedNativeCapturedDragConsumer,
     Subscription, WeakEntity, Window, WindowId,
 };
+#[cfg(feature = "test-support")]
+use open_gpui::{Bounds, DevicePixels, point, size};
 use std::{
     any::Any,
     cell::{Cell, RefCell},
@@ -45,6 +47,22 @@ struct DockNativeCapturedDragRouter {
 }
 
 impl Global for DockNativeCapturedDragRouter {}
+
+#[cfg(feature = "test-support")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct DockNativeReleasePlacementObservation {
+    source_window: WindowId,
+    bounds: Bounds<DevicePixels>,
+}
+
+#[cfg(feature = "test-support")]
+#[derive(Default)]
+struct DockNativeReleasePlacementObservations {
+    latest: Option<DockNativeReleasePlacementObservation>,
+}
+
+#[cfg(feature = "test-support")]
+impl Global for DockNativeReleasePlacementObservations {}
 
 #[derive(Default)]
 struct DockNativeCapturedDragState {
@@ -488,7 +506,7 @@ fn handle_native_captured_window_closed(
                         (publication.scene.window_id == window_id
                             && publication.scene.runtime_identity == active.runtime_identity
                             && active.latest_event.borrow().as_ref().is_some_and(|event| {
-                                native_event_may_target_scene(active, event, &publication.scene)
+                                native_event_may_target_scene(active, event, &publication.scene, cx)
                             }))
                         .then(|| (active.runtime.clone(), publication.scene.frame.clone()))
                     })
@@ -551,6 +569,48 @@ fn clear_failed_native_captured_releases_for_source_window(
 fn router_state(cx: &App) -> Option<Rc<RefCell<DockNativeCapturedDragState>>> {
     cx.try_global::<DockNativeCapturedDragRouter>()
         .map(|router| router.state.clone())
+}
+
+#[cfg(feature = "test-support")]
+fn record_native_release_placement_for_test(
+    source_window: WindowId,
+    release: DockLiveUndockReleaseLock,
+    cx: &mut App,
+) {
+    let desired = release.desired_bounds();
+    let (Ok(width), Ok(height)) = (
+        i32::try_from(desired.width()),
+        i32::try_from(desired.height()),
+    ) else {
+        return;
+    };
+    let observation = DockNativeReleasePlacementObservation {
+        source_window,
+        bounds: Bounds::new(
+            point(
+                DevicePixels(desired.origin().x()),
+                DevicePixels(desired.origin().y()),
+            ),
+            size(DevicePixels(width), DevicePixels(height)),
+        ),
+    };
+    if !cx.has_global::<DockNativeReleasePlacementObservations>() {
+        cx.set_global(DockNativeReleasePlacementObservations { latest: None });
+    }
+    cx.global_mut::<DockNativeReleasePlacementObservations>()
+        .latest = Some(observation);
+}
+
+#[cfg(feature = "test-support")]
+/// Returns the exact physical client bounds captured from the latest adopted native release.
+pub fn native_captured_release_placement_for_test(
+    source_window: WindowId,
+    cx: &App,
+) -> Option<Bounds<DevicePixels>> {
+    cx.try_global::<DockNativeReleasePlacementObservations>()?
+        .latest
+        .filter(|observation| observation.source_window == source_window)
+        .map(|observation| observation.bounds)
 }
 
 #[cfg(test)]
@@ -870,7 +930,7 @@ pub(crate) fn publish_native_captured_host_scene(scene: DockNativeCapturedHostSc
             let event = active.latest_event.borrow();
             let targets_scene = event
                 .as_ref()
-                .is_some_and(|event| native_event_may_target_scene(active, event, &scene));
+                .is_some_and(|event| native_event_may_target_scene(active, event, &scene, cx));
             let supports_source_route = scene_supports_source_route(&scene, active);
             if supports_source_route && active.live_undock_identity.get().is_none() {
                 active.live_undock_source_scene = Some(scene.clone());
@@ -977,7 +1037,7 @@ pub(crate) fn clear_native_captured_host_scene(
                 .filter_map(|scene| {
                     (scene.runtime_identity == active.runtime_identity
                         && latest_event.as_ref().is_some_and(|event| {
-                            native_event_may_target_scene(active, event, scene)
+                            native_event_may_target_scene(active, event, scene, cx)
                         }))
                     .then(|| (active.runtime.clone(), scene.frame.clone()))
                 })
@@ -1482,7 +1542,7 @@ fn lock_native_captured_drop(
     cx: &mut App,
 ) -> Option<Result<DockViewportLockedDropRoute, crate::DockActionApplyError>> {
     let captured_route = match target {
-        DockNativeCapturedTarget::Host(target) => captured_host_target(route, event, target)
+        DockNativeCapturedTarget::Host(target) => captured_host_target(route, event, target, cx)
             .map(DockCapturedNativeDropRoute::Host)
             .unwrap_or(DockCapturedNativeDropRoute::Unavailable),
         DockNativeCapturedTarget::Desktop(_) => DockCapturedNativeDropRoute::Desktop,
@@ -1700,7 +1760,7 @@ fn current_locked_native_captured_host_target(
         .scenes
         .get(&target.scene.window_id)
         .cloned()?;
-    let target_window = native_captured_registered_window(route, event)?;
+    let target_window = native_captured_registered_window(route, event, cx)?;
     if target_window.window_id() != target.scene.window_id {
         return None;
     }
@@ -1766,6 +1826,7 @@ fn classify_native_captured_window_hit(
     stack: &PlatformWindowHitStack,
     global_position: Point<open_gpui::DevicePixels>,
     mut admits_provisional: impl FnMut(AnyWindowHandle, u64) -> bool,
+    mut admits_no_input: impl FnMut(AnyWindowHandle, u64) -> bool,
 ) -> DockNativeCapturedWindowHit {
     let observation = match stack {
         PlatformWindowHitStack::Available(observation)
@@ -1777,17 +1838,22 @@ fn classify_native_captured_window_hit(
             return DockNativeCapturedWindowHit::Unavailable;
         }
     };
-    if !observation.provisional_pass_throughs().iter().all(|hit| {
-        matches!(
-            *hit,
-            PlatformWindowHit::ProvisionalPassThrough {
-                window,
-                session_generation,
-                coverage,
-                ..
-            } if coverage.contains(global_position)
-                && admits_provisional(window, session_generation)
-        )
+    if !observation.pass_throughs().iter().all(|hit| match *hit {
+        PlatformWindowHit::ProvisionalPassThrough {
+            window,
+            session_generation,
+            coverage,
+            ..
+        } => coverage.contains(global_position) && admits_provisional(window, session_generation),
+        PlatformWindowHit::NoInputPassThrough {
+            window,
+            pointer_input_generation,
+            coverage,
+        } => {
+            coverage.contains(global_position) && admits_no_input(window, pointer_input_generation)
+        }
+        PlatformWindowHit::RegisteredApplication { .. }
+        | PlatformWindowHit::OpaqueBarrier { .. } => false,
     }) {
         return DockNativeCapturedWindowHit::Unavailable;
     }
@@ -1820,7 +1886,8 @@ fn classify_native_captured_window_hit(
                     },
                 )
             }
-            PlatformWindowHit::ProvisionalPassThrough { .. } => {
+            PlatformWindowHit::ProvisionalPassThrough { .. }
+            | PlatformWindowHit::NoInputPassThrough { .. } => {
                 DockNativeCapturedWindowHit::Unavailable
             }
         },
@@ -1854,6 +1921,7 @@ fn route_admits_provisional_pass_through(
 fn native_captured_window_hit(
     route: &DockNativeCapturedDragRoute,
     event: &NativeCapturedDragEvent,
+    cx: &mut App,
 ) -> DockNativeCapturedWindowHit {
     let Some(physical_frame) = event.physical_frame() else {
         return DockNativeCapturedWindowHit::Unavailable;
@@ -1864,14 +1932,21 @@ fn native_captured_window_hit(
         |window, session_generation| {
             route_admits_provisional_pass_through(route, window, session_generation)
         },
+        |window, pointer_input_generation| {
+            cx.update_window(window, |_, window, _| {
+                window.is_current_pointer_input_observation(false, pointer_input_generation)
+            })
+            .unwrap_or(false)
+        },
     )
 }
 
 fn native_captured_registered_window(
     route: &DockNativeCapturedDragRoute,
     event: &NativeCapturedDragEvent,
+    cx: &mut App,
 ) -> Option<AnyWindowHandle> {
-    match native_captured_window_hit(route, event) {
+    match native_captured_window_hit(route, event, cx) {
         DockNativeCapturedWindowHit::RegisteredApplication { window, .. } => Some(window),
         DockNativeCapturedWindowHit::OpenDesktop
         | DockNativeCapturedWindowHit::OpaqueBarrier
@@ -1883,9 +1958,10 @@ fn native_event_may_target_scene(
     route: &DockNativeCapturedDragRoute,
     event: &NativeCapturedDragEvent,
     scene: &DockNativeCapturedHostScene,
+    cx: &mut App,
 ) -> bool {
     matches!(
-        native_captured_window_hit(route, event),
+        native_captured_window_hit(route, event, cx),
         DockNativeCapturedWindowHit::RegisteredApplication { window, .. }
             if window.window_id() == scene.window_id
     )
@@ -1951,7 +2027,8 @@ fn resolve_native_captured_target_with_source_window(
 ) -> DockNativeCapturedTarget {
     #[cfg(test)]
     panic_native_captured_drag_if_requested(state, DockNativeCapturedDragTestPanic::ResolveTarget);
-    let (target_window, target_window_position) = match native_captured_window_hit(route, event) {
+    let (target_window, target_window_position) = match native_captured_window_hit(route, event, cx)
+    {
         DockNativeCapturedWindowHit::OpenDesktop => {
             return DockNativeCapturedTarget::Desktop(DockNativeCapturedDesktopRoute::OpenSpace);
         }
@@ -2347,7 +2424,11 @@ fn lock_live_undock_release(
         &route.payload_finalizer,
         cx,
     ) {
-        DockLiveUndockReleaseAdoption::Adopted => true,
+        DockLiveUndockReleaseAdoption::Adopted => {
+            #[cfg(feature = "test-support")]
+            record_native_release_placement_for_test(route.source_window, release, cx);
+            true
+        }
         DockLiveUndockReleaseAdoption::Rejected(host_release) => {
             if let Some(host_release) = host_release {
                 *locked_drop = Some(Ok(host_release.into_locked_drop()));
@@ -2413,7 +2494,7 @@ fn update_native_captured_preview(
     match target {
         DockNativeCapturedTarget::Host(target) => {
             clear_foreign_preview(route, cx);
-            let Some(captured_target) = captured_host_target(route, event, &target) else {
+            let Some(captured_target) = captured_host_target(route, event, &target, cx) else {
                 route.runtime.clear_routed_drop_preview(cx);
                 return;
             };
@@ -2519,7 +2600,7 @@ fn commit_native_captured_release(
             commit_locked_native_captured_drop(route, locked_drop, cx);
         }
         DockNativeCapturedTarget::ForeignSurfaceTarget(target) => {
-            let Some(target) = captured_host_target(route, event, &target) else {
+            let Some(target) = captured_host_target(route, event, &target, cx) else {
                 return route.runtime.record_locked_payload_drop_failure(
                     &route.session,
                     crate::DockActionApplyError::DropTargetUnavailable,
@@ -2898,8 +2979,9 @@ fn captured_host_target(
     route: &DockNativeCapturedDragRoute,
     event: &NativeCapturedDragEvent,
     target: &DockNativeCapturedHostTarget,
+    cx: &mut App,
 ) -> Option<DockCapturedNativeHostTarget> {
-    let target_window = native_captured_registered_window(route, event)?;
+    let target_window = native_captured_registered_window(route, event, cx)?;
     let target_window =
         (target_window.window_id() == target.scene.window_id).then_some(target_window)?;
     Some(DockCapturedNativeHostTarget::new(
@@ -2917,7 +2999,7 @@ fn update_foreign_surface_preview(
     target: DockNativeCapturedHostTarget,
     cx: &mut App,
 ) {
-    let Some(captured_target) = captured_host_target(route, event, &target) else {
+    let Some(captured_target) = captured_host_target(route, event, &target, cx) else {
         clear_foreign_preview(route, cx);
         return;
     };
@@ -3175,6 +3257,14 @@ mod tests {
         }
     }
 
+    fn no_input_hit(window: AnyWindowHandle, generation: u64) -> PlatformWindowHit {
+        PlatformWindowHit::NoInputPassThrough {
+            window,
+            pointer_input_generation: generation,
+            coverage: test_coverage(),
+        }
+    }
+
     fn active_surface_lease() -> DockSurfaceWindowSessionLease {
         let mut session = DockSurfaceWindowSession::new(EntityId::from(71));
         let opening = session
@@ -3214,10 +3304,35 @@ mod tests {
             registered_hit(terminal),
         ]);
 
-        let resolved =
-            classify_native_captured_window_hit(&stack, test_point(), |window, generation| {
-                window == provisional && generation == 41
-            });
+        let resolved = classify_native_captured_window_hit(
+            &stack,
+            test_point(),
+            |window, generation| window == provisional && generation == 41,
+            |_, _| panic!("a provisional-only prefix must not request no-input authority"),
+        );
+
+        assert!(matches!(
+            resolved,
+            DockNativeCapturedWindowHit::RegisteredApplication { window, .. }
+                if window == terminal
+        ));
+    }
+
+    #[test]
+    fn no_input_prefix_reaches_registered_terminal_without_provisional_authority() {
+        let terminal = test_window(14);
+        let stack = test_stack(vec![
+            no_input_hit(test_window(13), 8),
+            registered_hit(terminal),
+        ]);
+
+        let no_input = test_window(13);
+        let resolved = classify_native_captured_window_hit(
+            &stack,
+            test_point(),
+            |_, _| panic!("a no-input pass-through must not request provisional authority"),
+            |window, generation| window == no_input && generation == 8,
+        );
 
         assert!(matches!(
             resolved,
@@ -3236,12 +3351,32 @@ mod tests {
             test_stack(vec![provisional_hit(foreign, 41), registered_hit(terminal)]),
         ] {
             assert_eq!(
-                classify_native_captured_window_hit(&stack, test_point(), |window, generation| {
-                    window == current && generation == 41
-                }),
+                classify_native_captured_window_hit(
+                    &stack,
+                    test_point(),
+                    |window, generation| window == current && generation == 41,
+                    |_, _| panic!("a provisional-only prefix must not request no-input authority"),
+                ),
                 DockNativeCapturedWindowHit::Unavailable
             );
         }
+    }
+
+    #[test]
+    fn stale_no_input_generation_fails_closed_before_delayed_routing() {
+        let no_input = test_window(25);
+        let terminal = test_window(26);
+        let stack = test_stack(vec![no_input_hit(no_input, 8), registered_hit(terminal)]);
+
+        assert_eq!(
+            classify_native_captured_window_hit(
+                &stack,
+                test_point(),
+                |_, _| panic!("a no-input pass-through must not request provisional authority"),
+                |window, generation| window == no_input && generation == 9,
+            ),
+            DockNativeCapturedWindowHit::Unavailable
+        );
     }
 
     #[test]
@@ -3250,9 +3385,12 @@ mod tests {
             .expect("verified open desktop should be representable");
 
         assert_eq!(
-            classify_native_captured_window_hit(&stack, test_point(), |_, _| {
-                panic!("empty desktop must not request provisional authority")
-            }),
+            classify_native_captured_window_hit(
+                &stack,
+                test_point(),
+                |_, _| panic!("empty desktop must not request provisional authority"),
+                |_, _| panic!("empty desktop must not request no-input authority"),
+            ),
             DockNativeCapturedWindowHit::OpenDesktop
         );
     }
@@ -3267,13 +3405,16 @@ mod tests {
         .expect("the exact provisional prefix should reach verified open desktop");
 
         assert_eq!(
-            classify_native_captured_window_hit(&stack, test_point(), |window, generation| {
-                window == provisional && generation == 42
-            }),
+            classify_native_captured_window_hit(
+                &stack,
+                test_point(),
+                |window, generation| window == provisional && generation == 42,
+                |_, _| panic!("a provisional-only prefix must not request no-input authority"),
+            ),
             DockNativeCapturedWindowHit::OpenDesktop
         );
         assert_eq!(
-            classify_native_captured_window_hit(&stack, test_point(), |_, _| false),
+            classify_native_captured_window_hit(&stack, test_point(), |_, _| false, |_, _| false),
             DockNativeCapturedWindowHit::Unavailable
         );
     }
@@ -3285,9 +3426,12 @@ mod tests {
         }]);
 
         assert_eq!(
-            classify_native_captured_window_hit(&stack, test_point(), |_, _| {
-                panic!("a terminal-only stack must not request provisional authority")
-            }),
+            classify_native_captured_window_hit(
+                &stack,
+                test_point(),
+                |_, _| panic!("a terminal-only stack must not request provisional authority"),
+                |_, _| panic!("a terminal-only stack must not request no-input authority"),
+            ),
             DockNativeCapturedWindowHit::OpaqueBarrier
         );
     }
@@ -3312,7 +3456,7 @@ mod tests {
         .expect("the registered terminal should form an exact stack");
 
         assert_eq!(
-            classify_native_captured_window_hit(&stack, test_point(), |_, _| false),
+            classify_native_captured_window_hit(&stack, test_point(), |_, _| false, |_, _| false),
             DockNativeCapturedWindowHit::OpaqueBarrier
         );
     }

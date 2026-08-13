@@ -1942,6 +1942,7 @@ impl DockHost {
                 .join(", ");
             let accessible_name: SharedString =
                 format!("Lost viewport recovery for {payload_name}").into();
+            let recovery_selector = format!("dock:payload-recovery:{}:restore", entry.generation());
             let action = entry.action();
             let click_action = action;
             let accessibility_action = action;
@@ -1959,6 +1960,7 @@ impl DockHost {
                     "dock-lost-viewport-recovery:{}",
                     entry.generation()
                 ))
+                .debug_selector(move || recovery_selector)
                 .role(Role::Group)
                 .aria_label(accessible_name)
                 .aria_actions([AccessibleAction::Click])

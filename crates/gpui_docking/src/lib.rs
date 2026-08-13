@@ -141,6 +141,9 @@ mod layout;
 mod locked_drop_identity;
 pub mod model;
 mod native_captured_drag;
+#[cfg(feature = "test-support")]
+#[doc(hidden)]
+pub use native_captured_drag::native_captured_release_placement_for_test;
 mod op;
 mod panel;
 mod panel_catalog;

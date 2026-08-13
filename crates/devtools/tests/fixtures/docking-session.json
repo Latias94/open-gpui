@@ -686,6 +686,7 @@
                                   }
                                 },
                                 "coordinate_space": "window-local",
+                                "physical_geometry": null,
                                 "window_state": "windowed",
                                 "restore_bounds": {
                                   "origin": {
@@ -751,6 +752,7 @@
                                 }
                               },
                               "coordinate_space": "window-local",
+                              "physical_geometry": null,
                               "window_state": "windowed",
                               "restore_bounds": {
                                 "origin": {
@@ -924,6 +926,7 @@
                       }
                     },
                     "coordinate_space": "window-local",
+                    "physical_geometry": null,
                     "window_state": "windowed",
                     "restore_bounds": {
                       "origin": {
@@ -995,6 +998,7 @@
                     }
                   },
                   "coordinate_space": "window-local",
+                  "physical_geometry": null,
                   "window_state": "windowed",
                   "restore_bounds": {
                     "origin": {
@@ -1289,6 +1293,7 @@
                                 }
                               },
                               "coordinate_space": "window-local",
+                              "physical_geometry": null,
                               "window_state": "windowed",
                               "restore_bounds": {
                                 "origin": {
@@ -1354,6 +1359,7 @@
                               }
                             },
                             "coordinate_space": "window-local",
+                            "physical_geometry": null,
                             "window_state": "windowed",
                             "restore_bounds": {
                               "origin": {
@@ -2018,6 +2024,7 @@
                                     }
                                   },
                                   "coordinate_space": "window-local",
+                                  "physical_geometry": null,
                                   "window_state": "windowed",
                                   "restore_bounds": {
                                     "origin": {
@@ -2083,6 +2090,7 @@
                                   }
                                 },
                                 "coordinate_space": "window-local",
+                                "physical_geometry": null,
                                 "window_state": "windowed",
                                 "restore_bounds": {
                                   "origin": {
@@ -2249,6 +2257,7 @@
                         }
                       },
                       "coordinate_space": "window-local",
+                      "physical_geometry": null,
                       "window_state": "windowed",
                       "restore_bounds": {
                         "origin": {
@@ -2357,6 +2366,7 @@
                       }
                     },
                     "coordinate_space": "window-local",
+                    "physical_geometry": null,
                     "window_state": "windowed",
                     "restore_bounds": {
                       "origin": {
@@ -2773,6 +2783,7 @@
                                   }
                                 },
                                 "coordinate_space": "window-local",
+                                "physical_geometry": null,
                                 "window_state": "windowed",
                                 "restore_bounds": {
                                   "origin": {
@@ -2838,6 +2849,7 @@
                                 }
                               },
                               "coordinate_space": "window-local",
+                              "physical_geometry": null,
                               "window_state": "windowed",
                               "restore_bounds": {
                                 "origin": {

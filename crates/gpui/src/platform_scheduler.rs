@@ -41,11 +41,13 @@ impl PlatformScheduler {
 
     pub fn foreground_executor(self: &Arc<Self>) -> LocalExecutor {
         let session_id = self.next_session_id();
-        let scheduler = Arc::downgrade(self);
+        // Local tasks can be woken by a platform timer after the application has begun tearing
+        // down. Keep the dispatch destination alive until every runnable has either reached the
+        // main-thread queue or been handled by the platform's closed-queue fallback. Dropping a
+        // !Send local runnable on the timer thread is never sound.
+        let scheduler = self.clone();
         LocalExecutor::new(session_id, self.clone(), move |runnable| {
-            if let Some(scheduler) = scheduler.upgrade() {
-                scheduler.schedule_local(session_id, runnable);
-            }
+            scheduler.schedule_local(session_id, runnable);
         })
     }
 
@@ -188,7 +190,7 @@ impl Clock for PlatformClock {
 #[cfg(all(test, not(target_family = "wasm")))]
 mod tests {
     use super::*;
-    use crate::RunnableVariant;
+    use crate::{PriorityQueueReceiver, RunnableVariant};
     use open_gpui_scheduler::BackgroundExecutor;
     use std::time::Instant as StdInstant;
 
@@ -212,6 +214,101 @@ mod tests {
         fn spawn_realtime(&self, _f: Box<dyn FnOnce() + Send>) {
             panic!("SmokeDispatcher does not implement realtime");
         }
+    }
+
+    struct MainQueueDispatcher {
+        sender: crate::PriorityQueueSender<RunnableVariant>,
+    }
+
+    impl PlatformDispatcher for MainQueueDispatcher {
+        fn is_main_thread(&self) -> bool {
+            true
+        }
+
+        fn dispatch(&self, _runnable: RunnableVariant, _priority: Priority) {
+            panic!("MainQueueDispatcher does not implement background dispatch");
+        }
+
+        fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority) {
+            self.sender
+                .send(priority, runnable)
+                .expect("main-thread runnable queue should remain connected");
+        }
+
+        fn dispatch_after(&self, _duration: Duration, _runnable: RunnableVariant) {
+            panic!("MainQueueDispatcher does not implement timers");
+        }
+
+        fn spawn_realtime(&self, _f: Box<dyn FnOnce() + Send>) {
+            panic!("MainQueueDispatcher does not implement realtime work");
+        }
+    }
+
+    #[test]
+    fn foreground_executor_retains_dispatch_authority_until_local_task_finishes() {
+        use std::{cell::Cell, rc::Rc, thread};
+
+        let (sender, mut receiver) = PriorityQueueReceiver::new();
+        let scheduler = Arc::new(PlatformScheduler::new(Arc::new(MainQueueDispatcher {
+            sender,
+        })));
+        let weak_scheduler = Arc::downgrade(&scheduler);
+        let executor = scheduler.foreground_executor();
+        let (resume_tx, resume_rx) = futures::channel::oneshot::channel::<()>();
+        let dropped_on_main = Rc::new(Cell::new(false));
+
+        struct LocalDropProbe {
+            dropped: Rc<Cell<bool>>,
+            main_thread: thread::ThreadId,
+        }
+
+        impl Drop for LocalDropProbe {
+            fn drop(&mut self) {
+                assert_eq!(thread::current().id(), self.main_thread);
+                self.dropped.set(true);
+            }
+        }
+
+        executor
+            .spawn({
+                let dropped = Rc::clone(&dropped_on_main);
+                async move {
+                    let _probe = LocalDropProbe {
+                        dropped,
+                        main_thread: thread::current().id(),
+                    };
+                    resume_rx.await.expect("resume sender should remain live");
+                }
+            })
+            .detach();
+
+        receiver
+            .pop()
+            .expect("initial local runnable should be queued")
+            .run();
+        drop(executor);
+        drop(scheduler);
+        assert!(
+            weak_scheduler.upgrade().is_some(),
+            "the local task must retain its dispatch destination while it can still wake"
+        );
+
+        let wake = thread::spawn(move || resume_tx.send(()));
+        assert_eq!(
+            wake.join().expect("background wake must not panic"),
+            Ok(()),
+            "the pending local task must still accept its wake"
+        );
+        receiver
+            .pop()
+            .expect("woken local runnable should reach the main-thread queue")
+            .run();
+
+        assert!(dropped_on_main.get());
+        assert!(
+            weak_scheduler.upgrade().is_none(),
+            "completed local work must release the retained scheduler"
+        );
     }
 
     #[test]

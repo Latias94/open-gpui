@@ -350,8 +350,8 @@ fn checked_global_device_to_logical_coordinate(
 
 /// One classified native top-level window covering a sampled physical desktop point.
 ///
-/// Native handles remain backend-private. Exact provisional application windows form a typed
-/// pass-through prefix, registered application windows terminate routing with their complete GPUI
+/// Native handles remain backend-private. Exact provisional and no-input application windows form
+/// a typed pass-through prefix, registered input windows terminate routing with their complete GPUI
 /// handle, and every other covering top-level is an opaque routing barrier.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PlatformWindowHit {
@@ -365,6 +365,15 @@ pub enum PlatformWindowHit {
         coverage: PlatformWindowPhysicalCoverage,
         /// The provisional client geometry sampled as part of the same observation.
         geometry: PlatformWindowPhysicalGeometry,
+    },
+    /// One registered application window whose committed native role does not accept pointer input.
+    NoInputPassThrough {
+        /// The complete GPUI handle matched to the exact native window generation.
+        window: AnyWindowHandle,
+        /// The backend-owned pointer-input fact generation observed for this exact window.
+        pointer_input_generation: u64,
+        /// The native top-level bounds that cover the sampled physical point.
+        coverage: PlatformWindowPhysicalCoverage,
     },
     /// A currently registered application window and its same-observation native geometry.
     RegisteredApplication {
@@ -387,14 +396,18 @@ impl PlatformWindowHit {
     pub fn coverage(self) -> PlatformWindowPhysicalCoverage {
         match self {
             Self::ProvisionalPassThrough { coverage, .. }
+            | Self::NoInputPassThrough { coverage, .. }
             | Self::RegisteredApplication { coverage, .. }
             | Self::OpaqueBarrier { coverage } => coverage,
         }
     }
 
-    /// Returns whether this entry is one exact provisional pass-through fact.
-    pub const fn is_provisional_pass_through(self) -> bool {
-        matches!(self, Self::ProvisionalPassThrough { .. })
+    /// Returns whether this entry is one exact native pass-through fact.
+    pub const fn is_pass_through(self) -> bool {
+        matches!(
+            self,
+            Self::ProvisionalPassThrough { .. } | Self::NoInputPassThrough { .. }
+        )
     }
 
     /// Returns whether this entry terminates native hit routing.
@@ -411,6 +424,9 @@ impl PlatformWindowHit {
             Self::ProvisionalPassThrough {
                 session_generation: 0,
                 ..
+            } | Self::NoInputPassThrough {
+                pointer_input_generation: 0,
+                ..
             }
         )
     }
@@ -419,7 +435,7 @@ impl PlatformWindowHit {
 /// Typed terminal fact for one complete point-scoped native hit observation.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PlatformWindowHitTerminus {
-    /// Native hit testing continued through every provisional prefix entry to verified desktop.
+    /// Native hit testing continued through every pass-through prefix entry to verified desktop.
     OpenDesktop,
     /// The first native top-level that terminates routing at the sampled point.
     Window(PlatformWindowHit),
@@ -429,14 +445,14 @@ pub enum PlatformWindowHitTerminus {
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlatformWindowHitObservation {
     sampled_point: Point<DevicePixels>,
-    provisional_pass_throughs: Vec<PlatformWindowHit>,
+    pass_throughs: Vec<PlatformWindowHit>,
     terminus: PlatformWindowHitTerminus,
 }
 
 impl PlatformWindowHitObservation {
     /// Creates a complete observation through the first terminal hit.
     ///
-    /// The observation contains zero or more exact provisional pass-through entries and exactly
+    /// The observation contains zero or more exact pass-through entries and exactly
     /// one terminal window entry at the end. Verified open desktop uses
     /// [`Self::try_open_desktop`] so the two terminal domains cannot be confused.
     pub fn try_new(
@@ -449,28 +465,28 @@ impl PlatformWindowHitObservation {
             return None;
         }
         let (terminal, prefix) = hits.split_last()?;
-        if !terminal.is_terminal() || !prefix.iter().all(|hit| hit.is_provisional_pass_through()) {
+        if !terminal.is_terminal() || !prefix.iter().all(|hit| hit.is_pass_through()) {
             return None;
         }
         Some(Self {
             sampled_point,
-            provisional_pass_throughs: prefix.to_vec(),
+            pass_throughs: prefix.to_vec(),
             terminus: PlatformWindowHitTerminus::Window(*terminal),
         })
     }
 
-    /// Creates a complete observation through exact provisional pass-through entries to verified
-    /// open desktop space.
+    /// Creates a complete observation through exact pass-through entries to verified open desktop
+    /// space.
     ///
     /// Backends must only use this constructor after independently proving that native hit testing
-    /// continues through every supplied provisional window and terminates at the desktop rather
-    /// than at an unclassified top-level window.
+    /// continues through every supplied provisional or no-input window and terminates at the
+    /// desktop rather than at an unclassified top-level window.
     pub fn try_open_desktop(
         sampled_point: Point<DevicePixels>,
         hits: Vec<PlatformWindowHit>,
     ) -> Option<Self> {
         if hits.iter().any(|hit| {
-            !hit.is_provisional_pass_through()
+            !hit.is_pass_through()
                 || !hit.coverage().contains(sampled_point)
                 || !hit.has_valid_authority_generation()
         }) {
@@ -478,7 +494,7 @@ impl PlatformWindowHitObservation {
         }
         Some(Self {
             sampled_point,
-            provisional_pass_throughs: hits,
+            pass_throughs: hits,
             terminus: PlatformWindowHitTerminus::OpenDesktop,
         })
     }
@@ -488,9 +504,9 @@ impl PlatformWindowHitObservation {
         self.sampled_point
     }
 
-    /// Returns the exact provisional pass-through prefix in front-to-back order.
-    pub fn provisional_pass_throughs(&self) -> &[PlatformWindowHit] {
-        &self.provisional_pass_throughs
+    /// Returns the exact pass-through prefix in front-to-back order.
+    pub fn pass_throughs(&self) -> &[PlatformWindowHit] {
+        &self.pass_throughs
     }
 
     /// Returns the typed routing terminus for this complete observation.
@@ -522,7 +538,7 @@ impl PlatformWindowHitStack {
     }
 
     /// Creates an available observation that reaches verified open desktop after zero or more
-    /// exact provisional pass-through entries.
+    /// exact pass-through entries.
     pub fn try_available_open_desktop(
         sampled_point: Point<DevicePixels>,
         hits: Vec<PlatformWindowHit>,
@@ -579,6 +595,14 @@ mod platform_window_hit_observation_tests {
         }
     }
 
+    fn no_input(window: AnyWindowHandle, pointer_input_generation: u64) -> PlatformWindowHit {
+        PlatformWindowHit::NoInputPassThrough {
+            window,
+            pointer_input_generation,
+            coverage: coverage(),
+        }
+    }
+
     #[test]
     fn hit_observation_accepts_exact_pass_through_prefix_and_one_terminal() {
         let sampled_point = point(DevicePixels(50), DevicePixels(50));
@@ -595,7 +619,7 @@ mod platform_window_hit_observation_tests {
 
         let observation = PlatformWindowHitObservation::try_new(sampled_point, hits.clone())
             .expect("an exact pass-through prefix followed by one terminal should be valid");
-        assert_eq!(observation.provisional_pass_throughs(), &hits[..2]);
+        assert_eq!(observation.pass_throughs(), &hits[..2]);
         assert_eq!(
             observation.terminus(),
             PlatformWindowHitTerminus::Window(hits[2])
@@ -615,7 +639,7 @@ mod platform_window_hit_observation_tests {
             PlatformWindowHitObservation::try_open_desktop(sampled_point, hits.clone()).expect(
                 "an exact provisional prefix may terminate at independently verified desktop",
             );
-        assert_eq!(observation.provisional_pass_throughs(), hits);
+        assert_eq!(observation.pass_throughs(), hits);
         assert_eq!(
             observation.terminus(),
             PlatformWindowHitTerminus::OpenDesktop
@@ -663,6 +687,41 @@ mod platform_window_hit_observation_tests {
             PlatformWindowHitObservation::try_new(
                 point(DevicePixels(101), DevicePixels(50)),
                 vec![terminal],
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn hit_observation_accepts_no_input_pass_through_prefix() {
+        let sampled_point = point(DevicePixels(50), DevicePixels(50));
+        let no_input = no_input(test_window(1), 7);
+        let terminal = PlatformWindowHit::RegisteredApplication {
+            window: test_window(2),
+            coverage: coverage(),
+            geometry: geometry(),
+        };
+
+        let observation =
+            PlatformWindowHitObservation::try_new(sampled_point, vec![no_input, terminal])
+                .expect("a no-input prefix must continue to the first terminal window");
+        assert_eq!(observation.pass_throughs(), &[no_input]);
+        assert_eq!(
+            observation.terminus(),
+            PlatformWindowHitTerminus::Window(terminal)
+        );
+    }
+
+    #[test]
+    fn hit_observation_rejects_zero_no_input_generation() {
+        let sampled_point = point(DevicePixels(50), DevicePixels(50));
+        let terminal = PlatformWindowHit::OpaqueBarrier {
+            coverage: coverage(),
+        };
+        assert!(
+            PlatformWindowHitObservation::try_new(
+                sampled_point,
+                vec![no_input(test_window(1), 0), terminal],
             )
             .is_none()
         );
@@ -3974,6 +4033,19 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn is_hovered(&self) -> bool;
     fn accepts_pointer_input(&self) -> bool {
         true
+    }
+    /// Returns whether a previously sampled pointer-input fact is still current.
+    ///
+    /// Native point-hit observations can be consumed after the platform callback that sampled
+    /// them. Backends that publish generation-bound no-input pass-through hits must override this
+    /// method so delayed routing fails closed after any intervening pointer-input fact change.
+    #[doc(hidden)]
+    fn is_current_pointer_input_observation(
+        &self,
+        accepts_pointer_input: bool,
+        generation: u64,
+    ) -> bool {
+        generation == 1 && self.accepts_pointer_input() == accepts_pointer_input
     }
     /// Returns immutable facts established by the backend during window creation.
     fn creation_facts(&self) -> WindowCreationFacts;

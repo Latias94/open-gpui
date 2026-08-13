@@ -302,6 +302,10 @@ impl DockViewportCommittedLockedPayloadDrop {
 }
 
 impl DockViewportPreflightedLockedPayloadDrop {
+    pub(crate) fn graph_changed(&self) -> bool {
+        self.workspace.changed()
+    }
+
     pub(crate) fn committed_workspace(
         &self,
         cx: &App,
