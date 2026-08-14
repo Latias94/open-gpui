@@ -2666,8 +2666,8 @@ mod handle_suite {
         viewport_test_support::handle,
     };
     use open_gpui::{
-        AppContext as _, Focusable, Modifiers, MouseButton, TestAppContext, VisualTestContext,
-        WindowBounds, WindowOptions, point, px, size,
+        AppContext as _, Focusable, Modifiers, MouseButton, QuitMode, TestAppContext,
+        VisualTestContext, WindowBounds, WindowOptions, point, px, size,
     };
     use slotmap::Key;
 
@@ -2968,6 +2968,7 @@ mod handle_suite {
     fn viewport_runtime_handle_retain_close_clears_scene_and_reopens_layout(
         cx: &mut TestAppContext,
     ) {
+        cx.update(|app| app.set_quit_mode(QuitMode::Explicit));
         let secondary_space = DockSpaceId::from("secondary");
         let mut graph = DockGraph::new();
         let secondary_tabs = graph.insert_node(DockNode::Tabs {

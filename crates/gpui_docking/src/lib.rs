@@ -338,6 +338,12 @@ pub use surface::{
     DockSurfaceWindowSessionReason, DockSurfaceWindowSessionShutdownReason,
     DockSurfaceWindowSessionStatus,
 };
+#[cfg(feature = "test-support")]
+#[doc(hidden)]
+pub use surface::{
+    DockSurfaceShutdownCaptureReleaseEvidence, DockSurfaceShutdownTestEvent,
+    DockSurfaceShutdownTestEventKind, DockSurfaceShutdownTestObservation,
+};
 pub(crate) use viewport::*;
 #[cfg(test)]
 pub(crate) use viewport_activation::DockViewportWindowActivation;

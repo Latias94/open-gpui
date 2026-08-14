@@ -31,6 +31,7 @@ const PROCESS_WINDOW_CENSUS_ATTEMPTS: usize = 8;
 pub struct NativeTestDisplay {
     display_id: DisplayId,
     physical_bounds: Bounds<DevicePixels>,
+    physical_visible_bounds: Bounds<DevicePixels>,
     scale_factor: f32,
 }
 
@@ -43,6 +44,11 @@ impl NativeTestDisplay {
     /// Returns the monitor rectangle in physical desktop coordinates.
     pub const fn physical_bounds(self) -> Bounds<DevicePixels> {
         self.physical_bounds
+    }
+
+    /// Returns the monitor work area in physical desktop coordinates.
+    pub const fn physical_visible_bounds(self) -> Bounds<DevicePixels> {
+        self.physical_visible_bounds
     }
 
     /// Returns the effective DPI scale sampled with the monitor rectangle.
@@ -59,6 +65,7 @@ pub fn native_test_displays() -> Vec<NativeTestDisplay> {
         .map(|display| NativeTestDisplay {
             display_id: display.display_id,
             physical_bounds: display.physical_bounds(),
+            physical_visible_bounds: display.physical_visible_bounds(),
             scale_factor: display.scale_factor(),
         })
         .collect()

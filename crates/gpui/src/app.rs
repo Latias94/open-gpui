@@ -274,18 +274,36 @@ impl Application {
     where
         F: 'static + FnOnce(&mut App),
     {
+        self.run_platform(on_finish_launching);
+        #[cfg(target_family = "wasm")]
+        RUNNING_WEB_APPLICATIONS.with(|applications| {
+            applications.borrow_mut().push(self.0);
+        });
+    }
+
+    /// Runs a returning test platform while retaining the application for post-run inspection.
+    ///
+    /// Native process-convergence tests use this to prove that normal last-window policy returns
+    /// from the owning platform loop before the worker publishes its live pre-exit census.
+    #[doc(hidden)]
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn run_returning_for_test<F>(&mut self, on_finish_launching: F)
+    where
+        F: 'static + FnOnce(&mut App),
+    {
+        self.run_platform(on_finish_launching);
+    }
+
+    fn run_platform<F>(&self, on_finish_launching: F)
+    where
+        F: 'static + FnOnce(&mut App),
+    {
         let this = self.0.clone();
         let platform = self.0.borrow().platform.clone();
-        #[cfg(target_family = "wasm")]
-        let keep_alive = this.clone();
         platform.run(Box::new(move || {
             let cx = &mut *this.borrow_mut();
             on_finish_launching(cx);
         }));
-        #[cfg(target_family = "wasm")]
-        RUNNING_WEB_APPLICATIONS.with(|applications| {
-            applications.borrow_mut().push(keep_alive);
-        });
     }
 
     /// Register a handler to be invoked when the platform instructs the application
@@ -1060,6 +1078,19 @@ impl App {
         self.begin_shutdown_with_window_open_barrier(true);
     }
 
+    /// Starts terminal App shutdown and returns the platform loop only after every native
+    /// shutdown authority has settled.
+    ///
+    /// Native process integration workers use this instead of pairing
+    /// [`Self::shutdown_for_native_exit_test`] with an early [`Self::quit`] call. The platform
+    /// quit request is consumed by the same terminal fence that clears the window registry and
+    /// drains presentation and native-retirement authorities.
+    #[doc(hidden)]
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn shutdown_and_quit_for_native_exit_test(&mut self) {
+        self.quit_after_terminal_shutdown();
+    }
+
     /// Returns whether terminal native shutdown owns no remaining application-bound authority.
     #[doc(hidden)]
     #[cfg(any(test, feature = "test-support"))]
@@ -1070,6 +1101,14 @@ impl App {
     }
 
     pub(super) fn shutdown_from_native_quit(&mut self) {
+        self.begin_shutdown_with_window_open_barrier(true);
+    }
+
+    pub(super) fn quit_after_terminal_shutdown(&mut self) {
+        let Some(app_cell) = self.this.upgrade() else {
+            return;
+        };
+        app_cell.request_terminal_platform_quit();
         self.begin_shutdown_with_window_open_barrier(true);
     }
 
@@ -4284,11 +4323,19 @@ mod test {
             1,
             "a panicking observer must not skip later close observers"
         );
+        assert!(cx.windows().is_empty());
+        cx.run_until_parked();
         assert!(
             cx.did_quit(),
-            "LastWindowClosed must still request application quit"
+            "LastWindowClosed must request platform quit after terminal shutdown"
         );
-        assert!(cx.windows().is_empty());
+        assert!(cx.update(|app| app.native_exit_authority_is_settled_for_test()));
+        let error = cx
+            .update(|app| {
+                app.open_window_detailed(WindowOptions::default(), |_, app| app.new(|_| Empty))
+            })
+            .expect_err("terminal LastWindowClosed shutdown must reject a replacement window");
+        assert_eq!(error.stage(), WindowOpenFailureStage::AppShutdown);
         assert_app_transaction_idle(cx);
     }
 
@@ -4462,6 +4509,40 @@ mod test {
         cx.run_until_parked();
 
         assert_eq!(observations.borrow().as_slice(), &[stale_window]);
+        assert_app_transaction_idle(cx);
+    }
+
+    #[crate::test]
+    fn terminating_shutdown_drains_closed_event_queued_behind_completion(cx: &mut TestAppContext) {
+        let stale_window = cx.update(|app| {
+            let reservation =
+                window_registry::reserve(app).expect("window reservation should be available");
+            let window_id = reservation.id();
+            drop(reservation);
+            window_id
+        });
+        let observations = Rc::new(RefCell::new(Vec::new()));
+        cx.update(|app| {
+            app.on_window_native_terminal({
+                let observations = observations.clone();
+                move |_, window_id| observations.borrow_mut().push(window_id)
+            })
+            .detach();
+        });
+
+        let mut app = cx.app.borrow_mut();
+        app.shutdown_from_native_quit();
+        cx.app
+            .enqueue_native_window_event(stale_window, NativeWindowEvent::Closed);
+        drop(app);
+        cx.run_until_parked();
+
+        assert_eq!(
+            observations.borrow().as_slice(),
+            &[stale_window],
+            "terminal shutdown must deliver exact native lifecycle work queued behind its completion"
+        );
+        assert!(cx.app.native_exit_authority_is_settled_for_test());
         assert_app_transaction_idle(cx);
     }
 

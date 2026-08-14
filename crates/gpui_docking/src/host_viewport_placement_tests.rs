@@ -35,10 +35,10 @@ mod runtime_suite {
         viewport_test_support::{handle, register_viewport},
     };
     use open_gpui::{
-        AnyWindowHandle, AppContext as _, DevicePixels, Focusable,
-        PlatformNativePointerPhysicalFrame, PlatformWindowPhysicalGeometry, SharedString,
-        TestAppContext, TitlebarOptions, VisualTestContext, WindowBounds, WindowHandle, WindowId,
-        WindowOptions, point, px, size,
+        AnyWindowHandle, AppContext as _, DevicePixels, DisplayId, Focusable,
+        PlatformNativePointerPhysicalFrame, PlatformPhysicalDisplayObservation,
+        PlatformWindowPhysicalGeometry, SharedString, TestAppContext, TitlebarOptions,
+        VisualTestContext, WindowBounds, WindowHandle, WindowId, WindowOptions, point, px, size,
     };
 
     use crate::host_viewport_runtime_test_support::*;
@@ -1674,6 +1674,167 @@ mod runtime_suite {
             Some(WindowBounds::Windowed(floating_bounds(
                 230.0, 320.0, 320.0, 240.0
             )))
+        );
+    }
+
+    #[test]
+    fn captured_native_physical_bounds_follow_cross_display_pointer_without_source_clamp() {
+        let source_geometry = PlatformWindowPhysicalGeometry::try_new(
+            open_gpui::Bounds::new(
+                point(DevicePixels(200), DevicePixels(400)),
+                size(DevicePixels(1_200), DevicePixels(900)),
+            ),
+            1.5,
+        )
+        .expect("the source physical geometry should be representable");
+        let target_display = PlatformPhysicalDisplayObservation::try_new(
+            1,
+            DisplayId::from(2),
+            open_gpui::Bounds::new(
+                point(DevicePixels(-1_920), DevicePixels(0)),
+                size(DevicePixels(1_920), DevicePixels(1_080)),
+            ),
+            open_gpui::Bounds::new(
+                point(DevicePixels(-1_920), DevicePixels(0)),
+                size(DevicePixels(1_920), DevicePixels(1_040)),
+            ),
+            1.0,
+        )
+        .expect("the target display observation should be representable");
+        let physical_frame = PlatformNativePointerPhysicalFrame::new(
+            point(DevicePixels(-1_760), DevicePixels(540)),
+            source_geometry,
+        )
+        .with_target_display(target_display)
+        .expect("the target display must contain the callback-scoped pointer point");
+        let geometry = DockDragTearOffGeometry::from_source_bounds(
+            floating_bounds(0.0, 0.0, 800.0, 600.0),
+            point(px(120.0), px(80.0)),
+        )
+        .with_preferred_size(size(px(640.0), px(480.0)))
+        .with_display_work_area(floating_bounds(0.0, 0.0, 1_280.0, 720.0));
+
+        let bounds =
+            crate::viewport_runtime::suggested_tear_off_physical_client_bounds_from_native_frame(
+                physical_frame,
+                geometry,
+            )
+            .expect("cross-display physical bounds should remain representable");
+
+        assert_eq!(
+            bounds,
+            open_gpui::Bounds::new(
+                point(DevicePixels(-1_880), DevicePixels(460)),
+                size(DevicePixels(640), DevicePixels(480)),
+            )
+        );
+        assert!(
+            physical_frame.global_position().x.0 >= bounds.origin.x.0
+                && physical_frame.global_position().x.0 < bounds.right().0
+                && physical_frame.global_position().y.0 >= bounds.origin.y.0
+                && physical_frame.global_position().y.0 < bounds.bottom().0,
+            "the exact reveal point must remain inside the same-generation physical bounds"
+        );
+        assert!(
+            bounds.origin.x.0 < 0,
+            "the source display work area may cap size but must not clamp a cross-display origin"
+        );
+    }
+
+    #[test]
+    fn captured_native_physical_bounds_use_higher_target_scale() {
+        let source_geometry = PlatformWindowPhysicalGeometry::try_new(
+            open_gpui::Bounds::new(
+                point(DevicePixels(0), DevicePixels(100)),
+                size(DevicePixels(1_920), DevicePixels(1_080)),
+            ),
+            1.0,
+        )
+        .expect("the source physical geometry should be representable");
+        let target_display = PlatformPhysicalDisplayObservation::try_new(
+            1,
+            DisplayId::from(3),
+            open_gpui::Bounds::new(
+                point(DevicePixels(1_920), DevicePixels(0)),
+                size(DevicePixels(2_560), DevicePixels(1_440)),
+            ),
+            open_gpui::Bounds::new(
+                point(DevicePixels(1_920), DevicePixels(0)),
+                size(DevicePixels(2_560), DevicePixels(1_400)),
+            ),
+            1.5,
+        )
+        .expect("the target display observation should be representable");
+        let physical_frame = PlatformNativePointerPhysicalFrame::new(
+            point(DevicePixels(2_200), DevicePixels(600)),
+            source_geometry,
+        )
+        .with_target_display(target_display)
+        .expect("the target display must contain the callback-scoped pointer point");
+        let geometry = DockDragTearOffGeometry::from_source_bounds(
+            floating_bounds(0.0, 0.0, 640.0, 480.0),
+            point(px(120.0), px(80.0)),
+        )
+        .with_preferred_size(size(px(640.0), px(480.0)));
+
+        assert_eq!(
+            crate::viewport_runtime::suggested_tear_off_physical_client_bounds_from_native_frame(
+                physical_frame,
+                geometry,
+            ),
+            Some(open_gpui::Bounds::new(
+                point(DevicePixels(2_020), DevicePixels(480)),
+                size(DevicePixels(960), DevicePixels(720)),
+            ))
+        );
+    }
+
+    #[test]
+    fn captured_native_physical_bounds_cap_size_against_target_work_area() {
+        let source_geometry = PlatformWindowPhysicalGeometry::try_new(
+            open_gpui::Bounds::new(
+                point(DevicePixels(0), DevicePixels(0)),
+                size(DevicePixels(1_920), DevicePixels(1_080)),
+            ),
+            1.0,
+        )
+        .expect("the source physical geometry should be representable");
+        let target_display = PlatformPhysicalDisplayObservation::try_new(
+            1,
+            DisplayId::from(4),
+            open_gpui::Bounds::new(
+                point(DevicePixels(-1_200), DevicePixels(0)),
+                size(DevicePixels(1_200), DevicePixels(800)),
+            ),
+            open_gpui::Bounds::new(
+                point(DevicePixels(-1_200), DevicePixels(0)),
+                size(DevicePixels(1_200), DevicePixels(800)),
+            ),
+            2.0,
+        )
+        .expect("the target display observation should be representable");
+        let physical_frame = PlatformNativePointerPhysicalFrame::new(
+            point(DevicePixels(-1_000), DevicePixels(400)),
+            source_geometry,
+        )
+        .with_target_display(target_display)
+        .expect("the target display must contain the callback-scoped pointer point");
+        let geometry = DockDragTearOffGeometry::from_source_bounds(
+            floating_bounds(0.0, 0.0, 1_000.0, 800.0),
+            point(px(100.0), px(80.0)),
+        )
+        .with_preferred_size(size(px(1_000.0), px(800.0)))
+        .with_display_work_area(floating_bounds(0.0, 0.0, 1_920.0, 1_080.0));
+
+        assert_eq!(
+            crate::viewport_runtime::suggested_tear_off_physical_client_bounds_from_native_frame(
+                physical_frame,
+                geometry,
+            ),
+            Some(open_gpui::Bounds::new(
+                point(DevicePixels(-1_200), DevicePixels(240)),
+                size(DevicePixels(1_080), DevicePixels(720)),
+            ))
         );
     }
 }

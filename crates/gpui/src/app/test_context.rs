@@ -3070,7 +3070,9 @@ mod tests {
         assert!(!cx.did_quit());
         assert!(cx.simulate_window_close(window));
         assert!(cx.windows().is_empty());
+        cx.run_until_parked();
         assert!(cx.did_quit());
+        assert!(cx.update(|app| app.native_exit_authority_is_settled_for_test()));
     }
 
     #[open_gpui::test]

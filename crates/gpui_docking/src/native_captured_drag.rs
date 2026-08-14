@@ -10,8 +10,8 @@ use crate::{
         DockLiveUndockCancelReason, DockLiveUndockDragGeneration, DockLiveUndockFact,
         DockLiveUndockHostTarget, DockLiveUndockIdentity, DockLiveUndockPhysicalBounds,
         DockLiveUndockPhysicalPoint, DockLiveUndockPlacementGeneration, DockLiveUndockReleaseLock,
-        DockLiveUndockRouteFeedback, DockLiveUndockSourceFocusSnapshot,
-        DockLiveUndockSourceSnapshot, DockLiveUndockTrigger,
+        DockLiveUndockRouteFeedback, DockLiveUndockRouteGeneration,
+        DockLiveUndockSourceFocusSnapshot, DockLiveUndockSourceSnapshot, DockLiveUndockTrigger,
     },
     surface::live_undock_runtime::{
         DockLiveUndockExecutionSeed, DockLiveUndockHostReleaseAuthority,
@@ -323,6 +323,54 @@ impl DockNativeCapturedSurfaceReleaseOutcome {
             | NativeCapturedDragReleaseTerminal::NotRequired => Self::Released,
             NativeCapturedDragReleaseTerminal::Failed => Self::Failed,
         }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct DockNativeCapturedSurfaceRelease {
+    outcome: DockNativeCapturedSurfaceReleaseOutcome,
+    cleanup_completed: bool,
+    evidence: Vec<(
+        NativeCapturedDragReleaseBarrier,
+        NativeCapturedDragReleaseTerminal,
+    )>,
+}
+
+impl DockNativeCapturedSurfaceRelease {
+    fn new(
+        outcome: DockNativeCapturedSurfaceReleaseOutcome,
+        cleanup_completed: bool,
+        evidence: Vec<(
+            NativeCapturedDragReleaseBarrier,
+            NativeCapturedDragReleaseTerminal,
+        )>,
+    ) -> Self {
+        Self {
+            outcome,
+            cleanup_completed,
+            evidence,
+        }
+    }
+
+    pub(crate) fn without_evidence(outcome: DockNativeCapturedSurfaceReleaseOutcome) -> Self {
+        Self::new(outcome, true, Vec::new())
+    }
+
+    pub(crate) const fn outcome(&self) -> DockNativeCapturedSurfaceReleaseOutcome {
+        self.outcome
+    }
+
+    pub(crate) const fn cleanup_completed(&self) -> bool {
+        self.cleanup_completed
+    }
+
+    pub(crate) fn evidence(
+        &self,
+    ) -> &[(
+        NativeCapturedDragReleaseBarrier,
+        NativeCapturedDragReleaseTerminal,
+    )] {
+        &self.evidence
     }
 }
 
@@ -1110,7 +1158,7 @@ pub(crate) fn cancel_native_captured_drag_route_for_surface(
     runtime_identity: DockViewportRuntimeIdentity,
     lease: crate::surface::window_session::DockSurfaceWindowSessionLease,
     on_native_capture_terminal: impl FnOnce(
-        DockNativeCapturedSurfaceReleaseOutcome,
+        DockNativeCapturedSurfaceRelease,
         &mut Option<Box<dyn Any + Send + 'static>>,
         &mut App,
     ) + 'static,
@@ -1118,7 +1166,9 @@ pub(crate) fn cancel_native_captured_drag_route_for_surface(
 ) {
     let Some(state) = router_state(cx) else {
         defer_native_captured_surface_terminal(
-            DockNativeCapturedSurfaceReleaseOutcome::Released,
+            DockNativeCapturedSurfaceRelease::without_evidence(
+                DockNativeCapturedSurfaceReleaseOutcome::Released,
+            ),
             Box::new(on_native_capture_terminal),
             cx,
         );
@@ -1162,11 +1212,11 @@ pub(crate) fn cancel_native_captured_drag_route_for_surface(
     let pending_count = usize::from(active.is_some()) + locked.len() + retired_pending.len();
     if pending_count == 0 {
         defer_native_captured_surface_terminal(
-            if release_failed {
+            DockNativeCapturedSurfaceRelease::without_evidence(if release_failed {
                 DockNativeCapturedSurfaceReleaseOutcome::Failed
             } else {
                 DockNativeCapturedSurfaceReleaseOutcome::Released
-            },
+            }),
             Box::new(on_native_capture_terminal),
             cx,
         );
@@ -1177,7 +1227,9 @@ pub(crate) fn cancel_native_captured_drag_route_for_surface(
         remaining: pending_count,
         on_native_capture_terminal: Some(Box::new(on_native_capture_terminal)),
         release_failed,
+        cleanup_completed: true,
         first_panic: None,
+        evidence: Vec::with_capacity(pending_count),
     }));
     if let Some(route) = active {
         attach_active_surface_route_release(
@@ -1202,7 +1254,7 @@ pub(crate) fn cancel_native_captured_drag_route_for_surface(
 
 type DockNativeCapturedSurfaceTerminal = Box<
     dyn FnOnce(
-        DockNativeCapturedSurfaceReleaseOutcome,
+        DockNativeCapturedSurfaceRelease,
         &mut Option<Box<dyn Any + Send + 'static>>,
         &mut App,
     ),
@@ -1212,32 +1264,32 @@ struct DockNativeCapturedSurfaceCancellation {
     remaining: usize,
     on_native_capture_terminal: Option<DockNativeCapturedSurfaceTerminal>,
     release_failed: bool,
+    cleanup_completed: bool,
     first_panic: Option<Box<dyn Any + Send + 'static>>,
+    evidence: Vec<(
+        NativeCapturedDragReleaseBarrier,
+        NativeCapturedDragReleaseTerminal,
+    )>,
 }
 
 fn defer_native_captured_surface_terminal(
-    release_outcome: DockNativeCapturedSurfaceReleaseOutcome,
+    release: DockNativeCapturedSurfaceRelease,
     on_native_capture_terminal: DockNativeCapturedSurfaceTerminal,
     cx: &mut App,
 ) {
     cx.defer_shutdown_critical_before_window_registry_clear(move |cx| {
-        invoke_native_captured_surface_terminal(
-            on_native_capture_terminal,
-            release_outcome,
-            None,
-            cx,
-        );
+        invoke_native_captured_surface_terminal(on_native_capture_terminal, release, None, cx);
     });
 }
 
 fn invoke_native_captured_surface_terminal(
     on_native_capture_terminal: DockNativeCapturedSurfaceTerminal,
-    release_outcome: DockNativeCapturedSurfaceReleaseOutcome,
+    release: DockNativeCapturedSurfaceRelease,
     mut first_panic: Option<Box<dyn Any + Send + 'static>>,
     cx: &mut App,
 ) {
     if let Err(payload) = catch_unwind(AssertUnwindSafe(|| {
-        on_native_capture_terminal(release_outcome, &mut first_panic, cx)
+        on_native_capture_terminal(release, &mut first_panic, cx)
     })) {
         if first_panic.is_none() {
             first_panic = Some(payload);
@@ -1281,6 +1333,7 @@ fn attach_active_surface_route_release(
             finish_surface_route_cancellation(
                 Some(cleanup),
                 DockNativeCapturedSurfaceReleaseOutcome::from_native_terminal(terminal),
+                Some((barrier, terminal)),
                 terminal_completion,
                 cx,
             );
@@ -1299,6 +1352,7 @@ fn attach_active_surface_route_release(
         finish_surface_route_cancellation(
             Some(cleanup),
             DockNativeCapturedSurfaceReleaseOutcome::Released,
+            None,
             completion,
             cx,
         )
@@ -1333,6 +1387,7 @@ fn attach_retired_surface_route_release(
             finish_surface_route_cancellation(
                 cleanup,
                 DockNativeCapturedSurfaceReleaseOutcome::from_native_terminal(terminal),
+                Some((barrier, terminal)),
                 terminal_completion,
                 cx,
             );
@@ -1355,6 +1410,7 @@ fn attach_retired_surface_route_release(
         finish_surface_route_cancellation(
             cleanup,
             DockNativeCapturedSurfaceReleaseOutcome::Failed,
+            Some((expected_barrier, NativeCapturedDragReleaseTerminal::Failed)),
             completion,
             cx,
         )
@@ -1364,10 +1420,18 @@ fn attach_retired_surface_route_release(
 fn finish_surface_route_cancellation(
     cleanup: Option<DockNativeCapturedRouteCleanup>,
     release_outcome: DockNativeCapturedSurfaceReleaseOutcome,
+    evidence: Option<(
+        NativeCapturedDragReleaseBarrier,
+        NativeCapturedDragReleaseTerminal,
+    )>,
     completion: Rc<RefCell<DockNativeCapturedSurfaceCancellation>>,
     cx: &mut App,
 ) {
-    let route_panic = cleanup.and_then(|cleanup| finish_route_cleanup(cleanup, cx));
+    let route_cleanup = cleanup.map(|cleanup| finish_route_cleanup(cleanup, cx));
+    let (route_cleanup_completed, route_panic) = match route_cleanup {
+        Some(cleanup) => (cleanup.completed, cleanup.first_panic),
+        None => (true, None),
+    };
     let terminal = {
         let mut completion = completion.borrow_mut();
         if completion.first_panic.is_none() {
@@ -1379,6 +1443,10 @@ fn finish_surface_route_cancellation(
         }
         completion.release_failed |=
             release_outcome == DockNativeCapturedSurfaceReleaseOutcome::Failed;
+        completion.cleanup_completed &= route_cleanup_completed;
+        if let Some(evidence) = evidence {
+            completion.evidence.push(evidence);
+        }
         completion.remaining = completion
             .remaining
             .checked_sub(1)
@@ -1394,16 +1462,25 @@ fn finish_surface_route_cancellation(
                 } else {
                     DockNativeCapturedSurfaceReleaseOutcome::Released
                 },
+                completion.cleanup_completed,
                 completion.first_panic.take(),
+                std::mem::take(&mut completion.evidence),
             )
         })
     };
-    let Some((on_native_capture_terminal, release_outcome, first_panic)) = terminal else {
+    let Some((
+        on_native_capture_terminal,
+        release_outcome,
+        cleanup_completed,
+        first_panic,
+        evidence,
+    )) = terminal
+    else {
         return;
     };
     invoke_native_captured_surface_terminal(
         on_native_capture_terminal,
-        release_outcome,
+        DockNativeCapturedSurfaceRelease::new(release_outcome, cleanup_completed, evidence),
         first_panic,
         cx,
     );
@@ -1688,7 +1765,7 @@ fn consume_native_captured_drag_event(
         let mut cleanup = terminal_cleanup
             .take()
             .expect("one terminal Dock route must retain its cleanup authority");
-        let cleanup_panic = match result {
+        let cleanup_result = match result {
             Ok(true) => finish_route_cleanup(cleanup, cx),
             Ok(false) => finish_route_cleanup_with_cancel(
                 cleanup,
@@ -1704,7 +1781,7 @@ fn consume_native_captured_drag_event(
                 )
             }
         };
-        if let Some(payload) = cleanup_panic {
+        if let Some(payload) = cleanup_result.first_panic {
             resume_unwind(payload);
         }
         return;
@@ -2183,12 +2260,20 @@ fn desired_live_undock_physical_bounds(
     event: &NativeCapturedDragEvent,
 ) -> Option<DockLiveUndockPhysicalBounds> {
     let physical_frame = event.physical_frame()?;
-    let logical = suggested_live_undock_window_bounds(route, event)?.get_bounds();
-    let physical = logical.to_device_pixels(physical_frame.source_geometry().scale_factor());
-    DockLiveUndockPhysicalBounds::new(
+    let physical =
+        crate::viewport_runtime::suggested_tear_off_physical_client_bounds_from_native_frame(
+            physical_frame,
+            route
+                .runtime
+                .active_payload_drag_tear_off_geometry(Some(&route.session))?,
+        )?;
+    let width = u32::try_from(physical.size.width.0).ok()?;
+    let height = u32::try_from(physical.size.height.0).ok()?;
+    DockLiveUndockPhysicalBounds::for_display(
         DockLiveUndockPhysicalPoint::new(physical.origin.x.0, physical.origin.y.0),
-        u32::try_from(physical.size.width.0).ok()?,
-        u32::try_from(physical.size.height.0).ok()?,
+        width,
+        height,
+        physical_frame.target_display()?,
     )
 }
 
@@ -2215,7 +2300,9 @@ fn live_undock_route_feedback(target: &DockNativeCapturedTarget) -> DockLiveUndo
 fn live_undock_trigger_for_move(
     drag_start: Option<PlatformNativeDragStartSnapshot>,
     current: Option<Point<open_gpui::DevicePixels>>,
+    desired_bounds: DockLiveUndockPhysicalBounds,
     drag_generation: DockLiveUndockDragGeneration,
+    route_generation: DockLiveUndockRouteGeneration,
     source: DockLiveUndockSourceSnapshot,
     route: DockLiveUndockRouteFeedback,
 ) -> Option<DockLiveUndockTrigger> {
@@ -2230,8 +2317,10 @@ fn live_undock_trigger_for_move(
     DockLiveUndockTrigger::new(
         drag_generation,
         source,
+        route_generation,
         route,
         DockLiveUndockPhysicalPoint::new(current.x.0, current.y.0),
+        desired_bounds,
     )
 }
 
@@ -2240,6 +2329,11 @@ fn live_undock_drag_generation(
 ) -> DockLiveUndockDragGeneration {
     DockLiveUndockDragGeneration::new(generation.ordinal())
         .expect("GPUI native captured-drag generations are non-zero")
+}
+
+fn live_undock_route_generation(sequence: NativeIngressSequence) -> DockLiveUndockRouteGeneration {
+    DockLiveUndockRouteGeneration::new(sequence.ordinal())
+        .expect("GPUI native ingress sequences are non-zero")
 }
 
 fn submit_live_undock_fact(
@@ -2308,11 +2402,13 @@ fn update_live_undock_move(
         && let Some(source_scene) = route.live_undock_source_scene.as_ref()
         && let source =
             DockLiveUndockSourceSnapshot::new(route.source_window, source_scene.frame.generation())
-        && suggested_live_undock_window_bounds(route, event).is_some()
+        && let Some(desired_bounds) = desired_live_undock_physical_bounds(route, event)
         && let Some(trigger) = live_undock_trigger_for_move(
             route.native_drag_start_snapshot,
             event.physical_frame().map(|frame| frame.global_position()),
+            desired_bounds,
             live_undock_drag_generation(route.generation),
+            live_undock_route_generation(event.sequence()),
             source,
             feedback,
         )
@@ -2326,13 +2422,16 @@ fn update_live_undock_move(
     }
     if let Some(identity) = route.live_undock_identity.get()
         && let Some(point) = event.physical_frame().map(|frame| frame.global_position())
+        && let Some(bounds) = desired_live_undock_physical_bounds(route, event)
     {
         let _ = submit_live_undock_fact(
             route,
             DockLiveUndockFact::RouteObserved {
                 identity,
+                generation: live_undock_route_generation(event.sequence()),
                 route: feedback,
                 point: DockLiveUndockPhysicalPoint::new(point.x.0, point.y.0),
+                bounds,
             },
             None,
             cx,
@@ -2365,22 +2464,15 @@ fn lock_live_undock_release(
         return false;
     };
     let feedback = live_undock_route_feedback(target);
-    let _ = submit_live_undock_fact(
-        route,
-        DockLiveUndockFact::RouteObserved {
-            identity,
-            route: feedback,
-            point: DockLiveUndockPhysicalPoint::new(point.x.0, point.y.0),
-        },
-        None,
-        cx,
-    );
-    let release = DockLiveUndockReleaseLock::new(
+    let Some(release) = DockLiveUndockReleaseLock::new(
         DockLiveUndockPhysicalPoint::new(point.x.0, point.y.0),
         feedback,
         desired_bounds,
         placement_generation,
-    );
+    ) else {
+        cancel_live_undock_identity(route, identity, DockLiveUndockCancelReason::CaptureLost, cx);
+        return false;
+    };
     let Some(owner) = route.runtime.surface_owner_entity() else {
         return false;
     };
@@ -2732,7 +2824,7 @@ fn finish_matching_route_cleanup(
     record_route_cleanup_cancel(&mut cleanup, PointerCancelReason::CaptureRevoked, cx);
     let cleanup =
         retain_retired_route_release(state, cleanup, PointerCancelReason::CaptureRevoked, cx)?;
-    finish_route_cleanup(cleanup, cx)
+    finish_route_cleanup(cleanup, cx).first_panic
 }
 
 fn schedule_route_retirement(
@@ -2775,7 +2867,7 @@ fn schedule_route_retirement_with_reason(
 fn schedule_route_cleanup(cleanup: DockNativeCapturedRouteCleanup, cx: &mut App) {
     retire_route_transport_proxy(&cleanup.route);
     cx.defer(move |cx| {
-        if let Some(payload) = finish_route_cleanup(cleanup, cx) {
+        if let Some(payload) = finish_route_cleanup(cleanup, cx).first_panic {
             resume_unwind(payload);
         }
     });
@@ -2818,7 +2910,7 @@ fn retain_retired_route_release(
                 state.borrow_mut().failed_releases.insert(key);
             }
             if let Some(cleanup) = pending.cleanup
-                && let Some(payload) = finish_route_cleanup(cleanup, cx)
+                && let Some(payload) = finish_route_cleanup(cleanup, cx).first_panic
             {
                 resume_unwind(payload);
             }
@@ -2872,22 +2964,28 @@ fn clear_retired_pending_if_matches(
     }
 }
 
+struct DockNativeCapturedRouteCleanupResult {
+    completed: bool,
+    first_panic: Option<Box<dyn Any + Send>>,
+}
+
 fn retire_route_cleanup(
     route: DockNativeCapturedDragRoute,
     cx: &mut App,
-) -> Option<Box<dyn Any + Send>> {
+) -> DockNativeCapturedRouteCleanupResult {
     let mut first_panic = None;
-    run_idempotent_cleanup_stage(&mut first_panic, || {
+    let transport_retired = run_idempotent_cleanup_stage(&mut first_panic, || {
         retire_route_transport_proxy(&route);
     });
-    run_idempotent_cleanup_stage(&mut first_panic, || clear_foreign_preview(&route, cx));
+    let foreign_preview_cleared =
+        run_idempotent_cleanup_stage(&mut first_panic, || clear_foreign_preview(&route, cx));
 
     let mut route_was_active = false;
-    run_idempotent_cleanup_stage(&mut first_panic, || {
+    let active_state_observed = run_idempotent_cleanup_stage(&mut first_panic, || {
         route_was_active = route.runtime.active_payload_drag_session(&route.payload)
             == Some(route.session.clone());
     });
-    run_idempotent_cleanup_stage(&mut first_panic, || {
+    let source_feedback_cleared = run_idempotent_cleanup_stage(&mut first_panic, || {
         if let Some(host) = route.source_host.upgrade() {
             host.update(cx, |host, cx| {
                 if !host.accepts_bound_window(Some(route.source_binding)) {
@@ -2903,7 +3001,7 @@ fn retire_route_cleanup(
             });
         }
     });
-    run_idempotent_cleanup_stage(&mut first_panic, || {
+    let payload_finalizer_settled = run_idempotent_cleanup_stage(&mut first_panic, || {
         settle_payload_drag_finalizer_claim(
             route.payload_finalizer.claim_route(),
             &route.runtime,
@@ -2912,30 +3010,38 @@ fn retire_route_cleanup(
             cx,
         );
     });
-    first_panic
+    DockNativeCapturedRouteCleanupResult {
+        completed: transport_retired
+            && foreign_preview_cleared
+            && active_state_observed
+            && source_feedback_cleared
+            && payload_finalizer_settled,
+        first_panic,
+    }
 }
 
 fn finish_route_cleanup(
     mut cleanup: DockNativeCapturedRouteCleanup,
     cx: &mut App,
-) -> Option<Box<dyn Any + Send>> {
-    let cleanup_panic = retire_route_cleanup(cleanup.route, cx);
+) -> DockNativeCapturedRouteCleanupResult {
+    let mut cleanup_result = retire_route_cleanup(cleanup.route, cx);
     if cleanup.first_panic.is_none() {
-        return cleanup_panic;
+        return cleanup_result;
     }
-    if cleanup_panic.is_some() {
+    if cleanup_result.first_panic.is_some() {
         log::error!(
             "suppressed a Dock route-retirement panic after an earlier locked-release panic"
         );
     }
-    cleanup.first_panic.take()
+    cleanup_result.first_panic = cleanup.first_panic.take();
+    cleanup_result
 }
 
 fn finish_route_cleanup_with_cancel(
     mut cleanup: DockNativeCapturedRouteCleanup,
     reason: PointerCancelReason,
     cx: &mut App,
-) -> Option<Box<dyn Any + Send>> {
+) -> DockNativeCapturedRouteCleanupResult {
     record_route_cleanup_cancel(&mut cleanup, reason, cx);
     finish_route_cleanup(cleanup, cx)
 }
@@ -3216,6 +3322,15 @@ mod tests {
         point(DevicePixels(50), DevicePixels(50))
     }
 
+    fn test_live_undock_bounds(current: Point<DevicePixels>) -> DockLiveUndockPhysicalBounds {
+        DockLiveUndockPhysicalBounds::new(
+            DockLiveUndockPhysicalPoint::new(current.x.0 - 50, current.y.0 - 50),
+            100,
+            100,
+        )
+        .expect("test live-undock bounds must contain the callback point")
+    }
+
     fn test_coverage() -> PlatformWindowPhysicalCoverage {
         PlatformWindowPhysicalCoverage::try_new(Bounds::new(
             point(DevicePixels(0), DevicePixels(0)),
@@ -3289,6 +3404,11 @@ mod tests {
     fn drag_generation(value: u64) -> DockLiveUndockDragGeneration {
         DockLiveUndockDragGeneration::new(value)
             .expect("test live-undock generation should be non-zero")
+    }
+
+    fn route_generation(value: u64) -> DockLiveUndockRouteGeneration {
+        DockLiveUndockRouteGeneration::new(value)
+            .expect("test live-undock route generation should be non-zero")
     }
 
     fn source_snapshot(value: u64) -> DockLiveUndockSourceSnapshot {
@@ -3465,33 +3585,42 @@ mod tests {
     fn live_undock_threshold_is_inclusive_and_accepts_either_physical_axis() {
         let snapshot = drag_start_snapshot();
         let source = source_snapshot(1);
+        let inside = point(DevicePixels(-7), DevicePixels(-20));
         assert!(
             live_undock_trigger_for_move(
                 Some(snapshot),
-                Some(point(DevicePixels(-7), DevicePixels(-20))),
+                Some(inside),
+                test_live_undock_bounds(inside),
                 drag_generation(1),
+                route_generation(1),
                 source,
                 DockLiveUndockRouteFeedback::Desktop,
             )
             .is_none(),
             "three physical pixels remain inside the four-pixel horizontal hysteresis"
         );
+        let horizontal = point(DevicePixels(-6), DevicePixels(-20));
         assert!(
             live_undock_trigger_for_move(
                 Some(snapshot),
-                Some(point(DevicePixels(-6), DevicePixels(-20))),
+                Some(horizontal),
+                test_live_undock_bounds(horizontal),
                 drag_generation(1),
+                route_generation(2),
                 source,
                 DockLiveUndockRouteFeedback::Desktop,
             )
             .is_some(),
             "the horizontal boundary is eligible"
         );
+        let vertical = point(DevicePixels(-10), DevicePixels(-26));
         assert!(
             live_undock_trigger_for_move(
                 Some(snapshot),
-                Some(point(DevicePixels(-10), DevicePixels(-26))),
+                Some(vertical),
+                test_live_undock_bounds(vertical),
                 drag_generation(1),
+                route_generation(3),
                 source,
                 DockLiveUndockRouteFeedback::OpaqueBarrier,
             )
@@ -3503,7 +3632,7 @@ mod tests {
     #[test]
     fn ineligible_routes_remain_armed_until_an_eligible_desktop_route() {
         let snapshot = drag_start_snapshot();
-        let current = Some(point(DevicePixels(100), DevicePixels(100)));
+        let current = point(DevicePixels(100), DevicePixels(100));
         let source = source_snapshot(2);
         for feedback in [
             DockLiveUndockRouteFeedback::Host(DockLiveUndockHostTarget::new(WindowId::from(74), 1)),
@@ -3515,8 +3644,10 @@ mod tests {
             assert!(
                 live_undock_trigger_for_move(
                     Some(snapshot),
-                    current,
+                    Some(current),
+                    test_live_undock_bounds(current),
                     drag_generation(2),
+                    route_generation(1),
                     source,
                     feedback,
                 )
@@ -3525,8 +3656,10 @@ mod tests {
         }
         let trigger = live_undock_trigger_for_move(
             Some(snapshot),
-            current,
+            Some(current),
+            test_live_undock_bounds(current),
             drag_generation(2),
+            route_generation(2),
             source,
             DockLiveUndockRouteFeedback::Desktop,
         )
@@ -3546,7 +3679,7 @@ mod tests {
     #[test]
     fn open_space_and_opaque_barrier_share_trigger_eligibility_but_not_route_identity() {
         let snapshot = drag_start_snapshot();
-        let current = Some(point(DevicePixels(100), DevicePixels(100)));
+        let current = point(DevicePixels(100), DevicePixels(100));
         let source = source_snapshot(3);
         assert_eq!(
             live_undock_route_feedback(&DockNativeCapturedTarget::Desktop(
@@ -3562,16 +3695,20 @@ mod tests {
         );
         let open = live_undock_trigger_for_move(
             Some(snapshot),
-            current,
+            Some(current),
+            test_live_undock_bounds(current),
             drag_generation(3),
+            route_generation(1),
             source,
             DockLiveUndockRouteFeedback::Desktop,
         )
         .expect("open desktop should trigger");
         let barrier = live_undock_trigger_for_move(
             Some(snapshot),
-            current,
+            Some(current),
+            test_live_undock_bounds(current),
             drag_generation(3),
+            route_generation(1),
             source,
             DockLiveUndockRouteFeedback::OpaqueBarrier,
         )
@@ -3591,8 +3728,10 @@ mod tests {
         let trigger = DockLiveUndockTrigger::new(
             drag_generation(5),
             source,
+            route_generation(5),
             DockLiveUndockRouteFeedback::Desktop,
             DockLiveUndockPhysicalPoint::new(test_point().x.0, test_point().y.0),
+            test_live_undock_bounds(test_point()),
         )
         .expect("desktop should be eligible");
         let mut reducer = DockLiveUndockSession::new();
@@ -3612,8 +3751,10 @@ mod tests {
         let stale = DockLiveUndockTrigger::new(
             drag_generation(4),
             source,
+            route_generation(4),
             DockLiveUndockRouteFeedback::OpaqueBarrier,
             DockLiveUndockPhysicalPoint::new(test_point().x.0, test_point().y.0),
+            test_live_undock_bounds(test_point()),
         )
         .expect("opaque barrier should be eligible");
         assert!(
@@ -3633,8 +3774,10 @@ mod tests {
         let trigger = DockLiveUndockTrigger::new(
             drag_generation(6),
             source_snapshot(6),
+            route_generation(6),
             DockLiveUndockRouteFeedback::Desktop,
             DockLiveUndockPhysicalPoint::new(test_point().x.0, test_point().y.0),
+            test_live_undock_bounds(test_point()),
         )
         .expect("desktop should be eligible");
         let mut reducer = DockLiveUndockSession::new();
@@ -3693,6 +3836,29 @@ mod tests {
                 .copied(),
             Some("resolution panic"),
             "the locked-release failure remains the panic reported after cleanup"
+        );
+    }
+
+    #[test]
+    fn first_cleanup_panic_retries_to_completion_and_remains_observable() {
+        let mut first_panic: Option<Box<dyn Any + Send>> = None;
+        let cleanup_attempts = Cell::new(0);
+
+        assert!(run_idempotent_cleanup_stage(&mut first_panic, || {
+            cleanup_attempts.set(cleanup_attempts.get() + 1);
+            if cleanup_attempts.get() == 1 {
+                panic!("first cleanup panic");
+            }
+        }));
+
+        assert_eq!(cleanup_attempts.get(), 2);
+        assert_eq!(
+            first_panic
+                .as_ref()
+                .and_then(|payload| payload.downcast_ref::<&'static str>())
+                .copied(),
+            Some("first cleanup panic"),
+            "cleanup completion must not erase the first callback panic"
         );
     }
 

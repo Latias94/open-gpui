@@ -1404,38 +1404,11 @@ fn repo_relative_path(root: &Path, path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::native_windows_interactive::{
-        NATIVE_SCENARIO_RUNNER, NATIVE_SCENARIO_SUITE, NativeScenarioDeclaration,
-    };
-
     fn native_manifest_fixture() -> NativeScenarioManifest {
-        NativeScenarioManifest {
-            schema: 3,
-            suite: NATIVE_SCENARIO_SUITE.to_owned(),
-            runner: NATIVE_SCENARIO_RUNNER.to_owned(),
-            scenario: vec![
-                NativeScenarioDeclaration {
-                    id: "native.u27.input".to_owned(),
-                    requirement_owner: "U27".to_owned(),
-                    test: "native_interactive_tests::native_input_worker".to_owned(),
-                    observation_domains: BTreeSet::from([
-                        NativeObservationDomain::SystemInput,
-                        NativeObservationDomain::WndProc,
-                        NativeObservationDomain::Capture,
-                        NativeObservationDomain::PointStack,
-                        NativeObservationDomain::Presentation,
-                    ]),
-                    behavior: "input".to_owned(),
-                },
-                NativeScenarioDeclaration {
-                    id: "native.u28.lifetime".to_owned(),
-                    requirement_owner: "U28".to_owned(),
-                    test: "native_interactive_tests::native_lifetime_worker".to_owned(),
-                    observation_domains: BTreeSet::from([NativeObservationDomain::Lifetime]),
-                    behavior: "lifetime".to_owned(),
-                },
-            ],
-        }
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("xtask must remain a direct workspace child");
+        load_native_scenario_manifest(root).expect("repository native manifest should parse")
     }
 
     fn native_workflow_fixture() -> String {

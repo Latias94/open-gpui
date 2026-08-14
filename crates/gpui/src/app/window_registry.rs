@@ -128,7 +128,7 @@ impl Drop for ReservedWindow<'_> {
 }
 
 pub(super) fn reserve(app: &mut App) -> Result<ReservedWindow<'_>, WindowReservationError> {
-    if app.window_open_barrier_depth > 0 {
+    if app.quitting || app.window_open_barrier_depth > 0 {
         return Err(WindowReservationError::AppShutdown);
     }
 
@@ -146,7 +146,7 @@ pub(super) fn reserve(app: &mut App) -> Result<ReservedWindow<'_>, WindowReserva
 }
 
 fn validate_reservation(app: &App, id: WindowId, epoch: u64) -> Result<(), WindowReservationError> {
-    if app.window_open_barrier_depth > 0 || app.window_open_epoch != epoch {
+    if app.quitting || app.window_open_barrier_depth > 0 || app.window_open_epoch != epoch {
         return Err(WindowReservationError::AppShutdown);
     }
     if !app.windows.get(id).is_some_and(Option::is_none) {
@@ -421,7 +421,7 @@ fn unregister_removed_window(app: &mut App, id: WindowId) -> Option<Box<dyn Any 
     {
         retain_first_panic(
             &mut first_panic,
-            catch_unwind(AssertUnwindSafe(|| app.quit())).err(),
+            catch_unwind(AssertUnwindSafe(|| app.quit_after_terminal_shutdown())).err(),
         );
     }
 

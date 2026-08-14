@@ -460,6 +460,7 @@ mod tests {
             window_id,
             9,
             reveal_point,
+            None,
             14,
             Vec::<WindowId>::new().into(),
         );
@@ -469,7 +470,6 @@ mod tests {
             PlatformWindowCommand::RevealDeferredInitialPresentation {
                 session_generation: 9,
                 presentation_generation: 14,
-                reveal_point,
             },
             ticket.clone(),
         );

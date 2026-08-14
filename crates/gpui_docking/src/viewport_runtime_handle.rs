@@ -107,12 +107,12 @@ pub struct DockViewportRuntimeHandle {
     surface_commit_sink: DockViewportRuntimeCommitSink,
     active_surface_transaction: Rc<Cell<Option<DockSurfaceTransactionId>>>,
     surface_owner: Rc<RefCell<Option<WeakEntity<DockSurfaceOwner>>>>,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     window_close_apply_test_hook: DockViewportWindowCloseApplyTestHook,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     live_undock_logical_close_selection_test_hook:
         DockViewportLiveUndockLogicalCloseSelectionTestHook,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     live_undock_provisional_builder_test_hook: DockViewportLiveUndockProvisionalBuilderTestHook,
     #[cfg(test)]
     surface_shutdown_failure_point: Rc<Cell<Option<DockViewportSurfaceShutdownFailurePoint>>>,
@@ -165,16 +165,16 @@ struct DockViewportManagedSurface {
     lease: DockSurfaceWindowSessionLease,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 type DockViewportWindowCloseApplyCallback = Box<dyn FnOnce(&mut App)>;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Clone, Default)]
 struct DockViewportWindowCloseApplyTestHook(
     Rc<RefCell<Option<DockViewportWindowCloseApplyCallback>>>,
 );
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl std::fmt::Debug for DockViewportWindowCloseApplyTestHook {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
@@ -184,16 +184,16 @@ impl std::fmt::Debug for DockViewportWindowCloseApplyTestHook {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 type DockViewportLiveUndockLogicalCloseSelectionCallback = Box<dyn FnOnce(&mut App)>;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Clone, Default)]
 struct DockViewportLiveUndockLogicalCloseSelectionTestHook(
     Rc<RefCell<Option<DockViewportLiveUndockLogicalCloseSelectionCallback>>>,
 );
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl std::fmt::Debug for DockViewportLiveUndockLogicalCloseSelectionTestHook {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
@@ -203,16 +203,16 @@ impl std::fmt::Debug for DockViewportLiveUndockLogicalCloseSelectionTestHook {
     }
 }
 
-#[cfg(test)]
-type DockViewportLiveUndockProvisionalBuilderCallback = Box<dyn FnOnce(&mut App)>;
+#[cfg(any(test, feature = "test-support"))]
+type DockViewportLiveUndockProvisionalBuilderCallback = Box<dyn FnOnce(&mut Window, &mut App)>;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Clone, Default)]
 struct DockViewportLiveUndockProvisionalBuilderTestHook(
     Rc<RefCell<Option<DockViewportLiveUndockProvisionalBuilderCallback>>>,
 );
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl std::fmt::Debug for DockViewportLiveUndockProvisionalBuilderTestHook {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
@@ -1120,12 +1120,12 @@ impl DockViewportRuntimeHandle {
             surface_commit_sink: DockViewportRuntimeCommitSink::default(),
             active_surface_transaction: Rc::new(Cell::new(None)),
             surface_owner: Rc::new(RefCell::new(None)),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             window_close_apply_test_hook: DockViewportWindowCloseApplyTestHook::default(),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             live_undock_logical_close_selection_test_hook:
                 DockViewportLiveUndockLogicalCloseSelectionTestHook::default(),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             live_undock_provisional_builder_test_hook:
                 DockViewportLiveUndockProvisionalBuilderTestHook::default(),
             #[cfg(test)]
@@ -1186,10 +1186,10 @@ impl DockViewportRuntimeHandle {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn install_live_undock_provisional_builder_hook_for_test(
         &self,
-        hook: impl FnOnce(&mut App) + 'static,
+        hook: impl FnOnce(&mut Window, &mut App) + 'static,
     ) {
         let mut installed = self
             .live_undock_provisional_builder_test_hook
@@ -1202,15 +1202,15 @@ impl DockViewportRuntimeHandle {
         *installed = Some(Box::new(hook));
     }
 
-    #[cfg(test)]
-    fn run_live_undock_provisional_builder_hook_for_test(&self, cx: &mut App) {
+    #[cfg(any(test, feature = "test-support"))]
+    fn run_live_undock_provisional_builder_hook_for_test(&self, window: &mut Window, cx: &mut App) {
         let hook = self
             .live_undock_provisional_builder_test_hook
             .0
             .borrow_mut()
             .take();
         if let Some(hook) = hook {
-            hook(cx);
+            hook(window, cx);
         }
     }
 
@@ -2577,11 +2577,12 @@ impl DockViewportRuntimeHandle {
         let owner = managed_surface.owner.clone();
         let open_result = catch_unwind(AssertUnwindSafe(|| {
             cx.open_window(options, move |window, cx| {
-                #[cfg(test)]
-                open_attempt_runtime.run_live_undock_provisional_builder_hook_for_test(cx);
+                let window_handle = window.window_handle();
                 let open_attempt = open_attempt_runtime
-                    .begin_live_undock_provisional_open_attempt(window.window_handle(), opening);
+                    .begin_live_undock_provisional_open_attempt(window_handle, opening);
                 open_attempt_slot_for_builder.set(open_attempt);
+                #[cfg(any(test, feature = "test-support"))]
+                open_attempt_runtime.run_live_undock_provisional_builder_hook_for_test(window, cx);
                 cx.new(move |cx| {
                     DockHost::from_provisional_surface_owner(
                         controller,
@@ -2643,12 +2644,24 @@ impl DockViewportRuntimeHandle {
             opening,
             retirement_dependency.is_ok() && can_admit,
         );
+        #[cfg(feature = "test-support")]
+        eprintln!(
+            "OPEN_GPUI_DOCK_PROVISIONAL_RUNTIME window={:?} retirement_dependency_ok={} can_admit={} completion={runtime:?}",
+            window.window_id(),
+            retirement_dependency.is_ok(),
+            can_admit,
+        );
         let outcome = crate::surface::finish_live_undock_open_return(
             &managed_surface.owner,
             opening,
             window,
             runtime,
             cx,
+        );
+        #[cfg(feature = "test-support")]
+        eprintln!(
+            "OPEN_GPUI_DOCK_PROVISIONAL_RETURN window={:?} outcome={outcome:?}",
+            window.window_id(),
         );
         if let Err(error) = retirement_dependency {
             return Err(error);

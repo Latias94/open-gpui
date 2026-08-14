@@ -1,3 +1,4 @@
+use super::DockSurfaceShutdownTestEventKind;
 use super::window_session::{
     DockSurfacePrimaryWindowOpenConflict, DockSurfacePrimaryWindowOpenOutcome,
     DockSurfacePrimaryWindowUnavailable, DockSurfaceWindowSession,
@@ -744,7 +745,9 @@ fn failed_capture_release_retires_the_frozen_surface_and_preserves_reopen_progre
             surface.owner(),
             lease,
             &coordinator,
-            crate::native_captured_drag::DockNativeCapturedSurfaceReleaseOutcome::Failed,
+            crate::native_captured_drag::DockNativeCapturedSurfaceRelease::without_evidence(
+                crate::native_captured_drag::DockNativeCapturedSurfaceReleaseOutcome::Failed,
+            ),
             &mut failure,
             app,
         );
@@ -923,7 +926,9 @@ fn capture_failure_postpublish_panic_retains_exact_close_handles(
             surface.owner(),
             lease,
             &coordinator,
-            crate::native_captured_drag::DockNativeCapturedSurfaceReleaseOutcome::Failed,
+            crate::native_captured_drag::DockNativeCapturedSurfaceRelease::without_evidence(
+                crate::native_captured_drag::DockNativeCapturedSurfaceReleaseOutcome::Failed,
+            ),
             &mut failure,
             app,
         );
@@ -985,6 +990,7 @@ fn borrow_conflicted_dependent_close_retries_after_the_window_update_boundary(
         });
         (surface, anchor, dependent, lease)
     });
+    let observation = cx.update(|app| surface.observe_shutdown_for_test(app));
 
     dependent
         .update(cx, |_, _, app| {
@@ -1005,6 +1011,121 @@ fn borrow_conflicted_dependent_close_retries_after_the_window_update_boundary(
     let status = cx.update(|cx| surface.window_session_status(cx));
     assert_eq!(status.phase(), DockSurfaceWindowSessionPhase::Closed);
     assert_eq!(status.pending_terminal_ticket_count(), 0);
+    let events = observation.events();
+    assert_eq!(events.len(), 3, "unexpected shutdown trace: {events:?}");
+    assert!(events.iter().all(|event| {
+        event.session_generation() == lease.generation() && event.anchor() == anchor.window_id()
+    }));
+    assert!(matches!(
+        events[0].kind(),
+        DockSurfaceShutdownTestEventKind::DependentCloseDispatchDeferredBusy { window }
+            if *window == dependent.window_id()
+    ));
+    assert!(matches!(
+        events[1].kind(),
+        DockSurfaceShutdownTestEventKind::DependentCloseDispatched { window }
+            if *window == dependent.window_id()
+    ));
+    assert!(matches!(
+        events[2].kind(),
+        DockSurfaceShutdownTestEventKind::AnchorCloseDispatched { window }
+            if *window == anchor.window_id()
+    ));
+    assert!(
+        events
+            .windows(2)
+            .all(|pair| pair[0].ordinal() < pair[1].ordinal())
+    );
+}
+
+#[open_gpui::test]
+fn native_shutdown_fault_plan_retries_busy_close_after_cleanup_panic(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let (surface, anchor, dependent, lease) = cx.update(|cx| {
+        cx.set_quit_mode(QuitMode::Explicit);
+        let surface = crate::DockSurface::builder("main")
+            .allow_platform_viewports(true)
+            .build(cx)
+            .expect("the surface should validate");
+        let anchor = match surface.open_primary_window(WindowOptions::default(), cx) {
+            DockSurfacePrimaryWindowOpenOutcome::Opened(opened) => opened.window(),
+            outcome => panic!("the primary should open, got {outcome:?}"),
+        };
+        let dependent = match surface.open_viewport("secondary", WindowOptions::default(), cx) {
+            DockSurfaceViewportOpenOutcome::Opened(opened) => opened.window(),
+            outcome => panic!("the dependent viewport should open, got {outcome:?}"),
+        };
+        let lease = cx.read_entity(surface.owner(), |owner, _| {
+            owner
+                .window_session()
+                .active_lease()
+                .expect("the active surface should expose its exact lease")
+        });
+        (surface, anchor, dependent, lease)
+    });
+    let observation = cx.update(|app| surface.observe_shutdown_for_test(app));
+    assert!(cx.update(|app| {
+        surface.arm_shutdown_retry_and_cleanup_panic_for_test(
+            dependent.window_id(),
+            "injected native shutdown cleanup panic",
+            app,
+        )
+    }));
+
+    let panic = catch_unwind(AssertUnwindSafe(|| {
+        cx.update(|app| {
+            let effects = super::prepare_surface_shutdown(
+                surface.owner(),
+                lease,
+                DockSurfaceWindowSessionShutdownReason::AnchorCloseRequested,
+                app,
+            )
+            .expect("the active lease should begin shutdown");
+            super::apply_surface_shutdown_close_effects(surface.owner(), effects, app);
+        });
+    }))
+    .expect_err("the injected cleanup callback panic should propagate after close dispatch");
+    let panic_message = panic
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| panic.downcast_ref::<&str>().copied())
+        .expect("the injected panic should preserve its message");
+    assert!(panic_message.contains("injected native shutdown cleanup panic"));
+
+    cx.run_until_parked();
+    assert!(!cx.windows().contains(&dependent));
+    assert!(!cx.windows().contains(&anchor));
+    let status = cx.update(|app| surface.window_session_status(app));
+    assert_eq!(status.phase(), DockSurfaceWindowSessionPhase::Closed);
+    assert_eq!(status.pending_terminal_ticket_count(), 0);
+
+    let events = observation.events();
+    assert_eq!(events.len(), 4, "unexpected shutdown trace: {events:?}");
+    assert!(matches!(
+        events[0].kind(),
+        DockSurfaceShutdownTestEventKind::CleanupCallbackPanicked
+    ));
+    assert!(matches!(
+        events[1].kind(),
+        DockSurfaceShutdownTestEventKind::DependentCloseDispatchDeferredBusy { window }
+            if *window == dependent.window_id()
+    ));
+    assert!(matches!(
+        events[2].kind(),
+        DockSurfaceShutdownTestEventKind::DependentCloseDispatched { window }
+            if *window == dependent.window_id()
+    ));
+    assert!(matches!(
+        events[3].kind(),
+        DockSurfaceShutdownTestEventKind::AnchorCloseDispatched { window }
+            if *window == anchor.window_id()
+    ));
+    assert!(
+        events
+            .windows(2)
+            .all(|pair| pair[0].ordinal() < pair[1].ordinal())
+    );
 }
 
 #[open_gpui::test]
@@ -1752,22 +1873,25 @@ fn app_shutdown_confirms_every_surface_window_terminal_after_registry_clear(
     );
     assert_eq!(status.pending_terminal_ticket_count(), 0);
     assert_eq!(status.runtime_empty(), Some(true));
+}
 
-    let reopened = cx.update(|cx| surface.open_primary_window(WindowOptions::default(), cx));
-    let reopened = match reopened {
-        DockSurfacePrimaryWindowOpenOutcome::Opened(opened) => opened,
-        outcome => panic!("post-clear convergence should admit G2, got {outcome:?}"),
-    };
-    assert_eq!(reopened.generation(), 2);
-    cx.run_until_parked();
-    let reopened_status = cx.update(|cx| surface.window_session_status(cx));
-    assert_eq!(
-        reopened_status.phase(),
-        DockSurfaceWindowSessionPhase::Active
-    );
-    assert_eq!(reopened_status.generation(), 2);
+#[open_gpui::test]
+fn app_shutdown_waits_for_held_surface_native_terminal_after_registry_clear(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let (surface, opened) = cx.update(|cx| {
+        let surface = crate::DockSurface::builder("main")
+            .allow_platform_viewports(true)
+            .build(cx)
+            .expect("the surface should validate");
+        let opened = match surface.open_primary_window(WindowOptions::default(), cx) {
+            DockSurfacePrimaryWindowOpenOutcome::Opened(opened) => opened,
+            outcome => panic!("the primary should open, got {outcome:?}"),
+        };
+        (surface, opened)
+    });
 
-    let reopened_terminal = cx.hold_window_native_terminal(reopened.window());
+    let terminal = cx.hold_window_native_terminal(opened.window());
     cx.quit();
 
     assert!(cx.windows().is_empty());
@@ -1776,7 +1900,7 @@ fn app_shutdown_confirms_every_surface_window_terminal_after_registry_clear(
         waiting_for_native_terminal.phase(),
         DockSurfaceWindowSessionPhase::ShuttingDown
     );
-    assert_eq!(waiting_for_native_terminal.generation(), 2);
+    assert_eq!(waiting_for_native_terminal.generation(), 1);
     assert_eq!(
         waiting_for_native_terminal.reason(),
         Some(DockSurfaceWindowSessionReason::Shutdown(
@@ -1789,7 +1913,7 @@ fn app_shutdown_confirms_every_surface_window_terminal_after_registry_clear(
         "logical registry absence cannot substitute for the held G2 native terminal"
     );
     assert_eq!(waiting_for_native_terminal.runtime_empty(), Some(false));
-    assert!(reopened_terminal.release());
+    assert!(terminal.release());
     cx.run_until_parked();
 
     let second_shutdown_status = cx.update(|cx| surface.window_session_status(cx));
@@ -1797,7 +1921,7 @@ fn app_shutdown_confirms_every_surface_window_terminal_after_registry_clear(
         second_shutdown_status.phase(),
         DockSurfaceWindowSessionPhase::Closed
     );
-    assert_eq!(second_shutdown_status.generation(), 2);
+    assert_eq!(second_shutdown_status.generation(), 1);
     assert_eq!(
         second_shutdown_status.reason(),
         Some(DockSurfaceWindowSessionReason::Shutdown(
@@ -2009,6 +2133,7 @@ fn programmatic_anchor_removal_waits_for_exact_native_capture_before_dependent_t
         });
         (source_window, dependent_window, source_runtime, lease)
     });
+    let shutdown_observation = cx.update(|app| surface.observe_shutdown_for_test(app));
 
     let target_space = DockSpaceId::from("foreign-target");
     let mut target_graph = DockGraph::new();
@@ -2252,5 +2377,38 @@ fn programmatic_anchor_removal_waits_for_exact_native_capture_before_dependent_t
     assert_eq!(
         cx.update(|app| surface.window_session_status(app).phase()),
         DockSurfaceWindowSessionPhase::Closed
+    );
+    let shutdown_events = shutdown_observation.events();
+    assert!(shutdown_events.iter().all(|event| {
+        event.session_generation() == lease.generation()
+            && event.anchor() == source_window.window_id()
+    }));
+    let cleanup_index = shutdown_events
+        .iter()
+        .position(|event| {
+            matches!(
+                event.kind(),
+                DockSurfaceShutdownTestEventKind::CaptureCleanupCompleted { releases }
+                    if releases.len() == 1
+                        && releases[0].barrier().source_window() == source_window.window_id()
+                        && releases[0].barrier().drag_generation() == old_generation
+                        && releases[0].terminal()
+                            == open_gpui::NativeCapturedDragReleaseTerminal::NativeWindowTerminal
+            )
+        })
+        .expect("the exact source terminal must publish capture-cleanup evidence");
+    let dependent_dispatch_index = shutdown_events
+        .iter()
+        .position(|event| {
+            matches!(
+                event.kind(),
+                DockSurfaceShutdownTestEventKind::DependentCloseDispatched { window }
+                    if *window == dependent_window.window_id()
+            )
+        })
+        .expect("the dependent close dispatch must be observed");
+    assert!(
+        cleanup_index < dependent_dispatch_index,
+        "capture and Dock feedback cleanup must complete before dependent close dispatch: {shutdown_events:?}"
     );
 }

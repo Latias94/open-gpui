@@ -103,6 +103,7 @@ struct ProvisionalPlacementRollback {
 #[derive(Debug)]
 struct AppliedProvisionalFinalPlacement {
     facts: WindowProvisionalPlacementNativeFacts,
+    platform_facts: WindowPlatformFacts,
     rollback: ProvisionalPlacementRollback,
     applied: ProvisionalPlacementRollback,
     applied_epoch: u64,
@@ -111,6 +112,10 @@ struct AppliedProvisionalFinalPlacement {
 impl AppliedProvisionalFinalPlacement {
     fn facts(&self) -> WindowProvisionalPlacementNativeFacts {
         self.facts
+    }
+
+    fn platform_facts(&self) -> WindowPlatformFacts {
+        self.platform_facts.clone()
     }
 
     fn commit(self) -> WindowProvisionalPlacementNativeFacts {
@@ -257,6 +262,38 @@ impl Drop for CreatedNativeWindowGuard {
                 DestroyWindow(hwnd)
                     .context("rolling back partially constructed native window")
                     .log_err();
+            }
+        }
+    }
+}
+
+struct ProvisionalRevealVisibilityGuard {
+    hwnd: Option<HWND>,
+}
+
+impl ProvisionalRevealVisibilityGuard {
+    fn new(hwnd: HWND) -> Self {
+        Self { hwnd: Some(hwnd) }
+    }
+
+    fn commit(mut self) {
+        self.hwnd = None;
+    }
+}
+
+impl Drop for ProvisionalRevealVisibilityGuard {
+    fn drop(&mut self) {
+        let Some(hwnd) = self.hwnd.take() else {
+            return;
+        };
+        if unsafe { IsWindow(Some(hwnd)).as_bool() && IsWindowVisible(hwnd).as_bool() } {
+            unsafe {
+                let _ = ShowWindow(hwnd, SW_HIDE);
+            }
+            if unsafe { IsWindowVisible(hwnd).as_bool() } {
+                log::error!(
+                    "failed to compensate a rejected provisional reveal by hiding its native window"
+                );
             }
         }
     }
@@ -759,7 +796,12 @@ impl WindowsWindowInner {
         client_position: Point<DevicePixels>,
         expected_global_position: Option<Point<DevicePixels>>,
     ) -> Result<PlatformNativePointerPhysicalFrame> {
-        let first_geometry = self.physical_geometry_from_native()?;
+        let coordinator = self
+            .native_retirement_coordinator
+            .upgrade()
+            .context("Windows platform topology authority is no longer available")?;
+        let first_topology_generation = coordinator.display_topology_generation();
+        let first_geometry = self.physical_geometry_observation(first_topology_generation)?;
         let mut screen_position = POINT {
             x: client_position.x.0,
             y: client_position.y.0,
@@ -767,19 +809,37 @@ impl WindowsWindowInner {
         unsafe { ClientToScreen(self.hwnd, &mut screen_position) }
             .ok()
             .context("converting native pointer position to physical desktop coordinates")?;
-        let final_geometry = self.physical_geometry_from_native()?;
+        let global_position = point(
+            DevicePixels(screen_position.x),
+            DevicePixels(screen_position.y),
+        );
+        let first_target_display =
+            WindowsDisplay::physical_geometry_at(global_position, first_topology_generation)
+                .context("resolving the target display for the native pointer frame")?;
+        let second_topology_generation = coordinator.display_topology_generation();
+        let second_geometry = self.physical_geometry_observation(second_topology_generation)?;
+        let second_target_display =
+            WindowsDisplay::physical_geometry_at(global_position, second_topology_generation)
+                .context("revalidating the target display for the native pointer frame")?;
+        let final_topology_generation = coordinator.display_topology_generation();
         anyhow::ensure!(
-            first_geometry == final_geometry,
+            first_geometry == second_geometry,
             "native pointer geometry changed while the callback frame was sampled"
         );
-        let expected_x = final_geometry
+        anyhow::ensure!(
+            first_topology_generation == second_topology_generation
+                && second_topology_generation == final_topology_generation
+                && first_target_display == second_target_display,
+            "native pointer target display changed while the callback frame was sampled"
+        );
+        let expected_x = second_geometry
             .client_bounds()
             .origin
             .x
             .0
             .checked_add(client_position.x.0)
             .context("native pointer x-coordinate overflowed physical desktop space")?;
-        let expected_y = final_geometry
+        let expected_y = second_geometry
             .client_bounds()
             .origin
             .y
@@ -797,13 +857,9 @@ impl WindowsWindowInner {
                 "native pointer point changed while the callback frame was sampled"
             );
         }
-        Ok(PlatformNativePointerPhysicalFrame::new(
-            point(
-                DevicePixels(screen_position.x),
-                DevicePixels(screen_position.y),
-            ),
-            final_geometry,
-        ))
+        PlatformNativePointerPhysicalFrame::new(global_position, second_geometry)
+            .with_target_display(second_target_display)
+            .context("native pointer point is outside its sampled target display")
     }
 
     fn new(context: &mut WindowCreateContext, hwnd: HWND, cs: &CREATESTRUCTW) -> Result<Rc<Self>> {
@@ -1249,48 +1305,54 @@ impl WindowsWindowInner {
         }
     }
 
+    fn reveal_pending_initial_placement_without_geometry(
+        self: &Rc<Self>,
+        insert_after: HWND,
+    ) -> Result<bool> {
+        let Some(open_status) = self.state.initial_placement.take() else {
+            return Ok(false);
+        };
+        anyhow::ensure!(
+            matches!(open_status.state, WindowOpenState::Windowed),
+            "provisional reveal requires a retained windowed initial placement"
+        );
+        let result = self.with_owner_detached_for_nonactivating_show(false, || {
+            unsafe {
+                SetWindowPos(
+                    self.hwnd,
+                    Some(insert_after),
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW,
+                )
+            }
+            .context("failed to reveal the prepared provisional window without moving it")?;
+            Ok(())
+        });
+        match result {
+            Ok(()) => {
+                self.show_on_initial_presentation.set(false);
+                Ok(true)
+            }
+            Err(error) => {
+                self.state.initial_placement.set(Some(open_status));
+                Err(error)
+            }
+        }
+    }
+
     fn present_pending_initial_placement_with_deferred_mutation(
         self: &Rc<Self>,
         activate: bool,
         force_show: bool,
     ) -> Result<bool> {
-        self.present_pending_initial_placement_with_deferred_mutation_inner(
-            activate,
-            force_show,
-            None,
-            &[],
-        )
-        .map(|(shown, _)| shown)
-    }
-
-    fn reveal_pending_initial_placement_with_deferred_mutation(
-        self: &Rc<Self>,
-        reveal_point: Point<DevicePixels>,
-        peer_windows: &[WindowId],
-    ) -> Result<(bool, PreparedProvisionalZOrderBand)> {
-        let (shown, prepared) = self
-            .present_pending_initial_placement_with_deferred_mutation_inner(
-                false,
-                true,
-                Some(reveal_point),
-                peer_windows,
-            )?;
-        Ok((
-            shown,
-            prepared.context("provisional reveal did not prepare a point-scoped z-order band")?,
-        ))
-    }
-
-    fn present_pending_initial_placement_with_deferred_mutation_inner(
-        self: &Rc<Self>,
-        activate: bool,
-        force_show: bool,
-        reveal_point: Option<Point<DevicePixels>>,
-        provisional_peers: &[WindowId],
-    ) -> Result<(bool, Option<PreparedProvisionalZOrderBand>)> {
         let deferred = self.state.deferred_placement_mutation.take();
-        let initial_placement_before_deferred =
-            deferred.and_then(|_| self.pending_initial_placement());
+        let initial_placement_before_deferred = deferred
+            .is_some()
+            .then(|| self.pending_initial_placement())
+            .flatten();
         let before_facts = deferred.map(|_| {
             self.observed_platform_facts_from_native()
                 .unwrap_or_else(|_| self.cached_platform_facts())
@@ -1299,29 +1361,7 @@ impl WindowsWindowInner {
             if let Some(deferred) = deferred {
                 self.merge_deferred_initial_placement(deferred.request)?;
             }
-            let prepared = reveal_point
-                .map(|point| {
-                    let open_status = self
-                        .pending_initial_placement()
-                        .context("provisional reveal has no retained initial placement")?;
-                    anyhow::ensure!(
-                        matches!(open_status.state, WindowOpenState::Windowed),
-                        "provisional reveal only supports a windowed placement"
-                    );
-                    let requested_rect =
-                        NativeRect::try_from_rect(open_status.placement.rcNormalPosition)
-                            .context("provisional reveal placement is empty or inverted")?;
-                    self.prepare_provisional_z_order_band(point, requested_rect, provisional_peers)
-                })
-                .transpose()?;
-            let shown = self.present_pending_initial_placement(
-                activate,
-                force_show,
-                prepared
-                    .as_ref()
-                    .map(PreparedProvisionalZOrderBand::insert_after),
-            )?;
-            Ok((shown, prepared))
+            self.present_pending_initial_placement(activate, force_show, None)
         })();
 
         if result.is_err()
@@ -1333,7 +1373,7 @@ impl WindowsWindowInner {
         let Some(deferred) = deferred else {
             return result;
         };
-        if matches!(&result, Ok((false, _))) {
+        if matches!(&result, Ok(false)) {
             let replacement = self.state.deferred_placement_mutation.take();
             if self.placement_mutation_is_current(deferred.generation) && replacement.is_none() {
                 self.state.deferred_placement_mutation.set(Some(deferred));
@@ -1936,7 +1976,6 @@ impl WindowsWindowInner {
         self: &Rc<Self>,
         session_generation: u64,
         presentation_generation: u64,
-        reveal_point: Point<DevicePixels>,
     ) -> PlatformWindowCommandOutcome {
         if self.is_native_window_terminal()
             || presentation_generation == 0
@@ -1955,54 +1994,76 @@ impl WindowsWindowInner {
         {
             return PlatformWindowCommandOutcome::Rejected;
         }
-        let Ok(peer_windows) =
-            session.reveal_peer_windows(self.handle.window_id(), presentation_generation)
+        let Ok(request) =
+            session.claim_native_reveal(self.handle.window_id(), presentation_generation)
         else {
             return PlatformWindowCommandOutcome::Rejected;
         };
+        let reveal_point = request.reveal_point();
+        let initial_physical_geometry = request.initial_physical_geometry();
+        let peer_windows = request.peer_windows();
 
         let foreground_before = unsafe { GetForegroundWindow() };
-        let show_result = self
-            .reveal_pending_initial_placement_with_deferred_mutation(reveal_point, &peer_windows)
-            .map(|(shown, prepared)| {
-                (
-                    shown,
-                    self.verify_provisional_z_order_band(&prepared),
-                    prepared,
-                )
-            });
+        let visibility_guard = ProvisionalRevealVisibilityGuard::new(self.hwnd);
+        let show_result = (|| {
+            if let Some(expected) = initial_physical_geometry {
+                anyhow::ensure!(
+                    self.physical_geometry_from_native()? == expected,
+                    "provisional reveal target geometry changed after its accepted frame"
+                );
+            }
+            let requested_rect = Self::native_rect(self.hwnd)?
+                .context("provisional reveal has no live native window frame")?;
+            let prepared =
+                self.prepare_provisional_z_order_band(reveal_point, requested_rect, &peer_windows)?;
+            let shown =
+                self.reveal_pending_initial_placement_without_geometry(prepared.insert_after())?;
+            let physical_client_bounds_exact = initial_physical_geometry
+                .is_none_or(|expected| self.physical_geometry_from_native().ok() == Some(expected));
+            anyhow::ensure!(
+                physical_client_bounds_exact,
+                "provisional reveal changed the accepted physical geometry"
+            );
+            Ok((
+                shown,
+                self.verify_provisional_z_order_band(&prepared),
+                prepared,
+                physical_client_bounds_exact,
+            ))
+        })();
         if let Err(error) = show_result.as_ref() {
             log::error!("failed to reveal deferred provisional presentation: {error:#}");
         }
         let native_visible = unsafe { IsWindowVisible(self.hwnd).as_bool() };
+        let physical_client_bounds_exact = show_result
+            .as_ref()
+            .map(|(_, _, _, exact)| *exact)
+            .unwrap_or(false);
         let z_order = show_result
             .as_ref()
-            .map(|(_, z_order, _)| *z_order)
+            .map(|(_, z_order, _, _)| *z_order)
             .unwrap_or(WindowProvisionalRevealZOrder::Unavailable);
         let facts = WindowProvisionalRevealNativeFacts::new(
             native_visible,
             unsafe { GetForegroundWindow() } == foreground_before,
             self.provisional_native_hit_is_transparent(reveal_point),
             true,
+            physical_client_bounds_exact,
             z_order,
         );
-        self.provisional_reveal_generation
-            .set(Some(presentation_generation));
         let recorded = session
             .record_native_reveal(self.handle.window_id(), presentation_generation, facts)
             .is_ok();
-        if matches!(show_result, Ok((true, _, _)))
+        if matches!(show_result, Ok((true, _, _, _)))
             && recorded
             && facts.accepts_reveal()
             && facts.z_order() != WindowProvisionalRevealZOrder::Unavailable
         {
+            self.provisional_reveal_generation
+                .set(Some(presentation_generation));
+            visibility_guard.commit();
             PlatformWindowCommandOutcome::Accepted
         } else {
-            if native_visible {
-                unsafe {
-                    let _ = ShowWindow(self.hwnd, SW_HIDE);
-                }
-            }
             PlatformWindowCommandOutcome::Rejected
         }
     }
@@ -2250,8 +2311,6 @@ impl WindowsWindowInner {
             fullscreen: self.state.fullscreen.get(),
             fullscreen_restore_bounds: self.state.fullscreen_restore_bounds.get(),
             non_rude_hwnd: non_rude_hwnd_for_fullscreen(self.state.fullscreen.get()),
-            display: self.state.display.get(),
-            scale_factor: self.state.scale_factor.get(),
         })
     }
 
@@ -2267,8 +2326,26 @@ impl WindowsWindowInner {
             .fullscreen_restore_bounds
             .set(snapshot.fullscreen_restore_bounds);
         set_non_rude_hwnd(self.hwnd, snapshot.non_rude_hwnd)?;
-        self.state.display.set(snapshot.display);
-        self.state.scale_factor.set(snapshot.scale_factor);
+        let physical_geometry = self
+            .physical_geometry_from_native()
+            .context("failed to read the native geometry restored by placement rollback")?;
+        let display_observation = physical_geometry
+            .display_observation()
+            .context("restored native geometry did not identify its display")?;
+        let display = WindowsDisplay::new(display_observation.display_id())
+            .context("restored native display is no longer available")?;
+        let coordinator = self
+            .native_retirement_coordinator
+            .upgrade()
+            .context("Windows platform topology authority is no longer available")?;
+        anyhow::ensure!(
+            coordinator.display_topology_generation() == display_observation.topology_generation(),
+            "display topology changed while placement rollback was committed"
+        );
+        self.state.display.set(display);
+        self.state
+            .scale_factor
+            .set(physical_geometry.scale_factor());
         Ok(())
     }
 
@@ -2336,44 +2413,97 @@ impl WindowsWindowInner {
         &self,
         request: WindowPhysicalPlacementRequest,
     ) -> Result<()> {
+        self.validate_physical_placement_target(request)?;
         let rollback = self.capture_window_placement_snapshot()?;
-        let result = (|| {
-            if self.state.is_fullscreen() {
-                self.toggle_fullscreen_now()?;
-            }
-            if unsafe {
-                IsWindowVisible(self.hwnd).as_bool()
-                    && (IsZoomed(self.hwnd).as_bool() || IsIconic(self.hwnd).as_bool())
-            } {
-                unsafe {
-                    let _ = ShowWindow(self.hwnd, SW_RESTORE);
+        let mut mutation_started = false;
+        match self.apply_physical_windowed_placement_body(request, &mut mutation_started) {
+            Ok(()) => Ok(()),
+            Err(error) if !mutation_started => Err(error),
+            Err(error) => {
+                if let Err(rollback_error) = self.restore_window_placement_snapshot(rollback) {
+                    return Err(error).context(format!(
+                        "physical window placement rollback also failed: {rollback_error:#}"
+                    ));
                 }
+                Err(error)
             }
-
-            let rect =
-                self.initial_window_rect_for_physical_client_bounds(request.client_bounds())?;
-            let style = WINDOW_STYLE(
-                self.get_window_long_checked(GWL_STYLE, "failed to read window style")? as u32,
-            );
-            self.apply_window_style_and_bounds(StyleAndBounds {
-                style,
-                x: rect.left,
-                y: rect.top,
-                cx: rect.right - rect.left,
-                cy: rect.bottom - rect.top,
-            })?;
-            self.settle_physical_client_bounds_exactly(request.client_bounds())
-        })();
-
-        if let Err(error) = result {
-            if let Err(rollback_error) = self.restore_window_placement_snapshot(rollback) {
-                return Err(error).context(format!(
-                    "physical window placement rollback also failed: {rollback_error:#}"
-                ));
-            }
-            return Err(error);
         }
-        Ok(())
+    }
+
+    fn apply_physical_windowed_placement_body(
+        &self,
+        request: WindowPhysicalPlacementRequest,
+        mutation_started: &mut bool,
+    ) -> Result<()> {
+        self.validate_physical_placement_target(request)?;
+        if self.state.is_fullscreen() {
+            *mutation_started = true;
+            self.toggle_fullscreen_now()?;
+        }
+        if unsafe {
+            IsWindowVisible(self.hwnd).as_bool()
+                && (IsZoomed(self.hwnd).as_bool() || IsIconic(self.hwnd).as_bool())
+        } {
+            *mutation_started = true;
+            unsafe {
+                let _ = ShowWindow(self.hwnd, SW_RESTORE);
+            }
+        }
+
+        let rect = self.initial_window_rect_for_physical_client_bounds(request)?;
+        let style = WINDOW_STYLE(
+            self.get_window_long_checked(GWL_STYLE, "failed to read window style")? as u32,
+        );
+        *mutation_started = true;
+        self.apply_window_style_and_bounds(StyleAndBounds {
+            style,
+            x: rect.left,
+            y: rect.top,
+            cx: rect.right - rect.left,
+            cy: rect.bottom - rect.top,
+        })?;
+        self.settle_physical_client_bounds_exactly(request)
+    }
+
+    fn apply_hidden_physical_initial_placement(
+        &self,
+        request: WindowPhysicalPlacementRequest,
+    ) -> Result<()> {
+        anyhow::ensure!(
+            self.has_pending_initial_placement()
+                && !self.is_native_window_terminal()
+                && unsafe { !IsWindowVisible(self.hwnd).as_bool() },
+            "hidden physical initial placement requires one live unmapped window"
+        );
+        self.validate_physical_placement_target(request)?;
+        let rollback = self.capture_window_placement_snapshot()?;
+        let mut mutation_started = false;
+        let result = (|| {
+            self.apply_physical_windowed_placement_body(request, &mut mutation_started)?;
+            let mut outer_bounds = RECT::default();
+            unsafe { GetWindowRect(self.hwnd, &mut outer_bounds) }
+                .context("failed to observe the settled hidden target window frame")?;
+            let mut open_status = self
+                .pending_initial_placement()
+                .context("hidden physical placement lost its retained initial placement")?;
+            open_status.state = WindowOpenState::Windowed;
+            open_status.placement.rcNormalPosition = outer_bounds;
+            open_status.placement.showCmd = SW_SHOWNORMAL.0 as u32;
+            self.state.initial_placement.set(Some(open_status));
+            Ok(())
+        })();
+        match result {
+            Ok(()) => Ok(()),
+            Err(error) if !mutation_started => Err(error),
+            Err(error) => {
+                if let Err(rollback_error) = self.restore_window_placement_snapshot(rollback) {
+                    return Err(error).context(format!(
+                        "hidden physical placement rollback also failed: {rollback_error:#}"
+                    ));
+                }
+                Err(error)
+            }
+        }
     }
 
     fn apply_provisional_final_placement(
@@ -2393,7 +2523,8 @@ impl WindowsWindowInner {
             "final provisional placement requires an accepted native reveal"
         );
         let rollback = self.capture_provisional_placement_rollback()?;
-        let rect = self.initial_window_rect_for_physical_client_bounds(request.client_bounds())?;
+        let rect =
+            self.initial_window_rect_for_physical_client_bounds(request.physical_request())?;
         let requested_rect = NativeRect::try_from_rect(rect)
             .context("final provisional placement is empty or inverted")?;
         let prepared = self.prepare_provisional_z_order_band(
@@ -2427,7 +2558,7 @@ impl WindowsWindowInner {
             return Err(error);
         }
 
-        if let Err(error) = self.settle_physical_client_bounds_exactly(request.client_bounds()) {
+        if let Err(error) = self.settle_physical_client_bounds_exactly(request.physical_request()) {
             if let Err(rollback_error) = self.restore_provisional_placement_rollback(rollback) {
                 return Err(error).context(format!(
                     "provisional DPI convergence rollback also failed: {rollback_error:#}"
@@ -2436,10 +2567,23 @@ impl WindowsWindowInner {
             return Err(error);
         }
 
+        let observation_epoch = self.state.native_placement_epoch();
         let z_order = self.verify_provisional_z_order_band(&prepared);
-        let observed_geometry = self.physical_geometry_from_native().ok();
-        let physical_geometry_exact = observed_geometry
-            .is_some_and(|geometry| geometry.client_bounds() == request.client_bounds());
+        let platform_facts = match self.observed_platform_facts_from_native() {
+            Ok(facts) => facts,
+            Err(error) => {
+                if let Err(rollback_error) = self.restore_provisional_placement_rollback(rollback) {
+                    return Err(error).context(format!(
+                        "failed to observe the applied provisional placement and rollback also failed: {rollback_error:#}"
+                    ));
+                }
+                return Err(error)
+                    .context("failed to observe the applied provisional placement authority");
+            }
+        };
+        let physical_geometry_exact = platform_facts
+            .physical_geometry
+            .is_some_and(|geometry| request.physical_request().matches_geometry(geometry));
         let stable_native_window_identity = self
             .registered_window_snapshot(self.hwnd)
             .ok()
@@ -2455,7 +2599,7 @@ impl WindowsWindowInner {
             stable_native_window_identity,
             z_order,
         );
-        if !facts.accepts_placement() {
+        if self.state.native_placement_epoch() != observation_epoch || !facts.accepts_placement() {
             if let Err(rollback_error) = self.restore_provisional_placement_rollback(rollback) {
                 return Err(anyhow::anyhow!(
                     "native provisional placement facts were incomplete ({facts:?}) and rollback failed: {rollback_error:#}"
@@ -2477,11 +2621,22 @@ impl WindowsWindowInner {
                     .context("failed to capture the applied provisional placement authority");
             }
         };
+        if self.state.native_placement_epoch() != observation_epoch {
+            if let Err(rollback_error) = self.restore_provisional_placement_rollback(rollback) {
+                return Err(anyhow::anyhow!(
+                    "native placement changed while its committed rollback authority was captured, and rollback failed: {rollback_error:#}"
+                ));
+            }
+            return Err(anyhow::anyhow!(
+                "native placement changed while its committed rollback authority was captured"
+            ));
+        }
         Ok(AppliedProvisionalFinalPlacement {
             facts,
+            platform_facts,
             rollback,
             applied,
-            applied_epoch: self.state.native_placement_epoch(),
+            applied_epoch: observation_epoch,
         })
     }
 
@@ -3017,7 +3172,7 @@ impl WindowsWindowInner {
                 self.merge_deferred_logical_initial_placement(request)
             }
             DeferredPlacementRequest::Physical(request) => {
-                self.merge_deferred_physical_initial_placement(request)
+                self.apply_hidden_physical_initial_placement(request)
             }
         }
     }
@@ -3067,21 +3222,6 @@ impl WindowsWindowInner {
         Ok(())
     }
 
-    fn merge_deferred_physical_initial_placement(
-        &self,
-        request: WindowPhysicalPlacementRequest,
-    ) -> Result<()> {
-        let Some(mut open_status) = self.state.initial_placement.take() else {
-            anyhow::bail!("pending creation placement disappeared before activation");
-        };
-        open_status.state = WindowOpenState::Windowed;
-        open_status.placement.rcNormalPosition =
-            calculate_window_rect(request.client_bounds(), &self.state.border_offset);
-        open_status.placement.showCmd = SW_SHOWNORMAL.0 as u32;
-        self.state.initial_placement.set(Some(open_status));
-        Ok(())
-    }
-
     fn observed_platform_facts(&self) -> WindowPlatformFacts {
         let facts = self
             .observed_platform_facts_from_native()
@@ -3124,6 +3264,7 @@ impl WindowsWindowInner {
     }
 
     fn observed_platform_facts_from_native(&self) -> Result<WindowPlatformFacts> {
+        let observation_epoch = self.state.native_placement_epoch();
         let physical_geometry = self.physical_geometry_from_native()?;
         let scale_factor = physical_geometry.scale_factor();
         let mut window_rect = RECT::default();
@@ -3137,7 +3278,10 @@ impl WindowsWindowInner {
         unsafe { GetWindowPlacement(self.hwnd, &mut placement) }
             .context("failed to read native window placement")?;
         let is_minimized = unsafe { IsIconic(self.hwnd).as_bool() };
-        let monitor = unsafe { MonitorFromWindow(self.hwnd, MONITOR_DEFAULTTONULL) };
+        let display = physical_geometry
+            .display_observation()
+            .context("native physical geometry did not identify its display")?;
+        let monitor = HMONITOR(u64::from(display.display_id()) as _);
         let window_style = WINDOW_STYLE(
             self.get_window_long_checked(GWL_STYLE, "failed to read window style")? as u32,
         );
@@ -3166,8 +3310,7 @@ impl WindowsWindowInner {
         } else {
             WindowBounds::Windowed(restore_bounds)
         };
-        let display_id =
-            (!monitor.is_invalid()).then(|| WindowsDisplay::display_id_for_monitor(monitor));
+        let display_id = Some(display.display_id());
         let accepts_pointer_input = self.native_accepts_pointer_input()?;
         let activation_policy = self.state.activation_policy.get();
         let focus_on_click = window_ex_style.0 & WS_EX_NOACTIVATE.0 == 0;
@@ -3175,7 +3318,7 @@ impl WindowsWindowInner {
             && window_ex_style.0 & WS_EX_TOOLWINDOW.0 == 0;
         let topmost = window_ex_style.0 & WS_EX_TOPMOST.0 != 0;
 
-        Ok(WindowPlatformFacts {
+        let facts = WindowPlatformFacts {
             bounds,
             coordinate_space: WindowCoordinateSpace::WindowLocal,
             physical_geometry: Some(physical_geometry),
@@ -3194,7 +3337,12 @@ impl WindowsWindowInner {
             topmost,
             taskbar_visible,
             is_active: self.hwnd == unsafe { GetForegroundWindow() },
-        })
+        };
+        anyhow::ensure!(
+            self.state.native_placement_epoch() == observation_epoch,
+            "native window placement changed while platform facts were sampled"
+        );
+        Ok(facts)
     }
 
     fn physical_client_bounds_observation(&self) -> Result<Bounds<DevicePixels>> {
@@ -3226,11 +3374,54 @@ impl WindowsWindowInner {
         ))
     }
 
+    fn validate_physical_placement_target(
+        &self,
+        request: WindowPhysicalPlacementRequest,
+    ) -> Result<Option<HMONITOR>> {
+        let Some(target_display) = request.target_display() else {
+            return Ok(None);
+        };
+        let target_point = request
+            .target_point()
+            .context("display-bound physical placement is missing its target point")?;
+        let coordinator = self
+            .native_retirement_coordinator
+            .upgrade()
+            .context("Windows platform topology authority is no longer available")?;
+        let topology_generation = coordinator.display_topology_generation();
+        anyhow::ensure!(
+            topology_generation == target_display.topology_generation(),
+            "physical placement target display topology is stale"
+        );
+        let monitor = unsafe {
+            MonitorFromPoint(
+                POINT {
+                    x: target_point.x.0,
+                    y: target_point.y.0,
+                },
+                MONITOR_DEFAULTTONULL,
+            )
+        };
+        anyhow::ensure!(
+            !monitor.is_invalid(),
+            "physical placement target point no longer resolves to a display"
+        );
+        let current = WindowsDisplay::physical_geometry_for_monitor(monitor, topology_generation)
+            .context("physical placement target point no longer resolves to a display")?;
+        anyhow::ensure!(
+            current == target_display,
+            "physical placement target display changed before native commit"
+        );
+        Ok(Some(monitor))
+    }
+
     fn initial_window_rect_for_physical_client_bounds(
         &self,
-        client_bounds: Bounds<DevicePixels>,
+        request: WindowPhysicalPlacementRequest,
     ) -> Result<RECT> {
-        let target_dpi = target_monitor_dpi_for_physical_client_bounds(client_bounds)?;
+        let target_monitor = self.validate_physical_placement_target(request)?;
+        let client_bounds = request.client_bounds();
+        let target_dpi = target_monitor_dpi_for_physical_placement(request, target_monitor)?;
         let style = WINDOW_STYLE(
             self.get_window_long_checked(GWL_STYLE, "failed to read native window style")? as u32,
         );
@@ -3256,9 +3447,11 @@ impl WindowsWindowInner {
 
     fn settle_physical_client_bounds_exactly(
         &self,
-        client_bounds: Bounds<DevicePixels>,
+        request: WindowPhysicalPlacementRequest,
     ) -> Result<()> {
-        if self.physical_client_bounds_observation()? == client_bounds {
+        self.validate_physical_placement_target(request)?;
+        let client_bounds = request.client_bounds();
+        if request.matches_geometry(self.physical_geometry_from_native()?) {
             return Ok(());
         }
 
@@ -3279,9 +3472,11 @@ impl WindowsWindowInner {
         }
         .context("failed to converge the native client bounds at the target DPI")?;
 
+        self.validate_physical_placement_target(request)?;
+        let observed = self.physical_geometry_from_native()?;
         anyhow::ensure!(
-            self.physical_client_bounds_observation()? == client_bounds,
-            "native physical client bounds did not converge exactly at the target DPI"
+            request.matches_geometry(observed),
+            "native physical client geometry did not converge exactly on the target display"
         );
         Ok(())
     }
@@ -3297,17 +3492,37 @@ impl WindowsWindowInner {
         Ok(scale_factor)
     }
 
+    fn physical_geometry_observation(
+        &self,
+        topology_generation: u64,
+    ) -> Result<PlatformWindowPhysicalGeometry> {
+        let bounds = self.physical_client_bounds_observation()?;
+        let scale_factor = self.physical_scale_factor_observation()?;
+        let monitor = unsafe { MonitorFromWindow(self.hwnd, MONITOR_DEFAULTTONULL) };
+        let display = WindowsDisplay::physical_geometry_for_monitor(monitor, topology_generation)
+            .context("failed to resolve the native window display")?;
+        PlatformWindowPhysicalGeometry::try_new(bounds, scale_factor)
+            .and_then(|geometry| geometry.with_display_observation(display))
+            .context("native physical client geometry and display were not coherent")
+    }
+
     pub(crate) fn physical_geometry_from_native(&self) -> Result<PlatformWindowPhysicalGeometry> {
-        let first_bounds = self.physical_client_bounds_observation()?;
-        let first_scale_factor = self.physical_scale_factor_observation()?;
-        let second_bounds = self.physical_client_bounds_observation()?;
-        let second_scale_factor = self.physical_scale_factor_observation()?;
+        let coordinator = self
+            .native_retirement_coordinator
+            .upgrade()
+            .context("Windows platform topology authority is no longer available")?;
+        let first_topology_generation = coordinator.display_topology_generation();
+        let first_geometry = self.physical_geometry_observation(first_topology_generation)?;
+        let second_topology_generation = coordinator.display_topology_generation();
+        let second_geometry = self.physical_geometry_observation(second_topology_generation)?;
+        let final_topology_generation = coordinator.display_topology_generation();
         anyhow::ensure!(
-            first_bounds == second_bounds && first_scale_factor == second_scale_factor,
-            "native physical client geometry changed while it was sampled"
+            first_topology_generation == second_topology_generation
+                && second_topology_generation == final_topology_generation
+                && first_geometry == second_geometry,
+            "native physical client geometry or display topology changed while it was sampled"
         );
-        PlatformWindowPhysicalGeometry::try_new(second_bounds, second_scale_factor)
-            .context("native physical client geometry was not representable")
+        Ok(second_geometry)
     }
 
     fn cached_platform_facts(&self) -> WindowPlatformFacts {
@@ -3869,12 +4084,57 @@ impl WindowsWindow {
             return PlatformWindowDispatch::Rejected;
         }
         if self.0.has_pending_initial_placement() {
-            self.state
-                .deferred_placement_mutation
-                .set(Some(DeferredWindowPlacementMutation {
-                    generation,
-                    request: DeferredPlacementRequest::Physical(request),
-                }));
+            if self.0.provisional_session.is_none() {
+                self.0.state.deferred_placement_mutation.set(Some(
+                    DeferredWindowPlacementMutation {
+                        generation,
+                        request: DeferredPlacementRequest::Physical(request),
+                    },
+                ));
+                return PlatformWindowDispatch::Queued;
+            }
+            let this = self.0.clone();
+            let executor = this.executor.clone();
+            executor
+                .spawn(async move {
+                    if !this.placement_mutation_is_current(generation)
+                        || this.is_native_window_terminal()
+                    {
+                        return;
+                    }
+                    let before_facts = match this.observed_platform_facts_from_native() {
+                        Ok(facts) => facts,
+                        Err(error) => {
+                            log::warn!(
+                                "Windows hidden physical placement rejected before dispatch because native facts could not be read: {error:#}"
+                            );
+                            this.emit_window_mutation_observation(
+                                WindowMutationDomain::Placement,
+                                generation,
+                                PlatformWindowMutationTerminal::Rejected,
+                                this.cached_platform_facts(),
+                            );
+                            return;
+                        }
+                    };
+                    let result = this.apply_hidden_physical_initial_placement(request);
+                    if this.placement_mutation_is_current(generation)
+                        && !this.is_native_window_terminal()
+                    {
+                        let (terminal, facts) = this.terminal_facts_after_mutation(
+                            "hidden physical initial placement",
+                            result,
+                            before_facts,
+                        );
+                        this.emit_window_mutation_observation(
+                            WindowMutationDomain::Placement,
+                            generation,
+                            terminal,
+                            facts,
+                        );
+                    }
+                })
+                .detach();
             return PlatformWindowDispatch::Queued;
         }
         if unsafe { !IsWindowVisible(self.0.hwnd).as_bool() } {
@@ -4036,33 +4296,7 @@ impl WindowsWindow {
                     }
                 };
 
-                let platform_facts = match this.observed_platform_facts_from_native() {
-                    Ok(facts) => facts,
-                    Err(error) => {
-                        log::warn!(
-                            "Windows provisional final placement completed but terminal fact readback failed: {error:#}"
-                        );
-                        this.compensate_applied_provisional_final_placement(
-                            applied,
-                            "a provisional final placement without generic terminal facts",
-                        );
-                        let _ = session.settle_native_final_placement(
-                            this.handle.window_id(),
-                            request.generation(),
-                            WindowProvisionalPlacementOutcome::Rejected,
-                        );
-                        let facts = this
-                            .observed_platform_facts_from_native()
-                            .unwrap_or(before_facts);
-                        this.emit_window_mutation_observation(
-                            WindowMutationDomain::Placement,
-                            generation,
-                            PlatformWindowMutationTerminal::Rejected,
-                            facts,
-                        );
-                        return;
-                    }
-                };
+                let platform_facts = applied.platform_facts();
 
                 if !this.placement_mutation_is_current(generation) {
                     this.compensate_applied_provisional_final_placement(
@@ -4305,11 +4539,9 @@ impl PlatformWindow for WindowsWindow {
                     PlatformWindowCommand::RevealDeferredInitialPresentation {
                         session_generation,
                         presentation_generation,
-                        reveal_point,
                     } => window.reveal_deferred_initial_presentation(
                         session_generation,
                         presentation_generation,
-                        reveal_point,
                     ),
                     PlatformWindowCommand::Activate => window.activate_now(),
                     // Preserve the existing Windows behavior for currently unsupported commands.
@@ -5202,8 +5434,6 @@ struct WindowPlacementRollbackSnapshot {
     fullscreen: Option<StyleAndBounds>,
     fullscreen_restore_bounds: Bounds<Pixels>,
     non_rude_hwnd: bool,
-    display: WindowsDisplay,
-    scale_factor: f32,
 }
 
 #[repr(C)]
@@ -5508,9 +5738,27 @@ fn calculate_client_rect(
     }
 }
 
-fn target_monitor_dpi_for_physical_client_bounds(
-    client_bounds: Bounds<DevicePixels>,
+fn target_monitor_dpi_for_physical_placement(
+    request: WindowPhysicalPlacementRequest,
+    validated_target_monitor: Option<HMONITOR>,
 ) -> Result<u32> {
+    if let Some(display) = request.target_display() {
+        let monitor = validated_target_monitor
+            .context("display-bound placement did not retain its validated target monitor")?;
+        let mut dpi_x = 0;
+        let mut dpi_y = 0;
+        unsafe { GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y) }
+            .context("failed to read the exact target display DPI")?;
+        anyhow::ensure!(
+            dpi_x != 0
+                && dpi_x == dpi_y
+                && dpi_x as f32 / USER_DEFAULT_SCREEN_DPI as f32 == display.scale_factor(),
+            "target display DPI no longer matches the placement observation"
+        );
+        return Ok(dpi_x);
+    }
+
+    let client_bounds = request.client_bounds();
     let client_rect = RECT {
         left: client_bounds.origin.x.0,
         top: client_bounds.origin.y.0,

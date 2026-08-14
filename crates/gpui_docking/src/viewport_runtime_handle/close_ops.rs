@@ -158,12 +158,12 @@ impl DockViewportRuntimeHandle {
         let surface_commit_sink = self.surface_commit_sink.clone();
         let active_surface_transaction = self.active_surface_transaction.clone();
         let surface_owner = self.surface_owner.clone();
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-support"))]
         let window_close_apply_test_hook = self.window_close_apply_test_hook.clone();
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-support"))]
         let live_undock_logical_close_selection_test_hook =
             self.live_undock_logical_close_selection_test_hook.clone();
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-support"))]
         let live_undock_provisional_builder_test_hook =
             self.live_undock_provisional_builder_test_hook.clone();
         #[cfg(test)]
@@ -197,12 +197,12 @@ impl DockViewportRuntimeHandle {
                 surface_commit_sink: surface_commit_sink.clone(),
                 active_surface_transaction: active_surface_transaction.clone(),
                 surface_owner: surface_owner.clone(),
-                #[cfg(test)]
+                #[cfg(any(test, feature = "test-support"))]
                 window_close_apply_test_hook: window_close_apply_test_hook.clone(),
-                #[cfg(test)]
+                #[cfg(any(test, feature = "test-support"))]
                 live_undock_logical_close_selection_test_hook:
                     live_undock_logical_close_selection_test_hook.clone(),
-                #[cfg(test)]
+                #[cfg(any(test, feature = "test-support"))]
                 live_undock_provisional_builder_test_hook:
                     live_undock_provisional_builder_test_hook.clone(),
                 #[cfg(test)]

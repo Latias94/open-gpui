@@ -1,12 +1,14 @@
 use super::{
-    NATIVE_SCENARIO_ENV, NativeScenarioRegistration, inject_primary_button_up_best_effort,
+    NATIVE_SCENARIO_ENV, NativeDockBehavior, NativeScenarioRegistration,
+    inject_primary_button_up_best_effort,
 };
 use anyhow::{Context as _, Result};
 use serde::{Deserialize, Serialize};
 use std::{
     env, fs,
     fs::File,
-    io::{BufRead as _, BufReader, Read as _, Seek as _, SeekFrom, Write as _},
+    io::{self, BufRead as _, BufReader, Read as _, Seek as _, SeekFrom, Write as _},
+    panic::{AssertUnwindSafe, catch_unwind},
     path::{Path, PathBuf},
     process::{Child, ChildStdin, ChildStdout, Command, ExitStatus, Stdio},
     sync::mpsc::{self, Receiver, RecvTimeoutError},
@@ -33,10 +35,14 @@ use windows::Win32::{
 };
 
 const WORKER_SCENARIO_ENV: &str = "OPEN_GPUI_NATIVE_DOCK_WORKER";
+const WORKER_SUBCASE_ENV: &str = "OPEN_GPUI_NATIVE_DOCK_WORKER_SUBCASE";
 const WORKER_PROTOCOL_NONCE_ENV: &str = "OPEN_GPUI_NATIVE_DOCK_PROTOCOL_NONCE";
-const WORKER_REPORT_SCHEMA_VERSION: u32 = 3;
+const WORKER_REPORT_SCHEMA_VERSION: u32 = 5;
 const WORKER_PROCESS_TIMEOUT: Duration = Duration::from_secs(60);
 const WORKER_EXIT_AFTER_EOF_TIMEOUT: Duration = Duration::from_secs(2);
+const WORKER_JOB_TERMINATION_TIMEOUT: Duration = Duration::from_secs(1);
+const WORKER_CHILD_KILL_TIMEOUT: Duration = Duration::from_secs(2);
+const WORKER_OUTPUT_READER_TIMEOUT: Duration = Duration::from_secs(1);
 const WORKER_POLL_INTERVAL: Duration = Duration::from_millis(20);
 const LOG_TAIL_BYTES: usize = 32 * 1024;
 const WORKER_START_COMMAND: &str = "START";
@@ -47,8 +53,10 @@ const WORKER_REPORT_PREFIX: &str = "OPEN_GPUI_NATIVE_DOCK_REPORT";
 pub(super) struct NativeWorkerReport {
     schema_version: u32,
     scenario_id: String,
+    subcase: NativeWorkerSubcase,
     outcome: NativeWorkerOutcome,
     milestones: Vec<String>,
+    exit_path: NativeWorkerExitPath,
     census: NativeWorkerCensus,
 }
 
@@ -57,6 +65,65 @@ pub(super) struct NativeWorkerReport {
 pub(super) enum NativeWorkerOutcome {
     Passed,
     Failed(String),
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum NativeWorkerSubcase {
+    Primary,
+    LastWindowClosed,
+    AppShutdown,
+}
+
+impl NativeWorkerSubcase {
+    const fn as_env(self) -> &'static str {
+        match self {
+            Self::Primary => "primary",
+            Self::LastWindowClosed => "last_window_closed",
+            Self::AppShutdown => "app_shutdown",
+        }
+    }
+
+    fn parse_env(value: &str) -> Option<Self> {
+        match value {
+            "primary" => Some(Self::Primary),
+            "last_window_closed" => Some(Self::LastWindowClosed),
+            "app_shutdown" => Some(Self::AppShutdown),
+            _ => None,
+        }
+    }
+
+    const fn expected_exit_path(self) -> NativeWorkerExitPath {
+        match self {
+            Self::Primary => NativeWorkerExitPath::ExplicitCleanup,
+            Self::LastWindowClosed => NativeWorkerExitPath::LastWindowClosed,
+            Self::AppShutdown => NativeWorkerExitPath::AppShutdown,
+        }
+    }
+
+    pub(super) const fn uses_last_window_policy(self) -> bool {
+        matches!(self, Self::LastWindowClosed)
+    }
+
+    pub(super) const fn uses_app_shutdown(self) -> bool {
+        matches!(self, Self::AppShutdown)
+    }
+
+    fn is_allowed_for(self, behavior: NativeDockBehavior) -> bool {
+        if behavior == NativeDockBehavior::ProcessConvergence {
+            matches!(self, Self::LastWindowClosed | Self::AppShutdown)
+        } else {
+            matches!(self, Self::Primary)
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum NativeWorkerExitPath {
+    ExplicitCleanup,
+    LastWindowClosed,
+    AppShutdown,
 }
 
 enum WorkerOutputEvent {
@@ -94,31 +161,81 @@ struct NativeWorkerCensus {
 }
 
 impl NativeWorkerReport {
-    fn passed(scenario_id: &str, milestones: Vec<String>, census: NativeWorkerCensus) -> Self {
+    fn passed(
+        scenario_id: &str,
+        subcase: NativeWorkerSubcase,
+        milestones: Vec<String>,
+        exit_path: NativeWorkerExitPath,
+        census: NativeWorkerCensus,
+    ) -> Self {
         Self {
             schema_version: WORKER_REPORT_SCHEMA_VERSION,
             scenario_id: scenario_id.to_owned(),
+            subcase,
             outcome: NativeWorkerOutcome::Passed,
             milestones,
+            exit_path,
             census,
         }
     }
 
-    fn failed(scenario_id: &str, message: String, census: NativeWorkerCensus) -> Self {
+    fn failed(
+        scenario_id: &str,
+        subcase: NativeWorkerSubcase,
+        message: String,
+        milestones: Vec<String>,
+        exit_path: NativeWorkerExitPath,
+        census: NativeWorkerCensus,
+    ) -> Self {
         Self {
             schema_version: WORKER_REPORT_SCHEMA_VERSION,
             scenario_id: scenario_id.to_owned(),
+            subcase,
             outcome: NativeWorkerOutcome::Failed(message),
-            milestones: Vec::new(),
+            milestones,
+            exit_path,
             census,
         }
     }
 }
 
-pub(super) fn is_worker(scenario_id: &str) -> bool {
-    env::var(WORKER_SCENARIO_ENV)
-        .ok()
-        .is_some_and(|worker| worker == scenario_id)
+pub(super) fn is_worker(scenario_id: &str, behavior: NativeDockBehavior) -> bool {
+    match env::var(WORKER_SCENARIO_ENV) {
+        Ok(worker) if worker == scenario_id => {
+            let _ = worker_subcase(scenario_id, behavior);
+            true
+        }
+        Ok(worker) => {
+            eprintln!(
+                "native Dock worker scenario `{worker}` does not match selected scenario `{scenario_id}`"
+            );
+            std::process::exit(2);
+        }
+        Err(env::VarError::NotPresent) => false,
+        Err(env::VarError::NotUnicode(_)) => {
+            eprintln!("native Dock worker scenario environment is not valid Unicode");
+            std::process::exit(2);
+        }
+    }
+}
+
+pub(super) fn worker_subcase(
+    scenario_id: &str,
+    behavior: NativeDockBehavior,
+) -> NativeWorkerSubcase {
+    let value = env::var(WORKER_SUBCASE_ENV).unwrap_or_else(|error| {
+        eprintln!("native Dock worker is missing a valid {WORKER_SUBCASE_ENV}: {error}");
+        std::process::exit(2);
+    });
+    let subcase = NativeWorkerSubcase::parse_env(&value).unwrap_or_else(|| {
+        eprintln!("native Dock worker received unknown subcase `{value}`");
+        std::process::exit(2);
+    });
+    if !subcase.is_allowed_for(behavior) {
+        eprintln!("native Dock worker subcase `{value}` is not valid for scenario `{scenario_id}`");
+        std::process::exit(2);
+    }
+    subcase
 }
 
 pub(super) fn await_worker_start() {
@@ -136,8 +253,10 @@ pub(super) fn capture_process_window_census() -> Result<NativeProcessWindowCensu
 
 pub(super) fn finish_worker_report(
     scenario_id: &str,
+    subcase: NativeWorkerSubcase,
     outcome: NativeWorkerOutcome,
     milestones: Vec<String>,
+    exit_path: NativeWorkerExitPath,
     before_application: NativeProcessWindowCensus,
     app: NativeWorkerAppCensus,
     observed_native_generations: usize,
@@ -154,9 +273,11 @@ pub(super) fn finish_worker_report(
         unterminated_native_generations,
     };
     Ok(match outcome {
-        NativeWorkerOutcome::Passed => NativeWorkerReport::passed(scenario_id, milestones, census),
+        NativeWorkerOutcome::Passed => {
+            NativeWorkerReport::passed(scenario_id, subcase, milestones, exit_path, census)
+        }
         NativeWorkerOutcome::Failed(message) => {
-            NativeWorkerReport::failed(scenario_id, message, census)
+            NativeWorkerReport::failed(scenario_id, subcase, message, milestones, exit_path, census)
         }
     })
 }
@@ -199,9 +320,38 @@ fn read_worker_command() -> String {
 }
 
 pub(super) fn run_case_in_worker(registration: &NativeScenarioRegistration) {
+    let subcases: &[NativeWorkerSubcase] =
+        if registration.behavior == NativeDockBehavior::ProcessConvergence {
+            &[
+                NativeWorkerSubcase::LastWindowClosed,
+                NativeWorkerSubcase::AppShutdown,
+            ]
+        } else {
+            &[NativeWorkerSubcase::Primary]
+        };
+    let failures = subcases
+        .iter()
+        .copied()
+        .filter_map(|subcase| {
+            catch_unwind(AssertUnwindSafe(|| {
+                run_worker_subcase(registration, subcase)
+            }))
+            .err()
+            .map(|panic| format!("{}: {}", subcase.as_env(), panic_payload_message(panic)))
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        failures.is_empty(),
+        "scenario `{}` worker subcases failed:\n{}",
+        registration.id,
+        failures.join("\n")
+    );
+}
+
+fn run_worker_subcase(registration: &NativeScenarioRegistration, subcase: NativeWorkerSubcase) {
     let scenario_id = registration.id.as_str();
     let _desktop = ParentDesktopState::capture();
-    let artifacts = WorkerArtifacts::new(scenario_id);
+    let artifacts = WorkerArtifacts::new(scenario_id, subcase);
     let stderr = File::create(&artifacts.stderr_path).unwrap_or_else(|error| {
         panic!(
             "scenario `{}` could not create worker stderr `{}`: {error}",
@@ -218,6 +368,7 @@ pub(super) fn run_case_in_worker(registration: &NativeScenarioRegistration) {
         .arg("--test-threads=1")
         .env(NATIVE_SCENARIO_ENV, scenario_id)
         .env(WORKER_SCENARIO_ENV, scenario_id)
+        .env(WORKER_SUBCASE_ENV, subcase.as_env())
         .env(WORKER_PROTOCOL_NONCE_ENV, &artifacts.protocol_nonce)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -253,6 +404,21 @@ pub(super) fn run_case_in_worker(registration: &NativeScenarioRegistration) {
         scenario_id,
         artifacts.summary()
     );
+    assert_eq!(
+        report.subcase,
+        subcase,
+        "scenario `{scenario_id}` worker reported a different subcase\n{}",
+        artifacts.summary()
+    );
+    if matches!(report.outcome, NativeWorkerOutcome::Passed) {
+        assert_eq!(
+            report.exit_path,
+            subcase.expected_exit_path(),
+            "scenario `{scenario_id}` worker subcase `{}` used the wrong application exit path\n{}",
+            subcase.as_env(),
+            artifacts.summary()
+        );
+    }
     assert_worker_census(scenario_id, child.id(), &report.census, &artifacts);
     assert_eq!(
         child.job_active_processes(),
@@ -296,6 +462,16 @@ pub(super) fn run_case_in_worker(registration: &NativeScenarioRegistration) {
         }
     }
     artifacts.remove_logs_after_success();
+}
+
+fn panic_payload_message(panic: Box<dyn std::any::Any + Send>) -> String {
+    match panic.downcast::<String>() {
+        Ok(message) => *message,
+        Err(panic) => match panic.downcast::<&'static str>() {
+            Ok(message) => (*message).to_owned(),
+            Err(_) => "non-string panic payload".to_owned(),
+        },
+    }
 }
 
 fn assert_worker_census(
@@ -423,25 +599,30 @@ impl Drop for ParentDesktopState {
 }
 
 struct WorkerArtifacts {
+    scenario_id: String,
+    subcase: NativeWorkerSubcase,
     protocol_nonce: String,
     stdout_path: PathBuf,
     stderr_path: PathBuf,
 }
 
 impl WorkerArtifacts {
-    fn new(scenario_id: &str) -> Self {
+    fn new(scenario_id: &str, subcase: NativeWorkerSubcase) -> Self {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock must be after the Unix epoch")
             .as_nanos();
         let stem = format!(
-            "open-gpui-native-dock-{}-{}-{nonce}",
+            "open-gpui-native-dock-{}-{}-{}-{nonce}",
             std::process::id(),
-            scenario_id.replace('.', "-")
+            scenario_id.replace('.', "-"),
+            subcase.as_env()
         );
         let directory = env::temp_dir();
         Self {
-            protocol_nonce: format!("{}-{nonce:x}", std::process::id()),
+            scenario_id: scenario_id.to_owned(),
+            subcase,
+            protocol_nonce: format!("{}-{}-{nonce:x}", std::process::id(), subcase.as_env()),
             stdout_path: directory.join(format!("{stem}.stdout.log")),
             stderr_path: directory.join(format!("{stem}.stderr.log")),
         }
@@ -449,7 +630,9 @@ impl WorkerArtifacts {
 
     fn summary(&self) -> String {
         format!(
-            "worker stdout log: {}\nworker stderr log: {}\nworker stdout tail:\n{}\nworker stderr tail:\n{}",
+            "worker scenario: {}\nworker subcase: {}\nworker stdout log: {}\nworker stderr log: {}\nworker stdout tail:\n{}\nworker stderr tail:\n{}",
+            self.scenario_id,
+            self.subcase.as_env(),
             self.stdout_path.display(),
             self.stderr_path.display(),
             read_log_tail(&self.stdout_path),
@@ -470,6 +653,40 @@ struct WorkerChild {
     report: Receiver<WorkerOutputEvent>,
     output_reader: Option<JoinHandle<()>>,
     protocol_nonce: String,
+}
+
+#[allow(dead_code)]
+#[derive(Debug)]
+struct WorkerTerminationReport {
+    job_termination: Result<(), String>,
+    exit_after_job_termination: Result<Option<ExitStatus>, String>,
+    child_kill: Option<Result<(), String>>,
+    exit_after_child_kill: Option<Result<Option<ExitStatus>, String>>,
+    output_reader: WorkerOutputReaderCompletion,
+}
+
+impl WorkerTerminationReport {
+    fn exit_was_confirmed(&self) -> bool {
+        self.exit_after_child_kill
+            .as_ref()
+            .unwrap_or(&self.exit_after_job_termination)
+            .as_ref()
+            .is_ok_and(Option::is_some)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WorkerOutputReaderCompletion {
+    NotRunning,
+    Joined,
+    Panicked,
+    TimedOut,
+}
+
+impl WorkerOutputReaderCompletion {
+    fn completed_cleanly(self) -> bool {
+        matches!(self, Self::NotRunning | Self::Joined)
+    }
 }
 
 impl WorkerChild {
@@ -548,17 +765,16 @@ impl WorkerChild {
                                 "scenario `{scenario_id}` parent could not inspect worker after stdout EOF: {error}\n{}",
                                 artifacts.summary()
                             )
-                        });
-                    self.stdin.take();
-                    self.join_output_reader();
+                    });
+                    let output_reader = self.finish_output_reader_with_deadline();
                     match status {
                         Some(status) => panic!(
-                            "scenario `{scenario_id}` worker exited before publishing its pre-exit census: {}\n{}",
+                            "scenario `{scenario_id}` worker exited before publishing its pre-exit census: {}; output_reader={output_reader:?}\n{}",
                             describe_exit_status(&status),
                             artifacts.summary()
                         ),
                         None => panic!(
-                            "scenario `{scenario_id}` worker closed stdout before publishing its pre-exit census but remained alive for {WORKER_EXIT_AFTER_EOF_TIMEOUT:?}; the harness will terminate its job\n{}",
+                            "scenario `{scenario_id}` worker closed stdout before publishing its pre-exit census but remained alive for {WORKER_EXIT_AFTER_EOF_TIMEOUT:?}; output_reader={output_reader:?}; the harness will terminate its job\n{}",
                             artifacts.summary()
                         ),
                     }
@@ -578,10 +794,9 @@ impl WorkerChild {
                 .try_wait()
             {
                 Ok(Some(status)) => {
-                    self.stdin.take();
-                    self.join_output_reader();
+                    let output_reader = self.finish_output_reader_with_deadline();
                     panic!(
-                        "scenario `{scenario_id}` worker exited before publishing its pre-exit census: {}\n{}",
+                        "scenario `{scenario_id}` worker exited before publishing its pre-exit census: {}; output_reader={output_reader:?}\n{}",
                         describe_exit_status(&status),
                         artifacts.summary()
                     )
@@ -628,32 +843,26 @@ impl WorkerChild {
                 .try_wait()
             {
                 Ok(Some(status)) => {
-                    self.stdin.take();
-                    self.join_output_reader();
+                    let output_reader = self.finish_output_reader_with_deadline();
+                    assert!(
+                        output_reader == WorkerOutputReaderCompletion::Joined,
+                        "scenario `{scenario_id}` worker exited but its output reader did not drain within {WORKER_OUTPUT_READER_TIMEOUT:?}: {output_reader:?}\n{}",
+                        artifacts.summary()
+                    );
                     return status;
                 }
                 Ok(None) if Instant::now() < deadline => thread::sleep(WORKER_POLL_INTERVAL),
                 Ok(None) => {
-                    let termination = self.job.terminate();
-                    let status = self
-                        .child
-                        .as_mut()
-                        .expect("worker child must be live")
-                        .wait();
+                    let termination = self.force_terminate_with_deadline();
                     panic!(
-                        "scenario `{scenario_id}` worker job exceeded {WORKER_PROCESS_TIMEOUT:?}; termination={termination:?}; wait={status:?}\n{}",
+                        "scenario `{scenario_id}` worker job exceeded {WORKER_PROCESS_TIMEOUT:?}; forced_termination={termination:?}\n{}",
                         artifacts.summary()
                     );
                 }
                 Err(error) => {
-                    let _ = self.job.terminate();
-                    let _ = self
-                        .child
-                        .as_mut()
-                        .expect("worker child must be live")
-                        .wait();
+                    let termination = self.force_terminate_with_deadline();
                     panic!(
-                        "scenario `{scenario_id}` parent could not inspect worker status: {error}\n{}",
+                        "scenario `{scenario_id}` parent could not inspect worker status: {error}; forced_termination={termination:?}\n{}",
                         artifacts.summary()
                     );
                 }
@@ -667,24 +876,116 @@ impl WorkerChild {
             .expect("native worker job census must remain readable")
     }
 
-    fn join_output_reader(&mut self) {
-        if let Some(reader) = self.output_reader.take() {
-            let _ = reader.join();
+    fn wait_for_child_exit_until(&mut self, deadline: Instant) -> io::Result<Option<ExitStatus>> {
+        loop {
+            match self
+                .child
+                .as_mut()
+                .expect("worker child must be live")
+                .try_wait()?
+            {
+                Some(status) => return Ok(Some(status)),
+                None if Instant::now() < deadline => thread::sleep(WORKER_POLL_INTERVAL),
+                None => return Ok(None),
+            }
+        }
+    }
+
+    fn finish_output_reader_with_deadline(&mut self) -> WorkerOutputReaderCompletion {
+        let Some(reader) = self.output_reader.take() else {
+            return WorkerOutputReaderCompletion::NotRunning;
+        };
+        let deadline = Instant::now() + WORKER_OUTPUT_READER_TIMEOUT;
+        while !reader.is_finished() && Instant::now() < deadline {
+            thread::sleep(WORKER_POLL_INTERVAL);
+        }
+        if !reader.is_finished() {
+            drop(reader);
+            return WorkerOutputReaderCompletion::TimedOut;
+        }
+        match reader.join() {
+            Ok(()) => WorkerOutputReaderCompletion::Joined,
+            Err(_) => WorkerOutputReaderCompletion::Panicked,
+        }
+    }
+
+    fn force_terminate_with_deadline(&mut self) -> WorkerTerminationReport {
+        self.stdin.take();
+        let job_termination = self.job.terminate().map_err(|error| error.to_string());
+        let exit_after_job_termination = if job_termination.is_ok() {
+            self.wait_for_child_exit_until(Instant::now() + WORKER_JOB_TERMINATION_TIMEOUT)
+        } else {
+            self.child
+                .as_mut()
+                .expect("worker child must be live")
+                .try_wait()
+        }
+        .map_err(|error| error.to_string());
+        let job_termination_finished = exit_after_job_termination
+            .as_ref()
+            .is_ok_and(Option::is_some);
+        let must_kill_child = job_termination.is_err() || !job_termination_finished;
+        let (child_kill, exit_after_child_kill) = if !must_kill_child {
+            (None, None)
+        } else {
+            let child_kill = self
+                .child
+                .as_mut()
+                .expect("worker child must be live")
+                .kill()
+                .map_err(|error| error.to_string());
+            let exit_after_child_kill = self
+                .wait_for_child_exit_until(Instant::now() + WORKER_CHILD_KILL_TIMEOUT)
+                .map_err(|error| error.to_string());
+            (Some(child_kill), Some(exit_after_child_kill))
+        };
+        let exit_was_confirmed = exit_after_child_kill
+            .as_ref()
+            .unwrap_or(&exit_after_job_termination)
+            .as_ref()
+            .is_ok_and(Option::is_some);
+        let output_reader = if exit_was_confirmed {
+            self.finish_output_reader_with_deadline()
+        } else {
+            self.output_reader.take();
+            WorkerOutputReaderCompletion::TimedOut
+        };
+        WorkerTerminationReport {
+            job_termination,
+            exit_after_job_termination,
+            child_kill,
+            exit_after_child_kill,
+            output_reader,
         }
     }
 }
 
 impl Drop for WorkerChild {
     fn drop(&mut self) {
-        let Some(child) = self.child.as_mut() else {
+        if self.child.is_none() {
             return;
-        };
-        if child.try_wait().ok().flatten().is_none() {
-            let _ = self.job.terminate();
-            let _ = child.wait();
         }
         self.stdin.take();
-        self.join_output_reader();
+        let child_exit = self
+            .child
+            .as_mut()
+            .expect("worker child must be live")
+            .try_wait();
+        if !child_exit.as_ref().is_ok_and(Option::is_some) {
+            let termination = self.force_terminate_with_deadline();
+            if !termination.exit_was_confirmed() || !termination.output_reader.completed_cleanly() {
+                log::error!(
+                    "native Dock worker cleanup did not converge within its hard deadlines: initial_exit={child_exit:?}; termination={termination:?}"
+                );
+            }
+            return;
+        }
+        let output_reader = self.finish_output_reader_with_deadline();
+        if !output_reader.completed_cleanly() {
+            log::error!(
+                "native Dock worker exited but its output reader did not drain within the cleanup deadline: {output_reader:?}"
+            );
+        }
     }
 }
 

@@ -1,6 +1,7 @@
 use crate::{DockViewportTearOffRequest, drag::DockDragTearOffGeometry};
 use open_gpui::{
-    Bounds, Pixels, PlatformNativePointerPhysicalFrame, Point, WindowBounds, point, px,
+    Bounds, DevicePixels, Pixels, PlatformNativePointerPhysicalFrame, Point, WindowBounds, point,
+    px,
 };
 
 const DOCK_TEAR_OFF_MAX_WORK_AREA_FRACTION: f32 = 0.90;
@@ -92,6 +93,36 @@ pub(crate) fn suggested_tear_off_window_bounds_from_native_frame(
     )))
 }
 
+pub(crate) fn suggested_tear_off_physical_client_bounds_from_native_frame(
+    physical_frame: PlatformNativePointerPhysicalFrame,
+    geometry: DockDragTearOffGeometry,
+) -> Option<Bounds<DevicePixels>> {
+    let target_display = physical_frame.target_display()?;
+    let scale_factor = target_display.scale_factor();
+    let logical_size = tear_off_window_size_for_target_display(geometry, target_display);
+    let physical_size = logical_size.to_device_pixels(scale_factor);
+    if physical_size.width.0 <= 0 || physical_size.height.0 <= 0 {
+        return None;
+    }
+
+    let logical_offset = geometry.cursor_offset().clamp(
+        &point(px(0.0), px(0.0)),
+        &point(logical_size.width, logical_size.height),
+    );
+    let offset_x = ((logical_offset.x.as_f32() * scale_factor).round() as i32)
+        .clamp(0, physical_size.width.0 - 1);
+    let offset_y = ((logical_offset.y.as_f32() * scale_factor).round() as i32)
+        .clamp(0, physical_size.height.0 - 1);
+    let global = physical_frame.global_position();
+    let origin = point(
+        DevicePixels(global.x.0.checked_sub(offset_x)?),
+        DevicePixels(global.y.0.checked_sub(offset_y)?),
+    );
+    origin.x.0.checked_add(physical_size.width.0)?;
+    origin.y.0.checked_add(physical_size.height.0)?;
+    Some(Bounds::new(origin, physical_size))
+}
+
 fn bounds_from_drag_geometry(
     release_position: Point<Pixels>,
     geometry: DockDragTearOffGeometry,
@@ -133,8 +164,24 @@ fn tear_off_window_size(geometry: DockDragTearOffGeometry) -> open_gpui::Size<Pi
         .unwrap_or(size)
 }
 
-fn undock_limited_work_area_size(work_area: Bounds<Pixels>) -> open_gpui::Size<Pixels> {
-    work_area
+fn tear_off_window_size_for_target_display(
+    geometry: DockDragTearOffGeometry,
+    target_display: open_gpui::PlatformPhysicalDisplayObservation,
+) -> open_gpui::Size<Pixels> {
+    let size = geometry
+        .preferred_size()
+        .unwrap_or_else(|| geometry.source_bounds().size);
+    let target_work_area_size = target_display
+        .visible_bounds()
         .size
-        .map(|dimension| (dimension * DOCK_TEAR_OFF_MAX_WORK_AREA_FRACTION).floor())
+        .to_pixels(target_display.scale_factor());
+    size.min(&undock_limited_size(target_work_area_size))
+}
+
+fn undock_limited_work_area_size(work_area: Bounds<Pixels>) -> open_gpui::Size<Pixels> {
+    undock_limited_size(work_area.size)
+}
+
+fn undock_limited_size(size: open_gpui::Size<Pixels>) -> open_gpui::Size<Pixels> {
+    size.map(|dimension| (dimension * DOCK_TEAR_OFF_MAX_WORK_AREA_FRACTION).floor())
 }

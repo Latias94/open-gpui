@@ -277,12 +277,12 @@ pub(super) struct NativeEventIngress {
     unwind_recovery_scheduled: Cell<bool>,
     terminated: Cell<bool>,
     shutdown_generation: Cell<Option<u64>>,
-    delayed_wake_tasks: RefCell<Vec<Task<()>>>,
+    delayed_wake_tasks: RefCell<Vec<NativeOwnedLocalTask>>,
     #[cfg(not(target_family = "wasm"))]
     accessibility_wake_sender: async_channel::Sender<()>,
     #[cfg(not(target_family = "wasm"))]
-    accessibility_wake_task: RefCell<Option<Task<()>>>,
-    owned_local_task_count: Rc<Cell<usize>>,
+    accessibility_wake_task: RefCell<Option<NativeOwnedLocalTask>>,
+    owned_local_authority_count: Rc<Cell<usize>>,
     foreground_executor: ForegroundExecutor,
     app: Weak<AppCell>,
     diagnostics: NativeBoundaryDiagnostics,
@@ -291,15 +291,17 @@ pub(super) struct NativeEventIngress {
 impl NativeEventIngress {
     pub(super) fn new(foreground_executor: ForegroundExecutor, app: Weak<AppCell>) -> Self {
         let sequencer = Arc::new(Mutex::new(NativeSequenceAuthority::new()));
-        let owned_local_task_count = Rc::new(Cell::new(0));
+        let owned_local_authority_count = Rc::new(Cell::new(0));
         #[cfg(not(target_family = "wasm"))]
         let (accessibility_wake_sender, accessibility_wake_receiver) =
             async_channel::bounded::<()>(1);
         #[cfg(not(target_family = "wasm"))]
         let accessibility_wake_task = {
             let app = app.clone();
-            let lease = NativeOwnedLocalTaskLease::acquire(Rc::clone(&owned_local_task_count));
-            foreground_executor.spawn(async move {
+            let (lease, terminal) = NativeOwnedLocalTaskAuthorityLease::acquire(Rc::clone(
+                &owned_local_authority_count,
+            ));
+            let task = foreground_executor.spawn(async move {
                 let _lease = lease;
                 while accessibility_wake_receiver.recv().await.is_ok() {
                     let Some(app) = app.upgrade() else {
@@ -307,7 +309,8 @@ impl NativeEventIngress {
                     };
                     app.import_native_accessibility_events();
                 }
-            })
+            });
+            NativeOwnedLocalTask::new(task, terminal)
         };
         Self {
             sequencer,
@@ -324,7 +327,7 @@ impl NativeEventIngress {
             accessibility_wake_sender,
             #[cfg(not(target_family = "wasm"))]
             accessibility_wake_task: RefCell::new(Some(accessibility_wake_task)),
-            owned_local_task_count,
+            owned_local_authority_count,
             foreground_executor,
             app,
             diagnostics: NativeBoundaryDiagnostics::default(),
@@ -391,7 +394,7 @@ impl NativeEventIngress {
         retry_epoch: u8,
     ) {
         let app = self.app.clone();
-        let lease = self.acquire_owned_local_task();
+        let (lease, terminal) = self.acquire_owned_local_task();
         let wake = self.foreground_executor.spawn(async move {
             let _lease = lease;
             timer.await;
@@ -399,7 +402,7 @@ impl NativeEventIngress {
                 app.retry_native_pointer_capture_release_from_wake(token, retry_epoch);
             }
         });
-        self.retain_delayed_wake(wake);
+        self.retain_delayed_wake(NativeOwnedLocalTask::new(wake, terminal));
     }
 
     pub(super) fn schedule_window_retirement_retry(
@@ -408,7 +411,7 @@ impl NativeEventIngress {
         retirement: NativeWindowRetirement,
     ) {
         let app = self.app.clone();
-        let lease = self.acquire_owned_local_task();
+        let (lease, terminal) = self.acquire_owned_local_task();
         let wake = self.foreground_executor.spawn(async move {
             let _lease = lease;
             timer.await;
@@ -416,7 +419,7 @@ impl NativeEventIngress {
                 app.retry_native_window_retirement(retirement);
             }
         });
-        self.retain_delayed_wake(wake);
+        self.retain_delayed_wake(NativeOwnedLocalTask::new(wake, terminal));
     }
 
     pub(super) fn schedule_shutdown_completion_retry(
@@ -426,7 +429,7 @@ impl NativeEventIngress {
         retry_epoch: u8,
     ) {
         let app = self.app.clone();
-        let lease = self.acquire_owned_local_task();
+        let (lease, terminal) = self.acquire_owned_local_task();
         let wake = self.foreground_executor.spawn(async move {
             let _lease = lease;
             timer.await;
@@ -434,24 +437,29 @@ impl NativeEventIngress {
                 app.retry_shutdown_completion_from_wake(generation, retry_epoch);
             }
         });
-        self.retain_delayed_wake(wake);
+        self.retain_delayed_wake(NativeOwnedLocalTask::new(wake, terminal));
     }
 
-    fn retain_delayed_wake(&self, wake: Task<()>) {
+    fn retain_delayed_wake(&self, wake: NativeOwnedLocalTask) {
         let mut wakes = self.delayed_wake_tasks.borrow_mut();
         wakes.retain(|wake| !wake.is_ready());
         wakes.push(wake);
     }
 
-    fn acquire_owned_local_task(&self) -> NativeOwnedLocalTaskLease {
-        NativeOwnedLocalTaskLease::acquire(Rc::clone(&self.owned_local_task_count))
+    fn acquire_owned_local_task(
+        &self,
+    ) -> (
+        NativeOwnedLocalTaskAuthorityLease,
+        NativeOwnedLocalTaskAuthorityTerminal,
+    ) {
+        NativeOwnedLocalTaskAuthorityLease::acquire(Rc::clone(&self.owned_local_authority_count))
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub(super) fn owned_local_tasks_are_idle_for_test(&self) -> bool {
+    pub(super) fn owned_local_authorities_are_settled_for_test(&self) -> bool {
         let mut wakes = self.delayed_wake_tasks.borrow_mut();
         wakes.retain(|wake| !wake.is_ready());
-        wakes.is_empty() && self.owned_local_task_count.get() == 0
+        wakes.is_empty() && self.owned_local_authority_count.get() == 0
     }
 
     pub(super) fn enqueue_captured_drag_release_completion(
@@ -620,6 +628,13 @@ impl NativeEventIngress {
             .borrow()
             .iter()
             .any(|pending| pending.sequence() < sequence.value())
+    }
+
+    pub(super) fn has_pending_shutdown_critical_work(&self) -> bool {
+        self.pending
+            .borrow()
+            .iter()
+            .any(NativeWorkEnvelope::is_shutdown_critical)
     }
 
     pub(super) fn is_terminated(&self) -> bool {
@@ -1069,30 +1084,94 @@ impl NativeEventIngress {
     }
 }
 
-struct NativeOwnedLocalTaskLease {
-    active: Rc<Cell<usize>>,
+struct NativeOwnedLocalTask {
+    task: Option<Task<()>>,
+    terminal: NativeOwnedLocalTaskAuthorityTerminal,
 }
 
-impl NativeOwnedLocalTaskLease {
-    fn acquire(active: Rc<Cell<usize>>) -> Self {
+impl NativeOwnedLocalTask {
+    fn new(task: Task<()>, terminal: NativeOwnedLocalTaskAuthorityTerminal) -> Self {
+        Self {
+            task: Some(task),
+            terminal,
+        }
+    }
+
+    fn is_ready(&self) -> bool {
+        self.task.as_ref().is_none_or(Task::is_ready)
+    }
+}
+
+impl Drop for NativeOwnedLocalTask {
+    fn drop(&mut self) {
+        // Cancel the future before settling its logical App authority. async-task may defer
+        // destroying the future's storage until the cancellation runnable reaches the main
+        // thread, so the future's lease shares the same idempotent terminal token.
+        drop(self.task.take());
+        self.terminal.settle();
+    }
+}
+
+struct NativeOwnedLocalTaskAuthorityLease {
+    terminal: NativeOwnedLocalTaskAuthorityTerminal,
+}
+
+#[derive(Clone)]
+struct NativeOwnedLocalTaskAuthorityTerminal {
+    state: Rc<NativeOwnedLocalTaskAuthorityState>,
+}
+
+struct NativeOwnedLocalTaskAuthorityState {
+    active: Rc<Cell<usize>>,
+    settled: Cell<bool>,
+}
+
+impl NativeOwnedLocalTaskAuthorityLease {
+    fn acquire(
+        active: Rc<Cell<usize>>,
+    ) -> (
+        NativeOwnedLocalTaskAuthorityLease,
+        NativeOwnedLocalTaskAuthorityTerminal,
+    ) {
         active.set(
             active
                 .get()
                 .checked_add(1)
                 .expect("native ingress owned-local-task count overflowed"),
         );
-        Self { active }
+        let terminal = NativeOwnedLocalTaskAuthorityTerminal {
+            state: Rc::new(NativeOwnedLocalTaskAuthorityState {
+                active,
+                settled: Cell::new(false),
+            }),
+        };
+        (
+            Self {
+                terminal: terminal.clone(),
+            },
+            terminal,
+        )
     }
 }
 
-impl Drop for NativeOwnedLocalTaskLease {
-    fn drop(&mut self) {
-        self.active.set(
-            self.active
+impl NativeOwnedLocalTaskAuthorityTerminal {
+    fn settle(&self) {
+        if self.state.settled.replace(true) {
+            return;
+        }
+        self.state.active.set(
+            self.state
+                .active
                 .get()
                 .checked_sub(1)
                 .expect("native ingress owned-local-task count underflowed"),
         );
+    }
+}
+
+impl Drop for NativeOwnedLocalTaskAuthorityLease {
+    fn drop(&mut self) {
+        self.terminal.settle();
     }
 }
 
@@ -1996,6 +2075,24 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     fn assert_send_sync<T: Send + Sync>() {}
+
+    #[test]
+    fn owned_local_task_authority_terminal_is_idempotent() {
+        let active = Rc::new(Cell::new(0));
+        let (lease, terminal) = NativeOwnedLocalTaskAuthorityLease::acquire(Rc::clone(&active));
+
+        assert_eq!(active.get(), 1);
+        terminal.settle();
+        assert_eq!(active.get(), 0);
+
+        drop(lease);
+        terminal.settle();
+        assert_eq!(
+            active.get(),
+            0,
+            "future teardown and owner cancellation must share one terminal authority"
+        );
+    }
 
     fn action_request() -> ActionRequest {
         ActionRequest {

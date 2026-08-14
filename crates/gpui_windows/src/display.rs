@@ -16,7 +16,10 @@ use windows::{
 };
 
 use crate::logical_point;
-use open_gpui::{Bounds, DevicePixels, DisplayId, Pixels, PlatformDisplay, point, size};
+use open_gpui::{
+    Bounds, DevicePixels, DisplayId, Pixels, PlatformDisplay, PlatformPhysicalDisplayObservation,
+    Point, point, size,
+};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct WindowsDisplay {
@@ -26,6 +29,7 @@ pub(crate) struct WindowsDisplay {
     bounds: Bounds<Pixels>,
     visible_bounds: Bounds<Pixels>,
     physical_bounds: Bounds<DevicePixels>,
+    physical_visible_bounds: Bounds<DevicePixels>,
     uuid: Uuid,
 }
 
@@ -69,6 +73,13 @@ impl WindowsDisplay {
             physical_bounds: Bounds {
                 origin: point(monitor_size.left.into(), monitor_size.top.into()),
                 size: physical_size,
+            },
+            physical_visible_bounds: Bounds {
+                origin: point(work_area.left.into(), work_area.top.into()),
+                size: size(
+                    (work_area.right - work_area.left).into(),
+                    (work_area.bottom - work_area.top).into(),
+                ),
             },
             uuid,
         })
@@ -126,9 +137,50 @@ impl WindowsDisplay {
         self.physical_bounds
     }
 
+    pub(crate) fn physical_geometry_at(
+        point: Point<DevicePixels>,
+        topology_generation: u64,
+    ) -> Option<PlatformPhysicalDisplayObservation> {
+        let monitor = unsafe {
+            MonitorFromPoint(
+                POINT {
+                    x: point.x.0,
+                    y: point.y.0,
+                },
+                MONITOR_DEFAULTTONULL,
+            )
+        };
+        if monitor.is_invalid() {
+            return None;
+        }
+        Self::physical_geometry_for_monitor(monitor, topology_generation)
+    }
+
+    pub(crate) fn physical_geometry_for_monitor(
+        monitor: HMONITOR,
+        topology_generation: u64,
+    ) -> Option<PlatformPhysicalDisplayObservation> {
+        if monitor.is_invalid() {
+            return None;
+        }
+        let display = Self::new(Self::display_id_for_monitor(monitor))?;
+        PlatformPhysicalDisplayObservation::try_new(
+            topology_generation,
+            display.display_id,
+            display.physical_bounds,
+            display.physical_visible_bounds,
+            display.scale_factor,
+        )
+    }
+
     #[cfg(feature = "test-support")]
     pub(crate) fn scale_factor(&self) -> f32 {
         self.scale_factor
+    }
+
+    #[cfg(feature = "test-support")]
+    pub(crate) fn physical_visible_bounds(&self) -> Bounds<DevicePixels> {
+        self.physical_visible_bounds
     }
 
     #[cfg(feature = "test-support")]

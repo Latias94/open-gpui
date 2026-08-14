@@ -367,6 +367,18 @@ pub(crate) struct DockSurfaceOwner {
     publication_flush_active: bool,
     last_transaction_id: u64,
     pending_transaction: Option<PendingDockSurfaceTransaction>,
+    #[cfg(any(test, feature = "test-support"))]
+    shutdown_test_observation: Option<super::DockSurfaceShutdownTestObservation>,
+    #[cfg(any(test, feature = "test-support"))]
+    shutdown_test_faults: Option<DockSurfaceShutdownTestFaults>,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+#[derive(Debug)]
+struct DockSurfaceShutdownTestFaults {
+    lease: DockSurfaceWindowSessionLease,
+    busy_window: Option<WindowId>,
+    cleanup_panic: Option<String>,
 }
 
 #[derive(Debug)]
@@ -399,7 +411,79 @@ impl DockSurfaceOwner {
             publication_flush_active: false,
             last_transaction_id: 0,
             pending_transaction: None,
+            #[cfg(any(test, feature = "test-support"))]
+            shutdown_test_observation: None,
+            #[cfg(any(test, feature = "test-support"))]
+            shutdown_test_faults: None,
         }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn install_shutdown_test_observation(
+        &mut self,
+        observation: super::DockSurfaceShutdownTestObservation,
+    ) {
+        self.shutdown_test_observation = Some(observation);
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn shutdown_test_observation(
+        &self,
+    ) -> Option<&super::DockSurfaceShutdownTestObservation> {
+        self.shutdown_test_observation.as_ref()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn install_shutdown_test_faults(
+        &mut self,
+        lease: DockSurfaceWindowSessionLease,
+        busy_window: WindowId,
+        cleanup_panic: String,
+    ) -> bool {
+        if !self.window_session.admits(lease) || self.shutdown_test_faults.is_some() {
+            return false;
+        }
+        self.shutdown_test_faults = Some(DockSurfaceShutdownTestFaults {
+            lease,
+            busy_window: Some(busy_window),
+            cleanup_panic: Some(cleanup_panic),
+        });
+        true
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn take_shutdown_test_busy_close(
+        &mut self,
+        lease: DockSurfaceWindowSessionLease,
+        window: WindowId,
+    ) -> bool {
+        let Some(faults) = self.shutdown_test_faults.as_mut() else {
+            return false;
+        };
+        if faults.lease != lease || faults.busy_window != Some(window) {
+            return false;
+        }
+        faults.busy_window = None;
+        if faults.cleanup_panic.is_none() {
+            self.shutdown_test_faults = None;
+        }
+        true
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn take_shutdown_test_cleanup_panic(
+        &mut self,
+        lease: DockSurfaceWindowSessionLease,
+    ) -> Option<String> {
+        let faults = self.shutdown_test_faults.as_mut()?;
+        if faults.lease != lease {
+            return None;
+        }
+        let panic = faults.cleanup_panic.take();
+        if faults.busy_window.is_none() {
+            self.shutdown_test_faults = None;
+        }
+        panic
     }
 
     /// Returns the shared controller entity.

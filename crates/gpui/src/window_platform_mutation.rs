@@ -53,7 +53,7 @@ impl WindowMutationRequest {
                 placement_state_from_facts(facts) == WindowPlacementState::Windowed
                     && facts
                         .physical_geometry
-                        .is_some_and(|geometry| geometry.client_bounds() == request.client_bounds())
+                        .is_some_and(|geometry| request.matches_geometry(geometry))
             }
             Self::PointerInput(requested) => facts.accepts_pointer_input == requested,
             Self::ActivationPolicy(requested) => {

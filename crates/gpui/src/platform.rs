@@ -96,7 +96,29 @@ pub use visual_test::VisualTestPlatform;
 pub struct PlatformWindowPhysicalGeometry {
     client_bounds: Bounds<DevicePixels>,
     scale_factor: f32,
+    display: Option<PlatformPhysicalDisplayObservation>,
 }
+
+// Construction rejects non-finite and non-positive scale factors, so equality remains reflexive.
+impl Eq for PlatformWindowPhysicalGeometry {}
+
+/// One immutable observation of a display in physical desktop coordinates.
+///
+/// The display identity, full bounds, visible work area, and scale factor belong to one platform
+/// observation. Pointer and placement consumers retain this value instead of combining a physical
+/// screen point with a later display or DPI query.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PlatformPhysicalDisplayObservation {
+    topology_generation: u64,
+    display_id: DisplayId,
+    bounds: Bounds<DevicePixels>,
+    visible_bounds: Bounds<DevicePixels>,
+    scale_factor: f32,
+}
+
+// Construction rejects non-finite and non-positive scale factors, so equality remains reflexive.
+impl Eq for PlatformPhysicalDisplayObservation {}
 
 /// One checked native top-level coverage rectangle in physical desktop coordinates.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -113,6 +135,7 @@ pub struct PlatformWindowPhysicalCoverage {
 pub struct PlatformNativePointerPhysicalFrame {
     global_position: Point<DevicePixels>,
     source_geometry: PlatformWindowPhysicalGeometry,
+    target_display: Option<PlatformPhysicalDisplayObservation>,
 }
 
 /// One checked native drag hysteresis observation in physical device pixels.
@@ -202,7 +225,21 @@ impl PlatformNativePointerPhysicalFrame {
         Self {
             global_position,
             source_geometry,
+            target_display: None,
         }
+    }
+
+    /// Binds the display observed at the callback-scoped physical point.
+    #[doc(hidden)]
+    pub fn with_target_display(
+        mut self,
+        target_display: PlatformPhysicalDisplayObservation,
+    ) -> Option<Self> {
+        if !target_display.contains(self.global_position) {
+            return None;
+        }
+        self.target_display = Some(target_display);
+        Some(self)
     }
 
     /// Returns the pointer position in the physical desktop coordinate space.
@@ -213,6 +250,77 @@ impl PlatformNativePointerPhysicalFrame {
     /// Returns the source geometry interpreted with the input event's DPI.
     pub fn source_geometry(self) -> PlatformWindowPhysicalGeometry {
         self.source_geometry
+    }
+
+    /// Returns the display observed at the pointer point, when the backend can prove it.
+    pub fn target_display(self) -> Option<PlatformPhysicalDisplayObservation> {
+        self.target_display
+    }
+}
+
+impl PlatformPhysicalDisplayObservation {
+    /// Creates one coherent physical display observation.
+    #[doc(hidden)]
+    pub fn try_new(
+        topology_generation: u64,
+        display_id: DisplayId,
+        bounds: Bounds<DevicePixels>,
+        visible_bounds: Bounds<DevicePixels>,
+        scale_factor: f32,
+    ) -> Option<Self> {
+        let (bounds_right, bounds_bottom) = checked_physical_bounds_end(bounds)?;
+        let (visible_right, visible_bottom) = checked_physical_bounds_end(visible_bounds)?;
+        if topology_generation == 0
+            || bounds.size.width.0 <= 0
+            || bounds.size.height.0 <= 0
+            || visible_bounds.size.width.0 <= 0
+            || visible_bounds.size.height.0 <= 0
+            || visible_bounds.origin.x.0 < bounds.origin.x.0
+            || visible_bounds.origin.y.0 < bounds.origin.y.0
+            || visible_right.0 > bounds_right.0
+            || visible_bottom.0 > bounds_bottom.0
+            || !scale_factor.is_finite()
+            || scale_factor <= 0.0
+        {
+            return None;
+        }
+        Some(Self {
+            topology_generation,
+            display_id,
+            bounds,
+            visible_bounds,
+            scale_factor,
+        })
+    }
+
+    /// Returns the complete display-topology generation that produced this observation.
+    pub fn topology_generation(self) -> u64 {
+        self.topology_generation
+    }
+
+    /// Returns the detached platform display identity.
+    pub fn display_id(self) -> DisplayId {
+        self.display_id
+    }
+
+    /// Returns the full physical desktop bounds for the display.
+    pub fn bounds(self) -> Bounds<DevicePixels> {
+        self.bounds
+    }
+
+    /// Returns the physical work area for the display.
+    pub fn visible_bounds(self) -> Bounds<DevicePixels> {
+        self.visible_bounds
+    }
+
+    /// Returns the scale factor captured with the display observation.
+    pub fn scale_factor(self) -> f32 {
+        self.scale_factor
+    }
+
+    /// Returns whether this observation owns the physical desktop point.
+    pub fn contains(self, point: Point<DevicePixels>) -> bool {
+        checked_physical_bounds_contains(self.bounds, point)
     }
 }
 
@@ -228,7 +336,21 @@ impl PlatformWindowPhysicalGeometry {
         Some(Self {
             client_bounds,
             scale_factor,
+            display: None,
         })
+    }
+
+    /// Binds the display observation sampled atomically with this window geometry.
+    #[doc(hidden)]
+    pub fn with_display_observation(
+        mut self,
+        display: PlatformPhysicalDisplayObservation,
+    ) -> Option<Self> {
+        if self.scale_factor != display.scale_factor() {
+            return None;
+        }
+        self.display = Some(display);
+        Some(self)
     }
 
     /// Returns the client bounds in physical desktop coordinates.
@@ -239,6 +361,11 @@ impl PlatformWindowPhysicalGeometry {
     /// Returns the DPI scale sampled with the client bounds.
     pub fn scale_factor(self) -> f32 {
         self.scale_factor
+    }
+
+    /// Returns the display observation sampled with this geometry, when the backend can prove it.
+    pub fn display_observation(self) -> Option<PlatformPhysicalDisplayObservation> {
+        self.display
     }
 
     /// Returns whether a physical desktop point is inside the observed client area.
@@ -919,7 +1046,13 @@ impl WindowPlacementRequest {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WindowPhysicalPlacementRequest {
     client_bounds: Bounds<DevicePixels>,
+    target_point: Option<Point<DevicePixels>>,
+    target_display: Option<PlatformPhysicalDisplayObservation>,
 }
+
+// The only floating-point field belongs to a validated display observation whose equality is
+// reflexive, so the request can safely participate in exact receipt comparisons.
+impl Eq for WindowPhysicalPlacementRequest {}
 
 impl WindowPhysicalPlacementRequest {
     /// Creates a physical placement request when the client bounds are representable.
@@ -928,12 +1061,50 @@ impl WindowPhysicalPlacementRequest {
             return None;
         }
         checked_physical_bounds_end(client_bounds)?;
-        Some(Self { client_bounds })
+        Some(Self {
+            client_bounds,
+            target_point: None,
+            target_display: None,
+        })
+    }
+
+    /// Creates a display-bound physical placement request.
+    #[doc(hidden)]
+    pub fn try_new_for_display(
+        client_bounds: Bounds<DevicePixels>,
+        target_point: Point<DevicePixels>,
+        target_display: PlatformPhysicalDisplayObservation,
+    ) -> Option<Self> {
+        if !client_bounds.contains(&target_point) || !target_display.contains(target_point) {
+            return None;
+        }
+        let mut request = Self::try_new(client_bounds)?;
+        request.target_point = Some(target_point);
+        request.target_display = Some(target_display);
+        Some(request)
     }
 
     /// Returns the requested client bounds in physical desktop coordinates.
     pub const fn client_bounds(self) -> Bounds<DevicePixels> {
         self.client_bounds
+    }
+
+    /// Returns the point that selected the target display, when this request is display-bound.
+    pub const fn target_point(self) -> Option<Point<DevicePixels>> {
+        self.target_point
+    }
+
+    /// Returns the exact target display observation, when this request is display-bound.
+    pub const fn target_display(self) -> Option<PlatformPhysicalDisplayObservation> {
+        self.target_display
+    }
+
+    /// Returns whether one coherent native geometry exactly satisfies this request.
+    pub fn matches_geometry(self, geometry: PlatformWindowPhysicalGeometry) -> bool {
+        geometry.client_bounds() == self.client_bounds
+            && self
+                .target_display
+                .is_none_or(|display| geometry.display_observation() == Some(display))
     }
 }
 
@@ -1323,6 +1494,7 @@ pub struct WindowProvisionalRevealNativeFacts {
     foreground_unchanged: bool,
     native_hit_transparent: bool,
     stable_native_window_identity: bool,
+    physical_client_bounds_exact: bool,
     z_order: WindowProvisionalRevealZOrder,
 }
 
@@ -1333,6 +1505,7 @@ impl WindowProvisionalRevealNativeFacts {
         foreground_unchanged: bool,
         native_hit_transparent: bool,
         stable_native_window_identity: bool,
+        physical_client_bounds_exact: bool,
         z_order: WindowProvisionalRevealZOrder,
     ) -> Self {
         Self {
@@ -1340,6 +1513,7 @@ impl WindowProvisionalRevealNativeFacts {
             foreground_unchanged,
             native_hit_transparent,
             stable_native_window_identity,
+            physical_client_bounds_exact,
             z_order,
         }
     }
@@ -1364,6 +1538,11 @@ impl WindowProvisionalRevealNativeFacts {
         self.stable_native_window_identity
     }
 
+    /// Returns whether requested physical reveal bounds matched native client readback exactly.
+    pub const fn physical_client_bounds_exact(self) -> bool {
+        self.physical_client_bounds_exact
+    }
+
     /// Returns the relative native Z-order observation.
     pub const fn z_order(self) -> WindowProvisionalRevealZOrder {
         self.z_order
@@ -1375,6 +1554,7 @@ impl WindowProvisionalRevealNativeFacts {
             && self.foreground_unchanged
             && self.native_hit_transparent
             && self.stable_native_window_identity
+            && self.physical_client_bounds_exact
     }
 }
 
@@ -1385,6 +1565,9 @@ pub struct WindowProvisionalRevealSnapshot {
     window_id: WindowId,
     session_generation: u64,
     reveal_point: Point<DevicePixels>,
+    initial_placement: Option<WindowPhysicalPlacementRequest>,
+    initial_physical_geometry: Option<PlatformWindowPhysicalGeometry>,
+    placement_mutation_generation: Option<u64>,
     minimum_presentation_generation: u64,
     presentation_generation: Option<u64>,
     native_facts: Option<WindowProvisionalRevealNativeFacts>,
@@ -1405,6 +1588,29 @@ impl WindowProvisionalRevealSnapshot {
     /// Returns the physical desktop point that scopes the native Z-order placement and proof.
     pub const fn reveal_point(self) -> Point<DevicePixels> {
         self.reveal_point
+    }
+
+    /// Returns the exact physical client bounds to establish before native reveal, when supplied.
+    pub const fn initial_client_bounds(self) -> Option<Bounds<DevicePixels>> {
+        match self.initial_placement {
+            Some(request) => Some(request.client_bounds()),
+            None => None,
+        }
+    }
+
+    /// Returns the display-bound hidden placement request that precedes reveal, when supplied.
+    pub const fn initial_placement(self) -> Option<WindowPhysicalPlacementRequest> {
+        self.initial_placement
+    }
+
+    /// Returns the coherent target geometry observed before the reveal frame was rendered.
+    pub const fn initial_physical_geometry(self) -> Option<PlatformWindowPhysicalGeometry> {
+        self.initial_physical_geometry
+    }
+
+    /// Returns the placement-mutation generation that established the hidden target geometry.
+    pub const fn placement_mutation_generation(self) -> Option<u64> {
+        self.placement_mutation_generation
     }
 
     /// Returns the first renderer generation eligible to reveal the window.
@@ -1430,7 +1636,12 @@ impl WindowProvisionalRevealSnapshot {
 
 #[derive(Debug)]
 struct WindowProvisionalRevealState {
+    placement_mutation_generation: Option<u64>,
+    placement_observed: bool,
+    initial_physical_geometry: Option<PlatformWindowPhysicalGeometry>,
+    minimum_presentation_generation: u64,
     presentation_generation: Option<u64>,
+    native_reveal_claimed: bool,
     native_facts: Option<WindowProvisionalRevealNativeFacts>,
     outcome: WindowProvisionalRevealOutcome,
 }
@@ -1442,13 +1653,49 @@ pub struct WindowProvisionalRevealTicket {
     window_id: WindowId,
     session_generation: u64,
     reveal_point: Point<DevicePixels>,
-    minimum_presentation_generation: u64,
+    initial_placement: Option<WindowPhysicalPlacementRequest>,
     peer_windows: Arc<[WindowId]>,
     state: Arc<ParkingMutex<WindowProvisionalRevealState>>,
 }
 
-/// A checked final physical placement and point-scoped Z-order request for one provisional
-/// top-level window.
+/// The immutable request claimed by a backend immediately before native reveal side effects.
+#[doc(hidden)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct WindowProvisionalRevealRequest {
+    reveal_point: Point<DevicePixels>,
+    initial_physical_geometry: Option<PlatformWindowPhysicalGeometry>,
+    peer_windows: Arc<[WindowId]>,
+}
+
+impl WindowProvisionalRevealRequest {
+    /// Returns the physical desktop point that scopes native Z-order placement.
+    pub const fn reveal_point(&self) -> Point<DevicePixels> {
+        self.reveal_point
+    }
+
+    /// Returns the hidden target geometry that must still be current at reveal time.
+    pub const fn initial_physical_geometry(&self) -> Option<PlatformWindowPhysicalGeometry> {
+        self.initial_physical_geometry
+    }
+
+    /// Returns the exact peer-window identities admitted by the provisional session.
+    pub fn peer_windows(&self) -> Arc<[WindowId]> {
+        self.peer_windows.clone()
+    }
+}
+
+/// The role owned by one exact provisional-window placement request.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WindowProvisionalPlacementPurpose {
+    /// Keeps an already-visible provisional window under the current pointer route.
+    LiveRoute,
+    /// Locks the MouseUp destination used by promotion and destination semantics.
+    FinalRelease,
+}
+
+/// A checked physical placement and point-scoped Z-order request for one provisional top-level
+/// window.
 ///
 /// The provisional session binds the exact peer list captured by its accepted reveal. Backends
 /// must treat every other visible top-level as an unrelated opaque barrier.
@@ -1456,8 +1703,8 @@ pub struct WindowProvisionalRevealTicket {
 #[derive(Clone, Debug, PartialEq)]
 pub struct WindowProvisionalPlacementRequest {
     generation: u64,
-    client_bounds: Bounds<DevicePixels>,
-    anchor_point: Point<DevicePixels>,
+    purpose: WindowProvisionalPlacementPurpose,
+    physical: WindowPhysicalPlacementRequest,
     peer_windows: Arc<[WindowId]>,
 }
 
@@ -1465,19 +1712,23 @@ impl WindowProvisionalPlacementRequest {
     /// Creates one exact final placement request.
     pub fn try_new(
         generation: u64,
+        purpose: WindowProvisionalPlacementPurpose,
         client_bounds: Bounds<DevicePixels>,
         anchor_point: Point<DevicePixels>,
+        target_display: PlatformPhysicalDisplayObservation,
     ) -> Option<Self> {
-        if generation == 0
-            || WindowPhysicalPlacementRequest::try_new(client_bounds).is_none()
-            || !client_bounds.contains(&anchor_point)
-        {
+        if generation == 0 {
             return None;
         }
-        Some(Self {
-            generation,
+        let physical = WindowPhysicalPlacementRequest::try_new_for_display(
             client_bounds,
             anchor_point,
+            target_display,
+        )?;
+        Some(Self {
+            generation,
+            purpose,
+            physical,
             peer_windows: Arc::from([]),
         })
     }
@@ -1492,19 +1743,38 @@ impl WindowProvisionalPlacementRequest {
         self.generation
     }
 
+    /// Returns whether this request follows a live route or locks the final release.
+    pub const fn purpose(&self) -> WindowProvisionalPlacementPurpose {
+        self.purpose
+    }
+
     /// Returns the requested physical client bounds.
     pub const fn client_bounds(&self) -> Bounds<DevicePixels> {
-        self.client_bounds
+        self.physical.client_bounds
     }
 
     /// Returns the physical desktop point that scopes the Z-order proof.
-    pub const fn anchor_point(&self) -> Point<DevicePixels> {
-        self.anchor_point
+    pub fn anchor_point(&self) -> Point<DevicePixels> {
+        self.physical
+            .target_point
+            .expect("provisional placement requests are always display-bound")
+    }
+
+    /// Returns the exact target display observation frozen by this request.
+    pub fn target_display(&self) -> PlatformPhysicalDisplayObservation {
+        self.physical
+            .target_display
+            .expect("provisional placement requests are always display-bound")
     }
 
     /// Returns the exact same-session peer identities admitted into the point-scoped band.
     pub fn peer_windows(&self) -> &[WindowId] {
         &self.peer_windows
+    }
+
+    #[doc(hidden)]
+    pub const fn physical_request(&self) -> WindowPhysicalPlacementRequest {
+        self.physical
     }
 }
 
@@ -1608,8 +1878,11 @@ pub struct WindowProvisionalPlacementSnapshot {
     window_id: WindowId,
     session_generation: u64,
     placement_generation: u64,
+    purpose: WindowProvisionalPlacementPurpose,
+    mutation_generation: Option<u64>,
     client_bounds: Bounds<DevicePixels>,
     anchor_point: Point<DevicePixels>,
+    target_display: PlatformPhysicalDisplayObservation,
     native_facts: Option<WindowProvisionalPlacementNativeFacts>,
     outcome: WindowProvisionalPlacementOutcome,
 }
@@ -1630,6 +1903,16 @@ impl WindowProvisionalPlacementSnapshot {
         self.placement_generation
     }
 
+    /// Returns whether this receipt follows a live route or locks the final release.
+    pub const fn purpose(self) -> WindowProvisionalPlacementPurpose {
+        self.purpose
+    }
+
+    /// Returns the GPUI placement-mutation generation that dispatched this request.
+    pub const fn mutation_generation(self) -> Option<u64> {
+        self.mutation_generation
+    }
+
     /// Returns the requested physical client bounds.
     pub const fn client_bounds(self) -> Bounds<DevicePixels> {
         self.client_bounds
@@ -1638,6 +1921,11 @@ impl WindowProvisionalPlacementSnapshot {
     /// Returns the physical desktop point that scoped the native Z-order proof.
     pub const fn anchor_point(self) -> Point<DevicePixels> {
         self.anchor_point
+    }
+
+    /// Returns the exact target display observation frozen by this placement receipt.
+    pub const fn target_display(self) -> PlatformPhysicalDisplayObservation {
+        self.target_display
     }
 
     /// Returns the native observation published by the backend.
@@ -1821,6 +2109,7 @@ impl WindowProvisionalRevealTicket {
         window_id: WindowId,
         session_generation: u64,
         reveal_point: Point<DevicePixels>,
+        initial_placement: Option<WindowPhysicalPlacementRequest>,
         minimum_presentation_generation: u64,
         peer_windows: Arc<[WindowId]>,
     ) -> Self {
@@ -1831,10 +2120,15 @@ impl WindowProvisionalRevealTicket {
             window_id,
             session_generation,
             reveal_point,
-            minimum_presentation_generation,
+            initial_placement,
             peer_windows: peer_windows.into(),
             state: Arc::new(ParkingMutex::new(WindowProvisionalRevealState {
+                placement_mutation_generation: None,
+                placement_observed: false,
+                initial_physical_geometry: None,
+                minimum_presentation_generation,
                 presentation_generation: None,
+                native_reveal_claimed: false,
                 native_facts: None,
                 outcome: WindowProvisionalRevealOutcome::Pending,
             })),
@@ -1855,7 +2149,10 @@ impl WindowProvisionalRevealTicket {
             window_id: self.window_id,
             session_generation: self.session_generation,
             reveal_point: self.reveal_point,
-            minimum_presentation_generation: self.minimum_presentation_generation,
+            initial_placement: self.initial_placement,
+            initial_physical_geometry: state.initial_physical_geometry,
+            placement_mutation_generation: state.placement_mutation_generation,
+            minimum_presentation_generation: state.minimum_presentation_generation,
             presentation_generation: state.presentation_generation,
             native_facts: state.native_facts,
             outcome: state.outcome,
@@ -1878,7 +2175,7 @@ impl WindowProvisionalRevealTicket {
         self.window_id == other.window_id
             && self.session_generation == other.session_generation
             && self.reveal_point == other.reveal_point
-            && self.minimum_presentation_generation == other.minimum_presentation_generation
+            && self.initial_placement == other.initial_placement
             && Arc::ptr_eq(&self.peer_windows, &other.peer_windows)
             && Arc::ptr_eq(&self.state, &other.state)
     }
@@ -1887,16 +2184,108 @@ impl WindowProvisionalRevealTicket {
         self.peer_windows.clone()
     }
 
-    pub(crate) fn bind_presentation(&self, generation: u64) -> bool {
+    pub(crate) fn bind_initial_placement_generation(&self, generation: u64) -> bool {
         let mut state = self.state.lock();
+        if self.initial_placement.is_none()
+            || generation == 0
+            || state.outcome != WindowProvisionalRevealOutcome::Pending
+            || state.placement_mutation_generation.is_some()
+            || state.presentation_generation.is_some()
+        {
+            return false;
+        }
+        state.placement_mutation_generation = Some(generation);
+        true
+    }
+
+    pub(crate) fn observe_placement(
+        &self,
+        generation: u64,
+        geometry: Option<PlatformWindowPhysicalGeometry>,
+        minimum_presentation_generation: u64,
+    ) -> bool {
+        let mut state = self.state.lock();
+        if minimum_presentation_generation == 0
+            || self.initial_placement.is_some_and(|expected| {
+                geometry.is_none_or(|geometry| !expected.matches_geometry(geometry))
+            })
+            || state.outcome != WindowProvisionalRevealOutcome::Pending
+            || state
+                .placement_mutation_generation
+                .is_some_and(|current| current != generation)
+            || state.placement_observed
+            || state.presentation_generation.is_some()
+        {
+            return false;
+        }
+        state.placement_mutation_generation = Some(generation);
+        state.placement_observed = true;
+        state.initial_physical_geometry = geometry;
+        state.minimum_presentation_generation = minimum_presentation_generation;
+        true
+    }
+
+    pub(crate) fn stale_for_newer_placement(&self, generation: u64) -> bool {
+        let mut state = self.state.lock();
+        if generation == 0
+            || state.outcome != WindowProvisionalRevealOutcome::Pending
+            || state
+                .placement_mutation_generation
+                .is_none_or(|current| current == generation)
+        {
+            return false;
+        }
+        state.outcome = WindowProvisionalRevealOutcome::Stale;
+        true
+    }
+
+    pub(crate) fn bind_presentation(
+        &self,
+        generation: u64,
+        current_placement_generation: u64,
+        current_physical_geometry: Option<PlatformWindowPhysicalGeometry>,
+    ) -> bool {
+        let mut state = self.state.lock();
+        if !state.placement_observed {
+            return false;
+        }
+        let placement_is_current = state.placement_mutation_generation
+            == Some(current_placement_generation)
+            && state
+                .initial_physical_geometry
+                .is_none_or(|geometry| current_physical_geometry == Some(geometry));
+        if !placement_is_current {
+            if state.outcome == WindowProvisionalRevealOutcome::Pending {
+                state.outcome = WindowProvisionalRevealOutcome::Stale;
+            }
+            return false;
+        }
         if state.outcome != WindowProvisionalRevealOutcome::Pending
             || state.presentation_generation.is_some()
-            || generation < self.minimum_presentation_generation
+            || generation < state.minimum_presentation_generation
         {
             return false;
         }
         state.presentation_generation = Some(generation);
         true
+    }
+
+    fn claim_native_reveal(&self, generation: u64) -> Option<WindowProvisionalRevealRequest> {
+        let mut state = self.state.lock();
+        if state.outcome != WindowProvisionalRevealOutcome::Pending
+            || state.presentation_generation != Some(generation)
+            || state.native_reveal_claimed
+            || state.native_facts.is_some()
+            || !state.placement_observed
+        {
+            return None;
+        }
+        state.native_reveal_claimed = true;
+        Some(WindowProvisionalRevealRequest {
+            reveal_point: self.reveal_point,
+            initial_physical_geometry: state.initial_physical_geometry,
+            peer_windows: self.peer_windows.clone(),
+        })
     }
 
     fn record_native_facts(
@@ -1907,6 +2296,7 @@ impl WindowProvisionalRevealTicket {
         let mut state = self.state.lock();
         if state.outcome != WindowProvisionalRevealOutcome::Pending
             || state.presentation_generation != Some(generation)
+            || !state.native_reveal_claimed
             || state.native_facts.is_some()
         {
             return false;
@@ -1957,8 +2347,11 @@ impl WindowProvisionalPlacementTicket {
             window_id: self.window_id,
             session_generation: self.session_generation,
             placement_generation: self.request.generation,
-            client_bounds: self.request.client_bounds,
-            anchor_point: self.request.anchor_point,
+            purpose: self.request.purpose,
+            mutation_generation: state.mutation_generation,
+            client_bounds: self.request.client_bounds(),
+            anchor_point: self.request.anchor_point(),
+            target_display: self.request.target_display(),
             native_facts: state.native_facts,
             outcome: state.outcome,
         }
@@ -2113,35 +2506,40 @@ impl WindowProvisionalSession {
     }
 
     #[doc(hidden)]
-    pub fn reveal_peer_windows(
+    pub fn claim_native_reveal(
         &self,
         window_id: WindowId,
         presentation_generation: u64,
-    ) -> Result<Arc<[WindowId]>, WindowProvisionalSessionError> {
-        let state = self.state.lock();
-        if state.window_id != Some(window_id) {
-            return Err(WindowProvisionalSessionError::WindowMismatch);
-        }
-        if state.phase != WindowProvisionalSessionPhase::Gated {
-            return Err(WindowProvisionalSessionError::InvalidPhase);
-        }
-        let ticket = state
-            .reveal_ticket
-            .as_ref()
-            .ok_or(WindowProvisionalSessionError::InvalidPhase)?;
+    ) -> Result<WindowProvisionalRevealRequest, WindowProvisionalSessionError> {
+        let ticket = {
+            let state = self.state.lock();
+            if state.window_id != Some(window_id) {
+                return Err(WindowProvisionalSessionError::WindowMismatch);
+            }
+            if state.phase != WindowProvisionalSessionPhase::Gated {
+                return Err(WindowProvisionalSessionError::InvalidPhase);
+            }
+            state
+                .reveal_ticket
+                .clone()
+                .ok_or(WindowProvisionalSessionError::InvalidPhase)?
+        };
         let snapshot = ticket.snapshot();
         if snapshot.presentation_generation() != Some(presentation_generation)
             || snapshot.outcome() != WindowProvisionalRevealOutcome::Pending
         {
             return Err(WindowProvisionalSessionError::InvalidPhase);
         }
-        Ok(ticket.peer_windows())
+        ticket
+            .claim_native_reveal(presentation_generation)
+            .ok_or(WindowProvisionalSessionError::InvalidPhase)
     }
 
-    pub(crate) fn begin_final_placement(
+    fn begin_placement(
         &self,
         window_id: WindowId,
         request: WindowProvisionalPlacementRequest,
+        purpose: WindowProvisionalPlacementPurpose,
     ) -> Result<WindowProvisionalPlacementTicket, WindowProvisionalSessionError> {
         let mut state = self.state.lock();
         if state.window_id != Some(window_id) {
@@ -2151,14 +2549,9 @@ impl WindowProvisionalSession {
             return Err(WindowProvisionalSessionError::InvalidPhase);
         };
         let reveal_snapshot = reveal_ticket.snapshot();
-        if state.phase != WindowProvisionalSessionPhase::Gated
-            || state.placement_ticket.as_ref().is_some_and(|ticket| {
-                let snapshot = ticket.snapshot();
-                snapshot.outcome() != WindowProvisionalPlacementOutcome::Settled
-                    || snapshot
-                        .native_facts()
-                        .is_none_or(|facts| !facts.accepts_placement())
-            })
+        let peer_windows = reveal_ticket.peer_windows();
+        if request.purpose() != purpose
+            || state.phase != WindowProvisionalSessionPhase::Gated
             || reveal_snapshot.outcome() != WindowProvisionalRevealOutcome::Revealed
             || reveal_snapshot
                 .native_facts()
@@ -2166,10 +2559,40 @@ impl WindowProvisionalSession {
         {
             return Err(WindowProvisionalSessionError::InvalidPhase);
         }
-        let request = request.bind_peer_windows(reveal_ticket.peer_windows());
+        if let Some(current) = state.placement_ticket.as_ref() {
+            if current.request.generation() >= request.generation() {
+                return Err(WindowProvisionalSessionError::InvalidPhase);
+            }
+            current.settle(WindowProvisionalPlacementOutcome::Stale);
+        }
+        let request = request.bind_peer_windows(peer_windows);
         let ticket = WindowProvisionalPlacementTicket::new(window_id, self.generation, request);
         state.placement_ticket = Some(ticket.clone());
         Ok(ticket)
+    }
+
+    pub(crate) fn begin_live_placement(
+        &self,
+        window_id: WindowId,
+        request: WindowProvisionalPlacementRequest,
+    ) -> Result<WindowProvisionalPlacementTicket, WindowProvisionalSessionError> {
+        self.begin_placement(
+            window_id,
+            request,
+            WindowProvisionalPlacementPurpose::LiveRoute,
+        )
+    }
+
+    pub(crate) fn begin_final_placement(
+        &self,
+        window_id: WindowId,
+        request: WindowProvisionalPlacementRequest,
+    ) -> Result<WindowProvisionalPlacementTicket, WindowProvisionalSessionError> {
+        self.begin_placement(
+            window_id,
+            request,
+            WindowProvisionalPlacementPurpose::FinalRelease,
+        )
     }
 
     pub(crate) fn blocks_window_mutation(
@@ -2333,9 +2756,10 @@ impl WindowProvisionalSession {
         }
         if state.phase != WindowProvisionalSessionPhase::Gated
             || state.destination_semantics_ticket.is_some()
-            || state.placement_ticket.as_ref().is_some_and(|ticket| {
+            || state.placement_ticket.as_ref().is_none_or(|ticket| {
                 let snapshot = ticket.snapshot();
-                snapshot.outcome() != WindowProvisionalPlacementOutcome::Settled
+                snapshot.purpose() != WindowProvisionalPlacementPurpose::FinalRelease
+                    || snapshot.outcome() != WindowProvisionalPlacementOutcome::Settled
                     || snapshot
                         .native_facts()
                         .is_none_or(|facts| !facts.accepts_placement())
@@ -2697,6 +3121,15 @@ pub trait Platform: 'static {
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>);
     fn quit(&self);
+    /// Accepts a terminal application exit request on the current platform thread.
+    ///
+    /// The default delegates to [`Platform::quit`]. Backends whose ordinary quit request is
+    /// asynchronous must override this so terminal shutdown can publish the platform exit before
+    /// resuming a retained callback panic.
+    #[doc(hidden)]
+    fn quit_after_terminal_shutdown(&self) {
+        self.quit();
+    }
     fn restart(&self, binary_path: Option<PathBuf>);
     fn activate(&self, ignoring_other_apps: bool);
     fn hide(&self);
@@ -2992,7 +3425,6 @@ pub enum PlatformWindowCommand {
     RevealDeferredInitialPresentation {
         session_generation: u64,
         presentation_generation: u64,
-        reveal_point: Point<DevicePixels>,
     },
     Activate,
     ShowWindowMenu(Point<Pixels>),
@@ -6640,6 +7072,141 @@ impl From<String> for ClipboardString {
 }
 
 #[cfg(test)]
+mod physical_display_observation_tests {
+    use super::*;
+
+    #[test]
+    fn display_observation_rejects_work_area_outside_display() {
+        assert!(
+            PlatformPhysicalDisplayObservation::try_new(
+                1,
+                DisplayId::from(1),
+                Bounds::new(
+                    point(DevicePixels(-1_920), DevicePixels(0)),
+                    size(DevicePixels(1_920), DevicePixels(1_080)),
+                ),
+                Bounds::new(
+                    point(DevicePixels(-1_920), DevicePixels(0)),
+                    size(DevicePixels(1_921), DevicePixels(1_040)),
+                ),
+                1.0,
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn pointer_frame_rejects_unrelated_target_display() {
+        let source = PlatformWindowPhysicalGeometry::try_new(
+            Bounds::new(
+                point(DevicePixels(0), DevicePixels(0)),
+                size(DevicePixels(800), DevicePixels(600)),
+            ),
+            1.0,
+        )
+        .expect("the source geometry should be valid");
+        let target = PlatformPhysicalDisplayObservation::try_new(
+            1,
+            DisplayId::from(2),
+            Bounds::new(
+                point(DevicePixels(1_920), DevicePixels(0)),
+                size(DevicePixels(1_920), DevicePixels(1_080)),
+            ),
+            Bounds::new(
+                point(DevicePixels(1_920), DevicePixels(0)),
+                size(DevicePixels(1_920), DevicePixels(1_040)),
+            ),
+            1.0,
+        )
+        .expect("the target display observation should be valid");
+
+        assert!(
+            PlatformNativePointerPhysicalFrame::new(
+                point(DevicePixels(400), DevicePixels(300)),
+                source,
+            )
+            .with_target_display(target)
+            .is_none(),
+            "a callback frame cannot combine its point with an unrelated display"
+        );
+    }
+
+    #[test]
+    fn display_bound_placement_rejects_same_bounds_on_the_wrong_display_generation() {
+        let bounds = Bounds::new(
+            point(DevicePixels(100), DevicePixels(80)),
+            size(DevicePixels(640), DevicePixels(480)),
+        );
+        let target = PlatformPhysicalDisplayObservation::try_new(
+            7,
+            DisplayId::from(1),
+            Bounds::new(
+                point(DevicePixels(0), DevicePixels(0)),
+                size(DevicePixels(1_920), DevicePixels(1_080)),
+            ),
+            Bounds::new(
+                point(DevicePixels(0), DevicePixels(0)),
+                size(DevicePixels(1_920), DevicePixels(1_040)),
+            ),
+            1.0,
+        )
+        .expect("the target display should be valid");
+        let request = WindowPhysicalPlacementRequest::try_new_for_display(
+            bounds,
+            point(DevicePixels(120), DevicePixels(100)),
+            target,
+        )
+        .expect("the placement should bind its target display");
+        let stale_display = PlatformPhysicalDisplayObservation::try_new(
+            8,
+            target.display_id(),
+            target.bounds(),
+            target.visible_bounds(),
+            target.scale_factor(),
+        )
+        .expect("the newer display observation should be valid");
+        let stale_geometry = PlatformWindowPhysicalGeometry::try_new(bounds, 1.0)
+            .and_then(|geometry| geometry.with_display_observation(stale_display))
+            .expect("the stale geometry should be representable");
+
+        assert!(!request.matches_geometry(stale_geometry));
+    }
+
+    #[test]
+    fn display_bound_placement_accepts_one_coherent_target_geometry() {
+        let bounds = Bounds::new(
+            point(DevicePixels(-1_200), DevicePixels(140)),
+            size(DevicePixels(720), DevicePixels(520)),
+        );
+        let target = PlatformPhysicalDisplayObservation::try_new(
+            11,
+            DisplayId::from(2),
+            Bounds::new(
+                point(DevicePixels(-1_920), DevicePixels(0)),
+                size(DevicePixels(1_920), DevicePixels(1_080)),
+            ),
+            Bounds::new(
+                point(DevicePixels(-1_920), DevicePixels(0)),
+                size(DevicePixels(1_920), DevicePixels(1_040)),
+            ),
+            1.5,
+        )
+        .expect("the target display should be valid");
+        let request = WindowPhysicalPlacementRequest::try_new_for_display(
+            bounds,
+            point(DevicePixels(-1_000), DevicePixels(260)),
+            target,
+        )
+        .expect("the placement should bind its target display");
+        let geometry = PlatformWindowPhysicalGeometry::try_new(bounds, 1.5)
+            .and_then(|geometry| geometry.with_display_observation(target))
+            .expect("the target geometry should be coherent");
+
+        assert!(request.matches_geometry(geometry));
+    }
+}
+
+#[cfg(test)]
 mod image_tests {
     use super::*;
     use std::sync::Arc;
@@ -6690,18 +7257,24 @@ mod provisional_placement_tests {
             window_id,
             7,
             reveal_point,
+            None,
             1,
             peers.into_iter().collect::<Vec<_>>().into(),
         );
         session
             .register_reveal_ticket(reveal.clone())
             .expect("test reveal ticket should register");
-        assert!(reveal.bind_presentation(1));
+        assert!(reveal.observe_placement(0, None, 1));
+        assert!(reveal.bind_presentation(1, 0, None));
+        session
+            .claim_native_reveal(window_id, 1)
+            .expect("test native reveal should claim the exact frame");
         session
             .record_native_reveal(
                 window_id,
                 1,
                 WindowProvisionalRevealNativeFacts::new(
+                    true,
                     true,
                     true,
                     true,
@@ -6714,16 +7287,42 @@ mod provisional_placement_tests {
         (session, window_id)
     }
 
-    fn placement_request(generation: u64) -> WindowProvisionalPlacementRequest {
+    fn placement_request_with_purpose(
+        generation: u64,
+        purpose: WindowProvisionalPlacementPurpose,
+    ) -> WindowProvisionalPlacementRequest {
         WindowProvisionalPlacementRequest::try_new(
             generation,
+            purpose,
             Bounds::new(
                 point(DevicePixels(80), DevicePixels(60)),
                 size(DevicePixels(320), DevicePixels(240)),
             ),
             point(DevicePixels(120), DevicePixels(90)),
+            PlatformPhysicalDisplayObservation::try_new(
+                1,
+                DisplayId::from(1),
+                Bounds::new(
+                    point(DevicePixels(0), DevicePixels(0)),
+                    size(DevicePixels(1_920), DevicePixels(1_080)),
+                ),
+                Bounds::new(
+                    point(DevicePixels(0), DevicePixels(0)),
+                    size(DevicePixels(1_920), DevicePixels(1_040)),
+                ),
+                1.0,
+            )
+            .expect("test placement display should be representable"),
         )
-        .expect("test final placement should be valid")
+        .expect("test provisional placement should be valid")
+    }
+
+    fn placement_request(generation: u64) -> WindowProvisionalPlacementRequest {
+        placement_request_with_purpose(generation, WindowProvisionalPlacementPurpose::FinalRelease)
+    }
+
+    fn live_placement_request(generation: u64) -> WindowProvisionalPlacementRequest {
+        placement_request_with_purpose(generation, WindowProvisionalPlacementPurpose::LiveRoute)
     }
 
     fn accepted_placement_facts() -> WindowProvisionalPlacementNativeFacts {
@@ -6774,6 +7373,57 @@ mod provisional_placement_tests {
                 .begin_destination_semantics(window_id, 1, 1, 1)
                 .is_ok(),
             "accepted final placement should open destination semantics"
+        );
+    }
+
+    #[test]
+    fn live_route_placement_cannot_publish_final_release_authority() {
+        let (session, window_id) = revealed_session();
+        let live = session
+            .begin_live_placement(window_id, live_placement_request(4))
+            .expect("revealed session should admit live route placement");
+        assert!(live.bind_mutation_generation(1));
+        session
+            .record_native_final_placement(window_id, 4, accepted_placement_facts())
+            .expect("exact native facts should record for live placement");
+        session
+            .settle_native_final_placement(window_id, 4, WindowProvisionalPlacementOutcome::Settled)
+            .expect("accepted live placement should settle");
+
+        assert_eq!(
+            live.snapshot().purpose(),
+            WindowProvisionalPlacementPurpose::LiveRoute
+        );
+        assert!(
+            session
+                .begin_destination_semantics(window_id, 1, 1, 1)
+                .is_err(),
+            "a settled live route must not publish final release authority"
+        );
+
+        let final_release = session
+            .begin_final_placement(window_id, placement_request(5))
+            .expect("a newer final release should supersede the live route");
+        assert_eq!(
+            live.snapshot().outcome(),
+            WindowProvisionalPlacementOutcome::Settled
+        );
+        assert_eq!(
+            final_release.snapshot().purpose(),
+            WindowProvisionalPlacementPurpose::FinalRelease
+        );
+        assert_eq!(
+            session
+                .final_placement_request(window_id, 5)
+                .expect("the session should expose only the current final release")
+                .purpose(),
+            WindowProvisionalPlacementPurpose::FinalRelease
+        );
+        assert!(
+            session
+                .begin_destination_semantics(window_id, 1, 1, 1)
+                .is_err(),
+            "historical live-route evidence cannot satisfy a pending final release"
         );
     }
 

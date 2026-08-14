@@ -5184,10 +5184,11 @@ impl ScrollHandleState {
 mod tests {
     use super::*;
     use crate::{
-        AppContext as _, Context, DevicePixels, Empty, InputEvent, Modifiers, MouseButton,
-        MouseMoveEvent, PlatformNativeDragHysteresis, PlatformNativeDragStartSnapshot,
-        PlatformWindowPhysicalGeometry, ScrollDelta, SubtreeTransform, SubtreeTransformExt as _,
-        TestAppContext, VisualContext as _, bounds, util::FluentBuilder as _,
+        AppContext as _, Context, DevicePixels, DisplayId, Empty, InputEvent, Modifiers,
+        MouseButton, MouseMoveEvent, PlatformNativeDragHysteresis, PlatformNativeDragStartSnapshot,
+        PlatformPhysicalDisplayObservation, PlatformWindowPhysicalGeometry, ScrollDelta,
+        SubtreeTransform, SubtreeTransformExt as _, TestAppContext, VisualContext as _, bounds,
+        util::FluentBuilder as _,
     };
     use std::{cell::Cell, rc::Weak};
 
@@ -5245,11 +5246,27 @@ mod tests {
     #[test]
     fn native_drag_start_snapshot_freezes_physical_frame_and_hysteresis() {
         let initial_bounds = bounds(
-            point(DevicePixels(-640), DevicePixels(-480)),
+            point(DevicePixels(640), DevicePixels(480)),
             size(DevicePixels(1280), DevicePixels(960)),
         );
-        let initial_geometry =
-            PlatformWindowPhysicalGeometry::try_new(initial_bounds, 2.0).unwrap();
+        let initial_display = PlatformPhysicalDisplayObservation::try_new(
+            1,
+            DisplayId::from(1),
+            bounds(
+                point(DevicePixels(0), DevicePixels(0)),
+                size(DevicePixels(3840), DevicePixels(2160)),
+            ),
+            bounds(
+                point(DevicePixels(0), DevicePixels(0)),
+                size(DevicePixels(3840), DevicePixels(2160)),
+            ),
+            2.0,
+        )
+        .unwrap();
+        let initial_geometry = PlatformWindowPhysicalGeometry::try_new(initial_bounds, 2.0)
+            .unwrap()
+            .with_display_observation(initial_display)
+            .unwrap();
         let initial_hysteresis =
             PlatformNativeDragHysteresis::try_new(DevicePixels(7), DevicePixels(11)).unwrap();
 
@@ -5284,8 +5301,12 @@ mod tests {
             .expect("the drag start should capture complete native physical facts");
         assert_eq!(snapshot.hysteresis(), initial_hysteresis);
         assert_eq!(
+            snapshot.pointer_frame().target_display(),
+            Some(initial_display)
+        );
+        assert_eq!(
             snapshot.pointer_frame().global_position(),
-            point(DevicePixels(-614), DevicePixels(-446))
+            point(DevicePixels(666), DevicePixels(514))
         );
         assert_eq!(snapshot.pointer_frame().source_geometry(), initial_geometry);
 
@@ -5310,7 +5331,7 @@ mod tests {
     #[test]
     fn native_drag_start_snapshot_requires_both_physical_facts() {
         let bounds = bounds(
-            point(DevicePixels(-200), DevicePixels(150)),
+            point(DevicePixels(200), DevicePixels(150)),
             size(DevicePixels(800), DevicePixels(600)),
         );
         let hysteresis =

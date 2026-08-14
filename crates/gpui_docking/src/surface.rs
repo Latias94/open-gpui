@@ -57,7 +57,9 @@ use crate::{
     DockController, DockHost, DockSpaceId, DockViewportClosePolicy,
     DockViewportRuntimeCommitAuthority, DockViewportRuntimeHandle, DockViewportRuntimeLineage,
     DockViewportSurfaceShutdownReservation, DockViewportWindowRole, DockVisualStyleResolver,
-    native_captured_drag::DockNativeCapturedSurfaceReleaseOutcome,
+    native_captured_drag::{
+        DockNativeCapturedSurfaceRelease, DockNativeCapturedSurfaceReleaseOutcome,
+    },
 };
 pub(crate) use activation::{
     DockSurfaceActivationBinding, DockSurfaceActivationHostRegistration,
@@ -71,6 +73,8 @@ use open_gpui::{
     Window, WindowBounds, WindowId, WindowInitialPresentationStatus, WindowOpenFailureStage,
     WindowOptions,
 };
+#[cfg(any(test, feature = "test-support"))]
+use open_gpui::{NativeCapturedDragReleaseBarrier, NativeCapturedDragReleaseTerminal};
 pub(crate) use owner::{
     DockSurfaceDeferredPublication, DockSurfaceOwner, DockSurfaceTransactionId,
     DockSurfaceTransactionReceipt, with_detached_deferred_tracked_root_transaction,
@@ -86,6 +90,142 @@ use std::{
 };
 
 type DockSurfaceShutdownPanic = Box<dyn Any + Send + 'static>;
+
+#[cfg(any(test, feature = "test-support"))]
+static NEXT_DOCK_SURFACE_SHUTDOWN_TEST_ORDINAL: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(1);
+
+/// Exact native capture-release evidence retained by the DockSurface shutdown test seam.
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DockSurfaceShutdownCaptureReleaseEvidence {
+    barrier: NativeCapturedDragReleaseBarrier,
+    terminal: NativeCapturedDragReleaseTerminal,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl DockSurfaceShutdownCaptureReleaseEvidence {
+    /// Returns the exact source, drag generation, and native release generation.
+    pub fn barrier(self) -> NativeCapturedDragReleaseBarrier {
+        self.barrier
+    }
+
+    /// Returns the terminal fact that authorized dependent shutdown effects.
+    pub fn terminal(self) -> NativeCapturedDragReleaseTerminal {
+        self.terminal
+    }
+}
+
+/// Typed DockSurface shutdown boundary observed by native and deterministic tests.
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DockSurfaceShutdownTestEventKind {
+    /// Every exact native capture candidate reached terminal and its Dock route cleanup ran.
+    CaptureCleanupCompleted {
+        /// Exact release barriers that required native capture settlement.
+        releases: Vec<DockSurfaceShutdownCaptureReleaseEvidence>,
+    },
+    /// A test-only cleanup callback panicked after capture cleanup and before close dispatch.
+    CleanupCallbackPanicked,
+    /// One dependent close attempt could not enter the checked-out window update and was retried.
+    DependentCloseDispatchDeferredBusy {
+        /// Dependent window whose close dispatch remained pending.
+        window: WindowId,
+    },
+    /// The primary anchor close attempt could not enter its checked-out window update.
+    AnchorCloseDispatchDeferredBusy {
+        /// Primary anchor whose close dispatch remained pending.
+        window: WindowId,
+    },
+    /// One dependent close crossed the window-update dispatch boundary.
+    DependentCloseDispatched {
+        /// Dependent window whose logical close was dispatched.
+        window: WindowId,
+    },
+    /// The primary anchor close crossed the window-update dispatch boundary.
+    AnchorCloseDispatched {
+        /// Primary anchor whose logical close was dispatched.
+        window: WindowId,
+    },
+}
+
+/// One process-ordered observation for an exact DockSurface session generation.
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DockSurfaceShutdownTestEvent {
+    ordinal: u64,
+    session_generation: u64,
+    anchor: WindowId,
+    kind: DockSurfaceShutdownTestEventKind,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl DockSurfaceShutdownTestEvent {
+    /// Returns the process-wide order assigned at the production shutdown boundary.
+    pub fn ordinal(&self) -> u64 {
+        self.ordinal
+    }
+
+    /// Returns the exact DockSurface session generation being retired.
+    pub fn session_generation(&self) -> u64 {
+        self.session_generation
+    }
+
+    /// Returns the primary anchor identity captured by the exact session lease.
+    pub fn anchor(&self) -> WindowId {
+        self.anchor
+    }
+
+    /// Returns the typed shutdown boundary.
+    pub fn kind(&self) -> &DockSurfaceShutdownTestEventKind {
+        &self.kind
+    }
+}
+
+/// Read-only observation handle for one DockSurface authority.
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+#[derive(Clone, Debug, Default)]
+pub struct DockSurfaceShutdownTestObservation {
+    events: Rc<RefCell<Vec<DockSurfaceShutdownTestEvent>>>,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl DockSurfaceShutdownTestObservation {
+    /// Returns all events ordered by their production-boundary ordinal.
+    pub fn events(&self) -> Vec<DockSurfaceShutdownTestEvent> {
+        let mut events = self.events.borrow().clone();
+        events.sort_unstable_by_key(DockSurfaceShutdownTestEvent::ordinal);
+        events
+    }
+
+    /// Removes events already consumed by the current test scenario.
+    pub fn clear(&self) {
+        self.events.borrow_mut().clear();
+    }
+
+    fn record(
+        &self,
+        lease: window_session::DockSurfaceWindowSessionLease,
+        kind: DockSurfaceShutdownTestEventKind,
+    ) {
+        let ordinal = NEXT_DOCK_SURFACE_SHUTDOWN_TEST_ORDINAL
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        assert_ne!(
+            ordinal, 0,
+            "DockSurface shutdown test observation ordinal space exhausted"
+        );
+        self.events.borrow_mut().push(DockSurfaceShutdownTestEvent {
+            ordinal,
+            session_generation: lease.generation(),
+            anchor: lease.anchor(),
+            kind,
+        });
+    }
+}
 
 pub(crate) struct DockSurfaceCaptureReleaseFailure {
     lease: window_session::DockSurfaceWindowSessionLease,
@@ -393,6 +533,20 @@ fn surface_shutdown_coordinator(cx: &mut App) -> DockSurfaceShutdownCoordinator 
     let coordinator = DockSurfaceShutdownCoordinator::default();
     cx.set_global(coordinator.clone());
     coordinator
+}
+
+#[cfg(any(test, feature = "test-support"))]
+fn record_surface_shutdown_test_event(
+    owner: &Entity<DockSurfaceOwner>,
+    lease: window_session::DockSurfaceWindowSessionLease,
+    kind: DockSurfaceShutdownTestEventKind,
+    cx: &App,
+) {
+    cx.read_entity(owner, |owner, _| {
+        if let Some(observation) = owner.shutdown_test_observation() {
+            observation.record(lease, kind);
+        }
+    });
 }
 
 pub(crate) fn register_surface_shutdown_payload_finalizer(
@@ -805,23 +959,61 @@ fn close_surface_window(
         return;
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    let force_busy = cx.update_entity(owner, |owner, _| {
+        owner.take_shutdown_test_busy_close(lease, window_id)
+    });
+    #[cfg(not(any(test, feature = "test-support")))]
+    let force_busy = false;
+
     let mut entered_window_update = false;
-    let dispatch = catch_unwind(AssertUnwindSafe(|| {
-        window.update(cx, |_, window, cx| {
-            entered_window_update = true;
-            window.remove_window(cx);
-        })
-    }));
+    let mut dispatch_panic = None;
+    if !force_busy {
+        if let Err(payload) = catch_unwind(AssertUnwindSafe(|| {
+            window.update(cx, |_, window, cx| {
+                entered_window_update = true;
+                window.remove_window(cx);
+            })
+        })) {
+            dispatch_panic = Some(payload);
+        }
+    }
 
     if entered_window_update {
         mark_surface_window_close_dispatched(owner, lease, window_id, cx);
-    } else if retry_surface_window_close_dispatch(owner, lease, window_id, cx)
-        && cx.windows().contains(&window)
-    {
-        defer_surface_window_close_retry(owner, lease, window, cx);
+        #[cfg(any(test, feature = "test-support"))]
+        record_surface_shutdown_test_event(
+            owner,
+            lease,
+            if window_id == lease.anchor() {
+                DockSurfaceShutdownTestEventKind::AnchorCloseDispatched { window: window_id }
+            } else {
+                DockSurfaceShutdownTestEventKind::DependentCloseDispatched { window: window_id }
+            },
+            cx,
+        );
+    } else if retry_surface_window_close_dispatch(owner, lease, window_id, cx) {
+        #[cfg(any(test, feature = "test-support"))]
+        record_surface_shutdown_test_event(
+            owner,
+            lease,
+            if window_id == lease.anchor() {
+                DockSurfaceShutdownTestEventKind::AnchorCloseDispatchDeferredBusy {
+                    window: window_id,
+                }
+            } else {
+                DockSurfaceShutdownTestEventKind::DependentCloseDispatchDeferredBusy {
+                    window: window_id,
+                }
+            },
+            cx,
+        );
+        if cx.windows().contains(&window) {
+            defer_surface_window_close_retry(owner, lease, window, cx);
+        }
     }
 
-    if let Err(payload) = dispatch {
+    if let Some(payload) = dispatch_panic {
         resume_unwind(payload);
     }
 }
@@ -1044,6 +1236,22 @@ fn dispatch_surface_shutdown_retirement_effects(
     first_panic: &mut Option<DockSurfaceShutdownPanic>,
     cx: &mut App,
 ) {
+    #[cfg(any(test, feature = "test-support"))]
+    if let Some(message) = cx.update_entity(owner, |owner, _| {
+        owner.take_shutdown_test_cleanup_panic(lease)
+    }) {
+        let panic = catch_unwind(AssertUnwindSafe(|| panic!("{}", message)));
+        if panic.is_err() {
+            record_surface_shutdown_test_event(
+                owner,
+                lease,
+                DockSurfaceShutdownTestEventKind::CleanupCallbackPanicked,
+                cx,
+            );
+        }
+        retain_first_surface_shutdown_panic(first_panic, panic, "test cleanup callback delivery");
+    }
+
     retain_first_surface_shutdown_panic(
         first_panic,
         catch_unwind(AssertUnwindSafe(|| activation_settlements.deliver(cx))),
@@ -1088,16 +1296,38 @@ fn finish_scheduled_surface_shutdown(
     owner: &Entity<DockSurfaceOwner>,
     lease: window_session::DockSurfaceWindowSessionLease,
     coordinator: &DockSurfaceShutdownCoordinator,
-    release_outcome: DockNativeCapturedSurfaceReleaseOutcome,
+    release: DockNativeCapturedSurfaceRelease,
     first_panic: &mut Option<DockSurfaceShutdownPanic>,
     cx: &mut App,
 ) {
+    let release_outcome = release.outcome();
     let capture_terminal = DockSurfaceShutdownCaptureTerminal::from(release_outcome);
     let Some(mut pending) = coordinator.take_after_capture_terminal(lease, capture_terminal) else {
         return;
     };
     match capture_terminal {
         DockSurfaceShutdownCaptureTerminal::Released => {
+            #[cfg(any(test, feature = "test-support"))]
+            if release.cleanup_completed() {
+                record_surface_shutdown_test_event(
+                    owner,
+                    lease,
+                    DockSurfaceShutdownTestEventKind::CaptureCleanupCompleted {
+                        releases: release
+                            .evidence()
+                            .iter()
+                            .copied()
+                            .map(
+                                |(barrier, terminal)| DockSurfaceShutdownCaptureReleaseEvidence {
+                                    barrier,
+                                    terminal,
+                                },
+                            )
+                            .collect(),
+                    },
+                    cx,
+                );
+            }
             if let Some(effects) = pending.effects.take() {
                 retain_first_surface_shutdown_panic(
                     first_panic,
@@ -1162,12 +1392,12 @@ fn schedule_surface_shutdown_close_effects(
     crate::native_captured_drag::cancel_native_captured_drag_route_for_surface(
         runtime_identity,
         lease,
-        move |release_outcome, first_panic, cx| {
+        move |release, first_panic, cx| {
             finish_scheduled_surface_shutdown(
                 &owner,
                 lease,
                 &completion_coordinator,
-                release_outcome,
+                release,
                 first_panic,
                 cx,
             );
@@ -1510,6 +1740,115 @@ impl DockSurface {
 
     pub(crate) fn viewport_runtime<C: AppContext>(&self, cx: &C) -> DockViewportRuntimeHandle {
         cx.read_entity(&self.owner, |owner, _| owner.runtime())
+    }
+
+    /// Begins a typed shutdown observation scoped to this exact DockSurface authority.
+    #[doc(hidden)]
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn observe_shutdown_for_test(&self, cx: &mut App) -> DockSurfaceShutdownTestObservation {
+        let observation = DockSurfaceShutdownTestObservation::default();
+        cx.update_entity(&self.owner, |owner, _| {
+            owner.install_shutdown_test_observation(observation.clone());
+        });
+        observation
+    }
+
+    /// Arms one exact shutdown generation to exercise retry and panic-continuation behavior.
+    ///
+    /// The first close attempt for `busy_window` is routed through the production Busy retry path.
+    /// The first cleanup callback then panics after native capture cleanup; shutdown must retain the
+    /// panic, continue retiring every surface window, and only propagate it after dispatching the
+    /// remaining cleanup work.
+    #[doc(hidden)]
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn arm_shutdown_retry_and_cleanup_panic_for_test(
+        &self,
+        busy_window: WindowId,
+        panic_message: impl Into<String>,
+        cx: &mut App,
+    ) -> bool {
+        let Some(lease) = cx.read_entity(&self.owner, |owner, _| {
+            owner.window_session().active_lease()
+        }) else {
+            return false;
+        };
+        let runtime = self.viewport_runtime(cx);
+        if busy_window == lease.anchor()
+            || !runtime
+                .windows_for_surface(lease)
+                .iter()
+                .any(|(_, window)| window.window_id() == busy_window)
+        {
+            return false;
+        }
+        cx.update_entity(&self.owner, |owner, _| {
+            owner.install_shutdown_test_faults(lease, busy_window, panic_message.into())
+        })
+    }
+
+    /// Opens one provisional live-undock viewport through the production opening protocol.
+    ///
+    /// The optional builder callback runs after the runtime accepts the exact provisional open
+    /// attempt but before the window enters the application registry. Native shutdown tests use
+    /// this narrow seam to inspect the real native window and prove that App shutdown compensates
+    /// the late return without exposing reducer/runtime implementation types.
+    #[doc(hidden)]
+    #[cfg(feature = "test-support")]
+    pub fn open_live_undock_provisional_for_test(
+        &self,
+        source_window: WindowId,
+        drag_generation: u64,
+        options: WindowOptions,
+        on_builder_entered: Option<Box<dyn FnOnce(&mut Window, &mut App)>>,
+        cx: &mut App,
+    ) -> std::io::Result<()> {
+        let lease = cx
+            .read_entity(&self.owner, |owner, _| {
+                owner.window_session().active_lease()
+            })
+            .ok_or_else(|| std::io::Error::other("the DockSurface has no active window lease"))?;
+        let drag_generation = live_undock::DockLiveUndockDragGeneration::new(drag_generation)
+            .ok_or_else(|| std::io::Error::other("live-undock drag generation must be non-zero"))?;
+        let trigger = live_undock::DockLiveUndockTrigger::new(
+            drag_generation,
+            live_undock::DockLiveUndockSourceSnapshot::new(source_window, 1),
+            live_undock::DockLiveUndockRouteGeneration::new(drag_generation.get())
+                .expect("the test route generation should be non-zero"),
+            live_undock::DockLiveUndockRouteFeedback::Desktop,
+            live_undock::DockLiveUndockPhysicalPoint::new(50, 50),
+            live_undock::DockLiveUndockPhysicalBounds::new(
+                live_undock::DockLiveUndockPhysicalPoint::new(0, 0),
+                640,
+                480,
+            )
+            .expect("test provisional bounds must be non-empty"),
+        )
+        .expect("desktop must remain an eligible live-undock route");
+        let request = reduce_live_undock_fact(
+            &self.owner,
+            live_undock::DockLiveUndockFact::Trigger { lease, trigger },
+            cx,
+        )
+        .and_then(|effects| {
+            effects.into_iter().find_map(|effect| match effect {
+                live_undock::DockLiveUndockEffect::OpenProvisional { request, .. } => Some(request),
+                _ => None,
+            })
+        })
+        .ok_or_else(|| std::io::Error::other("the active DockSurface rejected live undock"))?;
+        let runtime = self.viewport_runtime(cx);
+        if let Some(on_builder_entered) = on_builder_entered {
+            runtime.install_live_undock_provisional_builder_hook_for_test(on_builder_entered);
+        }
+        runtime
+            .open_triggered_live_undock_provisional_viewport(
+                self.primary_space.clone(),
+                options,
+                &request,
+                cx,
+            )
+            .map(|_| ())
+            .map_err(|error| std::io::Error::other(error.to_string()))
     }
 
     pub(crate) fn owner(&self) -> &Entity<DockSurfaceOwner> {

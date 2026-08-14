@@ -7,7 +7,7 @@ use std::{
     rc::{Rc, Weak},
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     },
     time::Duration,
 };
@@ -134,6 +134,7 @@ pub(crate) struct WindowsPlatformInner {
     dispatcher: Arc<WindowsDispatcher>,
     pub(crate) background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
+    display_topology_generation: AtomicU64,
     native_retirement: RefCell<WindowsNativeRetirementCoordinator>,
     #[cfg(test)]
     lifecycle_test_probe: Rc<NativeWindowLifecycleTestProbe>,
@@ -2007,6 +2008,10 @@ impl Platform for WindowsPlatform {
             .detach();
     }
 
+    fn quit_after_terminal_shutdown(&self) {
+        unsafe { PostQuitMessage(0) };
+    }
+
     fn restart(&self, binary_path: Option<PathBuf>) {
         let pid = std::process::id();
         let Some(app_path) = binary_path.or(self.app_path().log_err()) else {
@@ -2535,10 +2540,26 @@ impl WindowsPlatformInner {
                 .context("missing main receiver")?,
             background_executor,
             foreground_executor,
+            display_topology_generation: AtomicU64::new(1),
             native_retirement: RefCell::new(WindowsNativeRetirementCoordinator::default()),
             #[cfg(test)]
             lifecycle_test_probe: context.lifecycle_test_probe.clone(),
         }))
+    }
+
+    pub(crate) fn display_topology_generation(&self) -> u64 {
+        self.display_topology_generation.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn advance_display_topology_generation(&self) -> u64 {
+        match self.display_topology_generation.fetch_update(
+            Ordering::AcqRel,
+            Ordering::Acquire,
+            |generation| generation.checked_add(1),
+        ) {
+            Ok(previous) => previous + 1,
+            Err(saturated) => saturated,
+        }
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -3548,15 +3569,15 @@ mod native_test_support;
 mod tests {
     use crate::{read_from_clipboard, write_to_clipboard};
     use open_gpui::{
-        AnyWindowHandle, AppContext as _, Application, ClipboardItem, DevicePixels, Empty,
+        AnyWindowHandle, AppContext as _, Application, Bounds, ClipboardItem, DevicePixels, Empty,
         Platform as _, PlatformWindowCapabilities, PlatformWindowCreationCapabilities,
         PlatformWindowHit, PlatformWindowHitStack, PlatformWindowMutationCapabilities,
         PlatformWindowPhysicalCoverage, PlatformWindowPhysicalGeometry, WindowActivationPolicy,
         WindowBounds, WindowCoordinateSpace, WindowCreationSupport, WindowHandle, WindowId,
         WindowInitialPresentationOrder, WindowKind, WindowMutationDispatch,
         WindowMutationObservation, WindowMutationOutcome, WindowMutationRequest,
-        WindowMutationSupport, WindowOptions, WindowPlacementRequest, WindowPlacementState,
-        WindowPlatformFacts, point, px, size,
+        WindowMutationSupport, WindowOptions, WindowPhysicalPlacementRequest,
+        WindowPlacementRequest, WindowPlacementState, WindowPlatformFacts, point, px, size,
     };
     use std::{
         rc::Rc,
@@ -3564,10 +3585,11 @@ mod tests {
         time::Duration,
     };
     use windows::Win32::{
-        Foundation::{HWND, RECT},
+        Foundation::{HWND, POINT, RECT},
+        Graphics::Gdi::ClientToScreen,
         UI::WindowsAndMessaging::{
-            GetWindowRect, IsWindowVisible, SW_HIDE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER,
-            SetWindowPos, ShowWindow,
+            GetClientRect, GetWindowRect, IsWindowVisible, SW_HIDE, SWP_NOACTIVATE, SWP_NOMOVE,
+            SWP_NOZORDER, SetWindowPos, ShowWindow,
         },
     };
 
@@ -5366,6 +5388,101 @@ mod tests {
             window
                 .update(cx, |_, window, cx| window.remove_window(cx))
                 .expect("native test window should close");
+        });
+        platform.inner.run_foreground_task();
+    }
+
+    #[test]
+    fn ordinary_window_merges_physical_placement_before_first_presentation() {
+        let platform = Rc::new(super::WindowsPlatform::new(false).unwrap());
+        let mut app = Application::with_platform(platform.clone());
+        let (window, native_window, request, dispatch) = app.update_for_test(|cx| {
+            let window = cx
+                .open_window(
+                    WindowOptions {
+                        window_bounds: Some(WindowBounds::centered(size(px(320.0), px(220.0)), cx)),
+                        focus_on_appearing: false,
+                        show: true,
+                        ..WindowOptions::default()
+                    },
+                    |_, cx| cx.new(|_| Empty),
+                )
+                .expect("ordinary native test window should open");
+            let native_window = platform
+                .raw_window_handles
+                .read()
+                .last()
+                .expect("ordinary native test window handle should be registered")
+                .as_raw();
+            assert!(!unsafe { IsWindowVisible(native_window).as_bool() });
+
+            let mut client_rect = RECT::default();
+            unsafe { GetClientRect(native_window, &mut client_rect) }
+                .expect("initial native client bounds should be readable");
+            let mut client_origin = POINT { x: 0, y: 0 };
+            unsafe { ClientToScreen(native_window, &mut client_origin) }
+                .expect("initial native client origin should be readable");
+            let target_bounds = Bounds {
+                origin: point(
+                    DevicePixels(client_origin.x + 8),
+                    DevicePixels(client_origin.y + 8),
+                ),
+                size: size(
+                    DevicePixels(client_rect.right - client_rect.left + 32),
+                    DevicePixels(client_rect.bottom - client_rect.top + 24),
+                ),
+            };
+            let anchor_point = point(
+                DevicePixels(client_origin.x + 16),
+                DevicePixels(client_origin.y + 16),
+            );
+            let target_display = super::WindowsDisplay::physical_geometry_at(
+                anchor_point,
+                platform.inner.display_topology_generation(),
+            )
+            .expect("ordinary physical placement should resolve its target display");
+            let request = WindowPhysicalPlacementRequest::try_new_for_display(
+                target_bounds,
+                anchor_point,
+                target_display,
+            )
+            .expect("ordinary physical placement should bind its target display");
+            let dispatch = window
+                .update(cx, |_, window, _| {
+                    window
+                        .request_window_mutation(WindowMutationRequest::PhysicalPlacement(request))
+                })
+                .expect("ordinary native test window should remain open");
+            (window, native_window, request, dispatch)
+        });
+        let ticket = match dispatch {
+            WindowMutationDispatch::Queued(ticket) => ticket,
+            other => panic!("expected deferred physical placement, got {other:?}"),
+        };
+
+        let observation = (0..16)
+            .find_map(|_| {
+                platform.inner.run_foreground_task();
+                ticket.observation()
+            })
+            .expect("first presentation should settle deferred physical placement");
+        assert_eq!(observation.outcome, WindowMutationOutcome::Exact);
+        assert!(
+            observation
+                .facts
+                .physical_geometry
+                .is_some_and(|geometry| request.matches_geometry(geometry))
+        );
+        assert!(
+            unsafe { IsWindowVisible(native_window).as_bool() },
+            "the first presentation should show the physically placed window"
+        );
+
+        let window = open_gpui::AnyWindowHandle::from(window);
+        app.update_for_test(|cx| {
+            window
+                .update(cx, |_, window, cx| window.remove_window(cx))
+                .expect("ordinary native test window should close");
         });
         platform.inner.run_foreground_task();
     }

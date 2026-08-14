@@ -17,8 +17,9 @@ use crate::{
         DockSurfaceOwner,
         live_undock::{
             DockLiveUndockDragGeneration, DockLiveUndockEffect, DockLiveUndockFact,
-            DockLiveUndockPhysicalPoint, DockLiveUndockPromotionDestination,
-            DockLiveUndockPromotionToken, DockLiveUndockRouteFeedback, DockLiveUndockSession,
+            DockLiveUndockPhysicalBounds, DockLiveUndockPhysicalPoint,
+            DockLiveUndockPromotionDestination, DockLiveUndockPromotionToken,
+            DockLiveUndockRouteFeedback, DockLiveUndockRouteGeneration, DockLiveUndockSession,
             DockLiveUndockSourceSnapshot, DockLiveUndockTrigger,
         },
         payload_recovery::{
@@ -894,6 +895,15 @@ fn reveal_live_undock_provisional_destination(
         .into_iter()
         .find(|window| window.window_id() != fixture.source_window.window_id())
         .expect("live undock should retain one exact provisional destination window");
+    let initial_facts = destination_window
+        .update(cx, |_, window, _| window.presentation_facts())
+        .expect("the provisional destination window should remain live");
+    if !initial_facts.native_visible {
+        assert!(
+            cx.flush_window_mutation(destination_window, WindowMutationDomain::Placement),
+            "the TestPlatform must settle the hidden target-display placement before reveal"
+        );
+    }
     let destination_host = destination_window
         .downcast::<DockHost>()
         .expect("the provisional destination should retain a DockHost root")
@@ -1236,6 +1246,7 @@ fn native_reveal_winner_is_joined_by_the_deadline_before_the_next_observer_frame
         };
         ticket
     });
+    assert!(cx.flush_window_mutation(destination_window, WindowMutationDomain::Placement));
     assert!(cx.step_deferred_window_frame_request(destination_window));
     assert_eq!(
         reveal_ticket.snapshot().outcome(),
@@ -1303,6 +1314,7 @@ fn native_reveal_winner_requests_frames_until_the_exact_submission_is_observed(
         .entity(cx)
         .expect("the provisional destination DockHost should remain live");
 
+    assert!(cx.flush_window_mutation(destination_window, WindowMutationDomain::Placement));
     assert!(cx.step_deferred_window_frame_request(destination_window));
     assert!(matches!(
         cx.read_entity(&destination_host, |host, _| host
@@ -7865,7 +7877,7 @@ fn reentrant_surface_claim_attaches_to_delivering_native_release(cx: &mut TestAp
                         crate::native_captured_drag::cancel_native_captured_drag_route_for_surface(
                             runtime_identity,
                             lease,
-                            move |outcome, _, _| release_outcome.set(Some(outcome)),
+                            move |release, _, _| release_outcome.set(Some(release.outcome())),
                             app,
                         );
                     },
@@ -11104,8 +11116,12 @@ fn prepare_payload_recovery_host_restore_with_origin(
         DockLiveUndockDragGeneration::new(1)
             .expect("the synthetic recovery drag generation should be non-zero"),
         DockLiveUndockSourceSnapshot::new(source_window.window_id(), source_binding.generation()),
+        DockLiveUndockRouteGeneration::new(1)
+            .expect("the synthetic recovery route generation should be non-zero"),
         DockLiveUndockRouteFeedback::Desktop,
         DockLiveUndockPhysicalPoint::new(50, 50),
+        DockLiveUndockPhysicalBounds::new(DockLiveUndockPhysicalPoint::new(0, 0), 640, 480)
+            .expect("synthetic recovery bounds must be non-empty"),
     )
     .expect("the synthetic recovery trigger should be valid");
     let identity = DockLiveUndockSession::new()

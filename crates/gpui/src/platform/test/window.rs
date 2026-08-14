@@ -5,22 +5,24 @@ use crate::{
     DispatchEventResult, GpuSpecs, Pixels, Platform, PlatformAtlas, PlatformDisplay,
     PlatformHeadlessRenderer, PlatformInput, PlatformInputCallback, PlatformInputCallbackSlot,
     PlatformInputHandler, PlatformInputHandlerSlot, PlatformNativePointerPhysicalFrame,
-    PlatformNativeWindowRetirementOutcome, PlatformPointerCaptureReleaseOutcome,
-    PlatformPresentationShutdownOutcome, PlatformWindow, PlatformWindowCommand,
-    PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome, PlatformWindowDispatch,
-    PlatformWindowMutationObservation, PlatformWindowMutationTerminal,
+    PlatformNativeWindowRetirementOutcome, PlatformPhysicalDisplayObservation,
+    PlatformPointerCaptureReleaseOutcome, PlatformPresentationShutdownOutcome, PlatformWindow,
+    PlatformWindowCommand, PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome,
+    PlatformWindowDispatch, PlatformWindowMutationObservation, PlatformWindowMutationTerminal,
     PlatformWindowPhysicalGeometry, PlatformWindowPresentOutcome, Point,
     PreparedPlatformPointerCaptureRelease, PreparedPlatformPresentationShutdown, PromptButton,
     RequestFrameOptions, Scene, Size, TestPlatform, TileId, WindowAppearance,
     WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowCreationFacts,
-    WindowMutationDomain, WindowMutationRequest, WindowParams, WindowPhysicalPlacementRequest,
-    WindowPlacementState, WindowPlatformFacts, WindowPresentationShutdownTicket,
-    WindowProvisionalPlacementNativeFacts, WindowProvisionalPlacementOutcome,
-    WindowProvisionalPlacementRequest, WindowProvisionalRevealNativeFacts,
-    WindowProvisionalRevealZOrder, WindowProvisionalSession,
+    WindowMutationDomain, WindowMutationRequest, WindowParams, WindowPlacementState,
+    WindowPlatformFacts, WindowPresentationShutdownTicket, WindowProvisionalPlacementNativeFacts,
+    WindowProvisionalPlacementOutcome, WindowProvisionalPlacementRequest,
+    WindowProvisionalRevealNativeFacts, WindowProvisionalRevealZOrder, WindowProvisionalSession,
 };
 #[cfg(test)]
-use crate::{DisplayId, NativePointerCancelReservation, PointerCancelReason};
+use crate::{
+    DisplayId, NativePointerCancelReservation, PointerCancelReason,
+    WindowProvisionalPlacementPurpose,
+};
 use image::RgbaImage;
 use open_gpui_collections::{HashMap, VecDeque};
 use parking_lot::Mutex;
@@ -35,9 +37,32 @@ use std::{
 
 static NEXT_EMERGENCY_PRESENTATION_SHUTDOWN_GENERATION: AtomicU64 = AtomicU64::new(1);
 
+fn test_display_observation(state: &TestWindowState) -> Option<PlatformPhysicalDisplayObservation> {
+    PlatformPhysicalDisplayObservation::try_new(
+        1,
+        state.display.id(),
+        state.display.bounds().to_device_pixels(state.scale_factor),
+        state
+            .display
+            .visible_bounds()
+            .to_device_pixels(state.scale_factor),
+        state.scale_factor,
+    )
+}
+
+fn test_physical_geometry(state: &TestWindowState) -> Option<PlatformWindowPhysicalGeometry> {
+    let geometry =
+        PlatformWindowPhysicalGeometry::try_new(state.physical_client_bounds?, state.scale_factor)?;
+    match state.physical_display_observation {
+        Some(display) => geometry.with_display_observation(display),
+        None => Some(geometry),
+    }
+}
+
 pub(crate) struct TestWindowState {
     pub(crate) bounds: Bounds<Pixels>,
     physical_client_bounds: Option<Bounds<DevicePixels>>,
+    physical_display_observation: Option<PlatformPhysicalDisplayObservation>,
     scale_factor: f32,
     native_pointer_physical_frame: Option<PlatformNativePointerPhysicalFrame>,
     last_native_pointer_physical_frame: Option<PlatformNativePointerPhysicalFrame>,
@@ -160,13 +185,11 @@ fn test_native_pointer_physical_frame(
         PlatformInput::MouseExited(event) => event.position,
         _ => return None,
     };
-    let geometry =
-        PlatformWindowPhysicalGeometry::try_new(state.physical_client_bounds?, state.scale_factor)?;
+    let target_display = test_display_observation(state)?;
+    let geometry = test_physical_geometry(state)?;
     let global_position = geometry.local_to_global(position)?;
-    Some(PlatformNativePointerPhysicalFrame::new(
-        global_position,
-        geometry,
-    ))
+    PlatformNativePointerPhysicalFrame::new(global_position, geometry)
+        .with_target_display(target_display)
 }
 
 #[derive(Clone)]
@@ -181,7 +204,9 @@ fn test_provisional_placement_native_facts(
     request: &WindowProvisionalPlacementRequest,
 ) -> WindowProvisionalPlacementNativeFacts {
     WindowProvisionalPlacementNativeFacts::new(
-        state.physical_client_bounds == Some(request.client_bounds()),
+        window_platform_facts(state)
+            .physical_geometry
+            .is_some_and(|geometry| request.physical_request().matches_geometry(geometry)),
         state.mapped,
         true,
         true,
@@ -291,6 +316,7 @@ impl TestWindow {
             Rc::new(Mutex::new(TestWindowState {
                 bounds: params.bounds,
                 physical_client_bounds: None,
+                physical_display_observation: None,
                 scale_factor: 2.0,
                 native_pointer_physical_frame: None,
                 last_native_pointer_physical_frame: None,
@@ -562,15 +588,22 @@ impl TestWindow {
                 if !accepts_reveal {
                     return PlatformWindowCommandOutcome::Rejected;
                 }
+                let session = session.expect("accepted provisional reveal must retain its session");
+                if session
+                    .claim_native_reveal(window_id, presentation_generation)
+                    .is_err()
+                {
+                    return PlatformWindowCommandOutcome::Rejected;
+                }
                 state.mapped = true;
                 state.provisional_reveal_generation = Some(presentation_generation);
                 drop(state);
                 let recorded = session
-                    .expect("accepted provisional reveal must retain its session")
                     .record_native_reveal(
                         window_id,
                         presentation_generation,
                         WindowProvisionalRevealNativeFacts::new(
+                            true,
                             true,
                             true,
                             true,
@@ -766,6 +799,7 @@ impl TestWindow {
         let mut state = self.0.lock();
         state.physical_client_bounds = bounds;
         state.scale_factor = scale_factor;
+        state.physical_display_observation = bounds.and_then(|_| test_display_observation(&state));
     }
 
     #[cfg(test)]
@@ -1343,9 +1377,7 @@ impl PlatformWindow for TestWindow {
     }
 
     fn physical_geometry(&self) -> Option<PlatformWindowPhysicalGeometry> {
-        let state = self.0.lock();
-        let client_bounds = state.physical_client_bounds?;
-        PlatformWindowPhysicalGeometry::try_new(client_bounds, state.scale_factor)
+        test_physical_geometry(&self.0.lock())
     }
 
     fn native_pointer_physical_frame(&self) -> Option<PlatformNativePointerPhysicalFrame> {
@@ -1480,11 +1512,7 @@ impl PlatformWindow for TestWindow {
             session.final_placement_request(lock.handle.window_id(), request.generation()),
             Ok(current) if current == request
         );
-        let Some(physical_request) =
-            WindowPhysicalPlacementRequest::try_new(request.client_bounds())
-        else {
-            return PlatformWindowDispatch::Rejected;
-        };
+        let physical_request = request.physical_request();
         if lock.closed
             || !lock.mapped
             || lock.mutation_generations.get(&domain).copied() != Some(generation)
@@ -1817,17 +1845,19 @@ impl PlatformWindow for TestWindow {
 }
 
 fn window_platform_facts(state: &TestWindowState) -> WindowPlatformFacts {
+    let physical_geometry = test_physical_geometry(state);
     WindowPlatformFacts {
         bounds: state.bounds,
         coordinate_space: crate::WindowCoordinateSpace::GlobalScreen,
-        physical_geometry: state
-            .physical_client_bounds
-            .and_then(|bounds| PlatformWindowPhysicalGeometry::try_new(bounds, state.scale_factor)),
+        physical_geometry,
         window_bounds: state.window_bounds,
         inner_window_bounds: state.window_bounds,
         content_size: state.bounds.size,
         scale_factor: state.scale_factor,
-        display_id: Some(state.display.id()),
+        display_id: state
+            .physical_display_observation
+            .map(PlatformPhysicalDisplayObservation::display_id)
+            .or_else(|| Some(state.display.id())),
         is_minimized: state.is_minimized,
         is_maximized: state.is_maximized,
         is_fullscreen: state.is_fullscreen,
@@ -1893,6 +1923,10 @@ fn apply_test_window_mutation(state: &mut TestWindowState, request: WindowMutati
         }
         WindowMutationRequest::PhysicalPlacement(request) => {
             let physical_bounds = request.client_bounds();
+            if let Some(target_display) = request.target_display() {
+                state.scale_factor = target_display.scale_factor();
+                state.physical_display_observation = Some(target_display);
+            }
             let bounds = physical_bounds.to_pixels(state.scale_factor);
             state.physical_client_bounds = Some(physical_bounds);
             state.bounds = bounds;
@@ -1922,6 +1956,13 @@ fn apply_test_window_mutation(state: &mut TestWindowState, request: WindowMutati
 
 fn apply_window_platform_facts(state: &mut TestWindowState, facts: &WindowPlatformFacts) {
     state.bounds = facts.bounds;
+    state.physical_client_bounds = facts
+        .physical_geometry
+        .map(PlatformWindowPhysicalGeometry::client_bounds);
+    state.physical_display_observation = facts
+        .physical_geometry
+        .and_then(PlatformWindowPhysicalGeometry::display_observation);
+    state.scale_factor = facts.scale_factor;
     state.window_bounds = facts.window_bounds;
     state.is_minimized = facts.is_minimized;
     state.is_maximized = facts.is_maximized;
@@ -2015,13 +2056,64 @@ mod window_mutation_tests {
     fn provisional_placement_request(generation: u64) -> WindowProvisionalPlacementRequest {
         WindowProvisionalPlacementRequest::try_new(
             generation,
+            WindowProvisionalPlacementPurpose::FinalRelease,
             Bounds::new(
                 point(DevicePixels(80), DevicePixels(90)),
                 size(DevicePixels(360), DevicePixels(260)),
             ),
             point(DevicePixels(120), DevicePixels(130)),
+            PlatformPhysicalDisplayObservation::try_new(
+                1,
+                DisplayId::from(1),
+                Bounds::new(
+                    point(DevicePixels(0), DevicePixels(0)),
+                    size(DevicePixels(3_840), DevicePixels(2_160)),
+                ),
+                Bounds::new(
+                    point(DevicePixels(0), DevicePixels(0)),
+                    size(DevicePixels(3_840), DevicePixels(2_080)),
+                ),
+                2.0,
+            )
+            .expect("the test target display should be representable"),
         )
         .expect("the test final placement should be structurally valid")
+    }
+
+    fn settle_provisional_final_placement(
+        cx: &mut TestAppContext,
+        handle: AnyWindowHandle,
+        session: &WindowProvisionalSession,
+    ) {
+        let (dispatch, ticket) = cx
+            .update_window(handle, |_, window, _| {
+                window.request_provisional_placement(session, provisional_placement_request(1))
+            })
+            .expect("the provisional window should remain live")
+            .expect("the revealed session should admit final placement");
+        assert!(matches!(dispatch, WindowMutationDispatch::Queued(_)));
+        assert_eq!(
+            ticket.snapshot().outcome(),
+            WindowProvisionalPlacementOutcome::Pending,
+            "dispatch alone must not manufacture native placement evidence"
+        );
+        assert!(cx.flush_window_mutation(handle, WindowMutationDomain::Placement));
+
+        let placement = ticket.snapshot();
+        assert_eq!(
+            placement.purpose(),
+            WindowProvisionalPlacementPurpose::FinalRelease
+        );
+        assert_eq!(
+            placement.outcome(),
+            WindowProvisionalPlacementOutcome::Settled
+        );
+        assert!(
+            placement
+                .native_facts()
+                .is_some_and(|facts| facts.accepts_placement()),
+            "final placement must retain exact accepted native facts"
+        );
     }
 
     #[crate::test]
@@ -2655,6 +2747,53 @@ mod window_mutation_tests {
     }
 
     #[crate::test]
+    fn physical_placement_exactness_includes_the_target_display_observation(
+        cx: &mut TestAppContext,
+    ) {
+        let (handle, platform_window) = open_test_window(cx);
+        let request = provisional_placement_request(1).physical_request();
+        let ticket = cx
+            .update_window(handle, |_, window, _| {
+                match window.request_physical_window_placement(request) {
+                    WindowMutationDispatch::Queued(ticket) => ticket,
+                    dispatch => panic!("expected queued physical placement, got {dispatch:?}"),
+                }
+            })
+            .expect("the physical placement test window should remain live");
+
+        let target_display = request
+            .target_display()
+            .expect("the physical placement request should remain display-bound");
+        let stale_display = PlatformPhysicalDisplayObservation::try_new(
+            target_display.topology_generation() + 1,
+            target_display.display_id(),
+            target_display.bounds(),
+            target_display.visible_bounds(),
+            target_display.scale_factor(),
+        )
+        .expect("the stale display observation should remain structurally valid");
+        let stale_geometry = PlatformWindowPhysicalGeometry::try_new(
+            request.client_bounds(),
+            target_display.scale_factor(),
+        )
+        .and_then(|geometry| geometry.with_display_observation(stale_display))
+        .expect("the stale physical geometry should remain structurally valid");
+        let mut facts = platform_window.platform_facts();
+        facts.physical_geometry = Some(stale_geometry);
+
+        assert!(cx.simulate_window_mutation_observation(
+            handle,
+            WindowMutationDomain::Placement,
+            facts,
+        ));
+        assert_eq!(
+            ticket.observation().unwrap().outcome,
+            WindowMutationOutcome::Adjusted,
+            "matching client bounds from a different display publication must not settle exact",
+        );
+    }
+
+    #[crate::test]
     fn mutation_terminal_queued_while_app_is_borrowed_settles_after_update(
         cx: &mut TestAppContext,
     ) {
@@ -3221,6 +3360,7 @@ mod window_mutation_tests {
 
     #[crate::test]
     fn inline_close_releases_blocked_ingress_before_returning(cx: &mut TestAppContext) {
+        cx.update(|app| app.set_quit_mode(QuitMode::Explicit));
         let (handle, platform_window) = open_test_window(cx);
         let deliveries = Rc::new(Cell::new(0));
         let _subscription = cx.update(|app| {
@@ -3967,7 +4107,6 @@ mod window_mutation_tests {
                 PlatformWindowCommand::RevealDeferredInitialPresentation {
                     session_generation: session.snapshot().generation(),
                     presentation_generation: generation,
-                    reveal_point: point(DevicePixels(40), DevicePixels(50)),
                 },
             ]
         );
@@ -3982,8 +4121,23 @@ mod window_mutation_tests {
         );
         let placement_request = WindowProvisionalPlacementRequest::try_new(
             91,
+            WindowProvisionalPlacementPurpose::FinalRelease,
             placement_bounds,
             point(DevicePixels(120), DevicePixels(130)),
+            PlatformPhysicalDisplayObservation::try_new(
+                1,
+                DisplayId::from(1),
+                Bounds::new(
+                    point(DevicePixels(0), DevicePixels(0)),
+                    size(DevicePixels(3_840), DevicePixels(2_160)),
+                ),
+                Bounds::new(
+                    point(DevicePixels(0), DevicePixels(0)),
+                    size(DevicePixels(3_840), DevicePixels(2_080)),
+                ),
+                2.0,
+            )
+            .expect("the test target display should be representable"),
         )
         .expect("the test final placement should be structurally valid");
         let (placement_dispatch, placement_ticket) = cx
@@ -4264,7 +4418,6 @@ mod window_mutation_tests {
                     PlatformWindowCommand::RevealDeferredInitialPresentation {
                         session_generation: session.snapshot().generation(),
                         presentation_generation,
-                        reveal_point: point(DevicePixels(40), DevicePixels(50)),
                     },
                     ticket.clone(),
                 );
@@ -4393,6 +4546,7 @@ mod window_mutation_tests {
             reveal.snapshot().outcome(),
             crate::WindowProvisionalRevealOutcome::Revealed
         );
+        settle_provisional_final_placement(cx, handle, &session);
 
         let semantics = cx
             .update_window(handle, |_, window, app| {
@@ -4524,6 +4678,7 @@ mod window_mutation_tests {
             platform_window.platform_command_history().is_empty(),
             "a gated window must not enqueue native activation"
         );
+        settle_provisional_final_placement(cx, handle, &session);
 
         let semantics_ticket = cx
             .update_window(handle, |_, window, app| {
@@ -4644,6 +4799,7 @@ mod window_mutation_tests {
             reveal_ticket.snapshot().outcome(),
             crate::WindowProvisionalRevealOutcome::Revealed
         );
+        settle_provisional_final_placement(cx, handle, &session);
         let semantics_ticket = cx
             .update_window(handle, |_, window, app| {
                 window
@@ -4688,6 +4844,7 @@ mod window_mutation_tests {
 
     #[crate::test]
     fn initial_appearance_is_independent_from_lifetime_activation_policy(cx: &mut TestAppContext) {
+        cx.update(|app| app.set_quit_mode(QuitMode::Explicit));
         for focus_on_appearing in [false, true] {
             for (accepts_activation, focus_on_click) in
                 [(false, false), (false, true), (true, false), (true, true)]

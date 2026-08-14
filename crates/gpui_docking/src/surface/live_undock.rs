@@ -5,7 +5,8 @@ use crate::{
     native_captured_drag::DockNativeCapturedDragTransportRetirementReceipt,
 };
 use open_gpui::{
-    AnyWindowHandle, FocusHandle, WindowId, WindowProvisionalPlacementOutcome,
+    AnyWindowHandle, FocusHandle, PlatformPhysicalDisplayObservation, WindowId,
+    WindowProvisionalPlacementOutcome, WindowProvisionalPlacementPurpose,
     WindowProvisionalPlacementSnapshot, WindowProvisionalRevealOutcome,
     WindowProvisionalRevealSnapshot, WindowProvisionalRevealZOrder,
     WindowProvisionalSemanticsOutcome, WindowProvisionalSemanticsSnapshot,
@@ -55,6 +56,23 @@ impl DockLiveUndockPresentationLeaseGeneration {
 pub(crate) struct DockLiveUndockPlacementGeneration(u64);
 
 impl DockLiveUndockPlacementGeneration {
+    pub(crate) const fn new(generation: u64) -> Option<Self> {
+        if generation == 0 {
+            None
+        } else {
+            Some(Self(generation))
+        }
+    }
+
+    pub(crate) const fn get(self) -> u64 {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub(crate) struct DockLiveUndockRouteGeneration(u64);
+
+impl DockLiveUndockRouteGeneration {
     pub(crate) const fn new(generation: u64) -> Option<Self> {
         if generation == 0 {
             None
@@ -227,22 +245,71 @@ pub(crate) struct DockLiveUndockPhysicalBounds {
     origin: DockLiveUndockPhysicalPoint,
     width: u32,
     height: u32,
+    target_display: PlatformPhysicalDisplayObservation,
 }
 
 impl DockLiveUndockPhysicalBounds {
-    pub(crate) const fn new(
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn new(
         origin: DockLiveUndockPhysicalPoint,
         width: u32,
         height: u32,
     ) -> Option<Self> {
+        Self::for_test(origin, width, height)
+    }
+
+    pub(crate) fn for_display(
+        origin: DockLiveUndockPhysicalPoint,
+        width: u32,
+        height: u32,
+        target_display: PlatformPhysicalDisplayObservation,
+    ) -> Option<Self> {
         if width == 0 || height == 0 {
             return None;
         }
+        origin.x.checked_add(i32::try_from(width).ok()?)?;
+        origin.y.checked_add(i32::try_from(height).ok()?)?;
         Some(Self {
             origin,
             width,
             height,
+            target_display,
         })
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn for_test(
+        origin: DockLiveUndockPhysicalPoint,
+        width: u32,
+        height: u32,
+    ) -> Option<Self> {
+        let target_display = PlatformPhysicalDisplayObservation::try_new(
+            1,
+            open_gpui::DisplayId::from(1),
+            open_gpui::Bounds::new(
+                open_gpui::point(
+                    open_gpui::DevicePixels(-100_000),
+                    open_gpui::DevicePixels(-100_000),
+                ),
+                open_gpui::size(
+                    open_gpui::DevicePixels(200_000),
+                    open_gpui::DevicePixels(200_000),
+                ),
+            ),
+            open_gpui::Bounds::new(
+                open_gpui::point(
+                    open_gpui::DevicePixels(-100_000),
+                    open_gpui::DevicePixels(-100_000),
+                ),
+                open_gpui::size(
+                    open_gpui::DevicePixels(200_000),
+                    open_gpui::DevicePixels(200_000),
+                ),
+            ),
+            1.0,
+        )
+        .expect("the synthetic Dock display observation must be valid");
+        Self::for_display(origin, width, height, target_display)
     }
 
     pub(crate) const fn origin(self) -> DockLiveUndockPhysicalPoint {
@@ -255,6 +322,28 @@ impl DockLiveUndockPhysicalBounds {
 
     pub(crate) const fn height(self) -> u32 {
         self.height
+    }
+
+    pub(crate) const fn target_display(self) -> PlatformPhysicalDisplayObservation {
+        self.target_display
+    }
+
+    pub(crate) const fn contains(self, point: DockLiveUndockPhysicalPoint) -> bool {
+        let left = self.origin.x as i64;
+        let top = self.origin.y as i64;
+        let right = left + self.width as i64;
+        let bottom = top + self.height as i64;
+        let x = point.x as i64;
+        let y = point.y as i64;
+        x >= left && x < right && y >= top && y < bottom
+    }
+
+    pub(crate) fn contains_target_point(self, point: DockLiveUndockPhysicalPoint) -> bool {
+        self.contains(point)
+            && self.target_display.contains(open_gpui::point(
+                open_gpui::DevicePixels(point.x),
+                open_gpui::DevicePixels(point.y),
+            ))
     }
 }
 
@@ -299,18 +388,21 @@ pub(crate) struct DockLiveUndockReleaseLock {
 }
 
 impl DockLiveUndockReleaseLock {
-    pub(crate) const fn new(
+    pub(crate) fn new(
         point: DockLiveUndockPhysicalPoint,
         hit: DockLiveUndockRouteFeedback,
         desired_bounds: DockLiveUndockPhysicalBounds,
         placement_generation: DockLiveUndockPlacementGeneration,
-    ) -> Self {
-        Self {
+    ) -> Option<Self> {
+        if !desired_bounds.contains_target_point(point) {
+            return None;
+        }
+        Some(Self {
             point,
             hit,
             desired_bounds,
             placement_generation,
-        }
+        })
     }
 
     pub(crate) const fn point(self) -> DockLiveUndockPhysicalPoint {
@@ -327,6 +419,10 @@ impl DockLiveUndockReleaseLock {
 
     pub(crate) const fn placement_generation(self) -> DockLiveUndockPlacementGeneration {
         self.placement_generation
+    }
+
+    pub(crate) const fn route_generation(self) -> DockLiveUndockRouteGeneration {
+        DockLiveUndockRouteGeneration(self.placement_generation.get())
     }
 }
 
@@ -368,28 +464,35 @@ impl DockLiveUndockSourceFocusSnapshot {
 pub(crate) struct DockLiveUndockTrigger {
     drag_generation: DockLiveUndockDragGeneration,
     source: DockLiveUndockSourceSnapshot,
+    initial_route_generation: DockLiveUndockRouteGeneration,
     initial_route: DockLiveUndockRouteFeedback,
     initial_point: DockLiveUndockPhysicalPoint,
+    initial_bounds: DockLiveUndockPhysicalBounds,
 }
 
 impl DockLiveUndockTrigger {
-    pub(crate) const fn new(
+    pub(crate) fn new(
         drag_generation: DockLiveUndockDragGeneration,
         source: DockLiveUndockSourceSnapshot,
+        initial_route_generation: DockLiveUndockRouteGeneration,
         initial_route: DockLiveUndockRouteFeedback,
         initial_point: DockLiveUndockPhysicalPoint,
+        initial_bounds: DockLiveUndockPhysicalBounds,
     ) -> Option<Self> {
         if !matches!(
             initial_route,
             DockLiveUndockRouteFeedback::Desktop | DockLiveUndockRouteFeedback::OpaqueBarrier
-        ) {
+        ) || !initial_bounds.contains_target_point(initial_point)
+        {
             return None;
         }
         Some(Self {
             drag_generation,
             source,
+            initial_route_generation,
             initial_route,
             initial_point,
+            initial_bounds,
         })
     }
 
@@ -401,12 +504,20 @@ impl DockLiveUndockTrigger {
         self.source
     }
 
+    pub(crate) const fn initial_route_generation(self) -> DockLiveUndockRouteGeneration {
+        self.initial_route_generation
+    }
+
     pub(crate) const fn initial_route(self) -> DockLiveUndockRouteFeedback {
         self.initial_route
     }
 
     pub(crate) const fn initial_point(self) -> DockLiveUndockPhysicalPoint {
         self.initial_point
+    }
+
+    pub(crate) const fn initial_bounds(self) -> DockLiveUndockPhysicalBounds {
+        self.initial_bounds
     }
 }
 
@@ -1368,6 +1479,16 @@ pub(crate) enum DockLiveUndockPlacementOutcome {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DockLiveUndockRoutePlacementOutcome {
+    Exact,
+    Adjusted,
+    Superseded,
+    Rejected,
+    Unsupported,
+    WindowClosed,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct DockLiveUndockFinalPlacementReceipt {
     window_id: WindowId,
     session_generation: u64,
@@ -1396,7 +1517,8 @@ impl DockLiveUndockFinalPlacementReceipt {
 
     pub(crate) fn new(snapshot: WindowProvisionalPlacementSnapshot) -> Option<Self> {
         let native = snapshot.native_facts()?;
-        if snapshot.outcome() != WindowProvisionalPlacementOutcome::Settled
+        if snapshot.purpose() != WindowProvisionalPlacementPurpose::FinalRelease
+            || snapshot.outcome() != WindowProvisionalPlacementOutcome::Settled
             || !native.accepts_placement()
         {
             return None;
@@ -1412,13 +1534,14 @@ impl DockLiveUndockFinalPlacementReceipt {
                 snapshot.anchor_point().x.0,
                 snapshot.anchor_point().y.0,
             ),
-            bounds: DockLiveUndockPhysicalBounds::new(
+            bounds: DockLiveUndockPhysicalBounds::for_display(
                 DockLiveUndockPhysicalPoint::new(
                     client_bounds.origin.x.0,
                     client_bounds.origin.y.0,
                 ),
                 width,
                 height,
+                snapshot.target_display(),
             )?,
             z_order: native.z_order(),
         })
@@ -1523,6 +1646,7 @@ pub(crate) enum DockLiveUndockRestoreReason {
     RuntimeRegistrationRejected,
     PresentationFailed(DockLiveUndockPresentationFailure),
     RevealFailed(DockLiveUndockRevealOutcome),
+    RoutePlacementFailed(DockLiveUndockRoutePlacementOutcome),
     PlacementFailed(DockLiveUndockPlacementOutcome),
     ReleaseDeadlineExpired,
     PromotionPreparationFailed,
@@ -1841,8 +1965,10 @@ pub(crate) enum DockLiveUndockFact {
     },
     RouteObserved {
         identity: DockLiveUndockIdentity,
+        generation: DockLiveUndockRouteGeneration,
         route: DockLiveUndockRouteFeedback,
         point: DockLiveUndockPhysicalPoint,
+        bounds: DockLiveUndockPhysicalBounds,
     },
     OpeningReturned {
         identity: DockLiveUndockIdentity,
@@ -1873,6 +1999,10 @@ pub(crate) enum DockLiveUndockFact {
         identity: DockLiveUndockIdentity,
         receipt: DockLiveUndockPayloadPresentationReceipt,
     },
+    InitialPresentationReady {
+        identity: DockLiveUndockIdentity,
+        presentation: DockLiveUndockPayloadPresentationReceipt,
+    },
     RevealObserved {
         identity: DockLiveUndockIdentity,
         observation: DockLiveUndockRevealObservation,
@@ -1883,6 +2013,12 @@ pub(crate) enum DockLiveUndockFact {
         generation: DockLiveUndockPlacementGeneration,
         outcome: DockLiveUndockPlacementOutcome,
         final_placement: Option<DockLiveUndockFinalPlacementReceipt>,
+    },
+    RoutePlacementObserved {
+        identity: DockLiveUndockIdentity,
+        window_id: WindowId,
+        generation: DockLiveUndockRouteGeneration,
+        outcome: DockLiveUndockRoutePlacementOutcome,
     },
     ReleaseLocked {
         identity: DockLiveUndockIdentity,
@@ -2006,8 +2142,10 @@ impl DockLiveUndockFact {
             | Self::SourceProxyCommitted { identity, .. }
             | Self::PayloadMounted { identity, .. }
             | Self::PayloadPresented { identity, .. }
+            | Self::InitialPresentationReady { identity, .. }
             | Self::RevealObserved { identity, .. }
             | Self::PlacementObserved { identity, .. }
+            | Self::RoutePlacementObserved { identity, .. }
             | Self::ReleaseLocked { identity, .. }
             | Self::ReleaseDeadlineExpired { identity, .. }
             | Self::PromotionPrepared { identity, .. }
@@ -2089,6 +2227,14 @@ pub(crate) enum DockLiveUndockEffect {
         presentation: DockLiveUndockPayloadPresentationReceipt,
         window: AnyWindowHandle,
         point: DockLiveUndockPhysicalPoint,
+        bounds: DockLiveUndockPhysicalBounds,
+    },
+    RequestRoutePlacement {
+        identity: DockLiveUndockIdentity,
+        window: AnyWindowHandle,
+        generation: DockLiveUndockRouteGeneration,
+        point: DockLiveUndockPhysicalPoint,
+        bounds: DockLiveUndockPhysicalBounds,
     },
     RetireFrozenSourceVisual {
         identity: DockLiveUndockIdentity,
@@ -2322,6 +2468,7 @@ impl DockLiveUndockPayloadState {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct DockLiveUndockPresentationObservation {
     preflight: Option<DockLiveUndockPayloadPresentationReceipt>,
+    initial_presentation_ready: Option<DockLiveUndockPayloadPresentationReceipt>,
     visible: Option<DockLiveUndockRevealReceipt>,
 }
 
@@ -2374,7 +2521,10 @@ struct DockLiveUndockActive {
     transport: DockLiveUndockTransportState,
     source_transport_proxy_active: bool,
     route: Option<DockLiveUndockRouteFeedback>,
+    route_generation: DockLiveUndockRouteGeneration,
     route_point: DockLiveUndockPhysicalPoint,
+    route_bounds: DockLiveUndockPhysicalBounds,
+    route_placement_request_generation: Option<DockLiveUndockRouteGeneration>,
     payload: DockLiveUndockPayloadState,
     presentation: DockLiveUndockPresentationObservation,
     placement: Option<DockLiveUndockPlacementObservation>,
@@ -2637,6 +2787,9 @@ impl DockLiveUndockActive {
         let Some(window) = self.bound_window() else {
             return;
         };
+        if !self.presentation.exact_visible(window.window_id()) {
+            return;
+        }
         let DockLiveUndockTransportState::Released(release) = self.transport else {
             return;
         };
@@ -2656,6 +2809,27 @@ impl DockLiveUndockActive {
             identity: self.identity(),
             window,
             release,
+        });
+    }
+
+    fn request_route_placement_if_visible(&mut self, effects: &mut DockLiveUndockEffects) {
+        let Some(window) = self.bound_window() else {
+            return;
+        };
+        if self.transport != DockLiveUndockTransportState::Moving
+            || !self.presentation.exact_visible(window.window_id())
+            || self.route_placement_request_generation == Some(self.route_generation)
+        {
+            return;
+        }
+
+        self.route_placement_request_generation = Some(self.route_generation);
+        effects.push(DockLiveUndockEffect::RequestRoutePlacement {
+            identity: self.identity(),
+            window,
+            generation: self.route_generation,
+            point: self.route_point,
+            bounds: self.route_bounds,
         });
     }
 }
@@ -2906,7 +3080,10 @@ impl DockLiveUndockSession {
             transport: DockLiveUndockTransportState::Moving,
             source_transport_proxy_active: true,
             route: Some(trigger.initial_route()),
+            route_generation: trigger.initial_route_generation(),
             route_point: trigger.initial_point(),
+            route_bounds: trigger.initial_bounds(),
+            route_placement_request_generation: None,
             payload: DockLiveUndockPayloadState::Unclaimed,
             presentation: DockLiveUndockPresentationObservation::default(),
             placement: None,
@@ -2985,14 +3162,22 @@ impl DockLiveUndockSession {
                     | DockLiveUndockFact::SourceProxyCommitted { .. }
                     | DockLiveUndockFact::PayloadMounted { .. }
                     | DockLiveUndockFact::PayloadPresented { .. }
+                    | DockLiveUndockFact::InitialPresentationReady { .. }
                     | DockLiveUndockFact::RevealObserved { .. }
                     | DockLiveUndockFact::PlacementObserved { .. }
+                    | DockLiveUndockFact::RoutePlacementObserved { .. }
             )
         {
             return None;
         }
         match fact {
-            DockLiveUndockFact::RouteObserved { route, point, .. } => {
+            DockLiveUndockFact::RouteObserved {
+                generation,
+                route,
+                point,
+                bounds,
+                ..
+            } => {
                 let route = if matches!(
                     active.provisional,
                     DockLiveUndockProvisionalLifecycle::Unavailable(_)
@@ -3004,13 +3189,19 @@ impl DockLiveUndockSession {
                 } else {
                     route
                 };
-                if active.transport == DockLiveUndockTransportState::Moving {
+                if active.transport == DockLiveUndockTransportState::Moving
+                    && generation > active.route_generation
+                    && bounds.contains_target_point(point)
+                {
+                    active.route_generation = generation;
                     active.route_point = point;
+                    active.route_bounds = bounds;
                     if active.route != Some(route) {
                         active.route = Some(route);
                         effects
                             .push(DockLiveUndockEffect::RouteFeedbackChanged { identity, route });
                     }
+                    active.request_route_placement_if_visible(effects);
                 }
             }
             DockLiveUndockFact::OpeningReturned {
@@ -3153,15 +3344,37 @@ impl DockLiveUndockSession {
                     .is_none_or(|current| receipt.frame_generation() > current.frame_generation())
                 {
                     active.presentation.preflight = Some(receipt);
+                    active.presentation.initial_presentation_ready = None;
                     active.presentation.visible = None;
                     if let Some(window) = active.bound_window() {
+                        active.route_placement_request_generation = Some(active.route_generation);
                         effects.push(DockLiveUndockEffect::ArmExactReveal {
                             identity,
                             presentation: receipt,
                             window,
                             point: active.route_point,
+                            bounds: active.route_bounds,
                         });
                     }
+                }
+            }
+            DockLiveUndockFact::InitialPresentationReady { presentation, .. }
+                if active.presentation.preflight == Some(presentation)
+                    && active.presentation.initial_presentation_ready != Some(presentation)
+                    && active.presentation.visible.is_none()
+                    && active.bound_window().map(|window| window.window_id())
+                        == Some(presentation.window_id()) =>
+            {
+                active.presentation.initial_presentation_ready = Some(presentation);
+                if let Some(window) = active.bound_window() {
+                    active.route_placement_request_generation = Some(active.route_generation);
+                    effects.push(DockLiveUndockEffect::ArmExactReveal {
+                        identity,
+                        presentation,
+                        window,
+                        point: active.route_point,
+                        bounds: active.route_bounds,
+                    });
                 }
             }
             DockLiveUndockFact::RevealObserved { observation, .. }
@@ -3180,9 +3393,15 @@ impl DockLiveUndockSession {
                                 identity,
                                 reveal: receipt,
                             });
+                            active.request_route_placement_if_visible(effects);
+                            active.request_release_placement_if_needed(effects);
                         }
                     }
                     DockLiveUndockRevealObservation::Failed { outcome, .. } => {
+                        #[cfg(feature = "test-support")]
+                        eprintln!(
+                            "OPEN_GPUI_DOCK_REVEAL_FAILED identity={identity:?} outcome={outcome:?}"
+                        );
                         if active.may_commit_host_without_provisional() {
                             if let DockLiveUndockProvisionalLifecycle::Bound { window, runtime } =
                                 active.provisional
@@ -3231,9 +3450,37 @@ impl DockLiveUndockSession {
                     final_placement,
                 });
             }
+            DockLiveUndockFact::RoutePlacementObserved {
+                window_id,
+                generation,
+                outcome,
+                ..
+            } if active.bound_window().map(|window| window.window_id()) == Some(window_id) => {
+                if outcome == DockLiveUndockRoutePlacementOutcome::WindowClosed {
+                    return Some(DockLiveUndockSettlement::Restore(
+                        DockLiveUndockRestoreReason::ProvisionalTerminal,
+                    ));
+                }
+                if active.transport == DockLiveUndockTransportState::Moving
+                    && generation == active.route_generation
+                    && !matches!(
+                        outcome,
+                        DockLiveUndockRoutePlacementOutcome::Exact
+                            | DockLiveUndockRoutePlacementOutcome::Adjusted
+                    )
+                {
+                    return Some(DockLiveUndockSettlement::Restore(
+                        DockLiveUndockRestoreReason::RoutePlacementFailed(outcome),
+                    ));
+                }
+            }
             DockLiveUndockFact::ReleaseLocked { release, .. }
                 if active.transport == DockLiveUndockTransportState::Moving =>
             {
+                active.route_generation = release.route_generation();
+                active.route = Some(release.hit());
+                active.route_point = release.point();
+                active.route_bounds = release.desired_bounds();
                 active.retire_source_transport_proxy(effects);
                 active.transport = DockLiveUndockTransportState::Released(release);
                 active.request_release_placement_if_needed(effects);
@@ -3470,8 +3717,10 @@ impl DockLiveUndockSession {
             | DockLiveUndockFact::OpeningFailed { .. }
             | DockLiveUndockFact::PresentationLeaseActivated { .. }
             | DockLiveUndockFact::PayloadPresented { .. }
+            | DockLiveUndockFact::InitialPresentationReady { .. }
             | DockLiveUndockFact::RevealObserved { .. }
             | DockLiveUndockFact::PlacementObserved { .. }
+            | DockLiveUndockFact::RoutePlacementObserved { .. }
             | DockLiveUndockFact::ReleaseLocked { .. }
             | DockLiveUndockFact::WindowTerminal { .. } => {}
         }
@@ -3762,6 +4011,7 @@ impl DockLiveUndockSession {
             | DockLiveUndockRestoreReason::RuntimeRegistrationRejected
             | DockLiveUndockRestoreReason::PresentationFailed(_)
             | DockLiveUndockRestoreReason::RevealFailed(_)
+            | DockLiveUndockRestoreReason::RoutePlacementFailed(_)
             | DockLiveUndockRestoreReason::PlacementFailed(_)
             | DockLiveUndockRestoreReason::ReleaseDeadlineExpired
             | DockLiveUndockRestoreReason::PromotionPreparationFailed
@@ -5485,17 +5735,33 @@ mod promotion_commit_wait_tests {
             },
             source: DockLiveUndockSourceSnapshot::new(WindowId::from(44), 1),
             provisional: DockLiveUndockProvisionalLifecycle::Opening,
-            transport: DockLiveUndockTransportState::Released(DockLiveUndockReleaseLock::new(
-                DockLiveUndockPhysicalPoint::new(10, 10),
-                DockLiveUndockRouteFeedback::Desktop,
-                DockLiveUndockPhysicalBounds::new(DockLiveUndockPhysicalPoint::new(0, 0), 100, 100)
+            transport: DockLiveUndockTransportState::Released(
+                DockLiveUndockReleaseLock::new(
+                    DockLiveUndockPhysicalPoint::new(10, 10),
+                    DockLiveUndockRouteFeedback::Desktop,
+                    DockLiveUndockPhysicalBounds::new(
+                        DockLiveUndockPhysicalPoint::new(0, 0),
+                        100,
+                        100,
+                    )
                     .expect("test release bounds are non-empty"),
-                DockLiveUndockPlacementGeneration::new(1)
-                    .expect("test placement generation is non-zero"),
-            )),
+                    DockLiveUndockPlacementGeneration::new(1)
+                        .expect("test placement generation is non-zero"),
+                )
+                .expect("test release point must remain inside its physical bounds"),
+            ),
             source_transport_proxy_active: false,
             route: Some(DockLiveUndockRouteFeedback::Desktop),
+            route_generation: DockLiveUndockRouteGeneration::new(1)
+                .expect("test route generation is non-zero"),
             route_point: DockLiveUndockPhysicalPoint::new(10, 10),
+            route_bounds: DockLiveUndockPhysicalBounds::new(
+                DockLiveUndockPhysicalPoint::new(0, 0),
+                100,
+                100,
+            )
+            .expect("test route bounds are non-empty"),
+            route_placement_request_generation: None,
             payload: DockLiveUndockPayloadState::Unclaimed,
             presentation: DockLiveUndockPresentationObservation::default(),
             placement: None,

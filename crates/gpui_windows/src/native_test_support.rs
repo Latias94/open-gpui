@@ -1,5 +1,5 @@
 use super::{RegisteredWindow, WindowsPlatform, translate_accelerator};
-use crate::{NativeWindowLifecycleTestEvent, WindowsWindowInner, get_window_long};
+use crate::{NativeWindowLifecycleTestEvent, WindowsDisplay, WindowsWindowInner, get_window_long};
 use open_gpui::{
     AnyWindowHandle, AppContext as _, Application, Context, DevicePixels, Empty, IntoElement,
     NativeBoundaryDiagnosticCursor, NativeBoundaryDisposition, NativeBoundaryGeneration,
@@ -7,7 +7,8 @@ use open_gpui::{
     ParentElement, Platform, PlatformInput, PlatformWindowPresentOutcome, PointerCancelEvent,
     PointerCancelReason, QuitMode, Render, Styled, Window, WindowActivationPolicy, WindowBounds,
     WindowId, WindowKind, WindowMouseEvent, WindowMutationDispatch, WindowMutationOutcome,
-    WindowOptions, WindowProvisionalPlacementOutcome, WindowProvisionalPlacementRequest,
+    WindowOptions, WindowPhysicalPlacementRequest, WindowProvisionalPlacementOutcome,
+    WindowProvisionalPlacementPurpose, WindowProvisionalPlacementRequest,
     WindowProvisionalRevealOutcome, WindowProvisionalRevealZOrder,
     WindowProvisionalSemanticsOutcome, WindowProvisionalSemanticsTicket, WindowProvisionalSession,
     canvas, div, point, px, size, white,
@@ -15,6 +16,7 @@ use open_gpui::{
 use std::{
     cell::{Cell, RefCell},
     mem::size_of,
+    panic::{AssertUnwindSafe, catch_unwind},
     rc::Rc,
     time::{Duration, Instant},
 };
@@ -1571,9 +1573,51 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
     let mut reveal_rect = RECT::default();
     unsafe { GetWindowRect(hwnd, &mut reveal_rect) }
         .expect("native provisional window should expose its retained placement");
+    let mut hidden_client_rect = RECT::default();
+    unsafe { GetClientRect(hwnd, &mut hidden_client_rect) }
+        .expect("hidden provisional client bounds should be readable");
+    let mut hidden_client_origin = POINT::default();
+    unsafe { ClientToScreen(hwnd, &mut hidden_client_origin) }
+        .expect("hidden provisional client origin should map to screen coordinates");
+    let client_width = hidden_client_rect.right - hidden_client_rect.left;
+    let client_height = hidden_client_rect.bottom - hidden_client_rect.top;
+    let virtual_screen = VirtualScreenBounds::current();
+    let right_candidate = hidden_client_origin
+        .x
+        .checked_add(client_width)
+        .and_then(|x| x.checked_add(96));
+    let left_candidate = hidden_client_origin
+        .x
+        .checked_sub(client_width)
+        .and_then(|x| x.checked_sub(96));
+    let virtual_right = virtual_screen
+        .left
+        .checked_add(virtual_screen.width)
+        .expect("virtual desktop horizontal extent should be representable");
+    let desired_client_x = right_candidate
+        .filter(|x| {
+            x.checked_add(client_width)
+                .is_some_and(|right| right <= virtual_right - 64)
+        })
+        .or_else(|| left_candidate.filter(|x| *x >= virtual_screen.left + 64))
+        .expect("the native test desktop should fit one disjoint provisional placement");
+    let initial_client_bounds = open_gpui::Bounds::new(
+        point(
+            DevicePixels(desired_client_x),
+            DevicePixels(hidden_client_origin.y),
+        ),
+        size(DevicePixels(client_width), DevicePixels(client_height)),
+    );
     let reveal_point = point(
-        DevicePixels(reveal_rect.left + (reveal_rect.right - reveal_rect.left) / 2),
-        DevicePixels(reveal_rect.top + (reveal_rect.bottom - reveal_rect.top) / 2),
+        DevicePixels(desired_client_x + client_width / 2),
+        DevicePixels(hidden_client_origin.y + client_height / 2),
+    );
+    assert!(
+        reveal_point.x.0 < reveal_rect.left
+            || reveal_point.x.0 >= reveal_rect.right
+            || reveal_point.y.0 < reveal_rect.top
+            || reveal_point.y.0 >= reveal_rect.bottom,
+        "the atomic reveal proof must relocate the hidden HWND before point-scoped inspection"
     );
 
     assert!(unsafe { IsWindow(Some(hwnd)).as_bool() });
@@ -1588,16 +1632,35 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
     // covers only a small region around the reveal point, so the provisional still has visible
     // fragments after it is inserted immediately below the barrier.
     let _barrier = NativeOpaqueTestBarrier::create_around(&[POINT {
-        x: reveal_rect.left + (reveal_rect.right - reveal_rect.left) / 2,
-        y: reveal_rect.top + (reveal_rect.bottom - reveal_rect.top) / 2,
+        x: reveal_point.x.0,
+        y: reveal_point.y.0,
     }]);
     assert_eq!(unsafe { GetForegroundWindow() }, foreground_before);
 
     let reveal_ticket = app
         .update_for_test(|cx| {
             any_window.update(cx, |_, window, cx| {
+                let topology_generation = native_window
+                    .native_retirement_coordinator
+                    .upgrade()
+                    .expect("the native test window should retain its platform authority")
+                    .display_topology_generation();
+                let target_display =
+                    WindowsDisplay::physical_geometry_at(reveal_point, topology_generation)
+                        .expect("the native reveal point should resolve to a target display");
+                let initial_placement = WindowPhysicalPlacementRequest::try_new_for_display(
+                    initial_client_bounds,
+                    reveal_point,
+                    target_display,
+                )
+                .expect("the native reveal placement should bind its target display");
                 window
-                    .arm_provisional_presentation(&session, reveal_point, [], cx)
+                    .arm_provisional_presentation_with_initial_physical_placement(
+                        &session,
+                        initial_placement,
+                        [],
+                        cx,
+                    )
                     .expect("the exact provisional session should arm its next frame")
             })
         })
@@ -1624,6 +1687,20 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
     ));
     assert!(unsafe { IsWindowVisible(hwnd).as_bool() });
     assert_eq!(unsafe { GetForegroundWindow() }, foreground_before);
+    let revealed_geometry = native_window
+        .physical_geometry_from_native()
+        .expect("revealed provisional HWND should expose exact physical client geometry");
+    assert_eq!(
+        revealed_geometry.client_bounds(),
+        initial_client_bounds,
+        "the exact reveal must apply physical client placement before native Z-order proof"
+    );
+    assert!(
+        reveal
+            .initial_placement()
+            .is_some_and(|request| request.matches_geometry(revealed_geometry)),
+        "the exact reveal must retain the target display generation and coherent native geometry"
+    );
     assert!(
         !session.snapshot().accepts_interaction(),
         "native visibility must not open the provisional interaction gate"
@@ -1668,9 +1745,21 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
         DevicePixels(final_client_bounds.origin.x.0 + client_width / 2),
         DevicePixels(final_client_bounds.origin.y.0 + client_height / 2),
     );
-    let final_request =
-        WindowProvisionalPlacementRequest::try_new(77, final_client_bounds, final_anchor)
-            .expect("the native final-placement request should be finite and non-empty");
+    let topology_generation = native_window
+        .native_retirement_coordinator
+        .upgrade()
+        .expect("the native test window should retain its platform authority")
+        .display_topology_generation();
+    let target_display = WindowsDisplay::physical_geometry_at(final_anchor, topology_generation)
+        .expect("the native final placement should resolve to a target display");
+    let final_request = WindowProvisionalPlacementRequest::try_new(
+        77,
+        WindowProvisionalPlacementPurpose::FinalRelease,
+        final_client_bounds,
+        final_anchor,
+        target_display,
+    )
+    .expect("the native final-placement request should be finite and non-empty");
 
     {
         let _rejecting_barrier = NativeOpaqueTestBarrier::create_rect(
@@ -1686,9 +1775,14 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
         let geometry_before = native_window
             .physical_geometry_from_native()
             .expect("the provisional rollback baseline should expose physical geometry");
-        let rejected =
-            WindowProvisionalPlacementRequest::try_new(76, final_client_bounds, final_anchor)
-                .expect("the rejected native placement request should remain structurally valid");
+        let rejected = WindowProvisionalPlacementRequest::try_new(
+            76,
+            WindowProvisionalPlacementPurpose::FinalRelease,
+            final_client_bounds,
+            final_anchor,
+            target_display,
+        )
+        .expect("the rejected native placement request should remain structurally valid");
 
         assert!(
             native_window
@@ -1771,6 +1865,7 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
     );
     assert_eq!(placement.client_bounds(), final_client_bounds);
     assert_eq!(placement.anchor_point(), final_anchor);
+    assert_eq!(placement.target_display(), target_display);
     assert!(
         placement
             .native_facts()
@@ -3881,6 +3976,116 @@ fn returning_test_platform_exits_message_loop_after_retiring_native_resources() 
         "the returning loop must retire its message HWND before releasing the message pump"
     );
     drop(platform);
+}
+
+#[test]
+fn returning_application_last_window_policy_settles_before_platform_quit() {
+    discard_stale_quit_messages();
+
+    let platform = Rc::new(
+        WindowsPlatform::new_returning_for_test(false)
+            .expect("returning Windows test platform should initialize"),
+    );
+    let mut app =
+        Application::with_platform(platform.clone()).with_quit_mode(QuitMode::LastWindowClosed);
+    let opened_hwnd = Rc::new(Cell::new(HWND::default()));
+    let opened_hwnd_for_launch = Rc::clone(&opened_hwnd);
+    let platform_for_launch = Rc::clone(&platform);
+
+    app.run_returning_for_test(move |cx| {
+        let window = cx
+            .open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::centered(size(px(240.0), px(160.0)), cx)),
+                    focus_on_appearing: false,
+                    show: true,
+                    ..WindowOptions::default()
+                },
+                |_, cx| cx.new(|_| Empty),
+            )
+            .expect("last-window test should open one native window");
+        let hwnd = platform_for_launch
+            .raw_window_handles
+            .read()
+            .last()
+            .expect("last-window test should register an HWND")
+            .as_raw();
+        opened_hwnd_for_launch.set(hwnd);
+        let window: AnyWindowHandle = window.into();
+        window
+            .update(cx, |_, window, cx| window.remove_window(cx))
+            .expect("last-window test window should remove logically");
+    });
+
+    let hwnd = opened_hwnd.get();
+    assert_ne!(hwnd, HWND::default());
+    assert!(unsafe { !IsWindow(Some(hwnd)).as_bool() });
+    app.update_for_test(|cx| {
+        assert!(cx.windows().is_empty());
+        assert!(cx.native_exit_authority_is_settled_for_test());
+    });
+    assert!(platform.inner.native_retirement_is_settled());
+}
+
+#[test]
+fn returning_application_accepts_terminal_quit_before_resuming_shutdown_panic() {
+    discard_stale_quit_messages();
+
+    let platform = Rc::new(
+        WindowsPlatform::new_returning_for_test(false)
+            .expect("returning Windows test platform should initialize"),
+    );
+    let mut app =
+        Application::with_platform(platform.clone()).with_quit_mode(QuitMode::LastWindowClosed);
+    let opened_hwnd = Rc::new(Cell::new(HWND::default()));
+    let opened_hwnd_for_launch = Rc::clone(&opened_hwnd);
+    let platform_for_launch = Rc::clone(&platform);
+
+    let panic = catch_unwind(AssertUnwindSafe(|| {
+        app.run_returning_for_test(move |cx| {
+            cx.on_app_quit(|_| -> std::future::Ready<()> {
+                panic!("injected terminal quit observer panic")
+            })
+            .detach();
+            let window = cx
+                .open_window(
+                    WindowOptions {
+                        window_bounds: Some(WindowBounds::centered(size(px(240.0), px(160.0)), cx)),
+                        focus_on_appearing: false,
+                        show: true,
+                        ..WindowOptions::default()
+                    },
+                    |_, cx| cx.new(|_| Empty),
+                )
+                .expect("last-window panic test should open one native window");
+            let hwnd = platform_for_launch
+                .raw_window_handles
+                .read()
+                .last()
+                .expect("last-window panic test should register an HWND")
+                .as_raw();
+            opened_hwnd_for_launch.set(hwnd);
+            let window: AnyWindowHandle = window.into();
+            window
+                .update(cx, |_, window, cx| window.remove_window(cx))
+                .expect("last-window panic test window should remove logically");
+        });
+    }))
+    .expect_err("terminal shutdown must resume the retained quit-observer panic after exiting");
+    let panic_message = panic
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| panic.downcast_ref::<String>().map(String::as_str));
+    assert_eq!(panic_message, Some("injected terminal quit observer panic"));
+
+    let hwnd = opened_hwnd.get();
+    assert_ne!(hwnd, HWND::default());
+    assert!(unsafe { !IsWindow(Some(hwnd)).as_bool() });
+    app.update_for_test(|cx| {
+        assert!(cx.windows().is_empty());
+        assert!(cx.native_exit_authority_is_settled_for_test());
+    });
+    assert!(platform.inner.native_retirement_is_settled());
 }
 
 #[test]

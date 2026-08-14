@@ -23,6 +23,37 @@ const NATIVE_RUNNER_SENTINEL_TEST: &str = "platform::native_test_support::native
 const NATIVE_SCENARIO_REGISTRY_TEST: &str =
     "native_interactive_tests::native_interactive_scenario_registry_matches_cases";
 
+#[derive(Default)]
+struct NativeGateReport {
+    failed_steps: Vec<String>,
+}
+
+impl NativeGateReport {
+    fn run(&mut self, label: impl Into<String>, step: impl FnOnce() -> Result<(), ()>) {
+        let label = label.into();
+        if step().is_err() {
+            self.failed_steps.push(label);
+        }
+    }
+
+    #[cfg(test)]
+    fn failed_steps(&self) -> &[String] {
+        &self.failed_steps
+    }
+
+    fn finish(self) -> Result<(), ()> {
+        if self.failed_steps.is_empty() {
+            return Ok(());
+        }
+
+        eprintln!("native Windows interactive gate failed steps:");
+        for step in self.failed_steps {
+            eprintln!("- {step}");
+        }
+        Err(())
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct NativeScenarioManifest {
@@ -39,7 +70,83 @@ pub(crate) struct NativeScenarioDeclaration {
     pub(crate) requirement_owner: String,
     pub(crate) test: String,
     pub(crate) observation_domains: BTreeSet<NativeObservationDomain>,
-    pub(crate) behavior: String,
+    pub(crate) behavior: NativeScenarioBehavior,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum NativeScenarioBehavior {
+    SourceCapture,
+    OpaqueOcclusion,
+    SurfaceShutdown,
+    ProvisionalSameHwndPromotion,
+    CommittedLossRecovery,
+    ProcessConvergence,
+    NoInputPassThrough,
+    MixedDpiPlacement,
+}
+
+impl NativeScenarioBehavior {
+    const ALL: [Self; 8] = [
+        Self::SourceCapture,
+        Self::OpaqueOcclusion,
+        Self::SurfaceShutdown,
+        Self::ProvisionalSameHwndPromotion,
+        Self::CommittedLossRecovery,
+        Self::ProcessConvergence,
+        Self::NoInputPassThrough,
+        Self::MixedDpiPlacement,
+    ];
+
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::SourceCapture => "source-capture",
+            Self::OpaqueOcclusion => "opaque-occlusion",
+            Self::SurfaceShutdown => "surface-shutdown",
+            Self::ProvisionalSameHwndPromotion => "provisional-same-hwnd-promotion",
+            Self::CommittedLossRecovery => "committed-loss-recovery",
+            Self::ProcessConvergence => "process-convergence",
+            Self::NoInputPassThrough => "no-input-pass-through",
+            Self::MixedDpiPlacement => "mixed-dpi-placement",
+        }
+    }
+
+    const fn requirement_owner(self) -> &'static str {
+        match self {
+            Self::SourceCapture | Self::OpaqueOcclusion | Self::SurfaceShutdown => "U27",
+            Self::ProcessConvergence | Self::NoInputPassThrough | Self::MixedDpiPlacement => "U28",
+            Self::ProvisionalSameHwndPromotion | Self::CommittedLossRecovery => "U29",
+        }
+    }
+
+    const fn test(self) -> &'static str {
+        match self {
+            Self::SourceCapture => {
+                "native_interactive_tests::native_interactive_two_hwnd_captured_drag_routes_preview_and_drop"
+            }
+            Self::OpaqueOcclusion => {
+                "native_interactive_tests::native_interactive_opaque_occlusion_blocks_underlay_and_preserves_same_hwnd"
+            }
+            Self::SurfaceShutdown => {
+                "native_interactive_tests::native_interactive_anchor_close_releases_capture_and_retires_dependent_hwnds"
+            }
+            Self::ProvisionalSameHwndPromotion => {
+                "native_interactive_tests::native_interactive_provisional_gate_presents_and_promotes_same_hwnd"
+            }
+            Self::CommittedLossRecovery => {
+                "native_interactive_tests::native_interactive_committed_destination_loss_retires_runtime_authority"
+            }
+            Self::ProcessConvergence => {
+                "native_interactive_tests::native_interactive_process_converges_after_active_surface_shutdown"
+            }
+            Self::NoInputPassThrough => {
+                "native_interactive_tests::native_interactive_no_input_prefix_passes_through_and_fails_closed_on_generation_drift"
+            }
+            Self::MixedDpiPlacement => {
+                "native_interactive_tests::native_interactive_mixed_dpi_final_client_bounds_are_exact"
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
@@ -105,7 +212,7 @@ pub(crate) fn native_manifest_failures(manifest: &NativeScenarioManifest) -> Vec
 
     let mut ids = BTreeSet::new();
     let mut tests = BTreeMap::<&str, &str>::new();
-    let mut behaviors = BTreeMap::<&str, &str>::new();
+    let mut behaviors = BTreeMap::<NativeScenarioBehavior, &str>::new();
     for scenario in &manifest.scenario {
         if scenario.id.trim().is_empty() {
             failures.push(format!(
@@ -145,16 +252,28 @@ pub(crate) fn native_manifest_failures(manifest: &NativeScenarioManifest) -> Vec
                 scenario.id, scenario.test
             ));
         }
-        if !is_valid_behavior_key(&scenario.behavior) {
+        if scenario.requirement_owner != scenario.behavior.requirement_owner() {
             failures.push(format!(
-                "{NATIVE_SCENARIO_MANIFEST_PATH}: native scenario `{}` behavior `{}` is not an exact ASCII kebab-case behavior key",
-                scenario.id, scenario.behavior
+                "{NATIVE_SCENARIO_MANIFEST_PATH}: native scenario `{}` behavior `{}` belongs to {}, not {}",
+                scenario.id,
+                scenario.behavior.as_str(),
+                scenario.behavior.requirement_owner(),
+                scenario.requirement_owner,
             ));
         }
-        if let Some(previous) = behaviors.insert(&scenario.behavior, &scenario.id) {
+        if scenario.test != scenario.behavior.test() {
+            failures.push(format!(
+                "{NATIVE_SCENARIO_MANIFEST_PATH}: native scenario `{}` behavior `{}` must use exact test coordinate `{}`",
+                scenario.id,
+                scenario.behavior.as_str(),
+                scenario.behavior.test(),
+            ));
+        }
+        if let Some(previous) = behaviors.insert(scenario.behavior, &scenario.id) {
             failures.push(format!(
                 "{NATIVE_SCENARIO_MANIFEST_PATH}: native scenarios `{previous}` and `{}` share behavior `{}`; one behavior cannot dispatch two manifest scenarios",
-                scenario.id, scenario.behavior
+                scenario.id,
+                scenario.behavior.as_str(),
             ));
         }
         if scenario.observation_domains.is_empty() {
@@ -170,6 +289,14 @@ pub(crate) fn native_manifest_failures(manifest: &NativeScenarioManifest) -> Vec
             failures.push(format!(
                 "{NATIVE_SCENARIO_MANIFEST_PATH}: native scenario `{}` declares `visual-test`; VisualTest evidence cannot satisfy an owning-platform native gate",
                 scenario.id
+            ));
+        }
+    }
+    for required in NativeScenarioBehavior::ALL {
+        if !behaviors.contains_key(&required) {
+            failures.push(format!(
+                "{NATIVE_SCENARIO_MANIFEST_PATH}: missing required native behavior `{}`",
+                required.as_str()
             ));
         }
     }
@@ -224,31 +351,38 @@ pub(crate) fn native_windows_interactive(root: &Path) -> Result<(), ()> {
         false,
         None,
     )?;
+
+    let mut report = NativeGateReport::default();
     for scenario in &manifest.scenario {
         println!(
             "==> native scenario {} ({})",
             scenario.id, scenario.requirement_owner
         );
-        run_exact_test(
-            root,
-            NATIVE_DOCK_PACKAGE,
-            &scenario.test,
-            true,
-            Some(&scenario.id),
-        )?;
+        report.run(format!("native scenario {}", scenario.id), || {
+            run_exact_test(
+                root,
+                NATIVE_DOCK_PACKAGE,
+                &scenario.test,
+                true,
+                Some(&scenario.id),
+            )
+        });
     }
-    run_cargo(
-        root,
-        [
-            "nextest",
-            "run",
-            "-p",
-            NATIVE_DOCK_PACKAGE,
-            "--locked",
-            "--test-threads=1",
-            "--no-fail-fast",
-        ],
-    )
+    report.run("open-gpui-docking-native baseline", || {
+        run_cargo(
+            root,
+            [
+                "nextest",
+                "run",
+                "-p",
+                NATIVE_DOCK_PACKAGE,
+                "--locked",
+                "--test-threads=1",
+                "--no-fail-fast",
+            ],
+        )
+    });
+    report.finish()
 }
 
 fn run_exact_test(
@@ -307,18 +441,6 @@ fn run_cargo_with_scenario(
     }
 }
 
-fn is_valid_behavior_key(behavior: &str) -> bool {
-    !behavior.is_empty()
-        && !behavior.starts_with('-')
-        && !behavior.ends_with('-')
-        && behavior.split('-').all(|segment| {
-            !segment.is_empty()
-                && segment
-                    .bytes()
-                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
-        })
-}
-
 fn is_valid_test_coordinate(test: &str) -> bool {
     !test.is_empty()
         && !test.starts_with("::")
@@ -334,6 +456,26 @@ fn is_valid_test_coordinate(test: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::RefCell;
+
+    #[test]
+    fn native_gate_report_runs_every_step_before_returning_failure() {
+        let executed = RefCell::new(Vec::new());
+        let mut report = NativeGateReport::default();
+
+        report.run("sentinel", || {
+            executed.borrow_mut().push("sentinel");
+            Err(())
+        });
+        report.run("later scenario", || {
+            executed.borrow_mut().push("later scenario");
+            Ok(())
+        });
+
+        assert_eq!(executed.into_inner(), ["sentinel", "later scenario"]);
+        assert_eq!(report.failed_steps(), ["sentinel"]);
+        assert_eq!(report.finish(), Err(()));
+    }
 
     #[test]
     fn exact_test_coordinates_reject_filters_and_shell_syntax() {
@@ -354,10 +496,19 @@ mod tests {
     }
 
     #[test]
-    fn behavior_keys_are_exact_kebab_case() {
-        for invalid in ["", "-source", "source-", "source--capture", "SourceCapture"] {
-            assert!(!is_valid_behavior_key(invalid), "accepted `{invalid}`");
-        }
-        assert!(is_valid_behavior_key("no-input-pass-through"));
+    fn manifest_rejects_a_missing_required_behavior() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("xtask must remain a direct workspace child");
+        let mut manifest = load_native_scenario_manifest(root).expect("manifest should parse");
+        manifest
+            .scenario
+            .retain(|scenario| scenario.behavior != NativeScenarioBehavior::ProcessConvergence);
+
+        let failures = native_manifest_failures(&manifest).join("\n");
+        assert!(
+            failures.contains("missing required native behavior `process-convergence`"),
+            "missing fail-closed behavior diagnostic: {failures}"
+        );
     }
 }

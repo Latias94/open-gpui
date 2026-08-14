@@ -1904,6 +1904,9 @@ impl WindowsWindowInner {
     }
 
     fn handle_display_change_msg(&self, handle: HWND) -> Option<isize> {
+        self.native_retirement_coordinator
+            .upgrade()?
+            .advance_display_topology_generation();
         let new_monitor = unsafe { MonitorFromWindow(handle, MONITOR_DEFAULTTONULL) };
         if new_monitor.is_invalid() {
             log::error!("No monitor detected!");
@@ -2109,6 +2112,9 @@ impl WindowsWindowInner {
         lparam: LPARAM,
     ) -> Option<isize> {
         if wparam.0 != 0 {
+            if let Some(coordinator) = self.native_retirement_coordinator.upgrade() {
+                coordinator.advance_display_topology_generation();
+            }
             self.state.click_state.system_update(wparam.0);
             self.state.border_offset.update(handle).log_err();
             // system settings may emit a window message which wants to take the refcell self.state, so drop it

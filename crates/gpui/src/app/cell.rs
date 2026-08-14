@@ -393,8 +393,16 @@ enum NativeShutdownCompletionAction {
     Retry,
     Complete {
         terminate_ingress: bool,
+        quit_platform: bool,
         panic: Option<Box<dyn std::any::Any + Send>>,
     },
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum TerminalPlatformQuit {
+    #[default]
+    NotRequested,
+    Requested,
 }
 
 struct NativeBoundaryTerminalGuard<'a> {
@@ -521,6 +529,7 @@ pub struct AppCell {
     pre_shutdown_critical: RefCell<PreShutdownCriticalState>,
     active_shutdown_completion_generation: Cell<Option<u64>>,
     shutdown_terminate_ingress_requested: Cell<bool>,
+    terminal_platform_quit: Cell<TerminalPlatformQuit>,
     shutdown_completion_queued: Cell<Option<u64>>,
     open_urls_handler: NativeAppHandlerSlot<OpenUrlsHandler>,
     reopen_handler: NativeAppHandlerSlot<AppHandler>,
@@ -553,6 +562,7 @@ impl AppCell {
             pre_shutdown_critical: RefCell::new(PreShutdownCriticalState::default()),
             active_shutdown_completion_generation: Cell::new(None),
             shutdown_terminate_ingress_requested: Cell::new(false),
+            terminal_platform_quit: Cell::new(TerminalPlatformQuit::NotRequested),
             shutdown_completion_queued: Cell::new(None),
             open_urls_handler: NativeAppHandlerSlot::default(),
             reopen_handler: NativeAppHandlerSlot::default(),
@@ -1420,7 +1430,9 @@ impl AppCell {
             && self.shutdown_completion_queued.get().is_none()
             && self.pointer_capture_release_barriers_are_clear()
             && self.native_window_retirement_barriers_are_clear()
-            && self.native_events.owned_local_tasks_are_idle_for_test()
+            && self
+                .native_events
+                .owned_local_authorities_are_settled_for_test()
     }
 
     fn active_shutdown_generation(&self) -> Option<u64> {
@@ -1532,6 +1544,11 @@ impl AppCell {
         (generation, true)
     }
 
+    pub(super) fn request_terminal_platform_quit(&self) {
+        self.terminal_platform_quit
+            .set(TerminalPlatformQuit::Requested);
+    }
+
     fn park_shutdown_fence(&self, mut fence: NativeShutdownFence) {
         fence.terminate_ingress |= self.shutdown_terminate_ingress_requested.replace(false);
         *self.shutdown_fence.borrow_mut() = Some(fence);
@@ -1635,6 +1652,7 @@ impl AppCell {
         let Some(mut fence) = self.shutdown_fence.borrow_mut().take() else {
             return NativeShutdownCompletionAction::Complete {
                 terminate_ingress: false,
+                quit_platform: false,
                 panic: None,
             };
         };
@@ -1642,6 +1660,7 @@ impl AppCell {
             *self.shutdown_fence.borrow_mut() = Some(fence);
             return NativeShutdownCompletionAction::Complete {
                 terminate_ingress: false,
+                quit_platform: false,
                 panic: None,
             };
         }
@@ -1855,6 +1874,16 @@ impl AppCell {
             self.park_shutdown_fence(fence);
             return NativeShutdownCompletionAction::Retry;
         }
+        if self.native_events.has_pending_shutdown_critical_work() {
+            // A synchronous native retirement may enqueue its terminal Closed fact after an
+            // already-queued shutdown completion. The retirement barrier can therefore be clear
+            // while exact lifecycle work still remains behind this completion in FIFO order.
+            // Keep the fence alive until that work has been delivered; terminating ingress here
+            // would discard the domain terminal notification that owns higher-level shutdown
+            // tickets such as DockSurface window convergence.
+            self.park_shutdown_fence(fence);
+            return NativeShutdownCompletionAction::Retry;
+        }
 
         let Ok(mut app) = self.app.try_borrow_mut() else {
             self.park_shutdown_fence(fence);
@@ -1874,6 +1903,10 @@ impl AppCell {
 
         NativeShutdownCompletionAction::Complete {
             terminate_ingress: fence.terminate_ingress,
+            quit_platform: self
+                .terminal_platform_quit
+                .replace(TerminalPlatformQuit::NotRequested)
+                == TerminalPlatformQuit::Requested,
             panic: fence.first_panic.take(),
         }
     }
@@ -2873,13 +2906,21 @@ impl AppCell {
                                 }
                                 NativeShutdownCompletionAction::Complete {
                                     terminate_ingress,
-                                    panic,
+                                    quit_platform,
+                                    mut panic,
                                 } => {
                                     terminal.settle(NativeBoundaryDisposition::DELIVERED);
                                     if terminate_ingress {
                                         drain.terminate();
                                     } else {
                                         self.native_events.end_shutdown(completion.generation());
+                                    }
+                                    if quit_platform {
+                                        let platform = self.app.borrow().platform.clone();
+                                        let platform_quit = catch_unwind(AssertUnwindSafe(|| {
+                                            platform.quit_after_terminal_shutdown()
+                                        }));
+                                        retain_shutdown_panic(&mut panic, platform_quit.err());
                                     }
                                     if let Some(payload) = panic {
                                         resume_unwind(payload);

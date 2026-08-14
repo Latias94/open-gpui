@@ -17,22 +17,22 @@ use crate::{
     MonochromeSprite, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
     PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
     PlatformWindowCapabilities, PlatformWindowCommand, PlatformWindowDispatch,
-    PlatformWindowMutationObservation, PlatformWindowPresentOutcome, PlatformWindowProfile, Point,
-    PointerCancelEvent, PointerCancelReason, PolychromeSprite,
-    PreparedPlatformPresentationShutdown, Primitive, PrimitiveTransform, Priority, PromptButton,
-    PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams,
-    Replay, RequestFrameOptions, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X,
-    SUBPIXEL_VARIANTS_Y, ScaledPixels, Shadow, SharedString, Size, StrikethroughStyle, Style,
-    SubpixelSprite, SubscriberSet, Subscription, SubtreeClip, SubtreeClipError,
-    SubtreePresentation, SubtreeTransform, SubtreeTransformError, SystemWindowTab,
-    SystemWindowTabController, TaffyLayoutEngine, Task, TextRenderingMode, TextStyle,
-    TextStyleRefinement, Underline, UnderlineStyle, WindowActivationPolicy, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowControls, WindowCreationFacts,
-    WindowDecorations, WindowInitialPresentationOrder, WindowInitialPresentationStatus, WindowKind,
-    WindowMutationDispatch, WindowMutationDomain, WindowMutationOutcome, WindowOptions,
-    WindowParams, WindowPhysicalPlacementRequest, WindowPlacementRequest, WindowPlacementState,
-    WindowPlatformFacts, WindowPresentAttemptFacts, WindowPresentationFacts,
-    WindowProvisionalOpeningClaim, WindowProvisionalPlacementOutcome,
+    PlatformWindowMutationObservation, PlatformWindowMutationTerminal,
+    PlatformWindowPresentOutcome, PlatformWindowProfile, Point, PointerCancelEvent,
+    PointerCancelReason, PolychromeSprite, PreparedPlatformPresentationShutdown, Primitive,
+    PrimitiveTransform, Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams,
+    RenderImage, RenderImageParams, RenderSvgParams, Replay, RequestFrameOptions, ResizeEdge,
+    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Shadow,
+    SharedString, Size, StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription,
+    SubtreeClip, SubtreeClipError, SubtreePresentation, SubtreeTransform, SubtreeTransformError,
+    SystemWindowTab, SystemWindowTabController, TaffyLayoutEngine, Task, TextRenderingMode,
+    TextStyle, TextStyleRefinement, Underline, UnderlineStyle, WindowActivationPolicy,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls,
+    WindowCreationFacts, WindowDecorations, WindowInitialPresentationOrder,
+    WindowInitialPresentationStatus, WindowKind, WindowMutationDispatch, WindowMutationDomain,
+    WindowMutationOutcome, WindowOptions, WindowParams, WindowPhysicalPlacementRequest,
+    WindowPlacementRequest, WindowPlacementState, WindowPlatformFacts, WindowPresentAttemptFacts,
+    WindowPresentationFacts, WindowProvisionalOpeningClaim, WindowProvisionalPlacementOutcome,
     WindowProvisionalPlacementRequest, WindowProvisionalPlacementTicket,
     WindowProvisionalRevealCancellationOutcome, WindowProvisionalRevealOutcome,
     WindowProvisionalRevealTicket, WindowProvisionalSemanticsOutcome,
@@ -2759,6 +2759,42 @@ impl Window {
         session: &WindowProvisionalSession,
         reveal_point: Point<DevicePixels>,
         peer_windows: impl IntoIterator<Item = WindowId>,
+        cx: &mut App,
+    ) -> Result<WindowProvisionalRevealTicket> {
+        self.arm_provisional_presentation_inner(session, reveal_point, None, peer_windows, cx)
+    }
+
+    /// Arms a provisional reveal that atomically establishes exact physical client bounds.
+    #[doc(hidden)]
+    pub fn arm_provisional_presentation_with_initial_physical_placement(
+        &mut self,
+        session: &WindowProvisionalSession,
+        initial_placement: WindowPhysicalPlacementRequest,
+        peer_windows: impl IntoIterator<Item = WindowId>,
+        cx: &mut App,
+    ) -> Result<WindowProvisionalRevealTicket> {
+        anyhow::ensure!(
+            initial_placement.target_point().is_some()
+                && initial_placement.target_display().is_some(),
+            "provisional reveal placement must carry a target display and anchor point"
+        );
+        self.arm_provisional_presentation_inner(
+            session,
+            initial_placement
+                .target_point()
+                .expect("validated provisional placement must carry an anchor point"),
+            Some(initial_placement),
+            peer_windows,
+            cx,
+        )
+    }
+
+    fn arm_provisional_presentation_inner(
+        &mut self,
+        session: &WindowProvisionalSession,
+        reveal_point: Point<DevicePixels>,
+        initial_placement: Option<WindowPhysicalPlacementRequest>,
+        peer_windows: impl IntoIterator<Item = WindowId>,
         _cx: &mut App,
     ) -> Result<WindowProvisionalRevealTicket> {
         let owned = self
@@ -2797,17 +2833,89 @@ impl Window {
             self.handle.window_id(),
             snapshot.generation(),
             reveal_point,
-            self.rendered_frame.generation.saturating_add(1),
+            initial_placement,
+            if initial_placement.is_some() {
+                0
+            } else {
+                self.rendered_frame.generation.saturating_add(1)
+            },
             exact_peers.into(),
         );
         session.register_reveal_ticket(ticket.clone())?;
         self.presentation_state.provisional_reveal_ticket = Some(ticket.clone());
+        if let Some(request) = initial_placement {
+            let ticket_for_generation = ticket.clone();
+            let dispatch = self.request_window_mutation_with_platform_dispatch_and_hook(
+                WindowMutationRequest::PhysicalPlacement(request),
+                false,
+                true,
+                move |generation| {
+                    assert!(
+                        ticket_for_generation.bind_initial_placement_generation(generation),
+                        "a provisional reveal must bind its hidden placement generation once"
+                    );
+                },
+                move |platform_window, generation| {
+                    platform_window.request_window_mutation(
+                        generation,
+                        WindowMutationRequest::PhysicalPlacement(request),
+                    )
+                },
+            );
+            match dispatch {
+                WindowMutationDispatch::Queued(_) => {}
+                WindowMutationDispatch::Unchanged => {
+                    let generation = ticket
+                        .snapshot()
+                        .placement_mutation_generation()
+                        .expect("an unchanged hidden placement must retain its generation");
+                    if !self.accept_provisional_reveal_placement(
+                        &ticket,
+                        generation,
+                        self.platform_facts.physical_geometry,
+                    ) {
+                        ticket.settle(WindowProvisionalRevealOutcome::Rejected);
+                    }
+                }
+                WindowMutationDispatch::Unsupported | WindowMutationDispatch::Rejected => {
+                    ticket.settle(WindowProvisionalRevealOutcome::Rejected);
+                }
+                WindowMutationDispatch::WindowClosed => {
+                    ticket.settle(WindowProvisionalRevealOutcome::WindowTerminal);
+                }
+            }
+        } else {
+            let generation = self
+                .window_mutations
+                .last_generation(WindowMutationDomain::Placement);
+            anyhow::ensure!(
+                self.accept_provisional_reveal_placement(
+                    &ticket,
+                    generation,
+                    self.platform_facts.physical_geometry,
+                ),
+                "provisional reveal could not bind the current placement authority"
+            );
+        }
+        Ok(ticket)
+    }
+
+    fn accept_provisional_reveal_placement(
+        &mut self,
+        ticket: &WindowProvisionalRevealTicket,
+        generation: u64,
+        geometry: Option<crate::PlatformWindowPhysicalGeometry>,
+    ) -> bool {
+        let minimum_presentation_generation = self.rendered_frame.generation.saturating_add(1);
+        if !ticket.observe_placement(generation, geometry, minimum_presentation_generation) {
+            return false;
+        }
         self.refresh();
         self.platform_window.request_frame(RequestFrameOptions {
             force_render: false,
             require_presentation: true,
         });
-        Ok(ticket)
+        true
     }
 
     /// Requests another presented frame for the exact provisional reveal authority.
@@ -4983,25 +5091,76 @@ impl Window {
         observation: PlatformWindowMutationObservation,
         cx: &mut App,
     ) -> bool {
+        let PlatformWindowMutationObservation {
+            domain,
+            generation,
+            terminal,
+            facts,
+        } = observation;
         if !self.window_mutations.is_current_generation(
             &self.window_mutation_authority,
-            observation.domain,
-            observation.generation,
+            domain,
+            generation,
         ) {
             return false;
         }
-        self.commit_platform_facts(observation.facts);
+        self.commit_platform_facts(facts);
+        self.observe_provisional_reveal_placement(domain, generation, terminal);
         let deliveries = self.window_mutations.settle_from_terminal_facts(
             &self.window_mutation_authority,
-            observation.domain,
-            observation.generation,
-            observation.terminal,
+            domain,
+            generation,
+            terminal,
             &self.platform_facts,
         );
         self.refresh();
         self.notify_bounds_observers(cx);
         Self::deliver_window_mutation_ticket_deliveries(deliveries);
         true
+    }
+
+    fn observe_provisional_reveal_placement(
+        &mut self,
+        domain: WindowMutationDomain,
+        generation: u64,
+        terminal: PlatformWindowMutationTerminal,
+    ) {
+        if domain != WindowMutationDomain::Placement {
+            return;
+        }
+        let Some(ticket) = self
+            .presentation_state
+            .provisional_reveal_ticket
+            .as_ref()
+            .cloned()
+        else {
+            return;
+        };
+        let snapshot = ticket.snapshot();
+        if snapshot.outcome() != WindowProvisionalRevealOutcome::Pending
+            || snapshot.placement_mutation_generation() != Some(generation)
+            || snapshot.initial_client_bounds().is_none()
+        {
+            return;
+        }
+        match terminal {
+            PlatformWindowMutationTerminal::Observed => {
+                if !self.accept_provisional_reveal_placement(
+                    &ticket,
+                    generation,
+                    self.platform_facts.physical_geometry,
+                ) {
+                    ticket.settle(WindowProvisionalRevealOutcome::Rejected);
+                }
+            }
+            PlatformWindowMutationTerminal::Rejected
+            | PlatformWindowMutationTerminal::Unsupported => {
+                ticket.settle(WindowProvisionalRevealOutcome::Rejected);
+            }
+            PlatformWindowMutationTerminal::WindowClosed => {
+                ticket.settle(WindowProvisionalRevealOutcome::WindowTerminal);
+            }
+        }
     }
 
     fn notify_bounds_observers(&mut self, cx: &mut App) {
@@ -5259,6 +5418,25 @@ impl Window {
         session: &WindowProvisionalSession,
         request: WindowProvisionalPlacementRequest,
     ) -> Result<(WindowMutationDispatch, WindowProvisionalPlacementTicket)> {
+        self.request_provisional_placement_inner(session, request, true)
+    }
+
+    /// Repositions one visible gated provisional while preserving point-scoped Z-order authority.
+    #[doc(hidden)]
+    pub fn request_provisional_live_placement(
+        &mut self,
+        session: &WindowProvisionalSession,
+        request: WindowProvisionalPlacementRequest,
+    ) -> Result<(WindowMutationDispatch, WindowProvisionalPlacementTicket)> {
+        self.request_provisional_placement_inner(session, request, false)
+    }
+
+    fn request_provisional_placement_inner(
+        &mut self,
+        session: &WindowProvisionalSession,
+        request: WindowProvisionalPlacementRequest,
+        final_placement: bool,
+    ) -> Result<(WindowMutationDispatch, WindowProvisionalPlacementTicket)> {
         let owned = self
             .provisional_session
             .as_ref()
@@ -5277,10 +5455,13 @@ impl Window {
             self.creation_can_commit() && self.presentation_shutdown.is_none(),
             "a terminal window cannot request final provisional placement"
         );
-        let physical_request = WindowPhysicalPlacementRequest::try_new(request.client_bounds())
-            .ok_or_else(|| anyhow!("provisional placement contains invalid physical bounds"))?;
-        let ticket = session.begin_final_placement(self.handle.window_id(), request)?;
+        let ticket = if final_placement {
+            session.begin_final_placement(self.handle.window_id(), request)?
+        } else {
+            session.begin_live_placement(self.handle.window_id(), request)?
+        };
         let platform_request = ticket.request();
+        let physical_request = platform_request.physical_request();
         let ticket_for_generation = ticket.clone();
         let dispatch = self.request_window_mutation_with_platform_dispatch_and_hook(
             WindowMutationRequest::PhysicalPlacement(physical_request),
@@ -5385,6 +5566,11 @@ impl Window {
         let ticket = begin.ticket;
         let mut deliveries = begin.deliveries;
         before_platform_dispatch(ticket.generation());
+        if ticket.domain() == WindowMutationDomain::Placement
+            && let Some(reveal) = self.presentation_state.provisional_reveal_ticket.as_ref()
+        {
+            reveal.stale_for_newer_placement(ticket.generation());
+        }
         self.platform_window
             .prepare_window_mutation(ticket.domain(), ticket.generation());
 
@@ -6677,7 +6863,14 @@ impl Window {
                     .presentation_state
                     .provisional_reveal_ticket
                     .as_ref()
-                    .filter(|ticket| ticket.bind_presentation(generation))
+                    .filter(|ticket| {
+                        ticket.bind_presentation(
+                            generation,
+                            self.window_mutations
+                                .last_generation(WindowMutationDomain::Placement),
+                            self.platform_facts.physical_geometry,
+                        )
+                    })
                 {
                     if let Some(session) = self.provisional_session.as_ref() {
                         let snapshot = session.snapshot();
@@ -6688,7 +6881,6 @@ impl Window {
                                 PlatformWindowCommand::RevealDeferredInitialPresentation {
                                     session_generation: snapshot.generation(),
                                     presentation_generation: generation,
-                                    reveal_point: ticket.snapshot().reveal_point(),
                                 },
                                 ticket.clone(),
                             );

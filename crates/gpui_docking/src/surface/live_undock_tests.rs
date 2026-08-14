@@ -4,9 +4,10 @@ use super::{
     live_undock::{
         DockLiveUndockCancelReason, DockLiveUndockDragGeneration, DockLiveUndockEffect,
         DockLiveUndockFact, DockLiveUndockOpenFailureOutcome, DockLiveUndockOpenRequest,
-        DockLiveUndockOpenReturnOutcome, DockLiveUndockPhase, DockLiveUndockPhysicalPoint,
-        DockLiveUndockPromotionCommitDisposition, DockLiveUndockRouteFeedback,
-        DockLiveUndockSession, DockLiveUndockSourceSnapshot, DockLiveUndockTrigger,
+        DockLiveUndockOpenReturnOutcome, DockLiveUndockPhase, DockLiveUndockPhysicalBounds,
+        DockLiveUndockPhysicalPoint, DockLiveUndockPromotionCommitDisposition,
+        DockLiveUndockRouteFeedback, DockLiveUndockRouteGeneration, DockLiveUndockSession,
+        DockLiveUndockSourceSnapshot, DockLiveUndockTrigger,
     },
     prepare_surface_shutdown, reduce_live_undock_fact,
     window_session::{
@@ -40,8 +41,13 @@ fn active_window_session(
     (session, lease)
 }
 
+fn test_live_undock_bounds() -> DockLiveUndockPhysicalBounds {
+    DockLiveUndockPhysicalBounds::new(DockLiveUndockPhysicalPoint::new(0, 0), 640, 480)
+        .expect("test live-undock bounds must be non-empty")
+}
+
 mod reducer_tests {
-    use super::{DockHost, active_window_session};
+    use super::{DockHost, active_window_session, test_live_undock_bounds};
     use crate::{
         DockGraph, DockItemId, DockNode, DockSpaceId,
         locked_drop_identity::DockLockedPayloadIdentity,
@@ -67,6 +73,10 @@ mod reducer_tests {
     fn placement_generation(value: u64) -> DockLiveUndockPlacementGeneration {
         DockLiveUndockPlacementGeneration::new(value)
             .expect("test placement generations are non-zero")
+    }
+
+    fn route_generation(value: u64) -> DockLiveUndockRouteGeneration {
+        DockLiveUndockRouteGeneration::new(value).expect("test route generations are non-zero")
     }
 
     fn fake_window(value: u64) -> AnyWindowHandle {
@@ -104,8 +114,10 @@ mod reducer_tests {
         DockLiveUndockTrigger::new(
             drag_generation(generation),
             DockLiveUndockSourceSnapshot::new(WindowId::from(9_000 + generation), generation),
+            route_generation(generation),
             DockLiveUndockRouteFeedback::Desktop,
             DockLiveUndockPhysicalPoint::new(50, 50),
+            test_live_undock_bounds(),
         )
         .expect("desktop is an eligible live-undock trigger route")
     }
@@ -171,6 +183,31 @@ mod reducer_tests {
             [
                 DockLiveUndockEffect::RetireSourceTransportProxy {
                     identity: retired_identity,
+                },
+                DockLiveUndockEffect::RequestReleasePlacement {
+                    identity: current,
+                    window: current_window,
+                    release: current_release,
+                },
+            ] if *retired_identity == identity
+                && *current == identity
+                && *current_window == window
+                && *current_release == release
+        ));
+    }
+
+    fn assert_reveal_requests_release_placement(
+        effects: &DockLiveUndockEffects,
+        identity: DockLiveUndockIdentity,
+        window: AnyWindowHandle,
+        release: DockLiveUndockReleaseLock,
+    ) {
+        assert!(matches!(
+            effects.as_slice(),
+            [
+                DockLiveUndockEffect::RetireFrozenSourceVisual {
+                    identity: retired_identity,
+                    ..
                 },
                 DockLiveUndockEffect::RequestReleasePlacement {
                     identity: current,
@@ -270,6 +307,7 @@ mod reducer_tests {
                 .expect("test release bounds are non-empty"),
             generation,
         )
+        .expect("test release point must remain inside its physical bounds")
     }
 
     fn prepare_token(
@@ -876,11 +914,13 @@ mod reducer_tests {
             DockLiveUndockTrigger::new(
                 drag_generation(6),
                 DockLiveUndockSourceSnapshot::new(WindowId::from(9_006), 6),
+                route_generation(6),
                 DockLiveUndockRouteFeedback::Host(DockLiveUndockHostTarget::new(
                     WindowId::from(400),
                     1,
                 )),
                 DockLiveUndockPhysicalPoint::new(50, 50),
+                test_live_undock_bounds(),
             )
             .is_none()
         );
@@ -892,8 +932,10 @@ mod reducer_tests {
                     trigger: DockLiveUndockTrigger::new(
                         drag_generation(5),
                         DockLiveUndockSourceSnapshot::new(WindowId::from(9_005), 5),
+                        route_generation(5),
                         DockLiveUndockRouteFeedback::Desktop,
                         DockLiveUndockPhysicalPoint::new(50, 50),
+                        test_live_undock_bounds(),
                     )
                     .expect("desktop is eligible"),
                 })
@@ -906,8 +948,10 @@ mod reducer_tests {
                     trigger: DockLiveUndockTrigger::new(
                         drag_generation(4),
                         DockLiveUndockSourceSnapshot::new(WindowId::from(9_004), 4),
+                        route_generation(4),
                         DockLiveUndockRouteFeedback::Desktop,
                         DockLiveUndockPhysicalPoint::new(50, 50),
+                        test_live_undock_bounds(),
                     )
                     .expect("desktop is eligible"),
                 })
@@ -946,8 +990,10 @@ mod reducer_tests {
                     trigger: DockLiveUndockTrigger::new(
                         drag_generation(5),
                         DockLiveUndockSourceSnapshot::new(WindowId::from(9_005), 5),
+                        route_generation(5),
                         DockLiveUndockRouteFeedback::Desktop,
                         DockLiveUndockPhysicalPoint::new(50, 50),
+                        test_live_undock_bounds(),
                     )
                     .expect("desktop is eligible"),
                 })
@@ -960,8 +1006,10 @@ mod reducer_tests {
             session
                 .apply(DockLiveUndockFact::RouteObserved {
                     identity: first,
+                    generation: route_generation(6),
                     route: DockLiveUndockRouteFeedback::Desktop,
                     point: DockLiveUndockPhysicalPoint::new(51, 51),
+                    bounds: test_live_undock_bounds(),
                 })
                 .is_empty(),
             "a previous generation cannot mutate its replacement"
@@ -970,8 +1018,10 @@ mod reducer_tests {
             session
                 .apply(DockLiveUndockFact::RouteObserved {
                     identity: second,
+                    generation: route_generation(7),
                     route: DockLiveUndockRouteFeedback::OpaqueBarrier,
                     point: DockLiveUndockPhysicalPoint::new(52, 52),
+                    bounds: test_live_undock_bounds(),
                 })
                 .as_slice(),
             [DockLiveUndockEffect::RouteFeedbackChanged { .. }]
@@ -1394,16 +1444,33 @@ mod reducer_tests {
             window,
         );
         let latest_point = DockLiveUndockPhysicalPoint::new(725, 415);
+        let latest_bounds =
+            DockLiveUndockPhysicalBounds::new(DockLiveUndockPhysicalPoint::new(600, 300), 640, 480)
+                .expect("latest route bounds must be non-empty");
 
         assert!(
             session
                 .apply(DockLiveUndockFact::RouteObserved {
                     identity,
+                    generation: route_generation(2),
                     route: DockLiveUndockRouteFeedback::Desktop,
                     point: latest_point,
+                    bounds: latest_bounds,
                 })
                 .is_empty(),
             "moving within one route updates point authority without publishing route churn"
+        );
+        assert!(
+            session
+                .apply(DockLiveUndockFact::RouteObserved {
+                    identity,
+                    generation: route_generation(3),
+                    route: DockLiveUndockRouteFeedback::Desktop,
+                    point: DockLiveUndockPhysicalPoint::new(9_999, 9_999),
+                    bounds: test_live_undock_bounds(),
+                })
+                .is_empty(),
+            "an incoherent point/bounds observation must not publish route churn"
         );
 
         let presentation = DockLiveUndockPayloadPresentationReceipt::for_test(mount, 91)
@@ -1417,9 +1484,252 @@ mod reducer_tests {
                 .as_slice(),
             [DockLiveUndockEffect::ArmExactReveal {
                 point,
+                bounds,
                 ..
-            }] if *point == latest_point
+            }] if *point == latest_point && *bounds == latest_bounds
         ));
+    }
+
+    #[test]
+    fn initial_presentation_ready_rearms_the_latest_route_authority_once() {
+        let (_, lease) = active_window_session(104, 223);
+        let mut session = DockLiveUndockSession::new();
+        let identity = start(&mut session, lease, 1);
+        let window = fake_window(323);
+        admit(&mut session, identity, window);
+        let mount = activate_payload(
+            &mut session,
+            identity,
+            source_for(identity),
+            lease_generation(3),
+            window,
+        );
+        let presentation = DockLiveUndockPayloadPresentationReceipt::for_test(mount, 91)
+            .expect("the payload presentation frame is non-zero");
+        assert!(matches!(
+            session
+                .apply(DockLiveUndockFact::PayloadPresented {
+                    identity,
+                    receipt: presentation,
+                })
+                .as_slice(),
+            [DockLiveUndockEffect::ArmExactReveal { .. }]
+        ));
+
+        let latest_point = DockLiveUndockPhysicalPoint::new(-1_760, 540);
+        let latest_bounds = DockLiveUndockPhysicalBounds::new(
+            DockLiveUndockPhysicalPoint::new(-1_940, 420),
+            960,
+            720,
+        )
+        .expect("the cross-display route bounds must be non-empty");
+        assert!(
+            session
+                .apply(DockLiveUndockFact::RouteObserved {
+                    identity,
+                    generation: route_generation(2),
+                    route: DockLiveUndockRouteFeedback::Desktop,
+                    point: latest_point,
+                    bounds: latest_bounds,
+                })
+                .is_empty()
+        );
+
+        let effects = session.apply(DockLiveUndockFact::InitialPresentationReady {
+            identity,
+            presentation,
+        });
+        assert!(matches!(
+            effects.as_slice(),
+            [DockLiveUndockEffect::ArmExactReveal {
+                presentation: current,
+                point,
+                bounds,
+                ..
+            }] if *current == presentation && *point == latest_point && *bounds == latest_bounds
+        ));
+        assert!(
+            session
+                .apply(DockLiveUndockFact::InitialPresentationReady {
+                    identity,
+                    presentation,
+                })
+                .is_empty(),
+            "the monotonic initial-presentation wake must not rearm the same reveal twice"
+        );
+        let stale = DockLiveUndockPayloadPresentationReceipt::for_test(mount, 90)
+            .expect("the stale payload presentation remains representable");
+        assert!(
+            session
+                .apply(DockLiveUndockFact::InitialPresentationReady {
+                    identity,
+                    presentation: stale,
+                })
+                .is_empty(),
+            "a stale initial-presentation wake cannot rearm the current payload frame"
+        );
+    }
+
+    #[test]
+    fn visible_provisional_requests_latest_route_placement_and_fails_closed() {
+        let (_, lease) = active_window_session(104, 224);
+        let mut session = DockLiveUndockSession::new();
+        let identity = start(&mut session, lease, 1);
+        let window = fake_window(324);
+        admit(&mut session, identity, window);
+        let mount = activate_payload(
+            &mut session,
+            identity,
+            source_for(identity),
+            lease_generation(3),
+            window,
+        );
+        observe_nonempty_visible(&mut session, identity, mount, 91);
+
+        let generation = route_generation(2);
+        let point = DockLiveUndockPhysicalPoint::new(-1_760, 540);
+        let bounds = DockLiveUndockPhysicalBounds::new(
+            DockLiveUndockPhysicalPoint::new(-1_880, 460),
+            640,
+            480,
+        )
+        .expect("the target-scaled route bounds must be non-empty");
+        assert!(matches!(
+            session
+                .apply(DockLiveUndockFact::RouteObserved {
+                    identity,
+                    generation,
+                    route: DockLiveUndockRouteFeedback::Desktop,
+                    point,
+                    bounds,
+                })
+                .as_slice(),
+            [DockLiveUndockEffect::RequestRoutePlacement {
+                identity: current,
+                window: current_window,
+                generation: current_generation,
+                point: current_point,
+                bounds: current_bounds,
+            }] if *current == identity
+                && *current_window == window
+                && *current_generation == generation
+                && *current_point == point
+                && *current_bounds == bounds
+        ));
+
+        assert!(
+            session
+                .apply(DockLiveUndockFact::RoutePlacementObserved {
+                    identity,
+                    window_id: window.window_id(),
+                    generation: route_generation(1),
+                    outcome: DockLiveUndockRoutePlacementOutcome::Rejected,
+                })
+                .is_empty(),
+            "an older route-placement failure cannot replace the current route authority"
+        );
+
+        let effects = session.apply(DockLiveUndockFact::RoutePlacementObserved {
+            identity,
+            window_id: window.window_id(),
+            generation,
+            outcome: DockLiveUndockRoutePlacementOutcome::Rejected,
+        });
+        assert!(effects.as_slice().iter().any(|effect| matches!(
+            effect,
+            DockLiveUndockEffect::RestoreSource {
+                identity: current,
+                restore_focus: true,
+                ..
+            } if *current == identity
+        )));
+        assert_eq!(session.phase(), DockLiveUndockPhase::Restoring);
+    }
+
+    #[test]
+    fn mouse_up_final_release_supersedes_pending_live_route_placement() {
+        let (_, lease) = active_window_session(104, 225);
+        let mut session = DockLiveUndockSession::new();
+        let identity = start(&mut session, lease, 1);
+        let window = fake_window(325);
+        admit(&mut session, identity, window);
+        let mount = activate_payload(
+            &mut session,
+            identity,
+            source_for(identity),
+            lease_generation(3),
+            window,
+        );
+        observe_nonempty_visible(&mut session, identity, mount, 91);
+
+        let live_generation = route_generation(2);
+        let live_point = DockLiveUndockPhysicalPoint::new(830, 520);
+        let live_bounds =
+            DockLiveUndockPhysicalBounds::new(DockLiveUndockPhysicalPoint::new(790, 490), 640, 480)
+                .expect("the live route bounds must be non-empty");
+        assert!(
+            session
+                .apply(DockLiveUndockFact::RouteObserved {
+                    identity,
+                    generation: live_generation,
+                    route: DockLiveUndockRouteFeedback::Desktop,
+                    point: live_point,
+                    bounds: live_bounds,
+                })
+                .as_slice()
+                .iter()
+                .any(|effect| matches!(
+                    effect,
+                    DockLiveUndockEffect::RequestRoutePlacement { generation, .. }
+                        if *generation == live_generation
+                ))
+        );
+
+        let release = desktop_release(placement_generation(3));
+        let effects = session.apply(DockLiveUndockFact::ReleaseLocked { identity, release });
+        assert!(effects.as_slice().iter().any(|effect| matches!(
+            effect,
+            DockLiveUndockEffect::RequestReleasePlacement {
+                identity: current,
+                release: current_release,
+                ..
+            } if *current == identity && *current_release == release
+        )));
+        assert!(
+            !effects
+                .as_slice()
+                .iter()
+                .any(|effect| matches!(effect, DockLiveUndockEffect::RequestRoutePlacement { .. }))
+        );
+
+        assert!(
+            session
+                .apply(DockLiveUndockFact::RouteObserved {
+                    identity,
+                    generation: route_generation(4),
+                    route: DockLiveUndockRouteFeedback::Desktop,
+                    point: DockLiveUndockPhysicalPoint::new(1_300, 700),
+                    bounds: DockLiveUndockPhysicalBounds::new(
+                        DockLiveUndockPhysicalPoint::new(1_200, 620),
+                        640,
+                        480,
+                    )
+                    .expect("the post-release route bounds must remain representable"),
+                })
+                .is_empty(),
+            "pointer movement after MouseUp cannot replace the locked final release"
+        );
+        assert!(
+            session
+                .apply(DockLiveUndockFact::RoutePlacementObserved {
+                    identity,
+                    window_id: window.window_id(),
+                    generation: live_generation,
+                    outcome: DockLiveUndockRoutePlacementOutcome::Rejected,
+                })
+                .is_empty(),
+            "a late live-route failure cannot rewrite final-release authority"
+        );
     }
 
     #[test]
@@ -1432,7 +1742,12 @@ mod reducer_tests {
         let placement = placement_generation(8);
         let release = desktop_release(placement);
         let effects = session.apply(DockLiveUndockFact::ReleaseLocked { identity, release });
-        assert_release_placement_request(&effects, identity, window, release);
+        assert!(matches!(
+            effects.as_slice(),
+            [DockLiveUndockEffect::RetireSourceTransportProxy {
+                identity: current,
+            }] if *current == identity
+        ));
         assert!(
             session
                 .apply(DockLiveUndockFact::ReleaseLocked { identity, release })
@@ -1442,7 +1757,30 @@ mod reducer_tests {
 
         let source = source_for(identity);
         let mount = activate_payload(&mut session, identity, source, lease_generation(3), window);
-        observe_nonempty_visible(&mut session, identity, mount, 92);
+        let preflight = DockLiveUndockPayloadPresentationReceipt::for_test(mount, 92)
+            .expect("the payload preflight frame must be non-zero");
+        assert!(matches!(
+            session
+                .apply(DockLiveUndockFact::PayloadPresented {
+                    identity,
+                    receipt: preflight,
+                })
+                .as_slice(),
+            [DockLiveUndockEffect::ArmExactReveal { .. }]
+        ));
+        let reveal_frame = DockLiveUndockPayloadPresentationReceipt::for_test(mount, 93)
+            .expect("the reveal frame must be non-zero");
+        let reveal = DockLiveUndockRevealReceipt::for_test(preflight, reveal_frame)
+            .expect("the exact later frame must satisfy reveal authority");
+        assert_reveal_requests_release_placement(
+            &session.apply(DockLiveUndockFact::RevealObserved {
+                identity,
+                observation: DockLiveUndockRevealObservation::Visible(reveal),
+            }),
+            identity,
+            window,
+            release,
+        );
         let effects = session.apply(DockLiveUndockFact::PlacementObserved {
             identity,
             window_id: window.window_id(),
@@ -1495,14 +1833,43 @@ mod reducer_tests {
             lease_generation(4),
             window,
         );
-        observe_nonempty_visible(&mut session, identity, mount, 93);
+        let preflight = DockLiveUndockPayloadPresentationReceipt::for_test(mount, 93)
+            .expect("the payload preflight frame must be non-zero");
+        assert!(matches!(
+            session
+                .apply(DockLiveUndockFact::PayloadPresented {
+                    identity,
+                    receipt: preflight,
+                })
+                .as_slice(),
+            [DockLiveUndockEffect::ArmExactReveal {
+                point,
+                bounds,
+                ..
+            }] if *point == release.point() && *bounds == release.desired_bounds()
+        ));
+        let reveal_frame = DockLiveUndockPayloadPresentationReceipt::for_test(mount, 94)
+            .expect("the reveal frame must be non-zero");
+        let reveal = DockLiveUndockRevealReceipt::for_test(preflight, reveal_frame)
+            .expect("the exact later frame must satisfy reveal authority");
+        assert_reveal_requests_release_placement(
+            &session.apply(DockLiveUndockFact::RevealObserved {
+                identity,
+                observation: DockLiveUndockRevealObservation::Visible(reveal),
+            }),
+            identity,
+            window,
+            release,
+        );
 
         let stale_point = DockLiveUndockReleaseLock::new(
             DockLiveUndockPhysicalPoint::new(640, 420),
             DockLiveUndockRouteFeedback::Desktop,
-            release.desired_bounds(),
+            DockLiveUndockPhysicalBounds::new(DockLiveUndockPhysicalPoint::new(600, 380), 640, 480)
+                .expect("stale test bounds are non-empty"),
             placement,
-        );
+        )
+        .expect("stale test point must remain inside its own physical bounds");
         let effects = session.apply(DockLiveUndockFact::PlacementObserved {
             identity,
             window_id: window.window_id(),
@@ -1605,12 +1972,14 @@ mod reducer_tests {
             receipt: preflight,
         });
         let release = desktop_release(placement_generation(18));
-        assert_release_placement_request(
-            &session.apply(DockLiveUndockFact::ReleaseLocked { identity, release }),
-            identity,
-            window,
-            release,
-        );
+        assert!(matches!(
+            session
+                .apply(DockLiveUndockFact::ReleaseLocked { identity, release })
+                .as_slice(),
+            [DockLiveUndockEffect::RetireSourceTransportProxy {
+                identity: current,
+            }] if *current == identity
+        ));
         let reveal_frame = DockLiveUndockPayloadPresentationReceipt::for_test(mount, 95)
             .expect("the stale reveal observation must retain an exact payload frame");
 
@@ -1634,7 +2003,7 @@ mod reducer_tests {
     }
 
     #[test]
-    fn release_before_open_return_requests_exact_placement_once_on_admission() {
+    fn release_before_open_return_waits_for_exact_reveal_before_requesting_placement() {
         let (_, lease) = active_window_session(104, 205);
         let mut session = DockLiveUndockSession::new();
         let identity = start(&mut session, lease, 1);
@@ -1664,22 +2033,11 @@ mod reducer_tests {
         });
         assert!(matches!(
             effects.as_slice(),
-            [
-                DockLiveUndockEffect::ProvisionalAdmitted {
-                    identity: admitted_identity,
-                    window: admitted_window,
-                    ..
-                },
-                DockLiveUndockEffect::RequestReleasePlacement {
-                    identity: placement_identity,
-                    window: placement_window,
-                    release: requested_release,
-                },
-            ] if *admitted_identity == identity
-                && *admitted_window == window
-                && *placement_identity == identity
-                && *placement_window == window
-                && *requested_release == release
+            [DockLiveUndockEffect::ProvisionalAdmitted {
+                identity: admitted_identity,
+                window: admitted_window,
+                ..
+            }] if *admitted_identity == identity && *admitted_window == window
         ));
         assert!(
             session
@@ -1691,6 +2049,38 @@ mod reducer_tests {
                 })
                 .is_empty(),
             "an opening return cannot issue the placement twice"
+        );
+
+        let mount = activate_payload(
+            &mut session,
+            identity,
+            source_for(identity),
+            lease_generation(4),
+            window,
+        );
+        let preflight = DockLiveUndockPayloadPresentationReceipt::for_test(mount, 94)
+            .expect("the payload preflight frame must be non-zero");
+        assert!(matches!(
+            session
+                .apply(DockLiveUndockFact::PayloadPresented {
+                    identity,
+                    receipt: preflight,
+                })
+                .as_slice(),
+            [DockLiveUndockEffect::ArmExactReveal { .. }]
+        ));
+        let reveal_frame = DockLiveUndockPayloadPresentationReceipt::for_test(mount, 95)
+            .expect("the reveal frame must be non-zero");
+        let reveal = DockLiveUndockRevealReceipt::for_test(preflight, reveal_frame)
+            .expect("the exact later frame must satisfy reveal authority");
+        assert_reveal_requests_release_placement(
+            &session.apply(DockLiveUndockFact::RevealObserved {
+                identity,
+                observation: DockLiveUndockRevealObservation::Visible(reveal),
+            }),
+            identity,
+            window,
+            release,
         );
     }
 
@@ -1760,12 +2150,12 @@ mod reducer_tests {
             identity: timeout_identity,
             release: timeout_release,
         });
-        assert_release_placement_request(
-            &effects,
-            timeout_identity,
-            timeout_window,
-            timeout_release,
-        );
+        assert!(matches!(
+            effects.as_slice(),
+            [DockLiveUndockEffect::RetireSourceTransportProxy {
+                identity: current,
+            }] if *current == timeout_identity
+        ));
         let effects = timed_out.apply(DockLiveUndockFact::ReleaseDeadlineExpired {
             identity: timeout_identity,
             placement_generation: timeout_placement,
@@ -2496,7 +2886,8 @@ mod reducer_tests {
             DockLiveUndockPhysicalBounds::new(DockLiveUndockPhysicalPoint::new(390, 300), 640, 480)
                 .expect("test release bounds are non-empty"),
             placement_generation(31),
-        );
+        )
+        .expect("host release point must remain inside its physical bounds");
         let (token, destination) =
             prepare_token(session.apply(DockLiveUndockFact::ReleaseLocked { identity, release }));
         session.apply(DockLiveUndockFact::PromotionPrepared { identity, token });
@@ -2543,7 +2934,8 @@ mod reducer_tests {
             DockLiveUndockPhysicalBounds::new(DockLiveUndockPhysicalPoint::new(360, 270), 640, 480)
                 .expect("test release bounds are non-empty"),
             placement_generation(14),
-        );
+        )
+        .expect("host release point must remain inside its physical bounds");
         let (token, destination) =
             prepare_token(session.apply(DockLiveUndockFact::ReleaseLocked { identity, release }));
         assert_eq!(
@@ -2652,8 +3044,10 @@ mod reducer_tests {
             session
                 .apply(DockLiveUndockFact::RouteObserved {
                     identity,
+                    generation: route_generation(2),
                     route: DockLiveUndockRouteFeedback::Desktop,
                     point: DockLiveUndockPhysicalPoint::new(53, 53),
+                    bounds: test_live_undock_bounds(),
                 })
                 .is_empty(),
             "an unavailable provisional cannot publish a usable desktop route again"
@@ -2664,8 +3058,10 @@ mod reducer_tests {
             session
                 .apply(DockLiveUndockFact::RouteObserved {
                     identity,
+                    generation: route_generation(3),
                     route: DockLiveUndockRouteFeedback::Host(target),
                     point: DockLiveUndockPhysicalPoint::new(54, 54),
+                    bounds: test_live_undock_bounds(),
                 })
                 .as_slice(),
             [DockLiveUndockEffect::RouteFeedbackChanged {
@@ -2679,7 +3075,8 @@ mod reducer_tests {
             DockLiveUndockPhysicalBounds::new(DockLiveUndockPhysicalPoint::new(370, 280), 640, 480)
                 .expect("test release bounds are non-empty"),
             placement_generation(15),
-        );
+        )
+        .expect("host release point must remain inside its physical bounds");
         let (token, destination) =
             prepare_token(session.apply(DockLiveUndockFact::ReleaseLocked { identity, release }));
         assert_eq!(
@@ -2731,7 +3128,8 @@ mod reducer_tests {
             DockLiveUndockPhysicalBounds::new(DockLiveUndockPhysicalPoint::new(380, 290), 640, 480)
                 .expect("test release bounds are non-empty"),
             placement_generation(18),
-        );
+        )
+        .expect("host release point must remain inside its physical bounds");
         let (token, _) =
             prepare_token(session.apply(DockLiveUndockFact::ReleaseLocked { identity, release }));
         session.apply(DockLiveUndockFact::PromotionPrepared { identity, token });
@@ -4044,8 +4442,11 @@ fn begin_triggered_live_undock_opening(
     let trigger = DockLiveUndockTrigger::new(
         DockLiveUndockDragGeneration::new(1).expect("the test drag generation should be non-zero"),
         DockLiveUndockSourceSnapshot::new(source_window, 1),
+        DockLiveUndockRouteGeneration::new(1)
+            .expect("the test route generation should be non-zero"),
         DockLiveUndockRouteFeedback::Desktop,
         DockLiveUndockPhysicalPoint::new(50, 50),
+        test_live_undock_bounds(),
     )
     .expect("desktop should be an eligible live-undock route");
     reduce_live_undock_fact(
@@ -4286,7 +4687,7 @@ fn frozen_admission_before_provisional_builder_survives_close_observer_panic(
             let request =
                 begin_triggered_live_undock_opening(&surface, lease, anchor.window_id(), cx);
             let owner = surface.owner().clone();
-            runtime.install_live_undock_provisional_builder_hook_for_test(move |cx| {
+            runtime.install_live_undock_provisional_builder_hook_for_test(move |_, cx| {
                 let effects = prepare_surface_shutdown(
                     &owner,
                     lease,
@@ -4569,7 +4970,7 @@ fn frozen_provisional_builder_initial_close_aborts_exact_runtime_record(
     let error = cx.update(|cx| {
         let request = begin_triggered_live_undock_opening(&surface, lease, anchor.window_id(), cx);
         let owner = surface.owner().clone();
-        runtime.install_live_undock_provisional_builder_hook_for_test(move |cx| {
+        runtime.install_live_undock_provisional_builder_hook_for_test(move |_, cx| {
             let effects = prepare_surface_shutdown(
                 &owner,
                 lease,

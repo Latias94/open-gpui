@@ -4,7 +4,8 @@ use crate::viewport_close::{DockViewportCloseFinalizeKey, DockViewportShouldClos
 #[cfg(test)]
 use crate::viewport_registry::DockViewportRouteUnavailableReason;
 pub(crate) use crate::viewport_tear_off_placement::{
-    suggested_tear_off_window_bounds, suggested_tear_off_window_bounds_from_native_frame,
+    suggested_tear_off_physical_client_bounds_from_native_frame, suggested_tear_off_window_bounds,
+    suggested_tear_off_window_bounds_from_native_frame,
 };
 #[cfg(test)]
 use crate::viewport_window_lifecycle::DockViewportReusableWindow;

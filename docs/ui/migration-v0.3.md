@@ -573,9 +573,13 @@ For custom platform backends:
   avoid activation, preserve native hit transparency, and call
   `WindowProvisionalSession::record_native_reveal` with observed visibility, foreground, hit-test,
   identity, and z-order facts before reporting acceptance.
-  `RevealDeferredInitialPresentation` now also carries a required `reveal_point` in device pixels;
-  custom backends must use that point for the point-scoped reveal and must not infer it from a
-  later pointer or window movement.
+  `RevealDeferredInitialPresentation` carries only the exact session and presentation
+  generations. Custom backends must retain the corresponding `WindowProvisionalSession` and call
+  `claim_native_reveal(window_id, presentation_generation)` before producing native side effects.
+  The returned `WindowProvisionalRevealRequest` is the sole authority for the device-pixel reveal
+  point, initial physical client geometry, and peer windows. Report acceptance only after recording
+  facts for that same request, including `physical_client_bounds_exact`; do not infer geometry from
+  later pointer movement or from a second native sample.
 - If the backend can own native pointer capture, construct the dispatcher with
   `PlatformWindowCommandDispatcher::new_with_pointer_capture_release`. Its preparer may only
   snapshot the exact native owner for the supplied release generation; the retained operation

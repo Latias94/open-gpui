@@ -1,9 +1,10 @@
 use super::{
     live_undock::{
         DockLiveUndockDragGeneration, DockLiveUndockEffect, DockLiveUndockFact,
-        DockLiveUndockIdentity, DockLiveUndockPayloadLeaseReceipt, DockLiveUndockPhysicalPoint,
-        DockLiveUndockPresentationLeaseGeneration, DockLiveUndockPromotionDestination,
-        DockLiveUndockPromotionToken, DockLiveUndockRouteFeedback, DockLiveUndockSourceSnapshot,
+        DockLiveUndockIdentity, DockLiveUndockPayloadLeaseReceipt, DockLiveUndockPhysicalBounds,
+        DockLiveUndockPhysicalPoint, DockLiveUndockPresentationLeaseGeneration,
+        DockLiveUndockPromotionDestination, DockLiveUndockPromotionToken,
+        DockLiveUndockRouteFeedback, DockLiveUndockRouteGeneration, DockLiveUndockSourceSnapshot,
         DockLiveUndockTrigger,
     },
     owner::{DockSurfaceChangeCategory, DockSurfaceOwner, DockSurfaceTransition},
@@ -56,6 +57,11 @@ fn tabs(graph: &mut DockGraph, items: &[&str]) -> DockNodeId {
 
 fn bounds(origin: f32) -> Bounds<open_gpui::Pixels> {
     Bounds::new(point(px(origin), px(origin)), size(px(240.0), px(160.0)))
+}
+
+fn live_undock_bounds() -> DockLiveUndockPhysicalBounds {
+    DockLiveUndockPhysicalBounds::new(DockLiveUndockPhysicalPoint::new(0, 0), 640, 480)
+        .expect("test live-undock bounds must be non-empty")
 }
 
 fn item_fixture() -> PayloadFixture {
@@ -163,8 +169,11 @@ fn live_payload_proof(authority: u64) -> LivePayloadProof {
         DockLiveUndockDragGeneration::new(authority + 1)
             .expect("the test drag generation should be non-zero"),
         source,
+        DockLiveUndockRouteGeneration::new(authority + 1)
+            .expect("the test route generation should be non-zero"),
         DockLiveUndockRouteFeedback::Desktop,
         DockLiveUndockPhysicalPoint::new(50, 50),
+        live_undock_bounds(),
     )
     .expect("desktop should be an eligible live-undock route");
     let identity = live_undock
@@ -825,8 +834,11 @@ fn owner_commit_records_panel_lifecycle_without_publishing_revision_early(
             DockLiveUndockDragGeneration::new(1)
                 .expect("the test drag generation should be non-zero"),
             source,
+            DockLiveUndockRouteGeneration::new(1)
+                .expect("the test route generation should be non-zero"),
             DockLiveUndockRouteFeedback::Desktop,
             DockLiveUndockPhysicalPoint::new(50, 50),
+            live_undock_bounds(),
         )
         .expect("desktop should be an eligible live-undock route");
         let request = owner
@@ -919,8 +931,11 @@ fn owner_lost_and_restore_transactions_publish_exact_named_transitions(
             DockLiveUndockDragGeneration::new(1)
                 .expect("the test drag generation should be non-zero"),
             source,
+            DockLiveUndockRouteGeneration::new(1)
+                .expect("the test route generation should be non-zero"),
             DockLiveUndockRouteFeedback::Desktop,
             DockLiveUndockPhysicalPoint::new(50, 50),
+            live_undock_bounds(),
         )
         .expect("desktop should be an eligible live-undock route");
         let identity = owner

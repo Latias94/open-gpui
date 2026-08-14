@@ -14,7 +14,7 @@ use crate::{
 };
 use open_gpui::{
     AppContext as _, Bounds, DevicePixels, Modifiers, MouseButton, Pixels, PlatformWindowHitStack,
-    Point, TestAppContext, VisualTestContext, WindowBounds, point, px, size,
+    Point, QuitMode, TestAppContext, VisualTestContext, WindowBounds, point, px, size,
 };
 
 #[derive(Clone, Copy)]
@@ -120,6 +120,7 @@ fn source_only_known_viewport_release_rejects_overlapping_geometry_without_backe
 fn native_captured_item_release_matrix_commits_payloads_to_rendered_targets(
     cx: &mut TestAppContext,
 ) {
+    cx.update(|app| app.set_quit_mode(QuitMode::Explicit));
     for case in matrix_cases()
         .into_iter()
         .filter(|case| matches!(case.payload, MatrixPayload::Item))
