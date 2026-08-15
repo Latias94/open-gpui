@@ -98,6 +98,7 @@ struct ProvisionalPlacementRollback {
     rect: NativeRect,
     previous_above: Option<NativeZOrderWindowIdentity>,
     was_topmost: bool,
+    physical_geometry: PlatformWindowPhysicalGeometry,
 }
 
 #[derive(Debug)]
@@ -141,6 +142,7 @@ enum ProvisionalPlacementCompensationAuthority {
 struct ProvisionalPlacementCompensation {
     rect: ProvisionalPlacementCompensationComponent,
     z_order: ProvisionalPlacementCompensationComponent,
+    physical_geometry: ProvisionalPlacementCompensationComponent,
 }
 
 impl ProvisionalPlacementCompensation {
@@ -148,6 +150,7 @@ impl ProvisionalPlacementCompensation {
         Self {
             rect: ProvisionalPlacementCompensationComponent::AuthorityChanged,
             z_order: ProvisionalPlacementCompensationComponent::AuthorityChanged,
+            physical_geometry: ProvisionalPlacementCompensationComponent::AuthorityChanged,
         }
     }
 
@@ -158,6 +161,9 @@ impl ProvisionalPlacementCompensation {
                 ProvisionalPlacementCompensationComponent::Restored,
                 ProvisionalPlacementCompensationComponent::Restored
             )
+        ) && matches!(
+            self.physical_geometry,
+            ProvisionalPlacementCompensationComponent::Restored
         )
     }
 }
@@ -1606,6 +1612,8 @@ impl WindowsWindowInner {
     }
 
     fn capture_provisional_placement_rollback(&self) -> Result<ProvisionalPlacementRollback> {
+        let observation_epoch = self.state.native_placement_epoch();
+        let physical_geometry = self.physical_geometry_from_native()?;
         let rect = Self::native_rect(self.hwnd)?
             .context("provisional native window has no rollback rectangle")?;
         let previous_above = unsafe { GetWindow(self.hwnd, GW_HWNDPREV) }
@@ -1617,10 +1625,15 @@ impl WindowsWindowInner {
             GWL_EXSTYLE,
             "failed to read provisional native extended style for rollback",
         )? as u32);
+        anyhow::ensure!(
+            self.state.native_placement_epoch() == observation_epoch,
+            "native placement changed while provisional rollback authority was sampled"
+        );
         Ok(ProvisionalPlacementRollback {
             rect,
             previous_above,
             was_topmost: style.contains(WS_EX_TOPMOST),
+            physical_geometry,
         })
     }
 
@@ -1630,14 +1643,58 @@ impl WindowsWindowInner {
     ) -> Result<()> {
         let z_order = self.restore_provisional_z_order(rollback);
         let rect = self.restore_provisional_rect(rollback.rect);
-        match (rect, z_order) {
-            (Ok(()), Ok(())) => Ok(()),
-            (Err(rect), Ok(())) => Err(rect),
-            (Ok(()), Err(z_order)) => Err(z_order),
-            (Err(rect), Err(z_order)) => Err(anyhow::anyhow!(
-                "failed to restore provisional geometry ({rect:#}) and z-order ({z_order:#})"
-            )),
+        let physical_geometry =
+            self.restore_provisional_physical_geometry(rollback.physical_geometry);
+        let failures = [
+            ("z-order", z_order),
+            ("outer rectangle", rect),
+            ("physical client geometry", physical_geometry),
+        ]
+        .into_iter()
+        .filter_map(|(component, result)| {
+            result.err().map(|error| format!("{component}: {error:#}"))
+        })
+        .collect::<Vec<_>>();
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!(
+                "failed to restore provisional native placement: {}",
+                failures.join("; ")
+            ))
         }
+    }
+
+    fn restore_provisional_physical_geometry(
+        &self,
+        expected: PlatformWindowPhysicalGeometry,
+    ) -> Result<()> {
+        let display_observation = expected
+            .display_observation()
+            .context("provisional rollback geometry did not identify its display")?;
+        let coordinator = self
+            .native_retirement_coordinator
+            .upgrade()
+            .context("Windows platform topology authority is no longer available")?;
+        anyhow::ensure!(
+            coordinator.display_topology_generation() == display_observation.topology_generation(),
+            "display topology changed before provisional geometry rollback"
+        );
+        let request = WindowPhysicalPlacementRequest::try_new(expected.client_bounds())
+            .context("provisional rollback client geometry is not representable")?;
+        self.settle_physical_client_bounds_exactly(request)?;
+        let restored = self
+            .physical_geometry_from_native()
+            .context("failed to read provisional geometry after rollback")?;
+        anyhow::ensure!(
+            restored == expected,
+            "provisional physical client geometry did not restore exactly"
+        );
+        let display = WindowsDisplay::new(display_observation.display_id())
+            .context("the restored provisional display is no longer available")?;
+        self.state.display.set(display);
+        self.state.scale_factor.set(restored.scale_factor());
+        Ok(())
     }
 
     fn restore_provisional_rect(&self, rect: NativeRect) -> Result<()> {
@@ -1748,7 +1805,20 @@ impl WindowsWindowInner {
             self.restore_provisional_rect(applied.rollback.rect)?;
             ProvisionalPlacementCompensationComponent::Restored
         };
-        Ok(ProvisionalPlacementCompensation { rect, z_order })
+        let physical_geometry =
+            if current_z_order.physical_geometry != applied.applied.physical_geometry {
+                ProvisionalPlacementCompensationComponent::AuthorityChanged
+            } else if applied.applied.physical_geometry == applied.rollback.physical_geometry {
+                ProvisionalPlacementCompensationComponent::Restored
+            } else {
+                self.restore_provisional_physical_geometry(applied.rollback.physical_geometry)?;
+                ProvisionalPlacementCompensationComponent::Restored
+            };
+        Ok(ProvisionalPlacementCompensation {
+            rect,
+            z_order,
+            physical_geometry,
+        })
     }
 
     fn compensate_applied_provisional_final_placement(
@@ -3511,15 +3581,23 @@ impl WindowsWindowInner {
             .native_retirement_coordinator
             .upgrade()
             .context("Windows platform topology authority is no longer available")?;
+        let first_placement_epoch = self.state.native_placement_epoch();
         let first_topology_generation = coordinator.display_topology_generation();
         let first_geometry = self.physical_geometry_observation(first_topology_generation)?;
         let second_topology_generation = coordinator.display_topology_generation();
         let second_geometry = self.physical_geometry_observation(second_topology_generation)?;
         let final_topology_generation = coordinator.display_topology_generation();
+        let final_placement_epoch = self.state.native_placement_epoch();
         anyhow::ensure!(
-            first_topology_generation == second_topology_generation
-                && second_topology_generation == final_topology_generation
-                && first_geometry == second_geometry,
+            physical_geometry_sample_is_stable(
+                first_placement_epoch,
+                final_placement_epoch,
+                first_topology_generation,
+                second_topology_generation,
+                final_topology_generation,
+                first_geometry,
+                second_geometry,
+            ),
             "native physical client geometry or display topology changed while it was sampled"
         );
         Ok(second_geometry)
@@ -5786,6 +5864,21 @@ fn target_monitor_dpi_for_physical_placement(
     Ok(dpi_x)
 }
 
+fn physical_geometry_sample_is_stable(
+    first_placement_epoch: u64,
+    final_placement_epoch: u64,
+    first_topology_generation: u64,
+    second_topology_generation: u64,
+    final_topology_generation: u64,
+    first_geometry: PlatformWindowPhysicalGeometry,
+    second_geometry: PlatformWindowPhysicalGeometry,
+) -> bool {
+    first_placement_epoch == final_placement_epoch
+        && first_topology_generation == second_topology_generation
+        && second_topology_generation == final_topology_generation
+        && first_geometry == second_geometry
+}
+
 fn adjusted_window_rect_for_dpi(
     client_bounds: Bounds<DevicePixels>,
     style: WINDOW_STYLE,
@@ -5949,10 +6042,11 @@ fn set_non_rude_hwnd(hwnd: HWND, non_rude: bool) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ClickState, NativeRect, StyleAndBounds, WindowOpenState,
+        ClickState, NativeRect, ProvisionalPlacementCompensation,
+        ProvisionalPlacementCompensationComponent, StyleAndBounds, WindowOpenState,
         WindowsNativePointerPhysicalFrameScope, WindowsNativePointerPhysicalFrameState,
         adjusted_window_rect_for_dpi, non_rude_hwnd_for_fullscreen,
-        window_rect_from_observed_frame, with_windows_callback,
+        physical_geometry_sample_is_stable, window_rect_from_observed_frame, with_windows_callback,
     };
     use open_gpui::{
         Bounds, DevicePixels, MouseButton, PlatformNativePointerPhysicalFrame,
@@ -5996,6 +6090,46 @@ mod tests {
         assert!(frame_at_144.top < frame_at_96.top);
         assert!(frame_at_144.right > frame_at_96.right);
         assert!(frame_at_144.bottom > frame_at_96.bottom);
+    }
+
+    #[test]
+    fn stable_physical_geometry_sample_rejects_native_placement_aba() {
+        let geometry = PlatformWindowPhysicalGeometry::try_new(
+            Bounds::new(
+                point(DevicePixels(-1_600), DevicePixels(120)),
+                size(DevicePixels(800), DevicePixels(600)),
+            ),
+            1.5,
+        )
+        .unwrap();
+
+        assert!(physical_geometry_sample_is_stable(
+            7, 7, 11, 11, 11, geometry, geometry,
+        ));
+        assert!(!physical_geometry_sample_is_stable(
+            7, 9, 11, 11, 11, geometry, geometry,
+        ));
+    }
+
+    #[test]
+    fn provisional_compensation_requires_physical_geometry_restoration() {
+        let restored = ProvisionalPlacementCompensationComponent::Restored;
+        assert!(
+            ProvisionalPlacementCompensation {
+                rect: restored,
+                z_order: restored,
+                physical_geometry: restored,
+            }
+            .fully_restored()
+        );
+        assert!(
+            !ProvisionalPlacementCompensation {
+                rect: restored,
+                z_order: restored,
+                physical_geometry: ProvisionalPlacementCompensationComponent::AuthorityChanged,
+            }
+            .fully_restored()
+        );
     }
 
     #[test]

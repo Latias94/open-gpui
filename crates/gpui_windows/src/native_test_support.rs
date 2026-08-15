@@ -1812,6 +1812,8 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
         let geometry_before = native_window
             .physical_geometry_from_native()
             .expect("the post-apply rollback baseline should expose physical geometry");
+        let display_before = native_window.state.display.get().display_id;
+        let scale_before = native_window.state.scale_factor.get();
 
         let facts = native_window
             .apply_and_rollback_provisional_final_placement_for_test(&final_request)
@@ -1829,6 +1831,8 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
                 .expect("the compensated provisional placement should restore physical geometry"),
             geometry_before
         );
+        assert_eq!(native_window.state.display.get().display_id, display_before);
+        assert_eq!(native_window.state.scale_factor.get(), scale_before);
     }
 
     native_window
