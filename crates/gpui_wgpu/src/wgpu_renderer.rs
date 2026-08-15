@@ -1,4 +1,11 @@
-use crate::{CompositorGpuHint, WgpuAtlas, WgpuContext, wgpu_atlas::WgpuAtlasPresentationReceipt};
+use crate::{
+    CompositorGpuHint, WgpuAtlas, WgpuContext,
+    surface_lifecycle::{
+        SurfaceAcquireDecision, SurfaceAcquireEvent, SurfaceConfigureTicket, SurfaceRecreateTicket,
+        SurfaceRenderPlan, WgpuSurfaceShutdownProgress, WindowSurfaceRuntime,
+    },
+    wgpu_atlas::WgpuAtlasPresentationReceipt,
+};
 use bytemuck::{Pod, Zeroable};
 use log::warn;
 use open_gpui::{
@@ -67,58 +74,8 @@ struct SurfaceParams {
     clip: PodClipEnvelope,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum SurfaceAcquireRecovery {
-    Reconfigure,
-    Recreate,
-    Skip,
-    Reject,
-}
-
-impl SurfaceAcquireRecovery {
-    fn outcome(self) -> PlatformWindowPresentOutcome {
-        match self {
-            Self::Reconfigure | Self::Recreate | Self::Skip => {
-                PlatformWindowPresentOutcome::Deferred
-            }
-            Self::Reject => PlatformWindowPresentOutcome::Rejected,
-        }
-    }
-}
-
 fn atlas_receipt_failure_outcome(_error: &AtlasTextureLeaseError) -> PlatformWindowPresentOutcome {
     PlatformWindowPresentOutcome::RepaintRequired
-}
-
-fn surface_acquire_recovery(
-    texture: &wgpu::CurrentSurfaceTexture,
-) -> Option<SurfaceAcquireRecovery> {
-    match texture {
-        wgpu::CurrentSurfaceTexture::Success(_) | wgpu::CurrentSurfaceTexture::Suboptimal(_) => {
-            None
-        }
-        wgpu::CurrentSurfaceTexture::Outdated => Some(SurfaceAcquireRecovery::Reconfigure),
-        wgpu::CurrentSurfaceTexture::Lost => Some(SurfaceAcquireRecovery::Recreate),
-        wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
-            Some(SurfaceAcquireRecovery::Skip)
-        }
-        wgpu::CurrentSurfaceTexture::Validation => Some(SurfaceAcquireRecovery::Reject),
-    }
-}
-
-fn recreate_configured_surface_slot<T, E>(
-    configured: bool,
-    surface: &mut Option<T>,
-    create: impl FnOnce() -> Result<T, E>,
-) -> Result<bool, E> {
-    if !configured {
-        return Ok(false);
-    }
-
-    // A lost wgpu surface must be destroyed before another surface is created for the target.
-    drop(surface.take());
-    *surface = Some(create()?);
-    Ok(true)
 }
 
 #[repr(C)]
@@ -290,138 +247,6 @@ impl WgpuResources {
     }
 }
 
-/// Progress of an exact surface-presentation shutdown attempt.
-#[doc(hidden)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum WgpuSurfaceShutdownProgress {
-    /// The exact ticket has claimed the renderer and GPU work is being drained.
-    EnteredDraining,
-    /// The exact ticket remains in flight and must be retried after more GPU progress.
-    Draining,
-    /// Surface-bound resources were released after the exact ticket finished draining.
-    Quiesced,
-    /// Another ticket owns shutdown, or the requested transition was unsafe.
-    Rejected,
-}
-
-enum SurfacePresentationShutdown {
-    Open,
-    Draining {
-        ticket: WindowPresentationShutdownTicket,
-        #[cfg(target_family = "wasm")]
-        web_completion: Option<Arc<AtomicBool>>,
-    },
-    Quiesced {
-        ticket: WindowPresentationShutdownTicket,
-        drain_completed: bool,
-    },
-}
-
-impl Default for SurfacePresentationShutdown {
-    fn default() -> Self {
-        Self::Open
-    }
-}
-
-impl SurfacePresentationShutdown {
-    fn begin(
-        &mut self,
-        shutdown: &WindowPresentationShutdownTicket,
-    ) -> WgpuSurfaceShutdownProgress {
-        if shutdown.snapshot().quiesced() {
-            return if self.is_quiesced_for(shutdown) {
-                WgpuSurfaceShutdownProgress::Quiesced
-            } else {
-                WgpuSurfaceShutdownProgress::Rejected
-            };
-        }
-
-        match self {
-            Self::Open => {
-                *self = Self::Draining {
-                    ticket: shutdown.clone(),
-                    #[cfg(target_family = "wasm")]
-                    web_completion: None,
-                };
-                WgpuSurfaceShutdownProgress::EnteredDraining
-            }
-            Self::Draining { ticket, .. } if ticket.same_authority(shutdown) => {
-                WgpuSurfaceShutdownProgress::Draining
-            }
-            Self::Quiesced { ticket, .. } if ticket.same_authority(shutdown) => {
-                WgpuSurfaceShutdownProgress::Quiesced
-            }
-            Self::Draining { .. } | Self::Quiesced { .. } => WgpuSurfaceShutdownProgress::Rejected,
-        }
-    }
-
-    fn is_active(&self) -> bool {
-        !matches!(self, Self::Open)
-    }
-
-    fn is_draining_for(&self, shutdown: &WindowPresentationShutdownTicket) -> bool {
-        matches!(
-            self,
-            Self::Draining { ticket, .. } if ticket.same_authority(shutdown)
-        )
-    }
-
-    fn is_quiesced_for(&self, shutdown: &WindowPresentationShutdownTicket) -> bool {
-        matches!(
-            self,
-            Self::Quiesced {
-                ticket,
-                drain_completed: true,
-            } if ticket.same_authority(shutdown)
-        ) && shutdown.snapshot().quiesced()
-    }
-
-    fn mark_quiesced(&mut self, shutdown: &WindowPresentationShutdownTicket) -> bool {
-        let snapshot = shutdown.snapshot();
-        if !self.is_draining_for(shutdown) || !snapshot.quiesced() || snapshot.native_terminal() {
-            return false;
-        }
-
-        *self = Self::Quiesced {
-            ticket: shutdown.clone(),
-            drain_completed: true,
-        };
-        true
-    }
-
-    #[cfg(target_family = "wasm")]
-    fn web_completion(
-        &self,
-        shutdown: &WindowPresentationShutdownTicket,
-    ) -> Option<Arc<AtomicBool>> {
-        match self {
-            Self::Draining {
-                ticket,
-                web_completion,
-            } if ticket.same_authority(shutdown) => web_completion.clone(),
-            Self::Open | Self::Draining { .. } | Self::Quiesced { .. } => None,
-        }
-    }
-
-    #[cfg(target_family = "wasm")]
-    fn install_web_completion(
-        &mut self,
-        shutdown: &WindowPresentationShutdownTicket,
-        completion: Arc<AtomicBool>,
-    ) -> bool {
-        match self {
-            Self::Draining {
-                ticket,
-                web_completion,
-            } if ticket.same_authority(shutdown) && web_completion.is_none() => {
-                *web_completion = Some(completion);
-                true
-            }
-            Self::Open | Self::Draining { .. } | Self::Quiesced { .. } => false,
-        }
-    }
-}
-
 pub struct WgpuRenderer {
     /// Shared GPU context for device recovery coordination (unused on WASM).
     #[allow(dead_code)]
@@ -448,10 +273,8 @@ pub struct WgpuRenderer {
     opaque_alpha_mode: wgpu::CompositeAlphaMode,
     max_texture_size: u32,
     last_error: Arc<Mutex<Option<String>>>,
-    failed_frame_count: u32,
     device_lost: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    surface_configured: bool,
-    presentation_shutdown: SurfacePresentationShutdown,
+    surface_lifecycle: WindowSurfaceRuntime,
     last_submission: Option<wgpu::SubmissionIndex>,
 }
 
@@ -600,25 +423,26 @@ impl WgpuRenderer {
 
         let device = Arc::clone(&context.device);
         let max_texture_size = device.limits().max_texture_dimension_2d;
+        let (mut surface_lifecycle, initial_size) =
+            WindowSurfaceRuntime::new(config.size, max_texture_size);
 
-        let requested_width = config.size.width.0 as u32;
-        let requested_height = config.size.height.0 as u32;
-        let clamped_width = requested_width.min(max_texture_size);
-        let clamped_height = requested_height.min(max_texture_size);
-
-        if clamped_width != requested_width || clamped_height != requested_height {
+        if initial_size.was_clamped {
             warn!(
                 "Requested surface size ({}, {}) exceeds maximum texture dimension {}. \
                  Clamping to ({}, {}). Window content may not fill the entire window.",
-                requested_width, requested_height, max_texture_size, clamped_width, clamped_height
+                config.size.width.0.max(0),
+                config.size.height.0.max(0),
+                max_texture_size,
+                initial_size.width,
+                initial_size.height
             );
         }
 
         let surface_config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface_format,
-            width: clamped_width.max(1),
-            height: clamped_height.max(1),
+            width: initial_size.width,
+            height: initial_size.height,
             present_mode: config
                 .preferred_present_mode
                 .filter(|mode| surface_caps.present_modes.contains(mode))
@@ -628,9 +452,13 @@ impl WgpuRenderer {
             view_formats: vec![],
             color_space: wgpu::SurfaceColorSpace::Auto,
         };
-        // Configure the surface immediately. The adapter selection process already validated
-        // that this adapter can successfully configure this surface.
-        surface.configure(&context.device, &surface_config);
+        if let SurfaceRenderPlan::Configure(ticket) = surface_lifecycle.prepare_render() {
+            surface.configure(&context.device, &surface_config);
+            anyhow::ensure!(
+                surface_lifecycle.accept_configuration(ticket),
+                "initial WGPU surface configuration ticket became stale"
+            );
+        }
 
         let queue = Arc::clone(&context.queue);
         let dual_source_blending = context.supports_dual_source_blending();
@@ -768,10 +596,8 @@ impl WgpuRenderer {
             opaque_alpha_mode,
             max_texture_size,
             last_error,
-            failed_frame_count: 0,
             device_lost: context.device_lost_flag(),
-            surface_configured: true,
-            presentation_shutdown: SurfacePresentationShutdown::default(),
+            surface_lifecycle,
             last_submission: None,
         })
     }
@@ -1282,56 +1108,24 @@ impl WgpuRenderer {
     }
 
     pub fn update_drawable_size(&mut self, size: Size<DevicePixels>) {
-        if self.presentation_shutdown.is_active() {
+        if self.surface_lifecycle.shutdown_active() {
             return;
         }
 
-        let width = size.width.0 as u32;
-        let height = size.height.0 as u32;
-
-        if width != self.surface_config.width || height != self.surface_config.height {
-            let clamped_width = width.min(self.max_texture_size);
-            let clamped_height = height.min(self.max_texture_size);
-
-            if clamped_width != width || clamped_height != height {
-                warn!(
-                    "Requested surface size ({}, {}) exceeds maximum texture dimension {}. \
-                     Clamping to ({}, {}). Window content may not fill the entire window.",
-                    width, height, self.max_texture_size, clamped_width, clamped_height
-                );
-            }
-
-            self.surface_config.width = clamped_width.max(1);
-            self.surface_config.height = clamped_height.max(1);
-            let surface_config = self.surface_config.clone();
-
-            let resources = self.resources_mut();
-
-            // Wait for any in-flight GPU work to complete before destroying textures
-            if let Err(e) = resources.device.poll(wgpu::PollType::Wait {
-                submission_index: None,
-                timeout: None,
-            }) {
-                warn!("Failed to poll device during resize: {e:?}");
-            }
-
-            // Destroy old textures before allocating new ones to avoid GPU memory spikes
-            if let Some(ref texture) = resources.path_intermediate_texture {
-                texture.destroy();
-            }
-            if let Some(ref texture) = resources.path_msaa_texture {
-                texture.destroy();
-            }
-
-            if let Some(surface) = &resources.surface {
-                surface.configure(&resources.device, &surface_config);
-            }
-
-            // Invalidate intermediate textures - they will be lazily recreated
-            // in draw() after we confirm the surface is healthy. This avoids
-            // panics when the device/surface is in an invalid state during resize.
-            resources.invalidate_intermediate_textures();
+        let requested = self.surface_lifecycle.request_resize(size);
+        if requested.was_clamped {
+            warn!(
+                "Requested surface size ({}, {}) exceeds maximum texture dimension {}. \
+                 Clamping to ({}, {}). Window content may not fill the entire window.",
+                size.width.0.max(0),
+                size.height.0.max(0),
+                self.max_texture_size,
+                requested.width,
+                requested.height
+            );
         }
+        self.surface_config.width = requested.width;
+        self.surface_config.height = requested.height;
     }
 
     fn ensure_intermediate_textures(&mut self) {
@@ -1367,7 +1161,7 @@ impl WgpuRenderer {
     }
 
     pub fn update_transparency(&mut self, transparent: bool) {
-        if self.presentation_shutdown.is_active() {
+        if self.surface_lifecycle.shutdown_active() {
             return;
         }
 
@@ -1382,10 +1176,8 @@ impl WgpuRenderer {
             let surface_config = self.surface_config.clone();
             let path_sample_count = self.rendering_params.path_sample_count;
             let dual_source_blending = self.dual_source_blending;
+            self.surface_lifecycle.request_reconfigure();
             let resources = self.resources_mut();
-            if let Some(surface) = &resources.surface {
-                surface.configure(&resources.device, &surface_config);
-            }
             resources.pipelines = Self::create_pipelines(
                 &resources.device,
                 &resources.bind_group_layouts,
@@ -1426,112 +1218,140 @@ impl WgpuRenderer {
         self.max_texture_size
     }
 
-    fn reconfigure_surface(&mut self) {
-        if self.presentation_shutdown.is_active() {
-            return;
+    fn configure_surface(&mut self, ticket: SurfaceConfigureTicket) -> bool {
+        if self.surface_lifecycle.shutdown_active() {
+            return false;
         }
 
+        self.surface_config.width = ticket.extent.width;
+        self.surface_config.height = ticket.extent.height;
         let surface_config = self.surface_config.clone();
         let resources = self.resources_mut();
-        if let Some(surface) = &resources.surface {
-            surface.configure(&resources.device, &surface_config);
-        }
+        let Some(surface) = resources.surface.as_ref() else {
+            return false;
+        };
+        surface.configure(&resources.device, &surface_config);
+        resources.invalidate_intermediate_textures();
+        self.surface_lifecycle.accept_configuration(ticket)
     }
 
-    fn recreate_surface(&mut self) -> anyhow::Result<()> {
-        if self.presentation_shutdown.is_active() {
-            return Ok(());
-        }
+    fn recreate_surface(&mut self, ticket: SurfaceRecreateTicket) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !self.surface_lifecycle.shutdown_active(),
+            "cannot recreate a draining presentation surface"
+        );
 
-        let configured = self.surface_configured;
-
-        let surface_factory = &self.surface_factory;
-        let surface_config = &self.surface_config;
-        let resources = self
-            .resources
-            .as_mut()
-            .expect("GPU resources not available");
-        let device = &resources.device;
-        let recreated = recreate_configured_surface_slot(
-            configured,
-            &mut resources.surface,
-            || -> anyhow::Result<_> {
-                let surface = surface_factory.create()?;
-                surface.configure(device, surface_config);
-                Ok(surface)
-            },
-        )?;
-        if recreated {
+        self.surface_config.width = ticket.extent.width;
+        self.surface_config.height = ticket.extent.height;
+        let surface_config = self.surface_config.clone();
+        {
+            let resources = self
+                .resources
+                .as_mut()
+                .expect("GPU resources not available");
+            // A lost WGPU surface must be destroyed before another surface is created for the target.
+            drop(resources.surface.take());
             resources.invalidate_intermediate_textures();
+        }
+        let surface = self.surface_factory.create()?;
+        {
+            let resources = self
+                .resources
+                .as_mut()
+                .expect("GPU resources not available");
+            surface.configure(&resources.device, &surface_config);
+            resources.surface = Some(surface);
+        }
+        if !self.surface_lifecycle.accept_recreation(ticket) {
+            if let Some(resources) = self.resources.as_mut() {
+                drop(resources.surface.take());
+                resources.invalidate_intermediate_textures();
+            }
+            self.surface_lifecycle.reject();
+            anyhow::bail!("surface recreation ticket became stale");
         }
         Ok(())
     }
 
-    fn handle_surface_acquire_failure(
-        &mut self,
-        failure: &wgpu::CurrentSurfaceTexture,
-    ) -> PlatformWindowPresentOutcome {
-        let recovery = surface_acquire_recovery(failure)
-            .expect("successful surface acquisition is handled before recovery");
-
-        match recovery {
-            SurfaceAcquireRecovery::Reconfigure => self.reconfigure_surface(),
-            SurfaceAcquireRecovery::Recreate => {
-                if let Err(error) = self.recreate_surface() {
-                    warn!("Failed to recreate lost surface; will retry next frame: {error}");
+    fn prepare_surface_for_draw(&mut self) -> Option<PlatformWindowPresentOutcome> {
+        loop {
+            match self.surface_lifecycle.prepare_render() {
+                SurfaceRenderPlan::Deferred => {
+                    return Some(PlatformWindowPresentOutcome::Deferred);
+                }
+                SurfaceRenderPlan::Rejected => {
+                    return Some(PlatformWindowPresentOutcome::Rejected);
+                }
+                SurfaceRenderPlan::Configure(ticket) => {
+                    if !self.configure_surface(ticket) {
+                        self.surface_lifecycle.reject();
+                        return Some(PlatformWindowPresentOutcome::Rejected);
+                    }
+                }
+                SurfaceRenderPlan::Recreate(ticket) => {
+                    if let Err(error) = self.recreate_surface(ticket) {
+                        self.surface_lifecycle.reject_recreation(ticket);
+                        log::error!("Failed to recreate lost WGPU surface: {error}");
+                        return Some(PlatformWindowPresentOutcome::Rejected);
+                    }
+                }
+                SurfaceRenderPlan::Acquire => {
+                    if self.resources().surface.is_some() {
+                        return None;
+                    }
+                    self.surface_lifecycle.reject();
+                    return Some(PlatformWindowPresentOutcome::Rejected);
                 }
             }
-            SurfaceAcquireRecovery::Skip => {}
-            SurfaceAcquireRecovery::Reject => {
-                *self.last_error.lock().unwrap() =
-                    Some("Surface texture validation error".to_string());
+        }
+    }
+
+    fn observe_surface_acquire(&mut self, event: SurfaceAcquireEvent) -> SurfaceAcquireDecision {
+        self.surface_lifecycle.observe_acquire(event)
+    }
+
+    fn settle_surface_acquire_failure(
+        &mut self,
+        event: SurfaceAcquireEvent,
+    ) -> PlatformWindowPresentOutcome {
+        match self.observe_surface_acquire(event) {
+            SurfaceAcquireDecision::Deferred => PlatformWindowPresentOutcome::Deferred,
+            SurfaceAcquireDecision::Rejected => {
+                if event == SurfaceAcquireEvent::Validation {
+                    log::error!("WGPU surface texture validation failed");
+                }
+                PlatformWindowPresentOutcome::Rejected
+            }
+            SurfaceAcquireDecision::Recreate(ticket) => {
+                if let Err(error) = self.recreate_surface(ticket) {
+                    self.surface_lifecycle.reject_recreation(ticket);
+                    log::error!("Failed to recreate lost WGPU surface: {error}");
+                    PlatformWindowPresentOutcome::Rejected
+                } else {
+                    PlatformWindowPresentOutcome::Deferred
+                }
+            }
+            SurfaceAcquireDecision::UseFrame => {
+                debug_assert!(false, "surface failure cannot produce a usable frame");
+                PlatformWindowPresentOutcome::Rejected
             }
         }
-
-        recovery.outcome()
     }
 
     pub fn draw(&mut self, scene: &Scene) -> PlatformWindowPresentOutcome {
-        if self.presentation_shutdown.is_active() {
+        if self.surface_lifecycle.shutdown_active() {
             return PlatformWindowPresentOutcome::Deferred;
         }
 
-        // Bail out early if the surface has been unconfigured (e.g. during
-        // Android background/rotation transitions).  Attempting to acquire
-        // a texture from an unconfigured surface can block indefinitely on
-        // some drivers (Adreno).
-        if !self.surface_configured {
-            return PlatformWindowPresentOutcome::Deferred;
-        }
-
-        if self.resources().surface.is_none() {
-            if let Err(error) = self.recreate_surface() {
-                warn!("Failed to recreate lost surface; will retry next frame: {error}");
-            }
-            return PlatformWindowPresentOutcome::Deferred;
+        if let Some(outcome) = self.prepare_surface_for_draw() {
+            return outcome;
         }
 
         let last_error = self.last_error.lock().unwrap().take();
         if let Some(error) = last_error {
-            self.failed_frame_count += 1;
-            log::error!(
-                "GPU error during frame (failure {} of 10): {error}",
-                self.failed_frame_count
-            );
-
-            // TBD. Does retrying more actually help?
-            if self.failed_frame_count > 10 {
-                panic!("Too many consecutive GPU errors. Last error: {error}");
-            } else if self.failed_frame_count > 5 {
-                if let Some(res) = self.resources.as_mut() {
-                    res.invalidate_intermediate_textures();
-                }
-                self.atlas.clear();
-                self.failed_frame_count = 0;
-                return PlatformWindowPresentOutcome::RepaintRequired;
-            }
-        } else {
-            self.failed_frame_count = 0;
+            log::error!("Uncaptured WGPU error terminated the window surface: {error}");
+            self.surface_lifecycle.reject();
+            return PlatformWindowPresentOutcome::Rejected;
         }
 
         let Some(clip_shape_count) = self.prepare_clip_buffer(scene.clip_shapes()) else {
@@ -1557,26 +1377,43 @@ impl WgpuRenderer {
             }
         };
 
-        let frame = match self
+        let acquired = self
             .resources()
             .surface
             .as_ref()
             .expect("configured surface is available")
-            .get_current_texture()
-        {
-            wgpu::CurrentSurfaceTexture::Success(frame) => frame,
-            wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
-                // Textures must be destroyed before the surface can be reconfigured.
-                drop(frame);
-                self.reconfigure_surface();
-                return PlatformWindowPresentOutcome::Deferred;
+            .get_current_texture();
+        let frame = match acquired {
+            wgpu::CurrentSurfaceTexture::Success(frame) => {
+                if self.observe_surface_acquire(SurfaceAcquireEvent::Success)
+                    != SurfaceAcquireDecision::UseFrame
+                {
+                    return PlatformWindowPresentOutcome::Rejected;
+                }
+                frame
             }
-            failure @ (wgpu::CurrentSurfaceTexture::Outdated
-            | wgpu::CurrentSurfaceTexture::Timeout
-            | wgpu::CurrentSurfaceTexture::Occluded
-            | wgpu::CurrentSurfaceTexture::Lost
-            | wgpu::CurrentSurfaceTexture::Validation) => {
-                return self.handle_surface_acquire_failure(&failure);
+            wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
+                if self.observe_surface_acquire(SurfaceAcquireEvent::Suboptimal)
+                    != SurfaceAcquireDecision::UseFrame
+                {
+                    return PlatformWindowPresentOutcome::Rejected;
+                }
+                frame
+            }
+            wgpu::CurrentSurfaceTexture::Outdated => {
+                return self.settle_surface_acquire_failure(SurfaceAcquireEvent::Outdated);
+            }
+            wgpu::CurrentSurfaceTexture::Timeout => {
+                return self.settle_surface_acquire_failure(SurfaceAcquireEvent::Timeout);
+            }
+            wgpu::CurrentSurfaceTexture::Occluded => {
+                return self.settle_surface_acquire_failure(SurfaceAcquireEvent::Occluded);
+            }
+            wgpu::CurrentSurfaceTexture::Lost => {
+                return self.settle_surface_acquire_failure(SurfaceAcquireEvent::Lost);
+            }
+            wgpu::CurrentSurfaceTexture::Validation => {
+                return self.settle_surface_acquire_failure(SurfaceAcquireEvent::Validation);
             }
         };
 
@@ -2246,11 +2083,11 @@ impl WgpuRenderer {
     /// (e.g. Android `TerminateWindow`) but you intend to re-create the
     /// surface later without losing cached atlas textures.
     pub fn unconfigure_surface(&mut self) {
-        if self.presentation_shutdown.is_active() {
+        if self.surface_lifecycle.shutdown_active() {
             return;
         }
 
-        self.surface_configured = false;
+        self.surface_lifecycle.detach_surface();
         self.last_submission = None;
         // Drop surface-bound resources before the native window becomes invalid.
         if let Some(res) = self.resources.as_mut() {
@@ -2275,7 +2112,7 @@ impl WgpuRenderer {
         instance: &wgpu::Instance,
     ) -> anyhow::Result<()> {
         anyhow::ensure!(
-            !self.presentation_shutdown.is_active(),
+            !self.surface_lifecycle.shutdown_active(),
             "cannot replace a quiesced presentation surface"
         );
 
@@ -2291,28 +2128,40 @@ impl WgpuRenderer {
             SurfaceFactory::for_raw_window(instance.clone(), window_handle.as_raw());
         let surface = surface_factory.create()?;
 
-        let width = (config.size.width.0 as u32).max(1);
-        let height = (config.size.height.0 as u32).max(1);
-
         let alpha_mode = if config.transparent {
             self.transparent_alpha_mode
         } else {
             self.opaque_alpha_mode
         };
 
-        self.surface_config.width = width;
-        self.surface_config.height = height;
         self.surface_config.alpha_mode = alpha_mode;
         if let Some(mode) = config.preferred_present_mode {
             self.surface_config.present_mode = mode;
         }
+
+        let requested = self
+            .surface_lifecycle
+            .attach_surface(config.size)
+            .ok_or_else(|| anyhow::anyhow!("cannot attach a terminal WGPU surface"))?;
+        if requested.was_clamped {
+            warn!(
+                "Requested replacement surface size ({}, {}) exceeds maximum texture dimension {}. \
+                 Clamping to ({}, {}). Window content may not fill the entire window.",
+                config.size.width.0.max(0),
+                config.size.height.0.max(0),
+                self.max_texture_size,
+                requested.width,
+                requested.height
+            );
+        }
+        self.surface_config.width = requested.width;
+        self.surface_config.height = requested.height;
 
         {
             let res = self
                 .resources
                 .as_mut()
                 .expect("GPU resources not available");
-            surface.configure(&res.device, &self.surface_config);
             res.surface = Some(surface);
 
             // Invalidate intermediate textures — they'll be recreated lazily.
@@ -2320,7 +2169,6 @@ impl WgpuRenderer {
         }
 
         self.surface_factory = surface_factory;
-        self.surface_configured = true;
         self.last_submission = None;
 
         Ok(())
@@ -2330,6 +2178,7 @@ impl WgpuRenderer {
         // Release surface-bound GPU resources eagerly so the underlying native
         // window can be destroyed before the renderer itself is dropped.
         self.resources.take();
+        self.surface_lifecycle.reject();
         self.last_submission = None;
     }
 
@@ -2342,7 +2191,7 @@ impl WgpuRenderer {
         &mut self,
         shutdown: &WindowPresentationShutdownTicket,
     ) -> WgpuSurfaceShutdownProgress {
-        self.presentation_shutdown.begin(shutdown)
+        self.surface_lifecycle.begin_shutdown(shutdown)
     }
 
     #[cfg(not(target_family = "wasm"))]
@@ -2393,17 +2242,17 @@ impl WgpuRenderer {
         &mut self,
         shutdown: &WindowPresentationShutdownTicket,
     ) -> WgpuSurfaceShutdownProgress {
-        if self.presentation_shutdown.is_quiesced_for(shutdown) {
+        if self.surface_lifecycle.is_quiesced_for(shutdown) {
             return self.shutdown_progress_for(shutdown);
         }
-        if !self.presentation_shutdown.is_draining_for(shutdown) {
+        if !self.surface_lifecycle.is_draining_for(shutdown) {
             return WgpuSurfaceShutdownProgress::Rejected;
         }
         if self.last_submission.is_none() {
             return self.finish_surface_shutdown(shutdown);
         }
 
-        if let Some(completion) = self.presentation_shutdown.web_completion(shutdown) {
+        if let Some(completion) = self.surface_lifecycle.web_completion(shutdown) {
             return if completion.load(Ordering::Acquire) {
                 self.finish_surface_shutdown(shutdown)
             } else {
@@ -2420,7 +2269,7 @@ impl WgpuRenderer {
         };
         let completion = Arc::new(AtomicBool::new(false));
         if !self
-            .presentation_shutdown
+            .surface_lifecycle
             .install_web_completion(shutdown, completion.clone())
         {
             return WgpuSurfaceShutdownProgress::Rejected;
@@ -2435,19 +2284,24 @@ impl WgpuRenderer {
         &mut self,
         shutdown: &WindowPresentationShutdownTicket,
     ) -> WgpuSurfaceShutdownProgress {
-        if !self.presentation_shutdown.is_draining_for(shutdown)
+        if !self.surface_lifecycle.is_draining_for(shutdown)
             || shutdown.snapshot().native_terminal()
         {
             return WgpuSurfaceShutdownProgress::Rejected;
         }
 
-        self.surface_configured = false;
         if let Some(resources) = self.resources.as_mut() {
             drop(resources.surface.take());
             resources.invalidate_intermediate_textures();
         }
+        if !self
+            .surface_lifecycle
+            .release_surface_for_shutdown(shutdown)
+        {
+            return WgpuSurfaceShutdownProgress::Rejected;
+        }
 
-        if !shutdown.acknowledge_quiesced() || !self.presentation_shutdown.mark_quiesced(shutdown) {
+        if !shutdown.acknowledge_quiesced() || !self.surface_lifecycle.mark_quiesced(shutdown) {
             return WgpuSurfaceShutdownProgress::Rejected;
         }
         self.last_submission = None;
@@ -2470,21 +2324,20 @@ impl WgpuRenderer {
     /// Returns whether the renderer has accepted any presentation shutdown ticket.
     #[doc(hidden)]
     pub fn presentation_shutdown_active(&self) -> bool {
-        self.presentation_shutdown.is_active()
+        self.surface_lifecycle.shutdown_active()
     }
 
     /// Returns whether this exact ticket is still draining submitted GPU work.
     #[doc(hidden)]
     pub fn is_draining_for(&self, shutdown: &WindowPresentationShutdownTicket) -> bool {
-        self.presentation_shutdown.is_draining_for(shutdown)
+        self.surface_lifecycle.is_draining_for(shutdown)
     }
 
     /// Returns whether this exact ticket completed GPU draining and released the WGPU surface.
     #[doc(hidden)]
     pub fn is_quiesced_for(&self, shutdown: &WindowPresentationShutdownTicket) -> bool {
-        self.presentation_shutdown.is_quiesced_for(shutdown)
+        self.surface_lifecycle.is_quiesced_for(shutdown)
             && self.last_submission.is_none()
-            && !self.surface_configured
             && self
                 .resources
                 .as_ref()
@@ -2498,19 +2351,18 @@ impl WgpuRenderer {
     /// surface; an in-flight or rejected ticket fails closed.
     #[doc(hidden)]
     pub fn surface_owner_release_is_safe(&self) -> bool {
-        match &self.presentation_shutdown {
-            SurfacePresentationShutdown::Open => self.last_submission.is_none(),
-            SurfacePresentationShutdown::Draining { .. } => false,
-            SurfacePresentationShutdown::Quiesced { ticket, .. } => {
-                let ticket = ticket.clone();
-                self.is_quiesced_for(&ticket)
-            }
-        }
+        self.surface_lifecycle
+            .owner_release_is_safe(self.last_submission.is_some())
+            && (!self.surface_lifecycle.shutdown_active()
+                || self
+                    .resources
+                    .as_ref()
+                    .is_none_or(|resources| resources.surface.is_none()))
     }
 
     /// Returns true if the GPU device was lost and recovery is needed.
     pub fn device_lost(&self) -> bool {
-        !self.presentation_shutdown.is_active()
+        !self.surface_lifecycle.shutdown_active()
             && self.device_lost.load(std::sync::atomic::Ordering::SeqCst)
     }
 
@@ -2527,7 +2379,7 @@ impl WgpuRenderer {
         W: HasWindowHandle + HasDisplayHandle + std::fmt::Debug + Send + Sync + Clone + 'static,
     {
         anyhow::ensure!(
-            !self.presentation_shutdown.is_active(),
+            !self.surface_lifecycle.shutdown_active(),
             "cannot recover a quiesced presentation surface"
         );
 
@@ -2549,12 +2401,6 @@ impl WgpuRenderer {
             // Drop old resources to release Arc<Device>/Arc<Queue> and GPU resources
             self.resources = None;
             *gpu_context.borrow_mut() = None;
-
-            // Wait briefly for the GPU driver to stabilize, then try to
-            // recreate the context without software renderers. If this fails
-            // the caller should request another frame and retry — the real GPU
-            // may need more time to come back (e.g. after suspend/resume).
-            std::thread::sleep(std::time::Duration::from_millis(350));
 
             let instance = WgpuContext::instance(Box::new(window.clone()));
             let surface_factory =
@@ -2650,99 +2496,7 @@ impl RenderingParameters {
 #[cfg(test)]
 mod abi_layout_tests {
     use super::*;
-    use std::{
-        cell::Cell,
-        mem::{align_of, offset_of, size_of},
-    };
-
-    struct SurfaceDropProbe<'a> {
-        drop_count: &'a Cell<usize>,
-    }
-
-    impl Drop for SurfaceDropProbe<'_> {
-        fn drop(&mut self) {
-            self.drop_count.set(self.drop_count.get() + 1);
-        }
-    }
-
-    #[test]
-    fn surface_shutdown_requires_the_same_exact_ticket() {
-        let ticket = WindowPresentationShutdownTicket::new(open_gpui::WindowId::from(7), 1);
-        let same_ticket = ticket.clone();
-        let same_generation_but_distinct_ticket =
-            WindowPresentationShutdownTicket::new(open_gpui::WindowId::from(7), 1);
-        let different_generation =
-            WindowPresentationShutdownTicket::new(open_gpui::WindowId::from(7), 2);
-
-        let mut shutdown = SurfacePresentationShutdown::default();
-        assert_eq!(
-            shutdown.begin(&ticket),
-            WgpuSurfaceShutdownProgress::EnteredDraining
-        );
-        assert_eq!(
-            shutdown.begin(&same_ticket),
-            WgpuSurfaceShutdownProgress::Draining
-        );
-        assert_eq!(
-            shutdown.begin(&same_generation_but_distinct_ticket),
-            WgpuSurfaceShutdownProgress::Rejected
-        );
-        assert_eq!(
-            shutdown.begin(&different_generation),
-            WgpuSurfaceShutdownProgress::Rejected
-        );
-        assert!(shutdown.is_draining_for(&same_ticket));
-        assert!(!shutdown.is_quiesced_for(&same_ticket));
-        assert!(!shutdown.mark_quiesced(&same_ticket));
-
-        assert!(same_generation_but_distinct_ticket.acknowledge_quiesced());
-        assert!(!shutdown.mark_quiesced(&same_generation_but_distinct_ticket));
-        assert!(shutdown.is_draining_for(&same_ticket));
-
-        assert!(ticket.acknowledge_quiesced());
-        assert!(shutdown.mark_quiesced(&same_ticket));
-        assert!(shutdown.is_quiesced_for(&same_ticket));
-        assert_eq!(
-            shutdown.begin(&same_ticket),
-            WgpuSurfaceShutdownProgress::Quiesced
-        );
-    }
-
-    #[test]
-    fn surface_acquisition_failures_select_exact_recovery() {
-        for (failure, expected_recovery, expected_outcome) in [
-            (
-                wgpu::CurrentSurfaceTexture::Lost,
-                SurfaceAcquireRecovery::Recreate,
-                PlatformWindowPresentOutcome::Deferred,
-            ),
-            (
-                wgpu::CurrentSurfaceTexture::Outdated,
-                SurfaceAcquireRecovery::Reconfigure,
-                PlatformWindowPresentOutcome::Deferred,
-            ),
-            (
-                wgpu::CurrentSurfaceTexture::Timeout,
-                SurfaceAcquireRecovery::Skip,
-                PlatformWindowPresentOutcome::Deferred,
-            ),
-            (
-                wgpu::CurrentSurfaceTexture::Occluded,
-                SurfaceAcquireRecovery::Skip,
-                PlatformWindowPresentOutcome::Deferred,
-            ),
-            (
-                wgpu::CurrentSurfaceTexture::Validation,
-                SurfaceAcquireRecovery::Reject,
-                PlatformWindowPresentOutcome::Rejected,
-            ),
-        ] {
-            let recovery = surface_acquire_recovery(&failure)
-                .expect("each case represents a surface acquisition failure");
-            assert_eq!(recovery, expected_recovery);
-            assert_eq!(recovery.outcome(), expected_outcome);
-        }
-    }
+    use std::mem::{align_of, offset_of, size_of};
 
     #[test]
     fn stale_atlas_receipt_requires_a_fresh_framework_scene() {
@@ -2761,76 +2515,6 @@ mod abi_layout_tests {
             atlas_receipt_failure_outcome(&error),
             PlatformWindowPresentOutcome::RepaintRequired
         );
-    }
-
-    #[test]
-    fn surface_recreation_drops_the_old_surface_before_create() {
-        let drop_count = Cell::new(0);
-        let mut surface = Some(SurfaceDropProbe {
-            drop_count: &drop_count,
-        });
-
-        let recreated = recreate_configured_surface_slot(true, &mut surface, || {
-            assert_eq!(drop_count.get(), 1);
-            Ok::<_, ()>(SurfaceDropProbe {
-                drop_count: &drop_count,
-            })
-        })
-        .expect("surface recreation should succeed");
-
-        assert!(recreated);
-        assert!(surface.is_some());
-        assert_eq!(drop_count.get(), 1);
-    }
-
-    #[test]
-    fn failed_surface_recreation_leaves_an_empty_slot_and_can_retry() {
-        let drop_count = Cell::new(0);
-        let create_attempts = Cell::new(0);
-        let mut surface = Some(SurfaceDropProbe {
-            drop_count: &drop_count,
-        });
-
-        let first_attempt = recreate_configured_surface_slot(true, &mut surface, || {
-            create_attempts.set(create_attempts.get() + 1);
-            Err::<SurfaceDropProbe<'_>, _>("surface creation failed")
-        });
-
-        assert_eq!(first_attempt, Err("surface creation failed"));
-        assert!(surface.is_none());
-        assert_eq!(drop_count.get(), 1);
-
-        let recreated = recreate_configured_surface_slot(true, &mut surface, || {
-            create_attempts.set(create_attempts.get() + 1);
-            Ok::<_, &'static str>(SurfaceDropProbe {
-                drop_count: &drop_count,
-            })
-        })
-        .expect("a later surface recreation should succeed");
-
-        assert!(recreated);
-        assert!(surface.is_some());
-        assert_eq!(create_attempts.get(), 2);
-    }
-
-    #[test]
-    fn unconfigured_surface_slots_do_not_recreate_automatically() {
-        let drop_count = Cell::new(0);
-        let create_attempts = Cell::new(0);
-        let mut surface = None;
-
-        let recreated = recreate_configured_surface_slot(false, &mut surface, || {
-            create_attempts.set(create_attempts.get() + 1);
-            Ok::<_, ()>(SurfaceDropProbe {
-                drop_count: &drop_count,
-            })
-        })
-        .expect("an unconfigured surface should be skipped");
-
-        assert!(!recreated);
-        assert!(surface.is_none());
-        assert_eq!(create_attempts.get(), 0);
-        assert_eq!(drop_count.get(), 0);
     }
 
     #[test]
