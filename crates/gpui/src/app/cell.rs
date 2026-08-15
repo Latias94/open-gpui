@@ -2847,13 +2847,19 @@ impl AppCell {
                                     )),
                                 ),
                             );
-                            if let PlatformFocusedWindow::Window(focused_window) =
-                                self.platform.focused_window()
-                            {
-                                self.observe_native_window_activation_exact_positive(
-                                    focused_window.window_id(),
-                                    sequence,
-                                );
+                            let focused_window = match self.platform.focused_window() {
+                                PlatformFocusedWindow::Window(focused_window) => {
+                                    Some(focused_window.window_id())
+                                }
+                                PlatformFocusedWindow::NoWindow
+                                | PlatformFocusedWindow::Unavailable => None,
+                            };
+                            if let Some(delivery) = self.native_window_activations.observe_readback(
+                                window_id,
+                                request_generation,
+                                focused_window,
+                            ) {
+                                self.enqueue_window_activation_delivery(delivery);
                             }
                             terminal.settle(NativeBoundaryDisposition::DELIVERED);
                         }

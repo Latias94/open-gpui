@@ -423,24 +423,31 @@ fn settle_and_close_windows_quietly(
     effects: Vec<DockViewportWindowCloseEffect>,
     cx: &mut App,
 ) {
+    let mut pending = Vec::new();
     for effect in effects {
         let should_close = match runtime.try_borrow_mut() {
             Ok(mut runtime) => runtime.settle_window_retirement(effect.retirement()),
             Err(error) => {
-                // Native closure is the fail-safe terminal action. Keeping a stale logical
-                // retirement is preferable to leaking the HWND or panicking during reentry; the
-                // runtime is discarded by shutdown or reconciled by the native terminal event.
-                log::error!(
+                log::debug!(
                     "dock viewport retirement was reentered while the runtime was borrowed; \
-                     closing the native window fail-safe: {error}"
+                     deferring the exact retirement effect: {error}"
                 );
-                true
+                pending.push(effect);
+                continue;
             }
         };
         if should_close {
             close_window_quietly(effect.window(), cx);
         }
     }
+    if pending.is_empty() {
+        return;
+    }
+
+    let runtime = runtime.clone();
+    cx.defer_after_or_shutdown_critical_before_window_registry_clear(Duration::ZERO, move |cx| {
+        settle_and_close_windows_quietly(&runtime, pending, cx)
+    });
 }
 
 fn close_windows_after_current_effect(
@@ -708,14 +715,17 @@ pub(crate) fn refresh_viewport_window_effects_excluding<C: open_gpui::AppContext
 mod tests {
     use super::{
         DockViewportCommittedWindowEffects, DockViewportCommittedWindowEffectsPreparation,
-        DockViewportRuntimeUpdate, DockViewportWindowEffects, unique_windows,
-        unique_windows_excluding,
+        DockViewportRuntimeUpdate, DockViewportWindowEffects, settle_and_close_windows_quietly,
+        unique_windows, unique_windows_excluding,
     };
     use crate::{
-        DockViewportRuntimeIdentity, DockViewportRuntimeWorkContext,
+        DockController, DockGraph, DockSpaceId, DockViewportRuntime, DockViewportRuntimeIdentity,
+        DockViewportRuntimeLineage, DockViewportRuntimeWorkContext, DockWorkspace,
         surface::DockSurfaceChangeCategory, viewport_test_support::handle,
         workspace_drop_transaction::DockWorkspaceLockedPayloadDropCommitId,
     };
+    use open_gpui::{AppContext as _, Empty, TestAppContext, px, size};
+    use std::{cell::RefCell, rc::Rc};
 
     #[test]
     fn committed_window_effects_replay_exact_acceptance_after_interrupted_transfer() {
@@ -835,6 +845,44 @@ mod tests {
                 DockSurfaceChangeCategory::ViewportTopology,
                 DockSurfaceChangeCategory::ObservedViewportPlacement,
             ]
+        );
+    }
+
+    #[open_gpui::test]
+    fn runtime_busy_retirement_waits_for_authority_before_closing(cx: &mut TestAppContext) {
+        let controller = cx.new(|_| {
+            DockController::new(DockWorkspace::new(
+                DockSpaceId::from("main"),
+                DockGraph::new(),
+            ))
+        });
+        let runtime = Rc::new(RefCell::new(DockViewportRuntime::new(controller)));
+        let window = cx.open_window(size(px(320.0), px(200.0)), |_, _| Empty);
+        let any_window = window.into();
+        let effect = {
+            let mut runtime = runtime.borrow_mut();
+            let attempt = runtime
+                .begin_window_open_attempt(any_window, DockViewportRuntimeLineage::Unmanaged)
+                .expect("the test window should reserve one runtime ownership generation");
+            runtime
+                .retire_window_open_attempt_for_close(attempt, any_window)
+                .expect("the exact opening generation should produce one retirement effect")
+        };
+
+        let runtime_borrow = runtime.borrow_mut();
+        cx.update(|app| {
+            settle_and_close_windows_quietly(&runtime, vec![effect], app);
+        });
+        assert!(
+            window.update(cx, |_, _, _| ()).is_ok(),
+            "a busy runtime must not trigger native close before its retirement authority settles"
+        );
+
+        drop(runtime_borrow);
+        cx.run_until_parked();
+        assert!(
+            window.update(cx, |_, _, _| ()).is_err(),
+            "the exact retirement effect must close after the runtime borrow is released"
         );
     }
 }

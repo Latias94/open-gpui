@@ -1706,21 +1706,10 @@ impl PlatformWindow for MacWindow {
     }
 
     fn map_window(&mut self) -> anyhow::Result<()> {
-        let (native_window, show) = {
-            let mut state = self.0.lock();
-            if state.initial_presentation.mapped {
-                return Ok(());
-            }
+        let mut state = self.0.lock();
+        if !state.initial_presentation.mapped {
             state.initial_presentation.mapped = true;
-            (state.native_window, state.initial_presentation.show)
-        };
-
-        if show {
-            unsafe {
-                let _: () = msg_send![native_window, orderFront: nil];
-            }
         }
-
         Ok(())
     }
 

@@ -617,6 +617,37 @@ impl NativeWindowActivationAuthority {
         }
     }
 
+    /// Settles an accepted activation only when the post-dispatch readback already names the
+    /// exact target.
+    ///
+    /// A different focused window may simply be the pre-command source that has not emitted its
+    /// loss edge yet. Only a later exact native positive observation can prove that another owned
+    /// window won after the command.
+    pub(super) fn observe_readback(
+        &self,
+        target: WindowId,
+        request_generation: u64,
+        focused_window: Option<WindowId>,
+    ) -> Option<WindowActivationTicketDelivery> {
+        if focused_window != Some(target) {
+            return None;
+        }
+
+        let mut records = self.records.borrow_mut();
+        let record = records.get(&request_generation)?;
+        if record.ticket.target() != target
+            || record.ticket.snapshot().status() != WindowActivationStatus::Dispatched
+        {
+            return None;
+        }
+        let record = records
+            .remove(&request_generation)
+            .expect("checked activation record must remain present");
+        self.clear_current_if(request_generation);
+        drop(records);
+        record.ticket.settle(WindowActivationTerminal::Activated)
+    }
+
     pub(super) fn activation_policy_changed(
         &self,
         window_id: WindowId,
@@ -904,6 +935,41 @@ mod tests {
         assert_eq!(
             ticket.snapshot().status(),
             WindowActivationStatus::Terminal(WindowActivationTerminal::Superseded)
+        );
+    }
+
+    #[test]
+    fn readback_keeps_the_pre_command_source_pending_until_exact_target_gain() {
+        let authority = NativeWindowActivationAuthority::default();
+        let target = window_id(1);
+        let source = window_id(2);
+        let ticket = begin_bound(&authority, target, 0, 10);
+        assert!(authority.begin_dispatch(target, ticket.request_generation(), 10));
+        let completion = authority.finish_dispatch_accepted(target, ticket.request_generation());
+        assert!(completion.needs_readback);
+
+        assert!(
+            authority
+                .observe_readback(target, ticket.request_generation(), Some(source))
+                .is_none()
+        );
+        assert!(
+            authority
+                .observe_readback(target, ticket.request_generation(), None)
+                .is_none()
+        );
+        assert_eq!(
+            ticket.snapshot().status(),
+            WindowActivationStatus::Dispatched
+        );
+
+        authority
+            .observe_readback(target, ticket.request_generation(), Some(target))
+            .expect("the exact target readback should settle activation")
+            .deliver();
+        assert_eq!(
+            ticket.snapshot().status(),
+            WindowActivationStatus::Terminal(WindowActivationTerminal::Activated)
         );
     }
 
