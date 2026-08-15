@@ -1800,6 +1800,35 @@ real-adapter renderer pipeline smoke and the atlas, lease, shutdown, and rendere
 Windows CI owns this complete package gate. It is not part of the default `verify` command because
 the real-adapter case depends on GPU, driver, and interactive-session availability.
 
+## Renderer Submission And Per-Window Surface Lifecycle Gate
+
+Changes to provisional destination semantics, `PlatformWindowPresentOutcome`, renderer submission
+tracking, WGPU surface resize/recreation, or presentation shutdown must run the U31 gate serially:
+
+```powershell
+$env:CARGO_BUILD_JOBS = '1'
+cargo fmt --all -- --check
+cargo nextest run --locked -p open-gpui --test-threads 1 --no-fail-fast
+cargo nextest run --locked -p open-gpui-docking --test-threads 1 --no-fail-fast
+cargo nextest run --locked -p open-gpui-wgpu --test-threads 1 --no-fail-fast
+cargo check --locked -p open-gpui-windows --features test-support
+git diff --check
+```
+
+The GPUI gate proves that accepted destination semantics remain non-interactive until the exact
+accepted frame receives renderer `Submitted`, and that `Deferred`, `RepaintRequired`, `Rejected`,
+wrong-frame, wrong-placement, and native-terminal outcomes cannot manufacture submission. Docking
+proves that a post-boundary renderer rejection enters committed-destination recovery without
+rolling back committed topology or using elapsed time as a semantic verdict. WGPU proves zero-size
+suspension, resize-intent coalescing, stale configuration rejection, usable suboptimal
+render-then-reconfigure, generation-bound surface recreation, per-window terminal rejection, and
+exact presentation-shutdown ownership.
+
+These package tests are not native multi-window release evidence. Every renderer/backend claiming
+released multi-window support must additionally run an owning-platform scenario with two real
+native windows: submit non-empty frames to both, resize and suspend/resume one, retire the secondary
+only after renderer quiescence, then close the primary with an empty renderer/surface/native census.
+
 Run the docking smoke surface explicitly after changing `open-gpui-docking`:
 
 ```sh

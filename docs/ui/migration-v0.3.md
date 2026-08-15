@@ -649,6 +649,34 @@ window root; do not wait for entity release or the HWND terminal callback to beg
 The component-side constraints are also recorded in the
 [Open GPUI Component Contract](component-contract.md#native-window-callback-boundary).
 
+## Renderer-Submitted Provisional Semantics
+
+Provisional destination semantics now distinguish GPUI frame acceptance from renderer submission.
+The previous `WindowProvisionalSemanticsOutcome::Committed`,
+`WindowProvisionalSessionPhase::DestinationSemanticsCommitted`, and
+`WindowProvisionalSemanticsSnapshot::committed_frame_generation()` names are removed without
+aliases.
+
+Update exhaustive matches to handle:
+
+- `Pending`: no focus-stable destination frame has been accepted;
+- `Accepted`: GPUI accepted the exact destination frame, but the renderer has not submitted it;
+- `Submitted`: the renderer submitted that exact accepted frame;
+- `Rejected`: the renderer terminally rejected that exact accepted frame;
+- `WindowTerminal`: the native window became terminal before submission.
+
+Use `accepted_frame_generation()` only as accepted-frame evidence and
+`submitted_frame_generation()` as the presentation receipt. Do not remove a provisional input,
+focus, activation, or accessibility gate from `Accepted`. Request presentation through the retained
+window/session authority and admit interaction only after the exact ticket reports `Submitted`.
+`Deferred` keeps the same acceptance pending, `RepaintRequired` invalidates it and requires a newer
+accepted generation, and `Rejected` cannot be revived by a later renderer submission.
+
+Custom renderer integrations continue returning the renderer-neutral
+`PlatformWindowPresentOutcome`; backend surface or swapchain enums must not enter application or
+Dock state. A per-window terminal should return `Rejected`, while temporary occlusion or an
+otherwise retryable surface condition returns `Deferred`.
+
 ## Presentation Lease Batch Authority
 
 `view_presentation_window::claim_batch` now assigns one lease generation to every newly claimed
