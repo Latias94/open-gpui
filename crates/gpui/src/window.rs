@@ -2144,7 +2144,7 @@ pub(crate) struct ElementStateBox {
     pub(crate) type_name: &'static str,
 }
 
-fn default_bounds(display_id: Option<DisplayId>, cx: &mut App) -> WindowBounds {
+fn default_bounds(display: Option<&dyn PlatformDisplay>, cx: &mut App) -> WindowBounds {
     // TODO, BUG: if you open a window with the currently active window
     // on the stack, this will erroneously fallback to `None`
     //
@@ -2155,16 +2155,11 @@ fn default_bounds(display_id: Option<DisplayId>, cx: &mut App) -> WindowBounds {
 
     const CASCADE_OFFSET: f32 = 25.0;
 
-    let display = display_id
-        .map(|id| cx.find_display(id))
-        .unwrap_or_else(|| cx.primary_display());
-
     let default_placement = || Bounds::new(point(px(0.), px(0.)), DEFAULT_WINDOW_SIZE);
 
     // Use visible_bounds to exclude taskbar/dock areas
     let display_bounds = display
-        .as_ref()
-        .map(|d| d.visible_bounds())
+        .map(|display| display.visible_bounds())
         .unwrap_or_else(default_placement);
 
     let (
@@ -2181,8 +2176,7 @@ fn default_bounds(display_id: Option<DisplayId>, cx: &mut App) -> WindowBounds {
         },
         None => (
             display
-                .as_ref()
-                .map(|d| d.default_bounds())
+                .map(|display| display.default_bounds())
                 .unwrap_or_else(default_placement),
             WindowBounds::Windowed,
         ),
@@ -2272,8 +2266,13 @@ impl Window {
             );
         }
 
+        let display_snapshot = cx.display_snapshot();
         let requested_display_id = display_id;
-        let display_id = cx.resolve_display_id(display_id);
+        let resolved_display =
+            display_id.and_then(|display_id| display_snapshot.find_display(display_id));
+        let display_id = resolved_display.as_ref().map(|display| display.id());
+        let default_bounds_display =
+            resolved_display.or_else(|| display_snapshot.primary_display());
         if let Some(requested_display_id) = requested_display_id
             && display_id.is_none()
         {
@@ -2282,9 +2281,10 @@ impl Window {
                 u64::from(requested_display_id)
             );
         }
-        let window_bounds = window_bounds.unwrap_or_else(|| default_bounds(display_id, cx));
+        let window_bounds =
+            window_bounds.unwrap_or_else(|| default_bounds(default_bounds_display.as_deref(), cx));
         let window_kind = kind.clone();
-        let window_capabilities = cx.window_capabilities_for(&kind, display_id);
+        let window_capabilities = cx.window_capabilities_for_resolved_display(&kind, display_id);
         anyhow::ensure!(
             focus_on_appearing
                 || window_capabilities
@@ -2317,7 +2317,7 @@ impl Window {
             .as_ref()
             .map(WindowProvisionalSession::claim_opening)
             .transpose()?;
-        let platform_window = cx.platform.open_window(
+        let platform_window = cx.platform.open_window_with_display_snapshot(
             handle,
             WindowParams {
                 window_bounds,
@@ -2339,6 +2339,7 @@ impl Window {
                 #[cfg(target_os = "macos")]
                 tabbing_identifier,
             },
+            display_snapshot,
         )?;
         let mut platform_window = PlatformWindowCreationRollback::new(
             handle.window_id(),

@@ -1,21 +1,22 @@
 use crate::{
     AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DevicePixels,
     DummyKeyboardMapper, ForegroundExecutor, Keymap, MouseButton, NoopTextSystem,
-    PathPromptOptions, Platform, PlatformDisplay, PlatformFocusedWindow, PlatformHeadlessRenderer,
-    PlatformHoveredWindow, PlatformKeyboardLayout, PlatformKeyboardMapper,
-    PlatformNativeDragHysteresis, PlatformTextSystem, PlatformWindowCapabilities,
-    PlatformWindowCommandOutcome, PlatformWindowCreationCapabilities, PlatformWindowHitStack,
-    PlatformWindowMutationCapabilities, Point, PromptButton, ScreenCaptureFrame,
-    ScreenCaptureSource, ScreenCaptureStream, SourceMetadata, Task, TestDisplay, TestWindow,
-    ThermalState, WindowAppearance, WindowCoordinateSpace, WindowCreationSupport,
-    WindowInitialPresentationOrder, WindowMutationSupport, WindowParams, size,
+    PathPromptOptions, Platform, PlatformDisplay, PlatformDisplaySnapshot, PlatformFocusedWindow,
+    PlatformHeadlessRenderer, PlatformHoveredWindow, PlatformKeyboardLayout,
+    PlatformKeyboardMapper, PlatformNativeDragHysteresis, PlatformTextSystem,
+    PlatformWindowCapabilities, PlatformWindowCommandOutcome, PlatformWindowCreationCapabilities,
+    PlatformWindowHitStack, PlatformWindowMutationCapabilities, Point, PromptButton,
+    ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, SourceMetadata, Task,
+    TestDisplay, TestWindow, ThermalState, WindowAppearance, WindowCoordinateSpace,
+    WindowCreationSupport, WindowInitialPresentationOrder, WindowMutationSupport, WindowParams,
+    size,
 };
 use anyhow::Result;
 use futures::channel::oneshot;
 use open_gpui_collections::VecDeque;
 use parking_lot::Mutex;
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     path::{Path, PathBuf},
     rc::{Rc, Weak},
     sync::Arc,
@@ -46,6 +47,7 @@ pub(crate) struct TestPlatform {
     next_window_close_during_initial_presentation: RefCell<bool>,
     next_window_defer_frame_requests: RefCell<bool>,
     active_display: Rc<dyn PlatformDisplay>,
+    display_snapshot_query_count: Cell<usize>,
     active_cursor: Mutex<CursorStyle>,
     pressed_mouse_buttons: Mutex<Option<Vec<MouseButton>>>,
     current_clipboard_item: Mutex<Option<ClipboardItem>>,
@@ -156,6 +158,7 @@ impl TestPlatform {
             active_cursor: Default::default(),
             pressed_mouse_buttons: Default::default(),
             active_display: Rc::new(TestDisplay::new()),
+            display_snapshot_query_count: Cell::new(0),
             active_window: Default::default(),
             focused_window_available: RefCell::new(true),
             hovered_window_available: RefCell::new(true),
@@ -196,6 +199,16 @@ impl TestPlatform {
 
     pub(crate) fn set_pointer_input_mutation_supported(&self, supported: bool) {
         *self.pointer_input_mutation_supported.borrow_mut() = supported;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn reset_display_snapshot_query_count(&self) {
+        self.display_snapshot_query_count.set(0);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn display_snapshot_query_count(&self) -> usize {
+        self.display_snapshot_query_count.get()
     }
 
     pub(crate) fn set_window_mutation_capabilities(
@@ -596,6 +609,17 @@ impl Platform for TestPlatform {
 
     fn primary_display(&self) -> Option<std::rc::Rc<dyn crate::PlatformDisplay>> {
         Some(self.active_display.clone())
+    }
+
+    fn display_snapshot(&self) -> PlatformDisplaySnapshot {
+        self.display_snapshot_query_count
+            .set(self.display_snapshot_query_count.get() + 1);
+        PlatformDisplaySnapshot::try_new(
+            Some(1),
+            vec![self.active_display.clone()],
+            Some(self.active_display.id()),
+        )
+        .expect("test platform display publication must be valid")
     }
 
     fn is_screen_capture_supported(&self) -> bool {

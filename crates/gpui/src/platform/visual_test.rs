@@ -9,8 +9,8 @@ use crate::ScreenCaptureSource;
 use crate::{
     AnyWindowHandle, BackgroundExecutor, ClipboardItem, DevicePixels, ForegroundExecutor, Keymap,
     Menu, MenuItem, MouseButton, OwnedMenu, PathPromptOptions, Platform, PlatformDisplay,
-    PlatformHoveredWindow, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PlatformViewportCapabilities, PlatformWindow, PlatformWindowCapabilities,
+    PlatformDisplaySnapshot, PlatformHoveredWindow, PlatformKeyboardLayout, PlatformKeyboardMapper,
+    PlatformTextSystem, PlatformViewportCapabilities, PlatformWindow, PlatformWindowCapabilities,
     PlatformWindowHitStack, Point, Task, TestDispatcher, WindowAppearance, WindowParams,
 };
 use anyhow::Result;
@@ -108,6 +108,10 @@ impl Platform for VisualTestPlatform {
         self.platform.primary_display()
     }
 
+    fn display_snapshot(&self) -> PlatformDisplaySnapshot {
+        self.platform.display_snapshot()
+    }
+
     fn active_window(&self) -> Option<AnyWindowHandle> {
         self.platform.active_window()
     }
@@ -160,6 +164,16 @@ impl Platform for VisualTestPlatform {
         options: WindowParams,
     ) -> Result<Box<dyn PlatformWindow>> {
         self.platform.open_window(handle, options)
+    }
+
+    fn open_window_with_display_snapshot(
+        &self,
+        handle: AnyWindowHandle,
+        options: WindowParams,
+        display_snapshot: PlatformDisplaySnapshot,
+    ) -> Result<Box<dyn PlatformWindow>> {
+        self.platform
+            .open_window_with_display_snapshot(handle, options, display_snapshot)
     }
 
     fn window_appearance(&self) -> WindowAppearance {

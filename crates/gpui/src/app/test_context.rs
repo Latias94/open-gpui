@@ -968,6 +968,16 @@ impl TestAppContext {
         self.test_platform.set_platform_viewport_windows(supported);
     }
 
+    #[cfg(test)]
+    pub(crate) fn reset_platform_display_snapshot_query_count(&self) {
+        self.test_platform.reset_display_snapshot_query_count();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn platform_display_snapshot_query_count(&self) -> usize {
+        self.test_platform.display_snapshot_query_count()
+    }
+
     /// Makes the next TestPlatform window fail during `PlatformWindow::map_window`.
     pub fn fail_next_window_map(&self, message: impl Into<String>) {
         self.test_platform.fail_next_window_map(message);

@@ -3365,6 +3365,12 @@ pub trait Platform: 'static {
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>>;
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>>;
+    /// Returns one immutable display publication for callers that must resolve several display
+    /// facts coherently.
+    #[doc(hidden)]
+    fn display_snapshot(&self) -> PlatformDisplaySnapshot {
+        PlatformDisplaySnapshot::from_legacy(self.displays(), self.primary_display())
+    }
     fn hovered_window(&self) -> PlatformHoveredWindow {
         PlatformHoveredWindow::Unavailable
     }
@@ -3421,6 +3427,21 @@ pub trait Platform: 'static {
         handle: AnyWindowHandle,
         options: WindowParams,
     ) -> anyhow::Result<Box<dyn PlatformWindow>>;
+
+    /// Opens a window against the same display publication used to resolve its initial geometry.
+    ///
+    /// Backends without an atomic display publication retain the existing [`Self::open_window`]
+    /// behavior. Owning backends may override this to reject a stale publication before creating
+    /// native resources.
+    #[doc(hidden)]
+    fn open_window_with_display_snapshot(
+        &self,
+        handle: AnyWindowHandle,
+        options: WindowParams,
+        _display_snapshot: PlatformDisplaySnapshot,
+    ) -> anyhow::Result<Box<dyn PlatformWindow>> {
+        self.open_window(handle, options)
+    }
 
     /// Returns the appearance of the application's windows.
     fn window_appearance(&self) -> WindowAppearance;
@@ -3508,6 +3529,108 @@ pub trait Platform: 'static {
     fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout>;
     fn keyboard_mapper(&self) -> Rc<dyn PlatformKeyboardMapper>;
     fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>);
+}
+
+/// One immutable platform display publication.
+///
+/// The optional generation is present when the owning backend can prove that the display list,
+/// primary identity, work areas, and scale facts were committed atomically. Backends that have
+/// not yet converged on that contract retain `None` and therefore cannot issue generation-bound
+/// placement credit.
+#[doc(hidden)]
+#[derive(Clone)]
+pub struct PlatformDisplaySnapshot {
+    generation: Option<u64>,
+    displays: Rc<[Rc<dyn PlatformDisplay>]>,
+    primary_display: Option<Rc<dyn PlatformDisplay>>,
+}
+
+impl PlatformDisplaySnapshot {
+    /// Creates a validated display publication.
+    #[doc(hidden)]
+    pub fn try_new(
+        generation: Option<u64>,
+        displays: Vec<Rc<dyn PlatformDisplay>>,
+        primary_display_id: Option<DisplayId>,
+    ) -> Option<Self> {
+        if generation == Some(0) {
+            return None;
+        }
+        let mut identities = std::collections::HashSet::with_capacity(displays.len());
+        if displays
+            .iter()
+            .any(|display| !identities.insert(display.id()))
+            || primary_display_id.is_some_and(|primary| !identities.contains(&primary))
+        {
+            return None;
+        }
+        let primary_display = primary_display_id.and_then(|primary| {
+            displays
+                .iter()
+                .find(|display| display.id() == primary)
+                .cloned()
+        });
+        Some(Self {
+            generation,
+            displays: Rc::from(displays),
+            primary_display,
+        })
+    }
+
+    fn from_legacy(
+        displays: Vec<Rc<dyn PlatformDisplay>>,
+        primary: Option<Rc<dyn PlatformDisplay>>,
+    ) -> Self {
+        Self {
+            generation: None,
+            displays: Rc::from(displays),
+            primary_display: primary,
+        }
+    }
+
+    /// Returns the atomic publication generation when the backend provides one.
+    pub fn generation(&self) -> Option<u64> {
+        self.generation
+    }
+
+    /// Returns every display in this publication.
+    pub fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
+        self.displays.iter().cloned().collect()
+    }
+
+    /// Returns the primary display proven by this publication.
+    pub fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
+        self.primary_display.clone()
+    }
+
+    /// Returns the display with the given detached identity.
+    pub fn find_display(&self, display_id: DisplayId) -> Option<Rc<dyn PlatformDisplay>> {
+        self.displays
+            .iter()
+            .find(|display| display.id() == display_id)
+            .cloned()
+    }
+}
+
+impl Debug for PlatformDisplaySnapshot {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PlatformDisplaySnapshot")
+            .field("generation", &self.generation)
+            .field(
+                "display_ids",
+                &self
+                    .displays
+                    .iter()
+                    .map(|display| display.id())
+                    .collect::<Vec<_>>(),
+            )
+            .field(
+                "primary_display_id",
+                &self.primary_display.as_ref().map(|display| display.id()),
+            )
+            .finish()
+    }
 }
 
 /// A handle to a platform's display, e.g. a monitor or laptop screen.

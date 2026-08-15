@@ -49,8 +49,8 @@ use crate::{
     ArenaBox, Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle,
     DispatchPhase, DisplayId, EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global,
     KeyBinding, KeyContext, Keymap, Keystroke, LayoutId, Menu, MenuItem, MouseButton, OwnedMenu,
-    PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformFocusedWindow,
-    PlatformHoveredWindow, PlatformKeyboardLayout, PlatformKeyboardMapper,
+    PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformDisplaySnapshot,
+    PlatformFocusedWindow, PlatformHoveredWindow, PlatformKeyboardLayout, PlatformKeyboardMapper,
     PlatformViewportCapabilities, PlatformWindowCapabilities, PlatformWindowProfile, Point,
     PointerCaptureHandle, Priority, PromptBuilder, PromptButton, PromptHandle, PromptLevel, Render,
     RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString,
@@ -1486,8 +1486,15 @@ impl App {
         kind: &WindowKind,
         display_id: Option<DisplayId>,
     ) -> PlatformWindowCapabilities {
-        self.platform
-            .window_capabilities(kind, self.resolve_display_id(display_id))
+        self.window_capabilities_for_resolved_display(kind, self.resolve_display_id(display_id))
+    }
+
+    pub(crate) fn window_capabilities_for_resolved_display(
+        &self,
+        kind: &WindowKind,
+        display_id: Option<DisplayId>,
+    ) -> PlatformWindowCapabilities {
+        self.platform.window_capabilities(kind, display_id)
     }
 
     /// Returns the capability profile captured for an opened window's actual kind.
@@ -1679,6 +1686,10 @@ impl App {
     /// Returns the primary display that will be used for new windows.
     pub fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
         self.platform.primary_display()
+    }
+
+    pub(crate) fn display_snapshot(&self) -> PlatformDisplaySnapshot {
+        self.platform.display_snapshot()
     }
 
     /// Returns whether `screen_capture_sources` may work.

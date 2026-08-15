@@ -7,7 +7,7 @@ use std::{
     rc::{Rc, Weak},
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::Duration,
 };
@@ -83,6 +83,8 @@ impl PartialEq for RegisteredWindow {
 impl Eq for RegisteredWindow {}
 
 static NEXT_NATIVE_WINDOW_GENERATION: AtomicUsize = AtomicUsize::new(1);
+const DISPLAY_TOPOLOGY_RETRY_TIMER_ID: usize = 1;
+const DISPLAY_TOPOLOGY_RETRY_DELAY_MS: u32 = 100;
 
 fn next_native_window_generation() -> usize {
     let generation = NEXT_NATIVE_WINDOW_GENERATION.fetch_add(1, Ordering::Relaxed);
@@ -134,7 +136,9 @@ pub(crate) struct WindowsPlatformInner {
     dispatcher: Arc<WindowsDispatcher>,
     pub(crate) background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
-    display_topology_generation: AtomicU64,
+    platform_handle: SafeHwnd,
+    raw_window_handles: Arc<RegisteredWindows>,
+    display_topology: RefCell<WindowsDisplayTopologyAuthority>,
     native_retirement: RefCell<WindowsNativeRetirementCoordinator>,
     #[cfg(test)]
     lifecycle_test_probe: Rc<NativeWindowLifecycleTestProbe>,
@@ -652,6 +656,7 @@ impl WindowsPlatform {
             main_receiver: Some(main_receiver),
             directx_devices,
             recovered_directx_devices: recovered_directx_devices.clone(),
+            raw_window_handles: raw_window_handles.clone(),
             dispatcher: None,
             #[cfg(test)]
             lifecycle_test_probe: lifecycle_test_probe.clone(),
@@ -829,7 +834,10 @@ impl WindowsPlatform {
         Ok(hwnd)
     }
 
-    fn generate_creation_info(&self) -> WindowCreationInfo {
+    fn generate_creation_info(
+        &self,
+        display_topology: WindowsDisplayTopologySnapshot,
+    ) -> WindowCreationInfo {
         WindowCreationInfo {
             icon: self.icon,
             executor: self.foreground_executor.clone(),
@@ -842,6 +850,7 @@ impl WindowsPlatform {
             platform_window_handle: self.handle,
             raw_window_handles: Arc::downgrade(&self.raw_window_handles),
             native_retirement_coordinator: Rc::downgrade(&self.inner),
+            display_topology,
             recovered_directx_devices: self.recovered_directx_devices.clone(),
             disable_direct_composition: self.disable_direct_composition,
             directx_devices: self.inner.state.directx_devices.borrow().clone().unwrap(),
@@ -849,6 +858,41 @@ impl WindowsPlatform {
             #[cfg(test)]
             lifecycle_test_probe: self.lifecycle_test_probe.clone(),
         }
+    }
+
+    fn open_window_against_display_generation(
+        &self,
+        handle: AnyWindowHandle,
+        options: WindowParams,
+        expected_generation: Option<u64>,
+    ) -> Result<Box<dyn PlatformWindow>> {
+        self.inner.refresh_display_topology_now();
+        let display_topology = self.inner.exact_display_topology_snapshot().map_err(
+            |unavailable| {
+                anyhow!(
+                    "cannot open a native window without an exact display topology: {unavailable:?}"
+                )
+            },
+        )?;
+        if let Some(expected_generation) = expected_generation {
+            anyhow::ensure!(
+                expected_generation == display_topology.generation(),
+                "display topology changed after GPUI resolved the window creation placement"
+            );
+        }
+        let transient_owner_hwnd = options
+            .transient_for
+            .map(|owner| self.native_owner_for(owner))
+            .transpose()?;
+        let window = WindowsWindow::new(
+            handle,
+            options,
+            transient_owner_hwnd,
+            self.generate_creation_info(display_topology),
+        )?;
+        self.raw_window_handles.write().push(window.0.registration);
+
+        Ok(Box::new(window))
     }
 
     fn set_dock_menus(&self, menus: Vec<MenuItem>) {
@@ -2074,11 +2118,23 @@ impl Platform for WindowsPlatform {
     }
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
-        WindowsDisplay::displays()
+        self.display_snapshot().displays()
     }
 
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
-        WindowsDisplay::primary_monitor().map(|display| Rc::new(display) as Rc<dyn PlatformDisplay>)
+        self.display_snapshot().primary_display()
+    }
+
+    fn display_snapshot(&self) -> PlatformDisplaySnapshot {
+        // Message-only windows do not receive WM_DISPLAYCHANGE/WM_SETTINGCHANGE broadcasts.
+        // With no top-level window alive, synchronously refresh before publishing the snapshot so
+        // a tray/global action can open the first replacement window against current topology.
+        if self.raw_window_handles.read().is_empty() {
+            self.inner.refresh_display_topology_now();
+        }
+        self.inner
+            .retained_display_topology_snapshot()
+            .platform_snapshot()
     }
 
     #[cfg(feature = "screen-capture")]
@@ -2191,19 +2247,19 @@ impl Platform for WindowsPlatform {
         handle: AnyWindowHandle,
         options: WindowParams,
     ) -> Result<Box<dyn PlatformWindow>> {
-        let transient_owner_hwnd = options
-            .transient_for
-            .map(|owner| self.native_owner_for(owner))
-            .transpose()?;
-        let window = WindowsWindow::new(
-            handle,
-            options,
-            transient_owner_hwnd,
-            self.generate_creation_info(),
-        )?;
-        self.raw_window_handles.write().push(window.0.registration);
+        self.open_window_against_display_generation(handle, options, None)
+    }
 
-        Ok(Box::new(window))
+    fn open_window_with_display_snapshot(
+        &self,
+        handle: AnyWindowHandle,
+        options: WindowParams,
+        display_snapshot: PlatformDisplaySnapshot,
+    ) -> Result<Box<dyn PlatformWindow>> {
+        let expected_generation = display_snapshot.generation().ok_or_else(|| {
+            anyhow!("Windows window creation requires an atomic display publication")
+        })?;
+        self.open_window_against_display_generation(handle, options, Some(expected_generation))
     }
 
     fn window_appearance(&self) -> WindowAppearance {
@@ -2520,7 +2576,7 @@ impl Platform for WindowsPlatform {
 }
 
 impl WindowsPlatformInner {
-    fn new(context: &mut PlatformWindowCreateContext) -> Result<Rc<Self>> {
+    fn new(context: &mut PlatformWindowCreateContext, platform_handle: HWND) -> Result<Rc<Self>> {
         let state = WindowsPlatformState::new(context.directx_devices.take());
         let dispatcher = context
             .dispatcher
@@ -2540,25 +2596,167 @@ impl WindowsPlatformInner {
                 .context("missing main receiver")?,
             background_executor,
             foreground_executor,
-            display_topology_generation: AtomicU64::new(1),
+            platform_handle: platform_handle.into(),
+            raw_window_handles: context.raw_window_handles.clone(),
+            display_topology: RefCell::new(
+                WindowsDisplayTopologyAuthority::from_native().map_err(|error| {
+                    anyhow!("collecting the initial Windows display topology: {error}")
+                })?,
+            ),
             native_retirement: RefCell::new(WindowsNativeRetirementCoordinator::default()),
             #[cfg(test)]
             lifecycle_test_probe: context.lifecycle_test_probe.clone(),
         }))
     }
 
-    pub(crate) fn display_topology_generation(&self) -> u64 {
-        self.display_topology_generation.load(Ordering::Acquire)
+    pub(crate) fn retained_display_topology_snapshot(&self) -> WindowsDisplayTopologySnapshot {
+        self.display_topology.borrow().retained_snapshot()
     }
 
-    pub(crate) fn advance_display_topology_generation(&self) -> u64 {
-        match self.display_topology_generation.fetch_update(
-            Ordering::AcqRel,
-            Ordering::Acquire,
-            |generation| generation.checked_add(1),
-        ) {
-            Ok(previous) => previous + 1,
-            Err(saturated) => saturated,
+    pub(crate) fn exact_display_topology_snapshot(
+        &self,
+    ) -> Result<WindowsDisplayTopologySnapshot, WindowsDisplayTopologyUnavailable> {
+        self.display_topology.borrow().exact_snapshot()
+    }
+
+    pub(crate) fn request_display_topology_refresh(&self) {
+        let request = self.display_topology.borrow_mut().request_refresh();
+        if !request.should_post_message {
+            return;
+        }
+        if let Err(error) = unsafe {
+            PostMessageW(
+                Some(self.platform_handle.as_raw()),
+                WM_GPUI_REFRESH_DISPLAY_TOPOLOGY,
+                WPARAM(self.validation_number),
+                LPARAM(0),
+            )
+        } {
+            let failure =
+                WindowsDisplayTopologyFailure::RefreshMessageRejected(error.code().0 as u32);
+            self.display_topology
+                .borrow_mut()
+                .fail_scheduled_refresh(request.request_epoch, failure.clone());
+            log::error!("cannot schedule a Windows display-topology refresh: {failure}");
+            self.schedule_display_topology_retry();
+        }
+    }
+
+    pub(crate) fn refresh_display_topology_now(&self) {
+        let request = self.display_topology.borrow_mut().request_refresh();
+        let request_epoch = self
+            .display_topology
+            .borrow_mut()
+            .begin_scheduled_refresh()
+            .unwrap_or(request.request_epoch);
+        self.complete_display_topology_refresh(request_epoch);
+    }
+
+    fn complete_display_topology_refresh(&self, request_epoch: u64) {
+        let candidate = WindowsDisplayTopologyAuthority::refresh_candidate_from_native();
+        let refresh = self
+            .display_topology
+            .borrow_mut()
+            .finish_refresh(request_epoch, candidate);
+        self.finish_display_topology_refresh(&refresh);
+    }
+
+    fn handle_display_topology_refresh(&self) -> Option<isize> {
+        let request_epoch = self.display_topology.borrow_mut().begin_scheduled_refresh();
+        if let Some(request_epoch) = request_epoch {
+            self.complete_display_topology_refresh(request_epoch);
+        }
+        Some(0)
+    }
+
+    fn finish_display_topology_refresh(&self, refresh: &WindowsDisplayTopologyRefresh) {
+        match refresh {
+            WindowsDisplayTopologyRefresh::Published { generation, .. }
+            | WindowsDisplayTopologyRefresh::Unchanged { generation } => {
+                self.cancel_display_topology_retry();
+                self.notify_windows_of_display_topology(*generation);
+            }
+            WindowsDisplayTopologyRefresh::RetainedAfterFailure {
+                generation,
+                failure,
+            } => {
+                log::error!(
+                    "retaining Windows display topology generation {} after refresh failure: {}",
+                    generation,
+                    failure
+                );
+                self.schedule_display_topology_retry();
+            }
+            WindowsDisplayTopologyRefresh::Superseded { .. } => {}
+        }
+    }
+
+    fn cancel_display_topology_retry(&self) {
+        unsafe {
+            let _ = KillTimer(
+                Some(self.platform_handle.as_raw()),
+                DISPLAY_TOPOLOGY_RETRY_TIMER_ID,
+            );
+        }
+    }
+
+    fn schedule_display_topology_retry(&self) {
+        let timer = unsafe {
+            SetTimer(
+                Some(self.platform_handle.as_raw()),
+                DISPLAY_TOPOLOGY_RETRY_TIMER_ID,
+                DISPLAY_TOPOLOGY_RETRY_DELAY_MS,
+                None,
+            )
+        };
+        if timer == 0 {
+            log::error!(
+                "cannot schedule a Windows display-topology retry: {}",
+                std::io::Error::last_os_error()
+            );
+        }
+    }
+
+    fn handle_display_topology_retry(&self) -> Option<isize> {
+        self.cancel_display_topology_retry();
+        if self.display_topology.borrow().is_degraded() {
+            self.refresh_display_topology_now();
+        } else {
+            let generation = self.retained_display_topology_snapshot().generation();
+            self.notify_windows_of_display_topology(generation);
+        }
+        Some(0)
+    }
+
+    fn notify_windows_of_display_topology(&self, generation: u64) {
+        let windows = self.raw_window_handles.read().clone();
+        let mut retry_required = false;
+        for window in windows {
+            let Some(native_window) = window_from_hwnd(window.as_raw()) else {
+                continue;
+            };
+            if native_window.state.display_topology_generation.get() >= generation {
+                continue;
+            }
+            if let Err(error) = unsafe {
+                PostMessageW(
+                    Some(window.as_raw()),
+                    WM_GPUI_DISPLAY_TOPOLOGY_PUBLISHED,
+                    WPARAM(window.generation()),
+                    LPARAM(0),
+                )
+            } {
+                log::error!(
+                    "cannot notify window {:?} about display topology generation {}: {}",
+                    window.window_id(),
+                    generation,
+                    error
+                );
+                retry_required = true;
+            }
+        }
+        if retry_required {
+            self.schedule_display_topology_retry();
         }
     }
 
@@ -2929,7 +3127,11 @@ impl WindowsPlatformInner {
             WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD
             | WM_GPUI_DOCK_MENU_ACTION
             | WM_GPUI_KEYBOARD_LAYOUT_CHANGED
-            | WM_GPUI_GPU_DEVICE_LOST => self.handle_gpui_events(msg, wparam, lparam),
+            | WM_GPUI_GPU_DEVICE_LOST
+            | WM_GPUI_REFRESH_DISPLAY_TOPOLOGY => self.handle_gpui_events(msg, wparam, lparam),
+            WM_TIMER if wparam.0 == DISPLAY_TOPOLOGY_RETRY_TIMER_ID => {
+                self.handle_display_topology_retry()
+            }
             WM_POWERBROADCAST => self.handle_power_broadcast(wparam),
             _ => None,
         };
@@ -2955,6 +3157,7 @@ impl WindowsPlatformInner {
             WM_GPUI_DOCK_MENU_ACTION => self.handle_dock_action_event(lparam.0 as _),
             WM_GPUI_KEYBOARD_LAYOUT_CHANGED => self.handle_keyboard_layout_change(),
             WM_GPUI_GPU_DEVICE_LOST => self.handle_device_lost(),
+            WM_GPUI_REFRESH_DISPLAY_TOPOLOGY => self.handle_display_topology_refresh(),
             _ => unreachable!(),
         }
     }
@@ -3133,6 +3336,7 @@ pub(crate) struct WindowCreationInfo {
     pub(crate) platform_window_handle: HWND,
     pub(crate) raw_window_handles: std::sync::Weak<RegisteredWindows>,
     pub(crate) native_retirement_coordinator: std::rc::Weak<WindowsPlatformInner>,
+    pub(crate) display_topology: WindowsDisplayTopologySnapshot,
     pub(crate) recovered_directx_devices: Arc<RwLock<Option<DirectXDevices>>>,
     pub(crate) disable_direct_composition: bool,
     pub(crate) directx_devices: DirectXDevices,
@@ -3150,6 +3354,7 @@ struct PlatformWindowCreateContext {
     main_receiver: Option<PriorityQueueReceiver<RunnableVariant>>,
     directx_devices: Option<DirectXDevices>,
     recovered_directx_devices: Arc<RwLock<Option<DirectXDevices>>>,
+    raw_window_handles: Arc<RegisteredWindows>,
     dispatcher: Option<Arc<WindowsDispatcher>>,
     #[cfg(test)]
     lifecycle_test_probe: Rc<NativeWindowLifecycleTestProbe>,
@@ -3524,7 +3729,7 @@ unsafe fn platform_window_procedure_inner(
             creation_context.validation_number,
         )));
 
-        return match WindowsPlatformInner::new(creation_context) {
+        return match WindowsPlatformInner::new(creation_context, hwnd) {
             Ok(inner) => {
                 let weak = Box::new(Rc::downgrade(&inner));
                 unsafe { set_window_long(hwnd, GWLP_USERDATA, Box::into_raw(weak) as isize) };
@@ -5436,11 +5641,12 @@ mod tests {
                 DevicePixels(client_origin.x + 16),
                 DevicePixels(client_origin.y + 16),
             );
-            let target_display = super::WindowsDisplay::physical_geometry_at(
-                anchor_point,
-                platform.inner.display_topology_generation(),
-            )
-            .expect("ordinary physical placement should resolve its target display");
+            let target_display = platform
+                .inner
+                .exact_display_topology_snapshot()
+                .expect("ordinary placement should observe an exact display topology")
+                .physical_observation_at(anchor_point)
+                .expect("ordinary physical placement should resolve its target display");
             let request = WindowPhysicalPlacementRequest::try_new_for_display(
                 target_bounds,
                 anchor_point,

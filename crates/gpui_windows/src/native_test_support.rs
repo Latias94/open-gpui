@@ -1,13 +1,14 @@
 use super::{RegisteredWindow, WindowsPlatform, translate_accelerator};
-use crate::{NativeWindowLifecycleTestEvent, WindowsDisplay, WindowsWindowInner, get_window_long};
+use crate::{NativeWindowLifecycleTestEvent, WindowsWindowInner, get_window_long};
 use open_gpui::{
-    AnyWindowHandle, AppContext as _, Application, Context, DevicePixels, Empty, IntoElement,
-    NativeBoundaryDiagnosticCursor, NativeBoundaryDisposition, NativeBoundaryGeneration,
-    NativeBoundaryKind, NativeBoundaryTarget, NativeCallbackKind, NativePlatformCommandKind,
-    ParentElement, Platform, PlatformInput, PlatformWindowPresentOutcome, PointerCancelEvent,
-    PointerCancelReason, QuitMode, Render, Styled, Window, WindowActivationPolicy, WindowBounds,
-    WindowId, WindowKind, WindowMouseEvent, WindowMutationDispatch, WindowMutationOutcome,
-    WindowOptions, WindowPhysicalPlacementRequest, WindowProvisionalPlacementOutcome,
+    AnyWindowHandle, AppContext as _, Application, Bounds, Context, DevicePixels, Empty,
+    IntoElement, NativeBoundaryDiagnosticCursor, NativeBoundaryDisposition,
+    NativeBoundaryGeneration, NativeBoundaryKind, NativeBoundaryTarget, NativeCallbackKind,
+    NativePlatformCommandKind, ParentElement, Platform, PlatformInput,
+    PlatformWindowPresentOutcome, PointerCancelEvent, PointerCancelReason, QuitMode, Render,
+    Styled, Window, WindowActivationPolicy, WindowBounds, WindowId, WindowKind, WindowMouseEvent,
+    WindowMutationDispatch, WindowMutationOutcome, WindowMutationTicket, WindowOptions,
+    WindowPhysicalPlacementRequest, WindowProvisionalPlacementOutcome,
     WindowProvisionalPlacementPurpose, WindowProvisionalPlacementRequest,
     WindowProvisionalRevealOutcome, WindowProvisionalRevealZOrder,
     WindowProvisionalSemanticsOutcome, WindowProvisionalSemanticsTicket, WindowProvisionalSession,
@@ -39,11 +40,12 @@ use windows::Win32::{
             HWND_MESSAGE, HWND_TOPMOST, IsWindow, IsWindowVisible, IsZoomed, MA_NOACTIVATE,
             MA_NOACTIVATEANDEAT, MSG, PM_REMOVE, PeekMessageW, PostMessageW, SIZE_MINIMIZED,
             SIZE_RESTORED, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
-            SM_YVIRTUALSCREEN, SWP_NOACTIVATE, SWP_SHOWWINDOW, SendMessageW, SetCursorPos,
-            SetForegroundWindow, SetWindowPos, TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE,
-            WM_CLOSE, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE,
-            WM_MOUSEMOVE, WM_MOVE, WM_NCHITTEST, WM_PAINT, WM_QUIT, WM_SIZE, WM_SYSKEYDOWN,
-            WM_SYSKEYUP, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
+            SM_YVIRTUALSCREEN, SPI_SETWORKAREA, SWP_NOACTIVATE, SWP_SHOWWINDOW, SendMessageW,
+            SetCursorPos, SetForegroundWindow, SetWindowPos, TranslateMessage, WINDOW_EX_STYLE,
+            WINDOW_STYLE, WM_CLOSE, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP,
+            WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_MOVE, WM_NCHITTEST, WM_PAINT, WM_QUIT,
+            WM_SETTINGCHANGE, WM_SIZE, WM_SYSKEYDOWN, WM_SYSKEYUP, WS_EX_NOACTIVATE,
+            WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
         },
     },
 };
@@ -1089,6 +1091,24 @@ fn owned_nonactivating_maximized_first_show_preserves_focus_and_restore_bounds()
         WindowBounds::Maximized(restore_bounds),
         "non-activating maximization must preserve rcNormalPosition as the restore bounds"
     );
+    unsafe {
+        SendMessageW(
+            child_hwnd,
+            WM_SETTINGCHANGE,
+            Some(WPARAM(SPI_SETWORKAREA.0 as usize)),
+            Some(LPARAM(0)),
+        );
+    }
+    platform.inner.run_foreground_task();
+    pump_messages_until_idle("maximized system-setting topology refresh");
+    let post_setting_change_facts = native_window
+        .observed_platform_facts_for_test()
+        .expect("maximized child facts should survive a system-setting refresh");
+    assert_eq!(
+        post_setting_change_facts.window_bounds,
+        WindowBounds::Maximized(restore_bounds),
+        "maximized layout metrics must not replace normal-frame restore insets"
+    );
     assert!(native_facts.accepts_activation);
     assert!(native_facts.focus_on_click);
 
@@ -1640,14 +1660,15 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
     let reveal_ticket = app
         .update_for_test(|cx| {
             any_window.update(cx, |_, window, cx| {
-                let topology_generation = native_window
+                let topology = native_window
                     .native_retirement_coordinator
                     .upgrade()
                     .expect("the native test window should retain its platform authority")
-                    .display_topology_generation();
-                let target_display =
-                    WindowsDisplay::physical_geometry_at(reveal_point, topology_generation)
-                        .expect("the native reveal point should resolve to a target display");
+                    .exact_display_topology_snapshot()
+                    .expect("the native reveal should observe an exact display topology");
+                let target_display = topology
+                    .physical_observation_at(reveal_point)
+                    .expect("the native reveal point should resolve to a target display");
                 let initial_placement = WindowPhysicalPlacementRequest::try_new_for_display(
                     initial_client_bounds,
                     reveal_point,
@@ -1745,12 +1766,14 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
         DevicePixels(final_client_bounds.origin.x.0 + client_width / 2),
         DevicePixels(final_client_bounds.origin.y.0 + client_height / 2),
     );
-    let topology_generation = native_window
+    let topology = native_window
         .native_retirement_coordinator
         .upgrade()
         .expect("the native test window should retain its platform authority")
-        .display_topology_generation();
-    let target_display = WindowsDisplay::physical_geometry_at(final_anchor, topology_generation)
+        .exact_display_topology_snapshot()
+        .expect("the native final placement should observe an exact display topology");
+    let target_display = topology
+        .physical_observation_at(final_anchor)
         .expect("the native final placement should resolve to a target display");
     let final_request = WindowProvisionalPlacementRequest::try_new(
         77,
@@ -1990,6 +2013,207 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
 }
 
 #[test]
+fn hidden_initial_presentation_keeps_deferred_placement_unpublished_until_forced_show() {
+    discard_stale_quit_messages();
+
+    let platform = Rc::new(
+        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+    );
+    let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
+    let initial_bounds = app
+        .update_for_test(|cx| WindowBounds::centered(size(px(340.0), px(240.0)), cx).get_bounds());
+    let placement_ticket = Rc::new(RefCell::new(None::<WindowMutationTicket>));
+    let window = app
+        .update_for_test(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(initial_bounds)),
+                    focus_on_appearing: false,
+                    show: false,
+                    ..WindowOptions::default()
+                },
+                {
+                    let placement_ticket = placement_ticket.clone();
+                    move |window, cx| {
+                        let ticket = match window
+                            .request_window_placement(WindowBounds::Maximized(initial_bounds))
+                        {
+                            WindowMutationDispatch::Queued(ticket) => ticket,
+                            dispatch => {
+                                panic!("expected deferred placement ticket, got {dispatch:?}")
+                            }
+                        };
+                        placement_ticket.borrow_mut().replace(ticket);
+                        cx.new(|_| Empty)
+                    }
+                },
+            )
+        })
+        .expect("hidden deferred-placement target should open");
+    let hwnd = platform
+        .raw_window_handles
+        .read()
+        .last()
+        .expect("hidden deferred-placement target should register an HWND")
+        .as_raw();
+    let placement_ticket = placement_ticket
+        .borrow()
+        .clone()
+        .expect("the root builder should retain the deferred placement ticket");
+
+    platform.inner.run_foreground_task();
+    pump_messages_until_idle("hidden deferred initial presentation");
+
+    assert!(!unsafe { IsWindowVisible(hwnd).as_bool() });
+    assert!(placement_ticket.observation().is_none());
+    let hidden_facts = app.update_for_test(|cx| {
+        window
+            .update(cx, |_, window, _| window.platform_facts().clone())
+            .expect("hidden deferred-placement target should remain live")
+    });
+    assert_eq!(
+        hidden_facts.window_bounds,
+        WindowBounds::Windowed(initial_bounds)
+    );
+    assert!(!hidden_facts.is_maximized);
+
+    app.update_for_test(|cx| {
+        window
+            .update(cx, |_, window, _| window.activate_window())
+            .expect("hidden deferred-placement target should remain live")
+    });
+    platform.inner.run_foreground_task();
+    pump_messages_until("forced deferred initial presentation", || {
+        placement_ticket.observation().is_some() && unsafe { IsWindowVisible(hwnd).as_bool() }
+    });
+    let placement_observation = placement_ticket
+        .observation()
+        .expect("forced presentation should settle the deferred placement");
+    assert!(matches!(
+        placement_observation.outcome,
+        WindowMutationOutcome::Exact | WindowMutationOutcome::Adjusted
+    ));
+    assert!(placement_observation.facts.is_maximized);
+
+    app.update_for_test(|cx| {
+        window
+            .update(cx, |_, window, cx| window.remove_window(cx))
+            .expect("hidden deferred-placement target should close")
+    });
+    pump_messages_until_idle("hidden deferred initial presentation teardown");
+}
+
+#[test]
+fn hidden_initial_presentation_binds_unscoped_physical_placement_on_forced_show() {
+    discard_stale_quit_messages();
+
+    let platform = Rc::new(
+        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+    );
+    let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
+    let initial_bounds = app
+        .update_for_test(|cx| WindowBounds::centered(size(px(340.0), px(240.0)), cx).get_bounds());
+    let scale_factor = platform
+        .inner
+        .exact_display_topology_snapshot()
+        .expect("the physical placement test requires an exact display topology")
+        .primary_display()
+        .scale_factor();
+    let initial_client_bounds = initial_bounds.to_device_pixels(scale_factor);
+    let target_client_bounds = Bounds::new(
+        point(
+            DevicePixels(initial_client_bounds.origin.x.0 + 24),
+            DevicePixels(initial_client_bounds.origin.y.0 + 16),
+        ),
+        initial_client_bounds.size,
+    );
+    let placement_ticket = Rc::new(RefCell::new(None::<WindowMutationTicket>));
+    let window = app
+        .update_for_test(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(initial_bounds)),
+                    focus_on_appearing: false,
+                    show: false,
+                    ..WindowOptions::default()
+                },
+                {
+                    let placement_ticket = placement_ticket.clone();
+                    move |window, cx| {
+                        let request = WindowPhysicalPlacementRequest::try_new(target_client_bounds)
+                            .expect("the unscoped physical placement should be valid");
+                        let ticket = match window.request_physical_window_placement(request) {
+                            WindowMutationDispatch::Queued(ticket) => ticket,
+                            dispatch => {
+                                panic!("expected deferred physical placement, got {dispatch:?}")
+                            }
+                        };
+                        placement_ticket.borrow_mut().replace(ticket);
+                        cx.new(|_| Empty)
+                    }
+                },
+            )
+        })
+        .expect("hidden physical-placement target should open");
+    let hwnd = platform
+        .raw_window_handles
+        .read()
+        .last()
+        .expect("hidden physical-placement target should register an HWND")
+        .as_raw();
+    let placement_ticket = placement_ticket
+        .borrow()
+        .clone()
+        .expect("the root builder should retain the physical placement ticket");
+
+    platform.inner.run_foreground_task();
+    pump_messages_until_idle("hidden physical initial presentation");
+
+    assert!(!unsafe { IsWindowVisible(hwnd).as_bool() });
+    assert!(placement_ticket.observation().is_none());
+    let hidden_geometry = platform
+        .window_from_hwnd(hwnd)
+        .expect("hidden physical-placement target should remain registered")
+        .observed_platform_facts_for_test()
+        .expect("hidden physical-placement target facts should be readable")
+        .physical_geometry
+        .expect("Windows should report hidden physical geometry");
+    assert_ne!(hidden_geometry.client_bounds(), target_client_bounds);
+
+    app.update_for_test(|cx| {
+        window
+            .update(cx, |_, window, _| window.activate_window())
+            .expect("hidden physical-placement target should remain live")
+    });
+    platform.inner.run_foreground_task();
+    pump_messages_until("forced physical initial presentation", || {
+        placement_ticket.observation().is_some() && unsafe { IsWindowVisible(hwnd).as_bool() }
+    });
+    let placement_observation = placement_ticket
+        .observation()
+        .expect("forced presentation should settle the physical placement");
+    assert!(matches!(
+        placement_observation.outcome,
+        WindowMutationOutcome::Exact | WindowMutationOutcome::Adjusted
+    ));
+    assert_eq!(
+        placement_observation
+            .facts
+            .physical_geometry
+            .expect("settled physical placement should retain native geometry")
+            .client_bounds(),
+        target_client_bounds
+    );
+
+    app.update_for_test(|cx| {
+        window
+            .update(cx, |_, window, cx| window.remove_window(cx))
+            .expect("hidden physical-placement target should close")
+    });
+    pump_messages_until_idle("hidden physical initial presentation teardown");
+}
+
+#[test]
 fn failed_forced_initial_presentation_rejects_activation_and_rolls_back_deferred_placement() {
     discard_stale_quit_messages();
 
@@ -2015,16 +2239,47 @@ fn failed_forced_initial_presentation_rejects_activation_and_rolls_back_deferred
         .last()
         .expect("foreground sentinel should register an HWND")
         .as_raw();
+    let initial_bounds = app
+        .update_for_test(|cx| WindowBounds::centered(size(px(340.0), px(240.0)), cx).get_bounds());
+    let scale_factor = platform
+        .inner
+        .exact_display_topology_snapshot()
+        .expect("the rollback test requires an exact display topology")
+        .primary_display()
+        .scale_factor();
+    let initial_client_bounds = initial_bounds.to_device_pixels(scale_factor);
+    let target_client_bounds = Bounds::new(
+        point(
+            DevicePixels(initial_client_bounds.origin.x.0 + 28),
+            DevicePixels(initial_client_bounds.origin.y.0 + 20),
+        ),
+        initial_client_bounds.size,
+    );
+    let placement_ticket = Rc::new(RefCell::new(None::<WindowMutationTicket>));
     let window = app
         .update_for_test(|cx| {
             cx.open_window(
                 WindowOptions {
-                    window_bounds: Some(WindowBounds::centered(size(px(340.0), px(240.0)), cx)),
+                    window_bounds: Some(WindowBounds::Maximized(initial_bounds)),
                     focus_on_appearing: false,
                     show: false,
                     ..WindowOptions::default()
                 },
-                |_, cx| cx.new(|_| Empty),
+                {
+                    let placement_ticket = placement_ticket.clone();
+                    move |window, cx| {
+                        let request = WindowPhysicalPlacementRequest::try_new(target_client_bounds)
+                            .expect("the deferred physical placement should be valid");
+                        let ticket = match window.request_physical_window_placement(request) {
+                            WindowMutationDispatch::Queued(ticket) => ticket,
+                            dispatch => {
+                                panic!("expected deferred placement ticket, got {dispatch:?}")
+                            }
+                        };
+                        placement_ticket.borrow_mut().replace(ticket);
+                        cx.new(|_| Empty)
+                    }
+                },
             )
         })
         .expect("hidden activation target should open");
@@ -2040,25 +2295,31 @@ fn failed_forced_initial_presentation_rejects_activation_and_rolls_back_deferred
     }
     assert_eq!(unsafe { GetActiveWindow() }, foreground_hwnd);
 
-    let initial_window_bounds = platform
+    let initial_projected_facts = app.update_for_test(|cx| {
+        window
+            .update(cx, |_, window, _| window.platform_facts().clone())
+            .expect("hidden activation target should remain live")
+    });
+    assert_eq!(
+        initial_projected_facts.window_bounds,
+        WindowBounds::Maximized(initial_bounds)
+    );
+    assert!(initial_projected_facts.is_maximized);
+    let initial_physical_geometry = platform
         .window_from_hwnd(hwnd)
         .expect("hidden activation target should remain registered")
         .observed_platform_facts_for_test()
         .expect("hidden activation target native facts should be readable")
-        .window_bounds;
-    assert!(matches!(initial_window_bounds, WindowBounds::Windowed(_)));
-    let placement_ticket = app.update_for_test(|cx| {
-        window
-            .update(cx, |_, window, _| {
-                match window.request_window_placement(WindowBounds::Maximized(
-                    initial_window_bounds.get_bounds(),
-                )) {
-                    WindowMutationDispatch::Queued(ticket) => ticket,
-                    dispatch => panic!("expected deferred placement ticket, got {dispatch:?}"),
-                }
-            })
-            .expect("hidden activation target should remain live")
-    });
+        .physical_geometry
+        .expect("Windows should expose the hidden target's physical geometry");
+    assert_ne!(
+        initial_physical_geometry.client_bounds(),
+        target_client_bounds
+    );
+    let placement_ticket = placement_ticket
+        .borrow()
+        .clone()
+        .expect("the root builder should retain the deferred placement ticket");
     assert!(placement_ticket.observation().is_none());
     platform
         .lifecycle_test_probe
@@ -2093,9 +2354,28 @@ fn failed_forced_initial_presentation_rejects_activation_and_rolls_back_deferred
     );
     assert_eq!(
         placement_observation.facts.window_bounds,
-        initial_window_bounds
+        initial_projected_facts.window_bounds
     );
-    assert!(!placement_observation.facts.is_maximized);
+    assert!(placement_observation.facts.is_maximized);
+    assert_eq!(
+        placement_observation
+            .facts
+            .physical_geometry
+            .expect("rejected placement should retain restored native geometry")
+            .client_bounds(),
+        initial_physical_geometry.client_bounds()
+    );
+    let restored_native_geometry = platform
+        .window_from_hwnd(hwnd)
+        .expect("hidden activation target should remain registered")
+        .observed_platform_facts_for_test()
+        .expect("restored hidden activation target facts should be readable")
+        .physical_geometry
+        .expect("Windows should expose restored hidden physical geometry");
+    assert_eq!(
+        restored_native_geometry.client_bounds(),
+        initial_physical_geometry.client_bounds()
+    );
 
     let target = NativeBoundaryTarget::Window(window.window_id());
     let diagnostic_delta =
@@ -2131,8 +2411,11 @@ fn failed_forced_initial_presentation_rejects_activation_and_rolls_back_deferred
         .expect("retried activation target should remain registered")
         .observed_platform_facts_for_test()
         .expect("retried activation target native facts should be readable");
-    assert_eq!(retry_facts.window_bounds, initial_window_bounds);
-    assert!(!retry_facts.is_maximized);
+    assert_eq!(
+        retry_facts.window_bounds,
+        WindowBounds::Maximized(initial_bounds)
+    );
+    assert!(retry_facts.is_maximized);
 
     for handle in [
         AnyWindowHandle::from(window),

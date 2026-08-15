@@ -454,6 +454,8 @@ pub struct WindowsWindowState {
     taskbar_visible: bool,
 
     pub display: Cell<WindowsDisplay>,
+    pub(crate) display_topology_generation: Cell<u64>,
+    last_validated_platform_facts: RefCell<Option<WindowPlatformFacts>>,
     /// Flag to instruct the `VSyncProvider` thread to invalidate the directx devices
     /// as resizing them has failed, causing us to have lost at least the render target.
     pub invalidate_devices: Arc<AtomicBool>,
@@ -565,6 +567,7 @@ impl WindowsWindowState {
         current_cursor: Option<HCURSOR>,
         cursor_visible: Arc<AtomicBool>,
         display: WindowsDisplay,
+        display_topology_generation: u64,
         min_size: Option<Size<Pixels>>,
         appearance: WindowAppearance,
         disable_direct_composition: bool,
@@ -649,6 +652,8 @@ impl WindowsWindowState {
             activation_policy: Cell::new(activation_policy),
             taskbar_visible,
             display: Cell::new(display),
+            display_topology_generation: Cell::new(display_topology_generation),
+            last_validated_platform_facts: RefCell::new(None),
             native_placement_epoch,
             placement_mutation_generation,
             pointer_input_mutation_generation,
@@ -689,6 +694,11 @@ impl WindowsWindowState {
 
     fn native_placement_epoch(&self) -> u64 {
         self.native_placement_epoch.get()
+    }
+
+    pub(crate) fn set_display_binding(&self, display: WindowsDisplay, topology_generation: u64) {
+        self.display.set(display);
+        self.display_topology_generation.set(topology_generation);
     }
 
     pub(crate) fn accepts_pointer_input(&self) -> bool {
@@ -806,8 +816,10 @@ impl WindowsWindowInner {
             .native_retirement_coordinator
             .upgrade()
             .context("Windows platform topology authority is no longer available")?;
-        let first_topology_generation = coordinator.display_topology_generation();
-        let first_geometry = self.physical_geometry_observation(first_topology_generation)?;
+        let snapshot = coordinator
+            .exact_display_topology_snapshot()
+            .context("display topology is unavailable")?;
+        let (first_geometry, _) = self.physical_geometry_native_sample(&snapshot)?;
         let mut screen_position = POINT {
             x: client_position.x.0,
             y: client_position.y.0,
@@ -819,23 +831,28 @@ impl WindowsWindowInner {
             DevicePixels(screen_position.x),
             DevicePixels(screen_position.y),
         );
-        let first_target_display =
-            WindowsDisplay::physical_geometry_at(global_position, first_topology_generation)
-                .context("resolving the target display for the native pointer frame")?;
-        let second_topology_generation = coordinator.display_topology_generation();
-        let second_geometry = self.physical_geometry_observation(second_topology_generation)?;
-        let second_target_display =
-            WindowsDisplay::physical_geometry_at(global_position, second_topology_generation)
-                .context("revalidating the target display for the native pointer frame")?;
-        let final_topology_generation = coordinator.display_topology_generation();
+        let first_target_display = snapshot
+            .physical_observation_at(global_position)
+            .context("resolving the target display for the native pointer frame")?;
+        let (second_geometry, second_native_display) =
+            self.physical_geometry_native_sample(&snapshot)?;
+        snapshot
+            .validate_target_with_native_display(
+                first_target_display,
+                global_position,
+                second_native_display,
+            )
+            .or_else(|| snapshot.validate_target(first_target_display, global_position))
+            .context("the native pointer target no longer matches the display publication")?;
+        let final_snapshot = coordinator
+            .exact_display_topology_snapshot()
+            .context("display topology is unavailable")?;
         anyhow::ensure!(
             first_geometry == second_geometry,
             "native pointer geometry changed while the callback frame was sampled"
         );
         anyhow::ensure!(
-            first_topology_generation == second_topology_generation
-                && second_topology_generation == final_topology_generation
-                && first_target_display == second_target_display,
+            snapshot.generation() == final_snapshot.generation(),
             "native pointer target display changed while the callback frame was sampled"
         );
         let expected_x = second_geometry
@@ -864,7 +881,7 @@ impl WindowsWindowInner {
             );
         }
         PlatformNativePointerPhysicalFrame::new(global_position, second_geometry)
-            .with_target_display(second_target_display)
+            .with_target_display(first_target_display)
             .context("native pointer point is outside its sampled target display")
     }
 
@@ -876,6 +893,7 @@ impl WindowsWindowInner {
             context.current_cursor,
             context.cursor_visible.clone(),
             context.display,
+            context.display_topology_generation,
             context.min_size,
             context.appearance,
             context.disable_direct_composition,
@@ -1191,23 +1209,39 @@ impl WindowsWindowInner {
     }
 
     fn prepare_pending_initial_placement(&self) -> Result<()> {
-        let Some(open_status) = self.state.initial_placement.take() else {
+        let Some(mut open_status) = self.take_validated_pending_initial_placement()? else {
             return Ok(());
         };
+        let previous_open_status = open_status.clone();
+        let previous_facts = self.state.last_validated_platform_facts.borrow().clone();
         let rect = open_status.placement.rcNormalPosition;
-        let result = unsafe {
-            SetWindowPos(
-                self.hwnd,
-                None,
-                rect.left,
-                rect.top,
-                rect.right - rect.left,
-                rect.bottom - rect.top,
-                SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOZORDER,
-            )
+        let result = (|| {
+            unsafe {
+                SetWindowPos(
+                    self.hwnd,
+                    None,
+                    rect.left,
+                    rect.top,
+                    rect.right - rect.left,
+                    rect.bottom - rect.top,
+                    SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOZORDER,
+                )
+            }
+            .context("failed to prepare hidden window placement")?;
+            let settled_geometry =
+                self.settle_physical_client_bounds_exactly(open_status.client_placement)?;
+            self.checkpoint_settled_initial_placement(&mut open_status, settled_geometry)?;
+            self.validate_initial_placement_authority(&open_status)
+        })();
+        if result.is_ok() {
+            self.state.initial_placement.set(Some(open_status));
+            self.refresh_pending_initial_platform_facts();
+        } else {
+            self.state.initial_placement.set(Some(previous_open_status));
+            self.state
+                .last_validated_platform_facts
+                .replace(previous_facts);
         }
-        .context("failed to prepare hidden window placement");
-        self.state.initial_placement.set(Some(open_status));
         result
     }
 
@@ -1220,7 +1254,7 @@ impl WindowsWindowInner {
         if !force_show && !self.show_on_initial_presentation.get() {
             return Ok(false);
         }
-        let Some(open_status) = self.state.initial_placement.take() else {
+        let Some(open_status) = self.take_validated_pending_initial_placement()? else {
             return Ok(false);
         };
         #[cfg(test)]
@@ -1256,6 +1290,10 @@ impl WindowsWindowInner {
                 )
             }
             .context("failed to apply initial restore geometry")?;
+            self.state
+                .border_offset
+                .update_restored(self.hwnd)
+                .log_err();
 
             match open_status.state {
                 WindowOpenState::Maximized if activate => unsafe {
@@ -1301,6 +1339,15 @@ impl WindowsWindowInner {
         });
         match result {
             Ok(()) => {
+                if let Err(error) = self.validate_initial_placement_authority(&open_status) {
+                    unsafe {
+                        let _ = ShowWindow(self.hwnd, SW_HIDE);
+                    }
+                    self.state.initial_placement.set(Some(open_status));
+                    return Err(error).context(
+                        "display topology changed while the initial placement was presented",
+                    );
+                }
                 self.show_on_initial_presentation.set(false);
                 Ok(true)
             }
@@ -1315,7 +1362,7 @@ impl WindowsWindowInner {
         self: &Rc<Self>,
         insert_after: HWND,
     ) -> Result<bool> {
-        let Some(open_status) = self.state.initial_placement.take() else {
+        let Some(open_status) = self.take_validated_pending_initial_placement()? else {
             return Ok(false);
         };
         anyhow::ensure!(
@@ -1339,6 +1386,15 @@ impl WindowsWindowInner {
         });
         match result {
             Ok(()) => {
+                if let Err(error) = self.validate_initial_placement_authority(&open_status) {
+                    unsafe {
+                        let _ = ShowWindow(self.hwnd, SW_HIDE);
+                    }
+                    self.state.initial_placement.set(Some(open_status));
+                    return Err(error).context(
+                        "display topology changed while the provisional placement was revealed",
+                    );
+                }
                 self.show_on_initial_presentation.set(false);
                 Ok(true)
             }
@@ -1354,26 +1410,63 @@ impl WindowsWindowInner {
         activate: bool,
         force_show: bool,
     ) -> Result<bool> {
+        if !force_show && !self.show_on_initial_presentation.get() {
+            return Ok(false);
+        }
         let deferred = self.state.deferred_placement_mutation.take();
+        let (native_rollback, rollback_capture_error) = match deferred {
+            Some(_) => match self.capture_window_placement_snapshot() {
+                Ok(snapshot) => (Some(snapshot), None),
+                Err(error) => (None, Some(error)),
+            },
+            None => (None, None),
+        };
         let initial_placement_before_deferred = deferred
             .is_some()
             .then(|| self.pending_initial_placement())
             .flatten();
         let before_facts = deferred.map(|_| {
-            self.observed_platform_facts_from_native()
-                .unwrap_or_else(|_| self.cached_platform_facts())
+            self.project_pending_initial_placement(
+                self.observed_platform_facts_from_native()
+                    .unwrap_or_else(|_| self.last_validated_platform_facts()),
+            )
         });
-        let result = (|| {
-            if let Some(deferred) = deferred {
-                self.merge_deferred_initial_placement(deferred.request)?;
+        let mut deferred_merged = false;
+        let mut result = match rollback_capture_error {
+            Some(error) => {
+                Err(error).context("failed to capture deferred placement rollback state")
             }
-            self.present_pending_initial_placement(activate, force_show, None)
-        })();
+            None => (|| {
+                if let Some(deferred) = deferred {
+                    self.merge_deferred_initial_placement(deferred.request)?;
+                    deferred_merged = true;
+                }
+                self.present_pending_initial_placement(activate, force_show, None)
+            })(),
+        };
 
-        if result.is_err()
-            && let Some(initial_placement) = initial_placement_before_deferred
-        {
-            self.state.initial_placement.set(Some(initial_placement));
+        if result.is_err() || matches!(&result, Ok(false)) {
+            if let Some(native_rollback) = native_rollback.filter(|_| deferred_merged) {
+                if let Err(rollback_error) = self.restore_window_placement_snapshot(native_rollback)
+                {
+                    let original_outcome = match &result {
+                        Ok(false) => "initial presentation was deferred".to_string(),
+                        Err(error) => format!("initial presentation failed: {error:#}"),
+                        Ok(true) => unreachable!("successful presentation does not roll back"),
+                    };
+                    result = Err(rollback_error).with_context(|| {
+                        format!("failed to restore deferred placement after {original_outcome}")
+                    });
+                }
+            }
+            if let Some(initial_placement) = initial_placement_before_deferred.clone() {
+                self.state.initial_placement.set(Some(initial_placement));
+            }
+            if let Some(before_facts) = before_facts.clone() {
+                self.state
+                    .last_validated_platform_facts
+                    .replace(Some(before_facts));
+            }
         }
 
         let Some(deferred) = deferred else {
@@ -1404,10 +1497,7 @@ impl WindowsWindowInner {
                     }
                 }
             } else {
-                let facts = self
-                    .observed_platform_facts_from_native()
-                    .unwrap_or(before_facts);
-                (PlatformWindowMutationTerminal::Rejected, facts)
+                (PlatformWindowMutationTerminal::Rejected, before_facts)
             };
             self.emit_window_mutation_observation(
                 WindowMutationDomain::Placement,
@@ -1676,8 +1766,11 @@ impl WindowsWindowInner {
             .native_retirement_coordinator
             .upgrade()
             .context("Windows platform topology authority is no longer available")?;
+        let snapshot = coordinator
+            .exact_display_topology_snapshot()
+            .context("display topology is unavailable")?;
         anyhow::ensure!(
-            coordinator.display_topology_generation() == display_observation.topology_generation(),
+            snapshot.generation() == display_observation.topology_generation(),
             "display topology changed before provisional geometry rollback"
         );
         let request = WindowPhysicalPlacementRequest::try_new(expected.client_bounds())
@@ -1690,9 +1783,11 @@ impl WindowsWindowInner {
             restored == expected,
             "provisional physical client geometry did not restore exactly"
         );
-        let display = WindowsDisplay::new(display_observation.display_id())
+        let display = snapshot
+            .display(display_observation.display_id())
             .context("the restored provisional display is no longer available")?;
-        self.state.display.set(display);
+        self.state
+            .set_display_binding(display, snapshot.generation());
         self.state.scale_factor.set(restored.scale_factor());
         Ok(())
     }
@@ -2295,6 +2390,10 @@ impl WindowsWindowInner {
             }
             return Err(error);
         }
+        self.state
+            .border_offset
+            .update_restored(self.hwnd)
+            .context("failed to refresh restored window frame insets")?;
         set_non_rude_hwnd(self.hwnd, true)?;
         Ok(())
     }
@@ -2378,6 +2477,8 @@ impl WindowsWindowInner {
         Ok(WindowPlacementRollbackSnapshot {
             placement,
             style_and_bounds: self.current_style_and_bounds()?,
+            visible: unsafe { IsWindowVisible(self.hwnd).as_bool() },
+            border_offset: self.state.border_offset.snapshot(),
             fullscreen: self.state.fullscreen.get(),
             fullscreen_restore_bounds: self.state.fullscreen_restore_bounds.get(),
             non_rude_hwnd: non_rude_hwnd_for_fullscreen(self.state.fullscreen.get()),
@@ -2388,9 +2489,19 @@ impl WindowsWindowInner {
         &self,
         snapshot: WindowPlacementRollbackSnapshot,
     ) -> Result<()> {
+        self.state.border_offset.restore(snapshot.border_offset);
         self.restore_style_and_bounds(snapshot.style_and_bounds)?;
-        unsafe { SetWindowPlacement(self.hwnd, &snapshot.placement) }
+        let mut placement = snapshot.placement;
+        if !snapshot.visible {
+            placement.showCmd = SW_HIDE.0 as u32;
+        }
+        unsafe { SetWindowPlacement(self.hwnd, &placement) }
             .context("failed to restore native window placement")?;
+        if !snapshot.visible {
+            unsafe {
+                let _ = ShowWindow(self.hwnd, SW_HIDE);
+            }
+        }
         self.state.fullscreen.set(snapshot.fullscreen);
         self.state
             .fullscreen_restore_bounds
@@ -2402,31 +2513,42 @@ impl WindowsWindowInner {
         let display_observation = physical_geometry
             .display_observation()
             .context("restored native geometry did not identify its display")?;
-        let display = WindowsDisplay::new(display_observation.display_id())
-            .context("restored native display is no longer available")?;
         let coordinator = self
             .native_retirement_coordinator
             .upgrade()
             .context("Windows platform topology authority is no longer available")?;
+        let snapshot = coordinator
+            .exact_display_topology_snapshot()
+            .context("display topology is unavailable")?;
         anyhow::ensure!(
-            coordinator.display_topology_generation() == display_observation.topology_generation(),
+            snapshot.generation() == display_observation.topology_generation(),
             "display topology changed while placement rollback was committed"
         );
-        self.state.display.set(display);
+        let display = snapshot
+            .display(display_observation.display_id())
+            .context("restored native display is no longer available")?;
+        self.state
+            .set_display_binding(display, snapshot.generation());
         self.state
             .scale_factor
             .set(physical_geometry.scale_factor());
+        self.state.border_offset.update_restored(self.hwnd)?;
         Ok(())
     }
 
     fn window_placement_for_bounds(&self, bounds: Bounds<Pixels>) -> Result<WINDOWPLACEMENT> {
-        retrieve_window_placement(
-            self.hwnd,
-            self.state.display.get(),
-            bounds,
-            self.state.scale_factor.get(),
-            &self.state.border_offset,
-        )
+        let client_bounds = bounds.to_device_pixels(self.state.display.get().scale_factor());
+        let request = WindowPhysicalPlacementRequest::try_new(client_bounds)
+            .context("window placement bounds are not representable in physical coordinates")?;
+        let mut placement = WINDOWPLACEMENT {
+            length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
+            ..Default::default()
+        };
+        unsafe { GetWindowPlacement(self.hwnd, &mut placement) }
+            .context("failed to read native window placement")?;
+        placement.rcNormalPosition =
+            self.initial_window_rect_for_physical_client_bounds(request)?;
+        Ok(placement)
     }
 
     fn set_window_restore_bounds(
@@ -2487,7 +2609,7 @@ impl WindowsWindowInner {
         let rollback = self.capture_window_placement_snapshot()?;
         let mut mutation_started = false;
         match self.apply_physical_windowed_placement_body(request, &mut mutation_started) {
-            Ok(()) => Ok(()),
+            Ok(_) => Ok(()),
             Err(error) if !mutation_started => Err(error),
             Err(error) => {
                 if let Err(rollback_error) = self.restore_window_placement_snapshot(rollback) {
@@ -2504,7 +2626,7 @@ impl WindowsWindowInner {
         &self,
         request: WindowPhysicalPlacementRequest,
         mutation_started: &mut bool,
-    ) -> Result<()> {
+    ) -> Result<PlatformWindowPhysicalGeometry> {
         self.validate_physical_placement_target(request)?;
         if self.state.is_fullscreen() {
             *mutation_started = true;
@@ -2547,26 +2669,60 @@ impl WindowsWindowInner {
         );
         self.validate_physical_placement_target(request)?;
         let rollback = self.capture_window_placement_snapshot()?;
+        let previous_facts = self.state.last_validated_platform_facts.borrow().clone();
+        let mut open_status = self
+            .state
+            .initial_placement
+            .take()
+            .context("hidden physical placement lost its retained initial placement")?;
+        let previous_open_status = open_status.clone();
         let mut mutation_started = false;
         let result = (|| {
-            self.apply_physical_windowed_placement_body(request, &mut mutation_started)?;
-            let mut outer_bounds = RECT::default();
-            unsafe { GetWindowRect(self.hwnd, &mut outer_bounds) }
-                .context("failed to observe the settled hidden target window frame")?;
-            let mut open_status = self
-                .pending_initial_placement()
-                .context("hidden physical placement lost its retained initial placement")?;
+            let settled_geometry =
+                self.apply_physical_windowed_placement_body(request, &mut mutation_started)?;
+            self.state.border_offset.update_restored(self.hwnd)?;
+            let target_display = settled_geometry
+                .display_observation()
+                .context("settled hidden placement did not identify its target display")?;
+            let target_overlap = request.client_bounds().intersect(&target_display.bounds());
+            anyhow::ensure!(
+                target_overlap.size.width.0 > 0 && target_overlap.size.height.0 > 0,
+                "settled hidden placement did not overlap its observed target display"
+            );
+            let client_placement = if request.target_display().is_some() {
+                request
+            } else {
+                WindowPhysicalPlacementRequest::try_new_for_display(
+                    request.client_bounds(),
+                    target_overlap.center(),
+                    target_display,
+                )
+                .context("settled hidden placement could not bind its observed target display")?
+            };
             open_status.state = WindowOpenState::Windowed;
-            open_status.placement.rcNormalPosition = outer_bounds;
-            open_status.placement.showCmd = SW_SHOWNORMAL.0 as u32;
-            self.state.initial_placement.set(Some(open_status));
-            Ok(())
+            open_status.client_placement = client_placement;
+            self.checkpoint_settled_initial_placement(&mut open_status, settled_geometry)
         })();
         match result {
-            Ok(()) => Ok(()),
-            Err(error) if !mutation_started => Err(error),
+            Ok(()) => {
+                self.state.initial_placement.set(Some(open_status));
+                self.refresh_pending_initial_platform_facts();
+                Ok(())
+            }
+            Err(error) if !mutation_started => {
+                self.state.initial_placement.set(Some(previous_open_status));
+                self.state
+                    .last_validated_platform_facts
+                    .replace(previous_facts);
+                Err(error)
+            }
             Err(error) => {
-                if let Err(rollback_error) = self.restore_window_placement_snapshot(rollback) {
+                let rollback_result = self.restore_window_placement_snapshot(rollback);
+                self.state.initial_placement.set(Some(previous_open_status));
+                self.state
+                    .last_validated_platform_facts
+                    .replace(previous_facts);
+                if let Err(rollback_error) = rollback_result {
                     return Err(error).context(format!(
                         "hidden physical placement rollback also failed: {rollback_error:#}"
                     ));
@@ -2574,6 +2730,48 @@ impl WindowsWindowInner {
                 Err(error)
             }
         }
+    }
+
+    fn checkpoint_settled_initial_placement(
+        &self,
+        open_status: &mut WindowOpenStatus,
+        settled_geometry: PlatformWindowPhysicalGeometry,
+    ) -> Result<()> {
+        anyhow::ensure!(
+            open_status
+                .client_placement
+                .matches_geometry(settled_geometry),
+            "settled hidden geometry does not match its retained client placement"
+        );
+        let display_observation = settled_geometry
+            .display_observation()
+            .context("settled hidden placement did not identify its display")?;
+        let coordinator = self
+            .native_retirement_coordinator
+            .upgrade()
+            .context("Windows platform topology authority is no longer available")?;
+        let snapshot = coordinator
+            .exact_display_topology_snapshot()
+            .context("display topology is unavailable")?;
+        anyhow::ensure!(
+            snapshot.generation() == display_observation.topology_generation(),
+            "display topology changed while the hidden placement was checkpointed"
+        );
+        let display = snapshot
+            .display(display_observation.display_id())
+            .context("settled hidden placement display is no longer available")?;
+        let mut outer_bounds = RECT::default();
+        unsafe { GetWindowRect(self.hwnd, &mut outer_bounds) }
+            .context("failed to observe the settled hidden target window frame")?;
+        open_status.placement.rcNormalPosition = outer_bounds;
+        open_status.placement.showCmd = match open_status.state {
+            WindowOpenState::Windowed | WindowOpenState::Fullscreen => SW_SHOWNORMAL.0 as u32,
+            WindowOpenState::Maximized => SW_SHOWMAXIMIZED.0 as u32,
+        };
+        self.state
+            .set_display_binding(display, display_observation.topology_generation());
+        self.state.scale_factor.set(settled_geometry.scale_factor());
+        Ok(())
     }
 
     fn apply_provisional_final_placement(
@@ -2812,9 +3010,12 @@ impl WindowsWindowInner {
         let result = (|| {
             self.state.scale_factor.set(current_facts.scale_factor);
             if let Some(display_id) = current_facts.display_id
-                && let Some(display) = WindowsDisplay::new(display_id)
+                && let Some(coordinator) = self.native_retirement_coordinator.upgrade()
+                && let Ok(snapshot) = coordinator.exact_display_topology_snapshot()
+                && let Some(display) = snapshot.display(display_id)
             {
-                self.state.display.set(display);
+                self.state
+                    .set_display_binding(display, snapshot.generation());
             }
 
             let window_bounds = current_facts.window_bounds;
@@ -3236,6 +3437,42 @@ impl WindowsWindowInner {
         initial_placement
     }
 
+    fn validate_initial_placement_authority(&self, open_status: &WindowOpenStatus) -> Result<()> {
+        let coordinator = self
+            .native_retirement_coordinator
+            .upgrade()
+            .context("Windows platform topology authority is no longer available")?;
+        let snapshot = coordinator
+            .exact_display_topology_snapshot()
+            .context("display topology is unavailable")?;
+        let target_display = open_status
+            .client_placement
+            .target_display()
+            .context("retained initial placement lost its exact target display observation")?;
+        let target_point = open_status
+            .client_placement
+            .target_point()
+            .context("retained initial placement lost its exact target point")?;
+        snapshot
+            .validate_target(target_display, target_point)
+            .context(
+                "display topology changed before the retained initial placement was committed",
+            )?;
+        Ok(())
+    }
+
+    fn take_validated_pending_initial_placement(&self) -> Result<Option<WindowOpenStatus>> {
+        let Some(open_status) = self.state.initial_placement.take() else {
+            return Ok(None);
+        };
+        let result = self.validate_initial_placement_authority(&open_status);
+        if let Err(error) = result {
+            self.state.initial_placement.set(Some(open_status));
+            return Err(error);
+        }
+        Ok(Some(open_status))
+    }
+
     fn merge_deferred_initial_placement(&self, request: DeferredPlacementRequest) -> Result<()> {
         match request {
             DeferredPlacementRequest::Logical(request) => {
@@ -3251,55 +3488,90 @@ impl WindowsWindowInner {
         &self,
         request: WindowPlacementRequest,
     ) -> Result<()> {
-        let Some(mut open_status) = self.state.initial_placement.take() else {
+        let Some(mut open_status) = self.take_validated_pending_initial_placement()? else {
             anyhow::bail!("pending creation placement disappeared before activation");
         };
-        let mut restore_bounds = calculate_client_rect(
-            open_status.placement.rcNormalPosition,
-            &self.state.border_offset,
-            self.state.scale_factor.get(),
-        );
-        if let Some(bounds) = request.restore_bounds {
-            restore_bounds = bounds;
-        }
-        if let Some(position) = request.position {
-            restore_bounds.origin = position;
-        }
-        if let Some(size) = request.size {
-            restore_bounds.size = size;
-        }
-        if let Some(state) = request.state {
-            open_status.state = match state {
-                WindowPlacementState::Windowed => WindowOpenState::Windowed,
-                WindowPlacementState::Maximized => WindowOpenState::Maximized,
-                WindowPlacementState::Fullscreen => WindowOpenState::Fullscreen,
-                WindowPlacementState::Minimized => {
-                    self.state.initial_placement.set(Some(open_status));
-                    anyhow::bail!("live minimized placement is not supported");
-                }
-            };
-        }
+        let previous = open_status.clone();
+        let result = (|| {
+            let mut restore_bounds = open_status.logical_client_bounds();
+            if let Some(bounds) = request.restore_bounds {
+                restore_bounds = bounds;
+            }
+            if let Some(position) = request.position {
+                restore_bounds.origin = position;
+            }
+            if let Some(size) = request.size {
+                restore_bounds.size = size;
+            }
+            if let Some(state) = request.state {
+                open_status.state = match state {
+                    WindowPlacementState::Windowed => WindowOpenState::Windowed,
+                    WindowPlacementState::Maximized => WindowOpenState::Maximized,
+                    WindowPlacementState::Fullscreen => WindowOpenState::Fullscreen,
+                    WindowPlacementState::Minimized => {
+                        anyhow::bail!("live minimized placement is not supported");
+                    }
+                };
+            }
 
-        open_status.placement.rcNormalPosition = calculate_window_rect(
-            restore_bounds.to_device_pixels(self.state.scale_factor.get()),
-            &self.state.border_offset,
-        );
-        open_status.placement.showCmd = match open_status.state {
-            WindowOpenState::Windowed | WindowOpenState::Fullscreen => SW_SHOWNORMAL.0 as u32,
-            WindowOpenState::Maximized => SW_SHOWMAXIMIZED.0 as u32,
-        };
-        self.state.initial_placement.set(Some(open_status));
-        Ok(())
+            let target_display = open_status.target_display();
+            let physical_client_bounds =
+                restore_bounds.to_device_pixels(target_display.scale_factor());
+            open_status.client_placement = WindowPhysicalPlacementRequest::try_new_for_display(
+                physical_client_bounds,
+                physical_client_bounds.center(),
+                target_display,
+            )
+            .context("deferred logical placement left its retained target display")?;
+            open_status.placement.rcNormalPosition =
+                self.initial_window_rect_for_physical_client_bounds(open_status.client_placement)?;
+            open_status.placement.showCmd = match open_status.state {
+                WindowOpenState::Windowed | WindowOpenState::Fullscreen => SW_SHOWNORMAL.0 as u32,
+                WindowOpenState::Maximized => SW_SHOWMAXIMIZED.0 as u32,
+            };
+            Ok(())
+        })();
+        match result {
+            Ok(()) => {
+                self.state.initial_placement.set(Some(open_status));
+                self.refresh_pending_initial_platform_facts();
+                Ok(())
+            }
+            Err(error) => {
+                self.state.initial_placement.set(Some(previous));
+                Err(error)
+            }
+        }
     }
 
     fn observed_platform_facts(&self) -> WindowPlatformFacts {
-        let facts = self
-            .observed_platform_facts_from_native()
-            .unwrap_or_else(|error| {
+        match self.observed_platform_facts_from_native() {
+            Ok(facts) => self.project_pending_initial_placement(facts),
+            Err(error) => {
                 log::warn!("Windows platform fact readback failed: {error:#}");
-                self.cached_platform_facts()
-            });
-        self.project_pending_initial_placement(facts)
+                self.state
+                    .last_validated_platform_facts
+                    .borrow()
+                    .clone()
+                    .map(|facts| self.project_pending_initial_placement(facts))
+                    .expect("Windows window construction seeds coherent platform facts")
+            }
+        }
+    }
+
+    fn refresh_pending_initial_platform_facts(&self) {
+        let facts = self.project_pending_initial_placement(self.cached_platform_facts());
+        self.state
+            .last_validated_platform_facts
+            .replace(Some(facts));
+    }
+
+    fn last_validated_platform_facts(&self) -> WindowPlatformFacts {
+        self.state
+            .last_validated_platform_facts
+            .borrow()
+            .clone()
+            .expect("Windows window construction seeds coherent platform facts")
     }
 
     fn project_pending_initial_placement(
@@ -3309,18 +3581,27 @@ impl WindowsWindowInner {
         let Some(open_status) = self.pending_initial_placement() else {
             return facts;
         };
-        let restore_bounds = calculate_client_rect(
-            open_status.placement.rcNormalPosition,
-            &self.state.border_offset,
-            facts.scale_factor,
-        );
+        let target_display = open_status.target_display();
+        let physical_client_bounds = open_status.client_placement.client_bounds();
+        let restore_bounds = open_status.logical_client_bounds();
+        let physical_geometry = PlatformWindowPhysicalGeometry::try_new(
+            physical_client_bounds,
+            target_display.scale_factor(),
+        )
+        .and_then(|geometry| geometry.with_display_observation(target_display))
+        .expect("retained initial placement facts remain physically coherent");
         let window_bounds = match open_status.state {
             WindowOpenState::Windowed => WindowBounds::Windowed(restore_bounds),
             WindowOpenState::Maximized => WindowBounds::Maximized(restore_bounds),
             WindowOpenState::Fullscreen => WindowBounds::Fullscreen(restore_bounds),
         };
+        facts.bounds = restore_bounds;
+        facts.physical_geometry = Some(physical_geometry);
         facts.window_bounds = window_bounds;
         facts.inner_window_bounds = window_bounds;
+        facts.content_size = restore_bounds.size;
+        facts.scale_factor = target_display.scale_factor();
+        facts.display_id = Some(target_display.display_id());
         facts.is_minimized = false;
         facts.is_maximized = matches!(open_status.state, WindowOpenState::Maximized);
         facts.is_fullscreen = matches!(open_status.state, WindowOpenState::Fullscreen);
@@ -3351,7 +3632,20 @@ impl WindowsWindowInner {
         let display = physical_geometry
             .display_observation()
             .context("native physical geometry did not identify its display")?;
-        let monitor = HMONITOR(u64::from(display.display_id()) as _);
+        let coordinator = self
+            .native_retirement_coordinator
+            .upgrade()
+            .context("Windows platform topology authority is no longer available")?;
+        let snapshot = coordinator
+            .exact_display_topology_snapshot()
+            .context("display topology is unavailable")?;
+        anyhow::ensure!(
+            snapshot.generation() == display.topology_generation(),
+            "native window facts crossed display topology generations"
+        );
+        let monitor = snapshot
+            .native_monitor_for_display(display.display_id())
+            .context("native window display is no longer available")?;
         let window_style = WINDOW_STYLE(
             self.get_window_long_checked(GWL_STYLE, "failed to read window style")? as u32,
         );
@@ -3412,6 +3706,9 @@ impl WindowsWindowInner {
             self.state.native_placement_epoch() == observation_epoch,
             "native window placement changed while platform facts were sampled"
         );
+        self.state
+            .last_validated_platform_facts
+            .replace(Some(facts.clone()));
         Ok(facts)
     }
 
@@ -3458,31 +3755,13 @@ impl WindowsWindowInner {
             .native_retirement_coordinator
             .upgrade()
             .context("Windows platform topology authority is no longer available")?;
-        let topology_generation = coordinator.display_topology_generation();
-        anyhow::ensure!(
-            topology_generation == target_display.topology_generation(),
-            "physical placement target display topology is stale"
-        );
-        let monitor = unsafe {
-            MonitorFromPoint(
-                POINT {
-                    x: target_point.x.0,
-                    y: target_point.y.0,
-                },
-                MONITOR_DEFAULTTONULL,
-            )
-        };
-        anyhow::ensure!(
-            !monitor.is_invalid(),
-            "physical placement target point no longer resolves to a display"
-        );
-        let current = WindowsDisplay::physical_geometry_for_monitor(monitor, topology_generation)
-            .context("physical placement target point no longer resolves to a display")?;
-        anyhow::ensure!(
-            current == target_display,
-            "physical placement target display changed before native commit"
-        );
-        Ok(Some(monitor))
+        let snapshot = coordinator
+            .exact_display_topology_snapshot()
+            .context("display topology is unavailable")?;
+        let target = snapshot
+            .validate_target(target_display, target_point)
+            .context("physical placement target display changed before native commit")?;
+        Ok(Some(target.monitor))
     }
 
     fn initial_window_rect_for_physical_client_bounds(
@@ -3518,11 +3797,12 @@ impl WindowsWindowInner {
     fn settle_physical_client_bounds_exactly(
         &self,
         request: WindowPhysicalPlacementRequest,
-    ) -> Result<()> {
+    ) -> Result<PlatformWindowPhysicalGeometry> {
         self.validate_physical_placement_target(request)?;
         let client_bounds = request.client_bounds();
-        if request.matches_geometry(self.physical_geometry_from_native()?) {
-            return Ok(());
+        let observed = self.physical_geometry_from_native()?;
+        if request.matches_geometry(observed) {
+            return Ok(observed);
         }
 
         // Crossing a DPI boundary synchronously dispatches WM_DPICHANGED. The handler applies
@@ -3548,7 +3828,7 @@ impl WindowsWindowInner {
             request.matches_geometry(observed),
             "native physical client geometry did not converge exactly on the target display"
         );
-        Ok(())
+        Ok(observed)
     }
 
     fn physical_scale_factor_observation(&self) -> Result<f32> {
@@ -3564,16 +3844,29 @@ impl WindowsWindowInner {
 
     fn physical_geometry_observation(
         &self,
-        topology_generation: u64,
+        snapshot: &WindowsDisplayTopologySnapshot,
     ) -> Result<PlatformWindowPhysicalGeometry> {
+        self.physical_geometry_native_sample(snapshot)
+            .map(|(geometry, _)| geometry)
+    }
+
+    fn physical_geometry_native_sample(
+        &self,
+        snapshot: &WindowsDisplayTopologySnapshot,
+    ) -> Result<(
+        PlatformWindowPhysicalGeometry,
+        ValidatedWindowsNativeDisplay,
+    )> {
         let bounds = self.physical_client_bounds_observation()?;
         let scale_factor = self.physical_scale_factor_observation()?;
         let monitor = unsafe { MonitorFromWindow(self.hwnd, MONITOR_DEFAULTTONULL) };
-        let display = WindowsDisplay::physical_geometry_for_monitor(monitor, topology_generation)
+        let native_display = snapshot
+            .validated_native_display(monitor)
             .context("failed to resolve the native window display")?;
-        PlatformWindowPhysicalGeometry::try_new(bounds, scale_factor)
-            .and_then(|geometry| geometry.with_display_observation(display))
-            .context("native physical client geometry and display were not coherent")
+        let geometry = PlatformWindowPhysicalGeometry::try_new(bounds, scale_factor)
+            .and_then(|geometry| geometry.with_display_observation(native_display.observation()))
+            .context("native physical client geometry and display were not coherent")?;
+        Ok((geometry, native_display))
     }
 
     pub(crate) fn physical_geometry_from_native(&self) -> Result<PlatformWindowPhysicalGeometry> {
@@ -3582,19 +3875,21 @@ impl WindowsWindowInner {
             .upgrade()
             .context("Windows platform topology authority is no longer available")?;
         let first_placement_epoch = self.state.native_placement_epoch();
-        let first_topology_generation = coordinator.display_topology_generation();
-        let first_geometry = self.physical_geometry_observation(first_topology_generation)?;
-        let second_topology_generation = coordinator.display_topology_generation();
-        let second_geometry = self.physical_geometry_observation(second_topology_generation)?;
-        let final_topology_generation = coordinator.display_topology_generation();
+        let snapshot = coordinator
+            .exact_display_topology_snapshot()
+            .context("display topology is unavailable")?;
+        let first_geometry = self.physical_geometry_observation(&snapshot)?;
+        let second_geometry = self.physical_geometry_observation(&snapshot)?;
+        let final_snapshot = coordinator
+            .exact_display_topology_snapshot()
+            .context("display topology is unavailable")?;
         let final_placement_epoch = self.state.native_placement_epoch();
         anyhow::ensure!(
             physical_geometry_sample_is_stable(
                 first_placement_epoch,
                 final_placement_epoch,
-                first_topology_generation,
-                second_topology_generation,
-                final_topology_generation,
+                snapshot.generation(),
+                final_snapshot.generation(),
                 first_geometry,
                 second_geometry,
             ),
@@ -3861,6 +4156,7 @@ struct WindowCreateContext {
     handle: AnyWindowHandle,
     hide_title_bar: bool,
     display: WindowsDisplay,
+    display_topology_generation: u64,
     is_movable: bool,
     min_size: Option<Size<Pixels>>,
     executor: ForegroundExecutor,
@@ -3912,6 +4208,7 @@ impl WindowsWindow {
             platform_window_handle,
             raw_window_handles,
             native_retirement_coordinator,
+            display_topology,
             disable_direct_composition,
             directx_devices,
             invalidate_devices,
@@ -3970,13 +4267,10 @@ impl WindowsWindow {
         let taskbar_visible = matches!(params.kind, WindowKind::Normal | WindowKind::Floating);
 
         let hinstance = get_module_handle();
-        let display = if let Some(display_id) = params.display_id {
-            WindowsDisplay::new(display_id)
-        } else {
-            None
-        }
-        .or_else(WindowsDisplay::primary_monitor)
-        .context("failed to find any monitor")?;
+        let display = params
+            .display_id
+            .and_then(|display_id| display_topology.display(display_id))
+            .unwrap_or_else(|| display_topology.primary_display());
         let appearance = system_appearance().unwrap_or_default();
         anyhow::ensure!(
             dwstyle.0 & WS_CHILD.0 == 0,
@@ -3994,6 +4288,7 @@ impl WindowsWindow {
             handle,
             hide_title_bar,
             display,
+            display_topology_generation: display_topology.generation(),
             is_movable: params.is_movable,
             min_size: params.window_min_size,
             executor,
@@ -4093,23 +4388,22 @@ impl WindowsWindow {
             .inner()
             .state
             .border_offset
-            .update(hwnd)?;
-        let placement = retrieve_window_placement(
-            hwnd,
+            .update_restored(hwnd)?;
+        let open_status = WindowOpenStatus::new(
+            construction_guard.inner(),
             display,
+            display_topology.generation(),
             params.window_bounds.get_bounds(),
-            construction_guard.inner().state.scale_factor.get(),
-            &construction_guard.inner().state.border_offset,
+            WindowOpenState::from(params.window_bounds),
         )?;
-        let open_status = WindowOpenStatus {
-            placement,
-            state: WindowOpenState::from(params.window_bounds),
-        };
         construction_guard
             .inner()
             .state
             .initial_placement
             .set(Some(open_status));
+        construction_guard
+            .inner()
+            .refresh_pending_initial_platform_facts();
 
         Ok(construction_guard.commit())
     }
@@ -4190,7 +4484,7 @@ impl WindowsWindow {
                                 WindowMutationDomain::Placement,
                                 generation,
                                 PlatformWindowMutationTerminal::Rejected,
-                                this.cached_platform_facts(),
+                                this.last_validated_platform_facts(),
                             );
                             return;
                         }
@@ -4238,7 +4532,7 @@ impl WindowsWindow {
                             WindowMutationDomain::Placement,
                             generation,
                             PlatformWindowMutationTerminal::Rejected,
-                            this.cached_platform_facts(),
+                            this.last_validated_platform_facts(),
                         );
                         return;
                     }
@@ -4323,7 +4617,7 @@ impl WindowsWindow {
                             WindowMutationDomain::Placement,
                             generation,
                             PlatformWindowMutationTerminal::Rejected,
-                            this.cached_platform_facts(),
+                            this.last_validated_platform_facts(),
                         );
                         return;
                     }
@@ -4487,7 +4781,7 @@ impl WindowsWindow {
                             WindowMutationDomain::PointerInput,
                             generation,
                             PlatformWindowMutationTerminal::Rejected,
-                            this.cached_platform_facts(),
+                            this.last_validated_platform_facts(),
                         );
                         return;
                     }
@@ -4552,7 +4846,7 @@ impl WindowsWindow {
                             WindowMutationDomain::ActivationPolicy,
                             generation,
                             PlatformWindowMutationTerminal::Rejected,
-                            this.cached_platform_facts(),
+                            this.last_validated_platform_facts(),
                         );
                         return;
                     }
@@ -4793,7 +5087,7 @@ impl PlatformWindow for WindowsWindow {
                             WindowMutationDomain::Placement,
                             generation,
                             PlatformWindowMutationTerminal::Rejected,
-                            this.cached_platform_facts(),
+                            this.last_validated_platform_facts(),
                         );
                         return;
                     }
@@ -5509,6 +5803,8 @@ struct StyleAndBounds {
 struct WindowPlacementRollbackSnapshot {
     placement: WINDOWPLACEMENT,
     style_and_bounds: StyleAndBounds,
+    visible: bool,
+    border_offset: WindowBorderOffsetSnapshot,
     fullscreen: Option<StyleAndBounds>,
     fullscreen_restore_bounds: Bounds<Pixels>,
     non_rude_hwnd: bool,
@@ -5533,12 +5829,44 @@ type Color = (u8, u8, u8, u8);
 
 #[derive(Debug, Default, Clone)]
 pub(crate) struct WindowBorderOffset {
-    pub(crate) width_offset: Cell<i32>,
-    pub(crate) height_offset: Cell<i32>,
+    left: Cell<i32>,
+    top: Cell<i32>,
+    right: Cell<i32>,
+    bottom: Cell<i32>,
 }
 
 impl WindowBorderOffset {
-    pub(crate) fn update(&self, hwnd: HWND) -> anyhow::Result<()> {
+    fn snapshot(&self) -> WindowBorderOffsetSnapshot {
+        WindowBorderOffsetSnapshot {
+            left: self.left.get(),
+            top: self.top.get(),
+            right: self.right.get(),
+            bottom: self.bottom.get(),
+        }
+    }
+
+    fn restore(&self, snapshot: WindowBorderOffsetSnapshot) {
+        self.left.set(snapshot.left);
+        self.top.set(snapshot.top);
+        self.right.set(snapshot.right);
+        self.bottom.set(snapshot.bottom);
+    }
+
+    pub(crate) fn width(&self) -> i32 {
+        self.left.get() + self.right.get()
+    }
+
+    pub(crate) fn height(&self) -> i32 {
+        self.top.get() + self.bottom.get()
+    }
+
+    pub(crate) fn update_restored(&self, hwnd: HWND) -> anyhow::Result<()> {
+        let style = WINDOW_STYLE(unsafe { get_window_long(hwnd, GWL_STYLE) } as u32);
+        if unsafe { IsZoomed(hwnd).as_bool() }
+            || WindowsWindowInner::has_fullscreen_window_style(style)
+        {
+            return Ok(());
+        }
         let window_rect = unsafe {
             let mut rect = std::mem::zeroed();
             GetWindowRect(hwnd, &mut rect)?;
@@ -5549,18 +5877,122 @@ impl WindowBorderOffset {
             GetClientRect(hwnd, &mut rect)?;
             rect
         };
-        self.width_offset
-            .set((window_rect.right - window_rect.left) - (client_rect.right - client_rect.left));
-        self.height_offset
-            .set((window_rect.bottom - window_rect.top) - (client_rect.bottom - client_rect.top));
+        let mut client_origin = POINT {
+            x: client_rect.left,
+            y: client_rect.top,
+        };
+        unsafe { ClientToScreen(hwnd, &mut client_origin) }
+            .ok()
+            .context("failed to read the native client origin")?;
+        let client_width = client_rect
+            .right
+            .checked_sub(client_rect.left)
+            .context("native client width overflowed")?;
+        let client_height = client_rect
+            .bottom
+            .checked_sub(client_rect.top)
+            .context("native client height overflowed")?;
+        let client_right = client_origin
+            .x
+            .checked_add(client_width)
+            .context("native client right edge overflowed")?;
+        let client_bottom = client_origin
+            .y
+            .checked_add(client_height)
+            .context("native client bottom edge overflowed")?;
+        self.left.set(
+            client_origin
+                .x
+                .checked_sub(window_rect.left)
+                .context("native left frame inset overflowed")?,
+        );
+        self.top.set(
+            client_origin
+                .y
+                .checked_sub(window_rect.top)
+                .context("native top frame inset overflowed")?,
+        );
+        self.right.set(
+            window_rect
+                .right
+                .checked_sub(client_right)
+                .context("native right frame inset overflowed")?,
+        );
+        self.bottom.set(
+            window_rect
+                .bottom
+                .checked_sub(client_bottom)
+                .context("native bottom frame inset overflowed")?,
+        );
         Ok(())
     }
+}
+
+#[derive(Copy, Clone)]
+struct WindowBorderOffsetSnapshot {
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
 }
 
 #[derive(Clone)]
 struct WindowOpenStatus {
     placement: WINDOWPLACEMENT,
     state: WindowOpenState,
+    client_placement: WindowPhysicalPlacementRequest,
+}
+
+impl WindowOpenStatus {
+    fn new(
+        window: &WindowsWindowInner,
+        display: WindowsDisplay,
+        display_topology_generation: u64,
+        initial_bounds: Bounds<Pixels>,
+        state: WindowOpenState,
+    ) -> Result<Self> {
+        let logical_client_bounds = if display.check_given_bounds(initial_bounds) {
+            initial_bounds
+        } else {
+            display.default_bounds()
+        };
+        let client_bounds = logical_client_bounds.to_device_pixels(display.scale_factor());
+        let target_display = display
+            .physical_observation(display_topology_generation)
+            .context("initial display facts are not physically coherent")?;
+        let client_placement = WindowPhysicalPlacementRequest::try_new_for_display(
+            client_bounds,
+            client_bounds.center(),
+            target_display,
+        )
+        .context("initial client placement is outside its selected display")?;
+        let mut placement = WINDOWPLACEMENT {
+            length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
+            ..Default::default()
+        };
+        unsafe { GetWindowPlacement(window.hwnd, &mut placement) }
+            .context("failed to read the initial native window placement")?;
+        placement.rcNormalPosition =
+            window.initial_window_rect_for_physical_client_bounds(client_placement)?;
+        Ok(Self {
+            placement,
+            state,
+            client_placement,
+        })
+    }
+
+    fn target_display(&self) -> PlatformPhysicalDisplayObservation {
+        self.client_placement
+            .target_display()
+            .expect("retained initial placement is display-bound")
+    }
+
+    fn logical_client_bounds(&self) -> Bounds<Pixels> {
+        let target_display = self.target_display();
+        self.client_placement
+            .client_bounds()
+            .to_pixels(target_display.scale_factor())
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -5772,28 +6204,12 @@ fn register_drag_drop(window: &Rc<WindowsWindowInner>) -> Result<()> {
 }
 
 fn calculate_window_rect(bounds: Bounds<DevicePixels>, border_offset: &WindowBorderOffset) -> RECT {
-    // NOTE:
-    // The reason we're not using `AdjustWindowRectEx()` here is
-    // that the size reported by this function is incorrect.
-    // You can test it, and there are similar discussions online.
-    // See: https://stackoverflow.com/questions/12423584/how-to-set-exact-client-size-for-overlapped-window-winapi
-    //
-    // So we manually calculate these values here.
-    let mut rect = RECT {
-        left: bounds.left().0,
-        top: bounds.top().0,
-        right: bounds.right().0,
-        bottom: bounds.bottom().0,
-    };
-    let left_offset = border_offset.width_offset.get() / 2;
-    let top_offset = border_offset.height_offset.get() / 2;
-    let right_offset = border_offset.width_offset.get() - left_offset;
-    let bottom_offset = border_offset.height_offset.get() - top_offset;
-    rect.left -= left_offset;
-    rect.top -= top_offset;
-    rect.right += right_offset;
-    rect.bottom += bottom_offset;
-    rect
+    RECT {
+        left: bounds.left().0 - border_offset.left.get(),
+        top: bounds.top().0 - border_offset.top.get(),
+        right: bounds.right().0 + border_offset.right.get(),
+        bottom: bounds.bottom().0 + border_offset.bottom.get(),
+    }
 }
 
 fn calculate_client_rect(
@@ -5801,14 +6217,10 @@ fn calculate_client_rect(
     border_offset: &WindowBorderOffset,
     scale_factor: f32,
 ) -> Bounds<Pixels> {
-    let left_offset = border_offset.width_offset.get() / 2;
-    let top_offset = border_offset.height_offset.get() / 2;
-    let right_offset = border_offset.width_offset.get() - left_offset;
-    let bottom_offset = border_offset.height_offset.get() - top_offset;
-    let left = rect.left + left_offset;
-    let top = rect.top + top_offset;
-    let right = rect.right - right_offset;
-    let bottom = rect.bottom - bottom_offset;
+    let left = rect.left + border_offset.left.get();
+    let top = rect.top + border_offset.top.get();
+    let right = rect.right - border_offset.right.get();
+    let bottom = rect.bottom - border_offset.bottom.get();
     let physical_size = size(DevicePixels(right - left), DevicePixels(bottom - top));
     Bounds {
         origin: logical_point(left as f32, top as f32, scale_factor),
@@ -5868,14 +6280,12 @@ fn physical_geometry_sample_is_stable(
     first_placement_epoch: u64,
     final_placement_epoch: u64,
     first_topology_generation: u64,
-    second_topology_generation: u64,
     final_topology_generation: u64,
     first_geometry: PlatformWindowPhysicalGeometry,
     second_geometry: PlatformWindowPhysicalGeometry,
 ) -> bool {
     first_placement_epoch == final_placement_epoch
-        && first_topology_generation == second_topology_generation
-        && second_topology_generation == final_topology_generation
+        && first_topology_generation == final_topology_generation
         && first_geometry == second_geometry
 }
 
@@ -5930,29 +6340,6 @@ fn window_rect_from_observed_frame(
         "native physical client placement produced an empty window frame"
     );
     Ok(rect)
-}
-
-fn retrieve_window_placement(
-    hwnd: HWND,
-    display: WindowsDisplay,
-    initial_bounds: Bounds<Pixels>,
-    scale_factor: f32,
-    border_offset: &WindowBorderOffset,
-) -> Result<WINDOWPLACEMENT> {
-    let mut placement = WINDOWPLACEMENT {
-        length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
-        ..Default::default()
-    };
-    unsafe { GetWindowPlacement(hwnd, &mut placement)? };
-    // the bounds may be not inside the display
-    let bounds = if display.check_given_bounds(initial_bounds) {
-        initial_bounds
-    } else {
-        display.default_bounds()
-    };
-    let bounds = bounds.to_device_pixels(scale_factor);
-    placement.rcNormalPosition = calculate_window_rect(bounds, border_offset);
-    Ok(placement)
 }
 
 fn dwm_set_window_composition_attribute(hwnd: HWND, backdrop_type: u32) {
@@ -6104,10 +6491,10 @@ mod tests {
         .unwrap();
 
         assert!(physical_geometry_sample_is_stable(
-            7, 7, 11, 11, 11, geometry, geometry,
+            7, 7, 11, 11, geometry, geometry,
         ));
         assert!(!physical_geometry_sample_is_stable(
-            7, 9, 11, 11, 11, geometry, geometry,
+            7, 9, 11, 11, geometry, geometry,
         ));
     }
 

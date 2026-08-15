@@ -2648,13 +2648,16 @@ mod window_mutation_tests {
     }
 
     #[crate::test]
-    fn unavailable_display_falls_back_to_default_before_window_creation(cx: &mut TestAppContext) {
+    fn unavailable_display_uses_one_snapshot_primary_before_window_creation(
+        cx: &mut TestAppContext,
+    ) {
         let unavailable_display = DisplayId::from(999);
         let default_display = cx.read(|app| {
             app.primary_display()
                 .expect("test platform should expose a primary display")
                 .id()
         });
+        cx.reset_platform_display_snapshot_query_count();
         let handle: AnyWindowHandle = cx
             .update(|app| {
                 app.open_window(
@@ -2670,6 +2673,11 @@ mod window_mutation_tests {
         let platform_window = cx.test_window(handle);
 
         assert_eq!(platform_window.requested_display_id(), None);
+        assert_eq!(
+            cx.platform_display_snapshot_query_count(),
+            1,
+            "window resolution, default bounds, capabilities, and platform creation must share one display publication"
+        );
         assert_eq!(
             cx.update_window(handle, |_, window, _| {
                 window.platform_facts().display_id

@@ -31,6 +31,8 @@ pub(crate) const WM_GPUI_FORCE_UPDATE_WINDOW: u32 = WM_USER + 5;
 pub(crate) const WM_GPUI_KEYBOARD_LAYOUT_CHANGED: u32 = WM_USER + 6;
 pub(crate) const WM_GPUI_GPU_DEVICE_LOST: u32 = WM_USER + 7;
 pub(crate) const WM_GPUI_KEYDOWN: u32 = WM_USER + 8;
+pub(crate) const WM_GPUI_REFRESH_DISPLAY_TOPOLOGY: u32 = WM_USER + 9;
+pub(crate) const WM_GPUI_DISPLAY_TOPOLOGY_PUBLISHED: u32 = WM_USER + 10;
 
 const SIZE_MOVE_LOOP_TIMER_ID: usize = 1;
 
@@ -1082,7 +1084,7 @@ impl WindowsWindowInner {
             WM_TIMER => self.handle_timer_msg(handle, wparam),
             WM_NCCALCSIZE => self.handle_calc_client_size(handle, wparam, lparam),
             WM_DPICHANGED => self.handle_dpi_changed_msg(handle, wparam, lparam),
-            WM_DISPLAYCHANGE => self.handle_display_change_msg(handle),
+            WM_DISPLAYCHANGE => self.handle_display_change_msg(),
             WM_NCHITTEST => self.handle_hit_test_msg(handle, lparam),
             WM_PAINT => self.handle_paint_msg(handle),
             WM_CLOSE => self.handle_close_msg(),
@@ -1134,7 +1136,14 @@ impl WindowsWindowInner {
             WM_GPUI_GPU_DEVICE_LOST if self.accepts_generation_bound_message(wparam.0) => {
                 self.handle_device_lost()
             }
-            WM_GPUI_FORCE_UPDATE_WINDOW | WM_GPUI_GPU_DEVICE_LOST => Some(0),
+            WM_GPUI_DISPLAY_TOPOLOGY_PUBLISHED
+                if self.accepts_generation_bound_message(wparam.0) =>
+            {
+                self.handle_display_topology_published(handle)
+            }
+            WM_GPUI_FORCE_UPDATE_WINDOW
+            | WM_GPUI_GPU_DEVICE_LOST
+            | WM_GPUI_DISPLAY_TOPOLOGY_PUBLISHED => Some(0),
             DM_POINTERHITTEST => self.handle_dm_pointer_hit_test(wparam),
             WM_GETOBJECT => self.handle_wm_getobject(wparam, lparam),
             _ => None,
@@ -1166,11 +1175,13 @@ impl WindowsWindowInner {
             let monitor = unsafe { MonitorFromWindow(handle, MONITOR_DEFAULTTONULL) };
             // minimize the window can trigger this event too, in this case,
             // monitor is invalid, we do nothing.
-            if !monitor.is_invalid() && self.state.display.get().handle != monitor {
-                // we will get the same monitor if we only have one
-                self.state.display.set(WindowsDisplay::new(
-                    WindowsDisplay::display_id_for_monitor(monitor),
-                )?);
+            if !monitor.is_invalid()
+                && let Some(coordinator) = self.native_retirement_coordinator.upgrade()
+                && let Ok(snapshot) = coordinator.exact_display_topology_snapshot()
+                && let Some(display) = snapshot.display_for_native_monitor(monitor)
+            {
+                self.state
+                    .set_display_binding(display, snapshot.generation());
             }
         }
         let _ = with_windows_callback(&self.state.callbacks.moved, |callback| callback());
@@ -1184,10 +1195,10 @@ impl WindowsWindowInner {
 
         unsafe {
             let minmax_info = &mut *(lparam.0 as *mut MINMAXINFO);
-            minmax_info.ptMinTrackSize.x = min_size.width.scale(scale_factor).as_f32() as i32
-                + boarder_offset.width_offset.get();
-            minmax_info.ptMinTrackSize.y = min_size.height.scale(scale_factor).as_f32() as i32
-                + boarder_offset.height_offset.get();
+            minmax_info.ptMinTrackSize.x =
+                min_size.width.scale(scale_factor).as_f32() as i32 + boarder_offset.width();
+            minmax_info.ptMinTrackSize.y =
+                min_size.height.scale(scale_factor).as_f32() as i32 + boarder_offset.height();
         }
         Some(0)
     }
@@ -1228,6 +1239,12 @@ impl WindowsWindowInner {
         }
 
         self.handle_size_change(new_size, scale_factor, should_resize_renderer);
+        if wparam.0 == SIZE_RESTORED as usize && !self.state.is_fullscreen() {
+            self.state
+                .border_offset
+                .update_restored(self.hwnd)
+                .log_err();
+        }
         Some(0)
     }
 
@@ -1838,9 +1855,22 @@ impl WindowsWindowInner {
         let new_dpi = wparam.loword() as f32;
 
         let is_maximized = self.state.is_maximized();
+        let is_fullscreen = self.state.is_fullscreen();
         let new_scale_factor = new_dpi / USER_DEFAULT_SCREEN_DPI as f32;
+        let suggested_rect = unsafe { &*(lparam.0 as *const RECT) };
+        if let Some(coordinator) = self.native_retirement_coordinator.upgrade() {
+            let retained = coordinator.retained_display_topology_snapshot();
+            let suggested_monitor =
+                unsafe { MonitorFromRect(suggested_rect, MONITOR_DEFAULTTONEAREST) };
+            if suggested_monitor.is_invalid()
+                || retained
+                    .validated_native_display(suggested_monitor)
+                    .is_none_or(|display| display.observation().scale_factor() != new_scale_factor)
+            {
+                coordinator.request_display_topology_refresh();
+            }
+        }
         self.state.scale_factor.set(new_scale_factor);
-        self.state.border_offset.update(handle).log_err();
 
         self.state
             .direct_manipulation
@@ -1879,7 +1909,7 @@ impl WindowsWindowInner {
             }
         } else {
             // For non-maximized windows, use the suggested RECT from the system
-            let rect = unsafe { &*(lparam.0 as *const RECT) };
+            let rect = suggested_rect;
             let width = rect.right - rect.left;
             let height = rect.bottom - rect.top;
             // this will emit `WM_SIZE` and `WM_MOVE` right here
@@ -1898,22 +1928,39 @@ impl WindowsWindowInner {
                 .context("unable to set window position after dpi has changed")
                 .log_err();
             }
+            if !is_fullscreen {
+                self.state.border_offset.update_restored(handle).log_err();
+            }
         }
 
         Some(0)
     }
 
-    fn handle_display_change_msg(&self, handle: HWND) -> Option<isize> {
+    fn handle_display_change_msg(&self) -> Option<isize> {
         self.native_retirement_coordinator
             .upgrade()?
-            .advance_display_topology_generation();
+            .request_display_topology_refresh();
+        Some(0)
+    }
+
+    fn handle_display_topology_published(&self, handle: HWND) -> Option<isize> {
+        let coordinator = self.native_retirement_coordinator.upgrade()?;
+        let Ok(snapshot) = coordinator.exact_display_topology_snapshot() else {
+            return Some(0);
+        };
+        if self.state.display_topology_generation.get() >= snapshot.generation() {
+            return Some(0);
+        }
         let new_monitor = unsafe { MonitorFromWindow(handle, MONITOR_DEFAULTTONULL) };
         if new_monitor.is_invalid() {
-            log::error!("No monitor detected!");
-            return None;
+            return Some(0);
         }
-        let new_display = WindowsDisplay::new(WindowsDisplay::display_id_for_monitor(new_monitor))?;
-        self.state.display.set(new_display);
+        let Some(new_display) = snapshot.display_for_native_monitor(new_monitor) else {
+            return Some(0);
+        };
+        self.state
+            .set_display_binding(new_display, snapshot.generation());
+        let _ = with_windows_callback(&self.state.callbacks.moved, |callback| callback());
         Some(0)
     }
 
@@ -2112,11 +2159,16 @@ impl WindowsWindowInner {
         lparam: LPARAM,
     ) -> Option<isize> {
         if wparam.0 != 0 {
-            if let Some(coordinator) = self.native_retirement_coordinator.upgrade() {
-                coordinator.advance_display_topology_generation();
+            let action = SYSTEM_PARAMETERS_INFO_ACTION(wparam.0 as u32);
+            if system_setting_changes_display_topology(action)
+                && let Some(coordinator) = self.native_retirement_coordinator.upgrade()
+            {
+                coordinator.request_display_topology_refresh();
             }
             self.state.click_state.system_update(wparam.0);
-            self.state.border_offset.update(handle).log_err();
+            if !self.state.is_maximized() && !self.state.is_fullscreen() {
+                self.state.border_offset.update_restored(handle).log_err();
+            }
             // system settings may emit a window message which wants to take the refcell self.state, so drop it
 
             self.system_settings().update(wparam.0);
@@ -2663,6 +2715,10 @@ fn notify_frame_changed(handle: HWND) {
     }
 }
 
+fn system_setting_changes_display_topology(action: SYSTEM_PARAMETERS_INFO_ACTION) -> bool {
+    matches!(action, SPI_SETWORKAREA | SPI_SETLOGICALDPIOVERRIDE)
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -2679,7 +2735,8 @@ mod tests {
         Foundation::WPARAM,
         UI::Controls::WM_MOUSELEAVE,
         UI::WindowsAndMessaging::{
-            HTCAPTION, HTCLOSE, HTMAXBUTTON, HTMINBUTTON, WM_LBUTTONDOWN, WM_LBUTTONUP,
+            HTCAPTION, HTCLOSE, HTMAXBUTTON, HTMINBUTTON, SPI_SETLOGICALDPIOVERRIDE,
+            SPI_SETWORKAREA, SYSTEM_PARAMETERS_INFO_ACTION, WM_LBUTTONDOWN, WM_LBUTTONUP,
             WM_MOUSEMOVE, WM_NCMOUSELEAVE, WM_RBUTTONDOWN, WM_RBUTTONUP,
         },
     };
@@ -2691,8 +2748,20 @@ mod tests {
         WindowsPointerCaptureEffect, WindowsPointerCaptureInput, WindowsPointerCaptureState,
         decode_client_mouse_button_message, hit_test_window_control_area, may_own_pointer_session,
         should_reserve_pointer_cancel_after_callback_panic,
+        system_setting_changes_display_topology,
     };
     use crate::Callbacks;
+
+    #[test]
+    fn only_display_relevant_system_settings_refresh_the_topology() {
+        assert!(system_setting_changes_display_topology(SPI_SETWORKAREA));
+        assert!(system_setting_changes_display_topology(
+            SPI_SETLOGICALDPIOVERRIDE
+        ));
+        assert!(!system_setting_changes_display_topology(
+            SYSTEM_PARAMETERS_INFO_ACTION(29)
+        ));
+    }
 
     #[test]
     fn pointer_capture_tracks_first_companion_and_final_buttons() {
