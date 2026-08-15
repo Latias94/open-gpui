@@ -4714,6 +4714,7 @@ mod window_mutation_tests {
     ) {
         let (session, handle, platform_window, semantics_authority) =
             open_revealed_provisional_semantics_window(cx, 88);
+        let window_id = handle.window_id();
         platform_window.set_present_outcome(PlatformWindowPresentOutcome::Rejected);
         let semantics_ticket = cx
             .update_window(handle, |_, window, app| {
@@ -4755,6 +4756,7 @@ mod window_mutation_tests {
             session.snapshot().phase(),
             crate::WindowProvisionalSessionPhase::DestinationSemanticsRejected
         );
+
         assert!(!session.snapshot().accepts_interaction());
         cx.update_window(handle, |_, window, app| {
             window
@@ -4780,6 +4782,22 @@ mod window_mutation_tests {
         assert_eq!(
             session.snapshot().phase(),
             crate::WindowProvisionalSessionPhase::DestinationSemanticsRejected
+        );
+
+        cx.update_window(handle, |_, _, _| {
+            session
+                .terminate(window_id)
+                .expect("the rejected provisional session should terminate exactly once");
+        })
+        .expect("the rejected provisional window should remain live while terminating");
+        assert_eq!(
+            semantics_ticket.snapshot().outcome(),
+            crate::WindowProvisionalSemanticsOutcome::Rejected,
+            "window termination must not overwrite the first renderer terminal outcome"
+        );
+        assert_eq!(
+            session.snapshot().phase(),
+            crate::WindowProvisionalSessionPhase::Terminal
         );
     }
 

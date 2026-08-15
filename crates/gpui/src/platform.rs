@@ -2267,14 +2267,8 @@ impl WindowProvisionalSemanticsTicket {
                 minimum_frame_generation,
                 accepted_frame_generation: Some(frame_generation),
             },
-            WindowProvisionalSemanticsState::Rejected {
-                minimum_frame_generation,
-                frame_generation,
-            } => WindowProvisionalSemanticsState::WindowTerminal {
-                minimum_frame_generation,
-                accepted_frame_generation: Some(frame_generation),
-            },
             settled @ (WindowProvisionalSemanticsState::Submitted { .. }
+            | WindowProvisionalSemanticsState::Rejected { .. }
             | WindowProvisionalSemanticsState::WindowTerminal { .. }) => settled,
         };
     }
