@@ -121,6 +121,21 @@ impl DockLiveUndockIdentity {
     pub(crate) const fn drag_generation(self) -> DockLiveUndockDragGeneration {
         self.drag_generation
     }
+
+    #[cfg(test)]
+    pub(crate) const fn for_test(
+        lease: DockSurfaceWindowSessionLease,
+        opening_generation: u64,
+        drag_generation: u64,
+    ) -> Self {
+        Self {
+            opening: DockLiveUndockOpeningKey::for_test(lease, opening_generation),
+            drag_generation: match DockLiveUndockDragGeneration::new(drag_generation) {
+                Some(generation) => generation,
+                None => panic!("test drag generation must be non-zero"),
+            },
+        }
+    }
 }
 
 #[derive(Clone, Debug)]

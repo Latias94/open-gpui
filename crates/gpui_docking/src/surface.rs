@@ -800,7 +800,7 @@ pub(crate) fn settle_live_undock_dependency(
         }
     });
     let runtime = cx.read_entity(owner, |owner, _| owner.runtime());
-    close_surface_anchor_after_dependents(owner, &runtime, lease, cx);
+    drive_surface_shutdown_convergence(owner, &runtime, lease, cx);
 }
 
 pub(crate) fn fail_live_undock_dependency(
@@ -822,7 +822,7 @@ pub(crate) fn fail_live_undock_dependency(
         }
     });
     let runtime = cx.read_entity(owner, |owner, _| owner.runtime());
-    close_surface_anchor_after_dependents(owner, &runtime, lease, cx);
+    drive_surface_shutdown_convergence(owner, &runtime, lease, cx);
 }
 
 fn settle_surface_window_terminal(
@@ -832,9 +832,8 @@ fn settle_surface_window_terminal(
     window_id: WindowId,
     disposition: window_session::DockSurfaceWindowSessionTerminalDisposition,
     cx: &mut App,
-) {
+) -> Option<open_gpui::AnyWindowHandle> {
     let runtime_settled = runtime.settle_surface_window_terminal(lease, window_id, cx);
-    let runtime_empty = runtime.surface_generation_empty(lease);
     let live_effects = cx.update_entity(owner, |owner, owner_cx| {
         let (live_terminal, live_effects) = owner
             .settle_live_undock_window_terminal(window_id)
@@ -843,32 +842,21 @@ fn settle_surface_window_terminal(
         let terminal = owner
             .window_session_mut()
             .settle_terminal(lease, window_id, disposition);
-        let shutting_down = owner.window_session().is_shutting_down(lease);
-        let runtime = (shutting_down && runtime_empty)
-            .then(|| owner.window_session_mut().mark_runtime_empty(lease));
-        let convergence =
-            shutting_down.then(|| owner.window_session_mut().complete_shutdown(lease));
         if runtime_settled
             || live_terminal.is_some()
             || matches!(
                 terminal,
                 window_session::DockSurfaceWindowSessionTerminalOutcome::Settled
             )
-            || matches!(
-                runtime,
-                Some(window_session::DockSurfaceWindowSessionRuntimeEmptyOutcome::Marked)
-            )
-            || matches!(
-                convergence,
-                Some(window_session::DockSurfaceWindowSessionShutdownConvergenceOutcome::Closed)
-            )
         {
             owner_cx.notify();
         }
         live_effects
     });
+    let anchor = advance_surface_shutdown_convergence(owner, runtime, lease, cx);
     let live_runtime = cx.read_entity(owner, |owner, _| owner.live_undock_runtime());
     live_runtime.enqueue_effects(live_effects, cx);
+    anchor
 }
 
 fn claim_surface_window_close(
@@ -1018,41 +1006,65 @@ fn close_surface_window(
     }
 }
 
-fn close_surface_anchor_after_dependents(
+fn advance_surface_shutdown_convergence(
+    owner: &Entity<DockSurfaceOwner>,
+    runtime: &DockViewportRuntimeHandle,
+    lease: window_session::DockSurfaceWindowSessionLease,
+    cx: &mut App,
+) -> Option<open_gpui::AnyWindowHandle> {
+    if !cx.read_entity(owner, |owner, _| {
+        owner.window_session().is_shutting_down(lease)
+    }) {
+        return None;
+    }
+    let runtime_empty = runtime.surface_generation_empty(lease);
+    let (pending, has_pending_dependencies, closed) = cx.update_entity(owner, |owner, owner_cx| {
+        if !owner.window_session().is_shutting_down(lease) {
+            return (None, false, false);
+        }
+        let runtime = runtime_empty.then(|| owner.window_session_mut().mark_runtime_empty(lease));
+        let pending = owner.window_session().pending_terminal_window_ids(lease);
+        let has_pending_dependencies = owner.window_session().has_pending_dependencies(lease);
+        let convergence = owner.window_session_mut().complete_shutdown(lease);
+        let closed = matches!(
+            convergence,
+            window_session::DockSurfaceWindowSessionShutdownConvergenceOutcome::Closed
+        );
+        if matches!(
+            runtime,
+            Some(window_session::DockSurfaceWindowSessionRuntimeEmptyOutcome::Marked)
+        ) || closed
+        {
+            owner_cx.notify();
+        }
+        (pending, has_pending_dependencies, closed)
+    });
+    if closed || has_pending_dependencies {
+        return None;
+    }
+    let Some(pending) = pending else {
+        return None;
+    };
+    if pending.as_slice() != [lease.anchor()] {
+        return None;
+    }
+
+    runtime
+        .windows_for_surface(lease)
+        .into_iter()
+        .find_map(|(role, window)| {
+            (role == DockViewportWindowRole::PrimaryAnchor).then_some(window)
+        })
+        .filter(|anchor| cx.windows().contains(anchor))
+}
+
+fn drive_surface_shutdown_convergence(
     owner: &Entity<DockSurfaceOwner>,
     runtime: &DockViewportRuntimeHandle,
     lease: window_session::DockSurfaceWindowSessionLease,
     cx: &mut App,
 ) {
-    let (pending, has_pending_dependencies) = cx.read_entity(owner, |owner, _| {
-        (
-            owner.window_session().pending_terminal_window_ids(lease),
-            owner.window_session().has_pending_dependencies(lease),
-        )
-    });
-    if has_pending_dependencies {
-        return;
-    }
-    let Some(pending) = pending else {
-        return;
-    };
-    if pending.iter().any(|window_id| *window_id != lease.anchor()) {
-        return;
-    }
-    if !pending.contains(&lease.anchor()) {
-        return;
-    }
-
-    let anchor = runtime
-        .windows_for_surface(lease)
-        .into_iter()
-        .find_map(|(role, window)| {
-            (role == DockViewportWindowRole::PrimaryAnchor).then_some(window)
-        });
-    if let Some(anchor) = anchor {
-        if !cx.windows().contains(&anchor) {
-            return;
-        }
+    if let Some(anchor) = advance_surface_shutdown_convergence(owner, runtime, lease, cx) {
         close_surface_window(owner, lease, anchor, cx);
     }
 }
@@ -1286,7 +1298,7 @@ fn dispatch_surface_shutdown_retirement_effects(
     retain_first_surface_shutdown_panic(
         first_panic,
         catch_unwind(AssertUnwindSafe(|| {
-            close_surface_anchor_after_dependents(owner, runtime, lease, cx);
+            drive_surface_shutdown_convergence(owner, runtime, lease, cx);
         })),
         "primary anchor close dispatch",
     );
@@ -1475,7 +1487,7 @@ fn handle_surface_window_native_terminal(
     let Some(lease) = lease else {
         return;
     };
-    settle_surface_window_terminal(
+    let anchor = settle_surface_window_terminal(
         owner,
         &runtime,
         lease,
@@ -1483,18 +1495,10 @@ fn handle_surface_window_native_terminal(
         window_session::DockSurfaceWindowSessionTerminalDisposition::ObservedClosed,
         cx,
     );
-    let shutting_down = cx.read_entity(owner, |owner, _| {
-        owner.window_session().is_shutting_down(lease)
-    });
-    let anchor_is_logically_registered = cx
-        .windows()
-        .iter()
-        .any(|window| window.window_id() == lease.anchor());
-    if shutting_down && window_id != lease.anchor() && anchor_is_logically_registered {
+    if let Some(anchor) = anchor {
         let owner = owner.clone();
-        cx.defer_shutdown_critical_before_window_registry_clear(move |cx| {
-            let runtime = cx.read_entity(&owner, |owner, _| owner.runtime());
-            close_surface_anchor_after_dependents(&owner, &runtime, lease, cx);
+        cx.defer_shutdown_critical_before_window_registry_clear_or_run_now(move |cx| {
+            close_surface_window(&owner, lease, anchor, cx);
         });
     }
 }

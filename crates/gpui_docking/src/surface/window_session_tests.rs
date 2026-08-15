@@ -296,6 +296,118 @@ fn failed_shutdown_dependency_is_terminal_but_remains_observable_after_close() {
     assert_eq!(status.failed_terminal_ticket_count(), 1);
 }
 
+fn surface_waiting_only_on_live_undock_dependency(
+    cx: &mut open_gpui::App,
+) -> (
+    crate::DockSurface,
+    super::live_undock::DockLiveUndockIdentity,
+    DockSurfaceWindowSessionDependencyId,
+) {
+    let surface = crate::DockSurface::builder("main")
+        .build(cx)
+        .expect("an empty surface should validate");
+    let anchor = WindowId::from((19_u64 << 32) | 1);
+    let dependency = DockSurfaceWindowSessionDependencyId::live_undock(41);
+    let lease = cx.update_entity(surface.owner(), |owner, _| {
+        let session = owner.window_session_mut();
+        let opening = session.reserve_opening().expect("G1 should reserve");
+        let lease = session
+            .commit_opening(opening, anchor)
+            .expect("G1 should activate");
+        assert!(matches!(
+            session.begin_shutdown_with_dependencies(
+                lease,
+                DockSurfaceWindowSessionShutdownReason::AnchorCloseRequested,
+                [anchor],
+                [dependency],
+            ),
+            DockSurfaceWindowSessionBeginShutdownOutcome::Started { .. }
+        ));
+        assert_eq!(
+            session.mark_runtime_empty(lease),
+            DockSurfaceWindowSessionRuntimeEmptyOutcome::Marked
+        );
+        assert_eq!(
+            session.settle_terminal(
+                lease,
+                anchor,
+                DockSurfaceWindowSessionTerminalDisposition::ObservedClosed,
+            ),
+            DockSurfaceWindowSessionTerminalOutcome::Settled
+        );
+        lease
+    });
+    let waiting = surface.window_session_status(cx);
+    assert_eq!(waiting.phase(), DockSurfaceWindowSessionPhase::ShuttingDown);
+    assert_eq!(waiting.pending_terminal_ticket_count(), 1);
+    assert_eq!(waiting.runtime_empty(), Some(true));
+    (
+        surface,
+        super::live_undock::DockLiveUndockIdentity::for_test(lease, 41, 1),
+        dependency,
+    )
+}
+
+#[open_gpui::test]
+fn last_live_undock_dependency_settlement_drives_surface_shutdown_closed(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let (surface, identity, dependency) = cx.update(surface_waiting_only_on_live_undock_dependency);
+
+    cx.update(|cx| {
+        super::settle_live_undock_dependency(surface.owner(), identity, Some(dependency), cx);
+    });
+
+    let status = cx.update(|cx| surface.window_session_status(cx));
+    assert_eq!(status.phase(), DockSurfaceWindowSessionPhase::Closed);
+    assert_eq!(status.pending_terminal_ticket_count(), 0);
+    assert_eq!(status.runtime_empty(), Some(true));
+    assert_eq!(status.failed_terminal_ticket_count(), 0);
+
+    let replacement = cx.update(|cx| surface.open_primary_window(WindowOptions::default(), cx));
+    let replacement = match replacement {
+        DockSurfacePrimaryWindowOpenOutcome::Opened(opened) => opened,
+        outcome => panic!("the converged surface should reopen, got {outcome:?}"),
+    };
+    cx.update(|cx| {
+        super::settle_live_undock_dependency(surface.owner(), identity, Some(dependency), cx);
+    });
+    let active = cx.update(|cx| surface.window_session_status(cx));
+    assert_eq!(active.phase(), DockSurfaceWindowSessionPhase::Active);
+    assert_eq!(active.generation(), 2);
+    assert_eq!(active.anchor(), Some(replacement.window().window_id()));
+}
+
+#[open_gpui::test]
+fn last_live_undock_dependency_failure_drives_surface_shutdown_closed(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let (surface, identity, dependency) = cx.update(surface_waiting_only_on_live_undock_dependency);
+
+    cx.update(|cx| {
+        super::fail_live_undock_dependency(surface.owner(), identity, dependency, cx);
+    });
+
+    let status = cx.update(|cx| surface.window_session_status(cx));
+    assert_eq!(status.phase(), DockSurfaceWindowSessionPhase::Closed);
+    assert_eq!(status.pending_terminal_ticket_count(), 0);
+    assert_eq!(status.runtime_empty(), Some(true));
+    assert_eq!(status.failed_terminal_ticket_count(), 1);
+
+    let replacement = cx.update(|cx| surface.open_primary_window(WindowOptions::default(), cx));
+    let replacement = match replacement {
+        DockSurfacePrimaryWindowOpenOutcome::Opened(opened) => opened,
+        outcome => panic!("the converged surface should reopen, got {outcome:?}"),
+    };
+    cx.update(|cx| {
+        super::fail_live_undock_dependency(surface.owner(), identity, dependency, cx);
+    });
+    let active = cx.update(|cx| surface.window_session_status(cx));
+    assert_eq!(active.phase(), DockSurfaceWindowSessionPhase::Active);
+    assert_eq!(active.generation(), 2);
+    assert_eq!(active.anchor(), Some(replacement.window().window_id()));
+}
+
 #[test]
 fn late_returned_window_is_adopted_before_the_anchor_shutdown_ticket() {
     let mut session = DockSurfaceWindowSession::new(EntityId::from(1));
