@@ -14,7 +14,6 @@ use crate::{
     DockDropWorkspaceCommit, DockGraphMutationError, DockItemId, DockMergeBackTarget, DockNodeId,
     DockPreparedProvisionalWindowPromotion, DockSpaceId, DockViewportActivationBackendFocusApply,
     DockViewportActivationBackendFocusObservation, DockViewportActivationBackendFocusRecordEffect,
-    DockViewportActivationPendingBackendFocusEffect, DockViewportActivationTransaction,
     DockViewportAdapter, DockViewportBackendFocusState, DockViewportCloseCoordinator,
     DockViewportCloseOutcome, DockViewportClosePlanState, DockViewportClosePolicy,
     DockViewportCloseStatus, DockViewportCommittedTearOffMove, DockViewportCommittedWindowEffects,
@@ -98,7 +97,6 @@ pub(crate) struct DockViewportRuntime {
     window_ownership: DockViewportWindowOwnership,
     focus: DockViewportFocusCoordinator,
     backend_focus: DockViewportBackendFocusState,
-    backend_focus_cancellations: Vec<DockViewportActivationTransaction>,
     close_coordinator: DockViewportCloseCoordinator,
     routed_drop_preview: DockViewportRoutedDropPreviewState,
     status: DockViewportRuntimeStatus,
@@ -989,7 +987,6 @@ impl DockViewportRuntime {
             window_ownership: DockViewportWindowOwnership::default(),
             focus: DockViewportFocusCoordinator::default(),
             backend_focus: DockViewportBackendFocusState::default(),
-            backend_focus_cancellations: Vec::new(),
             close_coordinator: DockViewportCloseCoordinator::default(),
             routed_drop_preview: DockViewportRoutedDropPreviewState::default(),
             status: DockViewportRuntimeStatus::default(),
@@ -1023,7 +1020,6 @@ impl DockViewportRuntime {
             window_ownership: DockViewportWindowOwnership::default(),
             focus: DockViewportFocusCoordinator::default(),
             backend_focus: DockViewportBackendFocusState::default(),
-            backend_focus_cancellations: Vec::new(),
             close_coordinator: DockViewportCloseCoordinator::default(),
             routed_drop_preview: DockViewportRoutedDropPreviewState::default(),
             status: DockViewportRuntimeStatus::default(),
@@ -1136,7 +1132,6 @@ impl DockViewportRuntime {
         self.payload_drag = DockViewportPayloadDragState::default();
         self.focus = DockViewportFocusCoordinator::default();
         self.backend_focus = DockViewportBackendFocusState::default();
-        self.backend_focus_cancellations.clear();
         self.close_coordinator = DockViewportCloseCoordinator::default();
         self.routed_drop_preview = DockViewportRoutedDropPreviewState::default();
         self.status = DockViewportRuntimeStatus::default();
@@ -1296,11 +1291,6 @@ impl DockViewportRuntime {
     }
 
     #[cfg(test)]
-    pub(crate) fn pending_activation(&self) -> Option<&DockViewportActivationTransaction> {
-        self.backend_focus.pending_activation()
-    }
-
-    #[cfg(test)]
     pub(crate) fn begin_payload_drag(
         &mut self,
         payload: &DockDragPayload,
@@ -1440,20 +1430,7 @@ impl DockViewportRuntime {
                 adapter.space_for_window_id(candidate).is_some()
                     && !adapter.window_close_requested(candidate)
             })
-            .map(|focus_record| {
-                if let Some(cancellation) = focus_record.cleared_pending_activation() {
-                    if cancellation.surface_activation_binding().is_some() {
-                        self.backend_focus_cancellations.push(cancellation.clone());
-                    }
-                }
-                focus_record.changed()
-            })
-    }
-
-    pub(crate) fn take_backend_focus_cancellations(
-        &mut self,
-    ) -> Vec<DockViewportActivationTransaction> {
-        std::mem::take(&mut self.backend_focus_cancellations)
+            .map(|record| record.changed())
     }
 
     pub(crate) fn record_confirmed_backend_focus_for_window(
@@ -1484,24 +1461,11 @@ impl DockViewportRuntime {
 
     pub(crate) fn apply_activation_backend_focus(
         &mut self,
-        activation: &DockViewportActivationTransaction,
+        window_id: WindowId,
         backend_focus: DockViewportActivationBackendFocusObservation,
-        request_backend_activation: bool,
     ) -> DockViewportActivationBackendFocusApply {
         let backend_focus_recorded_changed = if backend_focus.target_focused() {
-            self.record_confirmed_backend_focus_for_window(activation.window_id())
-        } else {
-            false
-        };
-        let pending_backend_focus = request_backend_activation
-            && !backend_focus.target_focused()
-            && self.record_pending_activation(activation.clone());
-        let pending_backend_focus_cleared = if backend_focus.target_focused() {
-            let cleared =
-                self.take_pending_activation_for_registration(activation.registration_key());
-            let cleared_present = cleared.is_some();
-            self.queue_displaced_activation(cleared, Some(activation));
-            cleared_present
+            self.record_confirmed_backend_focus_for_window(window_id)
         } else {
             false
         };
@@ -1509,65 +1473,7 @@ impl DockViewportRuntime {
             DockViewportActivationBackendFocusRecordEffect::from_changed(
                 backend_focus_recorded_changed,
             ),
-            if backend_focus.target_focused() {
-                DockViewportActivationPendingBackendFocusEffect::from_cleared(
-                    pending_backend_focus_cleared,
-                )
-            } else {
-                DockViewportActivationPendingBackendFocusEffect::from_recorded(
-                    pending_backend_focus,
-                )
-            },
         )
-    }
-
-    pub(crate) fn record_pending_activation(
-        &mut self,
-        activation: DockViewportActivationTransaction,
-    ) -> bool {
-        let update = self
-            .backend_focus
-            .record_pending_activation_with_displaced(activation.clone());
-        let changed = update.changed();
-        self.queue_displaced_activation(update.displaced(), Some(&activation));
-        changed
-    }
-
-    pub(crate) fn clear_pending_activation_for(
-        &mut self,
-        space: &DockSpaceId,
-        window_id: WindowId,
-    ) -> bool {
-        let cleared = self
-            .backend_focus
-            .take_pending_activation_for(space, window_id);
-        let changed = cleared.is_some();
-        self.queue_displaced_activation(cleared, None);
-        changed
-    }
-
-    fn take_pending_activation_for_registration(
-        &mut self,
-        registration: &DockViewportRegistrationKey,
-    ) -> Option<DockViewportActivationTransaction> {
-        self.backend_focus
-            .take_pending_activation_for_registration(registration)
-    }
-
-    fn queue_displaced_activation(
-        &mut self,
-        displaced: Option<DockViewportActivationTransaction>,
-        replacement: Option<&DockViewportActivationTransaction>,
-    ) {
-        let Some(displaced) = displaced else {
-            return;
-        };
-        let displaced_binding = displaced.surface_activation_binding();
-        let replacement_binding =
-            replacement.and_then(DockViewportActivationTransaction::surface_activation_binding);
-        if displaced_binding != replacement_binding && displaced_binding.is_some() {
-            self.backend_focus_cancellations.push(displaced);
-        }
     }
 
     pub(crate) fn confirmed_backend_window_focus_outcome(
@@ -1577,6 +1483,7 @@ impl DockViewportRuntime {
         platform_focus_restore_gate: DockViewportPlatformFocusRestoreGate,
         backend_focus: PlatformFocusedWindow,
         platform_focus_restore_policy: DockViewportPlatformFocusRestorePolicy,
+        suppress_platform_restore: bool,
     ) -> crate::DockViewportConfirmedBackendFocusOutcome {
         let backend_focused = match backend_focus {
             PlatformFocusedWindow::Window(window) => window.window_id() == window_id,
@@ -1602,6 +1509,7 @@ impl DockViewportRuntime {
             &registration,
             platform_focus_restore_gate,
             platform_focus_restore_policy,
+            suppress_platform_restore,
         );
         focus_outcome.with_additional_changed(focus_record_changed)
     }
@@ -2053,7 +1961,6 @@ impl DockViewportRuntime {
             self.frame_coordinator
                 .discard_frame_for_viewport(space, window_id),
         );
-        update.mark_changed(self.clear_pending_activation_for(space, window_id));
         self.status.clear_window_references(space, window_id);
         update.merge(self.clear_routed_drop_preview_if_window_matches(window_id));
         update.merge(self.finish_payload_drag_for_source_space(space));
@@ -2402,7 +2309,6 @@ impl DockViewportRuntime {
         self.window_ownership.clear_window_state(window_id);
         self.backend_focus.discard_window(window_id);
         self.frame_coordinator.unregister_space(space);
-        self.clear_pending_activation_for(space, window_id);
         self.status.clear_window_references(space, window_id);
         if cleanup.focus_cleanup() == DockViewportSpaceFocusCleanup::Remove {
             self.focus.remove_space(space);

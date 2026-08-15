@@ -3497,6 +3497,13 @@ impl DockHost {
             .as_ref()
             .and_then(DockHostPresentationState::source_restoration_batch);
         let registration = self.surface_activation_registration.take();
+        if let Some(viewport_registration) = viewport_registration.as_ref() {
+            self.viewport_runtime.retire_activation_registration(
+                viewport_registration,
+                DockSurfaceActivationOutcome::Unavailable,
+                cx,
+            );
+        }
         let pending_command = self.interaction.take_pending_focus_command();
         self.pending_focus_completion = None;
         self.pending_recovery_entry_focus_completion = None;

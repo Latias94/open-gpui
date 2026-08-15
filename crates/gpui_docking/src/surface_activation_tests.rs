@@ -20,8 +20,8 @@ use crate::{
 use open_gpui::{
     AnyView, AnyWindowHandle, App, AppContext, Context, Entity, FocusHandle, Focusable,
     InteractiveElement, IntoElement, ParentElement, Render, Styled, SubtreePresentation,
-    SubtreePresentationExt, TestAppContext, Window, WindowHandle, WindowId, WindowOptions, div, px,
-    size,
+    SubtreePresentationExt, TestAppContext, Window, WindowActivationPolicy, WindowHandle, WindowId,
+    WindowMutationDispatch, WindowMutationDomain, WindowOptions, div, px, size,
 };
 use std::{
     cell::{Cell, RefCell},
@@ -136,6 +136,96 @@ fn surface_activation_without_a_registered_item_settles_unavailable(cx: &mut Tes
 }
 
 #[open_gpui::test]
+fn rejected_native_activation_cannot_be_completed_by_later_user_focus(cx: &mut TestAppContext) {
+    let (surface, host, target_window, external_window) = cx.update(|cx| {
+        let surface = DockSurface::builder("main")
+            .panel_placements([DockPanelPlacement::center("editor")])
+            .panel("editor", DockPanel::lazy_focusable("Editor", focus_panel))
+            .build(cx)
+            .expect("surface should build");
+        let (target_window, host) = open_primary_host(&surface, cx);
+        let external_window = cx
+            .open_window(WindowOptions::default(), |_, cx| focus_panel(cx))
+            .expect("external focus owner should open");
+        (surface, host, target_window, external_window)
+    });
+    cx.run_until_parked();
+
+    let _ = external_window
+        .update(cx, |_, window, _| {
+            let _ = window.activate_window();
+        })
+        .expect("external focus owner should activate");
+    cx.run_until_parked();
+    assert_eq!(
+        cx.update(|cx| cx.active_window()),
+        Some(external_window.into())
+    );
+
+    let target_handle = target_window;
+    let dispatch = target_window
+        .update(cx, |_, window, _| {
+            window.request_activation_policy(WindowActivationPolicy {
+                accepts_activation: false,
+                focus_on_click: true,
+            })
+        })
+        .expect("managed target should remain live");
+    assert!(matches!(dispatch, WindowMutationDispatch::Queued(_)));
+    assert!(cx.flush_window_mutation(target_handle, WindowMutationDomain::ActivationPolicy));
+
+    let outcomes = Rc::new(RefCell::new(Vec::new()));
+    let observed = outcomes.clone();
+    let subscription = cx.update(|cx| {
+        surface
+            .activate_panel_with_completion("editor", cx, move |outcome, _cx| {
+                observed.borrow_mut().push(outcome);
+            })
+            .1
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        outcomes.borrow().as_slice(),
+        &[DockSurfaceActivationOutcome::Rejected]
+    );
+    assert_eq!(
+        cx.read_entity(&host, |host, _| {
+            (
+                host.pending_focus_command().is_some(),
+                host.viewport_runtime().activation_execution_count(),
+            )
+        }),
+        (false, 0),
+        "a rejected native ticket must retire every Dock activation authority"
+    );
+
+    let dispatch = target_window
+        .update(cx, |_, window, _| {
+            window.request_activation_policy(WindowActivationPolicy {
+                accepts_activation: true,
+                focus_on_click: true,
+            })
+        })
+        .expect("managed target should remain live");
+    assert!(matches!(dispatch, WindowMutationDispatch::Queued(_)));
+    assert!(cx.flush_window_mutation(target_handle, WindowMutationDomain::ActivationPolicy));
+    let _ = target_window
+        .update(cx, |_, window, _| {
+            let _ = window.activate_window();
+        })
+        .expect("a later independent activation should succeed");
+    cx.run_until_parked();
+
+    assert_eq!(
+        outcomes.borrow().as_slice(),
+        &[DockSurfaceActivationOutcome::Rejected],
+        "later user focus must not resurrect the rejected surface request"
+    );
+    drop(subscription);
+}
+
+#[open_gpui::test]
 fn immediate_activation_outcome_is_suppressed_when_subscription_is_dropped(
     cx: &mut TestAppContext,
 ) {
@@ -221,7 +311,9 @@ fn facade_activation_from_current_window_listener_commits_without_reborrowing_wi
     });
     cx.run_until_parked();
     window
-        .update(cx, |_, window, _| window.activate_window())
+        .update(cx, |_, window, _| {
+            let _ = window.activate_window();
+        })
         .expect("managed primary window should remain live");
     cx.run_until_parked();
 
@@ -307,7 +399,7 @@ fn deferred_current_window_activation_rejects_replaced_viewport_registration(
         cx.read_entity(&host, |host, _| {
             (
                 host.pending_focus_command().is_some(),
-                host.viewport_runtime().pending_activation().is_some(),
+                host.viewport_runtime().activation_execution_count() != 0,
             )
         }),
         (false, false),
@@ -336,7 +428,9 @@ fn activation_completion_can_reenter_surface_after_first_settlement(cx: &mut Tes
     });
     cx.run_until_parked();
     window
-        .update(cx, |_, window, _| window.activate_window())
+        .update(cx, |_, window, _| {
+            let _ = window.activate_window();
+        })
         .expect("activation test window should remain live");
     cx.run_until_parked();
 
@@ -415,7 +509,7 @@ fn stale_surface_activation_is_rejected_before_runtime_focus_mutation(cx: &mut T
     let before = cx.read_entity(&host, |host, _| {
         (
             host.pending_focus_command().is_some(),
-            host.viewport_runtime().pending_activation().is_some(),
+            host.viewport_runtime().activation_execution_count() != 0,
         )
     });
     let registration = cx
@@ -439,7 +533,7 @@ fn stale_surface_activation_is_rejected_before_runtime_focus_mutation(cx: &mut T
     let after = cx.read_entity(&host, |host, _| {
         (
             host.pending_focus_command().is_some(),
-            host.viewport_runtime().pending_activation().is_some(),
+            host.viewport_runtime().activation_execution_count() != 0,
         )
     });
 

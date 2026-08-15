@@ -1347,7 +1347,8 @@ fn committed_focus_observers_are_independent_of_platform_activation(cx: &mut Tes
         &[FocusClaimOutcome::Committed]
     );
 
-    cx.update_window(window, |_, window, _| window.activate_window())
+    let _ = cx
+        .update_window(window, |_, window, _| window.activate_window())
         .unwrap();
     cx.run_until_parked();
 
@@ -2318,7 +2319,7 @@ fn failed_prepaint_transaction_preserves_committed_focus_authority(cx: &mut Test
         (view.committed_focus.clone(), view.rejected_focus.clone())
     });
     cx.update_window(window, |_, window, cx| {
-        window.activate_window();
+        let _ = window.activate_window();
         committed_focus.focus(window, cx);
     })
     .unwrap();
@@ -2687,7 +2688,8 @@ fn presentation_revocation_precedes_same_frame_publication_commit(cx: &mut TestA
         let view = view.read(cx);
         (view.focus.clone(), view.capture)
     });
-    cx.update_window(window, |_, window, _| window.activate_window())
+    let _ = cx
+        .update_window(window, |_, window, _| window.activate_window())
         .unwrap();
     cx.run_until_parked();
     cx.update_window(window, |_, window, cx| {
@@ -2906,7 +2908,8 @@ fn dynamic_presentation_suppression_revokes_every_raw_interaction_channel(cx: &m
         })
         .unwrap();
 
-    cx.update_window(window, |_, window, _| window.activate_window())
+    let _ = cx
+        .update_window(window, |_, window, _| window.activate_window())
         .unwrap();
     assert!(cx.activate_accessibility(window));
     let focus = cx.read(|cx| view.read(cx).focus.clone());
@@ -3839,7 +3842,7 @@ fn changing_drag_source_to_inert_cancels_the_owned_pointer_session_once(cx: &mut
         })
         .unwrap();
     cx.update_window(window, |_, window, cx| {
-        window.activate_window();
+        let _ = window.activate_window();
         window.draw(cx).clear();
     })
     .unwrap();

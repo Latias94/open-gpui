@@ -18,7 +18,7 @@ use super::{
     native_callback_diagnostics::{
         NativeBoundaryDiagnostic, NativeBoundaryDisposition, NativeBoundaryGeneration,
         NativeBoundaryKind, NativeBoundaryTarget, NativeCallbackKind, NativeInputBoundary,
-        NativeInputHandlerOperation, NativeInvariantFailure,
+        NativeInputHandlerOperation, NativeInvariantFailure, NativePlatformCommandKind,
     },
     native_captured_drag::{
         ConsumerKey, NativeCapturedDragAuthoritySnapshot, NativeCapturedDragConsumer,
@@ -37,12 +37,15 @@ use super::{
         NativeWindowRetirementAttempt,
     },
     native_query_snapshot::{NativeQuerySnapshots, NativeWindowLifecycle},
+    native_window_activation::{NativeWindowActivationAuthority, WindowActivationTicketDelivery},
 };
 use crate::{
-    Action, BackgroundExecutor, DispatchEventResult, NativeInputInvariantViolation, PlatformInput,
-    PlatformPointerCaptureReleaseOutcome, PlatformPresentationShutdownOutcome, PlatformWindow,
-    PlatformWindowCommand, PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome,
-    PointerCancelReason, PreparedPlatformPresentationShutdown, WindowControlArea, WindowId,
+    Action, BackgroundExecutor, DispatchEventResult, NativeInputInvariantViolation, Platform,
+    PlatformFocusedWindow, PlatformInput, PlatformPointerCaptureReleaseOutcome,
+    PlatformPresentationShutdownOutcome, PlatformWindow, PlatformWindowCommand,
+    PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome, PointerCancelReason,
+    PreparedPlatformPresentationShutdown, WindowActivationCancellationOutcome,
+    WindowActivationTerminal, WindowActivationTicket, WindowControlArea, WindowId,
 };
 
 type OpenUrlsHandler = dyn FnMut(Vec<String>, &mut App);
@@ -516,6 +519,8 @@ pub struct AppCell {
     native_events: NativeEventIngress,
     native_captured_drags: NativeCapturedDragOutbox,
     native_queries: NativeQuerySnapshots,
+    native_window_activations: NativeWindowActivationAuthority,
+    platform: Rc<dyn Platform>,
     background_executor: BackgroundExecutor,
     next_pointer_capture_release_generation: Cell<u64>,
     pointer_capture_releases: RefCell<HashMap<u64, NativePointerCaptureReleaseBarrier>>,
@@ -542,6 +547,7 @@ impl AppCell {
     pub(super) fn new(app: App) -> Self {
         let foreground_executor = app.foreground_executor.clone();
         let background_executor = app.background_executor.clone();
+        let platform = app.platform.clone();
         let this = app.this.clone();
         Self {
             app: RefCell::new(app),
@@ -549,6 +555,8 @@ impl AppCell {
             native_events: NativeEventIngress::new(foreground_executor, this),
             native_captured_drags: NativeCapturedDragOutbox::default(),
             native_queries: NativeQuerySnapshots::default(),
+            native_window_activations: NativeWindowActivationAuthority::default(),
+            platform,
             background_executor,
             next_pointer_capture_release_generation: Cell::new(0),
             pointer_capture_releases: RefCell::new(HashMap::new()),
@@ -668,6 +676,7 @@ impl AppCell {
     }
 
     pub(super) fn remove_native_window(&self, window_id: WindowId) {
+        self.close_native_window_activation_target(window_id);
         self.native_events.close_window(window_id);
         self.native_queries.remove_window(window_id);
     }
@@ -1325,6 +1334,7 @@ impl AppCell {
     }
 
     pub(super) fn settle_native_window_terminal(&self, window_id: WindowId) {
+        self.close_native_window_activation_target(window_id);
         self.observed_native_window_terminals
             .borrow_mut()
             .insert(window_id);
@@ -2117,6 +2127,188 @@ impl AppCell {
             .enqueue_command(window_id, dispatcher, command);
     }
 
+    pub(crate) fn begin_native_window_activation(
+        self: &Rc<Self>,
+        window_id: WindowId,
+        dispatcher: PlatformWindowCommandDispatcher,
+        activation_policy_generation: u64,
+    ) -> WindowActivationTicket {
+        let begin = self.native_window_activations.begin(
+            Rc::downgrade(self),
+            window_id,
+            activation_policy_generation,
+        );
+        for delivery in begin.displaced {
+            self.enqueue_window_activation_delivery(delivery);
+        }
+
+        let request_generation = begin.ticket.request_generation();
+        let sequence = self.native_events.enqueue_command(
+            window_id,
+            dispatcher,
+            PlatformWindowCommand::Activate { request_generation },
+        );
+        match sequence {
+            Some(sequence) => assert!(
+                self.native_window_activations
+                    .bind_command_sequence(&begin.ticket, sequence),
+                "new window activation request must bind its exact native command sequence"
+            ),
+            None => {
+                if let Some(delivery) = self.native_window_activations.settle_generation(
+                    window_id,
+                    request_generation,
+                    WindowActivationTerminal::WindowClosed,
+                ) {
+                    self.enqueue_window_activation_delivery(delivery);
+                }
+            }
+        }
+        begin.ticket
+    }
+
+    pub(crate) fn begin_terminal_native_window_activation(
+        self: &Rc<Self>,
+        window_id: WindowId,
+        activation_policy_generation: u64,
+        terminal: WindowActivationTerminal,
+    ) -> WindowActivationTicket {
+        let begin = self.native_window_activations.begin(
+            Rc::downgrade(self),
+            window_id,
+            activation_policy_generation,
+        );
+        for delivery in begin.displaced {
+            self.enqueue_window_activation_delivery(delivery);
+        }
+        let request_generation = begin.ticket.request_generation();
+        self.settle_native_window_activation_command(window_id, request_generation, terminal);
+        begin.ticket
+    }
+
+    pub(super) fn cancel_native_window_activation(
+        &self,
+        ticket: &WindowActivationTicket,
+        terminal: WindowActivationTerminal,
+    ) -> WindowActivationCancellationOutcome {
+        let outcome = match self.native_window_activations.cancel(ticket, terminal) {
+            Some(delivery) => {
+                self.enqueue_window_activation_delivery(delivery);
+                WindowActivationCancellationOutcome::Installed(terminal)
+            }
+            None => WindowActivationCancellationOutcome::AlreadyTerminal(
+                ticket
+                    .snapshot()
+                    .status()
+                    .terminal()
+                    .expect("failed activation cancellation must already be terminal"),
+            ),
+        };
+        self.app_borrow_released();
+        outcome
+    }
+
+    pub(super) fn native_window_activation_policy_committed(
+        &self,
+        window_id: WindowId,
+        activation_policy_generation: u64,
+        accepts_activation: bool,
+    ) {
+        for delivery in self.native_window_activations.activation_policy_changed(
+            window_id,
+            activation_policy_generation,
+            Some(accepts_activation),
+        ) {
+            self.enqueue_window_activation_delivery(delivery);
+        }
+    }
+
+    pub(super) fn observe_native_window_activation_exact_positive(
+        &self,
+        observed_window: WindowId,
+        ingress_sequence: u64,
+    ) {
+        if let Some(delivery) = self
+            .native_window_activations
+            .observe_exact_positive(observed_window, ingress_sequence)
+        {
+            self.enqueue_window_activation_delivery(delivery);
+        }
+    }
+
+    fn begin_native_window_activation_dispatch(
+        &self,
+        window_id: WindowId,
+        request_generation: u64,
+        command_sequence: u64,
+    ) -> bool {
+        self.native_window_activations.begin_dispatch(
+            window_id,
+            request_generation,
+            command_sequence,
+        )
+    }
+
+    fn finish_native_window_activation_dispatch_accepted(
+        &self,
+        window_id: WindowId,
+        request_generation: u64,
+    ) {
+        let completion = self
+            .native_window_activations
+            .finish_dispatch_accepted(window_id, request_generation);
+        if let Some(delivery) = completion.delivery {
+            self.enqueue_window_activation_delivery(delivery);
+        }
+        if completion.needs_readback {
+            self.native_events
+                .enqueue_window_activation_readback(window_id, request_generation);
+        }
+    }
+
+    fn settle_native_window_activation_command(
+        &self,
+        window_id: WindowId,
+        request_generation: u64,
+        terminal: WindowActivationTerminal,
+    ) {
+        if let Some(delivery) = self.native_window_activations.settle_generation(
+            window_id,
+            request_generation,
+            terminal,
+        ) {
+            self.enqueue_window_activation_delivery(delivery);
+        }
+    }
+
+    pub(super) fn terminate_native_window_activation(&self) {
+        for delivery in self.native_window_activations.terminate() {
+            self.enqueue_window_activation_delivery(delivery);
+        }
+    }
+
+    fn close_native_window_activation_target(&self, window_id: WindowId) {
+        for delivery in self.native_window_activations.window_closed(window_id) {
+            self.enqueue_window_activation_delivery(delivery);
+        }
+    }
+
+    pub(super) fn schedule_native_window_activation_delivery(
+        &self,
+        delivery: WindowActivationTicketDelivery,
+    ) {
+        self.enqueue_window_activation_delivery(delivery);
+        self.app_borrow_released();
+    }
+
+    fn enqueue_window_activation_delivery(&self, delivery: WindowActivationTicketDelivery) {
+        self.native_window_activations.enqueue_delivery(delivery);
+    }
+
+    fn drain_native_window_activation_deliveries(&self) {
+        self.native_window_activations.drain_deliveries();
+    }
+
     pub(crate) fn enqueue_provisional_window_reveal(
         &self,
         window_id: WindowId,
@@ -2597,6 +2789,7 @@ impl AppCell {
         };
 
         loop {
+            self.drain_native_window_activation_deliveries();
             match drain.pop_front() {
                 NativeWorkPop::Work(envelope) => {
                     let sequence = envelope.sequence();
@@ -2636,6 +2829,34 @@ impl AppCell {
                                 return;
                             }
                         }
+                        NativeWorkEnvelope::WindowActivationReadback {
+                            window_id,
+                            request_generation,
+                            ..
+                        } => {
+                            let mut terminal = NativeBoundaryTerminalGuard::new(
+                                &self.native_events,
+                                NativeBoundaryDiagnostic::pending(
+                                    sequence,
+                                    NativeBoundaryTarget::Window(window_id),
+                                    NativeBoundaryKind::Command(
+                                        NativePlatformCommandKind::Activate,
+                                    ),
+                                    Some(NativeBoundaryGeneration::WindowActivation(
+                                        request_generation,
+                                    )),
+                                ),
+                            );
+                            if let PlatformFocusedWindow::Window(focused_window) =
+                                self.platform.focused_window()
+                            {
+                                self.observe_native_window_activation_exact_positive(
+                                    focused_window.window_id(),
+                                    sequence,
+                                );
+                            }
+                            terminal.settle(NativeBoundaryDisposition::DELIVERED);
+                        }
                         NativeWorkEnvelope::Command { command, .. } => {
                             let mut terminal = NativeBoundaryTerminalGuard::new(
                                 &self.native_events,
@@ -2651,11 +2872,19 @@ impl AppCell {
                                 return;
                             };
                             let window_id = command.window_id();
+                            let activation_request_generation =
+                                command.activation_request_generation();
                             let quitting = app.quitting;
-                            let dispatchable = !quitting
+                            let base_dispatchable = !quitting
                                 && self.native_queries.committed(window_id).is_some()
                                 && command.provisional_reveal_is_pending();
                             drop(app);
+                            let dispatchable = base_dispatchable
+                                && activation_request_generation.is_none_or(|generation| {
+                                    self.begin_native_window_activation_dispatch(
+                                        window_id, generation, sequence,
+                                    )
+                                });
                             if dispatchable {
                                 log::trace!(
                                     "native platform command sequence={sequence} window={window_id:?} disposition=Dispatching"
@@ -2663,10 +2892,26 @@ impl AppCell {
                                 let completes_initial_presentation =
                                     command.completes_initial_presentation();
                                 let command_guard = drain.enter_command();
-                                let outcome = terminal.run_callback(|| command.dispatch());
+                                let outcome = terminal.run_callback_with_panic_cleanup(
+                                    || command.dispatch(),
+                                    || {
+                                        if let Some(generation) = activation_request_generation {
+                                            self.settle_native_window_activation_command(
+                                                window_id,
+                                                generation,
+                                                WindowActivationTerminal::Rejected,
+                                            );
+                                        }
+                                    },
+                                );
                                 drop(command_guard);
                                 match outcome {
                                     PlatformWindowCommandOutcome::Accepted => {
+                                        if let Some(generation) = activation_request_generation {
+                                            self.finish_native_window_activation_dispatch_accepted(
+                                                window_id, generation,
+                                            );
+                                        }
                                         command.settle_provisional_reveal(
                                             crate::WindowProvisionalRevealOutcome::Revealed,
                                         );
@@ -2678,11 +2923,42 @@ impl AppCell {
                                             );
                                         }
                                     }
-                                    PlatformWindowCommandOutcome::Rejected => {
-                                        command.settle_provisional_reveal(
-                                            crate::WindowProvisionalRevealOutcome::Rejected,
-                                        );
-                                        terminal.settle(NativeBoundaryDisposition::Rejected);
+                                    PlatformWindowCommandOutcome::Rejected
+                                    | PlatformWindowCommandOutcome::Unsupported
+                                    | PlatformWindowCommandOutcome::WindowClosed => {
+                                        if let Some(generation) = activation_request_generation {
+                                            let activation_terminal = match outcome {
+                                                PlatformWindowCommandOutcome::Rejected => {
+                                                    WindowActivationTerminal::Rejected
+                                                }
+                                                PlatformWindowCommandOutcome::Unsupported => {
+                                                    WindowActivationTerminal::Unsupported
+                                                }
+                                                PlatformWindowCommandOutcome::WindowClosed => {
+                                                    WindowActivationTerminal::WindowClosed
+                                                }
+                                                PlatformWindowCommandOutcome::Accepted => {
+                                                    unreachable!("accepted command handled above")
+                                                }
+                                            };
+                                            self.settle_native_window_activation_command(
+                                                window_id,
+                                                generation,
+                                                activation_terminal,
+                                            );
+                                        }
+                                        let window_closed =
+                                            outcome == PlatformWindowCommandOutcome::WindowClosed;
+                                        command.settle_provisional_reveal(if window_closed {
+                                            crate::WindowProvisionalRevealOutcome::WindowTerminal
+                                        } else {
+                                            crate::WindowProvisionalRevealOutcome::Rejected
+                                        });
+                                        terminal.settle(if window_closed {
+                                            NativeBoundaryDisposition::Closed
+                                        } else {
+                                            NativeBoundaryDisposition::Rejected
+                                        });
                                         match command.settle_rejection() {
                                             NativePlatformCommandRejection::Retry(retry) => {
                                                 self.native_events.enqueue_native_command(retry);
@@ -2698,6 +2974,17 @@ impl AppCell {
                                     }
                                 }
                             } else {
+                                if let Some(generation) = activation_request_generation {
+                                    self.settle_native_window_activation_command(
+                                        window_id,
+                                        generation,
+                                        if base_dispatchable {
+                                            WindowActivationTerminal::Superseded
+                                        } else {
+                                            WindowActivationTerminal::WindowClosed
+                                        },
+                                    );
+                                }
                                 command.settle_provisional_reveal(if quitting {
                                     crate::WindowProvisionalRevealOutcome::WindowTerminal
                                 } else {
@@ -3021,6 +3308,7 @@ impl AppCell {
             return;
         }
         self.request_active_shutdown_completion();
+        self.drain_native_window_activation_deliveries();
         self.drain_native_captured_drags();
         self.native_events.resume_after_app_borrow();
         self.drain_native_work(None);

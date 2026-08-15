@@ -1,5 +1,3 @@
-#[cfg(test)]
-use crate::DockViewportActivationTransaction;
 use crate::surface::{
     DockSurfaceActivationOutcome, DockSurfaceChangeCategory, DockSurfaceDeferredPublication,
     DockSurfaceOwner, DockSurfaceTransactionId, DockSurfaceTransactionReceipt,
@@ -33,7 +31,8 @@ use crate::{
     refresh_runtime_update, refresh_runtime_update_excluding,
     refresh_viewport_window_effects_excluding, refresh_windows,
     viewport_activation::{
-        DockViewportActivationApplyOutcome, apply_viewport_activation_transaction,
+        DockViewportActivationApplyOutcome, DockViewportActivationExecutor,
+        apply_viewport_activation_transaction,
     },
     viewport_coordinates::{
         DockViewportFrameObservation, DockViewportFrameSample, DockViewportFrameSampleRequest,
@@ -64,8 +63,8 @@ use crate::{
 use open_gpui::WindowBounds;
 use open_gpui::{
     AnyWindowHandle, App, AppContext as _, Bounds, Context, Entity, Pixels, Point, Result,
-    Subscription, WeakEntity, Window, WindowId, WindowMutationDomain, WindowMutationRequest,
-    WindowOptions, WindowPlacementRequest, WindowPlatformFacts,
+    Subscription, WeakEntity, Window, WindowActivationTicket, WindowId, WindowMutationDomain,
+    WindowMutationRequest, WindowOptions, WindowPlacementRequest, WindowPlatformFacts,
 };
 #[cfg(test)]
 use std::cell::{Ref, RefMut};
@@ -96,6 +95,7 @@ pub struct DockViewportRuntimeHandle {
     identity: DockViewportRuntimeIdentity,
     liveness: Rc<()>,
     runtime: Rc<RefCell<DockViewportRuntime>>,
+    activation_executor: DockViewportActivationExecutor,
     window_closed_observer_installed: Rc<Cell<bool>>,
     platform_mutation_observation_subscriptions:
         Rc<RefCell<HashMap<DockViewportPlatformMutationSubscriptionKey, Subscription>>>,
@@ -698,28 +698,6 @@ impl DockViewportRuntimeHandle {
         })
     }
 
-    fn settle_backend_focus_cancellation(&self, cx: &mut App) {
-        self.settle_backend_focus_cancellations(cx);
-    }
-
-    /// Settles every surface activation displaced by backend-focus bookkeeping performed since
-    /// the previous runtime boundary.
-    ///
-    /// Runtime state can be sampled more than once during one route resolution. The queue is
-    /// drained only after the runtime borrow ends, and each binding schedules delivery from the
-    /// owner context so callbacks cannot re-enter an active owner update.
-    pub(crate) fn settle_backend_focus_cancellations<C: open_gpui::AppContext>(&self, cx: &mut C) {
-        let cancellations = self.runtime.borrow_mut().take_backend_focus_cancellations();
-        if cancellations.is_empty() {
-            return;
-        }
-        for activation in cancellations {
-            if let Some(binding) = activation.surface_activation_binding() {
-                binding.settle(DockSurfaceActivationOutcome::Superseded, cx);
-            }
-        }
-    }
-
     /// Creates a handle around a runtime with the default close policy.
     pub fn new(controller: Entity<DockController>) -> Self {
         DockViewportRuntime::new(controller).into_handle()
@@ -1112,6 +1090,7 @@ impl DockViewportRuntimeHandle {
             identity: DockViewportRuntimeIdentity::next(),
             liveness: Rc::new(()),
             runtime: Rc::new(RefCell::new(runtime)),
+            activation_executor: DockViewportActivationExecutor::default(),
             window_closed_observer_installed: Rc::new(Cell::new(false)),
             platform_mutation_observation_subscriptions: Rc::new(RefCell::new(HashMap::new())),
             pending_platform_mutations: Rc::new(RefCell::new(HashMap::new())),
@@ -1712,6 +1691,14 @@ impl DockViewportRuntimeHandle {
                     .policy()
                     .platform_focus_sets_dock_focus(),
             );
+        let registration = self
+            .runtime
+            .borrow()
+            .registration_key_for_space_window(space, window_id);
+        let suppress_platform_restore = registration.as_ref().is_some_and(|registration| {
+            self.activation_executor
+                .has_execution_for_registration(registration)
+        });
         let outcome = self
             .runtime
             .borrow_mut()
@@ -1721,8 +1708,8 @@ impl DockViewportRuntimeHandle {
                 platform_focus_restore_gate,
                 backend_focus,
                 platform_focus_restore_policy,
+                suppress_platform_restore,
             );
-        self.settle_backend_focus_cancellation(cx);
         outcome
     }
 
@@ -1732,25 +1719,26 @@ impl DockViewportRuntimeHandle {
             .runtime
             .borrow_mut()
             .record_confirmed_backend_focus_signal(backend_focus);
-        self.settle_backend_focus_cancellation(cx);
         changed
     }
 
-    pub(crate) fn apply_activation_backend_focus(
+    pub(crate) fn record_activation_backend_focus(
         &self,
-        activation: &crate::DockViewportActivationTransaction,
+        window_id: WindowId,
         backend_focus: crate::DockViewportActivationBackendFocusObservation,
-        request_backend_activation: bool,
     ) -> crate::DockViewportActivationBackendFocusApply {
-        self.runtime.borrow_mut().apply_activation_backend_focus(
-            activation,
-            backend_focus,
-            request_backend_activation,
-        )
+        self.runtime
+            .borrow_mut()
+            .apply_activation_backend_focus(window_id, backend_focus)
     }
 
-    pub(crate) fn settle_backend_focus_cancellation_in_context(&self, cx: &mut Context<DockHost>) {
-        self.settle_backend_focus_cancellations(cx);
+    pub(crate) fn observe_activation_ticket(
+        &self,
+        activation: crate::DockViewportActivationTransaction,
+        ticket: WindowActivationTicket,
+        cx: &mut Context<DockHost>,
+    ) {
+        self.activation_executor.observe(activation, ticket, cx);
     }
 
     #[cfg(test)]
@@ -1761,18 +1749,13 @@ impl DockViewportRuntimeHandle {
     }
 
     #[cfg(test)]
-    pub(crate) fn pending_activation(&self) -> Option<DockViewportActivationTransaction> {
-        self.runtime.borrow().pending_activation().cloned()
+    pub(crate) fn activation_execution_count(&self) -> usize {
+        self.activation_executor.execution_count()
     }
 
     #[cfg(test)]
-    pub(crate) fn record_pending_activation(
-        &self,
-        activation: crate::DockViewportActivationTransaction,
-    ) -> bool {
-        self.runtime
-            .borrow_mut()
-            .record_pending_activation(activation)
+    pub(crate) fn settle_activation_execution_for_test(&self, generation: u64, cx: &mut App) {
+        self.activation_executor.settle_execution(generation, cx);
     }
 
     pub(crate) fn record_panel_focus(&self, space: DockSpaceId, item: DockItemId) {
@@ -1815,6 +1798,16 @@ impl DockViewportRuntimeHandle {
     ) -> bool {
         let update = self.runtime.borrow_mut().release_host_binding(registration);
         refresh_runtime_update_excluding(update, Some(window.window_handle().window_id()), cx)
+    }
+
+    pub(crate) fn retire_activation_registration(
+        &self,
+        registration: &DockViewportRegistrationKey,
+        outcome: DockSurfaceActivationOutcome,
+        cx: &mut App,
+    ) {
+        self.activation_executor
+            .retire_registration(registration, outcome, cx);
     }
 
     pub(crate) fn apply_close_recovery_activation(

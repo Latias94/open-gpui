@@ -1063,6 +1063,7 @@ fn windows_window_capabilities() -> PlatformWindowCapabilities {
             taskbar_visibility: WindowMutationSupport::Unsupported,
             coordinate_space: WindowCoordinateSpace::WindowLocal,
         },
+        activation: PlatformWindowActivationSupport::Observed,
     }
 }
 
@@ -3775,10 +3776,11 @@ mod tests {
     use crate::{read_from_clipboard, write_to_clipboard};
     use open_gpui::{
         AnyWindowHandle, AppContext as _, Application, Bounds, ClipboardItem, DevicePixels, Empty,
-        Platform as _, PlatformWindowCapabilities, PlatformWindowCreationCapabilities,
-        PlatformWindowHit, PlatformWindowHitStack, PlatformWindowMutationCapabilities,
-        PlatformWindowPhysicalCoverage, PlatformWindowPhysicalGeometry, WindowActivationPolicy,
-        WindowBounds, WindowCoordinateSpace, WindowCreationSupport, WindowHandle, WindowId,
+        Platform as _, PlatformWindowActivationSupport, PlatformWindowCapabilities,
+        PlatformWindowCreationCapabilities, PlatformWindowHit, PlatformWindowHitStack,
+        PlatformWindowMutationCapabilities, PlatformWindowPhysicalCoverage,
+        PlatformWindowPhysicalGeometry, WindowActivationPolicy, WindowBounds,
+        WindowCoordinateSpace, WindowCreationSupport, WindowHandle, WindowId,
         WindowInitialPresentationOrder, WindowKind, WindowMutationDispatch,
         WindowMutationObservation, WindowMutationOutcome, WindowMutationRequest,
         WindowMutationSupport, WindowOptions, WindowPhysicalPlacementRequest,
@@ -4997,6 +4999,7 @@ mod tests {
                     taskbar_visibility: WindowMutationSupport::Unsupported,
                     coordinate_space: WindowCoordinateSpace::WindowLocal,
                 },
+                activation: PlatformWindowActivationSupport::Observed,
             }
         );
     }
@@ -5574,8 +5577,8 @@ mod tests {
         assert!(ticket.observation().is_none());
         assert!(!unsafe { IsWindowVisible(native_window).as_bool() });
 
-        app.update_for_test(|cx| {
-            window
+        let _ = app.update_for_test(|cx| {
+            let _ = window
                 .update(cx, |_, window, _| window.activate_window())
                 .expect("hidden native test window should remain open");
         });

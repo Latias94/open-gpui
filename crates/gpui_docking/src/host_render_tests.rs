@@ -14,6 +14,9 @@ use crate::{
     presentation_scene::{DockPresentationPane, DockPresentationPaneKind, DockPresentationScene},
     transition_executor::DockTransitionExecutionState,
     transition_geometry::{DockMotionPreference, DockTransitionPlan},
+    viewport_activation::{
+        DockViewportActivationApplyOutcome, apply_viewport_activation_transaction,
+    },
     visual_affordance_scene::{
         DockVisualAffordanceKind, DockVisualAffordanceLayer, DockVisualAffordanceScene,
         DockVisualAffordanceState, DockVisualLayerScope,
@@ -478,7 +481,9 @@ fn dock_host_presentation_suppresses_routes_and_republishes_fresh_geometry(
     cx.run_until_parked();
     let mut visual = VisualTestContext::from_window(window.into(), cx);
     visual.update(|window, cx| window.draw(cx).clear());
-    visual.update(|window, _| window.activate_window());
+    visual.update(|window, _| {
+        let _ = window.activate_window();
+    });
     cx.run_until_parked();
     let window_id = window.window_id();
     let host_selector = selector_for(&visual, &host, DockDebugRegion::Host)
@@ -2815,7 +2820,9 @@ fn platform_activation_does_not_restore_panel_focus_while_mouse_is_pressed(
 
     visual.deactivate_window();
     window
-        .update(cx, |_, window, _| window.activate_window())
+        .update(cx, |_, window, _| {
+            let _ = window.activate_window();
+        })
         .expect("window should activate for initial backend focus confirmation");
     cx.run_until_parked();
     visual.update(|window, cx| {
@@ -2834,7 +2841,9 @@ fn platform_activation_does_not_restore_panel_focus_while_mouse_is_pressed(
     visual.deactivate_window();
     cx.set_platform_mouse_button_is_pressed(MouseButton::Left, Some(true));
     window
-        .update(cx, |_, window, _| window.activate_window())
+        .update(cx, |_, window, _| {
+            let _ = window.activate_window();
+        })
         .expect("window should activate");
     cx.run_until_parked();
     cx.set_platform_mouse_button_is_pressed(MouseButton::Left, None);
@@ -2880,7 +2889,9 @@ fn platform_activation_restores_recorded_panel_after_non_docking_focus_owner(
 
     visual.deactivate_window();
     window
-        .update(cx, |_, window, _| window.activate_window())
+        .update(cx, |_, window, _| {
+            let _ = window.activate_window();
+        })
         .expect("window should activate for initial backend focus confirmation");
     cx.run_until_parked();
     visual.update(|window, cx| {
@@ -2905,7 +2916,9 @@ fn platform_activation_restores_recorded_panel_after_non_docking_focus_owner(
 
     visual.deactivate_window();
     window
-        .update(cx, |_, window, _| window.activate_window())
+        .update(cx, |_, window, _| {
+            let _ = window.activate_window();
+        })
         .expect("window should activate");
     cx.run_until_parked();
     host.update(cx, |host, _| {
@@ -2922,7 +2935,7 @@ fn platform_activation_restores_recorded_panel_after_non_docking_focus_owner(
 }
 
 #[open_gpui::test]
-fn platform_activation_notifies_when_pending_activation_is_consumed_without_new_focus_command(
+fn platform_activation_notifies_when_activation_ticket_transfers_without_new_focus_command(
     cx: &mut TestAppContext,
 ) {
     let (graph, root) = tabs_graph_with_selected(&["a", "b"], "a");
@@ -2952,23 +2965,24 @@ fn platform_activation_notifies_when_pending_activation_is_consumed_without_new_
                 "b"
             )))
         ));
-        assert!(
-            host.viewport_runtime()
-                .record_pending_activation(activation.clone())
-        );
     });
 
     visual.deactivate_window();
-    window
-        .update(cx, |_, window, _| window.activate_window())
-        .expect("window should activate");
+    let outcome = cx.update(|cx| apply_viewport_activation_transaction(Some(activation), cx));
+    assert!(matches!(
+        outcome,
+        DockViewportActivationApplyOutcome::Applied {
+            window_activation_requested: true,
+            ..
+        }
+    ));
     cx.run_until_parked();
 
     host.update(cx, |host, _| {
         assert_eq!(
-            host.viewport_runtime().pending_activation(),
-            None,
-            "platform activation should consume the matching pending activation"
+            host.viewport_runtime().activation_execution_count(),
+            0,
+            "the exact native activation terminal should retire its Dock execution"
         );
         assert_eq!(
             host.pending_focus_command(),
@@ -3036,7 +3050,9 @@ fn platform_activation_policy_can_leave_dock_focus_unchanged(cx: &mut TestAppCon
 
     visual.deactivate_window();
     window
-        .update(cx, |_, window, _| window.activate_window())
+        .update(cx, |_, window, _| {
+            let _ = window.activate_window();
+        })
         .expect("window should activate");
     cx.run_until_parked();
 
@@ -3273,7 +3289,9 @@ fn platform_activation_after_no_panel_focus_does_not_restore_old_panel(cx: &mut 
 
     visual.deactivate_window();
     window
-        .update(cx, |_, window, _| window.activate_window())
+        .update(cx, |_, window, _| {
+            let _ = window.activate_window();
+        })
         .expect("window should activate");
     cx.run_until_parked();
 
@@ -3899,7 +3917,9 @@ fn viewport_activation_without_history_does_not_pick_first_panel(cx: &mut TestAp
     cx.run_until_parked();
 
     window
-        .update(cx, |_, window, _| window.activate_window())
+        .update(cx, |_, window, _| {
+            let _ = window.activate_window();
+        })
         .expect("window should activate");
     cx.run_until_parked();
 

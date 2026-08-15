@@ -898,6 +898,51 @@ impl WindowMutationSupport {
     }
 }
 
+/// Backend support for requesting and exactly observing native-window activation.
+///
+/// Activation is an application-level transaction rather than a window mutation: accepting the
+/// native command does not prove that the operating system granted foreground or keyboard focus.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PlatformWindowActivationSupport {
+    /// The backend cannot request activation or cannot report an exact native positive result.
+    #[default]
+    Unsupported,
+    /// The backend can request activation and report an exact native positive result.
+    Observed,
+}
+
+/// One native active-state edge plus its strength as activation evidence.
+///
+/// `active` preserves the backend's native edge for ordinary window state and pointer-capture
+/// cancellation. `exact_native_positive` is stronger: it is true only when the callback can prove
+/// that this exact owned window currently holds the platform's activation authority.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PlatformWindowActiveStatusObservation {
+    active: bool,
+    exact_native_positive: bool,
+}
+
+impl PlatformWindowActiveStatusObservation {
+    /// Creates one typed native active-state observation.
+    pub const fn new(active: bool, exact_native_positive: bool) -> Self {
+        debug_assert!(active || !exact_native_positive);
+        Self {
+            active,
+            exact_native_positive: active && exact_native_positive,
+        }
+    }
+
+    /// Returns the native active-state edge.
+    pub const fn active(self) -> bool {
+        self.active
+    }
+
+    /// Returns whether this edge is an exact positive activation observation.
+    pub const fn exact_native_positive(self) -> bool {
+        self.exact_native_positive
+    }
+}
+
 /// The coordinate system used by window geometry facts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum WindowCoordinateSpace {
@@ -1255,6 +1300,8 @@ pub struct PlatformWindowCapabilities {
     pub creation: PlatformWindowCreationCapabilities,
     /// Live and creation-only mutation capabilities.
     pub mutations: PlatformWindowMutationCapabilities,
+    /// Support for a generation-bound, exactly observed native activation transaction.
+    pub activation: PlatformWindowActivationSupport,
 }
 
 /// Capabilities captured for the actual kind of an opened platform window.
@@ -3776,7 +3823,9 @@ pub enum PlatformWindowCommand {
         session_generation: u64,
         presentation_generation: u64,
     },
-    Activate,
+    Activate {
+        request_generation: u64,
+    },
     ShowWindowMenu(Point<Pixels>),
     StartWindowMove,
     StartWindowResize(ResizeEdge),
@@ -3791,6 +3840,10 @@ pub enum PlatformWindowCommand {
 pub enum PlatformWindowCommandOutcome {
     Accepted,
     Rejected,
+    /// The backend cannot execute this command while preserving its observation contract.
+    Unsupported,
+    /// The exact native target was already terminal or replaced before dispatch.
+    WindowClosed,
 }
 
 /// The synchronous result of a post-borrow native pointer-capture release.
@@ -4912,7 +4965,10 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>);
     fn on_input(&self, callback: PlatformInputCallback);
     fn on_modifiers_changed(&self, _callback: Box<dyn FnMut(ModifiersChangedEvent)>) {}
-    fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>);
+    fn on_active_status_change(
+        &self,
+        callback: Box<dyn FnMut(PlatformWindowActiveStatusObservation)>,
+    );
     fn on_hover_status_change(&self, callback: Box<dyn FnMut(bool)>);
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>);
     fn on_moved(&self, callback: Box<dyn FnMut()>);

@@ -476,6 +476,37 @@ never means permanent non-activation. Set `WindowOptions::activation_policy` for
 `accepts_activation` and `focus_on_click` behavior; both fields share one mutation generation and
 terminal observation. Pointer-input acceptance remains independent.
 
+### Programmatic Native-Window Activation
+
+`Window::activate_window()` now returns a `#[must_use] WindowActivationTicket`. Calling the method
+only queues one generation-bound native command; backend acceptance means `Dispatched`, not that
+the target owns native foreground or focus. Retain the ticket when activation changes application
+state, subscribe to its first terminal snapshot, and only treat
+`WindowActivationTerminal::Activated` as success:
+
+```rust
+let ticket = window.activate_window();
+let subscription = ticket.subscribe(move |snapshot| {
+    match snapshot.status().terminal() {
+        Some(WindowActivationTerminal::Activated) => {
+            // Commit application state that requires exact native activation.
+        }
+        Some(terminal) => {
+            log::debug!("native activation did not commit: {terminal:?}");
+        }
+        None => unreachable!("activation subscriptions receive terminal snapshots"),
+    }
+});
+```
+
+Keep the `Subscription` alive for callback delivery. Dropping the subscription does not cancel the
+request; call `ticket.cancel()` when the caller still owns that semantic cancellation. A newer
+owned-window request, a committed activation-policy change, target replacement, window close, or
+application shutdown settles the same ticket with a typed terminal outcome. Do not recreate a
+parallel `pending_activation` flag or complete an old request from an unrelated later focus event.
+If the result is intentionally irrelevant, make that decision explicit with
+`let _ = window.activate_window();`.
+
 To establish a native top-level owner relationship, create a token with
 `App::transient_window_owner(live_handle)` and assign it to `WindowOptions::transient_for`. The
 token is bound to the exact live window generation and application. Self, stale, closed, or

@@ -14,12 +14,13 @@ use open_gpui::{
     AnyWindowHandle, Bounds, Capslock, CursorStyle, Decorations, DevicePixels, GpuSpecs, Modifiers,
     Pixels, PlatformAtlas, PlatformDisplay, PlatformInputCallback, PlatformInputCallbackSlot,
     PlatformInputHandler, PlatformInputHandlerSlot, PlatformPresentationShutdownOutcome,
-    PlatformWindow, PlatformWindowCommand, PlatformWindowCommandDispatcher,
-    PlatformWindowCommandOutcome, PlatformWindowPresentOutcome, Point, PointerCancelReason,
-    PreparedPlatformPresentationShutdown, PromptButton, PromptLevel, RequestFrameOptions, Scene,
-    Size, WindowActivationPolicy, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowControlArea, WindowControls, WindowCoordinateSpace, WindowCreationFacts,
-    WindowDecorations, WindowParams, WindowPlatformFacts, WindowPresentationShutdownTicket, px,
+    PlatformWindow, PlatformWindowActiveStatusObservation, PlatformWindowCommand,
+    PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome, PlatformWindowPresentOutcome,
+    Point, PointerCancelReason, PreparedPlatformPresentationShutdown, PromptButton, PromptLevel,
+    RequestFrameOptions, Scene, Size, WindowActivationPolicy, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls,
+    WindowCoordinateSpace, WindowCreationFacts, WindowDecorations, WindowParams,
+    WindowPlatformFacts, WindowPresentationShutdownTicket, px,
 };
 use open_gpui_wgpu::{WgpuContext, WgpuRenderer, WgpuSurfaceConfig, WgpuSurfaceShutdownProgress};
 use wasm_bindgen::prelude::*;
@@ -28,7 +29,7 @@ use wasm_bindgen::prelude::*;
 pub(crate) struct WebWindowCallbacks {
     pub(crate) request_frame: Option<Box<dyn FnMut(RequestFrameOptions)>>,
     pub(crate) input: PlatformInputCallbackSlot,
-    pub(crate) active_status_change: Option<Box<dyn FnMut(bool)>>,
+    pub(crate) active_status_change: Option<Box<dyn FnMut(PlatformWindowActiveStatusObservation)>>,
     pub(crate) hover_status_change: Option<Box<dyn FnMut(bool)>>,
     pub(crate) resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     pub(crate) moved: Option<Box<dyn FnMut()>>,
@@ -410,14 +411,14 @@ impl WebWindowInner {
         }
     }
 
-    fn dispatch_active_status_change(&self, is_active: bool) {
+    fn dispatch_active_status_change(&self, observation: PlatformWindowActiveStatusObservation) {
         let mut callback = {
             let mut callbacks = self.callbacks.borrow_mut();
             callbacks.active_status_change.take()
         };
 
         if let Some(ref mut callback) = callback {
-            callback(is_active);
+            callback(observation);
         }
 
         if let Some(callback) = callback {
@@ -456,7 +457,9 @@ impl WebWindowInner {
         if !is_active {
             self.cleanup_pointer_capture(PointerCancelReason::WindowDeactivated);
         }
-        self.dispatch_active_status_change(is_active);
+        self.dispatch_active_status_change(PlatformWindowActiveStatusObservation::new(
+            is_active, is_active,
+        ));
     }
 
     fn update_active_window(&self, is_active: bool) {
@@ -783,7 +786,7 @@ impl PlatformWindow for WebWindow {
         let inner = Rc::downgrade(&self.inner);
         PlatformWindowCommandDispatcher::new(move |command| {
             let Some(inner) = inner.upgrade() else {
-                return PlatformWindowCommandOutcome::Rejected;
+                return PlatformWindowCommandOutcome::WindowClosed;
             };
 
             match command {
@@ -794,7 +797,7 @@ impl PlatformWindow for WebWindow {
                 PlatformWindowCommand::RevealDeferredInitialPresentation { .. } => {
                     PlatformWindowCommandOutcome::Rejected
                 }
-                PlatformWindowCommand::Activate => {
+                PlatformWindowCommand::Activate { .. } => {
                     if inner.activate() {
                         PlatformWindowCommandOutcome::Accepted
                     } else {
@@ -1030,7 +1033,10 @@ impl PlatformWindow for WebWindow {
         input_callback.set(callback);
     }
 
-    fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
+    fn on_active_status_change(
+        &self,
+        callback: Box<dyn FnMut(PlatformWindowActiveStatusObservation)>,
+    ) {
         self.inner.callbacks.borrow_mut().active_status_change = Some(callback);
     }
 

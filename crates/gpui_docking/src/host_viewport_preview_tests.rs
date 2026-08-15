@@ -24,8 +24,7 @@ mod runtime_suite {
         viewport_activation::{
             DockViewportActivationApplyOutcome, DockViewportActivationBackendFocusApply,
             DockViewportActivationBackendFocusObservation,
-            DockViewportActivationBackendFocusRecordEffect,
-            DockViewportActivationPendingBackendFocusEffect, apply_viewport_activation_transaction,
+            DockViewportActivationBackendFocusRecordEffect, apply_viewport_activation_transaction,
         },
         viewport_registry::{
             DockViewportInputMask, DockViewportRouteUnavailableReason, DockViewportStaleReason,

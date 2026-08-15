@@ -593,7 +593,6 @@ impl DockViewportRuntimeHandle {
             .runtime
             .borrow_mut()
             .finalize_payload_drop_route_resolution(sampled);
-        self.settle_backend_focus_cancellations(cx);
         refresh_viewport_window_effects_excluding(refresh.window_effects(), excluded_window, cx);
         refresh.outcome
     }
@@ -770,7 +769,6 @@ impl DockViewportRuntimeHandle {
                 preview_update,
             )
         };
-        self.settle_backend_focus_cancellations(cx);
         refresh_viewport_window_effects_excluding(route_effects, excluded_window, cx);
         let preview_changed =
             refresh_runtime_update_excluding(preview_update, preview_excluded_window, cx);

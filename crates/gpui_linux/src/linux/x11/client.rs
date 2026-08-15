@@ -8,6 +8,7 @@ use core::str;
 use log::Level;
 use open_gpui::{
     Capslock, PlatformFocusedWindow, PlatformHoveredWindow, PlatformViewportCapabilities,
+    PlatformWindowActivationSupport, PlatformWindowActiveStatusObservation,
     PlatformWindowCapabilities, PlatformWindowCreationCapabilities,
     PlatformWindowMutationCapabilities, WindowCoordinateSpace, WindowCreationSupport,
     WindowInitialPresentationOrder, WindowMutationSupport, profiler,
@@ -1029,7 +1030,15 @@ impl X11Client {
             }
             Event::FocusIn(event) => {
                 let window = self.get_window(event.event)?;
-                window.set_active(true);
+                let exact_native_positive = event.response_type & 0x80 == 0
+                    && matches!(
+                        event.mode,
+                        xproto::NotifyMode::NORMAL | xproto::NotifyMode::WHILE_GRABBED
+                    );
+                window.set_active(PlatformWindowActiveStatusObservation::new(
+                    true,
+                    exact_native_positive,
+                ));
                 let mut state = self.0.borrow_mut();
                 state.keyboard_focused_window = Some(event.event);
                 if let Some(handler) = state.xim_handler.as_mut() {
@@ -1040,7 +1049,7 @@ impl X11Client {
             }
             Event::FocusOut(event) => {
                 let window = self.get_window(event.event)?;
-                window.set_active(false);
+                window.set_active(PlatformWindowActiveStatusObservation::new(false, false));
                 let mut state = self.0.borrow_mut();
                 // Set last scroll values to `None` so that a large delta isn't created if scrolling is done outside the window (the valuator is global)
                 reset_all_pointer_device_scroll_positions(&mut state.pointer_device_states);
@@ -1614,6 +1623,7 @@ fn x11_window_capabilities(
             coordinate_space: WindowCoordinateSpace::GlobalScreen,
             ..Default::default()
         },
+        activation: PlatformWindowActivationSupport::Observed,
     }
 }
 
@@ -3087,6 +3097,10 @@ mod tests {
 
     #[test]
     fn window_capabilities_match_x11_creation_paths() {
+        assert_eq!(
+            x11_window_capabilities(&WindowKind::Normal, true).activation,
+            PlatformWindowActivationSupport::Observed
+        );
         assert_eq!(
             x11_window_capabilities(&WindowKind::Normal, true).mutations,
             expected_x11_capabilities(

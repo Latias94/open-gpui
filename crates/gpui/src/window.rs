@@ -2456,8 +2456,8 @@ impl Window {
         }));
         platform_window.on_active_status_change(Box::new({
             let cx = cx.to_async();
-            move |active| {
-                cx.enqueue_window_active_changed(handle.window_id(), active);
+            move |observation| {
+                cx.enqueue_window_active_changed(handle.window_id(), observation);
             }
         }));
         platform_window.on_modifiers_changed(Box::new({
@@ -5180,6 +5180,17 @@ impl Window {
             terminal,
             &self.platform_facts,
         );
+        let committed_activation_policy = self
+            .window_mutations
+            .committed_activation_policy(&self.platform_facts);
+        if domain == WindowMutationDomain::ActivationPolicy
+            && committed_activation_policy.generation() == generation
+        {
+            self.platform_command_sink.activation_policy_committed(
+                generation,
+                committed_activation_policy.accepts_activation(),
+            );
+        }
         self.refresh();
         self.notify_bounds_observers(cx);
         Self::deliver_window_mutation_ticket_deliveries(deliveries);
@@ -5631,15 +5642,17 @@ impl Window {
             return WindowMutationDispatch::Rejected;
         };
         let ticket = begin.ticket;
+        let ticket_domain = ticket.domain();
+        let ticket_generation = ticket.generation();
         let mut deliveries = begin.deliveries;
-        before_platform_dispatch(ticket.generation());
-        if ticket.domain() == WindowMutationDomain::Placement
+        before_platform_dispatch(ticket_generation);
+        if ticket_domain == WindowMutationDomain::Placement
             && let Some(reveal) = self.presentation_state.provisional_reveal_ticket.as_ref()
         {
-            reveal.stale_for_newer_placement(ticket.generation());
+            reveal.stale_for_newer_placement(ticket_generation);
         }
         self.platform_window
-            .prepare_window_mutation(ticket.domain(), ticket.generation());
+            .prepare_window_mutation(ticket_domain, ticket_generation);
 
         let dispatch = if !force_platform_dispatch && request.matches_facts(&self.platform_facts) {
             deliveries.extend(self.window_mutations.settle_unqueued(
@@ -5658,7 +5671,7 @@ impl Window {
             ));
             WindowMutationDispatch::Unsupported
         } else {
-            match dispatch_platform(self.platform_window.as_mut(), ticket.generation()) {
+            match dispatch_platform(self.platform_window.as_mut(), ticket_generation) {
                 PlatformWindowDispatch::Queued => WindowMutationDispatch::Queued(ticket),
                 PlatformWindowDispatch::Unchanged => {
                     self.refresh_platform_facts();
@@ -5698,6 +5711,17 @@ impl Window {
             }
         };
 
+        let committed_activation_policy = self
+            .window_mutations
+            .committed_activation_policy(&self.platform_facts);
+        if ticket_domain == WindowMutationDomain::ActivationPolicy
+            && committed_activation_policy.generation() == ticket_generation
+        {
+            self.platform_command_sink.activation_policy_committed(
+                ticket_generation,
+                committed_activation_policy.accepts_activation(),
+            );
+        }
         Self::deliver_window_mutation_ticket_deliveries(deliveries);
         dispatch
     }
@@ -5795,8 +5819,12 @@ impl Window {
             .retain(&(), |callback| callback(self, cx));
     }
 
+    pub(crate) fn native_active_status_change_is_admissible(&self, active: bool) -> bool {
+        !active || self.provisional_session_accepts_interaction()
+    }
+
     pub(crate) fn native_active_status_changed(&mut self, active: bool, cx: &mut App) {
-        if active && !self.provisional_session_accepts_interaction() {
+        if !self.native_active_status_change_is_admissible(active) {
             self.active.set(false);
             return;
         }
@@ -11661,11 +11689,35 @@ impl Window {
         subscription
     }
 
-    /// Focus the current window and bring it to the foreground at the platform level.
-    pub fn activate_window(&self) {
-        if self.provisional_session_accepts_interaction() {
-            self.platform_command_sink
-                .enqueue(PlatformWindowCommand::Activate);
+    /// Requests native activation and returns an exact generation-bound terminal ticket.
+    ///
+    /// Command dispatch is not success. The ticket reaches `Activated` only after the backend
+    /// reports the exact target as the native focused window.
+    pub fn activate_window(&self) -> crate::WindowActivationTicket {
+        let activation_policy = self
+            .window_mutations
+            .committed_activation_policy(&self.platform_facts);
+        let terminal = if self.removed || self.native_closed.get() {
+            Some(crate::WindowActivationTerminal::WindowClosed)
+        } else if self.window_capabilities.activation
+            != crate::PlatformWindowActivationSupport::Observed
+        {
+            Some(crate::WindowActivationTerminal::Unsupported)
+        } else if !self.provisional_session_accepts_interaction()
+            || !activation_policy.accepts_activation()
+        {
+            Some(crate::WindowActivationTerminal::Rejected)
+        } else {
+            None
+        };
+
+        match terminal {
+            Some(terminal) => self
+                .platform_command_sink
+                .terminal_activation(activation_policy.generation(), terminal),
+            None => self
+                .platform_command_sink
+                .request_activation(activation_policy.generation()),
         }
     }
 

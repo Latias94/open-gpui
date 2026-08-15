@@ -1,6 +1,8 @@
+#[cfg(test)]
+use crate::DockSpaceId;
 use crate::{
-    DockSpaceId, DockViewportActivationTransaction, DockViewportFocusCommand,
-    DockViewportFocusCoordinator, viewport_registry::DockViewportRegistrationKey,
+    DockViewportFocusCommand, DockViewportFocusCoordinator,
+    viewport_registry::DockViewportRegistrationKey,
 };
 use open_gpui::{App, MouseButton, WindowId};
 use std::collections::HashMap;
@@ -8,7 +10,6 @@ use std::collections::HashMap;
 /// Backend focus state used to mirror ImGui's platform viewport focus semantics.
 #[derive(Debug, Default)]
 pub(crate) struct DockViewportBackendFocusState {
-    pending_activation: Option<DockViewportActivationTransaction>,
     /// Last live docking window observed as backend-focused. Mirrors ImGui's
     /// `PlatformLastFocusedViewportId` for activation and destroyed-focus suppression.
     last_confirmed_backend_focused_window: Option<WindowId>,
@@ -20,58 +21,21 @@ pub(crate) struct DockViewportBackendFocusState {
     destroyed_previous_focus_suppression: Option<DockViewportDestroyedPreviousFocusSuppression>,
 }
 
-/// Result of replacing the one backend-focus activation slot.
-///
-/// The displaced transaction is returned to the runtime owner instead of being silently dropped.
-/// A surface activation carried by that transaction must be settled before the replacement can
-/// dispatch a focus command.
-#[derive(Debug, Default)]
-pub(crate) struct DockViewportPendingActivationUpdate {
-    changed: bool,
-    displaced: Option<DockViewportActivationTransaction>,
-}
-
-impl DockViewportPendingActivationUpdate {
-    pub(crate) fn changed(&self) -> bool {
-        self.changed
-    }
-
-    pub(crate) fn displaced(self) -> Option<DockViewportActivationTransaction> {
-        self.displaced
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DockViewportBackendFocusRecord {
     focused_changed: bool,
-    cleared_pending_activation: Option<DockViewportActivationTransaction>,
     z_order_stamp_changed: bool,
 }
 
 impl DockViewportBackendFocusRecord {
     pub(crate) fn changed(self) -> bool {
-        self.focused_changed
-            || self.cleared_pending_activation.is_some()
-            || self.z_order_stamp_changed
+        self.focused_changed || self.z_order_stamp_changed
     }
-
-    pub(crate) fn cleared_pending_activation(&self) -> Option<&DockViewportActivationTransaction> {
-        self.cleared_pending_activation.as_ref()
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) enum DockViewportConfirmedBackendFocusEffect {
-    #[default]
-    None,
-    PendingActivation,
-    PlatformRestore,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) struct DockViewportConfirmedBackendFocusOutcome {
     changed: bool,
-    effect: DockViewportConfirmedBackendFocusEffect,
     focus_command: Option<DockViewportFocusCommand>,
 }
 
@@ -79,34 +43,19 @@ impl DockViewportConfirmedBackendFocusOutcome {
     fn no_effect(changed: bool) -> Self {
         Self {
             changed,
-            effect: DockViewportConfirmedBackendFocusEffect::None,
             focus_command: None,
-        }
-    }
-
-    fn pending_activation(changed: bool, focus_command: DockViewportFocusCommand) -> Self {
-        Self {
-            changed,
-            effect: DockViewportConfirmedBackendFocusEffect::PendingActivation,
-            focus_command: Some(focus_command),
         }
     }
 
     fn platform_restore(changed: bool, focus_command: Option<DockViewportFocusCommand>) -> Self {
         Self {
             changed,
-            effect: DockViewportConfirmedBackendFocusEffect::PlatformRestore,
             focus_command,
         }
     }
 
     pub(crate) fn changed(&self) -> bool {
         self.changed
-    }
-
-    #[cfg(test)]
-    pub(crate) fn effect(&self) -> DockViewportConfirmedBackendFocusEffect {
-        self.effect
     }
 
     pub(crate) fn with_additional_changed(mut self, changed: bool) -> Self {
@@ -121,9 +70,8 @@ impl DockViewportConfirmedBackendFocusOutcome {
 
 /// Gate for applying ImGui-style platform focus restoration after backend focus changes.
 ///
-/// `MouseDown` mirrors `!IsAnyMouseDown()` in the reference implementation: explicit pending
-/// viewport activations still win, but ordinary focus restoration is suppressed while pointer
-/// input is active.
+/// `MouseDown` mirrors `!IsAnyMouseDown()` in the reference implementation. Explicit activation is
+/// owned by the separate ticket executor; this gate controls only ordinary focus restoration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DockViewportPlatformFocusRestoreGate {
     NoMouseDown,
@@ -187,33 +135,6 @@ struct DockViewportDestroyedPreviousFocusSuppression {
 }
 
 impl DockViewportBackendFocusState {
-    #[cfg(test)]
-    pub(crate) fn pending_activation(&self) -> Option<&DockViewportActivationTransaction> {
-        self.pending_activation.as_ref()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn record_pending_activation(
-        &mut self,
-        activation: DockViewportActivationTransaction,
-    ) -> bool {
-        self.record_pending_activation_with_displaced(activation)
-            .changed()
-    }
-
-    pub(crate) fn record_pending_activation_with_displaced(
-        &mut self,
-        activation: DockViewportActivationTransaction,
-    ) -> DockViewportPendingActivationUpdate {
-        if self.pending_activation.as_ref() == Some(&activation) {
-            return DockViewportPendingActivationUpdate::default();
-        }
-        DockViewportPendingActivationUpdate {
-            changed: true,
-            displaced: self.pending_activation.replace(activation),
-        }
-    }
-
     pub(crate) fn record_viewport_created(&mut self, window_id: WindowId) {
         // Mirrors ImGui's AddUpdateViewport(): new platform viewports are assumed front-most for
         // fallback z-order even when they are opened without requesting platform focus.
@@ -231,11 +152,6 @@ impl DockViewportBackendFocusState {
 
         let previous_focused_window = self.last_confirmed_backend_focused_window;
         let focused_changed = previous_focused_window != Some(window_id);
-        let cleared_pending_activation = if focused_changed {
-            self.clear_pending_activation_except_window(window_id)
-        } else {
-            None
-        };
         if focused_changed {
             self.destroyed_previous_focus_suppression = if previous_focused_window
                 .is_none_or(|previous| !is_live_docking_window(previous))
@@ -255,7 +171,6 @@ impl DockViewportBackendFocusState {
         }
         Some(DockViewportBackendFocusRecord {
             focused_changed,
-            cleared_pending_activation,
             z_order_stamp_changed,
         })
     }
@@ -307,6 +222,7 @@ impl DockViewportBackendFocusState {
             &registration,
             platform_focus_restore_gate,
             platform_focus_restore_policy,
+            false,
         )
         .into_focus_command()
     }
@@ -317,35 +233,15 @@ impl DockViewportBackendFocusState {
         registration: &DockViewportRegistrationKey,
         platform_focus_restore_gate: DockViewportPlatformFocusRestoreGate,
         platform_focus_restore_policy: DockViewportPlatformFocusRestorePolicy,
+        suppress_platform_restore: bool,
     ) -> DockViewportConfirmedBackendFocusOutcome {
         let space = registration.space();
         let window_id = registration.window_id();
         let suppress_destroyed_previous_focus_restore =
             self.take_destroyed_previous_focus_suppression(window_id);
-        let mut changed = suppress_destroyed_previous_focus_restore;
-        // Mouse-down mirrors ImGui's platform-focus restore gate, but explicit viewport
-        // activations from drop, tear-off, or close recovery already carry their target focus.
-        if let Some(activation) = self.take_pending_activation_for_registration(registration) {
-            changed = true;
-            let focus_command = activation
-                .surface_activation_binding()
-                .cloned()
-                .map(|binding| {
-                    DockViewportFocusCommand::surface_activation(
-                        activation.focus_request().clone(),
-                        binding,
-                    )
-                })
-                .unwrap_or_else(|| {
-                    DockViewportFocusCommand::new(
-                        activation.focus_source(),
-                        activation.focus_request().clone(),
-                    )
-                });
-            return DockViewportConfirmedBackendFocusOutcome::pending_activation(
-                changed,
-                focus_command,
-            );
+        let changed = suppress_destroyed_previous_focus_restore;
+        if suppress_platform_restore {
+            return DockViewportConfirmedBackendFocusOutcome::no_effect(changed);
         }
         if !platform_focus_restore_policy.allows_restore() {
             return DockViewportConfirmedBackendFocusOutcome::no_effect(changed);
@@ -360,51 +256,6 @@ impl DockViewportBackendFocusState {
             .request_for_platform_activation(space)
             .map(DockViewportFocusCommand::platform_activation);
         DockViewportConfirmedBackendFocusOutcome::platform_restore(changed, focus_command)
-    }
-
-    fn clear_pending_activation_except_window(
-        &mut self,
-        window_id: WindowId,
-    ) -> Option<DockViewportActivationTransaction> {
-        if !self
-            .pending_activation
-            .as_ref()
-            .is_some_and(|activation| activation.window_id() != window_id)
-        {
-            return None;
-        }
-        self.pending_activation.take()
-    }
-
-    pub(crate) fn take_pending_activation_for(
-        &mut self,
-        space: &DockSpaceId,
-        window_id: WindowId,
-    ) -> Option<DockViewportActivationTransaction> {
-        if self
-            .pending_activation
-            .as_ref()
-            .is_some_and(|activation| activation.matches_window(space, window_id))
-        {
-            self.pending_activation.take()
-        } else {
-            None
-        }
-    }
-
-    pub(crate) fn take_pending_activation_for_registration(
-        &mut self,
-        registration: &DockViewportRegistrationKey,
-    ) -> Option<DockViewportActivationTransaction> {
-        if self
-            .pending_activation
-            .as_ref()
-            .is_some_and(|activation| activation.registration_key() == registration)
-        {
-            self.pending_activation.take()
-        } else {
-            None
-        }
     }
 
     fn take_destroyed_previous_focus_suppression(&mut self, window_id: WindowId) -> bool {
@@ -432,136 +283,6 @@ mod tests {
         DockViewportFocusCommandSource, DockViewportFocusRequest,
         viewport_test_support::{handle, item, space},
     };
-
-    #[test]
-    fn replacing_pending_activation_returns_displaced_transaction_once() {
-        let mut state = DockViewportBackendFocusState::default();
-        let first_window = handle(1);
-        let second_window = handle(2);
-        let first = DockViewportActivationTransaction::new(
-            space("first"),
-            first_window,
-            DockViewportFocusRequest::panel("first"),
-        );
-        let second = DockViewportActivationTransaction::new(
-            space("second"),
-            second_window,
-            DockViewportFocusRequest::panel("second"),
-        );
-
-        let first_update = state.record_pending_activation_with_displaced(first.clone());
-        assert!(first_update.changed());
-        assert_eq!(first_update.displaced(), None);
-
-        let replacement = state.record_pending_activation_with_displaced(second.clone());
-        assert!(replacement.changed());
-        assert_eq!(replacement.displaced(), Some(first));
-        assert_eq!(state.pending_activation(), Some(&second));
-
-        let duplicate = state.record_pending_activation_with_displaced(second);
-        assert!(!duplicate.changed());
-        assert_eq!(duplicate.displaced(), None);
-    }
-
-    #[test]
-    fn replacement_registration_does_not_consume_stale_pending_activation() {
-        let mut state = DockViewportBackendFocusState::default();
-        let window = handle(1);
-        let dock_space = space("main");
-        let first_registration = DockViewportRegistrationKey::for_test_generation(
-            dock_space.clone(),
-            window.window_id(),
-            1,
-        );
-        let second_registration =
-            DockViewportRegistrationKey::for_test_generation(dock_space, window.window_id(), 2);
-        let pending = DockViewportActivationTransaction::registered(
-            first_registration,
-            window,
-            DockViewportFocusRequest::panel("a"),
-        );
-        assert!(state.record_pending_activation(pending.clone()));
-        let focus = DockViewportFocusCoordinator::default();
-
-        let outcome = state.confirmed_backend_window_focus_outcome(
-            &focus,
-            &second_registration,
-            DockViewportPlatformFocusRestoreGate::MouseDown,
-            DockViewportPlatformFocusRestorePolicy::PreserveDockFocus,
-        );
-
-        assert_eq!(
-            outcome.effect(),
-            DockViewportConfirmedBackendFocusEffect::None
-        );
-        assert_eq!(
-            state.pending_activation(),
-            Some(&pending),
-            "a backend-focus signal for G2 must not consume G1 activation intent"
-        );
-    }
-
-    #[test]
-    fn backend_focus_clear_is_reported_only_on_focus_transition() {
-        let mut state = DockViewportBackendFocusState::default();
-        let pending_window = handle(1);
-        let confirmed_window = handle(2);
-        let pending = DockViewportActivationTransaction::new(
-            space("pending"),
-            pending_window,
-            DockViewportFocusRequest::panel("pending"),
-        );
-        state.record_pending_activation(pending.clone());
-
-        let first_record = state
-            .record_confirmed_backend_focused_window(confirmed_window.window_id(), |window| {
-                window == pending_window.window_id() || window == confirmed_window.window_id()
-            })
-            .expect("confirmed window should be live");
-        assert_eq!(
-            first_record.cleared_pending_activation(),
-            Some(&pending),
-            "a focus transition should return the displaced pending activation"
-        );
-
-        let second_record = state
-            .record_confirmed_backend_focused_window(confirmed_window.window_id(), |_| true)
-            .expect("repeated confirmed window should remain live");
-        assert_eq!(
-            second_record.cleared_pending_activation(),
-            None,
-            "a no-op backend sample must not manufacture a second cancellation"
-        );
-    }
-
-    #[test]
-    fn backend_focus_on_another_live_window_clears_pending_activation() {
-        let mut state = DockViewportBackendFocusState::default();
-        let alpha_window = handle(1);
-        let beta_window = handle(2);
-        let beta_space = space("beta");
-
-        assert!(
-            state.record_pending_activation(DockViewportActivationTransaction::new(
-                beta_space.clone(),
-                beta_window,
-                DockViewportFocusRequest::panel("b"),
-            ))
-        );
-
-        let record = state
-            .record_confirmed_backend_focused_window(alpha_window.window_id(), |window| {
-                window == alpha_window.window_id() || window == beta_window.window_id()
-            })
-            .expect("alpha is a live docking viewport");
-
-        assert!(record.changed());
-        assert_eq!(
-            state.pending_activation(),
-            None,
-            "confirmed backend focus on a different docking viewport cancels stale activation intent"
-        );
-    }
 
     #[test]
     fn viewport_z_order_stamps_expose_front_to_back_fallback_order() {
@@ -633,11 +354,6 @@ mod tests {
             state.front_to_back_z_order_windows(|_| true),
             vec![beta_window.window_id(), alpha_window.window_id()],
             "new viewport creation should mirror ImGui AddUpdateViewport z-order stamping"
-        );
-        assert_eq!(
-            state.pending_activation(),
-            None,
-            "creation z-order is not backend focus confirmation"
         );
     }
 
@@ -742,12 +458,9 @@ mod tests {
             &registration,
             DockViewportPlatformFocusRestoreGate::NoMouseDown,
             DockViewportPlatformFocusRestorePolicy::RestoreDockFocus,
+            false,
         );
 
-        assert_eq!(
-            platform_restore.effect(),
-            DockViewportConfirmedBackendFocusEffect::PlatformRestore
-        );
         assert!(
             !platform_restore.changed(),
             "requesting a platform restore command does not mutate backend focus state by itself"
@@ -760,127 +473,29 @@ mod tests {
             command.source(),
             DockViewportFocusCommandSource::PlatformActivation
         );
+    }
 
-        assert!(
-            state.record_pending_activation(DockViewportActivationTransaction::new(
-                dock_space.clone(),
-                window,
-                DockViewportFocusRequest::panel("a"),
-            ))
-        );
-        let pending_activation = state.confirmed_backend_window_focus_outcome(
+    #[test]
+    fn suppress_platform_restore_prevents_ordinary_restore_command() {
+        let mut state = DockViewportBackendFocusState::default();
+        let window = handle(1);
+        let dock_space = space("main");
+        let registration =
+            DockViewportRegistrationKey::for_test(dock_space.clone(), window.window_id());
+        let mut focus = DockViewportFocusCoordinator::default();
+        focus.record_panel_focus(dock_space, item("a"));
+
+        let outcome = state.confirmed_backend_window_focus_outcome(
             &focus,
             &registration,
-            DockViewportPlatformFocusRestoreGate::MouseDown,
-            DockViewportPlatformFocusRestorePolicy::PreserveDockFocus,
-        );
-
-        assert_eq!(
-            pending_activation.effect(),
-            DockViewportConfirmedBackendFocusEffect::PendingActivation
-        );
-        assert!(
-            pending_activation.changed(),
-            "consuming a pending activation mutates backend focus state"
-        );
-        let command = pending_activation
-            .into_focus_command()
-            .expect("pending activation should carry an explicit focus command");
-        assert_eq!(command.request(), &DockViewportFocusRequest::panel("a"));
-        assert_eq!(
-            command.source(),
-            DockViewportFocusCommandSource::ViewportActivation
-        );
-        assert_eq!(state.pending_activation(), None);
-    }
-
-    #[test]
-    fn mouse_down_suppresses_platform_restore_but_not_pending_activation() {
-        let mut state = DockViewportBackendFocusState::default();
-        let window = handle(1);
-        let dock_space = space("main");
-        let mut focus = DockViewportFocusCoordinator::default();
-        focus.record_panel_focus(dock_space.clone(), item("a"));
-
-        assert_eq!(
-            state.focus_command_for_confirmed_backend_window_focus(
-                &focus,
-                &dock_space,
-                window.window_id(),
-                DockViewportPlatformFocusRestoreGate::MouseDown,
-                DockViewportPlatformFocusRestorePolicy::RestoreDockFocus,
-            ),
-            None,
-            "mouse-down suppresses ordinary platform focus restoration"
+            DockViewportPlatformFocusRestoreGate::NoMouseDown,
+            DockViewportPlatformFocusRestorePolicy::RestoreDockFocus,
+            true,
         );
 
         assert!(
-            state.record_pending_activation(DockViewportActivationTransaction::new(
-                dock_space.clone(),
-                window,
-                DockViewportFocusRequest::panel("a"),
-            ))
+            outcome.into_focus_command().is_none(),
+            "ticket-backed activation authority suppresses the generic platform restore path"
         );
-        let command = state
-            .focus_command_for_confirmed_backend_window_focus(
-                &focus,
-                &dock_space,
-                window.window_id(),
-                DockViewportPlatformFocusRestoreGate::MouseDown,
-                DockViewportPlatformFocusRestorePolicy::RestoreDockFocus,
-            )
-            .expect("explicit viewport activation wins over the mouse-down gate");
-
-        assert_eq!(command.request(), &DockViewportFocusRequest::panel("a"));
-        assert_eq!(
-            command.source(),
-            DockViewportFocusCommandSource::ViewportActivation
-        );
-        assert_eq!(state.pending_activation(), None);
-    }
-
-    #[test]
-    fn policy_disabled_platform_focus_restore_preserves_explicit_pending_activation() {
-        let mut state = DockViewportBackendFocusState::default();
-        let window = handle(1);
-        let dock_space = space("main");
-        let mut focus = DockViewportFocusCoordinator::default();
-        focus.record_panel_focus(dock_space.clone(), item("a"));
-
-        assert_eq!(
-            state.focus_command_for_confirmed_backend_window_focus(
-                &focus,
-                &dock_space,
-                window.window_id(),
-                DockViewportPlatformFocusRestoreGate::NoMouseDown,
-                DockViewportPlatformFocusRestorePolicy::PreserveDockFocus,
-            ),
-            None,
-            "policy opt-out suppresses ordinary platform focus restoration"
-        );
-
-        assert!(
-            state.record_pending_activation(DockViewportActivationTransaction::new(
-                dock_space.clone(),
-                window,
-                DockViewportFocusRequest::panel("a"),
-            ))
-        );
-        let command = state
-            .focus_command_for_confirmed_backend_window_focus(
-                &focus,
-                &dock_space,
-                window.window_id(),
-                DockViewportPlatformFocusRestoreGate::NoMouseDown,
-                DockViewportPlatformFocusRestorePolicy::PreserveDockFocus,
-            )
-            .expect("explicit viewport activation is not gated by platform restore policy");
-
-        assert_eq!(command.request(), &DockViewportFocusRequest::panel("a"));
-        assert_eq!(
-            command.source(),
-            DockViewportFocusCommandSource::ViewportActivation
-        );
-        assert_eq!(state.pending_activation(), None);
     }
 }

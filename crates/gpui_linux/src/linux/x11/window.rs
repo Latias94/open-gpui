@@ -7,12 +7,13 @@ use open_gpui::{
     GpuSpecs, Modifiers, NativeInputHandlerOutcome, Pixels, PlatformAtlas, PlatformDisplay,
     PlatformInput, PlatformInputCallback, PlatformInputCallbackSlot, PlatformInputHandler,
     PlatformInputHandlerSlot, PlatformNativeWindowRetirementOutcome,
-    PlatformPresentationShutdownOutcome, PlatformWindow, PlatformWindowCommand,
-    PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome, PlatformWindowPresentOutcome,
-    Point, PreparedPlatformPresentationShutdown, PromptButton, PromptLevel, RequestFrameOptions,
-    ResizeEdge, ScaledPixels, Scene, Size, Tiling, WindowActivationPolicy, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowCreationFacts,
-    WindowDecorations, WindowKind, WindowParams, WindowPresentationShutdownTicket, px,
+    PlatformPresentationShutdownOutcome, PlatformWindow, PlatformWindowActiveStatusObservation,
+    PlatformWindowCommand, PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome,
+    PlatformWindowPresentOutcome, Point, PreparedPlatformPresentationShutdown, PromptButton,
+    PromptLevel, RequestFrameOptions, ResizeEdge, ScaledPixels, Scene, Size, Tiling,
+    WindowActivationPolicy, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    WindowControlArea, WindowCreationFacts, WindowDecorations, WindowKind, WindowParams,
+    WindowPresentationShutdownTicket, px,
 };
 use open_gpui_wgpu::{
     CompositorGpuHint, WgpuRenderer, WgpuSurfaceConfig, WgpuSurfaceShutdownProgress,
@@ -397,7 +398,7 @@ pub(crate) fn x11_supports_toplevel_creation_state(kind: &WindowKind) -> bool {
 pub struct Callbacks {
     request_frame: Option<Box<dyn FnMut(RequestFrameOptions)>>,
     input: PlatformInputCallbackSlot,
-    active_status_change: Option<Box<dyn FnMut(bool)>>,
+    active_status_change: Option<Box<dyn FnMut(PlatformWindowActiveStatusObservation)>>,
     hovered_status_change: Option<Box<dyn FnMut(bool)>>,
     resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     moved: Option<Box<dyn FnMut()>>,
@@ -482,14 +483,14 @@ impl X11WindowCommandTarget {
 
     fn dispatch(&self, command: PlatformWindowCommand) -> PlatformWindowCommandOutcome {
         let Some(_owner) = self.owner.upgrade() else {
-            return PlatformWindowCommandOutcome::Rejected;
+            return PlatformWindowCommandOutcome::WindowClosed;
         };
         let Some(state) = self.state.upgrade() else {
-            return PlatformWindowCommandOutcome::Rejected;
+            return PlatformWindowCommandOutcome::WindowClosed;
         };
         let mut state = state.borrow_mut();
         if state.destroyed {
-            return PlatformWindowCommandOutcome::Rejected;
+            return PlatformWindowCommandOutcome::WindowClosed;
         }
 
         match command {
@@ -506,10 +507,12 @@ impl X11WindowCommandTarget {
             PlatformWindowCommand::RevealDeferredInitialPresentation { .. } => {
                 PlatformWindowCommandOutcome::Rejected
             }
-            PlatformWindowCommand::Activate if state.activation_policy.accepts_activation => {
+            PlatformWindowCommand::Activate { .. }
+                if state.activation_policy.accepts_activation =>
+            {
                 x11_command_outcome(activate_x11_window(&state, &self.xcb, self.x_window))
             }
-            PlatformWindowCommand::Activate => PlatformWindowCommandOutcome::Rejected,
+            PlatformWindowCommand::Activate { .. } => PlatformWindowCommandOutcome::Rejected,
             PlatformWindowCommand::ShowWindowMenu(position) => x11_command_outcome(
                 show_x11_window_menu(&state, &self.xcb, self.x_window, position),
             ),
@@ -1645,10 +1648,11 @@ impl X11WindowStatePtr {
         Ok(())
     }
 
-    pub fn set_active(&self, focus: bool) {
+    pub fn set_active(&self, observation: PlatformWindowActiveStatusObservation) {
+        let focus = observation.active();
         let callback = self.callbacks.borrow_mut().active_status_change.take();
         if let Some(mut fun) = callback {
-            fun(focus);
+            fun(observation);
             self.callbacks.borrow_mut().active_status_change = Some(fun);
         }
         if let Some(adapter) = self.state.borrow_mut().accesskit_adapter.as_mut() {
@@ -2036,7 +2040,10 @@ impl PlatformWindow for X11Window {
         input.set(callback);
     }
 
-    fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
+    fn on_active_status_change(
+        &self,
+        callback: Box<dyn FnMut(PlatformWindowActiveStatusObservation)>,
+    ) {
         self.0.callbacks.borrow_mut().active_status_change = Some(callback);
     }
 

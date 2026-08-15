@@ -1847,7 +1847,9 @@ fn rejected_single_tabs_floating_drag_does_not_leave_payload_state(cx: &mut Test
     .expect("single-tabs floating handle should be emitted");
     let start = debug_bounds(&mut visual, &handle).center();
 
-    visual.update(|window, _| window.activate_window());
+    visual.update(|window, _| {
+        let _ = window.activate_window();
+    });
     cx.run_until_parked();
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(
@@ -1898,7 +1900,9 @@ fn rejected_single_tabs_geometry_does_not_leave_payload_or_capture(cx: &mut Test
     .expect("transformed floating handle should be emitted");
     let start = debug_bounds(&mut visual, &handle).center();
 
-    visual.update(|window, _| window.activate_window());
+    visual.update(|window, _| {
+        let _ = window.activate_window();
+    });
     cx.run_until_parked();
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(
@@ -2140,7 +2144,9 @@ fn window_deactivation_cancels_a_captured_composite_floating_drag(cx: &mut TestA
     .expect("composite floating handle should be emitted");
     let start = debug_bounds(&mut visual, &handle).center();
 
-    visual.update(|window, _| window.activate_window());
+    visual.update(|window, _| {
+        let _ = window.activate_window();
+    });
     cx.run_until_parked();
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     assert!(visual.update(|window, _| window.captured_pointer().is_some()));
@@ -2176,7 +2182,9 @@ fn window_deactivation_cancels_a_single_tabs_floating_payload_drag(cx: &mut Test
     let start = debug_bounds(&mut visual, &handle).center();
     let threshold = point(start.x + px(24.0), start.y);
 
-    visual.update(|window, _| window.activate_window());
+    visual.update(|window, _| {
+        let _ = window.activate_window();
+    });
     cx.run_until_parked();
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
@@ -2246,7 +2254,9 @@ fn host_subtree_removal_cancels_a_captured_single_tabs_payload_drag(cx: &mut Tes
     .expect("single-tabs floating handle should be emitted");
     let start = debug_bounds(&mut visual, &handle).center();
 
-    visual.update(|window, _| window.activate_window());
+    visual.update(|window, _| {
+        let _ = window.activate_window();
+    });
     cx.run_until_parked();
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(
@@ -2310,7 +2320,9 @@ fn host_subtree_removal_cancels_a_captured_tab_item_payload_drag(cx: &mut TestAp
     .expect("source tab should be emitted");
     let start = debug_bounds(&mut visual, &source).center();
 
-    visual.update(|window, _| window.activate_window());
+    visual.update(|window, _| {
+        let _ = window.activate_window();
+    });
     cx.run_until_parked();
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(
@@ -2382,7 +2394,9 @@ fn pointer_cancel_reaches_the_payload_owner_with_multiple_dock_hosts(cx: &mut Te
     let start = debug_bounds(&mut visual, &handle).center();
     let threshold = point(start.x + px(24.0), start.y);
 
-    visual.update(|window, _| window.activate_window());
+    visual.update(|window, _| {
+        let _ = window.activate_window();
+    });
     cx.run_until_parked();
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
@@ -2534,7 +2548,9 @@ fn floating_splitter_wins_over_an_overlapped_root_splitter(cx: &mut TestAppConte
     let start = debug_bounds(&mut visual, &floating_handle).center();
     let end = point(start.x + px(30.0), start.y);
 
-    visual.update(|window, _| window.activate_window());
+    visual.update(|window, _| {
+        let _ = window.activate_window();
+    });
     cx.run_until_parked();
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
@@ -2591,7 +2607,9 @@ fn window_deactivation_cancels_a_captured_splitter_drag(cx: &mut TestAppContext)
     .expect("splitter handle should be emitted");
     let start = debug_bounds(&mut visual, &handle).center();
 
-    visual.update(|window, _| window.activate_window());
+    visual.update(|window, _| {
+        let _ = window.activate_window();
+    });
     cx.run_until_parked();
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     assert!(visual.update(|window, _| window.captured_pointer().is_some()));

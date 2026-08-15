@@ -27,9 +27,10 @@ use super::{
     },
 };
 use crate::{
-    Action, App, ForegroundExecutor, ModifiersChangedEvent, PlatformInput, PlatformWindowCommand,
-    PlatformWindowCommandDispatcher, PlatformWindowMutationObservation, PointerCancelEvent,
-    PointerCancelReason, RequestFrameOptions, SystemWindowTabController, Task, Window, WindowId,
+    Action, App, ForegroundExecutor, ModifiersChangedEvent, PlatformInput,
+    PlatformWindowActiveStatusObservation, PlatformWindowCommand, PlatformWindowCommandDispatcher,
+    PlatformWindowMutationObservation, PointerCancelEvent, PointerCancelReason,
+    RequestFrameOptions, SystemWindowTabController, Task, Window, WindowId,
 };
 
 pub(super) const MAX_NATIVE_WORK_PER_DRAIN: u8 = 64;
@@ -361,8 +362,8 @@ impl NativeEventIngress {
         window_id: WindowId,
         dispatcher: PlatformWindowCommandDispatcher,
         command: PlatformWindowCommand,
-    ) {
-        self.enqueue_native_command(NativePlatformCommand::new(window_id, dispatcher, command));
+    ) -> Option<u64> {
+        self.enqueue_native_command(NativePlatformCommand::new(window_id, dispatcher, command))
     }
 
     pub(super) fn enqueue_provisional_reveal(
@@ -372,14 +373,28 @@ impl NativeEventIngress {
         command: PlatformWindowCommand,
         ticket: crate::WindowProvisionalRevealTicket,
     ) {
-        self.enqueue_native_command(NativePlatformCommand::new_provisional_reveal(
+        let _ = self.enqueue_native_command(NativePlatformCommand::new_provisional_reveal(
             window_id, dispatcher, command, ticket,
         ));
     }
 
-    pub(super) fn enqueue_native_command(&self, command: NativePlatformCommand) {
+    pub(super) fn enqueue_native_command(&self, command: NativePlatformCommand) -> Option<u64> {
         let sequence = self.reserve_sequence();
-        self.enqueue_work(NativeWorkEnvelope::Command { sequence, command });
+        self.enqueue_work(NativeWorkEnvelope::Command { sequence, command })
+            .then_some(sequence)
+    }
+
+    pub(super) fn enqueue_window_activation_readback(
+        &self,
+        window_id: WindowId,
+        request_generation: u64,
+    ) {
+        let sequence = self.reserve_sequence();
+        let _ = self.enqueue_work(NativeWorkEnvelope::WindowActivationReadback {
+            sequence,
+            window_id,
+            request_generation,
+        });
     }
 
     pub(super) fn enqueue_pointer_capture_release(&self, release: NativePointerCaptureRelease) {
@@ -562,7 +577,7 @@ impl NativeEventIngress {
         }
     }
 
-    fn enqueue_work(&self, mut envelope: NativeWorkEnvelope) {
+    fn enqueue_work(&self, mut envelope: NativeWorkEnvelope) -> bool {
         if self.terminated.get() {
             self.diagnostics.record_terminal(
                 envelope.pending_diagnostic(),
@@ -572,14 +587,14 @@ impl NativeEventIngress {
                 "native work sequence={} disposition=AfterQuitBarrier",
                 envelope.sequence()
             );
-            return;
+            return false;
         }
         if self.shutdown_generation.get().is_some() && !envelope.is_shutdown_critical() {
             self.diagnostics.record_terminal(
                 envelope.pending_diagnostic(),
                 NativeBoundaryDisposition::Closed,
             );
-            return;
+            return false;
         }
         let mut pending = self.pending.borrow_mut();
         if let NativeWorkEnvelope::Event(current) = &mut envelope
@@ -609,6 +624,7 @@ impl NativeEventIngress {
         pending.push_back(envelope);
         drop(pending);
         self.schedule_wake_if_needed();
+        true
     }
 
     pub(super) fn can_deliver_inline(&self) -> bool {
@@ -1202,6 +1218,11 @@ pub(super) enum NativeWorkEnvelope {
         sequence: u64,
         command: NativePlatformCommand,
     },
+    WindowActivationReadback {
+        sequence: u64,
+        window_id: WindowId,
+        request_generation: u64,
+    },
     PointerCaptureRelease {
         sequence: u64,
         release: NativePointerCaptureRelease,
@@ -1225,7 +1246,8 @@ impl NativeWorkEnvelope {
         match self {
             Self::Event(event) => event.sequence(),
             Self::Command { sequence, .. } => *sequence,
-            Self::PointerCaptureRelease { sequence, .. }
+            Self::WindowActivationReadback { sequence, .. }
+            | Self::PointerCaptureRelease { sequence, .. }
             | Self::CapturedDragReleaseCompletion { sequence, .. }
             | Self::WindowRetirement { sequence, .. }
             | Self::ShutdownCompletion { sequence, .. } => *sequence,
@@ -1236,6 +1258,20 @@ impl NativeWorkEnvelope {
         match self {
             Self::Event(event) => event.pending_diagnostic(),
             Self::Command { sequence, command } => command.pending_diagnostic(*sequence),
+            Self::WindowActivationReadback {
+                sequence,
+                window_id,
+                request_generation,
+            } => NativeBoundaryDiagnostic::pending(
+                *sequence,
+                NativeBoundaryTarget::Window(*window_id),
+                NativeBoundaryKind::Command(
+                    super::native_callback_diagnostics::NativePlatformCommandKind::Activate,
+                ),
+                Some(NativeBoundaryGeneration::WindowActivation(
+                    *request_generation,
+                )),
+            ),
             Self::PointerCaptureRelease { sequence, release } => {
                 release.pending_diagnostic(*sequence)
             }
@@ -1261,7 +1297,7 @@ impl NativeWorkEnvelope {
             | Self::CapturedDragReleaseCompletion { .. }
             | Self::WindowRetirement { .. }
             | Self::ShutdownCompletion { .. } => true,
-            Self::Command { .. } => false,
+            Self::Command { .. } | Self::WindowActivationReadback { .. } => false,
         }
     }
 }
@@ -1471,9 +1507,21 @@ impl NativeEventEnvelope {
                     window.refresh()
                 })
             }
-            NativeWindowEvent::ActiveChanged(active) => {
+            NativeWindowEvent::ActiveChanged(observation) => {
                 deliver_window_event(app, window_id, ingress_sequence, |window, cx| {
-                    window.native_active_status_changed(active, cx);
+                    let admissible =
+                        window.native_active_status_change_is_admissible(observation.active());
+                    if admissible
+                        && observation.active()
+                        && observation.exact_native_positive()
+                        && let Some(app_cell) = cx.this.upgrade()
+                    {
+                        app_cell.observe_native_window_activation_exact_positive(
+                            window_id,
+                            ingress_sequence.value(),
+                        );
+                    }
+                    window.native_active_status_changed(observation.active(), cx);
                 })
             }
             NativeWindowEvent::PointerCanceled(reservation) => {
@@ -1856,7 +1904,7 @@ pub(super) enum NativeWindowEvent {
         active: bool,
         activation_generation: u64,
     },
-    ActiveChanged(bool),
+    ActiveChanged(PlatformWindowActiveStatusObservation),
     PointerCanceled(ReservedPointerCancel),
     ModifiersChanged(ModifiersChangedEvent),
     AppearanceChanged,

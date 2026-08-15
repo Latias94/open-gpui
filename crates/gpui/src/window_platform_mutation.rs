@@ -303,6 +303,28 @@ pub(crate) struct WindowPlatformMutationAuthority {
     _private: (),
 }
 
+/// The committed programmatic-activation fact paired with its mutation generation.
+///
+/// Generation zero is the unversioned committed baseline. Requested generations do not enter this
+/// snapshot until their exact terminal facts have been committed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct CommittedWindowActivationPolicy {
+    generation: u64,
+    accepts_activation: bool,
+}
+
+impl CommittedWindowActivationPolicy {
+    /// Returns the activation-policy generation associated with the committed fact.
+    pub(crate) const fn generation(self) -> u64 {
+        self.generation
+    }
+
+    /// Returns whether the committed policy permits programmatic activation.
+    pub(crate) const fn accepts_activation(self) -> bool {
+        self.accepts_activation
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct WindowMutationState {
     domains: BTreeMap<WindowMutationDomain, WindowMutationDomainState>,
@@ -310,7 +332,10 @@ pub(crate) struct WindowMutationState {
 
 #[derive(Default)]
 struct WindowMutationDomainState {
+    /// The latest generation allocated for a request in this domain.
     last_generation: u64,
+    /// The latest generation whose exact terminal facts were committed.
+    committed_generation: u64,
     pending: Option<PendingWindowMutation>,
 }
 
@@ -388,6 +413,11 @@ impl WindowMutationState {
             .collect()
     }
 
+    /// Settles an exact current-generation terminal observation after its facts were committed.
+    ///
+    /// A mismatched or stale generation leaves both the pending request and committed generation
+    /// unchanged. The terminal outcome does not affect advancement because every accepted call
+    /// carries the coherent facts already committed by the owning window.
     pub(crate) fn settle_from_terminal_facts(
         &mut self,
         authority: &Arc<WindowPlatformMutationAuthority>,
@@ -396,14 +426,20 @@ impl WindowMutationState {
         terminal: PlatformWindowMutationTerminal,
         facts: &WindowPlatformFacts,
     ) -> Vec<WindowMutationTicketDelivery> {
-        let pending = self.pending_slot_mut(domain).take();
+        let state = self.domains.entry(domain).or_default();
+        let pending = state.pending.take();
         let Some(pending) = pending else {
             return Vec::new();
         };
         if !pending.ticket.belongs_to_generation(authority, generation) {
-            *self.pending_slot_mut(domain) = Some(pending);
+            state.pending = Some(pending);
             return Vec::new();
         }
+
+        debug_assert_eq!(state.last_generation, generation);
+        debug_assert!(state.committed_generation < generation);
+        state.committed_generation = generation;
+
         let outcome = terminal_outcome(terminal, pending.ticket.request(), facts);
         pending
             .ticket
@@ -428,6 +464,19 @@ impl WindowMutationState {
         self.domains
             .get(&domain)
             .map_or(0, |state| state.last_generation)
+    }
+
+    /// Returns the committed activation fact and the generation that observed it as one value.
+    ///
+    /// The supplied facts must be the owning window's current committed platform snapshot.
+    pub(crate) fn committed_activation_policy(
+        &self,
+        facts: &WindowPlatformFacts,
+    ) -> CommittedWindowActivationPolicy {
+        CommittedWindowActivationPolicy {
+            generation: self.committed_generation(WindowMutationDomain::ActivationPolicy),
+            accepts_activation: facts.accepts_activation,
+        }
     }
 
     pub(crate) fn settle_all(
@@ -462,6 +511,12 @@ impl WindowMutationState {
         let next = state.last_generation.checked_add(1)?;
         state.last_generation = next;
         Some(next)
+    }
+
+    fn committed_generation(&self, domain: WindowMutationDomain) -> u64 {
+        self.domains
+            .get(&domain)
+            .map_or(0, |state| state.committed_generation)
     }
 
     fn supersede_pending(
@@ -639,5 +694,208 @@ pub(crate) fn platform_dispatch_outcome(
         PlatformWindowDispatch::Unsupported => Some(WindowMutationOutcome::Unsupported),
         PlatformWindowDispatch::Rejected => Some(WindowMutationOutcome::Rejected),
         PlatformWindowDispatch::WindowClosed => Some(WindowMutationOutcome::WindowClosed),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn platform_facts(accepts_activation: bool, focus_on_click: bool) -> WindowPlatformFacts {
+        let bounds = crate::Bounds::default();
+        WindowPlatformFacts {
+            bounds,
+            coordinate_space: crate::WindowCoordinateSpace::WindowLocal,
+            physical_geometry: None,
+            window_bounds: crate::WindowBounds::Windowed(bounds),
+            inner_window_bounds: crate::WindowBounds::Windowed(bounds),
+            content_size: bounds.size,
+            scale_factor: 1.0,
+            display_id: None,
+            is_minimized: false,
+            is_maximized: false,
+            is_fullscreen: false,
+            accepts_pointer_input: true,
+            accepts_activation,
+            focus_on_click,
+            background_appearance: WindowBackgroundAppearance::Opaque,
+            topmost: false,
+            taskbar_visible: true,
+            is_active: false,
+        }
+    }
+
+    fn activation_request(accepts_activation: bool, focus_on_click: bool) -> WindowMutationRequest {
+        WindowMutationRequest::ActivationPolicy(WindowActivationPolicy {
+            accepts_activation,
+            focus_on_click,
+        })
+    }
+
+    #[test]
+    fn synchronous_settlement_does_not_advance_committed_generation() {
+        let authority = Arc::new(WindowPlatformMutationAuthority::default());
+        let mut state = WindowMutationState::default();
+        let facts = platform_facts(true, true);
+        let scenarios = [
+            (activation_request(true, true), WindowMutationOutcome::Exact),
+            (
+                activation_request(false, true),
+                WindowMutationOutcome::Rejected,
+            ),
+            (
+                activation_request(false, true),
+                WindowMutationOutcome::Unsupported,
+            ),
+        ];
+
+        for (request, outcome) in scenarios {
+            let begin = state.begin(&authority, request, &facts).unwrap();
+            assert!(begin.deliveries.is_empty());
+            let generation = begin.ticket.generation();
+
+            let deliveries = state.settle_unqueued(&authority, &begin.ticket, outcome, &facts);
+            assert_eq!(deliveries.len(), 1);
+            assert_eq!(begin.ticket.observation().unwrap().outcome, outcome);
+
+            let committed = state.committed_activation_policy(&facts);
+            assert_eq!(committed.generation(), 0);
+            assert!(committed.accepts_activation());
+            assert_eq!(
+                state.last_generation(WindowMutationDomain::ActivationPolicy),
+                generation
+            );
+        }
+    }
+
+    #[test]
+    fn superseded_and_stale_generations_do_not_advance_committed_generation() {
+        let authority = Arc::new(WindowPlatformMutationAuthority::default());
+        let mut state = WindowMutationState::default();
+        let initial_facts = platform_facts(true, true);
+        let first = state
+            .begin(&authority, activation_request(false, true), &initial_facts)
+            .unwrap();
+        let second = state
+            .begin(&authority, activation_request(true, true), &initial_facts)
+            .unwrap();
+
+        assert_eq!(second.deliveries.len(), 1);
+        assert_eq!(
+            first.ticket.observation().unwrap().outcome,
+            WindowMutationOutcome::Superseded
+        );
+        let committed = state.committed_activation_policy(&initial_facts);
+        assert_eq!(committed.generation(), 0);
+        assert!(committed.accepts_activation());
+
+        let stale_facts = platform_facts(false, true);
+        assert!(
+            state
+                .settle_from_terminal_facts(
+                    &authority,
+                    WindowMutationDomain::ActivationPolicy,
+                    first.ticket.generation(),
+                    PlatformWindowMutationTerminal::Observed,
+                    &stale_facts,
+                )
+                .is_empty()
+        );
+        let committed = state.committed_activation_policy(&initial_facts);
+        assert_eq!(committed.generation(), 0);
+        assert!(committed.accepts_activation());
+        assert!(state.is_current_generation(
+            &authority,
+            WindowMutationDomain::ActivationPolicy,
+            second.ticket.generation(),
+        ));
+    }
+
+    #[test]
+    fn exact_and_adjusted_terminal_facts_advance_committed_generation() {
+        let authority = Arc::new(WindowPlatformMutationAuthority::default());
+        let mut state = WindowMutationState::default();
+        let initial_facts = platform_facts(true, true);
+        let first = state
+            .begin(&authority, activation_request(false, true), &initial_facts)
+            .unwrap();
+        let disabled_facts = platform_facts(false, true);
+
+        let deliveries = state.settle_from_terminal_facts(
+            &authority,
+            WindowMutationDomain::ActivationPolicy,
+            first.ticket.generation(),
+            PlatformWindowMutationTerminal::Observed,
+            &disabled_facts,
+        );
+        assert_eq!(deliveries.len(), 1);
+        assert_eq!(
+            first.ticket.observation().unwrap().outcome,
+            WindowMutationOutcome::Exact
+        );
+        let committed = state.committed_activation_policy(&disabled_facts);
+        assert_eq!(committed.generation(), first.ticket.generation());
+        assert!(!committed.accepts_activation());
+
+        let second = state
+            .begin(&authority, activation_request(true, false), &disabled_facts)
+            .unwrap();
+        let adjusted_facts = platform_facts(true, true);
+        let deliveries = state.settle_from_terminal_facts(
+            &authority,
+            WindowMutationDomain::ActivationPolicy,
+            second.ticket.generation(),
+            PlatformWindowMutationTerminal::Observed,
+            &adjusted_facts,
+        );
+        assert_eq!(deliveries.len(), 1);
+        assert_eq!(
+            second.ticket.observation().unwrap().outcome,
+            WindowMutationOutcome::Adjusted
+        );
+        let committed = state.committed_activation_policy(&adjusted_facts);
+        assert_eq!(committed.generation(), second.ticket.generation());
+        assert!(committed.accepts_activation());
+    }
+
+    #[test]
+    fn asynchronous_terminal_failures_advance_committed_generation() {
+        let authority = Arc::new(WindowPlatformMutationAuthority::default());
+        let mut state = WindowMutationState::default();
+        let facts = platform_facts(true, true);
+        let terminals = [
+            (
+                PlatformWindowMutationTerminal::Rejected,
+                WindowMutationOutcome::Rejected,
+            ),
+            (
+                PlatformWindowMutationTerminal::Unsupported,
+                WindowMutationOutcome::Unsupported,
+            ),
+            (
+                PlatformWindowMutationTerminal::WindowClosed,
+                WindowMutationOutcome::WindowClosed,
+            ),
+        ];
+
+        for (terminal, outcome) in terminals {
+            let begin = state
+                .begin(&authority, activation_request(false, true), &facts)
+                .unwrap();
+            assert!(begin.deliveries.is_empty());
+
+            let deliveries = state.settle_from_terminal_facts(
+                &authority,
+                WindowMutationDomain::ActivationPolicy,
+                begin.ticket.generation(),
+                terminal,
+                &facts,
+            );
+            assert_eq!(deliveries.len(), 1);
+            assert_eq!(begin.ticket.observation().unwrap().outcome, outcome);
+            let committed = state.committed_activation_policy(&facts);
+            assert_eq!(committed.generation(), begin.ticket.generation());
+            assert!(committed.accepts_activation());
+        }
     }
 }

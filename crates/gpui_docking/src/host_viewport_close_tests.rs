@@ -25,8 +25,7 @@ mod runtime_suite {
         viewport_activation::{
             DockViewportActivationApplyOutcome, DockViewportActivationBackendFocusApply,
             DockViewportActivationBackendFocusObservation,
-            DockViewportActivationBackendFocusRecordEffect,
-            DockViewportActivationPendingBackendFocusEffect, apply_viewport_activation_transaction,
+            DockViewportActivationBackendFocusRecordEffect, apply_viewport_activation_transaction,
         },
         viewport_registry::{
             DockViewportInputMask, DockViewportRouteUnavailableReason, DockViewportStaleReason,
@@ -115,7 +114,9 @@ mod runtime_suite {
 
         inspector
             .window()
-            .update(cx, |_, window, _| window.activate_window())
+            .update(cx, |_, window, _| {
+                let _ = window.activate_window();
+            })
             .expect("inspector viewport should activate");
         cx.run_until_parked();
         let _ = cx.update(|app| runtime.reconcile_backend_window_focus(app));
@@ -206,7 +207,9 @@ mod runtime_suite {
         runtime.record_panel_focus(detached_space.clone(), item("c"));
 
         non_docking
-            .update(cx, |_, window, _| window.activate_window())
+            .update(cx, |_, window, _| {
+                let _ = window.activate_window();
+            })
             .expect("plain GPUI window should activate");
         cx.run_until_parked();
         let _ = cx.update(|app| runtime.reconcile_backend_window_focus(app));
@@ -276,7 +279,9 @@ mod runtime_suite {
         runtime.record_panel_focus(main_space.clone(), item("a"));
 
         main.window()
-            .update(cx, |_, window, _| window.activate_window())
+            .update(cx, |_, window, _| {
+                let _ = window.activate_window();
+            })
             .expect("main viewport should activate");
         cx.run_until_parked();
         freeze_should_close_plan(cx, &runtime, detached.window().window_id());
@@ -378,7 +383,9 @@ mod runtime_suite {
         runtime.record_panel_focus(detached_space.clone(), item("c"));
 
         main.window()
-            .update(cx, |_, window, _| window.activate_window())
+            .update(cx, |_, window, _| {
+                let _ = window.activate_window();
+            })
             .expect("main viewport should activate");
         cx.run_until_parked();
         let _ = cx.update(|app| runtime.reconcile_backend_window_focus(app));
@@ -425,7 +432,7 @@ mod runtime_suite {
             (
                 host.pending_focus_command()
                     .map(|command| (command.source(), command.request().clone())),
-                host.viewport_runtime().pending_activation(),
+                host.viewport_runtime().activation_execution_count(),
             )
         });
         let focus_diagnostics = (window_focus, host_focus);
@@ -3275,7 +3282,9 @@ mod handle_suite {
             .expect("main viewport should remain live");
         main_opened
             .window()
-            .update(cx, |_, window, _| window.activate_window())
+            .update(cx, |_, window, _| {
+                let _ = window.activate_window();
+            })
             .expect("main viewport should activate");
         cx.run_until_parked();
         let should_close = cx.update(|app| {
@@ -3355,7 +3364,9 @@ mod handle_suite {
 
         main_opened
             .window()
-            .update(cx, |_, window, _| window.activate_window())
+            .update(cx, |_, window, _| {
+                let _ = window.activate_window();
+            })
             .expect("main viewport should activate");
         cx.run_until_parked();
         let should_close = cx.update(|app| {

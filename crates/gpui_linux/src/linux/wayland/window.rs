@@ -36,10 +36,11 @@ use open_gpui::{
     NativeInputHandlerOutcome, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformInputCallback, PlatformInputCallbackSlot, PlatformInputHandler,
     PlatformInputHandlerSlot, PlatformPresentationShutdownOutcome, PlatformWindow,
-    PlatformWindowCommand, PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome,
-    PlatformWindowPresentOutcome, Point, PreparedPlatformPresentationShutdown, PromptButton,
-    PromptLevel, RequestFrameOptions, ResizeEdge, Scene, Size, Tiling, WindowActivationPolicy,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls,
+    PlatformWindowActiveStatusObservation, PlatformWindowCommand, PlatformWindowCommandDispatcher,
+    PlatformWindowCommandOutcome, PlatformWindowPresentOutcome, Point,
+    PreparedPlatformPresentationShutdown, PromptButton, PromptLevel, RequestFrameOptions,
+    ResizeEdge, Scene, Size, Tiling, WindowActivationPolicy, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls,
     WindowCreationFacts, WindowDecorations, WindowKind, WindowParams,
     WindowPresentationShutdownTicket, layer_shell::LayerShellNotSupportedError, px, size,
 };
@@ -51,7 +52,7 @@ use open_gpui_wgpu::{
 pub(crate) struct Callbacks {
     request_frame: Option<Box<dyn FnMut(RequestFrameOptions)>>,
     input: PlatformInputCallbackSlot,
-    active_status_change: Option<Box<dyn FnMut(bool)>>,
+    active_status_change: Option<Box<dyn FnMut(PlatformWindowActiveStatusObservation)>>,
     hover_status_change: Option<Box<dyn FnMut(bool)>>,
     resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     moved: Option<Box<dyn FnMut()>>,
@@ -489,10 +490,10 @@ impl WaylandWindowCommandTarget {
 
     fn dispatch(&self, command: PlatformWindowCommand) -> PlatformWindowCommandOutcome {
         let Some(_owner) = self.owner.upgrade() else {
-            return PlatformWindowCommandOutcome::Rejected;
+            return PlatformWindowCommandOutcome::WindowClosed;
         };
         let Some(state) = self.state.upgrade() else {
-            return PlatformWindowCommandOutcome::Rejected;
+            return PlatformWindowCommandOutcome::WindowClosed;
         };
         let mut state = state.borrow_mut();
 
@@ -513,12 +514,15 @@ impl WaylandWindowCommandTarget {
             PlatformWindowCommand::RevealDeferredInitialPresentation { .. } => {
                 PlatformWindowCommandOutcome::Rejected
             }
-            PlatformWindowCommand::Activate
+            PlatformWindowCommand::Activate { .. } if state.globals.activation.is_none() => {
+                PlatformWindowCommandOutcome::Unsupported
+            }
+            PlatformWindowCommand::Activate { .. }
                 if state.creation.activation_policy.accepts_activation =>
             {
-                wayland_command_outcome(activate_wayland_window(&state))
+                activate_wayland_window(&state)
             }
-            PlatformWindowCommand::Activate => PlatformWindowCommandOutcome::Rejected,
+            PlatformWindowCommand::Activate { .. } => PlatformWindowCommandOutcome::Rejected,
             PlatformWindowCommand::ShowWindowMenu(position) => {
                 wayland_command_outcome(show_wayland_window_menu(&state, position))
             }
@@ -540,25 +544,24 @@ fn wayland_command_outcome(accepted: bool) -> PlatformWindowCommandOutcome {
     }
 }
 
-fn activate_wayland_window(state: &WaylandWindowState) -> bool {
+fn activate_wayland_window(state: &WaylandWindowState) -> PlatformWindowCommandOutcome {
     // Try to request an activation token. Even though the activation is likely going to be
     // rejected, KWin and Mutter can use the app_id to indicate that attention was requested.
-    if let Some(activation) = &state.globals.activation {
-        let token = activation.get_activation_token(&state.globals.qh, ());
-        state
-            .client
-            .set_pending_window_activation(token.id(), state.surface.id(), state.handle);
-        let serial = state.client.get_serial(SerialKind::MousePress);
-        if let Some(app_id) = state.app_id.clone() {
-            token.set_app_id(app_id);
-        }
-        token.set_serial(serial, &state.globals.seat);
-        token.set_surface(&state.surface);
-        token.commit();
-        true
-    } else {
-        false
+    let Some(activation) = &state.globals.activation else {
+        return PlatformWindowCommandOutcome::Unsupported;
+    };
+    let token = activation.get_activation_token(&state.globals.qh, ());
+    state
+        .client
+        .set_pending_window_activation(token.id(), state.surface.id(), state.handle);
+    let serial = state.client.get_serial(SerialKind::MousePress);
+    if let Some(app_id) = state.app_id.clone() {
+        token.set_app_id(app_id);
     }
+    token.set_serial(serial, &state.globals.seat);
+    token.set_surface(&state.surface);
+    token.commit();
+    PlatformWindowCommandOutcome::Accepted
 }
 
 fn show_wayland_window_menu(state: &WaylandWindowState, position: Point<Pixels>) -> bool {
@@ -1392,11 +1395,12 @@ impl WaylandWindowStatePtr {
         }
     }
 
-    pub fn set_focused(&self, focus: bool) {
+    pub fn set_focused(&self, observation: PlatformWindowActiveStatusObservation) {
+        let focus = observation.active();
         self.state.borrow_mut().active = focus;
         let callback = self.callbacks.borrow_mut().active_status_change.take();
         if let Some(mut fun) = callback {
-            fun(focus);
+            fun(observation);
             self.callbacks.borrow_mut().active_status_change = Some(fun);
         }
         if let Some(adapter) = self.state.borrow_mut().accesskit_adapter.as_mut() {
@@ -1746,7 +1750,10 @@ impl PlatformWindow for WaylandWindow {
         input.set(callback);
     }
 
-    fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
+    fn on_active_status_change(
+        &self,
+        callback: Box<dyn FnMut(PlatformWindowActiveStatusObservation)>,
+    ) {
         self.0.callbacks.borrow_mut().active_status_change = Some(callback);
     }
 

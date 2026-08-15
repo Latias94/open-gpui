@@ -75,6 +75,7 @@ mod native_captured_drag;
 mod native_event_ingress;
 mod native_platform_commands;
 mod native_query_snapshot;
+mod native_window_activation;
 #[cfg(any(test, feature = "test-support"))]
 mod test_app;
 #[cfg(any(test, feature = "test-support"))]
@@ -100,6 +101,10 @@ pub use native_captured_drag::{
 };
 pub(crate) use native_platform_commands::{
     NativePointerCaptureReleaseToken, PlatformWindowCommandSink,
+};
+pub use native_window_activation::{
+    WindowActivationCancellationOutcome, WindowActivationSnapshot, WindowActivationStatus,
+    WindowActivationTerminal, WindowActivationTicket,
 };
 
 /// The duration for which futures returned from [Context::on_app_quit] can run before the application fully quits.
@@ -667,7 +672,7 @@ impl SystemWindowTabController {
         let next_index = (current_index + 1) % tabs.len();
 
         let _ = &tabs[next_index].handle.update(cx, |_, window, _| {
-            window.activate_window();
+            let _ = window.activate_window();
         });
     }
 
@@ -686,7 +691,7 @@ impl SystemWindowTabController {
         };
 
         let _ = &tabs[previous_index].handle.update(cx, |_, window, _| {
-            window.activate_window();
+            let _ = window.activate_window();
         });
     }
 }
@@ -1116,6 +1121,7 @@ impl App {
         let Some(app_cell) = self.this.upgrade() else {
             return;
         };
+        app_cell.terminate_native_window_activation();
         let (shutdown_generation, newly_started) =
             app_cell.begin_shutdown_fence(terminate_ingress, self.quitting);
         if !newly_started {
@@ -5100,7 +5106,7 @@ mod test {
     #[crate::test]
     fn app_dispatch_action_uses_focused_window_authority(cx: &mut TestAppContext) {
         let window = cx.open_window(size(px(320.0), px(200.0)), |_, _| Empty);
-        window
+        let _ = window
             .update(cx, |_, window, _| window.activate_window())
             .expect("test window should be activatable");
         cx.run_until_parked();

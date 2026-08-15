@@ -5226,7 +5226,7 @@ mod tests {
         cx.set_platform_native_drag_hysteresis(hysteresis);
         cx.set_platform_window_physical_client_geometry(window, physical_bounds, scale_factor);
         cx.update(|window, cx| {
-            window.activate_window();
+            let _ = window.activate_window();
             window.draw(cx).clear();
         });
         cx.run_until_parked();
@@ -5280,7 +5280,7 @@ mod tests {
         cx.set_platform_native_drag_hysteresis(Some(initial_hysteresis));
         cx.set_platform_window_physical_client_geometry(window, Some(initial_bounds), 2.0);
         cx.update(|window, cx| {
-            window.activate_window();
+            let _ = window.activate_window();
             window.draw(cx).clear();
         });
         cx.run_until_parked();

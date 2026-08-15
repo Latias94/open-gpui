@@ -8,10 +8,10 @@ use open_gpui::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, DisplayId, DummyKeyboardMapper,
     ForegroundExecutor, Keymap, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay,
     PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow,
-    PlatformWindowCapabilities, PlatformWindowCreationCapabilities,
-    PlatformWindowMutationCapabilities, Task, ThermalState, WindowAppearance,
-    WindowCreationSupport, WindowInitialPresentationOrder, WindowKind, WindowMutationSupport,
-    WindowParams,
+    PlatformWindowActivationSupport, PlatformWindowCapabilities,
+    PlatformWindowCreationCapabilities, PlatformWindowMutationCapabilities, Task, ThermalState,
+    WindowAppearance, WindowCreationSupport, WindowInitialPresentationOrder, WindowKind,
+    WindowMutationSupport, WindowParams,
 };
 use open_gpui_wgpu::{WebGpuContextOptions, WgpuContext};
 use std::{
@@ -201,6 +201,7 @@ impl Platform for WebPlatform {
                 activation_policy: WindowMutationSupport::CreationOnly,
                 ..Default::default()
             },
+            activation: PlatformWindowActivationSupport::Observed,
         }
     }
 

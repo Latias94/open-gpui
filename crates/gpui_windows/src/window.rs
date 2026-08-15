@@ -2236,8 +2236,10 @@ impl WindowsWindowInner {
     /// Must stay synchronous because activation APIs can pump window messages and command
     /// dispatch runs only after the application has released its mutable borrow.
     fn activate_now(self: &Rc<Self>) -> PlatformWindowCommandOutcome {
-        if self.is_native_window_terminal()
-            || !self.provisional_accepts_interaction()
+        if self.is_native_window_terminal() {
+            return PlatformWindowCommandOutcome::WindowClosed;
+        }
+        if !self.provisional_accepts_interaction()
             || !self.state.activation_policy.get().accepts_activation
         {
             return PlatformWindowCommandOutcome::Rejected;
@@ -2256,7 +2258,7 @@ impl WindowsWindowInner {
         }
 
         if self.is_native_window_terminal() {
-            return PlatformWindowCommandOutcome::Rejected;
+            return PlatformWindowCommandOutcome::WindowClosed;
         }
         if !had_initial_placement && unsafe { !IsWindowVisible(hwnd).as_bool() } {
             let command = if self.state.is_maximized() {
@@ -2270,7 +2272,7 @@ impl WindowsWindowInner {
         }
 
         if self.is_native_window_terminal() {
-            return PlatformWindowCommandOutcome::Rejected;
+            return PlatformWindowCommandOutcome::WindowClosed;
         }
         // If the window is minimized, restore it.
         if unsafe { IsIconic(hwnd).as_bool() } {
@@ -2280,29 +2282,30 @@ impl WindowsWindowInner {
         }
 
         if self.is_native_window_terminal() {
-            return PlatformWindowCommandOutcome::Rejected;
+            return PlatformWindowCommandOutcome::WindowClosed;
         }
         unsafe {
             SetActiveWindow(hwnd).ok();
         }
 
         if self.is_native_window_terminal() {
-            return PlatformWindowCommandOutcome::Rejected;
+            return PlatformWindowCommandOutcome::WindowClosed;
         }
         unsafe {
             SetFocus(Some(hwnd)).ok();
         }
 
         if self.is_native_window_terminal() {
-            return PlatformWindowCommandOutcome::Rejected;
+            return PlatformWindowCommandOutcome::WindowClosed;
         }
         // Foreground activation remains subject to the operating system's focus-stealing policy.
         // Never synthesize keyboard input to bypass that policy: framework commands must not
         // fabricate user input or feed it back through GPUI's must-immediate input boundary.
-        unsafe {
-            let _ = SetForegroundWindow(hwnd);
+        if unsafe { SetForegroundWindow(hwnd).as_bool() } {
+            PlatformWindowCommandOutcome::Accepted
+        } else {
+            PlatformWindowCommandOutcome::Rejected
         }
-        PlatformWindowCommandOutcome::Accepted
     }
 
     /// Applies a fullscreen transition on the window-owning thread.
@@ -4124,7 +4127,8 @@ pub(crate) struct Callbacks {
     pub(crate) request_frame: Cell<Option<Box<dyn FnMut(RequestFrameOptions)>>>,
     pub(crate) input: PlatformInputCallbackSlot,
     pub(crate) modifiers_changed: Cell<Option<Box<dyn FnMut(ModifiersChangedEvent)>>>,
-    pub(crate) active_status_change: Cell<Option<Box<dyn FnMut(bool)>>>,
+    pub(crate) active_status_change:
+        Cell<Option<Box<dyn FnMut(PlatformWindowActiveStatusObservation)>>>,
     pub(crate) hovered_status_change: Cell<Option<Box<dyn FnMut(bool)>>>,
     pub(crate) resize: Cell<Option<Box<dyn FnMut(Size<Pixels>, f32)>>>,
     pub(crate) moved: Cell<Option<Box<dyn FnMut()>>>,
@@ -4898,10 +4902,10 @@ impl PlatformWindow for WindowsWindow {
         PlatformWindowCommandDispatcher::new_with_pointer_capture_release(
             move |command| {
                 let Some(window) = command_window.upgrade() else {
-                    return PlatformWindowCommandOutcome::Rejected;
+                    return PlatformWindowCommandOutcome::WindowClosed;
                 };
                 if window.is_native_window_terminal() {
-                    return PlatformWindowCommandOutcome::Rejected;
+                    return PlatformWindowCommandOutcome::WindowClosed;
                 }
 
                 match command {
@@ -4915,7 +4919,7 @@ impl PlatformWindow for WindowsWindow {
                         session_generation,
                         presentation_generation,
                     ),
-                    PlatformWindowCommand::Activate => window.activate_now(),
+                    PlatformWindowCommand::Activate { .. } => window.activate_now(),
                     // Preserve the existing Windows behavior for currently unsupported commands.
                     PlatformWindowCommand::ShowWindowMenu(_)
                     | PlatformWindowCommand::StartWindowMove
@@ -5347,7 +5351,10 @@ impl PlatformWindow for WindowsWindow {
         self.state.callbacks.modifiers_changed.set(Some(callback));
     }
 
-    fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
+    fn on_active_status_change(
+        &self,
+        callback: Box<dyn FnMut(PlatformWindowActiveStatusObservation)>,
+    ) {
         self.0
             .state
             .callbacks

@@ -2512,7 +2512,7 @@ mod tests {
                 key_subscription: None,
             }
         });
-        cx.update(|window, _| window.activate_window());
+        let _ = cx.update(|window, _| window.activate_window());
         cx.run_until_parked();
         cx.update(|window, cx| window.draw(cx).clear());
         cx.update_window_entity(&view, |view, window, _cx| {
@@ -3202,7 +3202,8 @@ mod tests {
             })
             .into();
 
-        cx.update_window(active, |_, window, _| window.activate_window())
+        let _ = cx
+            .update_window(active, |_, window, _| window.activate_window())
             .unwrap();
         cx.run_until_parked();
         cx.set_platform_hovered_window(Some(hovered));

@@ -24,8 +24,7 @@ mod runtime_suite {
         viewport_activation::{
             DockViewportActivationApplyOutcome, DockViewportActivationBackendFocusApply,
             DockViewportActivationBackendFocusObservation,
-            DockViewportActivationBackendFocusRecordEffect,
-            DockViewportActivationPendingBackendFocusEffect, apply_viewport_activation_transaction,
+            DockViewportActivationBackendFocusRecordEffect, apply_viewport_activation_transaction,
         },
         viewport_drop_scene::DockViewportHostSceneDraft,
         viewport_registry::{
@@ -324,7 +323,9 @@ mod runtime_suite {
         );
 
         alpha_window
-            .update(cx, |_, window, _| window.activate_window())
+            .update(cx, |_, window, _| {
+                let _ = window.activate_window();
+            })
             .expect("alpha viewport should activate");
         cx.run_until_parked();
         assert!(cx.update(|app| runtime.reconcile_backend_window_focus(app)));
@@ -337,45 +338,24 @@ mod runtime_suite {
         assert!(!cx.update(|app| runtime.reconcile_backend_window_focus(app)));
 
         zeta_window
-            .update(cx, |_, window, _| window.activate_window())
+            .update(cx, |_, window, _| {
+                let _ = window.activate_window();
+            })
             .expect("zeta viewport should activate");
         cx.run_until_parked();
         assert!(cx.update(|app| runtime.reconcile_backend_window_focus(app)));
 
         cx.set_platform_focused_window_available(false);
         alpha_window
-            .update(cx, |_, window, _| window.activate_window())
+            .update(cx, |_, window, _| {
+                let _ = window.activate_window();
+            })
             .expect("alpha viewport should activate while backend focus is unavailable");
         cx.run_until_parked();
         assert!(
             !cx.update(|app| runtime.reconcile_backend_window_focus(app)),
             "unavailable backend focus must not overwrite the last trusted backend focus"
         );
-    }
-
-    #[open_gpui::test]
-    fn unavailable_backend_focus_reconcile_preserves_pending_viewport_activation(
-        cx: &mut TestAppContext,
-    ) {
-        let main_space = DockSpaceId::from("main");
-        let fixture = DockViewportRuntimeFixture::builder(main_space.clone())
-            .space(main_space.clone(), ["a"])
-            .build(cx);
-        let runtime = fixture.runtime.clone();
-        let opened = fixture.open_unfocused_viewport(cx, &main_space);
-        assert!(runtime.record_pending_activation(registered_activation(
-            &runtime,
-            &main_space,
-            opened.window(),
-            DockViewportFocusRequest::panel("a"),
-        ),));
-        cx.set_platform_focused_window_available(false);
-
-        assert!(
-            !cx.update(|app| runtime.reconcile_backend_window_focus(app)),
-            "unavailable backend focus should be treated as unknown, not as a clear signal"
-        );
-        assert!(runtime.pending_activation().is_some());
     }
 
     #[open_gpui::test]
@@ -406,7 +386,9 @@ mod runtime_suite {
 
         visual.deactivate_window();
         window
-            .update(cx, |_, window, _| window.activate_window())
+            .update(cx, |_, window, _| {
+                let _ = window.activate_window();
+            })
             .expect("window should activate for initial backend focus confirmation");
         cx.run_until_parked();
         visual.update(|window, cx| {
@@ -417,7 +399,9 @@ mod runtime_suite {
 
         visual.deactivate_window();
         window
-            .update(cx, |_, window, _| window.activate_window())
+            .update(cx, |_, window, _| {
+                let _ = window.activate_window();
+            })
             .expect("window should activate through its live DockHost binding");
         cx.run_until_parked();
 
@@ -763,96 +747,6 @@ mod runtime_suite {
     }
 
     #[open_gpui::test]
-    fn pending_activation_overrides_destroyed_previous_focus_suppression(cx: &mut TestAppContext) {
-        let main_space = DockSpaceId::from("main");
-        let detached_space = DockSpaceId::from("detached");
-        let fixture = DockViewportRuntimeFixture::builder(main_space.clone())
-            .space(main_space.clone(), ["a"])
-            .space(detached_space.clone(), ["c"])
-            .build(cx);
-        let runtime = fixture.runtime.clone();
-        let main = fixture.open_unfocused_viewport(cx, &main_space);
-        let detached = fixture.open_unfocused_viewport(cx, &detached_space);
-        runtime.record_panel_focus(main_space.clone(), item("a"));
-        runtime.record_panel_focus(detached_space.clone(), item("c"));
-
-        focus_backend_window_for_test(main.window(), cx);
-        let _ = cx.update(|app| {
-            runtime.focus_command_for_confirmed_backend_window_focus(
-                &main_space,
-                main.window().window_id(),
-                false,
-                app,
-            )
-        });
-        let closed = runtime
-            .borrow_mut()
-            .handle_window_closed(main.window().window_id());
-        assert_eq!(closed.status(), DockViewportCloseStatus::Closed);
-        assert!(runtime.record_pending_activation(registered_activation(
-            &runtime,
-            &detached_space,
-            detached.window(),
-            DockViewportFocusRequest::panel("c"),
-        ),));
-
-        focus_backend_window_for_test(detached.window(), cx);
-        let command = cx.update(|app| {
-            runtime.focus_command_for_confirmed_backend_window_focus(
-                &detached_space,
-                detached.window().window_id(),
-                false,
-                app,
-            )
-        });
-        assert_eq!(
-            command.as_ref().map(DockViewportFocusCommand::request),
-            Some(&DockViewportFocusRequest::panel("c")),
-            "explicit pending viewport activation should win over destroyed-previous platform focus suppression"
-        );
-        assert_eq!(
-            command.as_ref().map(DockViewportFocusCommand::source),
-            Some(crate::DockViewportFocusCommandSource::ViewportActivation)
-        );
-    }
-
-    #[open_gpui::test]
-    fn pending_activation_is_not_suppressed_by_mouse_down(cx: &mut TestAppContext) {
-        let main_space = DockSpaceId::from("main");
-        let fixture = DockViewportRuntimeFixture::builder(main_space.clone())
-            .space(main_space.clone(), ["a"])
-            .build(cx);
-        let runtime = fixture.runtime.clone();
-        let main = fixture.open_unfocused_viewport(cx, &main_space);
-        assert!(runtime.record_pending_activation(registered_activation(
-            &runtime,
-            &main_space,
-            main.window(),
-            DockViewportFocusRequest::panel("a"),
-        )));
-
-        focus_backend_window_for_test(main.window(), cx);
-        let command = cx.update(|app| {
-            runtime.focus_command_for_confirmed_backend_window_focus(
-                &main_space,
-                main.window().window_id(),
-                true,
-                app,
-            )
-        });
-
-        assert_eq!(
-            command.as_ref().map(DockViewportFocusCommand::request),
-            Some(&DockViewportFocusRequest::panel("a")),
-            "mouse-down backend focus should not suppress an explicit viewport activation transaction"
-        );
-        assert_eq!(
-            command.as_ref().map(DockViewportFocusCommand::source),
-            Some(crate::DockViewportFocusCommandSource::ViewportActivation)
-        );
-    }
-
-    #[open_gpui::test]
     fn non_docking_backend_focus_does_not_overwrite_last_confirmed_backend_focused_viewport(
         cx: &mut TestAppContext,
     ) {
@@ -908,219 +802,6 @@ mod runtime_suite {
             }),
             None,
             "closing the last focused docking viewport should still suppress restore after a non-docking window was focused"
-        );
-    }
-
-    #[open_gpui::test]
-    fn backend_focus_command_consumes_pending_viewport_activation(cx: &mut TestAppContext) {
-        let main_space = DockSpaceId::from("main");
-        let fixture = DockViewportRuntimeFixture::builder(main_space.clone())
-            .space(main_space.clone(), ["a"])
-            .build(cx);
-        let runtime = fixture.runtime.clone();
-        let opened = fixture.open_unfocused_viewport(cx, &main_space);
-        runtime.record_panel_focus(main_space.clone(), item("a"));
-        assert!(runtime.record_pending_activation(registered_activation(
-            &runtime,
-            &main_space,
-            opened.window(),
-            DockViewportFocusRequest::panel("a"),
-        ),));
-        opened
-            .window()
-            .update(cx, |_, window, _| window.activate_window())
-            .expect("viewport should activate");
-
-        let command = cx.update(|app| {
-            runtime.focus_command_for_confirmed_backend_window_focus(
-                &main_space,
-                opened.window().window_id(),
-                false,
-                app,
-            )
-        });
-
-        assert_eq!(
-            command.as_ref().map(DockViewportFocusCommand::request),
-            Some(&DockViewportFocusRequest::panel("a"))
-        );
-        assert_eq!(
-            command.as_ref().map(DockViewportFocusCommand::source),
-            Some(crate::DockViewportFocusCommandSource::ViewportActivation)
-        );
-        assert_eq!(runtime.pending_activation(), None);
-    }
-
-    #[open_gpui::test]
-    fn backend_focus_unavailable_does_not_consume_pending_viewport_activation(
-        cx: &mut TestAppContext,
-    ) {
-        let main_space = DockSpaceId::from("main");
-        let fixture = DockViewportRuntimeFixture::builder(main_space.clone())
-            .space(main_space.clone(), ["a"])
-            .build(cx);
-        let runtime = fixture.runtime.clone();
-        let opened = fixture.open_unfocused_viewport(cx, &main_space);
-        runtime.record_panel_focus(main_space.clone(), item("a"));
-        assert!(runtime.record_pending_activation(registered_activation(
-            &runtime,
-            &main_space,
-            opened.window(),
-            DockViewportFocusRequest::panel("a"),
-        ),));
-        cx.set_platform_focused_window_available(false);
-
-        let command = cx.update(|app| {
-            runtime.focus_command_for_confirmed_backend_window_focus(
-                &main_space,
-                opened.window().window_id(),
-                false,
-                app,
-            )
-        });
-
-        assert_eq!(command, None);
-        assert!(runtime.pending_activation().is_some());
-    }
-
-    #[open_gpui::test]
-    fn backend_focus_on_another_docking_window_clears_pending_viewport_activation(
-        cx: &mut TestAppContext,
-    ) {
-        let main_space = DockSpaceId::from("main");
-        let detached_space = DockSpaceId::from("detached");
-        let fixture = DockViewportRuntimeFixture::builder(main_space.clone())
-            .space(main_space.clone(), ["a"])
-            .space(detached_space.clone(), ["c"])
-            .build(cx);
-        let runtime = fixture.runtime.clone();
-        let main = fixture.open_unfocused_viewport(cx, &main_space);
-        let detached = fixture.open_unfocused_viewport(cx, &detached_space);
-        assert!(runtime.record_pending_activation(registered_activation(
-            &runtime,
-            &detached_space,
-            detached.window(),
-            DockViewportFocusRequest::panel("c"),
-        )));
-
-        focus_backend_window_for_test(main.window(), cx);
-        assert!(
-            cx.update(|app| runtime.reconcile_backend_window_focus(app)),
-            "backend focus on another docking viewport should cancel stale activation intent"
-        );
-        assert_eq!(
-            runtime.pending_activation(),
-            None,
-            "explicit activation intent must not survive confirmed backend focus on another docking viewport"
-        );
-
-        focus_backend_window_for_test(detached.window(), cx);
-        assert_eq!(
-            cx.update(|app| {
-                runtime.focus_command_for_confirmed_backend_window_focus(
-                    &detached_space,
-                    detached.window().window_id(),
-                    false,
-                    app,
-                )
-            }),
-            None,
-            "later ordinary focus of the original target must not replay the stale activation"
-        );
-    }
-
-    #[open_gpui::test]
-    fn backend_confirmed_activation_consumes_pending_viewport_activation(cx: &mut TestAppContext) {
-        let main_space = DockSpaceId::from("main");
-        let fixture = DockViewportRuntimeFixture::builder(main_space.clone())
-            .space(main_space.clone(), ["a"])
-            .build(cx);
-        let runtime = fixture.runtime.clone();
-        let opened = fixture.open_unfocused_viewport(cx, &main_space);
-        let host = opened
-            .window()
-            .downcast::<DockHost>()
-            .expect("runtime viewport should render DockHost")
-            .root(cx)
-            .expect("runtime viewport should expose DockHost root");
-        let mut visual = VisualTestContext::from_window(opened.window(), cx);
-        let host_selector = selector_for(&visual, &host, crate::debug::DockDebugRegion::Host)
-            .expect("host selector should be available");
-        assert!(debug_bounds(&mut visual, &host_selector).size.width > px(0.0));
-
-        host.update(cx, |host, _| {
-            assert!(host.request_viewport_focus_command(
-                DockViewportFocusCommand::platform_activation(DockViewportFocusRequest::panel("a"))
-            ));
-        });
-        runtime.record_pending_activation(registered_activation(
-            &runtime,
-            &main_space,
-            opened.window(),
-            DockViewportFocusRequest::panel("a"),
-        ));
-        assert_eq!(
-            runtime
-                .pending_activation()
-                .map(|activation| activation.focus_request().clone()),
-            Some(DockViewportFocusRequest::panel("a"))
-        );
-
-        opened
-            .window()
-            .update(cx, |_, window, _| window.activate_window())
-            .expect("viewport should activate");
-        cx.run_until_parked();
-
-        assert_eq!(runtime.pending_activation(), None);
-    }
-
-    #[open_gpui::test]
-    fn backend_confirmed_activation_while_mouse_is_pressed_preserves_pending_viewport_activation(
-        cx: &mut TestAppContext,
-    ) {
-        let main_space = DockSpaceId::from("main");
-        let fixture = DockViewportRuntimeFixture::builder(main_space.clone())
-            .space(main_space.clone(), ["a"])
-            .build(cx);
-        let runtime = fixture.runtime.clone();
-        let opened = fixture.open_unfocused_viewport(cx, &main_space);
-
-        runtime.record_panel_focus(main_space.clone(), item("a"));
-        assert!(runtime.record_pending_activation(registered_activation(
-            &runtime,
-            &main_space,
-            opened.window(),
-            DockViewportFocusRequest::panel("a"),
-        ),));
-
-        cx.set_platform_mouse_button_is_pressed(open_gpui::MouseButton::Left, Some(true));
-        opened
-            .window()
-            .update(cx, |_, window, _| window.activate_window())
-            .expect("viewport should activate");
-
-        let command = cx.update(|app| {
-            runtime.focus_command_for_confirmed_backend_window_focus(
-                &main_space,
-                opened.window().window_id(),
-                true,
-                app,
-            )
-        });
-
-        assert_eq!(
-            command.as_ref().map(DockViewportFocusCommand::request),
-            Some(&DockViewportFocusRequest::panel("a"))
-        );
-        assert_eq!(
-            command.as_ref().map(DockViewportFocusCommand::source),
-            Some(crate::DockViewportFocusCommandSource::ViewportActivation)
-        );
-        assert_eq!(
-            runtime.pending_activation(),
-            None,
-            "mouse-down suppresses platform focus restore, not explicit pending viewport activation"
         );
     }
 
@@ -2438,7 +2119,6 @@ mod runtime_suite {
         let outcome = cx.update(|app| apply_viewport_activation_transaction(Some(activation), app));
         let expected_backend_focus_apply = DockViewportActivationBackendFocusApply::new(
             DockViewportActivationBackendFocusRecordEffect::RecordedTargetFocus,
-            DockViewportActivationPendingBackendFocusEffect::Unchanged,
         );
         assert!(
             matches!(
@@ -3372,7 +3052,9 @@ mod handle_suite {
             .expect("source viewport should open");
         source_opened
             .window()
-            .update(cx, |_, window, _| window.activate_window())
+            .update(cx, |_, window, _| {
+                let _ = window.activate_window();
+            })
             .expect("source viewport should be activatable before host drop");
         let source_window = source_opened
             .window()

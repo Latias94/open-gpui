@@ -736,7 +736,9 @@ pub(crate) fn close_window_quietly_for_test(window: AnyWindowHandle, cx: &mut Te
 
 pub(crate) fn focus_backend_window_for_test(window: AnyWindowHandle, cx: &mut TestAppContext) {
     window
-        .update(cx, |_, window, _| window.activate_window())
+        .update(cx, |_, window, _| {
+            let _ = window.activate_window();
+        })
         .expect("test viewport should activate");
 }
 

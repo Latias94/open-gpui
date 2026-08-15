@@ -349,8 +349,7 @@ pub(crate) use viewport::*;
 pub(crate) use viewport_activation::DockViewportWindowActivation;
 pub(crate) use viewport_activation::{
     DockViewportActivationBackendFocusApply, DockViewportActivationBackendFocusObservation,
-    DockViewportActivationBackendFocusRecordEffect,
-    DockViewportActivationPendingBackendFocusEffect, DockViewportActivationTransaction,
+    DockViewportActivationBackendFocusRecordEffect, DockViewportActivationTransaction,
 };
 pub(crate) use viewport_backend_focus::*;
 pub use viewport_close::DockViewportClosePolicy;

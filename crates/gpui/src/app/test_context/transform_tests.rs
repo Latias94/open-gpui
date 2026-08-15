@@ -1127,7 +1127,7 @@ fn nonuniform_transform_keeps_drag_preview_and_target_geometry_distinct(cx: &mut
             drop,
         }
     });
-    visual.update(|window, _| window.activate_window());
+    let _ = visual.update(|window, _| window.activate_window());
     visual.run_until_parked();
     visual.update(|window, cx| window.draw(cx).clear());
 
@@ -1180,7 +1180,7 @@ fn pointer_capture_uses_the_latest_committed_transform_geometry(cx: &mut TestApp
             moves,
         }
     });
-    cx.update(|window, _| window.activate_window());
+    let _ = cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
     cx.update(|window, cx| window.draw(cx).clear());
 
@@ -1418,7 +1418,7 @@ fn paint_time_invalid_focus_claim_restores_the_committed_focus(cx: &mut TestAppC
         (view.committed_focus.clone(), view.rejected_focus.clone())
     });
     cx.update_window(any_window, |_, window, cx| {
-        window.activate_window();
+        let _ = window.activate_window();
         committed_focus.focus(window, cx);
     })
     .unwrap();
@@ -1463,7 +1463,7 @@ fn paint_time_invalid_drag_source_schedules_preview_removal(cx: &mut TestAppCont
     });
     let any_window = window.into();
     cx.update_window(any_window, |_, window, cx| {
-        window.activate_window();
+        let _ = window.activate_window();
         window.draw(cx).clear();
     })
     .unwrap();
@@ -1726,7 +1726,7 @@ fn transform_only_frame_updates_ime_from_the_new_committed_handler(cx: &mut Test
         }
     });
 
-    cx.update(|window, _| window.activate_window());
+    let _ = cx.update(|window, _| window.activate_window());
     cx.update_window_entity(&root, |root, window, cx| {
         root.focus.focus(window, cx);
         cx.notify();

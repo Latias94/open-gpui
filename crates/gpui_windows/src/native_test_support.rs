@@ -895,7 +895,7 @@ fn owned_nonactivating_first_show_preserves_z_order_and_later_activation() {
         let _ = SetActiveWindow(foreground_hwnd);
     }
     assert_eq!(unsafe { GetActiveWindow() }, foreground_hwnd);
-    app.update_for_test(|cx| {
+    let _ = app.update_for_test(|cx| {
         child
             .update(cx, |_, window, _| window.activate_window())
             .expect("ordinary owned child should remain live")
@@ -1112,7 +1112,7 @@ fn owned_nonactivating_maximized_first_show_preserves_focus_and_restore_bounds()
     assert!(native_facts.accepts_activation);
     assert!(native_facts.focus_on_click);
 
-    app.update_for_test(|cx| {
+    let _ = app.update_for_test(|cx| {
         child
             .update(cx, |_, window, _| window.activate_window())
             .expect("maximized owned child should remain live")
@@ -1240,7 +1240,7 @@ fn asymmetric_activation_policy_preserves_click_and_programmatic_independence() 
         unsafe {
             let _ = SetActiveWindow(owner_hwnd);
         }
-        app.update_for_test(|cx| {
+        let _ = app.update_for_test(|cx| {
             child
                 .update(cx, |_, window, _| window.activate_window())
                 .expect("asymmetric-policy child should remain live")
@@ -1367,7 +1367,7 @@ fn owned_permanently_nonactivating_window_preserves_owner_and_rejects_activation
     assert_eq!(mouse_activate_result.0, MA_NOACTIVATE as isize);
     assert_eq!(unsafe { GetActiveWindow() }, owner_hwnd);
 
-    app.update_for_test(|cx| {
+    let _ = app.update_for_test(|cx| {
         child
             .update(cx, |_, window, _| window.activate_window())
             .expect("the owned child should remain live")
@@ -2077,7 +2077,7 @@ fn hidden_initial_presentation_keeps_deferred_placement_unpublished_until_forced
     );
     assert!(!hidden_facts.is_maximized);
 
-    app.update_for_test(|cx| {
+    let _ = app.update_for_test(|cx| {
         window
             .update(cx, |_, window, _| window.activate_window())
             .expect("hidden deferred-placement target should remain live")
@@ -2180,7 +2180,7 @@ fn hidden_initial_presentation_binds_unscoped_physical_placement_on_forced_show(
         .expect("Windows should report hidden physical geometry");
     assert_ne!(hidden_geometry.client_bounds(), target_client_bounds);
 
-    app.update_for_test(|cx| {
+    let _ = app.update_for_test(|cx| {
         window
             .update(cx, |_, window, _| window.activate_window())
             .expect("hidden physical-placement target should remain live")
@@ -2329,7 +2329,7 @@ fn failed_forced_initial_presentation_rejects_activation_and_rolls_back_deferred
             .cursor
     });
 
-    app.update_for_test(|cx| {
+    let _ = app.update_for_test(|cx| {
         window
             .update(cx, |_, window, _| window.activate_window())
             .expect("hidden activation target should remain live")
@@ -2396,7 +2396,7 @@ fn failed_forced_initial_presentation_rejects_activation_and_rolls_back_deferred
         "activation must reject immediately after forced presentation fails"
     );
 
-    app.update_for_test(|cx| {
+    let _ = app.update_for_test(|cx| {
         window
             .update(cx, |_, window, _| window.activate_window())
             .expect("hidden activation target should remain live")
@@ -3638,10 +3638,10 @@ fn deactivation_releases_child_capture_and_cancels_pointer_once() {
         .set(Some(Box::new({
             let active_callback_calls = active_callback_calls.clone();
             let active_callback_panicked = active_callback_panicked.clone();
-            move |active| {
-                active_callback(active);
+            move |observation| {
+                active_callback(observation);
                 active_callback_calls.set(active_callback_calls.get().saturating_add(1));
-                if !active && !active_callback_panicked.replace(true) {
+                if !observation.active() && !active_callback_panicked.replace(true) {
                     panic!("injected WA_INACTIVE active callback panic");
                 }
             }
@@ -4014,8 +4014,8 @@ fn queued_activate_commands_precede_activation_facts_without_synthetic_keyboard_
     app.update_for_test(|cx| {
         window
             .update(cx, |_, window, _| {
-                window.activate_window();
-                window.activate_window();
+                let _ = window.activate_window();
+                let _ = window.activate_window();
             })
             .expect("native test window should remain live")
     });

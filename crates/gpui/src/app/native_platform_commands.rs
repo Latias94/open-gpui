@@ -4,8 +4,9 @@ use crate::{
     NativeBoundaryGeneration, NativeCapturedDragGeneration, PlatformNativeWindowRetirementOutcome,
     PlatformPointerCaptureReleaseOutcome, PlatformPresentationShutdownOutcome,
     PlatformWindowCommand, PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome,
-    PreparedPlatformPointerCaptureRelease, PreparedPlatformPresentationShutdown, Window, WindowId,
-    WindowProvisionalRevealOutcome, WindowProvisionalRevealTicket,
+    PreparedPlatformPointerCaptureRelease, PreparedPlatformPresentationShutdown, Window,
+    WindowActivationTerminal, WindowActivationTicket, WindowId, WindowProvisionalRevealOutcome,
+    WindowProvisionalRevealTicket,
     app::{
         AppCell,
         native_callback_diagnostics::{
@@ -82,6 +83,57 @@ impl PlatformWindowCommandSink {
             return;
         };
         app.enqueue_platform_window_command(self.window_id, self.dispatcher.clone(), command);
+    }
+
+    pub(crate) fn request_activation(
+        &self,
+        activation_policy_generation: u64,
+    ) -> WindowActivationTicket {
+        let Some(app) = self.app.upgrade() else {
+            return WindowActivationTicket::terminal(
+                self.app.clone(),
+                self.window_id,
+                0,
+                activation_policy_generation,
+                WindowActivationTerminal::WindowClosed,
+            );
+        };
+        app.begin_native_window_activation(
+            self.window_id,
+            self.dispatcher.clone(),
+            activation_policy_generation,
+        )
+    }
+
+    pub(crate) fn terminal_activation(
+        &self,
+        activation_policy_generation: u64,
+        terminal: WindowActivationTerminal,
+    ) -> WindowActivationTicket {
+        let Some(app) = self.app.upgrade() else {
+            return WindowActivationTicket::terminal(
+                self.app.clone(),
+                self.window_id,
+                0,
+                activation_policy_generation,
+                WindowActivationTerminal::WindowClosed,
+            );
+        };
+        app.begin_terminal_native_window_activation(
+            self.window_id,
+            activation_policy_generation,
+            terminal,
+        )
+    }
+
+    pub(crate) fn activation_policy_committed(&self, generation: u64, accepts_activation: bool) {
+        if let Some(app) = self.app.upgrade() {
+            app.native_window_activation_policy_committed(
+                self.window_id,
+                generation,
+                accepts_activation,
+            );
+        }
     }
 
     pub(crate) fn enqueue_provisional_reveal(
@@ -381,6 +433,13 @@ impl NativePlatformCommand {
             })
     }
 
+    pub(super) fn activation_request_generation(&self) -> Option<u64> {
+        match self.command {
+            PlatformWindowCommand::Activate { request_generation } => Some(request_generation),
+            _ => None,
+        }
+    }
+
     pub(super) fn pending_diagnostic(&self, sequence: u64) -> NativeBoundaryDiagnostic {
         let (kind, generation) = match self.command {
             PlatformWindowCommand::CompleteInitialPresentation { .. } => {
@@ -397,7 +456,12 @@ impl NativePlatformCommand {
                     presentation_generation,
                 }),
             ),
-            PlatformWindowCommand::Activate => (NativePlatformCommandKind::Activate, None),
+            PlatformWindowCommand::Activate { request_generation } => (
+                NativePlatformCommandKind::Activate,
+                Some(NativeBoundaryGeneration::WindowActivation(
+                    request_generation,
+                )),
+            ),
             PlatformWindowCommand::ShowWindowMenu(_) => {
                 (NativePlatformCommandKind::ShowWindowMenu, None)
             }

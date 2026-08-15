@@ -257,7 +257,9 @@ pub(crate) fn open_controller_space_with_runtime(
 }
 
 pub(crate) fn activate_window_for_pointer_input(visual: &mut VisualTestContext) {
-    visual.update(|window, _| window.activate_window());
+    visual.update(|window, _| {
+        let _ = window.activate_window();
+    });
     visual.run_until_parked();
 }
 

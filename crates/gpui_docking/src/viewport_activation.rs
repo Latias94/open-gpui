@@ -1,12 +1,21 @@
 use crate::{
     DockHost, DockSpaceId, DockViewportFocusCommand, DockViewportFocusCommandSource,
-    DockViewportFocusRequest, surface::DockSurfaceActivationBinding,
+    DockViewportFocusRequest,
+    surface::{DockSurfaceActivationBinding, DockSurfaceActivationOutcome},
     viewport_registry::DockViewportRegistrationKey,
 };
+#[cfg(test)]
+use open_gpui::WindowActivationStatus;
 use open_gpui::{
-    AnyWindowHandle, App, Context, PlatformFocusedWindow, WeakEntity, Window, WindowId,
+    AnyWindowHandle, App, Context, PlatformFocusedWindow, Subscription, WeakEntity, Window,
+    WindowActivationSnapshot, WindowActivationTerminal, WindowActivationTicket, WindowId,
 };
-use std::{cell::Cell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    collections::{BTreeMap, HashMap},
+    fmt,
+    rc::{Rc, Weak as RcWeak},
+};
 
 /// Platform activation policy for a runtime viewport activation transaction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -226,6 +235,196 @@ impl DockViewportActivationTransaction {
     }
 }
 
+/// Sole Dock-side owner of in-flight native-window activation requests.
+///
+/// The GPUI ticket owns native activation authority. Dock retains only the semantic transaction
+/// that must be transferred to the focus coordinator after an exact `Activated` terminal, or
+/// settled if native activation fails. Backend focus observations never complete these records on
+/// their own.
+#[derive(Clone, Default)]
+pub(crate) struct DockViewportActivationExecutor {
+    state: Rc<RefCell<DockViewportActivationExecutorState>>,
+}
+
+#[derive(Default)]
+struct DockViewportActivationExecutorState {
+    executions: BTreeMap<u64, DockViewportActivationExecution>,
+    latest_generation_by_registration: HashMap<DockViewportRegistrationKey, u64>,
+}
+
+struct DockViewportActivationExecution {
+    transaction: DockViewportActivationTransaction,
+    ticket: WindowActivationTicket,
+    retirement_outcome: Option<DockSurfaceActivationOutcome>,
+    _subscription: Subscription,
+}
+
+impl fmt::Debug for DockViewportActivationExecutor {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("DockViewportActivationExecutor")
+            .field("execution_count", &self.state.borrow().executions.len())
+            .finish()
+    }
+}
+
+impl DockViewportActivationExecutor {
+    pub(crate) fn observe(
+        &self,
+        transaction: DockViewportActivationTransaction,
+        ticket: WindowActivationTicket,
+        cx: &mut Context<DockHost>,
+    ) {
+        let snapshot = ticket.snapshot();
+        debug_assert_eq!(snapshot.target(), transaction.window_id());
+        let generation = snapshot.request_generation();
+        let registration = transaction.registration_key().clone();
+        let state: RcWeak<RefCell<DockViewportActivationExecutorState>> =
+            Rc::downgrade(&self.state);
+        let async_cx = cx.to_async();
+        let subscription = ticket.subscribe(move |_| {
+            let Some(state) = state.upgrade() else {
+                return;
+            };
+            async_cx.update(|cx| settle_viewport_activation_execution(&state, generation, cx));
+        });
+
+        let mut state = self.state.borrow_mut();
+        state
+            .latest_generation_by_registration
+            .entry(registration)
+            .and_modify(|latest_generation| {
+                *latest_generation = (*latest_generation).max(generation);
+            })
+            .or_insert(generation);
+        let replaced = state.executions.insert(
+            generation,
+            DockViewportActivationExecution {
+                transaction,
+                ticket,
+                retirement_outcome: None,
+                _subscription: subscription,
+            },
+        );
+        debug_assert!(
+            replaced.is_none(),
+            "native activation generations must identify one Dock execution"
+        );
+    }
+
+    /// Returns whether an exact registration still owns native activation settlement.
+    pub(crate) fn has_execution_for_registration(
+        &self,
+        registration: &DockViewportRegistrationKey,
+    ) -> bool {
+        self.state
+            .borrow()
+            .executions
+            .values()
+            .any(|execution| execution.transaction.registration_key() == registration)
+    }
+
+    /// Retires every activation owned by one exact viewport registration before its host binding
+    /// is released.
+    pub(crate) fn retire_registration(
+        &self,
+        registration: &DockViewportRegistrationKey,
+        lifecycle_outcome: DockSurfaceActivationOutcome,
+        cx: &mut App,
+    ) {
+        let generations = self
+            .state
+            .borrow()
+            .executions
+            .iter()
+            .filter_map(|(generation, execution)| {
+                (execution.transaction.registration_key() == registration).then_some(*generation)
+            })
+            .collect::<Vec<_>>();
+        for generation in generations {
+            let ticket = {
+                let mut state = self.state.borrow_mut();
+                let Some(execution) = state.executions.get_mut(&generation) else {
+                    continue;
+                };
+                let snapshot = execution.ticket.snapshot();
+                if snapshot.status().terminal().is_none()
+                    || snapshot.status().terminal() == Some(WindowActivationTerminal::Activated)
+                {
+                    execution.retirement_outcome = Some(lifecycle_outcome);
+                }
+                execution.ticket.clone()
+            };
+            if !ticket.snapshot().status().is_terminal() {
+                let _ = ticket.cancel_for_target_replacement();
+            }
+            settle_viewport_activation_execution(&self.state, generation, cx);
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn execution_count(&self) -> usize {
+        self.state.borrow().executions.len()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn settle_execution(&self, generation: u64, cx: &mut App) {
+        settle_viewport_activation_execution(&self.state, generation, cx);
+    }
+}
+
+fn settle_viewport_activation_execution(
+    state: &Rc<RefCell<DockViewportActivationExecutorState>>,
+    generation: u64,
+    cx: &mut App,
+) {
+    let (transaction, snapshot, retirement_outcome, is_latest_for_registration) = {
+        let state = state.borrow();
+        let Some(execution) = state.executions.get(&generation) else {
+            return;
+        };
+        let latest_generation = state
+            .latest_generation_by_registration
+            .get(execution.transaction.registration_key())
+            .copied();
+        (
+            execution.transaction.clone(),
+            execution.ticket.snapshot(),
+            execution.retirement_outcome,
+            latest_generation == Some(generation),
+        )
+    };
+
+    if let Some(outcome) = retirement_outcome {
+        settle_surface_activation_binding(&transaction, outcome, cx);
+    } else if !is_latest_for_registration {
+        settle_surface_activation_binding(
+            &transaction,
+            DockSurfaceActivationOutcome::Superseded,
+            cx,
+        );
+    } else if snapshot.status().is_terminal() {
+        settle_viewport_activation_ticket(&transaction, snapshot, cx);
+    } else {
+        return;
+    }
+
+    let mut state = state.borrow_mut();
+    let Some(execution) = state.executions.remove(&generation) else {
+        return;
+    };
+    let registration = execution.transaction.registration_key().clone();
+    if !state
+        .executions
+        .values()
+        .any(|execution| execution.transaction.registration_key() == &registration)
+    {
+        state
+            .latest_generation_by_registration
+            .remove(&registration);
+    }
+}
+
 fn focus_command_for_transaction(
     transaction: &DockViewportActivationTransaction,
 ) -> DockViewportFocusCommand {
@@ -238,6 +437,68 @@ fn focus_command_for_transaction(
             transaction.focus_source(),
             transaction.focus_request().clone(),
         ),
+    }
+}
+
+fn settle_viewport_activation_ticket(
+    transaction: &DockViewportActivationTransaction,
+    snapshot: WindowActivationSnapshot,
+    cx: &mut App,
+) {
+    let terminal = snapshot
+        .status()
+        .terminal()
+        .expect("a viewport activation observer must receive one terminal snapshot");
+    if terminal == WindowActivationTerminal::Activated {
+        let outcome =
+            apply_viewport_activation_transaction_with_policy(Some(transaction.clone()), false, cx);
+        if matches!(
+            outcome,
+            DockViewportActivationApplyOutcome::Applied {
+                focus_command_queued: true,
+                ..
+            }
+        ) {
+            return;
+        }
+        let outcome = match outcome {
+            DockViewportActivationApplyOutcome::WindowUnavailable => {
+                DockSurfaceActivationOutcome::WindowClosed
+            }
+            DockViewportActivationApplyOutcome::NoTarget
+            | DockViewportActivationApplyOutcome::SpaceMismatch
+            | DockViewportActivationApplyOutcome::Applied { .. } => {
+                DockSurfaceActivationOutcome::Superseded
+            }
+            DockViewportActivationApplyOutcome::WrongRootView => {
+                DockSurfaceActivationOutcome::Unavailable
+            }
+        };
+        settle_surface_activation_binding(transaction, outcome, cx);
+        return;
+    }
+
+    let outcome = match terminal {
+        WindowActivationTerminal::Activated => unreachable!(),
+        WindowActivationTerminal::Rejected | WindowActivationTerminal::PolicyChanged => {
+            DockSurfaceActivationOutcome::Rejected
+        }
+        WindowActivationTerminal::Unsupported => DockSurfaceActivationOutcome::Unavailable,
+        WindowActivationTerminal::Superseded
+        | WindowActivationTerminal::TargetReplaced
+        | WindowActivationTerminal::Cancelled => DockSurfaceActivationOutcome::Superseded,
+        WindowActivationTerminal::WindowClosed => DockSurfaceActivationOutcome::WindowClosed,
+    };
+    settle_surface_activation_binding(transaction, outcome, cx);
+}
+
+fn settle_surface_activation_binding(
+    transaction: &DockViewportActivationTransaction,
+    outcome: DockSurfaceActivationOutcome,
+    cx: &mut App,
+) {
+    if let Some(binding) = transaction.surface_activation_binding() {
+        binding.settle(outcome, cx);
     }
 }
 
@@ -291,54 +552,21 @@ impl DockViewportActivationBackendFocusRecordEffect {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) enum DockViewportActivationPendingBackendFocusEffect {
-    #[default]
-    Unchanged,
-    RecordedPendingTarget,
-    ClearedConfirmedTarget,
-}
-
-impl DockViewportActivationPendingBackendFocusEffect {
-    pub(crate) fn from_recorded(recorded: bool) -> Self {
-        if recorded {
-            Self::RecordedPendingTarget
-        } else {
-            Self::Unchanged
-        }
-    }
-
-    pub(crate) fn from_cleared(cleared: bool) -> Self {
-        if cleared {
-            Self::ClearedConfirmedTarget
-        } else {
-            Self::Unchanged
-        }
-    }
-
-    fn changed(self) -> bool {
-        !matches!(self, Self::Unchanged)
-    }
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct DockViewportActivationBackendFocusApply {
     backend_focus_record: DockViewportActivationBackendFocusRecordEffect,
-    pending_backend_focus: DockViewportActivationPendingBackendFocusEffect,
 }
 
 impl DockViewportActivationBackendFocusApply {
     pub(crate) fn new(
         backend_focus_record: DockViewportActivationBackendFocusRecordEffect,
-        pending_backend_focus: DockViewportActivationPendingBackendFocusEffect,
     ) -> Self {
         Self {
             backend_focus_record,
-            pending_backend_focus,
         }
     }
 
     pub(crate) fn changed(self) -> bool {
-        self.backend_focus_record.changed() || self.pending_backend_focus.changed()
+        self.backend_focus_record.changed()
     }
 }
 
@@ -385,15 +613,13 @@ fn apply_activation_to_host(
         cx.focused_window(),
         transaction.window(),
     );
-    let request_backend_activation =
-        should_activate_window && window.platform_facts().accepts_activation;
-    let backend_focus_apply = host.viewport_runtime().apply_activation_backend_focus(
-        transaction,
-        backend_focus,
-        request_backend_activation,
-    );
-    host.viewport_runtime()
-        .settle_backend_focus_cancellation_in_context(cx);
+    // Do not pre-filter through cached capability or policy booleans. `activate_window` is the
+    // sole native activation authority and returns an exact typed terminal for unsupported or
+    // rejected requests. Skipping that ticket here would strand the Dock transaction forever.
+    let request_backend_activation = should_activate_window;
+    let backend_focus_apply = host
+        .viewport_runtime()
+        .record_activation_backend_focus(transaction.window_id(), backend_focus);
     if !registration_is_current(host) {
         outcome.set(DockViewportActivationApplyOutcome::NoTarget);
         return;
@@ -409,7 +635,9 @@ fn apply_activation_to_host(
     }
     let window_activation_requested = request_backend_activation && !backend_focus.target_focused();
     if window_activation_requested {
-        window.activate_window();
+        let ticket = window.activate_window();
+        host.viewport_runtime()
+            .observe_activation_ticket(transaction.clone(), ticket, cx);
     }
     let changed = backend_focus_apply.changed() || focus_changed || window_activation_requested;
     outcome.set(DockViewportActivationApplyOutcome::Applied {
@@ -468,16 +696,25 @@ pub(crate) fn apply_viewport_activation_transaction(
     transaction: Option<DockViewportActivationTransaction>,
     cx: &mut App,
 ) -> DockViewportActivationApplyOutcome {
+    let should_activate_window = transaction
+        .as_ref()
+        .is_some_and(DockViewportActivationTransaction::requests_window_activation);
+    apply_viewport_activation_transaction_with_policy(transaction, should_activate_window, cx)
+}
+
+fn apply_viewport_activation_transaction_with_policy(
+    transaction: Option<DockViewportActivationTransaction>,
+    should_activate_window: bool,
+    cx: &mut App,
+) -> DockViewportActivationApplyOutcome {
     let Some(transaction) = transaction else {
         return DockViewportActivationApplyOutcome::NoTarget;
     };
 
     let focus_command = focus_command_for_transaction(&transaction);
-    let window_activation = transaction.window_activation();
     let outcome = Rc::new(Cell::new(
         DockViewportActivationApplyOutcome::WindowUnavailable,
     ));
-    let should_activate_window = matches!(window_activation, DockViewportWindowActivation::Request);
     let target_host = transaction.target_host().cloned();
     let applied = if let Some(target_host) = target_host {
         let transaction_for_host = transaction.clone();
@@ -555,24 +792,9 @@ mod tests {
         DockViewportActivationBackendFocusApply::default()
     }
 
-    fn recorded_pending_backend_focus() -> DockViewportActivationBackendFocusApply {
-        DockViewportActivationBackendFocusApply::new(
-            DockViewportActivationBackendFocusRecordEffect::Unchanged,
-            DockViewportActivationPendingBackendFocusEffect::RecordedPendingTarget,
-        )
-    }
-
     fn recorded_confirmed_backend_focus() -> DockViewportActivationBackendFocusApply {
         DockViewportActivationBackendFocusApply::new(
             DockViewportActivationBackendFocusRecordEffect::RecordedTargetFocus,
-            DockViewportActivationPendingBackendFocusEffect::Unchanged,
-        )
-    }
-
-    fn cleared_pending_backend_focus() -> DockViewportActivationBackendFocusApply {
-        DockViewportActivationBackendFocusApply::new(
-            DockViewportActivationBackendFocusRecordEffect::Unchanged,
-            DockViewportActivationPendingBackendFocusEffect::ClearedConfirmedTarget,
         )
     }
 
@@ -663,7 +885,7 @@ mod tests {
         let after_first = cx.read_entity(&host, |host, _| {
             (
                 host.pending_focus_command().is_some(),
-                host.viewport_runtime().pending_activation().is_some(),
+                host.viewport_runtime().activation_execution_count() != 0,
             )
         });
         let second_outcome =
@@ -685,7 +907,7 @@ mod tests {
     }
 
     #[open_gpui::test]
-    fn activation_request_waits_for_backend_focus_before_restore(cx: &mut TestAppContext) {
+    fn activation_request_transfers_without_a_parallel_backend_focus_slot(cx: &mut TestAppContext) {
         let (graph, _) = tabs_graph(&["a"]);
         let (window, host, _visual) = open_host(
             cx,
@@ -715,24 +937,23 @@ mod tests {
                 focus_command_queued: false,
                 window_activation_requested: true,
                 backend_focus: DockViewportActivationBackendFocusObservation::TargetNotFocused,
-                backend_focus_apply: recorded_pending_backend_focus(),
+                backend_focus_apply: unchanged_backend_focus_apply(),
             }
         );
         assert_eq!(pending_request, None);
 
         assert_eq!(
             cx.read_entity(&host, |host, _| {
-                host.viewport_runtime()
-                    .pending_activation()
-                    .map(|activation| activation.focus_request().clone())
+                host.viewport_runtime().activation_execution_count()
             }),
-            Some(DockViewportFocusRequest::panel("a")),
-            "low-level apply records intent; host render subscription consumes it after backend focus"
+            0,
+            "the synchronous exact native terminal may transfer and retire in the same update"
         );
+        assert_eq!(cx.update(|app| app.active_window()), Some(window.into()));
     }
 
     #[open_gpui::test]
-    fn permanent_nonactivation_does_not_queue_or_count_activation(cx: &mut TestAppContext) {
+    fn rejected_activation_policy_settles_through_the_native_ticket(cx: &mut TestAppContext) {
         let (graph, _) = tabs_graph(&["a"]);
         let (window, host, _visual) = open_host(
             cx,
@@ -769,20 +990,94 @@ mod tests {
         assert_eq!(
             outcome,
             DockViewportActivationApplyOutcome::Applied {
-                changed: false,
+                changed: true,
                 focus_command_queued: false,
-                window_activation_requested: false,
+                window_activation_requested: true,
                 backend_focus: DockViewportActivationBackendFocusObservation::TargetNotFocused,
                 backend_focus_apply: DockViewportActivationBackendFocusApply::default(),
             }
         );
         assert_eq!(
             cx.read_entity(&host, |host, _| {
-                host.viewport_runtime().pending_activation()
+                host.viewport_runtime().activation_execution_count()
             }),
-            None
+            0,
+            "the already-rejected native ticket must deliver and retire without a focus edge"
         );
         assert_ne!(cx.update(|app| app.active_window()), Some(window_handle));
+    }
+
+    #[open_gpui::test]
+    fn latest_registration_generation_prevents_older_activated_transfer(cx: &mut TestAppContext) {
+        let (graph, _) = tabs_graph(&["a"]);
+        let (window, host, _visual) = open_host(
+            cx,
+            graph,
+            &[("a", "Panel A", "A")],
+            size(px(320.0), px(240.0)),
+        );
+        let registration = current_registration(cx, &host, window.window_id());
+        let activated = window
+            .update(cx, |_, window, _| window.activate_window())
+            .expect("viewport activation should remain available");
+        cx.run_until_parked();
+        assert_eq!(
+            activated.snapshot().status(),
+            WindowActivationStatus::Terminal(WindowActivationTerminal::Activated)
+        );
+
+        let dispatch = window
+            .update(cx, |_, window, _| {
+                window.request_activation_policy(WindowActivationPolicy {
+                    accepts_activation: false,
+                    focus_on_click: true,
+                })
+            })
+            .expect("the viewport should remain live");
+        assert!(matches!(dispatch, WindowMutationDispatch::Queued(_)));
+        assert!(cx.flush_window_mutation(window.into(), WindowMutationDomain::ActivationPolicy));
+        let rejected = window
+            .update(cx, |_, window, _| window.activate_window())
+            .expect("the rejected activation should still return a ticket");
+        assert_eq!(
+            rejected.snapshot().status(),
+            WindowActivationStatus::Terminal(WindowActivationTerminal::Rejected)
+        );
+        let activated_generation = activated.snapshot().request_generation();
+        let rejected_generation = rejected.snapshot().request_generation();
+
+        let first = DockViewportActivationTransaction::registered(
+            registration.clone(),
+            window,
+            DockViewportFocusRequest::panel("a"),
+        );
+        let second = DockViewportActivationTransaction::registered(
+            registration,
+            window,
+            DockViewportFocusRequest::panel("a"),
+        );
+        host.update(cx, |host, cx| {
+            host.viewport_runtime()
+                .observe_activation_ticket(first, activated, cx);
+            host.viewport_runtime()
+                .observe_activation_ticket(second, rejected, cx);
+            host.viewport_runtime()
+                .settle_activation_execution_for_test(rejected_generation, cx);
+            host.viewport_runtime()
+                .settle_activation_execution_for_test(activated_generation, cx);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            cx.read_entity(&host, |host, _| {
+                (
+                    host.pending_focus_command().is_some(),
+                    host.viewport_runtime().activation_execution_count(),
+                )
+            }),
+            (false, 0),
+            "a newer settled generation must permanently prevent an older Activated ticket from transferring focus"
+        );
     }
 
     #[open_gpui::test]
@@ -801,16 +1096,17 @@ mod tests {
             DockViewportFocusRequest::panel("a"),
         );
 
-        let (outcome, pending_request, pending_activation) = cx.update(|app| {
+        let (outcome, pending_request, activation_execution_count) = cx.update(|app| {
             let outcome = apply_viewport_activation_transaction(Some(activation), app);
-            let (pending_request, pending_activation) = app.read_entity(&host, |host, _| {
-                (
-                    host.pending_focus_command()
-                        .map(|command| command.request().clone()),
-                    host.viewport_runtime().pending_activation(),
-                )
-            });
-            (outcome, pending_request, pending_activation)
+            let (pending_request, activation_execution_count) =
+                app.read_entity(&host, |host, _| {
+                    (
+                        host.pending_focus_command()
+                            .map(|command| command.request().clone()),
+                        host.viewport_runtime().activation_execution_count(),
+                    )
+                });
+            (outcome, pending_request, activation_execution_count)
         });
 
         assert_eq!(
@@ -820,17 +1116,13 @@ mod tests {
                 focus_command_queued: false,
                 window_activation_requested: true,
                 backend_focus: DockViewportActivationBackendFocusObservation::TargetNotFocused,
-                backend_focus_apply: recorded_pending_backend_focus(),
+                backend_focus_apply: unchanged_backend_focus_apply(),
             }
         );
         assert_eq!(pending_request, None);
-        let pending_activation = pending_activation.expect("pending activation should remain");
-        assert_eq!(pending_activation.space(), &space());
-        assert_eq!(pending_activation.window_id(), window.window_id());
         assert_eq!(
-            pending_activation.focus_request().clone(),
-            DockViewportFocusRequest::panel("a"),
-            "backend focus Unavailable should not erase the explicit activation intent"
+            activation_execution_count, 1,
+            "backend focus Unavailable must not erase the exact native activation ticket"
         );
     }
 
@@ -852,7 +1144,9 @@ mod tests {
         );
 
         window
-            .update(cx, |_, window, _| window.activate_window())
+            .update(cx, |_, window, _| {
+                let _ = window.activate_window();
+            })
             .expect("viewport should confirm backend focus before activation apply");
         cx.run_until_parked();
 
@@ -896,7 +1190,9 @@ mod tests {
         );
 
         window
-            .update(cx, |_, window, _| window.activate_window())
+            .update(cx, |_, window, _| {
+                let _ = window.activate_window();
+            })
             .expect("viewport should become the backend-focused window");
 
         let outcome = window
@@ -926,65 +1222,6 @@ mod tests {
             },
             "confirmed backend focus should still update runtime focus stamps even when the focus command was already queued"
         );
-    }
-
-    #[open_gpui::test]
-    fn activation_confirmed_backend_focus_reports_pending_clear_as_changed(
-        cx: &mut TestAppContext,
-    ) {
-        let (graph, _) = tabs_graph(&["a"]);
-        let (window, host, _visual) = open_host(
-            cx,
-            graph,
-            &[("a", "Panel A", "A")],
-            size(px(320.0), px(240.0)),
-        );
-        let activation = DockViewportActivationTransaction::registered(
-            current_registration(cx, &host, window.window_id()),
-            window,
-            DockViewportFocusRequest::panel("a"),
-        );
-        window
-            .update(cx, |_, window, _| window.activate_window())
-            .expect("viewport should be backend-focused before applying pending activation");
-
-        let (outcome, pending_activation) = window
-            .update(cx, |host, window, cx| {
-                let _ = host
-                    .viewport_runtime()
-                    .record_confirmed_backend_focus_for_window(window.window_handle().window_id());
-                assert!(host.request_viewport_focus_command(
-                    DockViewportFocusCommand::viewport_activation(DockViewportFocusRequest::panel(
-                        "a"
-                    ),),
-                ));
-                assert!(
-                    host.viewport_runtime()
-                        .record_pending_activation(activation.clone())
-                );
-                let outcome = apply_viewport_activation_transaction_from_window(
-                    Some(activation),
-                    host,
-                    window,
-                    cx,
-                );
-                let pending_activation = host.viewport_runtime().pending_activation();
-                (outcome, pending_activation)
-            })
-            .expect("viewport should remain live");
-
-        assert_eq!(
-            outcome,
-            DockViewportActivationApplyOutcome::Applied {
-                changed: true,
-                focus_command_queued: false,
-                window_activation_requested: false,
-                backend_focus: DockViewportActivationBackendFocusObservation::TargetFocused,
-                backend_focus_apply: cleared_pending_backend_focus(),
-            },
-            "consuming a confirmed pending activation must notify even when focus and backend stamps were already current"
-        );
-        assert_eq!(pending_activation, None);
     }
 
     #[open_gpui::test]
@@ -1033,7 +1270,9 @@ mod tests {
         );
 
         window
-            .update(cx, |_, window, _| window.activate_window())
+            .update(cx, |_, window, _| {
+                let _ = window.activate_window();
+            })
             .expect("viewport should become the backend-focused window");
         let (outcome, pending_request, pending_source) = window
             .update(cx, |host, window, cx| {
@@ -1126,7 +1365,7 @@ mod tests {
                 focus_command_queued: false,
                 window_activation_requested: true,
                 backend_focus: DockViewportActivationBackendFocusObservation::TargetNotFocused,
-                backend_focus_apply: recorded_pending_backend_focus(),
+                backend_focus_apply: unchanged_backend_focus_apply(),
             }
         );
         assert_eq!(pending_request, Some(DockViewportFocusRequest::panel("a")));

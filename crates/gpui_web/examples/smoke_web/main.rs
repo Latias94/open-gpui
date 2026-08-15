@@ -93,7 +93,7 @@ impl SmokeWeb {
                     if let Some(probe) = this.activation_probe.as_mut() {
                         probe.programmatic_attempted = true;
                     }
-                    window.activate_window();
+                    let _ = window.activate_window();
                     cx.notify();
                 })
                 .ok();

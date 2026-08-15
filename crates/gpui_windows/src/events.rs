@@ -1797,7 +1797,10 @@ impl WindowsWindowInner {
         }
 
         let _ = with_windows_callback(&self.state.callbacks.active_status_change, |callback| {
-            callback(activated)
+            callback(PlatformWindowActiveStatusObservation::new(
+                activated,
+                activated && unsafe { GetForegroundWindow() } == handle,
+            ))
         });
 
         // When the window is activated (gains focus), reset the modifier tracking state.

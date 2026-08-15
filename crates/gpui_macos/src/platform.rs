@@ -43,10 +43,11 @@ use open_gpui::{
     KeyContext, Keymap, Menu, MenuItem, MouseButton, NavigationDirection, OsMenu, OwnedMenu,
     PathPromptOptions, Platform, PlatformDisplay, PlatformFocusedWindow, PlatformHoveredWindow,
     PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PlatformViewportCapabilities, PlatformWindow, PlatformWindowCapabilities,
-    PlatformWindowCreationCapabilities, PlatformWindowMutationCapabilities, Result, SystemMenuType,
-    Task, ThermalState, WindowAppearance, WindowCoordinateSpace, WindowCreationSupport,
-    WindowInitialPresentationOrder, WindowKind, WindowMutationSupport, WindowParams,
+    PlatformViewportCapabilities, PlatformWindow, PlatformWindowActivationSupport,
+    PlatformWindowCapabilities, PlatformWindowCreationCapabilities,
+    PlatformWindowMutationCapabilities, Result, SystemMenuType, Task, ThermalState,
+    WindowAppearance, WindowCoordinateSpace, WindowCreationSupport, WindowInitialPresentationOrder,
+    WindowKind, WindowMutationSupport, WindowParams,
 };
 use open_gpui_util::{
     ResultExt,
@@ -519,6 +520,7 @@ fn macos_window_capabilities(kind: &WindowKind) -> PlatformWindowCapabilities {
             taskbar_visibility: WindowMutationSupport::Unsupported,
             coordinate_space: WindowCoordinateSpace::GlobalScreen,
         },
+        activation: PlatformWindowActivationSupport::Observed,
     }
 }
 
@@ -1589,9 +1591,10 @@ mod security {
 #[cfg(test)]
 mod window_capability_tests {
     use open_gpui::{
-        PlatformWindowCapabilities, PlatformWindowCreationCapabilities,
-        PlatformWindowMutationCapabilities, WindowCoordinateSpace, WindowCreationSupport,
-        WindowInitialPresentationOrder, WindowMutationSupport,
+        PlatformWindowActivationSupport, PlatformWindowCapabilities,
+        PlatformWindowCreationCapabilities, PlatformWindowMutationCapabilities,
+        WindowCoordinateSpace, WindowCreationSupport, WindowInitialPresentationOrder,
+        WindowMutationSupport,
     };
 
     fn expected_macos_capabilities(supports_toplevel_state: bool) -> PlatformWindowCapabilities {
@@ -1627,6 +1630,7 @@ mod window_capability_tests {
                 taskbar_visibility: WindowMutationSupport::Unsupported,
                 coordinate_space: WindowCoordinateSpace::GlobalScreen,
             },
+            activation: PlatformWindowActivationSupport::Observed,
         }
     }
 

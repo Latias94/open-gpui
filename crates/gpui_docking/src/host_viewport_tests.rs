@@ -124,7 +124,9 @@ fn viewport_platform_signals_separate_hovered_from_active_window(cx: &mut TestAp
     }
 
     zeta_window
-        .update(cx, |_, window, _| window.activate_window())
+        .update(cx, |_, window, _| {
+            let _ = window.activate_window();
+        })
         .expect("zeta window should be live");
     let (context, capabilities, active_window) = alpha_window
         .update(cx, |_, _, app| {

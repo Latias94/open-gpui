@@ -25,8 +25,7 @@ mod runtime_suite {
         viewport_activation::{
             DockViewportActivationApplyOutcome, DockViewportActivationBackendFocusApply,
             DockViewportActivationBackendFocusObservation,
-            DockViewportActivationBackendFocusRecordEffect,
-            DockViewportActivationPendingBackendFocusEffect, apply_viewport_activation_transaction,
+            DockViewportActivationBackendFocusRecordEffect, apply_viewport_activation_transaction,
         },
         viewport_registry::{
             DockViewportInputMask, DockViewportRouteUnavailableReason, DockViewportStaleReason,
@@ -429,7 +428,9 @@ mod runtime_suite {
             .expect("target viewport should open");
         source_opened
             .window()
-            .update(cx, |_, window, _| window.activate_window())
+            .update(cx, |_, window, _| {
+                let _ = window.activate_window();
+            })
             .expect("source viewport should be activatable");
         cx.run_until_parked();
 
@@ -1073,7 +1074,9 @@ mod handle_suite {
         );
 
         target_window
-            .update(cx, |_, window, _| window.activate_window())
+            .update(cx, |_, window, _| {
+                let _ = window.activate_window();
+            })
             .expect("target viewport should activate while backend focus is unavailable");
         cx.run_until_parked();
         cx.set_platform_focused_window_available(true);
@@ -1112,7 +1115,9 @@ mod handle_suite {
         );
 
         target_window
-            .update(cx, |_, window, _| window.activate_window())
+            .update(cx, |_, window, _| {
+                let _ = window.activate_window();
+            })
             .expect("target viewport should activate while backend focus is unavailable");
         cx.run_until_parked();
         cx.set_platform_focused_window_available(true);

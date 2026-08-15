@@ -115,10 +115,14 @@ impl AsyncApp {
         );
     }
 
-    pub(crate) fn enqueue_window_active_changed(&self, window_id: WindowId, active: bool) {
+    pub(crate) fn enqueue_window_active_changed(
+        &self,
+        window_id: WindowId,
+        observation: crate::PlatformWindowActiveStatusObservation,
+    ) {
         self.enqueue_native_window_event(
             window_id,
-            super::native_event_ingress::NativeWindowEvent::ActiveChanged(active),
+            super::native_event_ingress::NativeWindowEvent::ActiveChanged(observation),
         );
     }
 

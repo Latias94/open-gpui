@@ -96,6 +96,7 @@ use open_gpui::{
     MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection,
     Pixels, PlatformDisplay, PlatformFocusedWindow, PlatformHoveredWindow, PlatformInput,
     PlatformKeyboardLayout, PlatformViewportCapabilities, PlatformWindow,
+    PlatformWindowActivationSupport, PlatformWindowActiveStatusObservation,
     PlatformWindowCapabilities, PlatformWindowCreationCapabilities,
     PlatformWindowMutationCapabilities, Point, ScrollDelta, ScrollWheelEvent, SharedString, Size,
     TouchPhase, WindowButtonLayout, WindowCoordinateSpace, WindowCreationSupport,
@@ -838,7 +839,10 @@ impl WaylandClient {
     }
 }
 
-fn wayland_window_capabilities(kind: &WindowKind) -> PlatformWindowCapabilities {
+fn wayland_window_capabilities(
+    kind: &WindowKind,
+    activation_protocol_available: bool,
+) -> PlatformWindowCapabilities {
     let layer_shell = matches!(kind, WindowKind::LayerShell(_));
     let mut mutations = PlatformWindowMutationCapabilities {
         size: WindowMutationSupport::CreationOnly,
@@ -870,6 +874,11 @@ fn wayland_window_capabilities(kind: &WindowKind) -> PlatformWindowCapabilities 
                 WindowInitialPresentationOrder::PresentationEstablishesVisibility,
         },
         mutations,
+        activation: if !layer_shell && activation_protocol_available {
+            PlatformWindowActivationSupport::Observed
+        } else {
+            PlatformWindowActivationSupport::Unsupported
+        },
     }
 }
 
@@ -1139,7 +1148,7 @@ impl LinuxClient for WaylandClient {
         kind: &WindowKind,
         _display_id: Option<DisplayId>,
     ) -> PlatformWindowCapabilities {
-        wayland_window_capabilities(kind)
+        wayland_window_capabilities(kind, self.0.borrow().globals.activation.is_some())
     }
 
     fn mouse_button_is_pressed(&self, button: MouseButton) -> Option<bool> {
@@ -1660,7 +1669,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
 
                 if let Some(window) = state.keyboard_focused_window.clone() {
                     drop(state);
-                    window.set_focused(true);
+                    window.set_focused(PlatformWindowActiveStatusObservation::new(true, true));
                 }
             }
             wl_keyboard::Event::Leave { surface, .. } => {
@@ -1678,7 +1687,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                     state.pre_edit_text.take();
                     drop(state);
                     window.handle_ime(ImeInput::DeleteText);
-                    window.set_focused(false);
+                    window.set_focused(PlatformWindowActiveStatusObservation::new(false, false));
                 }
             }
             wl_keyboard::Event::Modifiers {
@@ -2788,24 +2797,43 @@ mod window_capability_tests {
     #[test]
     fn capabilities_match_exact_kind_specific_creation_paths() {
         assert_eq!(
-            wayland_window_capabilities(&WindowKind::Normal).mutations,
+            wayland_window_capabilities(&WindowKind::Normal, true).activation,
+            PlatformWindowActivationSupport::Observed
+        );
+        assert_eq!(
+            wayland_window_capabilities(&WindowKind::Normal, false).activation,
+            PlatformWindowActivationSupport::Unsupported
+        );
+        assert_eq!(
+            wayland_window_capabilities(
+                &WindowKind::LayerShell(LayerShellOptions::default()),
+                true,
+            )
+            .activation,
+            PlatformWindowActivationSupport::Unsupported
+        );
+        assert_eq!(
+            wayland_window_capabilities(&WindowKind::Normal, true).mutations,
             expected_wayland_capabilities(false)
         );
         assert_eq!(
-            wayland_window_capabilities(&WindowKind::PopUp).mutations,
+            wayland_window_capabilities(&WindowKind::PopUp, true).mutations,
             expected_wayland_capabilities(false)
         );
         assert_eq!(
-            wayland_window_capabilities(&WindowKind::Floating).mutations,
+            wayland_window_capabilities(&WindowKind::Floating, true).mutations,
             expected_wayland_capabilities(false)
         );
         assert_eq!(
-            wayland_window_capabilities(&WindowKind::Dialog).mutations,
+            wayland_window_capabilities(&WindowKind::Dialog, true).mutations,
             expected_wayland_capabilities(false)
         );
         assert_eq!(
-            wayland_window_capabilities(&WindowKind::LayerShell(LayerShellOptions::default()))
-                .mutations,
+            wayland_window_capabilities(
+                &WindowKind::LayerShell(LayerShellOptions::default()),
+                true,
+            )
+            .mutations,
             expected_wayland_capabilities(true)
         );
     }
@@ -2818,7 +2846,7 @@ mod window_capability_tests {
             WindowKind::Floating,
             WindowKind::Dialog,
         ] {
-            let creation = wayland_window_capabilities(&kind).creation;
+            let creation = wayland_window_capabilities(&kind, true).creation;
             assert_eq!(
                 creation.focus_on_appearing,
                 WindowCreationSupport::Unsupported
@@ -2830,9 +2858,11 @@ mod window_capability_tests {
             );
         }
 
-        let layer =
-            wayland_window_capabilities(&WindowKind::LayerShell(LayerShellOptions::default()))
-                .creation;
+        let layer = wayland_window_capabilities(
+            &WindowKind::LayerShell(LayerShellOptions::default()),
+            true,
+        )
+        .creation;
         assert_eq!(layer.focus_on_appearing, WindowCreationSupport::Unsupported);
         assert_eq!(layer.transient_for, WindowCreationSupport::Unsupported);
         assert_eq!(

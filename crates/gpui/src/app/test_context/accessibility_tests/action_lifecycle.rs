@@ -679,7 +679,7 @@ fn accessibility_action_window_removal_commits_after_listener_and_pointer_cancel
     });
     let window: crate::AnyWindowHandle = typed_window.into();
 
-    window
+    let _ = window
         .update(cx, |_, window, _| window.activate_window())
         .unwrap();
     cx.run_until_parked();

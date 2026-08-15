@@ -18,11 +18,12 @@ use open_gpui::{
     AtlasTextureLeaseError, AtlasTile, Bounds, Capslock, CursorStyle, DevicePixels, DisplayId,
     GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInputCallback,
     PlatformInputHandler, PlatformInputHandlerSlot, PlatformPresentationShutdownOutcome,
-    PlatformWindow, PlatformWindowCommand, PlatformWindowCommandDispatcher,
-    PlatformWindowCommandOutcome, PlatformWindowPresentOutcome, Point,
-    PreparedPlatformPresentationShutdown, PromptButton, PromptLevel, RequestFrameOptions, Scene,
-    Size, TileId, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
-    WindowCreationFacts, WindowParams, WindowPlatformFacts, WindowPresentationShutdownTicket, px,
+    PlatformWindow, PlatformWindowActiveStatusObservation, PlatformWindowCommand,
+    PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome, PlatformWindowPresentOutcome,
+    Point, PreparedPlatformPresentationShutdown, PromptButton, PromptLevel, RequestFrameOptions,
+    Scene, Size, TileId, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    WindowControlArea, WindowCreationFacts, WindowParams, WindowPlatformFacts,
+    WindowPresentationShutdownTicket, px,
 };
 
 #[derive(Debug)]
@@ -131,8 +132,8 @@ impl PlatformWindow for HeadlessWindow {
             PlatformWindowCommand::CompleteInitialPresentation { .. } => {
                 PlatformWindowCommandOutcome::Accepted
             }
+            PlatformWindowCommand::Activate { .. } => PlatformWindowCommandOutcome::Unsupported,
             PlatformWindowCommand::RevealDeferredInitialPresentation { .. }
-            | PlatformWindowCommand::Activate
             | PlatformWindowCommand::ShowWindowMenu(_)
             | PlatformWindowCommand::StartWindowMove
             | PlatformWindowCommand::StartWindowResize(_) => PlatformWindowCommandOutcome::Rejected,
@@ -284,7 +285,11 @@ impl PlatformWindow for HeadlessWindow {
         input.set(callback);
     }
 
-    fn on_active_status_change(&self, _callback: Box<dyn FnMut(bool)>) {}
+    fn on_active_status_change(
+        &self,
+        _callback: Box<dyn FnMut(PlatformWindowActiveStatusObservation)>,
+    ) {
+    }
 
     fn on_hover_status_change(&self, _callback: Box<dyn FnMut(bool)>) {}
 

@@ -7,11 +7,11 @@ use crate::{
     PlatformInputHandler, PlatformInputHandlerSlot, PlatformNativePointerPhysicalFrame,
     PlatformNativeWindowRetirementOutcome, PlatformPhysicalDisplayObservation,
     PlatformPointerCaptureReleaseOutcome, PlatformPresentationShutdownOutcome, PlatformWindow,
-    PlatformWindowCommand, PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome,
-    PlatformWindowDispatch, PlatformWindowMutationObservation, PlatformWindowMutationTerminal,
-    PlatformWindowPhysicalGeometry, PlatformWindowPresentOutcome, Point,
-    PreparedPlatformPointerCaptureRelease, PreparedPlatformPresentationShutdown, PromptButton,
-    RequestFrameOptions, Scene, Size, TestPlatform, TileId, WindowAppearance,
+    PlatformWindowActiveStatusObservation, PlatformWindowCommand, PlatformWindowCommandDispatcher,
+    PlatformWindowCommandOutcome, PlatformWindowDispatch, PlatformWindowMutationObservation,
+    PlatformWindowMutationTerminal, PlatformWindowPhysicalGeometry, PlatformWindowPresentOutcome,
+    Point, PreparedPlatformPointerCaptureRelease, PreparedPlatformPresentationShutdown,
+    PromptButton, RequestFrameOptions, Scene, Size, TestPlatform, TileId, WindowAppearance,
     WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowCreationFacts,
     WindowMutationDomain, WindowMutationRequest, WindowParams, WindowPlacementState,
     WindowPlatformFacts, WindowPresentationShutdownTicket, WindowProvisionalPlacementNativeFacts,
@@ -85,7 +85,7 @@ pub(crate) struct TestWindowState {
     native_drop_callback: Option<Box<dyn FnMut()>>,
     hit_test_window_control_callback: Option<Box<dyn FnMut() -> Option<WindowControlArea>>>,
     input_callback: PlatformInputCallbackSlot,
-    active_status_change_callback: Option<Box<dyn FnMut(bool)>>,
+    active_status_change_callback: Option<Box<dyn FnMut(PlatformWindowActiveStatusObservation)>>,
     hover_status_change_callback: Option<Box<dyn FnMut(bool)>>,
     request_frame_callback: Option<Box<dyn FnMut(RequestFrameOptions)>>,
     defer_frame_requests: bool,
@@ -533,7 +533,7 @@ impl TestWindow {
         let (callback, scripted_outcome) = {
             let mut state = self.0.lock();
             if state.closed {
-                return PlatformWindowCommandOutcome::Rejected;
+                return PlatformWindowCommandOutcome::WindowClosed;
             }
             state.platform_command_history.push(command);
             let scripted_outcome = matches!(
@@ -554,7 +554,7 @@ impl TestWindow {
         } else {
             scripted_outcome.unwrap_or(PlatformWindowCommandOutcome::Accepted)
         };
-        if outcome == PlatformWindowCommandOutcome::Rejected {
+        if outcome != PlatformWindowCommandOutcome::Accepted {
             return outcome;
         }
 
@@ -624,7 +624,7 @@ impl TestWindow {
                     return PlatformWindowCommandOutcome::Rejected;
                 }
             }
-            PlatformWindowCommand::Activate => {
+            PlatformWindowCommand::Activate { .. } => {
                 let accepts_activation = {
                     let state = self.0.lock();
                     state.accepts_activation
@@ -827,13 +827,22 @@ impl TestWindow {
     }
 
     pub(crate) fn simulate_active_status_change(&self, active: bool) {
+        self.simulate_active_status_observation(PlatformWindowActiveStatusObservation::new(
+            active, active,
+        ));
+    }
+
+    pub(crate) fn simulate_active_status_observation(
+        &self,
+        observation: PlatformWindowActiveStatusObservation,
+    ) {
         let mut lock = self.0.lock();
-        lock.is_active = active;
+        lock.is_active = observation.active();
         let Some(mut callback) = lock.active_status_change_callback.take() else {
             return;
         };
         drop(lock);
-        callback(active);
+        callback(observation);
         let mut lock = self.0.lock();
         if !lock.closed {
             lock.active_status_change_callback = Some(callback);
@@ -1710,7 +1719,10 @@ impl PlatformWindow for TestWindow {
         input_callback.set(callback)
     }
 
-    fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
+    fn on_active_status_change(
+        &self,
+        callback: Box<dyn FnMut(PlatformWindowActiveStatusObservation)>,
+    ) {
         let mut state = self.0.lock();
         if !state.closed {
             state.active_status_change_callback = Some(callback);
@@ -5148,7 +5160,8 @@ mod window_mutation_tests {
         assert!(gated.default_prevented);
         assert_eq!(pointer_calls.get(), 0);
         assert_eq!(element_pointer_calls.get(), 0);
-        cx.update_window(handle, |_, window, _| window.activate_window())
+        let _ = cx
+            .update_window(handle, |_, window, _| window.activate_window())
             .expect("the provisional window should remain live");
         cx.run_until_parked();
         assert!(
@@ -5236,12 +5249,15 @@ mod window_mutation_tests {
             promoted.propagate || !promoted.default_prevented,
             "promotion admits only new input; it does not replay the gated event"
         );
-        cx.update_window(handle, |_, window, _| window.activate_window())
+        let _ = cx
+            .update_window(handle, |_, window, _| window.activate_window())
             .expect("the promoted window should remain live");
         cx.run_until_parked();
         assert_eq!(
             platform_window.platform_command_history(),
-            [PlatformWindowCommand::Activate]
+            [PlatformWindowCommand::Activate {
+                request_generation: 1,
+            }]
         );
     }
 
@@ -5387,7 +5403,8 @@ mod window_mutation_tests {
                 assert_eq!(facts.accepts_activation, accepts_activation);
                 assert_eq!(facts.focus_on_click, focus_on_click);
 
-                cx.update_window(handle, |_, window, _| window.activate_window())
+                let _ = cx
+                    .update_window(handle, |_, window, _| window.activate_window())
                     .expect("the policy test window should accept a framework command");
                 cx.run_until_parked();
                 assert_eq!(
@@ -6025,7 +6042,7 @@ mod platform_command_tests {
         platform_window.set_platform_command_callback({
             let callback_ran = callback_ran.clone();
             move |command, _| {
-                assert_eq!(command, PlatformWindowCommand::Activate);
+                assert!(matches!(command, PlatformWindowCommand::Activate { .. }));
                 let app_borrow = app
                     .try_borrow_mut()
                     .expect("platform commands must run after the outer AppRefMut is released");
@@ -6036,7 +6053,7 @@ mod platform_command_tests {
         });
 
         cx.update_window(handle, |_, window, _| {
-            window.activate_window();
+            let _ = window.activate_window();
             assert!(
                 !callback_ran.get(),
                 "platform commands must stay queued while the outer AppRefMut is active"
@@ -6047,7 +6064,121 @@ mod platform_command_tests {
         assert!(callback_ran.get());
         assert_eq!(
             platform_window.platform_command_history(),
-            [PlatformWindowCommand::Activate]
+            [PlatformWindowCommand::Activate {
+                request_generation: 1,
+            }]
+        );
+    }
+
+    #[crate::test]
+    fn synchronous_exact_activation_before_accepted_dispatch_settles_ticket(
+        cx: &mut TestAppContext,
+    ) {
+        let (handle, platform_window) = open_test_window(cx);
+        platform_window.set_platform_command_callback(|command, mut platform_window| {
+            assert!(matches!(command, PlatformWindowCommand::Activate { .. }));
+            platform_window.simulate_active_status_observation(
+                PlatformWindowActiveStatusObservation::new(true, true),
+            );
+            let _ = platform_window.simulate_input_result(mouse_move_input(24.0));
+            PlatformWindowCommandOutcome::Accepted
+        });
+
+        let ticket = cx
+            .update_window(handle, |_, window, _| window.activate_window())
+            .expect("test window should remain live");
+        cx.run_until_parked();
+
+        assert_eq!(
+            ticket.snapshot().status(),
+            crate::WindowActivationStatus::Terminal(crate::WindowActivationTerminal::Activated)
+        );
+    }
+
+    #[crate::test]
+    fn synchronous_exact_activation_cannot_override_rejected_dispatch(cx: &mut TestAppContext) {
+        let (handle, platform_window) = open_test_window(cx);
+        platform_window.set_platform_command_callback(|command, mut platform_window| {
+            assert!(matches!(command, PlatformWindowCommand::Activate { .. }));
+            platform_window.simulate_active_status_observation(
+                PlatformWindowActiveStatusObservation::new(true, true),
+            );
+            let _ = platform_window.simulate_input_result(mouse_move_input(28.0));
+            PlatformWindowCommandOutcome::Rejected
+        });
+
+        let ticket = cx
+            .update_window(handle, |_, window, _| window.activate_window())
+            .expect("test window should remain live");
+        cx.run_until_parked();
+
+        assert_eq!(
+            ticket.snapshot().status(),
+            crate::WindowActivationStatus::Terminal(crate::WindowActivationTerminal::Rejected)
+        );
+    }
+
+    #[crate::test]
+    fn dropping_pending_activation_subscription_cancels_terminal_delivery(cx: &mut TestAppContext) {
+        let (handle, platform_window) = open_test_window(cx);
+        platform_window.set_platform_command_callback(|command, _| {
+            assert!(matches!(command, PlatformWindowCommand::Activate { .. }));
+            PlatformWindowCommandOutcome::Rejected
+        });
+        let delivered = Rc::new(Cell::new(false));
+        let ticket = cx
+            .update_window(handle, {
+                let delivered = delivered.clone();
+                move |_, window, _| {
+                    let ticket = window.activate_window();
+                    let subscription = ticket.subscribe(move |_| delivered.set(true));
+                    drop(subscription);
+                    ticket
+                }
+            })
+            .expect("test window should remain live");
+        cx.run_until_parked();
+
+        assert!(!delivered.get());
+        assert_eq!(
+            ticket.snapshot().status(),
+            crate::WindowActivationStatus::Terminal(crate::WindowActivationTerminal::Rejected)
+        );
+    }
+
+    #[crate::test]
+    fn dropping_already_terminal_activation_subscription_cancels_deferred_delivery(
+        cx: &mut TestAppContext,
+    ) {
+        let (handle, _) = open_test_window(cx);
+        let dispatch = cx
+            .update_window(handle, |_, window, _| {
+                window.request_activation_policy(crate::WindowActivationPolicy {
+                    accepts_activation: false,
+                    focus_on_click: true,
+                })
+            })
+            .expect("test window should remain live");
+        assert!(matches!(dispatch, crate::WindowMutationDispatch::Queued(_)));
+        assert!(cx.flush_window_mutation(handle, WindowMutationDomain::ActivationPolicy));
+        let delivered = Rc::new(Cell::new(false));
+        let ticket = cx
+            .update_window(handle, {
+                let delivered = delivered.clone();
+                move |_, window, _| {
+                    let ticket = window.activate_window();
+                    let subscription = ticket.subscribe(move |_| delivered.set(true));
+                    drop(subscription);
+                    ticket
+                }
+            })
+            .expect("test window should remain live");
+        cx.run_until_parked();
+
+        assert!(!delivered.get());
+        assert_eq!(
+            ticket.snapshot().status(),
+            crate::WindowActivationStatus::Terminal(crate::WindowActivationTerminal::Rejected)
         );
     }
 

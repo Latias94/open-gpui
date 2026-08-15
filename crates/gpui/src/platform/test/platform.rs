@@ -4,12 +4,12 @@ use crate::{
     PathPromptOptions, Platform, PlatformDisplay, PlatformDisplaySnapshot, PlatformFocusedWindow,
     PlatformHeadlessRenderer, PlatformHoveredWindow, PlatformKeyboardLayout,
     PlatformKeyboardMapper, PlatformNativeDragHysteresis, PlatformTextSystem,
-    PlatformWindowCapabilities, PlatformWindowCommandOutcome, PlatformWindowCreationCapabilities,
-    PlatformWindowHitStack, PlatformWindowMutationCapabilities, Point, PromptButton,
-    ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, SourceMetadata, Task,
-    TestDisplay, TestWindow, ThermalState, WindowAppearance, WindowCoordinateSpace,
-    WindowCreationSupport, WindowInitialPresentationOrder, WindowMutationSupport, WindowParams,
-    size,
+    PlatformWindowActivationSupport, PlatformWindowCapabilities, PlatformWindowCommandOutcome,
+    PlatformWindowCreationCapabilities, PlatformWindowHitStack, PlatformWindowMutationCapabilities,
+    Point, PromptButton, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream,
+    SourceMetadata, Task, TestDisplay, TestWindow, ThermalState, WindowAppearance,
+    WindowCoordinateSpace, WindowCreationSupport, WindowInitialPresentationOrder,
+    WindowMutationSupport, WindowParams, size,
 };
 use anyhow::Result;
 use futures::channel::oneshot;
@@ -749,6 +749,7 @@ impl Platform for TestPlatform {
                     initial_presentation_order: WindowInitialPresentationOrder::BeforeVisibility,
                 }),
             mutations,
+            activation: PlatformWindowActivationSupport::Observed,
         }
     }
 

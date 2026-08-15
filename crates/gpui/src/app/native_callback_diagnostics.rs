@@ -152,6 +152,7 @@ pub enum NativePlatformCommandKind {
 pub enum NativeBoundaryGeneration {
     AppShutdown(u64),
     AccessibilityActivation(u64),
+    WindowActivation(u64),
     CapturedDrag(NativeCapturedDragGeneration),
     PointerCaptureRelease {
         captured_drag: Option<NativeCapturedDragGeneration>,

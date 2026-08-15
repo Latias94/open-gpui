@@ -111,8 +111,7 @@ mod runtime_suite {
         viewport_activation::{
             DockViewportActivationApplyOutcome, DockViewportActivationBackendFocusApply,
             DockViewportActivationBackendFocusObservation,
-            DockViewportActivationBackendFocusRecordEffect,
-            DockViewportActivationPendingBackendFocusEffect, apply_viewport_activation_transaction,
+            DockViewportActivationBackendFocusRecordEffect, apply_viewport_activation_transaction,
         },
         viewport_registry::{
             DockViewportInputMask, DockViewportRouteUnavailableReason, DockViewportStaleReason,
@@ -1247,7 +1246,9 @@ mod runtime_suite {
             .expect("secondary viewport should open");
         primary
             .window()
-            .update(cx, |_, window, _| window.activate_window())
+            .update(cx, |_, window, _| {
+                let _ = window.activate_window();
+            })
             .expect("primary viewport should be activatable");
         cx.run_until_parked();
         assert_eq!(cx.update(|app| app.active_window()), Some(primary.window()));

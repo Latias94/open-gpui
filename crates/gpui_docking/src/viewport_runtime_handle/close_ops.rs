@@ -188,6 +188,7 @@ impl DockViewportRuntimeHandle {
                 identity,
                 liveness,
                 runtime,
+                activation_executor: Default::default(),
                 window_closed_observer_installed: Rc::new(Cell::new(true)),
                 platform_mutation_observation_subscriptions:
                     platform_mutation_observation_subscriptions.clone(),

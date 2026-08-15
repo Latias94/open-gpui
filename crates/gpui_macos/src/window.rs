@@ -32,12 +32,13 @@ use open_gpui::{
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas,
     PlatformDisplay, PlatformInput, PlatformInputCallback, PlatformInputCallbackSlot,
     PlatformInputHandler, PlatformInputHandlerSlot, PlatformNativeWindowRetirementOutcome,
-    PlatformPresentationShutdownOutcome, PlatformWindow, PlatformWindowCommand,
-    PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome, PlatformWindowPresentOutcome,
-    Point, PreparedPlatformPresentationShutdown, PromptButton, PromptLevel, RequestFrameOptions,
-    SharedString, Size, SystemWindowTab, WindowActivationPolicy, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowCreationFacts, WindowId,
-    WindowKind, WindowParams, WindowPresentationShutdownTicket, point, px, size,
+    PlatformPresentationShutdownOutcome, PlatformWindow, PlatformWindowActiveStatusObservation,
+    PlatformWindowCommand, PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome,
+    PlatformWindowPresentOutcome, Point, PreparedPlatformPresentationShutdown, PromptButton,
+    PromptLevel, RequestFrameOptions, SharedString, Size, SystemWindowTab, WindowActivationPolicy,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
+    WindowCreationFacts, WindowId, WindowKind, WindowParams, WindowPresentationShutdownTicket,
+    point, px, size,
 };
 
 use core_foundation::base::{CFRelease, CFTypeRef};
@@ -709,7 +710,7 @@ struct MacWindowState {
     presentation_shutdown_authority: Arc<Mutex<MacPresentationShutdownAuthority>>,
     request_frame_callback: Option<Box<dyn FnMut(RequestFrameOptions)>>,
     event_callback: PlatformInputCallbackSlot,
-    activate_callback: Option<Box<dyn FnMut(bool)>>,
+    activate_callback: Option<Box<dyn FnMut(PlatformWindowActiveStatusObservation)>>,
     resize_callback: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     moved_callback: Option<Box<dyn FnMut()>>,
     window_state_change_callback: Option<Box<dyn FnMut()>>,
@@ -1586,10 +1587,10 @@ fn dispatch_mac_window_command(
     command: PlatformWindowCommand,
 ) -> PlatformWindowCommandOutcome {
     let Some(window_state) = window_state.upgrade() else {
-        return PlatformWindowCommandOutcome::Rejected;
+        return PlatformWindowCommandOutcome::WindowClosed;
     };
     if window_state.lock().is_closed() {
-        return PlatformWindowCommandOutcome::Rejected;
+        return PlatformWindowCommandOutcome::WindowClosed;
     }
 
     match command {
@@ -1600,7 +1601,7 @@ fn dispatch_mac_window_command(
         PlatformWindowCommand::RevealDeferredInitialPresentation { .. } => {
             PlatformWindowCommandOutcome::Rejected
         }
-        PlatformWindowCommand::Activate => {
+        PlatformWindowCommand::Activate { .. } => {
             if activate_mac_window(&window_state) {
                 PlatformWindowCommandOutcome::Accepted
             } else {
@@ -2178,7 +2179,10 @@ impl PlatformWindow for MacWindow {
         event_callback.set(callback);
     }
 
-    fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
+    fn on_active_status_change(
+        &self,
+        callback: Box<dyn FnMut(PlatformWindowActiveStatusObservation)>,
+    ) {
         let mut lock = self.0.as_ref().lock();
         if !lock.is_closed() {
             lock.activate_callback = Some(callback);
@@ -3189,8 +3193,18 @@ extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) 
             }
 
             if let Some(mut callback) = lock.activate_callback.take() {
+                let native_window = lock.native_window;
                 drop(lock);
-                callback(is_active);
+                let exact_native_positive = is_active
+                    && unsafe {
+                        let app = NSApplication::sharedApplication(nil);
+                        let key_window: id = msg_send![app, keyWindow];
+                        key_window == native_window
+                    };
+                callback(PlatformWindowActiveStatusObservation::new(
+                    is_active,
+                    exact_native_positive,
+                ));
                 let mut lock = window_state.lock();
                 if !lock.is_closed() {
                     lock.activate_callback = Some(callback);
