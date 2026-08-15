@@ -1897,15 +1897,15 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
         })
         .expect("native provisional marker root should remain live");
     });
-    pump_messages_until("real provisional destination-semantics commit", || {
+    pump_messages_until("real provisional destination-semantics submission", || {
         app.update_for_test(|_| {
-            semantics_ticket.snapshot().outcome() != WindowProvisionalSemanticsOutcome::Pending
+            semantics_ticket.snapshot().outcome() == WindowProvisionalSemanticsOutcome::Submitted
         })
     });
     let semantics = semantics_ticket.snapshot();
     assert_eq!(
         semantics.outcome(),
-        WindowProvisionalSemanticsOutcome::Committed
+        WindowProvisionalSemanticsOutcome::Submitted
     );
     assert_eq!(semantics.window_id(), any_window.window_id());
     assert_eq!(
@@ -1915,20 +1915,25 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
     assert_eq!(semantics.destination_generation(), 79);
     assert!(
         semantics
-            .committed_frame_generation()
+            .submitted_frame_generation()
             .is_some_and(|generation| generation >= semantics.minimum_frame_generation())
     );
+    assert_eq!(
+        semantics.accepted_frame_generation(),
+        semantics.submitted_frame_generation(),
+        "the native gate must be backed by submission of the exact accepted semantics frame"
+    );
     assert!(!session.snapshot().accepts_interaction());
-    let committed_but_gated_hit =
+    let submitted_but_gated_hit =
         unsafe { SendMessageW(hwnd, WM_NCHITTEST, Some(WPARAM::default()), Some(hit_point)) };
-    assert_eq!(committed_but_gated_hit.0, HTTRANSPARENT as isize);
+    assert_eq!(submitted_but_gated_hit.0, HTTRANSPARENT as isize);
 
     app.update_for_test(|cx| {
         any_window
             .update(cx, |_, window, cx| {
                 window
                     .admit_provisional_interaction(&session, &semantics_ticket, cx)
-                    .expect("the exact committed destination should promote in place");
+                    .expect("the exact submitted destination should promote in place");
             })
             .expect("native provisional window should remain live during promotion")
     });

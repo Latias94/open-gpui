@@ -6,10 +6,10 @@ use crate::{
     MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, Pixels, Platform,
     PlatformPointerCaptureReleaseOutcome, PlatformWindowCreationCapabilities,
     PlatformWindowDispatch, PlatformWindowHitStack, PlatformWindowMutationCapabilities,
-    PlatformWindowMutationTerminal, Point, Render, Result, Size, Task, TestDispatcher,
-    TestPlatform, TestScreenCaptureSource, TestWindow, TextSystem, VisualContext, Window,
-    WindowBounds, WindowHandle, WindowMutationDomain, WindowOptions, WindowPlatformFacts,
-    app::GpuiMode, platform::RequestFrameOptions, window::ElementArenaScope,
+    PlatformWindowMutationTerminal, PlatformWindowPresentOutcome, Point, Render, Result, Size,
+    Task, TestDispatcher, TestPlatform, TestScreenCaptureSource, TestWindow, TextSystem,
+    VisualContext, Window, WindowBounds, WindowHandle, WindowMutationDomain, WindowOptions,
+    WindowPlatformFacts, app::GpuiMode, platform::RequestFrameOptions, window::ElementArenaScope,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt, channel::oneshot};
@@ -559,6 +559,15 @@ impl TestAppContext {
     ) {
         self.test_window(window)
             .set_next_pointer_input_dispatch(dispatch);
+    }
+
+    /// Configures the renderer outcome returned by a test window's presentation attempts.
+    pub fn set_window_present_outcome(
+        &self,
+        window: AnyWindowHandle,
+        outcome: PlatformWindowPresentOutcome,
+    ) {
+        self.test_window(window).set_present_outcome(outcome);
     }
 
     /// Applies the latest queued mutation in one domain and emits its observed terminal facts.

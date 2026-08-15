@@ -463,9 +463,14 @@ impl TestWindow {
             .clone()
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn set_present_outcome(&self, outcome: PlatformWindowPresentOutcome) {
         self.0.lock().present_outcome = outcome;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn close_on_next_present_for_test(&self) {
+        self.0.lock().close_on_next_present = true;
     }
 
     #[cfg(test)]
@@ -2195,9 +2200,11 @@ mod window_mutation_tests {
         }
     }
 
+    type ProvisionalSemanticsAuthority =
+        Rc<RefCell<Option<(WindowProvisionalSession, WindowProvisionalSemanticsTicket)>>>;
+
     struct ProvisionalSemanticsMarkerRoot {
-        authority:
-            Rc<RefCell<Option<(WindowProvisionalSession, WindowProvisionalSemanticsTicket)>>>,
+        authority: ProvisionalSemanticsAuthority,
     }
 
     impl Render for ProvisionalSemanticsMarkerRoot {
@@ -2228,8 +2235,7 @@ mod window_mutation_tests {
 
     struct InteractiveProvisionalRoot {
         mouse_downs: Rc<Cell<usize>>,
-        semantics_authority:
-            Rc<RefCell<Option<(WindowProvisionalSession, WindowProvisionalSemanticsTicket)>>>,
+        semantics_authority: ProvisionalSemanticsAuthority,
     }
 
     impl Render for InteractiveProvisionalRoot {
@@ -2269,6 +2275,58 @@ mod window_mutation_tests {
                     .size_full(),
                 )
         }
+    }
+
+    fn open_revealed_provisional_semantics_window(
+        cx: &mut TestAppContext,
+        generation: u64,
+    ) -> (
+        WindowProvisionalSession,
+        AnyWindowHandle,
+        TestWindow,
+        ProvisionalSemanticsAuthority,
+    ) {
+        let session = WindowProvisionalSession::new(generation)
+            .expect("the provisional generation should be valid");
+        let semantics_authority = Rc::new(RefCell::new(None));
+        let handle: AnyWindowHandle = cx
+            .update(|app| {
+                let semantics_authority = semantics_authority.clone();
+                app.open_window(
+                    WindowOptions {
+                        focus_on_appearing: false,
+                        provisional_session: Some(session.clone()),
+                        ..Default::default()
+                    },
+                    |_, app| {
+                        app.new(|_| ProvisionalSemanticsMarkerRoot {
+                            authority: semantics_authority,
+                        })
+                    },
+                )
+            })
+            .expect("the provisional test window should open")
+            .into();
+        let platform_window = cx.test_window(handle);
+        let reveal = cx
+            .update_window(handle, |_, window, app| {
+                window
+                    .arm_provisional_presentation(
+                        &session,
+                        point(DevicePixels(40), DevicePixels(50)),
+                        [],
+                        app,
+                    )
+                    .expect("the matching bound session should arm presentation")
+            })
+            .expect("the provisional window should remain live");
+        cx.run_until_parked();
+        assert_eq!(
+            reveal.snapshot().outcome(),
+            crate::WindowProvisionalRevealOutcome::Revealed
+        );
+        settle_provisional_final_placement(cx, handle, &session);
+        (session, handle, platform_window, semantics_authority)
     }
 
     struct InitialPresentationObserverProbe {
@@ -4234,10 +4292,22 @@ mod window_mutation_tests {
         })
         .expect("the provisional window should remain live");
         cx.run_until_parked();
+        assert_eq!(
+            semantics_ticket.snapshot().outcome(),
+            crate::WindowProvisionalSemanticsOutcome::Accepted,
+            "focus-stable acceptance must precede renderer submission"
+        );
+        cx.update_window(handle, |_, window, _| {
+            window
+                .request_provisional_destination_semantics_presentation(&session, &semantics_ticket)
+                .expect("the accepted destination frame should be presented");
+        })
+        .expect("the provisional window should remain live");
+        cx.run_until_parked();
         let semantics = semantics_ticket.snapshot();
         assert_eq!(
             semantics.outcome(),
-            crate::WindowProvisionalSemanticsOutcome::Committed
+            crate::WindowProvisionalSemanticsOutcome::Submitted
         );
         assert_eq!(semantics.window_id(), handle.window_id());
         assert_eq!(
@@ -4247,8 +4317,13 @@ mod window_mutation_tests {
         assert_eq!(semantics.destination_generation(), 73);
         assert!(
             semantics
-                .committed_frame_generation()
+                .accepted_frame_generation()
                 .is_some_and(|generation| generation >= semantics.minimum_frame_generation())
+        );
+        assert_eq!(
+            semantics.submitted_frame_generation(),
+            semantics.accepted_frame_generation(),
+            "submission must name the exact accepted destination frame"
         );
         assert!(!session.snapshot().accepts_interaction());
         cx.update_window(handle, |_, window, _| {
@@ -4266,7 +4341,7 @@ mod window_mutation_tests {
         cx.update_window(handle, |_, window, app| {
             window
                 .admit_provisional_interaction(&session, &semantics_ticket, app)
-                .expect("the committed destination receipt should open the exact gate");
+                .expect("the submitted destination receipt should open the exact gate");
         })
         .expect("the provisional window should remain live");
         assert!(session.snapshot().accepts_interaction());
@@ -4570,6 +4645,382 @@ mod window_mutation_tests {
     }
 
     #[crate::test]
+    fn provisional_interaction_requires_submitted_exact_semantics_frame(cx: &mut TestAppContext) {
+        let (session, handle, platform_window, semantics_authority) =
+            open_revealed_provisional_semantics_window(cx, 84);
+        platform_window.set_present_outcome(PlatformWindowPresentOutcome::Deferred);
+        let semantics_ticket = cx
+            .update_window(handle, |_, window, app| {
+                window
+                    .begin_provisional_destination_semantics(&session, 90, app)
+                    .expect("the revealed provisional should project its destination")
+            })
+            .expect("the provisional window should remain live");
+        *semantics_authority.borrow_mut() = Some((session.clone(), semantics_ticket.clone()));
+        cx.update_window(handle, |root, _, app| {
+            root.downcast::<ProvisionalSemanticsMarkerRoot>()
+                .expect("the provisional semantics root should retain its exact type")
+                .update(app, |_, root_cx| root_cx.notify());
+        })
+        .expect("the provisional window should remain live");
+        cx.run_until_parked();
+
+        let accepted = semantics_ticket.snapshot();
+        assert_eq!(
+            accepted.outcome(),
+            crate::WindowProvisionalSemanticsOutcome::Accepted,
+            "the accepted semantics frame should remain observable while submission is deferred"
+        );
+        assert!(accepted.accepted_frame_generation().is_some());
+        assert_eq!(accepted.submitted_frame_generation(), None);
+        cx.update_window(handle, |_, window, app| {
+            window
+                .admit_provisional_interaction(&session, &semantics_ticket, app)
+                .expect_err("a deferred renderer submission must keep interaction gated");
+        })
+        .expect("the provisional window should remain live");
+        assert!(!session.snapshot().accepts_interaction());
+
+        platform_window.set_present_outcome(PlatformWindowPresentOutcome::Submitted);
+        cx.update_window(handle, |_, window, _| {
+            window
+                .request_provisional_destination_semantics_presentation(&session, &semantics_ticket)
+                .expect("the accepted semantics frame should remain retryable");
+        })
+        .expect("the provisional window should remain live");
+        cx.run_until_parked();
+        let submitted = semantics_ticket.snapshot();
+        assert_eq!(
+            submitted.outcome(),
+            crate::WindowProvisionalSemanticsOutcome::Submitted
+        );
+        assert_eq!(
+            submitted.submitted_frame_generation(),
+            accepted.accepted_frame_generation(),
+            "only submission of the exact accepted frame may open the gate"
+        );
+        cx.update_window(handle, |_, window, app| {
+            window
+                .admit_provisional_interaction(&session, &semantics_ticket, app)
+                .expect("the exact submitted semantics frame should admit interaction");
+        })
+        .expect("the provisional window should remain live");
+        assert!(session.snapshot().accepts_interaction());
+    }
+
+    #[crate::test]
+    fn renderer_rejection_terminally_rejects_semantics_and_keeps_interaction_gated(
+        cx: &mut TestAppContext,
+    ) {
+        let (session, handle, platform_window, semantics_authority) =
+            open_revealed_provisional_semantics_window(cx, 88);
+        platform_window.set_present_outcome(PlatformWindowPresentOutcome::Rejected);
+        let semantics_ticket = cx
+            .update_window(handle, |_, window, app| {
+                window
+                    .begin_provisional_destination_semantics(&session, 94, app)
+                    .expect("the revealed provisional should project its destination")
+            })
+            .expect("the provisional window should remain live");
+        *semantics_authority.borrow_mut() = Some((session.clone(), semantics_ticket.clone()));
+        cx.update_window(handle, |root, _, app| {
+            root.downcast::<ProvisionalSemanticsMarkerRoot>()
+                .expect("the provisional semantics root should retain its exact type")
+                .update(app, |_, root_cx| root_cx.notify());
+        })
+        .expect("the provisional window should remain live");
+        cx.run_until_parked();
+
+        assert_eq!(
+            semantics_ticket.snapshot().outcome(),
+            crate::WindowProvisionalSemanticsOutcome::Accepted,
+            "focus-stable acceptance must precede the renderer attempt"
+        );
+        cx.update_window(handle, |_, window, _| {
+            window
+                .request_provisional_destination_semantics_presentation(&session, &semantics_ticket)
+                .expect("the accepted semantics frame should reach the rejecting renderer");
+        })
+        .expect("the provisional window should remain live");
+        cx.run_until_parked();
+
+        let rejected = semantics_ticket.snapshot();
+        assert_eq!(
+            rejected.outcome(),
+            crate::WindowProvisionalSemanticsOutcome::Rejected
+        );
+        assert!(rejected.accepted_frame_generation().is_some());
+        assert_eq!(rejected.submitted_frame_generation(), None);
+        assert_eq!(
+            session.snapshot().phase(),
+            crate::WindowProvisionalSessionPhase::DestinationSemanticsRejected
+        );
+        assert!(!session.snapshot().accepts_interaction());
+        cx.update_window(handle, |_, window, app| {
+            window
+                .admit_provisional_interaction(&session, &semantics_ticket, app)
+                .expect_err("a renderer rejection must keep interaction gated");
+            window
+                .request_provisional_destination_semantics_presentation(&session, &semantics_ticket)
+                .expect_err("a renderer rejection must not remain retryable");
+        })
+        .expect("the provisional window should remain live");
+
+        platform_window.set_present_outcome(PlatformWindowPresentOutcome::Submitted);
+        assert!(platform_window.simulate_frame(RequestFrameOptions {
+            force_render: false,
+            require_presentation: true,
+        }));
+        cx.run_until_parked();
+        assert_eq!(
+            semantics_ticket.snapshot(),
+            rejected,
+            "a later renderer submission must not revive rejected semantics authority"
+        );
+        assert_eq!(
+            session.snapshot().phase(),
+            crate::WindowProvisionalSessionPhase::DestinationSemanticsRejected
+        );
+    }
+
+    #[crate::test]
+    fn newer_focus_stable_semantics_frame_replaces_unsubmitted_acceptance(cx: &mut TestAppContext) {
+        let (session, handle, platform_window, semantics_authority) =
+            open_revealed_provisional_semantics_window(cx, 87);
+        platform_window.set_present_outcome(PlatformWindowPresentOutcome::Deferred);
+        let semantics_ticket = cx
+            .update_window(handle, |_, window, app| {
+                window
+                    .begin_provisional_destination_semantics(&session, 93, app)
+                    .expect("the revealed provisional should project its destination")
+            })
+            .expect("the provisional window should remain live");
+        *semantics_authority.borrow_mut() = Some((session.clone(), semantics_ticket.clone()));
+        cx.update_window(handle, |root, _, app| {
+            root.downcast::<ProvisionalSemanticsMarkerRoot>()
+                .expect("the provisional semantics root should retain its exact type")
+                .update(app, |_, root_cx| root_cx.notify());
+        })
+        .expect("the provisional window should remain live");
+        cx.run_until_parked();
+        let first_acceptance = semantics_ticket.snapshot();
+        let first_generation = first_acceptance
+            .accepted_frame_generation()
+            .expect("the first focus-stable frame should be accepted");
+        assert_eq!(
+            first_acceptance.outcome(),
+            crate::WindowProvisionalSemanticsOutcome::Accepted
+        );
+
+        platform_window.defer_frame_requests_for_test();
+        *semantics_authority.borrow_mut() = Some((session.clone(), semantics_ticket.clone()));
+        cx.update_window(handle, |root, _, app| {
+            root.downcast::<ProvisionalSemanticsMarkerRoot>()
+                .expect("the provisional semantics root should retain its exact type")
+                .update(app, |_, root_cx| root_cx.notify());
+        })
+        .expect("the provisional window should remain live");
+        cx.run_until_parked();
+        let replacement = semantics_ticket.snapshot();
+        let replacement_generation = replacement
+            .accepted_frame_generation()
+            .expect("the newer focus-stable frame should replace the old acceptance");
+        assert!(replacement_generation > first_generation);
+        assert_eq!(replacement.submitted_frame_generation(), None);
+        assert_eq!(
+            session.snapshot().phase(),
+            crate::WindowProvisionalSessionPhase::DestinationSemanticsAccepted
+        );
+
+        platform_window.set_present_outcome(PlatformWindowPresentOutcome::Submitted);
+        cx.update_window(handle, |_, window, _| {
+            window
+                .request_provisional_destination_semantics_presentation(&session, &semantics_ticket)
+                .expect("the replacement frame should remain presentation-ready");
+        })
+        .expect("the provisional window should remain live");
+        assert!(
+            platform_window.release_deferred_frame_request_for_test(),
+            "the exact replacement frame should retain one deferred presentation request"
+        );
+        cx.run_until_parked();
+        let submitted = semantics_ticket.snapshot();
+        assert_eq!(
+            submitted.outcome(),
+            crate::WindowProvisionalSemanticsOutcome::Submitted
+        );
+        assert_eq!(
+            submitted.submitted_frame_generation(),
+            Some(replacement_generation),
+            "only the replacement acceptance may become the submitted semantics proof"
+        );
+    }
+
+    #[crate::test]
+    fn native_terminal_during_semantics_present_cannot_publish_submission(cx: &mut TestAppContext) {
+        let (session, handle, platform_window, semantics_authority) =
+            open_revealed_provisional_semantics_window(cx, 86);
+        platform_window.set_present_outcome(PlatformWindowPresentOutcome::Deferred);
+        let semantics_ticket = cx
+            .update_window(handle, |_, window, app| {
+                window
+                    .begin_provisional_destination_semantics(&session, 92, app)
+                    .expect("the revealed provisional should project its destination")
+            })
+            .expect("the provisional window should remain live");
+        *semantics_authority.borrow_mut() = Some((session.clone(), semantics_ticket.clone()));
+        cx.update_window(handle, |root, _, app| {
+            root.downcast::<ProvisionalSemanticsMarkerRoot>()
+                .expect("the provisional semantics root should retain its exact type")
+                .update(app, |_, root_cx| root_cx.notify());
+        })
+        .expect("the provisional window should remain live");
+        cx.run_until_parked();
+        let accepted = semantics_ticket.snapshot();
+        assert_eq!(
+            accepted.outcome(),
+            crate::WindowProvisionalSemanticsOutcome::Accepted
+        );
+        let accepted_generation = accepted
+            .accepted_frame_generation()
+            .expect("the deferred semantics frame should remain accepted");
+
+        platform_window.close_on_next_present_for_test();
+        platform_window.set_present_outcome(PlatformWindowPresentOutcome::Submitted);
+        assert!(platform_window.simulate_frame(RequestFrameOptions {
+            force_render: false,
+            require_presentation: true,
+        }));
+        cx.run_until_parked();
+        assert!(platform_window.is_native_terminal());
+        assert!(!cx.windows().contains(&handle));
+        assert_eq!(
+            session.snapshot().phase(),
+            crate::WindowProvisionalSessionPhase::Terminal
+        );
+        let terminal = semantics_ticket.snapshot();
+        assert_eq!(
+            terminal.outcome(),
+            crate::WindowProvisionalSemanticsOutcome::WindowTerminal
+        );
+        assert_eq!(
+            terminal.accepted_frame_generation(),
+            Some(accepted_generation),
+            "terminal settlement may retain the accepted fact without manufacturing submission"
+        );
+        assert_eq!(terminal.submitted_frame_generation(), None);
+    }
+
+    #[crate::test]
+    fn renderer_repaint_invalidates_accepted_semantics_and_requires_a_higher_frame(
+        cx: &mut TestAppContext,
+    ) {
+        let (session, handle, platform_window, semantics_authority) =
+            open_revealed_provisional_semantics_window(cx, 85);
+        platform_window.set_present_outcome(PlatformWindowPresentOutcome::Deferred);
+        let semantics_ticket = cx
+            .update_window(handle, |_, window, app| {
+                window
+                    .begin_provisional_destination_semantics(&session, 91, app)
+                    .expect("the revealed provisional should project its destination")
+            })
+            .expect("the provisional window should remain live");
+        *semantics_authority.borrow_mut() = Some((session.clone(), semantics_ticket.clone()));
+        cx.update_window(handle, |root, _, app| {
+            root.downcast::<ProvisionalSemanticsMarkerRoot>()
+                .expect("the provisional semantics root should retain its exact type")
+                .update(app, |_, root_cx| root_cx.notify());
+        })
+        .expect("the provisional window should remain live");
+        cx.run_until_parked();
+        let first_acceptance = semantics_ticket.snapshot();
+        assert_eq!(
+            first_acceptance.outcome(),
+            crate::WindowProvisionalSemanticsOutcome::Accepted
+        );
+        let rejected_generation = first_acceptance
+            .accepted_frame_generation()
+            .expect("the deferred attempt should retain its accepted frame");
+
+        platform_window.defer_frame_requests_for_test();
+        platform_window.set_present_outcome(PlatformWindowPresentOutcome::RepaintRequired);
+        assert!(platform_window.simulate_frame(RequestFrameOptions {
+            force_render: false,
+            require_presentation: true,
+        }));
+        cx.run_until_parked();
+        let invalidated = semantics_ticket.snapshot();
+        assert_eq!(
+            invalidated.outcome(),
+            crate::WindowProvisionalSemanticsOutcome::Pending
+        );
+        assert_eq!(invalidated.accepted_frame_generation(), None);
+        assert_eq!(invalidated.submitted_frame_generation(), None);
+        assert!(
+            invalidated.minimum_frame_generation() > rejected_generation,
+            "renderer invalidation must prohibit reuse of the rejected accepted generation"
+        );
+        assert_eq!(
+            session.snapshot().phase(),
+            crate::WindowProvisionalSessionPhase::ProjectingDestinationSemantics
+        );
+        cx.update_window(handle, |_, window, app| {
+            window
+                .admit_provisional_interaction(&session, &semantics_ticket, app)
+                .expect_err("an invalidated accepted frame cannot admit interaction");
+        })
+        .expect("the provisional window should remain live");
+
+        platform_window.set_present_outcome(PlatformWindowPresentOutcome::Submitted);
+        assert!(
+            platform_window.release_deferred_frame_request_for_test(),
+            "renderer invalidation should retain one forced higher-generation frame request"
+        );
+        cx.run_until_parked();
+        assert_eq!(
+            semantics_ticket.snapshot().outcome(),
+            crate::WindowProvisionalSemanticsOutcome::Pending,
+            "renderer recovery alone must not recreate destination-semantics authority"
+        );
+
+        *semantics_authority.borrow_mut() = Some((session.clone(), semantics_ticket.clone()));
+        cx.update_window(handle, |root, _, app| {
+            root.downcast::<ProvisionalSemanticsMarkerRoot>()
+                .expect("the provisional semantics root should retain its exact type")
+                .update(app, |_, root_cx| root_cx.notify());
+        })
+        .expect("the provisional window should remain live");
+        cx.run_until_parked();
+        let replacement = semantics_ticket.snapshot();
+        assert_eq!(
+            replacement.outcome(),
+            crate::WindowProvisionalSemanticsOutcome::Accepted,
+            "accepting the replacement marker must not manufacture renderer submission"
+        );
+        assert!(
+            replacement
+                .accepted_frame_generation()
+                .is_some_and(|generation| generation > rejected_generation)
+        );
+
+        assert!(platform_window.simulate_frame(RequestFrameOptions {
+            force_render: false,
+            require_presentation: true,
+        }));
+        cx.run_until_parked();
+        let submitted = semantics_ticket.snapshot();
+        assert_eq!(
+            submitted.outcome(),
+            crate::WindowProvisionalSemanticsOutcome::Submitted
+        );
+        assert!(
+            submitted
+                .submitted_frame_generation()
+                .is_some_and(|generation| generation > rejected_generation)
+        );
+    }
+
+    #[crate::test]
     fn provisional_session_rejects_stale_identity_and_input_without_replay(
         cx: &mut TestAppContext,
     ) {
@@ -4709,9 +5160,21 @@ mod window_mutation_tests {
         cx.run_until_parked();
         assert_eq!(
             semantics_ticket.snapshot().outcome(),
-            crate::WindowProvisionalSemanticsOutcome::Committed
+            crate::WindowProvisionalSemanticsOutcome::Accepted,
+            "focus-stable acceptance must precede renderer submission"
         );
-        let committed_but_gated =
+        cx.update_window(handle, |_, window, _| {
+            window
+                .request_provisional_destination_semantics_presentation(&session, &semantics_ticket)
+                .expect("the accepted destination frame should be presented");
+        })
+        .expect("the provisional window should remain live");
+        cx.run_until_parked();
+        assert_eq!(
+            semantics_ticket.snapshot().outcome(),
+            crate::WindowProvisionalSemanticsOutcome::Submitted
+        );
+        let submitted_but_gated =
             platform_window.simulate_input_result(PlatformInput::MouseDown(MouseDownEvent {
                 button: MouseButton::Left,
                 position: point(px(12.0), px(18.0)),
@@ -4719,14 +5182,14 @@ mod window_mutation_tests {
                 click_count: 1,
                 first_mouse: false,
             }));
-        assert!(!committed_but_gated.propagate);
-        assert!(committed_but_gated.default_prevented);
+        assert!(!submitted_but_gated.propagate);
+        assert!(submitted_but_gated.default_prevented);
         assert_eq!(pointer_calls.get(), 0);
         assert_eq!(element_pointer_calls.get(), 0);
         cx.update_window(handle, |_, window, app| {
             window
                 .admit_provisional_interaction(&session, &semantics_ticket, app)
-                .expect("the exact committed destination should promote in place");
+                .expect("the exact submitted destination should promote in place");
         })
         .expect("the provisional window should remain live");
         let promoted =
@@ -4741,7 +5204,7 @@ mod window_mutation_tests {
         assert_eq!(
             element_pointer_calls.get(),
             1,
-            "promotion must expose the element handlers from the committed destination frame"
+            "promotion must expose the element handlers from the submitted destination frame"
         );
         assert!(
             promoted.propagate || !promoted.default_prevented,
@@ -4757,7 +5220,7 @@ mod window_mutation_tests {
     }
 
     #[crate::test]
-    fn provisional_interaction_rejects_native_terminal_after_semantics_commit(
+    fn provisional_interaction_rejects_native_terminal_after_semantics_submission(
         cx: &mut TestAppContext,
     ) {
         let session =
@@ -4817,7 +5280,19 @@ mod window_mutation_tests {
         cx.run_until_parked();
         assert_eq!(
             semantics_ticket.snapshot().outcome(),
-            crate::WindowProvisionalSemanticsOutcome::Committed
+            crate::WindowProvisionalSemanticsOutcome::Accepted,
+            "focus-stable acceptance must precede renderer submission"
+        );
+        cx.update_window(handle, |_, window, _| {
+            window
+                .request_provisional_destination_semantics_presentation(&session, &semantics_ticket)
+                .expect("the accepted destination frame should be presented");
+        })
+        .expect("the provisional window should remain live");
+        cx.run_until_parked();
+        assert_eq!(
+            semantics_ticket.snapshot().outcome(),
+            crate::WindowProvisionalSemanticsOutcome::Submitted
         );
 
         cx.update_window(handle, |_, window, app| {
@@ -4837,8 +5312,8 @@ mod window_mutation_tests {
         );
         assert_eq!(
             semantics_ticket.snapshot().outcome(),
-            crate::WindowProvisionalSemanticsOutcome::Committed,
-            "the receipt should preserve the committed frame fact after later window loss"
+            crate::WindowProvisionalSemanticsOutcome::Submitted,
+            "the receipt should preserve the submitted frame fact after later window loss"
         );
     }
 

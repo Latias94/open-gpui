@@ -729,7 +729,7 @@ mod reducer_tests {
             assert!(!effects.as_slice().iter().any(|effect| matches!(
                 effect,
                 DockLiveUndockEffect::CommitPreparedPromotion { .. }
-                    | DockLiveUndockEffect::DestinationSemanticsCommitRequired { .. }
+                    | DockLiveUndockEffect::DestinationSemanticsSubmissionRequired { .. }
             )));
             assert_eq!(session.phase(), DockLiveUndockPhase::Retiring);
         }
@@ -2208,7 +2208,7 @@ mod reducer_tests {
         assert!(!effects.as_slice().iter().any(|effect| matches!(
             effect,
             DockLiveUndockEffect::CommitPreparedPromotion { .. }
-                | DockLiveUndockEffect::DestinationSemanticsCommitRequired { .. }
+                | DockLiveUndockEffect::DestinationSemanticsSubmissionRequired { .. }
         )));
     }
 
@@ -2234,7 +2234,7 @@ mod reducer_tests {
             effect,
             DockLiveUndockEffect::PublishTerminal { .. }
                 | DockLiveUndockEffect::ProvisionalRetirementRequired { .. }
-                | DockLiveUndockEffect::DestinationSemanticsCommitRequired { .. }
+                | DockLiveUndockEffect::DestinationSemanticsSubmissionRequired { .. }
         )));
         let committed = acknowledge_source_restoration(&mut session, identity, payload_lease);
         assert!(committed.as_slice().iter().any(|effect| matches!(
@@ -2286,7 +2286,7 @@ mod reducer_tests {
         assert!(!effects.as_slice().iter().any(|effect| matches!(
             effect,
             DockLiveUndockEffect::RecoverCommittedDestinationTopology { .. }
-                | DockLiveUndockEffect::DestinationSemanticsCommitRequired { .. }
+                | DockLiveUndockEffect::DestinationSemanticsSubmissionRequired { .. }
         )));
     }
 
@@ -2341,7 +2341,7 @@ mod reducer_tests {
             session
                 .apply(DockLiveUndockFact::DurableSwapCommitted { identity, token })
                 .as_slice(),
-            [DockLiveUndockEffect::DestinationSemanticsCommitRequired { .. }]
+            [DockLiveUndockEffect::DestinationSemanticsSubmissionRequired { .. }]
         ));
 
         let durable_lease = DockLiveUndockPayloadLeaseReceipt::for_test(
@@ -2410,7 +2410,7 @@ mod reducer_tests {
         );
         assert!(
             session
-                .apply(DockLiveUndockFact::DestinationSemanticsCommitted {
+                .apply(DockLiveUndockFact::DestinationSemanticsSubmitted {
                     identity,
                     receipt: semantics,
                 })
@@ -2492,14 +2492,14 @@ mod reducer_tests {
         session.apply(DockLiveUndockFact::DurableSwapCommitted { identity, token });
         assert!(
             session
-                .apply(DockLiveUndockFact::DestinationSemanticsCommitted {
+                .apply(DockLiveUndockFact::DestinationSemanticsSubmitted {
                     identity,
                     receipt: stale_semantics,
                 })
                 .is_empty()
         );
 
-        let effects = session.apply(DockLiveUndockFact::DestinationSemanticsCommitted {
+        let effects = session.apply(DockLiveUndockFact::DestinationSemanticsSubmitted {
             identity,
             receipt: semantics,
         });
@@ -2522,12 +2522,12 @@ mod reducer_tests {
         );
         assert!(
             session
-                .apply(DockLiveUndockFact::DestinationSemanticsCommitted {
+                .apply(DockLiveUndockFact::DestinationSemanticsSubmitted {
                     identity,
                     receipt: semantics,
                 })
                 .is_empty(),
-            "a duplicate semantics acknowledgement cannot complete promotion"
+            "a duplicate semantics-submission acknowledgement cannot complete promotion"
         );
 
         let effects = session.apply(DockLiveUndockFact::DestinationInteractionAdmitted {
@@ -2567,7 +2567,7 @@ mod reducer_tests {
     }
 
     #[test]
-    fn destination_semantics_commit_failure_enters_committed_destination_recovery() {
+    fn destination_semantics_submission_failure_enters_committed_destination_recovery() {
         let (_, lease) = active_window_session(126, 226);
         let mut session = DockLiveUndockSession::new();
         let identity = start(&mut session, lease, 1);
@@ -2584,7 +2584,7 @@ mod reducer_tests {
             .expect("the stale test token remains non-zero");
         assert!(
             session
-                .apply(DockLiveUndockFact::DestinationSemanticsCommitFailed {
+                .apply(DockLiveUndockFact::DestinationSemanticsSubmissionFailed {
                     identity,
                     token: stale_token,
                     destination,
@@ -2593,7 +2593,7 @@ mod reducer_tests {
             "a stale failure cannot recover the current durable destination"
         );
 
-        let effects = session.apply(DockLiveUndockFact::DestinationSemanticsCommitFailed {
+        let effects = session.apply(DockLiveUndockFact::DestinationSemanticsSubmissionFailed {
             identity,
             token,
             destination,
@@ -2609,7 +2609,7 @@ mod reducer_tests {
     }
 
     #[test]
-    fn destination_interaction_admission_failure_never_publishes_committed() {
+    fn destination_interaction_admission_failure_never_publishes_completion() {
         let (_, lease) = active_window_session(116, 216);
         let mut session = DockLiveUndockSession::new();
         let identity = start(&mut session, lease, 1);
@@ -2627,7 +2627,7 @@ mod reducer_tests {
         session.apply(DockLiveUndockFact::DurableSwapCommitted { identity, token });
         assert!(matches!(
             session
-                .apply(DockLiveUndockFact::DestinationSemanticsCommitted {
+                .apply(DockLiveUndockFact::DestinationSemanticsSubmitted {
                     identity,
                     receipt: semantics,
                 })
@@ -2893,7 +2893,7 @@ mod reducer_tests {
         session.apply(DockLiveUndockFact::PromotionPrepared { identity, token });
         session.apply(DockLiveUndockFact::DurableSwapCommitted { identity, token });
         let semantics = semantics_receipt(identity, token, destination);
-        session.apply(DockLiveUndockFact::DestinationSemanticsCommitted {
+        session.apply(DockLiveUndockFact::DestinationSemanticsSubmitted {
             identity,
             receipt: semantics,
         });
@@ -2953,7 +2953,7 @@ mod reducer_tests {
                     token: current_token,
                     destination: current_destination,
                 },
-                DockLiveUndockEffect::DestinationSemanticsCommitRequired {
+                DockLiveUndockEffect::DestinationSemanticsSubmissionRequired {
                     identity: semantics_identity,
                     token: semantics_token,
                     destination: semantics_destination,
@@ -2966,7 +2966,7 @@ mod reducer_tests {
                 && *semantics_destination == destination
         ));
         let semantics = semantics_receipt(identity, token, destination);
-        let semantics_effects = session.apply(DockLiveUndockFact::DestinationSemanticsCommitted {
+        let semantics_effects = session.apply(DockLiveUndockFact::DestinationSemanticsSubmitted {
             identity,
             receipt: semantics,
         });
@@ -3086,7 +3086,7 @@ mod reducer_tests {
         session.apply(DockLiveUndockFact::PromotionPrepared { identity, token });
         session.apply(DockLiveUndockFact::DurableSwapCommitted { identity, token });
         let semantics = semantics_receipt(identity, token, destination);
-        let semantics_effects = session.apply(DockLiveUndockFact::DestinationSemanticsCommitted {
+        let semantics_effects = session.apply(DockLiveUndockFact::DestinationSemanticsSubmitted {
             identity,
             receipt: semantics,
         });

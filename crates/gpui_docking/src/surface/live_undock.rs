@@ -1749,7 +1749,10 @@ impl DockLiveUndockPromotionCommitDisposition {
     }
 }
 
-/// Exact accepted destination-semantics projection for one durable promotion.
+/// Exact destination-semantics proof for one durable promotion.
+///
+/// Same-window receipts retain the renderer-submitted provisional frame. Host receipts retain the
+/// exact already-published host scene selected by the locked drop route.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct DockLiveUndockDestinationSemanticsReceipt {
     identity: DockLiveUndockIdentity,
@@ -1764,7 +1767,7 @@ pub(crate) struct DockLiveUndockPreparedDestinationSemanticsReceipt {
     identity: DockLiveUndockIdentity,
     token: DockLiveUndockPromotionToken,
     reveal: DockLiveUndockRevealReceipt,
-    pending: WindowProvisionalSemanticsSnapshot,
+    prior: WindowProvisionalSemanticsSnapshot,
     frame_generation: u64,
 }
 
@@ -1792,12 +1795,20 @@ impl DockLiveUndockDestinationSemanticsReceipt {
     ) -> Option<DockLiveUndockPreparedDestinationSemanticsReceipt> {
         let payload_lease = reveal.reveal_frame().mount().proxy().lease();
         let window_id = reveal.reveal_frame().window_id();
+        let accepts_first_frame = provisional.outcome()
+            == WindowProvisionalSemanticsOutcome::Pending
+            && provisional.accepted_frame_generation().is_none();
+        let replaces_unsubmitted_frame = provisional.outcome()
+            == WindowProvisionalSemanticsOutcome::Accepted
+            && provisional
+                .accepted_frame_generation()
+                .is_some_and(|accepted| frame_generation > accepted);
         if payload_lease.identity() != identity
             || provisional.window_id() != window_id
             || provisional.session_generation() != payload_lease.provisional_session_generation()
             || provisional.destination_generation() != token.get()
-            || provisional.outcome() != WindowProvisionalSemanticsOutcome::Pending
-            || provisional.committed_frame_generation().is_some()
+            || !(accepts_first_frame || replaces_unsubmitted_frame)
+            || provisional.submitted_frame_generation().is_some()
             || frame_generation < provisional.minimum_frame_generation()
             || frame_generation <= reveal.reveal_frame().frame_generation()
         {
@@ -1807,8 +1818,38 @@ impl DockLiveUndockDestinationSemanticsReceipt {
             identity,
             token,
             reveal,
-            pending: provisional,
+            prior: provisional,
             frame_generation,
+        })
+    }
+
+    pub(crate) fn new_same_window_submitted(
+        identity: DockLiveUndockIdentity,
+        token: DockLiveUndockPromotionToken,
+        reveal: DockLiveUndockRevealReceipt,
+        submitted: WindowProvisionalSemanticsSnapshot,
+    ) -> Option<Self> {
+        let payload_lease = reveal.reveal_frame().mount().proxy().lease();
+        let submitted_frame_generation = submitted.submitted_frame_generation()?;
+        if payload_lease.identity() != identity
+            || submitted.window_id() != reveal.reveal_frame().window_id()
+            || submitted.session_generation() != payload_lease.provisional_session_generation()
+            || submitted.destination_generation() != token.get()
+            || submitted.outcome() != WindowProvisionalSemanticsOutcome::Submitted
+            || submitted.accepted_frame_generation() != Some(submitted_frame_generation)
+            || submitted_frame_generation < submitted.minimum_frame_generation()
+            || submitted_frame_generation <= reveal.reveal_frame().frame_generation()
+        {
+            return None;
+        }
+        Some(Self {
+            identity,
+            token,
+            destination: DockLiveUndockPromotionDestination::SameWindowDesktop {
+                window_id: submitted.window_id(),
+            },
+            reveal: Some(reveal),
+            provisional: Some(submitted),
         })
     }
 
@@ -1841,44 +1882,29 @@ impl DockLiveUndockDestinationSemanticsReceipt {
 }
 
 impl DockLiveUndockPreparedDestinationSemanticsReceipt {
-    pub(crate) fn commit(
-        self,
-        committed: WindowProvisionalSemanticsSnapshot,
-    ) -> DockLiveUndockDestinationSemanticsReceipt {
-        assert_eq!(committed.window_id(), self.pending.window_id());
-        assert_eq!(
-            committed.session_generation(),
-            self.pending.session_generation()
-        );
-        assert_eq!(
-            committed.destination_generation(),
-            self.pending.destination_generation()
-        );
-        assert_eq!(
-            committed.minimum_frame_generation(),
-            self.pending.minimum_frame_generation()
-        );
-        assert_eq!(
-            committed.committed_frame_generation(),
-            Some(self.frame_generation)
-        );
-        assert_eq!(
-            committed.outcome(),
-            WindowProvisionalSemanticsOutcome::Committed
-        );
-        DockLiveUndockDestinationSemanticsReceipt {
-            identity: self.identity,
-            token: self.token,
-            destination: DockLiveUndockPromotionDestination::SameWindowDesktop {
-                window_id: committed.window_id(),
-            },
-            reveal: Some(self.reveal),
-            provisional: Some(committed),
-        }
+    pub(crate) fn accepts(self, accepted: WindowProvisionalSemanticsSnapshot) -> bool {
+        self.reveal
+            .reveal_frame()
+            .mount()
+            .proxy()
+            .lease()
+            .identity()
+            == self.identity
+            && accepted.window_id() == self.reveal.reveal_frame().window_id()
+            && accepted.window_id() == self.prior.window_id()
+            && accepted.session_generation() == self.prior.session_generation()
+            && accepted.destination_generation() == self.prior.destination_generation()
+            && accepted.destination_generation() == self.token.get()
+            && accepted.minimum_frame_generation() == self.prior.minimum_frame_generation()
+            && accepted.placement_mutation_generation()
+                == self.prior.placement_mutation_generation()
+            && accepted.accepted_frame_generation() == Some(self.frame_generation)
+            && accepted.submitted_frame_generation().is_none()
+            && accepted.outcome() == WindowProvisionalSemanticsOutcome::Accepted
     }
 }
 
-/// Exact proof that the destination interaction gate opened for committed semantics.
+/// Exact proof that the destination interaction gate opened for submitted semantics.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct DockLiveUndockDestinationInteractionReceipt {
     semantics: DockLiveUndockDestinationSemanticsReceipt,
@@ -1912,6 +1938,9 @@ impl DockLiveUndockDestinationInteractionReceipt {
         if session.window_id() != Some(semantics.destination.window_id())
             || session.generation() != projected.session_generation()
             || session.phase() != WindowProvisionalSessionPhase::Promoted
+            || projected.outcome() != WindowProvisionalSemanticsOutcome::Submitted
+            || projected.accepted_frame_generation() != projected.submitted_frame_generation()
+            || projected.submitted_frame_generation().is_none()
         {
             return None;
         }
@@ -2045,11 +2074,11 @@ pub(crate) enum DockLiveUndockFact {
         token: DockLiveUndockPromotionToken,
         destination: DockLiveUndockPromotionDestination,
     },
-    DestinationSemanticsCommitted {
+    DestinationSemanticsSubmitted {
         identity: DockLiveUndockIdentity,
         receipt: DockLiveUndockDestinationSemanticsReceipt,
     },
-    DestinationSemanticsCommitFailed {
+    DestinationSemanticsSubmissionFailed {
         identity: DockLiveUndockIdentity,
         token: DockLiveUndockPromotionToken,
         destination: DockLiveUndockPromotionDestination,
@@ -2152,8 +2181,8 @@ impl DockLiveUndockFact {
             | Self::PromotionPreparationFailed { identity, .. }
             | Self::DurableSwapCommitted { identity, .. }
             | Self::CommittedDestinationRecoveryRequired { identity, .. }
-            | Self::DestinationSemanticsCommitted { identity, .. }
-            | Self::DestinationSemanticsCommitFailed { identity, .. }
+            | Self::DestinationSemanticsSubmitted { identity, .. }
+            | Self::DestinationSemanticsSubmissionFailed { identity, .. }
             | Self::DestinationInteractionAdmitted { identity, .. }
             | Self::DestinationInteractionAdmissionFailed { identity, .. }
             | Self::SourceRestorationCommitted { identity, .. }
@@ -2266,7 +2295,7 @@ pub(crate) enum DockLiveUndockEffect {
         token: DockLiveUndockPromotionToken,
         destination: DockLiveUndockPromotionDestination,
     },
-    DestinationSemanticsCommitRequired {
+    DestinationSemanticsSubmissionRequired {
         identity: DockLiveUndockIdentity,
         token: DockLiveUndockPromotionToken,
         destination: DockLiveUndockPromotionDestination,
@@ -2508,7 +2537,7 @@ enum DockLiveUndockPromotionState {
         token: DockLiveUndockPromotionToken,
         destination: DockLiveUndockPromotionDestination,
     },
-    SemanticsCommitted {
+    SemanticsSubmitted {
         receipt: DockLiveUndockDestinationSemanticsReceipt,
     },
 }
@@ -2635,7 +2664,7 @@ impl DockLiveUndockActive {
             } | DockLiveUndockPromotionState::RecoveryRequired {
                 destination: DockLiveUndockPromotionDestination::Host(_),
                 ..
-            } | DockLiveUndockPromotionState::SemanticsCommitted {
+            } | DockLiveUndockPromotionState::SemanticsSubmitted {
                 receipt: DockLiveUndockDestinationSemanticsReceipt {
                     destination: DockLiveUndockPromotionDestination::Host(_),
                     ..
@@ -2661,7 +2690,7 @@ impl DockLiveUndockActive {
             DockLiveUndockPromotionState::Durable { token, destination } => {
                 Some((token, destination))
             }
-            DockLiveUndockPromotionState::SemanticsCommitted { receipt } => {
+            DockLiveUndockPromotionState::SemanticsSubmitted { receipt } => {
                 Some((receipt.token(), receipt.destination()))
             }
             DockLiveUndockPromotionState::None
@@ -2682,7 +2711,7 @@ impl DockLiveUndockActive {
             | DockLiveUndockPromotionState::RecoveryRequired { token, destination } => {
                 Some((token, destination))
             }
-            DockLiveUndockPromotionState::SemanticsCommitted { receipt } => {
+            DockLiveUndockPromotionState::SemanticsSubmitted { receipt } => {
                 Some((receipt.token(), receipt.destination()))
             }
             DockLiveUndockPromotionState::None
@@ -2726,7 +2755,7 @@ impl DockLiveUndockActive {
                 token: current,
                 destination,
             } if current == token => destination,
-            DockLiveUndockPromotionState::SemanticsCommitted { receipt }
+            DockLiveUndockPromotionState::SemanticsSubmitted { receipt }
                 if receipt.token() == token =>
             {
                 receipt.destination()
@@ -2736,7 +2765,7 @@ impl DockLiveUndockActive {
             | DockLiveUndockPromotionState::Prepared { .. }
             | DockLiveUndockPromotionState::Durable { .. }
             | DockLiveUndockPromotionState::RecoveryRequired { .. }
-            | DockLiveUndockPromotionState::SemanticsCommitted { .. } => return None,
+            | DockLiveUndockPromotionState::SemanticsSubmitted { .. } => return None,
         };
         if expected_destination.is_some_and(|expected| expected != destination) {
             return None;
@@ -2774,7 +2803,7 @@ impl DockLiveUndockActive {
             | DockLiveUndockPromotionState::Prepared { .. }
             | DockLiveUndockPromotionState::Durable { .. }
             | DockLiveUndockPromotionState::RecoveryRequired { .. }
-            | DockLiveUndockPromotionState::SemanticsCommitted { .. } => return None,
+            | DockLiveUndockPromotionState::SemanticsSubmitted { .. } => return None,
         };
         if expected_destination.is_some_and(|expected| expected != destination) {
             return None;
@@ -3541,11 +3570,13 @@ impl DockLiveUndockSession {
                             destination,
                         });
                     }
-                    effects.push(DockLiveUndockEffect::DestinationSemanticsCommitRequired {
-                        identity,
-                        token,
-                        destination,
-                    });
+                    effects.push(
+                        DockLiveUndockEffect::DestinationSemanticsSubmissionRequired {
+                            identity,
+                            token,
+                            destination,
+                        },
+                    );
                 }
             }
             DockLiveUndockFact::CommittedDestinationRecoveryRequired {
@@ -3558,7 +3589,7 @@ impl DockLiveUndockSession {
                     return Some(DockLiveUndockSettlement::DestinationLost(destination));
                 }
             }
-            DockLiveUndockFact::DestinationSemanticsCommitted { receipt, .. } => {
+            DockLiveUndockFact::DestinationSemanticsSubmitted { receipt, .. } => {
                 if let DockLiveUndockPromotionState::Durable {
                     token: current,
                     destination,
@@ -3567,7 +3598,7 @@ impl DockLiveUndockSession {
                     && receipt.token() == current
                     && receipt.destination() == destination
                 {
-                    active.promotion = DockLiveUndockPromotionState::SemanticsCommitted { receipt };
+                    active.promotion = DockLiveUndockPromotionState::SemanticsSubmitted { receipt };
                     effects.push(
                         DockLiveUndockEffect::DestinationInteractionAdmissionRequired {
                             identity,
@@ -3576,7 +3607,7 @@ impl DockLiveUndockSession {
                     );
                 }
             }
-            DockLiveUndockFact::DestinationSemanticsCommitFailed {
+            DockLiveUndockFact::DestinationSemanticsSubmissionFailed {
                 token, destination, ..
             } => {
                 if matches!(
@@ -3590,7 +3621,7 @@ impl DockLiveUndockSession {
                 }
             }
             DockLiveUndockFact::DestinationInteractionAdmitted { receipt, .. } => {
-                if let DockLiveUndockPromotionState::SemanticsCommitted { receipt: current } =
+                if let DockLiveUndockPromotionState::SemanticsSubmitted { receipt: current } =
                     active.promotion
                     && current == receipt.semantics()
                 {
@@ -3604,7 +3635,7 @@ impl DockLiveUndockSession {
                 }
             }
             DockLiveUndockFact::DestinationInteractionAdmissionFailed { semantics, .. } => {
-                if let DockLiveUndockPromotionState::SemanticsCommitted { receipt: current } =
+                if let DockLiveUndockPromotionState::SemanticsSubmitted { receipt: current } =
                     active.promotion
                     && current == semantics
                 {
@@ -3627,7 +3658,7 @@ impl DockLiveUndockSession {
                 {
                     return Some(DockLiveUndockSettlement::DestinationLost(destination));
                 }
-                DockLiveUndockPromotionState::SemanticsCommitted { receipt }
+                DockLiveUndockPromotionState::SemanticsSubmitted { receipt }
                     if receipt.destination().window_id() == window_id =>
                 {
                     let destination = receipt.destination();
@@ -3638,7 +3669,7 @@ impl DockLiveUndockSession {
                 | DockLiveUndockPromotionState::Prepared { .. }
                 | DockLiveUndockPromotionState::Durable { .. }
                 | DockLiveUndockPromotionState::RecoveryRequired { .. }
-                | DockLiveUndockPromotionState::SemanticsCommitted { .. } => {}
+                | DockLiveUndockPromotionState::SemanticsSubmitted { .. } => {}
             },
             DockLiveUndockFact::Cancel { reason, .. } => {
                 let precommit = active.committed_destination().is_none();

@@ -116,6 +116,26 @@ fn workspace_graph_projection_is_exact(
     })
 }
 
+fn destination_host_semantics_are_exact(
+    host: &Entity<DockHost>,
+    marker: &DockHostLiveDestinationSemantics,
+    cx: &App,
+) -> bool {
+    cx.read_entity(host, |host, _| {
+        host.accepts_live_destination_semantics(marker)
+            && host
+                .interaction()
+                .viewport_host_scene_frame()
+                .is_some_and(|scene| {
+                    scene.registration_key() == marker.registration()
+                        && scene.matches_viewport(
+                            marker.registration().space(),
+                            marker.binding().window_id(),
+                        )
+                })
+    })
+}
+
 fn record_post_commit_panic<T>(
     first_panic: &mut Option<Box<dyn Any + Send>>,
     stage: impl FnOnce() -> T,
@@ -697,6 +717,31 @@ struct DockLiveUndockDestinationSemanticsWatchdogKey {
     destination: DockLiveUndockPromotionDestination,
     session_generation: u64,
     placement_mutation_generation: u64,
+}
+
+#[derive(Clone)]
+struct DockLiveUndockSameWindowDestinationSemanticsAuthority {
+    identity: DockLiveUndockIdentity,
+    token: DockLiveUndockPromotionToken,
+    destination: DockLiveUndockPromotionDestination,
+    destination_window: WindowHandle<DockHost>,
+    reveal: DockLiveUndockRevealReceipt,
+    provisional_session: WindowProvisionalSession,
+    semantics: WindowProvisionalSemanticsTicket,
+    destination_host: WeakEntity<DockHost>,
+    marker: DockHostLiveDestinationSemantics,
+    controller: Entity<DockController>,
+    graph_commit: Option<DockWorkspaceGraphCommitReceipt>,
+}
+
+impl DockLiveUndockSameWindowDestinationSemanticsAuthority {
+    fn watchdog_key(&self) -> DockLiveUndockDestinationSemanticsWatchdogKey {
+        DockLiveUndockRuntime::destination_semantics_watchdog_key(
+            self.token,
+            self.destination,
+            &self.semantics,
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -1363,7 +1408,6 @@ struct DockLiveUndockDurableSameWindowPromotionExecution {
     identity: DockLiveUndockIdentity,
     token: DockLiveUndockPromotionToken,
     destination: DockLiveUndockPromotionDestination,
-    surface_revision: u64,
     destination_window: WindowHandle<DockHost>,
     destination_binding: DockHostWindowBinding,
     registration: crate::viewport_registry::DockViewportRegistrationKey,
@@ -3536,6 +3580,33 @@ impl DockLiveUndockRuntime {
         }
     }
 
+    fn same_window_destination_semantics_authority(
+        &self,
+        identity: DockLiveUndockIdentity,
+    ) -> Option<DockLiveUndockSameWindowDestinationSemanticsAuthority> {
+        let state = self.state.borrow();
+        let execution = state.executions.get(&identity)?;
+        let DockLiveUndockPromotionExecution::Durable(
+            DockLiveUndockDurablePromotionExecution::SameWindow(durable),
+        ) = execution.promotion.as_ref()?
+        else {
+            return None;
+        };
+        Some(DockLiveUndockSameWindowDestinationSemanticsAuthority {
+            identity: durable.identity,
+            token: durable.token,
+            destination: durable.destination,
+            destination_window: durable.destination_window,
+            reveal: durable.reveal,
+            provisional_session: durable.provisional_session.clone(),
+            semantics: durable.semantics.clone(),
+            destination_host: durable.destination_host.clone(),
+            marker: durable.destination_promotion.semantics().clone(),
+            controller: durable.controller.clone(),
+            graph_commit: durable.graph_commit,
+        })
+    }
+
     fn destination_semantics_watchdog_key(
         token: DockLiveUndockPromotionToken,
         destination: DockLiveUndockPromotionDestination,
@@ -3548,6 +3619,86 @@ impl DockLiveUndockRuntime {
             session_generation: semantics.session_generation(),
             placement_mutation_generation: semantics.placement_mutation_generation(),
         }
+    }
+
+    fn complete_submitted_destination_semantics(
+        &self,
+        authority: &DockLiveUndockSameWindowDestinationSemanticsAuthority,
+        cx: &mut App,
+    ) -> Option<DockLiveUndockDestinationSemanticsReceipt> {
+        let semantics = authority.semantics.snapshot();
+        let session = authority.provisional_session.snapshot();
+        if semantics.outcome() != WindowProvisionalSemanticsOutcome::Submitted
+            || session.window_id() != Some(authority.destination_window.window_id())
+            || session.generation() != semantics.session_generation()
+            || session.phase() != WindowProvisionalSessionPhase::DestinationSemanticsSubmitted
+        {
+            return None;
+        }
+        if !workspace_graph_projection_is_exact(&authority.controller, authority.graph_commit, cx) {
+            return None;
+        }
+        let Some(host) = authority.destination_host.upgrade() else {
+            return None;
+        };
+        if !destination_host_semantics_are_exact(&host, &authority.marker, cx) {
+            return None;
+        }
+        let Some(receipt) = DockLiveUndockDestinationSemanticsReceipt::new_same_window_submitted(
+            authority.identity,
+            authority.token,
+            authority.reveal,
+            semantics,
+        ) else {
+            return None;
+        };
+        if receipt.destination() != authority.destination {
+            return None;
+        }
+        let completed = cx.update_entity(&host, |host, host_cx| {
+            host.complete_live_destination_semantics(&authority.marker, host_cx)
+        });
+        completed.then_some(receipt)
+    }
+
+    fn fail_destination_semantics_submission(
+        &self,
+        identity: DockLiveUndockIdentity,
+        key: DockLiveUndockDestinationSemanticsWatchdogKey,
+        cx: &mut App,
+    ) {
+        self.clear_destination_semantics_watchdog(identity, key);
+        self.enqueue_fact(
+            DockLiveUndockQueuedFact::Reduce(
+                DockLiveUndockFact::DestinationSemanticsSubmissionFailed {
+                    identity,
+                    token: key.token,
+                    destination: key.destination,
+                },
+            ),
+            cx,
+        );
+    }
+
+    fn publish_submitted_destination_semantics(
+        &self,
+        authority: &DockLiveUndockSameWindowDestinationSemanticsAuthority,
+        key: DockLiveUndockDestinationSemanticsWatchdogKey,
+        cx: &mut App,
+    ) -> bool {
+        let Some(receipt) = self.complete_submitted_destination_semantics(authority, cx) else {
+            self.fail_destination_semantics_submission(authority.identity, key, cx);
+            return false;
+        };
+        self.clear_destination_semantics_watchdog(authority.identity, key);
+        self.enqueue_fact(
+            DockLiveUndockQueuedFact::Reduce(DockLiveUndockFact::DestinationSemanticsSubmitted {
+                identity: authority.identity,
+                receipt,
+            }),
+            cx,
+        );
+        true
     }
 
     fn arm_destination_semantics_watchdog(
@@ -3601,7 +3752,7 @@ impl DockLiveUndockRuntime {
         generation: u64,
         cx: &mut App,
     ) {
-        let authority = {
+        {
             let mut state = self.state.borrow_mut();
             let Some(execution) = state.executions.get_mut(&identity) else {
                 return;
@@ -3628,63 +3779,81 @@ impl DockLiveUndockRuntime {
                 execution.destination_semantics_watchdog.clear();
                 return;
             }
-            Some((
-                durable.destination_window,
-                durable.provisional_session.clone(),
-                durable.semantics.clone(),
-                durable.destination_host.clone(),
-                durable.destination_promotion.semantics().clone(),
-                durable.controller.clone(),
-                durable.graph_commit,
-            ))
-        };
-        let Some((
-            destination_window,
-            provisional_session,
-            semantics,
-            destination_host,
-            marker,
-            controller,
-            graph_commit,
-        )) = authority
-        else {
+        }
+        let Some(authority) = self.same_window_destination_semantics_authority(identity) else {
             return;
         };
 
-        let semantics_snapshot = semantics.snapshot();
-        if semantics_snapshot.outcome() == WindowProvisionalSemanticsOutcome::Committed {
-            self.clear_destination_semantics_watchdog(identity, key);
+        let semantics = authority.semantics.snapshot();
+        if semantics.outcome() == WindowProvisionalSemanticsOutcome::Submitted {
+            self.publish_submitted_destination_semantics(&authority, key, cx);
             return;
         }
-        let session = provisional_session.snapshot();
-        let destination_is_live = semantics_snapshot.outcome()
-            == WindowProvisionalSemanticsOutcome::Pending
-            && session.window_id() == Some(destination_window.window_id())
+        if matches!(
+            semantics.outcome(),
+            WindowProvisionalSemanticsOutcome::Rejected
+                | WindowProvisionalSemanticsOutcome::WindowTerminal
+        ) {
+            self.fail_destination_semantics_submission(identity, key, cx);
+            return;
+        }
+        let session = authority.provisional_session.snapshot();
+        let waiting_phase_is_exact = match (semantics.outcome(), session.phase()) {
+            (
+                WindowProvisionalSemanticsOutcome::Pending,
+                WindowProvisionalSessionPhase::ProjectingDestinationSemantics,
+            ) => {
+                semantics.accepted_frame_generation().is_none()
+                    && semantics.submitted_frame_generation().is_none()
+            }
+            (
+                WindowProvisionalSemanticsOutcome::Accepted,
+                WindowProvisionalSessionPhase::DestinationSemanticsAccepted,
+            ) => {
+                semantics.accepted_frame_generation().is_some()
+                    && semantics.submitted_frame_generation().is_none()
+            }
+            _ => false,
+        };
+        let authority_is_live = waiting_phase_is_exact
+            && session.window_id() == Some(authority.destination_window.window_id())
             && session.generation() == key.session_generation
-            && session.phase() == WindowProvisionalSessionPhase::ProjectingDestinationSemantics
-            && workspace_graph_projection_is_exact(&controller, graph_commit, cx)
-            && destination_host.upgrade().is_some_and(|host| {
+            && semantics.session_generation() == key.session_generation
+            && semantics.destination_generation() == key.token.get()
+            && semantics.placement_mutation_generation() == key.placement_mutation_generation
+            && workspace_graph_projection_is_exact(
+                &authority.controller,
+                authority.graph_commit,
+                cx,
+            )
+            && authority.destination_host.upgrade().is_some_and(|host| {
                 cx.read_entity(&host, |host, _| {
-                    host.accepts_live_destination_semantics(&marker)
+                    host.accepts_live_destination_semantics(&authority.marker)
                 })
-            })
-            && destination_window
-                .update(cx, |_, window, _| window.refresh())
-                .is_ok();
+            });
+        let destination_is_live = authority_is_live
+            && match semantics.outcome() {
+                WindowProvisionalSemanticsOutcome::Pending => authority
+                    .destination_window
+                    .update(cx, |_, window, _| window.refresh())
+                    .is_ok(),
+                WindowProvisionalSemanticsOutcome::Accepted => authority
+                    .destination_window
+                    .update(cx, |_, window, _| {
+                        window.request_provisional_destination_semantics_presentation(
+                            &authority.provisional_session,
+                            &authority.semantics,
+                        )
+                    })
+                    .is_ok_and(|result| result.is_ok()),
+                WindowProvisionalSemanticsOutcome::Submitted
+                | WindowProvisionalSemanticsOutcome::Rejected
+                | WindowProvisionalSemanticsOutcome::WindowTerminal => false,
+            };
         if destination_is_live {
             self.arm_destination_semantics_watchdog(identity, key.token, key.destination, cx);
         } else {
-            self.clear_destination_semantics_watchdog(identity, key);
-            self.enqueue_fact(
-                DockLiveUndockQueuedFact::Reduce(
-                    DockLiveUndockFact::DestinationSemanticsCommitFailed {
-                        identity,
-                        token: key.token,
-                        destination: key.destination,
-                    },
-                ),
-                cx,
-            );
+            self.fail_destination_semantics_submission(identity, key, cx);
         }
     }
 
@@ -4927,50 +5096,25 @@ impl DockLiveUndockRuntime {
                 return;
             }
         }
-        let authority = self
-            .state
-            .borrow()
-            .executions
-            .get(&marker.identity())
-            .and_then(|execution| match execution.promotion.as_ref()? {
-                DockLiveUndockPromotionExecution::Durable(
-                    DockLiveUndockDurablePromotionExecution::SameWindow(durable),
-                ) if durable.identity == marker.identity()
-                    && durable.token == marker.token()
-                    && durable.destination.window_id() == window.window_handle().window_id()
-                    && durable.surface_revision == marker.surface_revision()
-                    && durable.destination_binding == marker.binding()
-                    && &durable.registration == marker.registration()
-                    && durable.destination_window.window_id()
-                        == window.window_handle().window_id() =>
-                {
-                    Some((
-                        durable.identity,
-                        durable.token,
-                        durable.destination,
-                        durable.reveal,
-                        durable.provisional_session.clone(),
-                        durable.semantics.clone(),
-                        durable.controller.clone(),
-                        durable.graph_commit,
-                    ))
-                }
-                _ => None,
-            });
-        let Some((
-            identity,
-            token,
-            destination,
-            reveal,
-            provisional_session,
-            semantics,
-            controller,
-            graph_commit,
-        )) = authority
+        let Some(authority) = self.same_window_destination_semantics_authority(marker.identity())
         else {
             return;
         };
-        let watchdog_key = Self::destination_semantics_watchdog_key(token, destination, &semantics);
+        if authority.token != marker.token()
+            || authority.destination.window_id() != window.window_handle().window_id()
+            || authority.marker.surface_revision() != marker.surface_revision()
+            || authority.marker.binding() != marker.binding()
+            || authority.marker.registration() != marker.registration()
+            || authority.marker.destination().window_id() != marker.destination().window_id()
+            || authority.marker.destination().leases() != marker.destination().leases()
+            || authority.destination_window.window_id() != window.window_handle().window_id()
+        {
+            return;
+        }
+        let identity = authority.identity;
+        let token = authority.token;
+        let destination = authority.destination;
+        let watchdog_key = authority.watchdog_key();
         #[cfg(test)]
         let retire_graph_commit = std::mem::take(
             &mut self
@@ -4979,42 +5123,55 @@ impl DockLiveUndockRuntime {
                 .retire_next_same_window_graph_commit_before_semantics_ack,
         );
         #[cfg(test)]
-        if retire_graph_commit && let Some(receipt) = graph_commit {
-            cx.update_entity(&controller, |controller, _| {
+        if retire_graph_commit && let Some(receipt) = authority.graph_commit {
+            cx.update_entity(&authority.controller, |controller, _| {
                 controller.workspace_mut().retire_graph_commit(receipt);
             });
         }
-        if !workspace_graph_projection_is_exact(&controller, graph_commit, cx) {
-            self.clear_destination_semantics_watchdog(identity, watchdog_key);
-            self.enqueue_fact(
-                DockLiveUndockQueuedFact::Reduce(
-                    DockLiveUndockFact::DestinationSemanticsCommitFailed {
-                        identity,
-                        token,
-                        destination,
-                    },
-                ),
-                cx,
-            );
+        if !workspace_graph_projection_is_exact(&authority.controller, authority.graph_commit, cx) {
+            self.fail_destination_semantics_submission(identity, watchdog_key, cx);
             return;
         }
-        let host_is_exact = cx.read_entity(host, |host, _| {
-            host.accepts_live_destination_semantics(marker)
-                && host
-                    .interaction()
-                    .viewport_host_scene_frame()
-                    .is_some_and(|scene| {
-                        scene.registration_key() == marker.registration()
-                            && scene.matches_viewport(
-                                marker.registration().space(),
-                                marker.binding().window_id(),
-                            )
-                    })
-        });
-        if !host_is_exact {
+        if !destination_host_semantics_are_exact(host, marker, cx) {
             window.refresh();
             return;
         }
+
+        let current = authority.semantics.snapshot();
+        match current.outcome() {
+            WindowProvisionalSemanticsOutcome::Submitted => {
+                self.publish_submitted_destination_semantics(&authority, watchdog_key, cx);
+                return;
+            }
+            WindowProvisionalSemanticsOutcome::Accepted => {
+                let session = authority.provisional_session.snapshot();
+                let acceptance_is_live = session.window_id()
+                    == Some(window.window_handle().window_id())
+                    && session.generation() == current.session_generation()
+                    && session.phase()
+                        == WindowProvisionalSessionPhase::DestinationSemanticsAccepted
+                    && current.accepted_frame_generation().is_some()
+                    && current.submitted_frame_generation().is_none();
+                if !acceptance_is_live {
+                    self.fail_destination_semantics_submission(identity, watchdog_key, cx);
+                    return;
+                }
+                if current
+                    .accepted_frame_generation()
+                    .is_some_and(|accepted| frame_generation <= accepted)
+                {
+                    self.arm_destination_semantics_watchdog(identity, token, destination, cx);
+                    return;
+                }
+            }
+            WindowProvisionalSemanticsOutcome::Rejected
+            | WindowProvisionalSemanticsOutcome::WindowTerminal => {
+                self.fail_destination_semantics_submission(identity, watchdog_key, cx);
+                return;
+            }
+            WindowProvisionalSemanticsOutcome::Pending => {}
+        }
+
         let Some(presentation) =
             view_presentation_window::stable_batch_presentation_receipt(cx, marker.destination())
         else {
@@ -5035,86 +5192,69 @@ impl DockLiveUndockRuntime {
             return;
         }
 
-        let pending = semantics.snapshot();
+        let before_acceptance = authority.semantics.snapshot();
         let Some(prepared_receipt) = DockLiveUndockDestinationSemanticsReceipt::prepare_same_window(
             identity,
             token,
-            reveal,
-            pending,
+            authority.reveal,
+            before_acceptance,
             frame_generation,
         ) else {
-            let retryable = pending.outcome() == WindowProvisionalSemanticsOutcome::Pending
-                && pending.committed_frame_generation().is_none()
-                && pending.window_id() == window.window_handle().window_id()
-                && pending.session_generation() == provisional_session.snapshot().generation()
-                && pending.destination_generation() == token.get()
-                && (frame_generation < pending.minimum_frame_generation()
-                    || frame_generation <= reveal.reveal_frame().frame_generation());
+            let retryable = before_acceptance.outcome()
+                == WindowProvisionalSemanticsOutcome::Pending
+                && before_acceptance.accepted_frame_generation().is_none()
+                && before_acceptance.submitted_frame_generation().is_none()
+                && before_acceptance.window_id() == window.window_handle().window_id()
+                && before_acceptance.session_generation()
+                    == authority.provisional_session.snapshot().generation()
+                && before_acceptance.destination_generation() == token.get()
+                && (frame_generation < before_acceptance.minimum_frame_generation()
+                    || frame_generation <= authority.reveal.reveal_frame().frame_generation());
             if retryable {
                 window.refresh();
             } else {
-                self.clear_destination_semantics_watchdog(identity, watchdog_key);
-                self.enqueue_fact(
-                    DockLiveUndockQueuedFact::Reduce(
-                        DockLiveUndockFact::DestinationSemanticsCommitFailed {
-                            identity,
-                            token,
-                            destination,
-                        },
-                    ),
-                    cx,
-                );
+                self.fail_destination_semantics_submission(identity, watchdog_key, cx);
             }
             return;
         };
 
-        let committed = match window.accept_provisional_destination_semantics_frame(
-            &provisional_session,
-            &semantics,
+        let accepted = match window.accept_provisional_destination_semantics_frame(
+            &authority.provisional_session,
+            &authority.semantics,
             frame_generation,
             cx,
         ) {
-            Ok(committed) => committed,
+            Ok(accepted) => accepted,
             Err(_) => {
-                let semantics = semantics.snapshot();
-                let session = provisional_session.snapshot();
-                if semantics.outcome() == WindowProvisionalSemanticsOutcome::Pending
-                    && session.phase()
-                        == WindowProvisionalSessionPhase::ProjectingDestinationSemantics
-                {
-                    window.refresh();
-                } else {
-                    self.clear_destination_semantics_watchdog(identity, watchdog_key);
-                    self.enqueue_fact(
-                        DockLiveUndockQueuedFact::Reduce(
-                            DockLiveUndockFact::DestinationSemanticsCommitFailed {
-                                identity,
-                                token,
-                                destination,
-                            },
-                        ),
-                        cx,
-                    );
+                let semantics = authority.semantics.snapshot();
+                let session = authority.provisional_session.snapshot();
+                match (semantics.outcome(), session.phase()) {
+                    (
+                        WindowProvisionalSemanticsOutcome::Pending,
+                        WindowProvisionalSessionPhase::ProjectingDestinationSemantics,
+                    ) => window.refresh(),
+                    (
+                        WindowProvisionalSemanticsOutcome::Accepted,
+                        WindowProvisionalSessionPhase::DestinationSemanticsAccepted,
+                    ) => self.arm_destination_semantics_watchdog(identity, token, destination, cx),
+                    (
+                        WindowProvisionalSemanticsOutcome::Submitted,
+                        WindowProvisionalSessionPhase::DestinationSemanticsSubmitted,
+                    ) => {
+                        self.publish_submitted_destination_semantics(&authority, watchdog_key, cx);
+                    }
+                    _ => {
+                        self.fail_destination_semantics_submission(identity, watchdog_key, cx);
+                    }
                 }
                 return;
             }
         };
-        let receipt = prepared_receipt.commit(committed);
-        let completed = cx.update_entity(host, |host, host_cx| {
-            host.complete_live_destination_semantics(marker, host_cx)
-        });
-        assert!(
-            completed,
-            "an accepted destination-semantics marker must remain exact through one callback"
-        );
-        self.clear_destination_semantics_watchdog(identity, watchdog_key);
-        let _ = self.enqueue_fact(
-            DockLiveUndockQueuedFact::Reduce(DockLiveUndockFact::DestinationSemanticsCommitted {
-                identity,
-                receipt,
-            }),
-            cx,
-        );
+        if prepared_receipt.accepts(accepted) {
+            self.arm_destination_semantics_watchdog(identity, token, destination, cx);
+        } else {
+            self.fail_destination_semantics_submission(identity, watchdog_key, cx);
+        }
     }
 
     fn source_restoration_execution_for_identity(
@@ -8064,7 +8204,6 @@ impl DockLiveUndockRuntime {
                 identity: commit.identity,
                 token: commit.token,
                 destination: commit.destination,
-                surface_revision: committed_revision,
                 destination_window,
                 destination_binding: destination_promotion.semantics().binding(),
                 registration: viewport.registration.clone(),
@@ -8534,7 +8673,6 @@ impl DockLiveUndockRuntime {
                 identity: commit.identity,
                 token: commit.token,
                 destination: commit.destination,
-                surface_revision: committed_revision,
                 destination_window,
                 destination_binding: destination_semantics.binding(),
                 registration: viewport.registration.clone(),
@@ -9754,7 +9892,7 @@ impl DockLiveUndockRuntime {
                     }
                 }
             }
-            DockLiveUndockEffect::DestinationSemanticsCommitRequired {
+            DockLiveUndockEffect::DestinationSemanticsSubmissionRequired {
                 identity,
                 token,
                 destination,
@@ -9835,12 +9973,12 @@ impl DockLiveUndockRuntime {
                             })
                             .flatten()
                             .map_or_else(
-                                || DockLiveUndockFact::DestinationSemanticsCommitFailed {
+                                || DockLiveUndockFact::DestinationSemanticsSubmissionFailed {
                                     identity,
                                     token,
                                     destination,
                                 },
-                                |receipt| DockLiveUndockFact::DestinationSemanticsCommitted {
+                                |receipt| DockLiveUndockFact::DestinationSemanticsSubmitted {
                                     identity,
                                     receipt,
                                 },
@@ -9850,7 +9988,7 @@ impl DockLiveUndockRuntime {
                     None => {
                         self.enqueue_fact(
                             DockLiveUndockQueuedFact::Reduce(
-                                DockLiveUndockFact::DestinationSemanticsCommitFailed {
+                                DockLiveUndockFact::DestinationSemanticsSubmissionFailed {
                                     identity,
                                     token,
                                     destination,
@@ -9998,8 +10136,7 @@ impl DockLiveUndockRuntime {
                                 if !source_proxies_retired {
                                     return None;
                                 }
-                                window
-                                .update(cx, |_, window, cx| {
+                                let admission = window.update(cx, |_, window, cx| {
                                     if !workspace_graph_projection_is_exact(
                                         &controller,
                                         graph_commit,
@@ -10013,9 +10150,8 @@ impl DockLiveUndockRuntime {
                                     DockLiveUndockDestinationInteractionReceipt::new_same_window(
                                         semantics, &session,
                                     )
-                                })
-                                .ok()
-                                .flatten()
+                                });
+                                admission.ok().flatten()
                             }
                             Authority::Host {
                                 host,

@@ -37,10 +37,11 @@ use open_gpui::{
     InteractiveElement, IntoElement, Modifiers, MouseButton, NativeCapturedDragReleaseTerminal,
     ParentElement, Pixels, PlatformNativeDragHysteresis, PlatformPointerCaptureReleaseOutcome,
     PlatformWindowDispatch, PlatformWindowHit, PlatformWindowHitStack,
-    PlatformWindowPhysicalCoverage, PlatformWindowPhysicalGeometry, Point, PointerCancelReason,
-    PointerCaptureHandle, Render, Size, Styled, Subscription, SubtreeTransform,
-    SubtreeTransformExt, SubtreeTransformOrigin, TestAppContext, VisualTestContext, Window,
-    WindowHandle, WindowMouseEvent, WindowMutationDomain, canvas, div, point, px, size,
+    PlatformWindowPhysicalCoverage, PlatformWindowPhysicalGeometry, PlatformWindowPresentOutcome,
+    Point, PointerCancelReason, PointerCaptureHandle, Render, Size, Styled, Subscription,
+    SubtreeTransform, SubtreeTransformExt, SubtreeTransformOrigin, TestAppContext,
+    VisualTestContext, Window, WindowHandle, WindowMouseEvent, WindowMutationDomain, canvas, div,
+    point, px, size,
 };
 use slotmap::Key;
 use std::{
@@ -6545,6 +6546,94 @@ fn same_window_missing_graph_receipt_before_semantics_recovers_committed_destina
 }
 
 #[open_gpui::test]
+fn same_window_renderer_rejection_recovers_committed_destination(cx: &mut TestAppContext) {
+    let mut fixture = native_captured_source_fixture(cx);
+    begin_native_live_undock_with_released_source(&mut fixture, cx);
+    fixture.source_visual = VisualTestContext::from_window(fixture.source_window, cx);
+    let (destination_window, _destination_host, destination_space) =
+        reveal_live_undock_provisional_destination(&fixture, cx);
+    cx.set_window_present_outcome(destination_window, PlatformWindowPresentOutcome::Rejected);
+
+    cx.set_next_window_placement_dispatch(destination_window, PlatformWindowDispatch::Queued);
+    cx.set_platform_window_hit_stack(
+        PlatformWindowHitStack::try_available_open_desktop(
+            point(DevicePixels(1880), DevicePixels(1880)),
+            Vec::new(),
+        )
+        .expect("the moved desktop release observation should be valid"),
+    );
+    fixture.source_visual.simulate_mouse_up(
+        point(px(940.0), px(940.0)),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    let drained_without_advancing_deadline = (0..10_000).any(|_| !cx.background_executor.tick());
+    assert!(drained_without_advancing_deadline);
+    assert!(cx.flush_window_mutation(destination_window, WindowMutationDomain::Placement));
+    cx.run_until_parked();
+
+    assert_eq!(
+        cx.read_entity(fixture.surface.owner(), |owner, _| owner
+            .live_undock_phase()),
+        crate::surface::live_undock::DockLiveUndockPhase::Bound,
+        "renderer rejection must remain gated until its typed semantics outcome is consumed"
+    );
+    for _ in 0..3 {
+        cx.executor().advance_clock(
+            crate::surface::live_undock_runtime::LIVE_UNDOCK_DESTINATION_SEMANTICS_WATCHDOG_INTERVAL,
+        );
+        cx.run_until_parked();
+        if cx.read_entity(fixture.surface.owner(), |owner, _| {
+            owner.live_undock_phase()
+        }) == crate::surface::live_undock::DockLiveUndockPhase::Idle
+        {
+            break;
+        }
+    }
+
+    assert!(
+        destination_window.update(cx, |_, _, _| ()).is_err(),
+        "a renderer-rejected destination must never become interactive"
+    );
+    cx.read_entity(&fixture.controller, |controller, _| {
+        assert_eq!(
+            controller
+                .graph()
+                .collect_items_in_space(&DockSpaceId::from("main")),
+            vec![item("b")]
+        );
+        assert_eq!(
+            controller
+                .graph()
+                .collect_items_in_space(&destination_space),
+            vec![item("a")],
+            "renderer rejection occurs after the durable topology swap and must recover forward"
+        );
+    });
+    cx.read_entity(fixture.surface.owner(), |owner, _| {
+        assert_eq!(
+            owner.live_undock_phase(),
+            crate::surface::live_undock::DockLiveUndockPhase::Idle
+        );
+        assert_eq!(owner.live_undock_runtime().execution_count_for_test(), 0);
+        assert_eq!(
+            owner.visible_payload_recovery_count_for_test(
+                crate::surface::payload_recovery::DockPayloadRecoveryReason::LostViewportRecovery,
+            ),
+            1,
+            "typed renderer rejection must enter committed-destination recovery"
+        );
+    });
+    assert!(
+        fixture
+            .runtime
+            .active_payload_drag_session(&fixture.payload)
+            .is_none(),
+        "committed-destination recovery must release the exact payload drag generation"
+    );
+}
+
+#[open_gpui::test]
 fn same_window_superseded_graph_before_interaction_admission_recovers_committed_destination(
     cx: &mut TestAppContext,
 ) {
@@ -7208,7 +7297,7 @@ fn same_window_promotion_can_commit_failure_restores_without_durable_swap(cx: &m
 }
 
 #[open_gpui::test]
-fn same_window_destination_semantics_can_commit_after_more_than_four_watchdog_wakes(
+fn same_window_destination_semantics_can_submit_after_more_than_four_watchdog_wakes(
     cx: &mut TestAppContext,
 ) {
     let mut fixture = native_captured_source_fixture(cx);

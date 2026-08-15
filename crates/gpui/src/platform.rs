@@ -1335,8 +1335,12 @@ pub enum WindowProvisionalSessionPhase {
     Gated,
     /// The destination tree is being projected while native and framework input remain gated.
     ProjectingDestinationSemantics,
-    /// The exact destination tree committed, but interaction remains gated.
-    DestinationSemanticsCommitted,
+    /// The exact destination tree was accepted by GPUI, but has not been submitted yet.
+    DestinationSemanticsAccepted,
+    /// The renderer submitted the exact accepted destination frame, but interaction remains gated.
+    DestinationSemanticsSubmitted,
+    /// The renderer terminally rejected the exact accepted destination frame.
+    DestinationSemanticsRejected,
     /// The exact window was promoted in place and may accept interaction.
     Promoted,
     /// Presentation and interaction are terminal for this generation.
@@ -1378,7 +1382,8 @@ impl WindowProvisionalSessionSnapshot {
         matches!(
             self.phase,
             WindowProvisionalSessionPhase::ProjectingDestinationSemantics
-                | WindowProvisionalSessionPhase::DestinationSemanticsCommitted
+                | WindowProvisionalSessionPhase::DestinationSemanticsAccepted
+                | WindowProvisionalSessionPhase::DestinationSemanticsSubmitted
                 | WindowProvisionalSessionPhase::Promoted
         )
     }
@@ -1956,15 +1961,19 @@ pub struct WindowProvisionalPlacementTicket {
     state: Arc<ParkingMutex<WindowProvisionalPlacementState>>,
 }
 
-/// Terminal status of one exact destination-semantics projection.
+/// State of one exact destination-semantics projection.
 #[doc(hidden)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WindowProvisionalSemanticsOutcome {
-    /// The interactive destination tree has not committed yet.
+    /// The interactive destination tree has not reached an accepted frame yet.
     Pending,
-    /// The exact destination tree committed in one accepted frame.
-    Committed,
-    /// The window became terminal before the destination tree committed.
+    /// GPUI accepted the exact destination tree, but the renderer has not submitted it yet.
+    Accepted,
+    /// The renderer submitted the exact accepted destination frame.
+    Submitted,
+    /// The renderer terminally rejected the exact accepted destination frame.
+    Rejected,
+    /// The window became terminal before the destination frame was submitted.
     WindowTerminal,
 }
 
@@ -1977,7 +1986,8 @@ pub struct WindowProvisionalSemanticsSnapshot {
     destination_generation: u64,
     minimum_frame_generation: u64,
     placement_mutation_generation: u64,
-    committed_frame_generation: Option<u64>,
+    accepted_frame_generation: Option<u64>,
+    submitted_frame_generation: Option<u64>,
     outcome: WindowProvisionalSemanticsOutcome,
 }
 
@@ -2007,21 +2017,51 @@ impl WindowProvisionalSemanticsSnapshot {
         self.placement_mutation_generation
     }
 
-    /// Returns the accepted frame that committed the destination tree.
-    pub const fn committed_frame_generation(self) -> Option<u64> {
-        self.committed_frame_generation
+    /// Returns the exact frame GPUI accepted for the destination tree.
+    pub const fn accepted_frame_generation(self) -> Option<u64> {
+        self.accepted_frame_generation
     }
 
-    /// Returns the current terminal or pending outcome.
+    /// Returns the exact accepted frame whose renderer submission completed.
+    pub const fn submitted_frame_generation(self) -> Option<u64> {
+        self.submitted_frame_generation
+    }
+
+    /// Returns the current projection outcome.
     pub const fn outcome(self) -> WindowProvisionalSemanticsOutcome {
         self.outcome
     }
 }
 
-#[derive(Debug)]
-struct WindowProvisionalSemanticsState {
-    committed_frame_generation: Option<u64>,
-    outcome: WindowProvisionalSemanticsOutcome,
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WindowProvisionalSemanticsState {
+    Pending {
+        minimum_frame_generation: u64,
+    },
+    Accepted {
+        minimum_frame_generation: u64,
+        frame_generation: u64,
+    },
+    Submitted {
+        minimum_frame_generation: u64,
+        frame_generation: u64,
+    },
+    Rejected {
+        minimum_frame_generation: u64,
+        frame_generation: u64,
+    },
+    WindowTerminal {
+        minimum_frame_generation: u64,
+        accepted_frame_generation: Option<u64>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum WindowProvisionalSemanticsPresentTransition {
+    Unchanged,
+    Submitted,
+    Rejected,
+    Invalidated,
 }
 
 /// A cloneable exact-generation destination-semantics receipt.
@@ -2031,7 +2071,6 @@ pub struct WindowProvisionalSemanticsTicket {
     window_id: WindowId,
     session_generation: u64,
     destination_generation: u64,
-    minimum_frame_generation: u64,
     placement_mutation_generation: u64,
     state: Arc<ParkingMutex<WindowProvisionalSemanticsState>>,
 }
@@ -2048,47 +2087,196 @@ impl WindowProvisionalSemanticsTicket {
             window_id,
             session_generation,
             destination_generation,
-            minimum_frame_generation,
             placement_mutation_generation,
-            state: Arc::new(ParkingMutex::new(WindowProvisionalSemanticsState {
-                committed_frame_generation: None,
-                outcome: WindowProvisionalSemanticsOutcome::Pending,
-            })),
+            state: Arc::new(ParkingMutex::new(
+                WindowProvisionalSemanticsState::Pending {
+                    minimum_frame_generation,
+                },
+            )),
         }
     }
 
     /// Returns immutable evidence that survives the target window.
     pub fn snapshot(&self) -> WindowProvisionalSemanticsSnapshot {
-        let state = self.state.lock();
+        let state = *self.state.lock();
+        let (
+            minimum_frame_generation,
+            accepted_frame_generation,
+            submitted_frame_generation,
+            outcome,
+        ) = match state {
+            WindowProvisionalSemanticsState::Pending {
+                minimum_frame_generation,
+            } => (
+                minimum_frame_generation,
+                None,
+                None,
+                WindowProvisionalSemanticsOutcome::Pending,
+            ),
+            WindowProvisionalSemanticsState::Accepted {
+                minimum_frame_generation,
+                frame_generation,
+            } => (
+                minimum_frame_generation,
+                Some(frame_generation),
+                None,
+                WindowProvisionalSemanticsOutcome::Accepted,
+            ),
+            WindowProvisionalSemanticsState::Submitted {
+                minimum_frame_generation,
+                frame_generation,
+            } => (
+                minimum_frame_generation,
+                Some(frame_generation),
+                Some(frame_generation),
+                WindowProvisionalSemanticsOutcome::Submitted,
+            ),
+            WindowProvisionalSemanticsState::Rejected {
+                minimum_frame_generation,
+                frame_generation,
+            } => (
+                minimum_frame_generation,
+                Some(frame_generation),
+                None,
+                WindowProvisionalSemanticsOutcome::Rejected,
+            ),
+            WindowProvisionalSemanticsState::WindowTerminal {
+                minimum_frame_generation,
+                accepted_frame_generation,
+            } => (
+                minimum_frame_generation,
+                accepted_frame_generation,
+                None,
+                WindowProvisionalSemanticsOutcome::WindowTerminal,
+            ),
+        };
         WindowProvisionalSemanticsSnapshot {
             window_id: self.window_id,
             session_generation: self.session_generation,
             destination_generation: self.destination_generation,
-            minimum_frame_generation: self.minimum_frame_generation,
+            minimum_frame_generation,
             placement_mutation_generation: self.placement_mutation_generation,
-            committed_frame_generation: state.committed_frame_generation,
-            outcome: state.outcome,
+            accepted_frame_generation,
+            submitted_frame_generation,
+            outcome,
         }
     }
 
-    fn commit_frame(&self, frame_generation: u64) -> bool {
+    fn accept_frame(&self, frame_generation: u64) -> bool {
         let mut state = self.state.lock();
-        if state.outcome != WindowProvisionalSemanticsOutcome::Pending
-            || state.committed_frame_generation.is_some()
-            || frame_generation < self.minimum_frame_generation
-        {
-            return false;
+        match *state {
+            WindowProvisionalSemanticsState::Pending {
+                minimum_frame_generation,
+            } => {
+                if frame_generation < minimum_frame_generation {
+                    return false;
+                }
+                *state = WindowProvisionalSemanticsState::Accepted {
+                    minimum_frame_generation,
+                    frame_generation,
+                };
+                true
+            }
+            WindowProvisionalSemanticsState::Accepted {
+                minimum_frame_generation,
+                frame_generation: accepted_frame_generation,
+            } => {
+                if frame_generation < accepted_frame_generation {
+                    return false;
+                }
+                *state = WindowProvisionalSemanticsState::Accepted {
+                    minimum_frame_generation,
+                    frame_generation,
+                };
+                true
+            }
+            WindowProvisionalSemanticsState::Submitted { .. }
+            | WindowProvisionalSemanticsState::Rejected { .. }
+            | WindowProvisionalSemanticsState::WindowTerminal { .. } => false,
         }
-        state.committed_frame_generation = Some(frame_generation);
-        state.outcome = WindowProvisionalSemanticsOutcome::Committed;
-        true
+    }
+
+    fn record_present_outcome(
+        &self,
+        frame_generation: u64,
+        outcome: PlatformWindowPresentOutcome,
+    ) -> WindowProvisionalSemanticsPresentTransition {
+        let mut state = self.state.lock();
+        let WindowProvisionalSemanticsState::Accepted {
+            minimum_frame_generation,
+            frame_generation: accepted_frame_generation,
+        } = *state
+        else {
+            return WindowProvisionalSemanticsPresentTransition::Unchanged;
+        };
+        if frame_generation < accepted_frame_generation {
+            return WindowProvisionalSemanticsPresentTransition::Unchanged;
+        }
+        if frame_generation > accepted_frame_generation {
+            let Some(next_frame_generation) = frame_generation.checked_add(1) else {
+                return WindowProvisionalSemanticsPresentTransition::Unchanged;
+            };
+            *state = WindowProvisionalSemanticsState::Pending {
+                minimum_frame_generation: minimum_frame_generation.max(next_frame_generation),
+            };
+            return WindowProvisionalSemanticsPresentTransition::Invalidated;
+        }
+        match outcome {
+            PlatformWindowPresentOutcome::Submitted => {
+                *state = WindowProvisionalSemanticsState::Submitted {
+                    minimum_frame_generation,
+                    frame_generation,
+                };
+                WindowProvisionalSemanticsPresentTransition::Submitted
+            }
+            PlatformWindowPresentOutcome::RepaintRequired => {
+                let Some(next_frame_generation) = frame_generation.checked_add(1) else {
+                    return WindowProvisionalSemanticsPresentTransition::Unchanged;
+                };
+                *state = WindowProvisionalSemanticsState::Pending {
+                    minimum_frame_generation: minimum_frame_generation.max(next_frame_generation),
+                };
+                WindowProvisionalSemanticsPresentTransition::Invalidated
+            }
+            PlatformWindowPresentOutcome::Rejected => {
+                *state = WindowProvisionalSemanticsState::Rejected {
+                    minimum_frame_generation,
+                    frame_generation,
+                };
+                WindowProvisionalSemanticsPresentTransition::Rejected
+            }
+            PlatformWindowPresentOutcome::Deferred => {
+                WindowProvisionalSemanticsPresentTransition::Unchanged
+            }
+        }
     }
 
     fn settle_window_terminal(&self) {
         let mut state = self.state.lock();
-        if state.outcome == WindowProvisionalSemanticsOutcome::Pending {
-            state.outcome = WindowProvisionalSemanticsOutcome::WindowTerminal;
-        }
+        *state = match *state {
+            WindowProvisionalSemanticsState::Pending {
+                minimum_frame_generation,
+            } => WindowProvisionalSemanticsState::WindowTerminal {
+                minimum_frame_generation,
+                accepted_frame_generation: None,
+            },
+            WindowProvisionalSemanticsState::Accepted {
+                minimum_frame_generation,
+                frame_generation,
+            } => WindowProvisionalSemanticsState::WindowTerminal {
+                minimum_frame_generation,
+                accepted_frame_generation: Some(frame_generation),
+            },
+            WindowProvisionalSemanticsState::Rejected {
+                minimum_frame_generation,
+                frame_generation,
+            } => WindowProvisionalSemanticsState::WindowTerminal {
+                minimum_frame_generation,
+                accepted_frame_generation: Some(frame_generation),
+            },
+            settled @ (WindowProvisionalSemanticsState::Submitted { .. }
+            | WindowProvisionalSemanticsState::WindowTerminal { .. }) => settled,
+        };
     }
 
     fn same_authority(&self, other: &Self) -> bool {
@@ -2610,13 +2798,17 @@ impl WindowProvisionalSession {
         let semantics_frozen = matches!(
             state.phase,
             WindowProvisionalSessionPhase::ProjectingDestinationSemantics
-                | WindowProvisionalSessionPhase::DestinationSemanticsCommitted
+                | WindowProvisionalSessionPhase::DestinationSemanticsAccepted
+                | WindowProvisionalSessionPhase::DestinationSemanticsSubmitted
+                | WindowProvisionalSessionPhase::DestinationSemanticsRejected
         );
         let provisional_gate_live = matches!(
             state.phase,
             WindowProvisionalSessionPhase::Gated
                 | WindowProvisionalSessionPhase::ProjectingDestinationSemantics
-                | WindowProvisionalSessionPhase::DestinationSemanticsCommitted
+                | WindowProvisionalSessionPhase::DestinationSemanticsAccepted
+                | WindowProvisionalSessionPhase::DestinationSemanticsSubmitted
+                | WindowProvisionalSessionPhase::DestinationSemanticsRejected
         );
         Ok(match domain {
             WindowMutationDomain::Placement => placement_pending || semantics_frozen,
@@ -2787,7 +2979,7 @@ impl WindowProvisionalSession {
         Ok(ticket)
     }
 
-    pub(crate) fn commit_destination_semantics(
+    pub(crate) fn accept_destination_semantics_frame(
         &self,
         window_id: WindowId,
         exact_ticket: &WindowProvisionalSemanticsTicket,
@@ -2798,7 +2990,11 @@ impl WindowProvisionalSession {
         if state.window_id != Some(window_id) {
             return Err(WindowProvisionalSessionError::WindowMismatch);
         }
-        if state.phase != WindowProvisionalSessionPhase::ProjectingDestinationSemantics {
+        if !matches!(
+            state.phase,
+            WindowProvisionalSessionPhase::ProjectingDestinationSemantics
+                | WindowProvisionalSessionPhase::DestinationSemanticsAccepted
+        ) {
             return Err(WindowProvisionalSessionError::InvalidPhase);
         }
         let ticket = state
@@ -2810,11 +3006,46 @@ impl WindowProvisionalSession {
         {
             return Err(WindowProvisionalSessionError::InvalidPhase);
         }
-        if !ticket.commit_frame(frame_generation) {
+        if !ticket.accept_frame(frame_generation) {
             return Err(WindowProvisionalSessionError::InvalidPhase);
         }
-        state.phase = WindowProvisionalSessionPhase::DestinationSemanticsCommitted;
+        state.phase = WindowProvisionalSessionPhase::DestinationSemanticsAccepted;
         Ok(())
+    }
+
+    pub(crate) fn record_destination_semantics_present_outcome(
+        &self,
+        window_id: WindowId,
+        frame_generation: u64,
+        current_mutation_generation: u64,
+        outcome: PlatformWindowPresentOutcome,
+    ) -> WindowProvisionalSemanticsPresentTransition {
+        let mut state = self.state.lock();
+        if state.window_id != Some(window_id)
+            || state.phase != WindowProvisionalSessionPhase::DestinationSemanticsAccepted
+        {
+            return WindowProvisionalSemanticsPresentTransition::Unchanged;
+        }
+        let Some(ticket) = state.destination_semantics_ticket.as_ref() else {
+            return WindowProvisionalSemanticsPresentTransition::Unchanged;
+        };
+        if !ticket.matches_placement_mutation_generation(current_mutation_generation) {
+            return WindowProvisionalSemanticsPresentTransition::Unchanged;
+        }
+        let transition = ticket.record_present_outcome(frame_generation, outcome);
+        match transition {
+            WindowProvisionalSemanticsPresentTransition::Submitted => {
+                state.phase = WindowProvisionalSessionPhase::DestinationSemanticsSubmitted;
+            }
+            WindowProvisionalSemanticsPresentTransition::Rejected => {
+                state.phase = WindowProvisionalSessionPhase::DestinationSemanticsRejected;
+            }
+            WindowProvisionalSemanticsPresentTransition::Invalidated => {
+                state.phase = WindowProvisionalSessionPhase::ProjectingDestinationSemantics;
+            }
+            WindowProvisionalSemanticsPresentTransition::Unchanged => {}
+        }
+        transition
     }
 
     pub(crate) fn admit_interaction(
@@ -2835,17 +3066,19 @@ impl WindowProvisionalSession {
                     current.same_authority(ticket)
                         && current
                             .matches_placement_mutation_generation(current_mutation_generation)
+                        && current.snapshot().outcome()
+                            == WindowProvisionalSemanticsOutcome::Submitted
                 })
         {
             return Ok(());
         }
-        if state.phase != WindowProvisionalSessionPhase::DestinationSemanticsCommitted
+        if state.phase != WindowProvisionalSessionPhase::DestinationSemanticsSubmitted
             || state
                 .destination_semantics_ticket
                 .as_ref()
                 .is_none_or(|current| !current.same_authority(ticket))
             || !ticket.matches_placement_mutation_generation(current_mutation_generation)
-            || ticket.snapshot().outcome() != WindowProvisionalSemanticsOutcome::Committed
+            || ticket.snapshot().outcome() != WindowProvisionalSemanticsOutcome::Submitted
         {
             return Err(WindowProvisionalSessionError::InvalidPhase);
         }
@@ -7454,7 +7687,7 @@ mod provisional_placement_tests {
     }
 
     #[test]
-    fn destination_semantics_rechecks_frozen_placement_generation_at_commit_and_admission() {
+    fn destination_semantics_rechecks_exact_frame_and_placement_at_every_boundary() {
         let (session, window_id) = revealed_session();
         let placement = session
             .begin_final_placement(window_id, placement_request(42))
@@ -7476,8 +7709,8 @@ mod provisional_placement_tests {
 
         assert_eq!(
             session
-                .commit_destination_semantics(window_id, &semantics, 3, 8)
-                .expect_err("a changed placement generation must reject frame commit"),
+                .accept_destination_semantics_frame(window_id, &semantics, 3, 8)
+                .expect_err("a changed placement generation must reject frame acceptance"),
             WindowProvisionalSessionError::InvalidPhase
         );
         assert_eq!(
@@ -7485,8 +7718,56 @@ mod provisional_placement_tests {
             WindowProvisionalSemanticsOutcome::Pending
         );
         session
-            .commit_destination_semantics(window_id, &semantics, 3, 7)
-            .expect("the frozen placement generation should commit semantics");
+            .accept_destination_semantics_frame(window_id, &semantics, 3, 7)
+            .expect("the frozen placement generation should accept semantics");
+        assert_eq!(
+            semantics.snapshot().outcome(),
+            WindowProvisionalSemanticsOutcome::Accepted
+        );
+        assert!(
+            session.record_destination_semantics_present_outcome(
+                window_id,
+                2,
+                7,
+                PlatformWindowPresentOutcome::Submitted,
+            ) == WindowProvisionalSemanticsPresentTransition::Unchanged,
+            "an older frame generation cannot submit the accepted semantics"
+        );
+        assert!(
+            session.record_destination_semantics_present_outcome(
+                window_id,
+                3,
+                8,
+                PlatformWindowPresentOutcome::Submitted,
+            ) == WindowProvisionalSemanticsPresentTransition::Unchanged,
+            "a changed placement generation cannot submit the accepted semantics"
+        );
+        assert!(
+            session.record_destination_semantics_present_outcome(
+                window_id,
+                3,
+                7,
+                PlatformWindowPresentOutcome::Deferred,
+            ) == WindowProvisionalSemanticsPresentTransition::Unchanged,
+            "a deferred presentation must preserve accepted-but-unsubmitted semantics"
+        );
+        assert_eq!(
+            semantics.snapshot().outcome(),
+            WindowProvisionalSemanticsOutcome::Accepted
+        );
+        assert_eq!(
+            session.record_destination_semantics_present_outcome(
+                window_id,
+                3,
+                7,
+                PlatformWindowPresentOutcome::Submitted,
+            ),
+            WindowProvisionalSemanticsPresentTransition::Submitted
+        );
+        assert_eq!(
+            semantics.snapshot().outcome(),
+            WindowProvisionalSemanticsOutcome::Submitted
+        );
         assert_eq!(
             session
                 .admit_interaction(window_id, &semantics, 8)
@@ -7497,6 +7778,139 @@ mod provisional_placement_tests {
             .admit_interaction(window_id, &semantics, 7)
             .expect("the frozen placement generation should admit interaction");
         assert!(session.snapshot().accepts_interaction());
+    }
+
+    #[test]
+    fn repaint_required_reopens_projection_above_the_invalidated_semantics_frame() {
+        let (session, window_id) = revealed_session();
+        let placement = session
+            .begin_final_placement(window_id, placement_request(43))
+            .expect("revealed session should admit final placement");
+        assert!(placement.bind_mutation_generation(7));
+        session
+            .record_native_final_placement(window_id, 43, accepted_placement_facts())
+            .expect("exact native facts should record");
+        session
+            .settle_native_final_placement(
+                window_id,
+                43,
+                WindowProvisionalPlacementOutcome::Settled,
+            )
+            .expect("accepted native facts should settle final placement");
+        let semantics = session
+            .begin_destination_semantics(window_id, 10, 3, 7)
+            .expect("the exact placement generation should begin semantics");
+        session
+            .accept_destination_semantics_frame(window_id, &semantics, 3, 7)
+            .expect("the minimum eligible frame should be accepted");
+
+        assert_eq!(
+            session.record_destination_semantics_present_outcome(
+                window_id,
+                3,
+                7,
+                PlatformWindowPresentOutcome::RepaintRequired,
+            ),
+            WindowProvisionalSemanticsPresentTransition::Invalidated
+        );
+        let invalidated = semantics.snapshot();
+        assert_eq!(
+            invalidated.outcome(),
+            WindowProvisionalSemanticsOutcome::Pending
+        );
+        assert_eq!(invalidated.minimum_frame_generation(), 4);
+        assert_eq!(invalidated.accepted_frame_generation(), None);
+        assert_eq!(invalidated.submitted_frame_generation(), None);
+        assert_eq!(
+            session.snapshot().phase(),
+            WindowProvisionalSessionPhase::ProjectingDestinationSemantics
+        );
+        assert_eq!(
+            session
+                .accept_destination_semantics_frame(window_id, &semantics, 3, 7)
+                .expect_err("the invalidated frame cannot be accepted again"),
+            WindowProvisionalSessionError::InvalidPhase
+        );
+        session
+            .accept_destination_semantics_frame(window_id, &semantics, 4, 7)
+            .expect("a higher frame should regain semantics authority");
+        assert_eq!(
+            session.record_destination_semantics_present_outcome(
+                window_id,
+                4,
+                7,
+                PlatformWindowPresentOutcome::Submitted,
+            ),
+            WindowProvisionalSemanticsPresentTransition::Submitted
+        );
+        let submitted = semantics.snapshot();
+        assert_eq!(
+            submitted.outcome(),
+            WindowProvisionalSemanticsOutcome::Submitted
+        );
+        assert_eq!(submitted.accepted_frame_generation(), Some(4));
+        assert_eq!(submitted.submitted_frame_generation(), Some(4));
+    }
+
+    #[test]
+    fn newer_presented_frame_supersedes_unsubmitted_semantics_authority() {
+        let (session, window_id) = revealed_session();
+        let placement = session
+            .begin_final_placement(window_id, placement_request(44))
+            .expect("revealed session should admit final placement");
+        assert!(placement.bind_mutation_generation(7));
+        session
+            .record_native_final_placement(window_id, 44, accepted_placement_facts())
+            .expect("exact native facts should record");
+        session
+            .settle_native_final_placement(
+                window_id,
+                44,
+                WindowProvisionalPlacementOutcome::Settled,
+            )
+            .expect("accepted native facts should settle final placement");
+        let semantics = session
+            .begin_destination_semantics(window_id, 11, 3, 7)
+            .expect("the exact placement generation should begin semantics");
+        session
+            .accept_destination_semantics_frame(window_id, &semantics, 3, 7)
+            .expect("the minimum eligible frame should be accepted");
+
+        assert_eq!(
+            session.record_destination_semantics_present_outcome(
+                window_id,
+                4,
+                7,
+                PlatformWindowPresentOutcome::Deferred,
+            ),
+            WindowProvisionalSemanticsPresentTransition::Invalidated,
+            "a newer rendered frame cannot inherit an older frame's acceptance"
+        );
+        let invalidated = semantics.snapshot();
+        assert_eq!(
+            invalidated.outcome(),
+            WindowProvisionalSemanticsOutcome::Pending
+        );
+        assert_eq!(invalidated.minimum_frame_generation(), 5);
+        assert_eq!(
+            session
+                .accept_destination_semantics_frame(window_id, &semantics, 4, 7)
+                .expect_err("the unmarked newer frame cannot be accepted retroactively"),
+            WindowProvisionalSessionError::InvalidPhase
+        );
+        session
+            .accept_destination_semantics_frame(window_id, &semantics, 5, 7)
+            .expect("a still-higher marked frame should regain semantics authority");
+        assert_eq!(
+            session.record_destination_semantics_present_outcome(
+                window_id,
+                5,
+                7,
+                PlatformWindowPresentOutcome::Submitted,
+            ),
+            WindowProvisionalSemanticsPresentTransition::Submitted
+        );
+        assert_eq!(semantics.snapshot().submitted_frame_generation(), Some(5));
     }
 
     #[test]

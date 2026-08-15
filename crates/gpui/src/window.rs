@@ -36,8 +36,9 @@ use crate::{
     WindowProvisionalPlacementRequest, WindowProvisionalPlacementTicket,
     WindowProvisionalRevealCancellationOutcome, WindowProvisionalRevealOutcome,
     WindowProvisionalRevealTicket, WindowProvisionalSemanticsOutcome,
-    WindowProvisionalSemanticsSnapshot, WindowProvisionalSemanticsTicket, WindowProvisionalSession,
-    WindowProvisionalSessionPhase, WindowTextSystem,
+    WindowProvisionalSemanticsPresentTransition, WindowProvisionalSemanticsSnapshot,
+    WindowProvisionalSemanticsTicket, WindowProvisionalSession, WindowProvisionalSessionPhase,
+    WindowTextSystem,
     geometry::{
         ClipStackSnapshot, ResolvedClip, ResolvedSubtreeTransform, SubtreeGeometryError,
         SubtreeGeometryValidity,
@@ -3090,17 +3091,28 @@ impl Window {
         );
         let session_snapshot = session.snapshot();
         let ticket_snapshot = ticket.snapshot();
+        let phase_admits_frame = matches!(
+            (session_snapshot.phase(), ticket_snapshot.outcome()),
+            (
+                WindowProvisionalSessionPhase::ProjectingDestinationSemantics,
+                WindowProvisionalSemanticsOutcome::Pending,
+            ) | (
+                WindowProvisionalSessionPhase::DestinationSemanticsAccepted,
+                WindowProvisionalSemanticsOutcome::Accepted,
+            )
+        );
         anyhow::ensure!(
-            session_snapshot.window_id() == Some(self.handle.window_id())
-                && session_snapshot.phase()
-                    == WindowProvisionalSessionPhase::ProjectingDestinationSemantics,
-            "provisional session is not projecting destination semantics for this window"
+            session_snapshot.window_id() == Some(self.handle.window_id()) && phase_admits_frame,
+            "provisional session cannot accept destination semantics for this window"
         );
         anyhow::ensure!(
             ticket_snapshot.window_id() == self.handle.window_id()
                 && ticket_snapshot.session_generation() == session_snapshot.generation()
-                && ticket_snapshot.outcome() == WindowProvisionalSemanticsOutcome::Pending
-                && frame_generation >= ticket_snapshot.minimum_frame_generation(),
+                && ticket_snapshot.submitted_frame_generation().is_none()
+                && frame_generation >= ticket_snapshot.minimum_frame_generation()
+                && ticket_snapshot
+                    .accepted_frame_generation()
+                    .is_none_or(|accepted| frame_generation >= accepted),
             "destination semantics ticket does not admit the candidate frame"
         );
         let current_mutation_generation = self
@@ -3111,7 +3123,7 @@ impl Window {
             "destination semantics ticket no longer owns the exact placement authority"
         );
         session
-            .commit_destination_semantics(
+            .accept_destination_semantics_frame(
                 self.handle.window_id(),
                 ticket,
                 frame_generation,
@@ -3121,7 +3133,60 @@ impl Window {
         Ok(ticket.snapshot())
     }
 
-    /// Admits interaction after the exact destination-semantics frame has committed.
+    /// Requests another presentation attempt for the exact accepted destination-semantics frame.
+    ///
+    /// This does not invalidate or redraw the accepted frame. A deferred renderer submission may
+    /// therefore retry the same generation without manufacturing a newer semantics candidate.
+    #[doc(hidden)]
+    pub fn request_provisional_destination_semantics_presentation(
+        &mut self,
+        session: &WindowProvisionalSession,
+        ticket: &WindowProvisionalSemanticsTicket,
+    ) -> Result<()> {
+        let owned = self
+            .provisional_session
+            .as_ref()
+            .ok_or_else(|| anyhow!("window has no provisional presentation session"))?;
+        anyhow::ensure!(
+            owned.same_authority(session),
+            "provisional presentation session authority does not match the window"
+        );
+        let session_snapshot = session.snapshot();
+        let ticket_snapshot = ticket.snapshot();
+        anyhow::ensure!(
+            session_snapshot.window_id() == Some(self.handle.window_id())
+                && session_snapshot.phase()
+                    == WindowProvisionalSessionPhase::DestinationSemanticsAccepted,
+            "provisional session has no accepted destination semantics to present"
+        );
+        anyhow::ensure!(
+            ticket_snapshot.window_id() == self.handle.window_id()
+                && ticket_snapshot.session_generation() == session_snapshot.generation()
+                && ticket_snapshot.outcome() == WindowProvisionalSemanticsOutcome::Accepted
+                && ticket_snapshot.accepted_frame_generation().is_some()
+                && ticket_snapshot.submitted_frame_generation().is_none(),
+            "destination semantics ticket has no accepted frame awaiting submission"
+        );
+        anyhow::ensure!(
+            ticket_snapshot.placement_mutation_generation()
+                == self
+                    .window_mutations
+                    .last_generation(WindowMutationDomain::Placement),
+            "destination semantics ticket no longer owns the exact placement authority"
+        );
+        anyhow::ensure!(
+            self.creation_can_commit() && self.presentation_shutdown.is_none(),
+            "a terminal window cannot continue destination-semantics presentation"
+        );
+
+        self.platform_window.request_frame(RequestFrameOptions {
+            force_render: false,
+            require_presentation: true,
+        });
+        Ok(())
+    }
+
+    /// Admits interaction after the renderer submitted the exact destination-semantics frame.
     #[doc(hidden)]
     pub fn admit_provisional_interaction(
         &mut self,
@@ -3258,6 +3323,7 @@ impl Window {
                 && !matches!(
                     snapshot.phase(),
                     WindowProvisionalSessionPhase::Promoted
+                        | WindowProvisionalSessionPhase::DestinationSemanticsRejected
                         | WindowProvisionalSessionPhase::Terminal
                 )
         })
@@ -6825,6 +6891,13 @@ impl Window {
     fn present(&mut self) -> PlatformWindowPresentOutcome {
         let generation = self.rendered_frame.generation;
         if self.renderer_repaint_is_pending() {
+            if self.record_provisional_destination_semantics_present_outcome(
+                generation,
+                PlatformWindowPresentOutcome::RepaintRequired,
+            ) == WindowProvisionalSemanticsPresentTransition::Invalidated
+            {
+                self.refresh();
+            }
             self.needs_present.set(false);
             profiling::finish_frame!();
             return PlatformWindowPresentOutcome::RepaintRequired;
@@ -6846,6 +6919,7 @@ impl Window {
                 .renderer_invalidated_generation
                 .get_or_insert(generation);
             *invalidated_generation = (*invalidated_generation).max(generation);
+            self.record_provisional_destination_semantics_present_outcome(generation, outcome);
             self.needs_present.set(false);
             self.refresh();
         } else if self
@@ -6857,6 +6931,11 @@ impl Window {
         }
         if outcome == PlatformWindowPresentOutcome::Submitted {
             self.presentation_state.present_submitted_generation = Some(generation);
+            if self.record_provisional_destination_semantics_present_outcome(generation, outcome)
+                == WindowProvisionalSemanticsPresentTransition::Invalidated
+            {
+                self.refresh();
+            }
             if non_empty {
                 self.presentation_state.non_empty_presented_generation = Some(generation);
                 if let Some(ticket) = self
@@ -6896,6 +6975,11 @@ impl Window {
             }
             self.needs_present.set(false);
         } else if outcome != PlatformWindowPresentOutcome::RepaintRequired {
+            if self.record_provisional_destination_semantics_present_outcome(generation, outcome)
+                == WindowProvisionalSemanticsPresentTransition::Invalidated
+            {
+                self.refresh();
+            }
             self.needs_present.set(true);
         }
         #[cfg(feature = "input-latency-histogram")]
@@ -6904,6 +6988,26 @@ impl Window {
         }
         profiling::finish_frame!();
         outcome
+    }
+
+    fn record_provisional_destination_semantics_present_outcome(
+        &self,
+        generation: u64,
+        outcome: PlatformWindowPresentOutcome,
+    ) -> WindowProvisionalSemanticsPresentTransition {
+        if !self.creation_can_commit() || self.presentation_shutdown.is_some() {
+            return WindowProvisionalSemanticsPresentTransition::Unchanged;
+        }
+        let Some(session) = self.provisional_session.as_ref() else {
+            return WindowProvisionalSemanticsPresentTransition::Unchanged;
+        };
+        session.record_destination_semantics_present_outcome(
+            self.handle.window_id(),
+            generation,
+            self.window_mutations
+                .last_generation(WindowMutationDomain::Placement),
+            outcome,
+        )
     }
 
     /// Returns a snapshot of the current input-latency histograms.
