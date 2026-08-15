@@ -354,6 +354,13 @@ only for that generation. `DockSurface::window_session_status` reports `Vacant`,
 `Active`, `ShuttingDown`, or `Closed`, plus the anchor, rollback/shutdown reason, terminal ticket
 counts, and runtime convergence.
 
+A facade-managed Host remains laid out and painted while `ShuttingDown`. Host-owned render
+callbacks and controller mutations require the exact active generation; the accepted replacement
+frame presents the whole subtree as inert. Low-level integrations that exhaustively match
+`DockActionApplyError` must handle `SurfaceSessionUnavailable`. Do not retry a rejected G1 callback
+against a reopened G2 surface; wait for a fresh callback carrying the current active window-session
+generation.
+
 Delete application close observers that call `App::quit` when the Dock primary closes. The first
 ordinary anchor close request freezes the surface, force-retires that surface's dependent windows
 before removing the anchor, and bypasses per-viewport `Prevent` or `MergeBack` policy. It does not

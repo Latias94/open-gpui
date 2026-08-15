@@ -248,7 +248,8 @@ impl From<DockActionApplyError> for DockSurfacePanelError {
             DockActionApplyError::TearOffViewportOpenFailed { message } => {
                 Self::Runtime { message }
             }
-            DockActionApplyError::DropDragSessionStale { .. }
+            DockActionApplyError::SurfaceSessionUnavailable
+            | DockActionApplyError::DropDragSessionStale { .. }
             | DockActionApplyError::DropDragSessionMissing
             | DockActionApplyError::TearOffViewportPlacementUnavailable
             | DockActionApplyError::DropPayloadMismatch { .. } => Self::Runtime {

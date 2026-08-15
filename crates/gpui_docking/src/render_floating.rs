@@ -7,11 +7,11 @@ use crate::{
     drop_scene_fact,
     host_render_actions::DockRenderedPointerPosition,
     host_render_session::{DockFloatingChromeTarget, DockHostRenderSession},
-    render::DockViewportHostSceneCandidateSlot,
+    render::{DockViewportHostSceneCandidateSlot, defer_rejected_payload_drag_cleanup},
     surface::live_payload_carrier::floating_retained_source_id,
 };
 use open_gpui::{
-    AnyElement, App, AppContext, Context, DispatchPhase, DragMoveEvent, HitboxBehavior,
+    AnyElement, AppContext, Context, DispatchPhase, DragMoveEvent, HitboxBehavior,
     InteractiveElement, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     ParentElement, Pixels, PointerCaptureHandle, StatefulInteractiveElement, Styled, Window,
     canvas, div, px, retained_visual, rgba,
@@ -168,9 +168,11 @@ impl DockHost {
             // genuine local drop event while the render-owned preview remains the target fact.
             .on_drop(cx.listener(
                 move |this, event: &open_gpui::DropEvent<DockDragPayload>, window, cx| {
-                    if !this
-                        .accepts_window_callback(window_binding, window.window_handle().window_id())
-                    {
+                    if !this.accepts_render_callback(
+                        window_binding,
+                        window.window_handle().window_id(),
+                        cx,
+                    ) {
                         return;
                     }
                     let Ok(layout_position) = event.pointer().target_layout_position() else {
@@ -215,9 +217,10 @@ impl DockHost {
                 .bg(rgba(0x00000001))
                 .on_drag_move(cx.listener(
                     move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
-                        if !this.accepts_window_callback(
+                        if !this.accepts_render_callback(
                             window_binding,
                             window.window_handle().window_id(),
+                            cx,
                         ) {
                             return;
                         }
@@ -311,11 +314,12 @@ impl DockHost {
                         }
                         let frozen_drag_visual_style =
                             drag_entity.update(cx, |host, cx| {
-                                if !host.accepts_window_callback(
+                                if !host.accepts_render_callback(
                                     window_binding,
                                     window.window_handle().window_id(),
+                                    cx,
                                 ) {
-                                    return Some(drag_visual_style.clone());
+                                    return None;
                                 }
                                 host.focus_host_for_drag_from_render(window, cx);
                                 if !host.begin_floating_drag_from_render(
@@ -388,9 +392,10 @@ impl DockHost {
                                     .capture_pointer(&pointer_capture, MouseButton::Left)
                                     .is_ok();
                                 let began = entity.update(app, |host, cx| {
-                                    if !host.accepts_window_callback(
+                                    if !host.accepts_render_callback(
                                         window_binding,
                                         window.window_handle().window_id(),
+                                        cx,
                                     ) {
                                         return false;
                                     }
@@ -430,9 +435,10 @@ impl DockHost {
                                 };
 
                                 entity.update(app, |host, cx| {
-                                    if !host.accepts_window_callback(
+                                    if !host.accepts_render_callback(
                                         window_binding,
                                         window.window_handle().window_id(),
+                                        cx,
                                     ) {
                                         return;
                                     }
@@ -451,9 +457,10 @@ impl DockHost {
                                 }
 
                                 entity.update(app, |host, cx| {
-                                    if !host.accepts_window_callback(
+                                    if !host.accepts_render_callback(
                                         window_binding,
                                         window.window_handle().window_id(),
+                                        cx,
                                     ) {
                                         return;
                                     }
@@ -470,13 +477,4 @@ impl DockHost {
             )
             .into_any_element()
     }
-}
-
-fn defer_rejected_payload_drag_cleanup(payload: &DockDragPayload, window: &Window, cx: &mut App) {
-    let rejected_payload = payload.clone();
-    window.defer(cx, move |window, cx| {
-        if cx.active_drag_value::<DockDragPayload>() == Some(&rejected_payload) {
-            cx.stop_active_drag(window);
-        }
-    });
 }

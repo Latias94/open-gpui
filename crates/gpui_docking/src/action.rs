@@ -173,6 +173,9 @@ pub enum DockActionApplyError {
     /// The resolved drop target was no longer available at commit time.
     #[error("dock drop target is not currently available")]
     DropTargetUnavailable,
+    /// The host belongs to a surface window-session generation that no longer admits mutations.
+    #[error("dock surface window session is not currently active")]
+    SurfaceSessionUnavailable,
     /// The routed drop was created by a drag session that is no longer active.
     #[error("dock drop drag session {session} is no longer active")]
     DropDragSessionStale {

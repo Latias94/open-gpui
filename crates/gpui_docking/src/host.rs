@@ -13,7 +13,7 @@ use crate::{
     surface::{
         DockSurfaceActivationHostRegistration, DockSurfaceActivationHostRegistrationStatus,
         DockSurfaceActivationOutcome, DockSurfaceActivationSettlements, DockSurfaceChangeCategory,
-        DockSurfaceOwner,
+        DockSurfaceOwner, DockSurfaceTransactionId,
         live_payload_carrier::DockLivePayloadCarrier,
         live_undock::{
             DockLiveUndockIdentity, DockLiveUndockPayloadLeaseReceipt,
@@ -26,7 +26,7 @@ use crate::{
             DockPayloadRecoveryRestoreError, DockPayloadRecoveryRestoreReceipt,
         },
         window_session::{DockSurfaceWindowSessionLease, DockSurfaceWindowSessionOpeningToken},
-        with_root_transaction,
+        with_detached_root_transaction, with_root_transaction,
     },
     transition_executor::DockTransitionExecutor,
     viewport_registry::DockViewportRegistrationKey,
@@ -3219,6 +3219,9 @@ impl DockHost {
         mutate: impl FnOnce(&mut DockController) -> Result<R, DockActionApplyError>,
         changed: impl FnOnce(&R) -> bool,
     ) -> Result<R, DockActionApplyError> {
+        if !self.surface_session_admits_host_authority(cx) {
+            return Err(DockActionApplyError::SurfaceSessionUnavailable);
+        }
         let controller = self.controller.clone();
         let Some(owner) = self.surface_owner.clone() else {
             return cx.update_entity(&controller, |controller, cx| {
@@ -3244,6 +3247,20 @@ impl DockHost {
             }
             outcome
         })
+    }
+
+    pub(crate) fn with_detached_surface_transaction<R>(
+        &self,
+        cx: &mut Context<Self>,
+        update: impl FnOnce(DockSurfaceTransactionId, &mut Context<Self>) -> R,
+    ) -> Result<R, DockActionApplyError> {
+        if !self.surface_session_admits_host_authority(cx) {
+            return Err(DockActionApplyError::SurfaceSessionUnavailable);
+        }
+        let Some(owner) = self.surface_owner.clone() else {
+            return Err(DockActionApplyError::SurfaceSessionUnavailable);
+        };
+        Ok(with_detached_root_transaction(&owner, cx, update))
     }
 
     pub(crate) fn interaction(&self) -> &DockInteractionRuntime {
@@ -3387,6 +3404,28 @@ impl DockHost {
             self.bound_window_id == Some(binding.window_id)
                 && self.window_binding_generation == binding.generation
         })
+    }
+
+    pub(crate) fn accepts_render_callback(
+        &self,
+        binding: Option<DockHostWindowBinding>,
+        window_id: WindowId,
+        cx: &Context<Self>,
+    ) -> bool {
+        self.accepts_window_callback(binding, window_id)
+            && self.surface_session_admits_host_authority(cx)
+    }
+
+    pub(crate) fn accepts_bound_render_callback(
+        &self,
+        binding: Option<DockHostWindowBinding>,
+        cx: &Context<Self>,
+    ) -> bool {
+        self.accepts_bound_window(binding) && self.surface_session_admits_host_authority(cx)
+    }
+
+    pub(crate) fn surface_session_admits_host_authority(&self, cx: &Context<Self>) -> bool {
+        matches!(self.role, DockHostRole::Embedded) || self.runtime_lineage(cx).is_some()
     }
 
     pub(crate) fn accepts_viewport_scene_candidate(
@@ -3637,7 +3676,7 @@ impl DockHost {
             window,
             move |host, window, cx| {
                 let window_id = window.window_handle().window_id();
-                if !host.accepts_window_callback(binding, window_id) {
+                if !host.accepts_render_callback(binding, window_id, cx) {
                     return;
                 }
                 if window.is_window_active() {
@@ -4154,6 +4193,9 @@ impl DockHost {
     }
 
     pub(crate) fn remember_panel_focus(&mut self, item: DockItemId, cx: &mut Context<Self>) {
+        if !self.surface_session_admits_host_authority(cx) {
+            return;
+        }
         let space = self.space().clone();
         self.viewport_runtime()
             .record_panel_focus(space.clone(), item.clone());

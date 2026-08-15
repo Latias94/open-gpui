@@ -9,7 +9,7 @@ use crate::{
         DockFloatingBoundsRequest, DockPayloadDropRelease, DockRuntimeDragSession,
         DockSplitterResizeRequest, SplitterDragAxis,
     },
-    surface::{DockSurfaceChangeCategory, with_detached_root_transaction},
+    surface::DockSurfaceChangeCategory,
     workspace_drop_transaction::DockWorkspacePayloadDropRequest,
     workspace_move_validation::dock_target_validator,
 };
@@ -428,7 +428,7 @@ impl DockHost {
         };
 
         let controller = self.controller_entity();
-        with_detached_root_transaction(&owner, cx, |transaction, cx| {
+        match self.with_detached_surface_transaction(cx, |transaction, cx| {
             let (result, did_change, source_is_empty) =
                 cx.update_entity(&controller, |controller, cx| {
                     let result = controller
@@ -484,7 +484,16 @@ impl DockHost {
                     focus_item: None,
                 },
             }
-        })
+        }) {
+            Ok(commit) => commit,
+            Err(error) => DockHostResolvedDropCommit {
+                outcome: DockHostInteractionOutcome::from_commit_result(
+                    Err(error),
+                    notify_on_unchanged,
+                ),
+                focus_item: None,
+            },
+        }
     }
 
     fn commit_resize_split_interaction(

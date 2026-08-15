@@ -7,7 +7,7 @@ use crate::{
     drop_scene_fact,
     host_render_actions::DockRenderedPointerPosition,
     host_render_session::{DockHostPanelRenderResolution, DockHostRenderSession},
-    render::DockViewportHostSceneCandidateSlot,
+    render::{DockViewportHostSceneCandidateSlot, defer_rejected_payload_drag_cleanup},
     surface::live_payload_carrier::tabs_retained_source_id,
 };
 use open_gpui::{
@@ -84,8 +84,8 @@ impl DockHost {
                 if event.window_event().button != MouseButton::Left {
                     return;
                 }
-                anchor_entity.update(cx, |host, _| {
-                    if !host.accepts_bound_window(window_binding) {
+                anchor_entity.update(cx, |host, cx| {
+                    if !host.accepts_bound_render_callback(window_binding, cx) {
                         return;
                     }
                     host.record_payload_drag_anchor_from_render(
@@ -97,9 +97,11 @@ impl DockHost {
             })
             .on_drag_move(cx.listener(
                 move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
-                    if !this
-                        .accepts_window_callback(window_binding, window.window_handle().window_id())
-                    {
+                    if !this.accepts_render_callback(
+                        window_binding,
+                        window.window_handle().window_id(),
+                        cx,
+                    ) {
                         return;
                     }
                     let payload = event.drag().clone();
@@ -175,9 +177,11 @@ impl DockHost {
             .bg(tabs_style.strip_background)
             .on_drag_move(cx.listener(
                 move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
-                    if !this
-                        .accepts_window_callback(window_binding, window.window_handle().window_id())
-                    {
+                    if !this.accepts_render_callback(
+                        window_binding,
+                        window.window_handle().window_id(),
+                        cx,
+                    ) {
                         return;
                     }
                     let Ok(position) = event.target_layout_position() else {
@@ -228,10 +232,12 @@ impl DockHost {
             tab_bar = tab_bar.on_drag(stack_payload, move |payload, geometry, window, cx| {
                 let source_drag_visual_style = stack_drag_visual_style.clone();
                 let frozen_drag_visual_style = stack_drag_entity.update(cx, |host, cx| {
-                    if !host
-                        .accepts_window_callback(window_binding, window.window_handle().window_id())
-                    {
-                        return source_drag_visual_style.clone();
+                    if !host.accepts_render_callback(
+                        window_binding,
+                        window.window_handle().window_id(),
+                        cx,
+                    ) {
+                        return None;
                     }
                     host.focus_host_for_drag_from_render(window, cx);
                     let drag_session = host.begin_payload_drag_from_render_with_drag_visual_style(
@@ -258,12 +264,19 @@ impl DockHost {
                         DockDragTearOffGeometry::from_source_bounds(source_bounds, cursor_position)
                             .with_preferred_size(source_bounds.size),
                     );
-                    host.viewport_runtime()
-                        .active_payload_drag_visual_style(Some(&drag_session))
-                        .expect("new drag session must retain its captured visual style")
+                    Some(
+                        host.viewport_runtime()
+                            .active_payload_drag_visual_style(Some(&drag_session))
+                            .expect("new drag session must retain its captured visual style"),
+                    )
                 });
+                if frozen_drag_visual_style.is_none() {
+                    defer_rejected_payload_drag_cleanup(payload, window, cx);
+                }
                 let drag_title = stack_drag_title.clone();
-                cx.new(move |_| DockDragVisual::new(drag_title, frozen_drag_visual_style))
+                let drag_style =
+                    frozen_drag_visual_style.unwrap_or_else(|| source_drag_visual_style.clone());
+                cx.new(move |_| DockDragVisual::new(drag_title, drag_style))
             });
         }
         tab_bar = tab_bar_a11y.apply_to(tab_bar);
@@ -339,7 +352,7 @@ impl DockHost {
                 .on_click(cx.listener({
                     let window_binding = window_binding;
                     move |this, _, _, cx| {
-                        if !this.accepts_bound_window(window_binding) {
+                        if !this.accepts_bound_render_callback(window_binding, cx) {
                             return;
                         }
                         this.select_tab_from_render(node, tab_item.clone(), cx);
@@ -349,7 +362,7 @@ impl DockHost {
                     let window_binding = window_binding;
                     move |_, _, cx| {
                         focus_entity.update(cx, |host, cx| {
-                            if !host.accepts_bound_window(window_binding) {
+                            if !host.accepts_bound_render_callback(window_binding, cx) {
                                 return;
                             }
                             host.select_tab_from_render(node, focus_item.clone(), cx);
@@ -358,9 +371,10 @@ impl DockHost {
                 })
                 .on_drag_move(cx.listener(
                     move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
-                        if !this.accepts_window_callback(
+                        if !this.accepts_render_callback(
                             window_binding,
                             window.window_handle().window_id(),
+                            cx,
                         ) {
                             return;
                         }
@@ -390,11 +404,12 @@ impl DockHost {
             if !suppress_drag_source {
                 tab = tab.on_drag(payload, move |payload, geometry, window, cx| {
                     let frozen_drag_visual_style = drag_entity.update(cx, |host, cx| {
-                        if !host.accepts_window_callback(
+                        if !host.accepts_render_callback(
                             window_binding,
                             window.window_handle().window_id(),
+                            cx,
                         ) {
-                            return drag_visual_style.clone();
+                            return None;
                         }
                         host.focus_host_for_drag_from_render(window, cx);
                         let drag_session = host
@@ -427,12 +442,19 @@ impl DockHost {
                             )
                             .with_preferred_size(source_bounds.size),
                         );
-                        host.viewport_runtime()
-                            .active_payload_drag_visual_style(Some(&drag_session))
-                            .expect("new drag session must retain its captured visual style")
+                        Some(
+                            host.viewport_runtime()
+                                .active_payload_drag_visual_style(Some(&drag_session))
+                                .expect("new drag session must retain its captured visual style"),
+                        )
                     });
+                    if frozen_drag_visual_style.is_none() {
+                        defer_rejected_payload_drag_cleanup(payload, window, cx);
+                    }
                     let drag_title = drag_visual_title.clone();
-                    cx.new(move |_| DockDragVisual::new(drag_title, frozen_drag_visual_style))
+                    let drag_style =
+                        frozen_drag_visual_style.unwrap_or_else(|| drag_visual_style.clone());
+                    cx.new(move |_| DockDragVisual::new(drag_title, drag_style))
                 });
             }
             tab = tab_a11y.apply_to(tab);
@@ -485,7 +507,7 @@ impl DockHost {
                     .on_click(cx.listener({
                         let window_binding = window_binding;
                         move |this, _, _, cx| {
-                            if !this.accepts_bound_window(window_binding) {
+                            if !this.accepts_bound_render_callback(window_binding, cx) {
                                 return;
                             }
                             this.close_item_from_render(close_item.clone(), cx);

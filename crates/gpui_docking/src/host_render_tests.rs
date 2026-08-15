@@ -35,7 +35,11 @@ use open_gpui_motion::{
     MotionDuration, MotionEasing, MotionIntent, MotionPreference, MotionTransition,
 };
 use slotmap::Key;
-use std::{cell::RefCell, rc::Rc, time::Duration};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+    time::Duration,
+};
 
 struct TransformedDockHostFixture {
     host: Entity<DockHost>,
@@ -638,6 +642,258 @@ fn dock_host_presentation_suppresses_routes_and_republishes_fresh_geometry(
             .expect("restored DockHost should publish displayed route geometry");
         assert_ne!(restored_displayed_bounds, visible_displayed_bounds);
         assert!(host.active_payload_drag_session(&payload).is_none());
+    });
+}
+
+#[open_gpui::test]
+fn shutting_down_surface_host_remains_painted_but_rejects_tab_interaction(cx: &mut TestAppContext) {
+    cx.update(|cx| cx.set_quit_mode(open_gpui::QuitMode::Explicit));
+    let (mut graph, root) = tabs_graph_with_selected(&["a", "b"], "a");
+    let dependent_space = DockSpaceId::from("secondary");
+    let dependent_root = graph.insert_node(DockNode::Tabs {
+        items: vec![item("c")],
+        selected: Some(item("c")),
+    });
+    graph.set_root(dependent_space.clone(), dependent_root);
+    let mut workspace = DockWorkspace::new(space(), graph);
+    workspace.policy_mut().set_allow_platform_viewports(true);
+    let panel_a = test_view(cx, "A");
+    let panel_a_focus = cx.read_entity(&panel_a, |panel, cx| panel.focus_handle(cx));
+    workspace.register_focusable_panel_view(item("a"), "Panel A", panel_a);
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    workspace.register_panel_view(item("c"), "Panel C", test_view(cx, "C"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let surface = cx.update(|cx| crate::DockSurface::from_controller(controller.clone(), cx));
+    let (anchor, dependent) = cx.update(|cx| {
+        let anchor = match surface.open_primary_window(viewport_window_options(400.0, 240.0), cx) {
+            crate::DockSurfacePrimaryWindowOpenOutcome::Opened(opened) => opened.window(),
+            outcome => panic!("the primary surface window should open, got {outcome:?}"),
+        };
+        let dependent =
+            match surface.open_viewport(dependent_space, viewport_window_options(320.0, 220.0), cx)
+            {
+                crate::DockSurfaceViewportOpenOutcome::Opened(opened) => opened.window(),
+                outcome => panic!("the dependent surface window should open, got {outcome:?}"),
+            };
+        (anchor, dependent)
+    });
+    cx.run_until_parked();
+    let dependent_terminal = cx.hold_window_native_terminal(dependent);
+
+    let host = anchor
+        .downcast::<DockHost>()
+        .expect("the primary surface window should render DockHost")
+        .root(cx)
+        .expect("the primary surface window should expose its DockHost root");
+    let mut visual = VisualTestContext::from_window(anchor, cx);
+    visual.update(|window, cx| window.draw(cx).clear());
+    let host_selector = selector_for(&visual, &host, DockDebugRegion::Host)
+        .expect("the active surface host should publish its debug selector");
+    let tab_b_selector = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::Tab {
+            tabs: root,
+            item: item("b"),
+        },
+    )
+    .expect("tab B should publish its debug selector");
+    let tab_b_bounds = debug_bounds(&mut visual, &tab_b_selector);
+    let close_b_selector = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::TabClose {
+            tabs: root,
+            item: item("b"),
+        },
+    )
+    .expect("tab B close control should publish its debug selector");
+    let close_b_bounds = debug_bounds(&mut visual, &close_b_selector);
+    let g1_binding = host.update(cx, |host, _| {
+        host.current_window_binding()
+            .expect("the active primary should expose its exact window binding")
+    });
+    visual.update(|window, cx| panel_a_focus.focus(window, cx));
+    cx.run_until_parked();
+    visual.update(|window, cx| {
+        assert_eq!(window.focused(cx), Some(panel_a_focus.clone()));
+        assert!(window.is_focus_handle_rendered(&panel_a_focus));
+    });
+
+    let close = cx.simulate_window_close_request(anchor);
+    assert!(!close.native_close_allowed());
+    assert!(!close.logical_window_removed());
+    assert_eq!(
+        cx.update(|cx| surface.window_session_status(cx).phase()),
+        crate::DockSurfaceWindowSessionPhase::ShuttingDown,
+        "the close query must synchronously revoke the active surface lease"
+    );
+    let shutdown_revision = cx.read(|cx| surface.revision(cx));
+    let stale_callback_applied = host.update(cx, |host, cx| {
+        if !host.accepts_bound_render_callback(Some(g1_binding), cx) {
+            return false;
+        }
+        host.select_tab_from_render(root, item("b"), cx)
+    });
+    assert!(
+        !stale_callback_applied,
+        "the captured G1 tab callback must become inert at the close-query boundary"
+    );
+    let stale_mutation = host.update(cx, |host, cx| {
+        host.mutate_controller_from_host(
+            cx,
+            &[crate::surface::DockSurfaceChangeCategory::Selection],
+            |controller| controller.select_tab(root, item("b")),
+        )
+    });
+    assert_eq!(
+        stale_mutation,
+        Err(crate::DockActionApplyError::SurfaceSessionUnavailable),
+        "a stale render callback must not cross the exact surface lease boundary"
+    );
+    let detached_mutation_called = Rc::new(Cell::new(false));
+    let detached_mutation = host.update(cx, |host, cx| {
+        let detached_mutation_called = detached_mutation_called.clone();
+        host.with_detached_surface_transaction(cx, move |_, _| {
+            detached_mutation_called.set(true);
+        })
+    });
+    assert_eq!(
+        detached_mutation,
+        Err(crate::DockActionApplyError::SurfaceSessionUnavailable),
+        "the detached local-drop transaction seam must reject the inactive lease"
+    );
+    assert!(
+        !detached_mutation_called.get(),
+        "an inactive detached transaction must not run its workspace mutation"
+    );
+    let stale_drag_start = tab_b_bounds.center();
+    visual.simulate_mouse_down(stale_drag_start, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(
+        point(stale_drag_start.x + px(24.0), stale_drag_start.y),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    cx.run_until_parked();
+    visual.update(|window, cx| {
+        assert!(
+            !cx.has_active_drag(),
+            "a rejected G1 drag constructor must retire the global drag reservation"
+        );
+        assert!(
+            window.captured_pointer().is_none(),
+            "a rejected G1 drag constructor must not retain pointer capture"
+        );
+    });
+    let stale_payload = DockDragPayload::new_item(space(), root, item("b"), "Panel B".to_string());
+    host.update(cx, |host, _| {
+        assert!(host.active_payload_drag_session(&stale_payload).is_none());
+        assert!(
+            host.payload_drag_anchor_position_from_render(&stale_payload)
+                .is_none(),
+            "a rejected G1 drag constructor must not publish a drag anchor"
+        );
+    });
+    visual.simulate_click(tab_b_bounds.center(), Modifiers::none());
+    controller.update(cx, |controller, _| {
+        assert_eq!(
+            controller.graph().selected_item_in_tabs(root),
+            Some(item("a")),
+            "the previous Active frame must become inert before a replacement frame is painted"
+        );
+    });
+    assert_eq!(
+        cx.read(|cx| surface.revision(cx)),
+        shutdown_revision,
+        "rejected stale callbacks must not publish a surface revision"
+    );
+
+    cx.update(|_| {});
+    cx.run_until_parked();
+    assert!(cx.windows().contains(&anchor));
+    visual.update(|window, cx| window.draw(cx).clear());
+    assert!(
+        visual.debug_bounds(&host_selector).is_some(),
+        "a shutting-down surface host should preserve its last paintable tree"
+    );
+    visual.update(|window, cx| {
+        assert!(window.focused(cx).is_none());
+        assert!(!window.is_focus_handle_rendered(&panel_a_focus));
+    });
+    visual.simulate_click(tab_b_bounds.center(), Modifiers::none());
+    visual.simulate_click(close_b_bounds.center(), Modifiers::none());
+    cx.run_until_parked();
+    controller.update(cx, |controller, _| {
+        assert_eq!(
+            controller.graph().selected_item_in_tabs(root),
+            Some(item("a")),
+            "the inert replacement frame must reject pointer interaction"
+        );
+        assert_eq!(
+            controller.graph().collect_items_in_space(&space()),
+            vec![item("a"), item("b")],
+            "the inert replacement frame must reject tab close"
+        );
+    });
+
+    assert!(dependent_terminal.release());
+    cx.run_until_parked();
+    assert_eq!(
+        cx.update(|cx| surface.window_session_status(cx).phase()),
+        crate::DockSurfaceWindowSessionPhase::Closed
+    );
+
+    let reopened = cx.update(|cx| {
+        match surface.open_primary_window(viewport_window_options(400.0, 240.0), cx) {
+            crate::DockSurfacePrimaryWindowOpenOutcome::Opened(opened) => opened,
+            outcome => panic!("the converged surface should reopen, got {outcome:?}"),
+        }
+    });
+    assert_eq!(reopened.generation(), 2);
+    cx.run_until_parked();
+    let replayed_g1_callback = host.update(cx, |host, cx| {
+        if !host.accepts_bound_render_callback(Some(g1_binding), cx) {
+            return false;
+        }
+        host.select_tab_from_render(root, item("b"), cx)
+    });
+    assert!(
+        !replayed_g1_callback,
+        "a delayed G1 render callback must not mutate the reopened G2 surface"
+    );
+    controller.update(cx, |controller, _| {
+        assert_eq!(
+            controller.graph().selected_item_in_tabs(root),
+            Some(item("a"))
+        );
+    });
+
+    let g2_window = reopened.window();
+    let g2_host = g2_window
+        .downcast::<DockHost>()
+        .expect("the reopened surface window should render DockHost")
+        .root(cx)
+        .expect("the reopened surface window should expose its DockHost root");
+    let mut g2_visual = VisualTestContext::from_window(g2_window, cx);
+    g2_visual.update(|window, cx| window.draw(cx).clear());
+    let g2_tab_b = selector_for(
+        &g2_visual,
+        &g2_host,
+        DockDebugRegion::Tab {
+            tabs: root,
+            item: item("b"),
+        },
+    )
+    .expect("the active G2 host should publish tab B");
+    let g2_tab_b_bounds = debug_bounds(&mut g2_visual, &g2_tab_b);
+    g2_visual.simulate_click(g2_tab_b_bounds.center(), Modifiers::none());
+    cx.run_until_parked();
+    controller.update(cx, |controller, _| {
+        assert_eq!(
+            controller.graph().selected_item_in_tabs(root),
+            Some(item("b")),
+            "the exact G2 lease must restore fresh interaction authority"
+        );
     });
 }
 

@@ -64,6 +64,19 @@ use std::{
 
 pub(crate) const LIVE_UNDOCK_REVEAL_OBSERVATION_DEADLINE: Duration = Duration::from_millis(500);
 
+pub(crate) fn defer_rejected_payload_drag_cleanup(
+    payload: &DockDragPayload,
+    window: &Window,
+    cx: &mut App,
+) {
+    let rejected_payload = payload.clone();
+    window.defer(cx, move |window, cx| {
+        if cx.active_drag_value::<DockDragPayload>() == Some(&rejected_payload) {
+            cx.stop_active_drag(window);
+        }
+    });
+}
+
 #[derive(Clone)]
 pub(crate) struct DockViewportHostSceneCandidate {
     pub(crate) draft: DockViewportHostSceneDraft,
@@ -526,12 +539,22 @@ impl Render for DockHost {
         {
             self.record_resolved_visual_style_for_test(visual_style.clone());
         }
+        let surface_presentation = if self.surface_session_admits_host_authority(cx) {
+            SubtreePresentation::Visible
+        } else {
+            SubtreePresentation::Inert
+        };
+        let present_surface = |visual: AnyElement| {
+            visual
+                .with_subtree_presentation(surface_presentation)
+                .into_any_element()
+        };
         let mut session = self.render_session_with_visual_style(visual_style.clone(), cx);
         if matches!(
             session.kind(),
             crate::host_render_session::DockHostPresentationKind::PayloadRecoveryProjection
         ) {
-            return self.render_payload_recovery_projection(&session, window, cx);
+            return present_surface(self.render_payload_recovery_projection(&session, window, cx));
         }
         let runtime_work_context = self.runtime_work_context(cx);
         let runtime_publication_admitted = runtime_work_context.is_some();
@@ -554,18 +577,26 @@ impl Render for DockHost {
             session.kind(),
             crate::host_render_session::DockHostPresentationKind::LivePayloadProjection
         ) {
-            return self.render_live_payload_projection(&session, runtime_work_context, window, cx);
+            return present_surface(self.render_live_payload_projection(
+                &session,
+                runtime_work_context,
+                window,
+                cx,
+            ));
         }
         if session.is_provisional_shell() {
             let mut background = session.visual_style().host.background;
             background.a = background.a.max(1.0 / 255.0);
-            return div()
-                .size_full()
-                .overflow_hidden()
-                .bg(background)
-                .into_any_element();
+            return present_surface(
+                div()
+                    .size_full()
+                    .overflow_hidden()
+                    .bg(background)
+                    .into_any_element(),
+            );
         }
-        if runtime_publication_admitted
+        if surface_presentation.is_interactive()
+            && runtime_publication_admitted
             && self.prepare_pending_focus_selection_from_render(window, cx)
         {
             session = self.render_session_with_visual_style(visual_style, cx);
@@ -641,9 +672,11 @@ impl Render for DockHost {
             .on_drag_move(cx.listener({
                 let window_binding = window_binding;
                 move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
-                    if !this
-                        .accepts_window_callback(window_binding, window.window_handle().window_id())
-                    {
+                    if !this.accepts_render_callback(
+                        window_binding,
+                        window.window_handle().window_id(),
+                        cx,
+                    ) {
                         return;
                     }
                     let payload = event.drag().clone();
@@ -674,9 +707,11 @@ impl Render for DockHost {
             .on_drop(cx.listener({
                 let window_binding = window_binding;
                 move |this, event: &DropEvent<DockDragPayload>, window, cx| {
-                    if !this
-                        .accepts_window_callback(window_binding, window.window_handle().window_id())
-                    {
+                    if !this.accepts_render_callback(
+                        window_binding,
+                        window.window_handle().window_id(),
+                        cx,
+                    ) {
                         return;
                     }
                     let payload = event.value();
@@ -705,9 +740,10 @@ impl Render for DockHost {
                 .capture_key_down(cx.listener({
                     let window_binding = window_binding;
                     move |this, event: &KeyDownEvent, window, cx| {
-                        if !this.accepts_window_callback(
+                        if !this.accepts_render_callback(
                             window_binding,
                             window.window_handle().window_id(),
+                            cx,
                         ) || event.keystroke.key != "escape"
                             || event.keystroke.modifiers.modified()
                         {
@@ -814,11 +850,17 @@ impl Render for DockHost {
             host = host.child(recovery_region);
         }
 
-        if runtime_publication_admitted {
+        if surface_presentation.is_interactive() && runtime_publication_admitted {
             self.apply_pending_focus_from_render(&session, window, cx);
         }
-        self.apply_payload_recovery_entry_focus_from_render(&payload_recovery_entries, window, cx);
-        self.apply_payload_recovery_restore_focus_from_render(&session, window, cx);
+        if surface_presentation.is_interactive() {
+            self.apply_payload_recovery_entry_focus_from_render(
+                &payload_recovery_entries,
+                window,
+                cx,
+            );
+            self.apply_payload_recovery_restore_focus_from_render(&session, window, cx);
+        }
 
         let restoration_is_staging = matches!(
             self.live_presentation_state().map(|state| state.mode),
@@ -833,7 +875,7 @@ impl Render for DockHost {
         } else {
             host.into_any_element()
         };
-        self.wrap_transport_and_semantic_proxies(rendered_host, window)
+        present_surface(self.wrap_transport_and_semantic_proxies(rendered_host, window))
     }
 }
 
@@ -1980,18 +2022,21 @@ impl DockHost {
                 .hover(move |style| style.bg(hover_background))
                 .focus_visible(move |style| style.shadow(focus_ring.clone()))
                 .on_click(cx.listener(move |host, _, window, cx| {
-                    if !host
-                        .accepts_window_callback(window_binding, window.window_handle().window_id())
-                    {
+                    if !host.accepts_render_callback(
+                        window_binding,
+                        window.window_handle().window_id(),
+                        cx,
+                    ) {
                         return;
                     }
                     let _ = host.restore_payload_recovery_from_render(click_action, window, cx);
                 }))
                 .on_a11y_action(AccessibleAction::Click, move |_, window, app| {
                     accessibility_host.update(app, |host, cx| {
-                        if !host.accepts_window_callback(
+                        if !host.accepts_render_callback(
                             window_binding,
                             window.window_handle().window_id(),
+                            cx,
                         ) {
                             return;
                         }
@@ -3022,6 +3067,7 @@ impl DockHost {
             window,
             cx,
         );
+        let window_binding = self.current_window_binding();
         let mut root_container = div()
             .relative()
             .flex()
@@ -3029,6 +3075,13 @@ impl DockHost {
             .overflow_hidden()
             .on_drag_move(cx.listener(
                 move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
+                    if !this.accepts_render_callback(
+                        window_binding,
+                        window.window_handle().window_id(),
+                        cx,
+                    ) {
+                        return;
+                    }
                     let payload = event.drag().clone();
                     let Ok(layout_position) = event.target_layout_position() else {
                         return;
@@ -3126,9 +3179,10 @@ impl DockHost {
                             .capture_pointer(&pointer_capture, MouseButton::Left)
                             .is_ok();
                         let began = entity.update(app, |host, cx| {
-                            if !host.accepts_window_callback(
+                            if !host.accepts_render_callback(
                                 window_binding,
                                 window.window_handle().window_id(),
+                                cx,
                             ) {
                                 return false;
                             }
@@ -3159,9 +3213,10 @@ impl DockHost {
                             return;
                         };
                         entity.update(app, |host, cx| {
-                            if !host.accepts_window_callback(
+                            if !host.accepts_render_callback(
                                 window_binding,
                                 window.window_handle().window_id(),
+                                cx,
                             ) {
                                 return;
                             }
@@ -3177,9 +3232,10 @@ impl DockHost {
                             return;
                         }
                         entity.update(app, |host, cx| {
-                            if !host.accepts_window_callback(
+                            if !host.accepts_render_callback(
                                 window_binding,
                                 window.window_handle().window_id(),
+                                cx,
                             ) {
                                 return;
                             }
@@ -3420,6 +3476,7 @@ impl DockHost {
             DockDebugRegion::EmptySpace,
             format!("{}:empty", session.selector_prefix()),
         );
+        let window_binding = self.current_window_binding();
         let mut empty = div()
             .id(selector.clone())
             .debug_selector(move || selector)
@@ -3433,6 +3490,13 @@ impl DockHost {
             .text_color(session.visual_style().host.empty_text)
             .on_drag_move(cx.listener(
                 move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
+                    if !this.accepts_render_callback(
+                        window_binding,
+                        window.window_handle().window_id(),
+                        cx,
+                    ) {
+                        return;
+                    }
                     let payload = event.drag().clone();
                     let Ok(layout_position) = event.target_layout_position() else {
                         return;
@@ -3462,6 +3526,7 @@ impl DockHost {
             DockDebugRegion::EmptySpace,
             format!("{}:empty-central", session.selector_prefix()),
         );
+        let window_binding = self.current_window_binding();
         let empty = div()
             .id(selector.clone())
             .debug_selector(move || selector)
@@ -3471,6 +3536,13 @@ impl DockHost {
             .bg(rgba(0x00000000))
             .on_drag_move(cx.listener(
                 move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
+                    if !this.accepts_render_callback(
+                        window_binding,
+                        window.window_handle().window_id(),
+                        cx,
+                    ) {
+                        return;
+                    }
                     let payload = event.drag().clone();
                     let Ok(layout_position) = event.target_layout_position() else {
                         return;
