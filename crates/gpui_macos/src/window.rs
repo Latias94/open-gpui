@@ -809,9 +809,11 @@ impl MacFullscreenTransitionTerminal {
     }
 
     fn finish(self, transition: &mut Option<MacFullscreenTransition>) -> bool {
-        let matched = *transition == Some(self.expected_transition());
+        if *transition != Some(self.expected_transition()) {
+            return false;
+        }
         *transition = None;
-        matched
+        true
     }
 
     fn titlebar_appears_transparent(self, requested_transparent: bool) -> bool {
@@ -995,7 +997,6 @@ struct MacWindowSerialEffectDrain<T> {
 enum MacWindowSerialEffectDrainOwner {
     Idle,
     Draining,
-    RecoveryScheduled,
 }
 
 impl<T> Default for MacWindowSerialEffectDrain<T> {
@@ -1016,8 +1017,7 @@ impl<T> MacWindowSerialEffectDrain<T> {
                 self.owner = MacWindowSerialEffectDrainOwner::Draining;
                 true
             }
-            MacWindowSerialEffectDrainOwner::Draining
-            | MacWindowSerialEffectDrainOwner::RecoveryScheduled => false,
+            MacWindowSerialEffectDrainOwner::Draining => false,
         }
     }
 
@@ -1032,31 +1032,46 @@ impl<T> MacWindowSerialEffectDrain<T> {
         next
     }
 
-    fn mark_recovery_scheduled_after_panic(&mut self) -> bool {
-        if self.owner != MacWindowSerialEffectDrainOwner::Draining {
-            return false;
-        }
-        // Keep reentrant enqueues attached to the deferred owner while the original panic unwinds.
-        self.owner = MacWindowSerialEffectDrainOwner::RecoveryScheduled;
-        true
-    }
-
-    fn begin_scheduled_recovery(&mut self) -> bool {
-        if self.owner != MacWindowSerialEffectDrainOwner::RecoveryScheduled {
-            return false;
-        }
-        if self.pending.is_empty() {
-            self.owner = MacWindowSerialEffectDrainOwner::Idle;
-            false
-        } else {
-            self.owner = MacWindowSerialEffectDrainOwner::Draining;
-            true
-        }
-    }
-
     fn cancel(&mut self) {
         self.pending.clear();
         self.owner = MacWindowSerialEffectDrainOwner::Idle;
+    }
+}
+
+#[derive(Default)]
+struct MacWindowCallbackPanicBoundary {
+    first_panic: Option<Box<dyn std::any::Any + Send>>,
+}
+
+impl MacWindowCallbackPanicBoundary {
+    fn deliver(&mut self, effect: impl FnOnce()) {
+        if let Err(panic) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(effect)) {
+            self.retain(panic);
+        }
+    }
+
+    fn retain(&mut self, panic: Box<dyn std::any::Any + Send>) {
+        if self.first_panic.is_none() {
+            self.first_panic = Some(panic);
+        } else {
+            // Panic payloads are arbitrary user values whose destructor may also panic. Only the
+            // first payload is retained for boundary reporting; later payloads must not be dropped.
+            mem::forget(panic);
+        }
+    }
+
+    fn into_first_panic(self) -> Option<Box<dyn std::any::Any + Send>> {
+        self.first_panic
+    }
+
+    fn isolate_at_native_boundary(self, context: &str) {
+        let Some(panic) = self.into_first_panic() else {
+            return;
+        };
+        // An arbitrary panic payload may itself panic from Drop. Keep it from unwinding through
+        // the Objective-C or dispatch ABI after all recoverable effects have been delivered.
+        mem::forget(panic);
+        log::error!("isolated a panic from {context} at the native callback boundary");
     }
 }
 
@@ -2611,80 +2626,37 @@ fn enqueue_window_observation_effect_batches(
 }
 
 fn drain_window_observation_effects(window_state: &Arc<Mutex<MacWindowState>>) {
+    let mut panic_boundary = MacWindowCallbackPanicBoundary::default();
     loop {
         let batch = {
             let mut state = window_state.lock();
             if state.is_closed() {
                 state.observation_effects.cancel();
-                return;
+                None
+            } else {
+                state.observation_effects.pop_next()
             }
-            state.observation_effects.pop_next()
         };
         let Some(batch) = batch else {
-            return;
+            break;
         };
         let delivery = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            deliver_window_observation_effect_batch(window_state, batch);
+            deliver_window_observation_effect_batch(window_state, batch, &mut panic_boundary);
         }));
         if let Err(panic) = delivery {
-            // The current batch has already been removed and may be partially applied. Transfer
-            // the original payload without replaying it; a later main-queue owner drains the FIFO.
-            let panic_owner = {
-                let mut state = window_state.lock();
-                let panic_owner = state.foreground_executor.clone();
-                if state.is_closed() {
-                    state.observation_effects.cancel();
-                } else {
-                    let recovery_scheduled = state
-                        .observation_effects
-                        .mark_recovery_scheduled_after_panic();
-                    debug_assert!(recovery_scheduled);
-                }
-                panic_owner
-            };
-            transfer_window_observation_effect_panic(window_state, panic_owner, panic);
-            return;
+            // User callbacks are isolated individually below. Retain an unexpected internal panic
+            // as well, then continue every older and reentrant batch owned by this serial drain.
+            panic_boundary.retain(panic);
         }
     }
-}
 
-fn transfer_window_observation_effect_panic(
-    window_state: &Arc<Mutex<MacWindowState>>,
-    panic_owner: ForegroundExecutor,
-    panic: Box<dyn std::any::Any + Send>,
-) {
-    let weak_window_state = Arc::downgrade(window_state);
-    // The foreground task is the Rust panic owner: it first resumes any unapplied FIFO batches,
-    // then isolates the original payload without unwinding through the dispatch trampoline.
-    panic_owner
-        .spawn(async move {
-            if let Some(window_state) = weak_window_state.upgrade() {
-                let should_drain = {
-                    let mut state = window_state.lock();
-                    if state.is_closed() {
-                        state.observation_effects.cancel();
-                        false
-                    } else {
-                        state.observation_effects.begin_scheduled_recovery()
-                    }
-                };
-                if should_drain {
-                    drain_window_observation_effects(&window_state);
-                }
-            }
-            log::error!(
-                "isolated a panic from a macOS window observation effect at the native callback boundary"
-            );
-            // An arbitrary panic payload may itself panic from Drop. Leaking only this isolated
-            // payload mirrors the native-boundary policy used by the Win32 backend.
-            mem::forget(panic);
-        })
-        .detach();
+    panic_boundary.isolate_at_native_boundary("a macOS window observation effect");
 }
 
 fn deliver_window_observation_effect_batch(
     window_state: &Arc<Mutex<MacWindowState>>,
     batch: MacWindowObservationEffectBatch,
+    panic_boundary: &mut MacWindowCallbackPanicBoundary,
 ) {
     let changes = {
         let mut state = window_state.lock();
@@ -2702,7 +2674,7 @@ fn deliver_window_observation_effect_batch(
     };
 
     if changes.renderer_geometry_changed {
-        notify_window_resize(window_state);
+        panic_boundary.deliver(|| notify_window_resize(window_state));
     }
     if changes.moved
         || matches!(
@@ -2710,12 +2682,12 @@ fn deliver_window_observation_effect_batch(
             Some(MacWindowObservationEvent::Moved)
         )
     {
-        notify_window_moved(window_state);
+        panic_boundary.deliver(|| notify_window_moved(window_state));
     }
 
     let Some(event) = batch.event else {
         if changes.state_changed {
-            notify_window_state_changed(window_state);
+            panic_boundary.deliver(|| notify_window_state_changed(window_state));
         }
         return;
     };
@@ -2726,20 +2698,21 @@ fn deliver_window_observation_effect_batch(
                 active_event,
                 batch.observation.is_active,
                 event.is_latest_active,
+                panic_boundary,
             );
             if changes.state_changed {
-                notify_window_state_changed(window_state);
+                panic_boundary.deliver(|| notify_window_state_changed(window_state));
             }
         }
         MacWindowObservationEvent::Fullscreen(terminal) => {
             if batch.observation.is_fullscreen == terminal.is_fullscreen() {
-                notify_window_state_changed(window_state);
+                panic_boundary.deliver(|| notify_window_state_changed(window_state));
             } else {
                 log::warn!(
                     "discarding macOS fullscreen terminal {terminal:?} without a matching complete observation"
                 );
                 if changes.state_changed {
-                    notify_window_state_changed(window_state);
+                    panic_boundary.deliver(|| notify_window_state_changed(window_state));
                 }
             }
         }
@@ -2751,20 +2724,20 @@ fn deliver_window_observation_effect_batch(
                 | MacWindowStateEventSource::Deminiaturized => observation_matches,
             };
             if should_notify && observation_matches {
-                notify_window_state_changed(window_state);
+                panic_boundary.deliver(|| notify_window_state_changed(window_state));
             } else if !observation_matches {
                 log::warn!(
                     "discarding macOS window-state edge {:?} without a matching complete observation",
                     state_event.source
                 );
                 if changes.state_changed {
-                    notify_window_state_changed(window_state);
+                    panic_boundary.deliver(|| notify_window_state_changed(window_state));
                 }
             }
         }
         MacWindowObservationEvent::Moved => {
             if changes.state_changed {
-                notify_window_state_changed(window_state);
+                panic_boundary.deliver(|| notify_window_state_changed(window_state));
             }
         }
     }
@@ -2826,6 +2799,77 @@ fn checkout_mac_window_callback<T>(
         }
         restore_callback_if_vacant(slot(&mut state), callback);
     })
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MacRequestFrameDeliveryMode {
+    DisplayTransaction,
+    DisplayLinkTick,
+}
+
+impl MacRequestFrameDeliveryMode {
+    fn uses_display_transaction(self) -> bool {
+        matches!(self, Self::DisplayTransaction)
+    }
+}
+
+fn request_frame_callback_slot(
+    state: &mut MacWindowState,
+) -> &mut Option<Box<dyn FnMut(RequestFrameOptions)>> {
+    &mut state.request_frame_callback
+}
+
+fn activate_callback_slot(
+    state: &mut MacWindowState,
+) -> &mut Option<Box<dyn FnMut(PlatformWindowActiveStatusObservation)>> {
+    &mut state.activate_callback
+}
+
+fn checkout_mac_request_frame_callback(
+    window_state: &Arc<Mutex<MacWindowState>>,
+    callback: Box<dyn FnMut(RequestFrameOptions)>,
+    mode: MacRequestFrameDeliveryMode,
+) -> MacWindowCallbackCheckout<
+    Box<dyn FnMut(RequestFrameOptions)>,
+    impl FnOnce(Box<dyn FnMut(RequestFrameOptions)>),
+> {
+    let window_state = window_state.clone();
+    MacWindowCallbackCheckout::new(callback, move |callback| {
+        let mut state = window_state.lock();
+        if state.is_closed() {
+            return;
+        }
+        if mode.uses_display_transaction() {
+            state.renderer.set_presents_with_transaction(false);
+            state.start_display_link();
+        }
+        restore_callback_if_vacant(request_frame_callback_slot(&mut state), callback);
+    })
+}
+
+fn deliver_window_request_frame(
+    window_state: &Arc<Mutex<MacWindowState>>,
+    mode: MacRequestFrameDeliveryMode,
+    panic_boundary: &mut MacWindowCallbackPanicBoundary,
+) {
+    let callback = {
+        let mut state = window_state.lock();
+        if state.is_closed() {
+            return;
+        }
+        let Some(callback) = state.request_frame_callback.take() else {
+            return;
+        };
+        if mode.uses_display_transaction() {
+            state.renderer.set_presents_with_transaction(true);
+            state.stop_display_link();
+        }
+        callback
+    };
+
+    let mut callback = checkout_mac_request_frame_callback(window_state, callback, mode);
+    panic_boundary.deliver(|| (callback.callback())(Default::default()));
+    panic_boundary.deliver(|| drop(callback));
 }
 
 fn resize_callback_slot(
@@ -4541,15 +4585,14 @@ extern "C" fn window_fullscreen_transition_did_finish(this: &Object, selector: S
     let window_state = unsafe { get_window_state(this) };
     let (target_generation, event) = {
         let mut lock = window_state.as_ref().lock();
-        let transition_matched = terminal.finish(&mut lock.fullscreen_transition);
-        if !transition_matched {
+        if lock.is_closed() {
+            return;
+        }
+        if !terminal.finish(&mut lock.fullscreen_transition) {
             log::debug!(
                 "received unexpected macOS fullscreen terminal {terminal:?} for window {:?}",
                 lock.handle.window_id()
             );
-        }
-
-        if lock.is_closed() {
             return;
         }
 
@@ -4693,6 +4736,7 @@ fn deliver_window_active_event(
     event: MacWindowActiveEvent,
     observed_is_active: bool,
     event_is_latest: bool,
+    panic_boundary: &mut MacWindowCallbackPanicBoundary,
 ) {
     let is_active = event.is_active();
     let mut lock = window_state.lock();
@@ -4721,7 +4765,6 @@ fn deliver_window_active_event(
         return;
     }
 
-    let executor = lock.foreground_executor.clone();
     drop(lock);
 
     let a11y_events = {
@@ -4735,7 +4778,7 @@ fn deliver_window_active_event(
         }
     };
     if let Some(events) = a11y_events {
-        events.raise();
+        panic_boundary.deliver(|| events.raise());
     }
 
     // When a window becomes active, trigger an immediate synchronous frame request to prevent
@@ -4745,62 +4788,56 @@ fn deliver_window_active_event(
     // path is properly established. Without this guard, the focus state would remain unset until
     // the first mouse click, causing keybindings to be non-functional.
     if event == MacWindowActiveEvent::BecameKey && is_active {
-        let mut lock = window_state.lock();
-
-        if lock.is_closed() {
-            return;
-        } else if lock.activated_least_once {
-            if let Some(mut callback) = lock.request_frame_callback.take() {
-                lock.renderer.set_presents_with_transaction(true);
-                lock.stop_display_link();
-                drop(lock);
-                callback(Default::default());
-
-                let mut lock = window_state.lock();
-                if !lock.is_closed() {
-                    lock.request_frame_callback = Some(callback);
-                    lock.renderer.set_presents_with_transaction(false);
-                    lock.start_display_link();
-                }
+        let should_request_frame = {
+            let mut lock = window_state.lock();
+            if lock.is_closed() {
+                return;
             }
-        } else {
-            lock.activated_least_once = true;
+            if lock.activated_least_once {
+                true
+            } else {
+                lock.activated_least_once = true;
+                false
+            }
+        };
+        if should_request_frame {
+            deliver_window_request_frame(
+                window_state,
+                MacRequestFrameDeliveryMode::DisplayTransaction,
+                panic_boundary,
+            );
         }
     }
 
-    let window_state = window_state.clone();
-    executor
-        .spawn(async move {
-            let mut lock = window_state.lock();
-            if lock.is_closed() || lock.interaction_is_quiesced() {
-                return;
-            }
-            if is_active {
-                lock.move_traffic_light();
-            }
-
-            if let Some(mut callback) = lock.activate_callback.take() {
-                let native_window = lock.native_window;
-                drop(lock);
-                let exact_native_positive = is_active
-                    && event_is_latest
-                    && observed_is_active
-                    && unsafe {
-                        let app = NSApplication::sharedApplication(nil);
-                        let key_window: id = msg_send![app, keyWindow];
-                        key_window == native_window
-                    };
-                callback(PlatformWindowActiveStatusObservation::new(
-                    is_active,
-                    exact_native_positive,
-                ));
-                let mut lock = window_state.lock();
-                if !lock.is_closed() {
-                    lock.activate_callback = Some(callback);
-                }
-            };
-        })
-        .detach();
+    let (callback, native_window) = {
+        let mut lock = window_state.lock();
+        if lock.is_closed() || lock.interaction_is_quiesced() {
+            return;
+        }
+        if is_active {
+            lock.move_traffic_light();
+        }
+        let Some(callback) = lock.activate_callback.take() else {
+            return;
+        };
+        (callback, lock.native_window)
+    };
+    let exact_native_positive = is_active
+        && event_is_latest
+        && observed_is_active
+        && unsafe {
+            let app = NSApplication::sharedApplication(nil);
+            let key_window: id = msg_send![app, keyWindow];
+            key_window == native_window
+        };
+    let mut callback = checkout_mac_window_callback(window_state, callback, activate_callback_slot);
+    panic_boundary.deliver(|| {
+        (callback.callback())(PlatformWindowActiveStatusObservation::new(
+            is_active,
+            exact_native_positive,
+        ));
+    });
+    panic_boundary.deliver(|| drop(callback));
 }
 
 extern "C" fn window_should_close(this: &Object, _: Sel, _: id) -> BOOL {
@@ -4893,41 +4930,35 @@ extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
 
 extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
-    let mut lock = window_state.lock();
-    if lock.is_closed() {
-        return;
+    let mut panic_boundary = MacWindowCallbackPanicBoundary::default();
+    let delivery = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        deliver_window_request_frame(
+            &window_state,
+            MacRequestFrameDeliveryMode::DisplayTransaction,
+            &mut panic_boundary,
+        );
+    }));
+    if let Err(panic) = delivery {
+        panic_boundary.retain(panic);
     }
-    if let Some(mut callback) = lock.request_frame_callback.take() {
-        lock.renderer.set_presents_with_transaction(true);
-        lock.stop_display_link();
-        drop(lock);
-        callback(Default::default());
-
-        let mut lock = window_state.lock();
-        if !lock.is_closed() {
-            lock.request_frame_callback = Some(callback);
-            lock.renderer.set_presents_with_transaction(false);
-            lock.start_display_link();
-        }
-    }
+    panic_boundary.isolate_at_native_boundary("a macOS display-layer frame callback");
 }
 
 extern "C" fn step(view: *mut c_void) {
     let view = view as id;
     let window_state = unsafe { get_window_state(&*view) };
-    let mut lock = window_state.lock();
-    if lock.is_closed() {
-        return;
+    let mut panic_boundary = MacWindowCallbackPanicBoundary::default();
+    let delivery = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        deliver_window_request_frame(
+            &window_state,
+            MacRequestFrameDeliveryMode::DisplayLinkTick,
+            &mut panic_boundary,
+        );
+    }));
+    if let Err(panic) = delivery {
+        panic_boundary.retain(panic);
     }
-
-    if let Some(mut callback) = lock.request_frame_callback.take() {
-        drop(lock);
-        callback(Default::default());
-        let mut lock = window_state.lock();
-        if !lock.is_closed() {
-            lock.request_frame_callback = Some(callback);
-        }
-    }
+    panic_boundary.isolate_at_native_boundary("a macOS display-link frame callback");
 }
 
 extern "C" fn valid_attributes_for_marked_text(_: &Object, _: Sel) -> id {
@@ -5648,37 +5679,64 @@ mod creation_projection_tests {
     }
 
     #[test]
-    fn observation_effect_drain_recovers_after_callback_panic_without_replay() {
+    fn active_effect_completion_precedes_reentrant_moved_and_fullscreen_batches() {
+        let mut drain = MacWindowSerialEffectDrain::default();
+        let mut delivered = Vec::new();
+        assert!(drain.enqueue("active"));
+
+        while let Some(effect) = drain.pop_next() {
+            if effect == "active" {
+                delivered.push("active-start");
+                assert!(!drain.enqueue("moved"));
+                assert!(!drain.enqueue("fullscreen"));
+                delivered.push("active-end");
+            } else {
+                delivered.push(effect);
+            }
+        }
+
+        assert_eq!(
+            delivered,
+            vec!["active-start", "active-end", "moved", "fullscreen"]
+        );
+    }
+
+    #[test]
+    fn observation_effect_drain_continues_after_callback_panic_without_replay() {
         let mut drain = MacWindowSerialEffectDrain::default();
         assert!(drain.enqueue("already-applied"));
         assert!(!drain.enqueue("older-pending"));
 
-        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            assert_eq!(drain.pop_next(), Some("already-applied"));
-            assert!(!drain.enqueue("callback-reentrant"));
-            panic!("effect callback panic");
-        }))
-        .unwrap_err();
+        let mut panic_boundary = MacWindowCallbackPanicBoundary::default();
+        let mut delivered = Vec::new();
+        while let Some(effect) = drain.pop_next() {
+            delivered.push(effect);
+            panic_boundary.deliver(|| {
+                if effect == "already-applied" {
+                    assert!(!drain.enqueue("callback-reentrant"));
+                    panic!("effect callback panic");
+                }
+            });
+            if effect == "already-applied" {
+                assert!(!drain.enqueue("after-panic"));
+            }
+        }
+
+        assert_eq!(
+            delivered,
+            vec![
+                "already-applied",
+                "older-pending",
+                "callback-reentrant",
+                "after-panic",
+            ]
+        );
+        let panic = panic_boundary.into_first_panic().unwrap();
         assert_eq!(
             panic.downcast_ref::<&'static str>(),
             Some(&"effect callback panic")
         );
-
-        assert!(drain.mark_recovery_scheduled_after_panic());
-        assert!(!drain.mark_recovery_scheduled_after_panic());
-        assert!(!drain.enqueue("after-panic"));
-        assert!(drain.begin_scheduled_recovery());
-        assert!(!drain.begin_scheduled_recovery());
-
-        let mut resumed = Vec::new();
-        while let Some(effect) = drain.pop_next() {
-            resumed.push(effect);
-        }
-        assert_eq!(
-            resumed,
-            vec!["older-pending", "callback-reentrant", "after-panic"]
-        );
-        assert!(!resumed.contains(&"already-applied"));
+        mem::forget(panic);
 
         assert!(drain.enqueue("next-independent-drain"));
         assert_eq!(drain.pop_next(), Some("next-independent-drain"));
@@ -5686,9 +5744,54 @@ mod creation_projection_tests {
     }
 
     #[test]
-    fn window_callback_checkout_restores_the_callback_after_panic() {
+    fn callback_panic_boundary_continues_remaining_same_batch_effects_exactly_once() {
+        let mut panic_boundary = MacWindowCallbackPanicBoundary::default();
+        let mut delivered = Vec::new();
+
+        panic_boundary.deliver(|| {
+            delivered.push("resize");
+            panic!("resize callback panic");
+        });
+        panic_boundary.deliver(|| delivered.push("moved"));
+        panic_boundary.deliver(|| delivered.push("state"));
+
+        assert_eq!(delivered, vec!["resize", "moved", "state"]);
+        let panic = panic_boundary.into_first_panic().unwrap();
+        assert_eq!(
+            panic.downcast_ref::<&'static str>(),
+            Some(&"resize callback panic")
+        );
+        mem::forget(panic);
+    }
+
+    #[test]
+    fn callback_panic_boundary_never_drops_arbitrary_payloads() {
+        struct PanicPayload(Arc<AtomicU64>);
+
+        impl Drop for PanicPayload {
+            fn drop(&mut self) {
+                self.0.fetch_add(1, Ordering::Relaxed);
+                panic!("panic payload destructor must remain isolated");
+            }
+        }
+
+        let drops = Arc::new(AtomicU64::new(0));
+        let mut panic_boundary = MacWindowCallbackPanicBoundary::default();
+        for _ in 0..2 {
+            let drops = Arc::clone(&drops);
+            panic_boundary.deliver(|| std::panic::panic_any(PanicPayload(drops)));
+        }
+
+        panic_boundary.isolate_at_native_boundary("a test callback");
+        assert_eq!(drops.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn request_frame_checkout_restores_callback_rendering_and_display_link_after_panic() {
         let calls = Rc::new(Cell::new(0));
         let callback_calls = Rc::clone(&calls);
+        let presents_with_transaction = Rc::new(Cell::new(true));
+        let display_link_running = Rc::new(Cell::new(false));
         let slot: Rc<std::cell::RefCell<Option<Box<dyn FnMut()>>>> =
             Rc::new(std::cell::RefCell::new(Some(Box::new(move || {
                 let next = callback_calls.get() + 1;
@@ -5698,33 +5801,141 @@ mod creation_projection_tests {
                 }
             }))));
 
-        let delivery = std::panic::catch_unwind(std::panic::AssertUnwindSafe({
-            let slot = Rc::clone(&slot);
-            move || {
-                let callback = slot
-                    .borrow_mut()
-                    .take()
-                    .expect("the callback must be installed before checkout");
-                let restore_slot = Rc::clone(&slot);
-                let mut checkout = MacWindowCallbackCheckout::new(callback, move |callback| {
-                    let mut slot = restore_slot.borrow_mut();
-                    restore_callback_if_vacant(&mut slot, callback);
-                });
-                (checkout.callback())();
-            }
-        }));
+        let callback = slot
+            .borrow_mut()
+            .take()
+            .expect("the callback must be installed before checkout");
+        let restore_slot = Rc::clone(&slot);
+        let restore_transaction = Rc::clone(&presents_with_transaction);
+        let restore_display_link = Rc::clone(&display_link_running);
+        let mut checkout = MacWindowCallbackCheckout::new(callback, move |callback| {
+            restore_transaction.set(false);
+            restore_display_link.set(true);
+            let mut slot = restore_slot.borrow_mut();
+            restore_callback_if_vacant(&mut slot, callback);
+        });
+        let mut panic_boundary = MacWindowCallbackPanicBoundary::default();
+        panic_boundary.deliver(|| (checkout.callback())());
+        panic_boundary.deliver(|| drop(checkout));
 
-        assert!(delivery.is_err());
+        let panic = panic_boundary.into_first_panic().unwrap();
+        assert_eq!(
+            panic.downcast_ref::<&'static str>(),
+            Some(&"injected macOS window callback panic")
+        );
+        mem::forget(panic);
         let mut callback = slot
             .borrow_mut()
             .take()
             .expect("the panicking callback must be restored");
         callback();
         assert_eq!(calls.get(), 2);
+        assert!(!presents_with_transaction.get());
+        assert!(display_link_running.get());
     }
 
     #[test]
-    fn window_callback_checkout_preserves_a_reentrant_replacement_during_unwind() {
+    fn request_frame_checkout_preserves_reentrant_replacement_and_restores_rendering() {
+        struct CallbackDropPanic;
+
+        impl Drop for CallbackDropPanic {
+            fn drop(&mut self) {
+                panic!("superseded request-frame callback destructor panic");
+            }
+        }
+
+        let replacement_calls = Rc::new(Cell::new(0));
+        let presents_with_transaction = Rc::new(Cell::new(true));
+        let display_link_running = Rc::new(Cell::new(false));
+        let slot: Rc<std::cell::RefCell<Option<Box<dyn FnMut()>>>> =
+            Rc::new(std::cell::RefCell::new(None));
+        let slot_from_callback = Rc::clone(&slot);
+        let replacement_calls_from_callback = Rc::clone(&replacement_calls);
+        let callback_drop_panic = CallbackDropPanic;
+        *slot.borrow_mut() = Some(Box::new(move || {
+            let _keep_drop_guard_captured = &callback_drop_panic;
+            let replacement_calls = Rc::clone(&replacement_calls_from_callback);
+            *slot_from_callback.borrow_mut() = Some(Box::new(move || {
+                replacement_calls.set(replacement_calls.get() + 1);
+            }));
+            panic!("injected request-frame panic after reentrant replacement");
+        }));
+
+        let callback = slot
+            .borrow_mut()
+            .take()
+            .expect("the callback must be installed before checkout");
+        let restore_slot = Rc::clone(&slot);
+        let restore_transaction = Rc::clone(&presents_with_transaction);
+        let restore_display_link = Rc::clone(&display_link_running);
+        let mut checkout = MacWindowCallbackCheckout::new(callback, move |callback| {
+            restore_transaction.set(false);
+            restore_display_link.set(true);
+            let mut slot = restore_slot.borrow_mut();
+            restore_callback_if_vacant(&mut slot, callback);
+        });
+        let mut panic_boundary = MacWindowCallbackPanicBoundary::default();
+        panic_boundary.deliver(|| (checkout.callback())());
+        panic_boundary.deliver(|| drop(checkout));
+
+        let panic = panic_boundary.into_first_panic().unwrap();
+        assert_eq!(
+            panic.downcast_ref::<&'static str>(),
+            Some(&"injected request-frame panic after reentrant replacement")
+        );
+        mem::forget(panic);
+        let mut replacement = slot
+            .borrow_mut()
+            .take()
+            .expect("the reentrant replacement must remain authoritative");
+        replacement();
+        assert_eq!(replacement_calls.get(), 1);
+        assert!(!presents_with_transaction.get());
+        assert!(display_link_running.get());
+    }
+
+    #[test]
+    fn activate_callback_checkout_restores_the_callback_after_panic() {
+        let calls = Rc::new(Cell::new(0));
+        let callback_calls = Rc::clone(&calls);
+        let slot: Rc<std::cell::RefCell<Option<Box<dyn FnMut()>>>> =
+            Rc::new(std::cell::RefCell::new(Some(Box::new(move || {
+                let next = callback_calls.get() + 1;
+                callback_calls.set(next);
+                if next == 1 {
+                    panic!("injected activate callback panic");
+                }
+            }))));
+
+        let callback = slot
+            .borrow_mut()
+            .take()
+            .expect("the callback must be installed before checkout");
+        let restore_slot = Rc::clone(&slot);
+        let mut checkout = MacWindowCallbackCheckout::new(callback, move |callback| {
+            let mut slot = restore_slot.borrow_mut();
+            restore_callback_if_vacant(&mut slot, callback);
+        });
+        let mut panic_boundary = MacWindowCallbackPanicBoundary::default();
+        panic_boundary.deliver(|| (checkout.callback())());
+        panic_boundary.deliver(|| drop(checkout));
+
+        let panic = panic_boundary.into_first_panic().unwrap();
+        assert_eq!(
+            panic.downcast_ref::<&'static str>(),
+            Some(&"injected activate callback panic")
+        );
+        mem::forget(panic);
+        let mut callback = slot
+            .borrow_mut()
+            .take()
+            .expect("the panicking activate callback must be restored");
+        callback();
+        assert_eq!(calls.get(), 2);
+    }
+
+    #[test]
+    fn activate_callback_checkout_preserves_a_reentrant_replacement_during_unwind() {
         let replacement_calls = Rc::new(Cell::new(0));
         let slot: Rc<std::cell::RefCell<Option<Box<dyn FnMut()>>>> =
             Rc::new(std::cell::RefCell::new(None));
@@ -5738,23 +5949,25 @@ mod creation_projection_tests {
             panic!("injected callback panic after reentrant replacement");
         }));
 
-        let delivery = std::panic::catch_unwind(std::panic::AssertUnwindSafe({
-            let slot = Rc::clone(&slot);
-            move || {
-                let callback = slot
-                    .borrow_mut()
-                    .take()
-                    .expect("the callback must be installed before checkout");
-                let restore_slot = Rc::clone(&slot);
-                let mut checkout = MacWindowCallbackCheckout::new(callback, move |callback| {
-                    let mut slot = restore_slot.borrow_mut();
-                    restore_callback_if_vacant(&mut slot, callback);
-                });
-                (checkout.callback())();
-            }
-        }));
+        let callback = slot
+            .borrow_mut()
+            .take()
+            .expect("the callback must be installed before checkout");
+        let restore_slot = Rc::clone(&slot);
+        let mut checkout = MacWindowCallbackCheckout::new(callback, move |callback| {
+            let mut slot = restore_slot.borrow_mut();
+            restore_callback_if_vacant(&mut slot, callback);
+        });
+        let mut panic_boundary = MacWindowCallbackPanicBoundary::default();
+        panic_boundary.deliver(|| (checkout.callback())());
+        panic_boundary.deliver(|| drop(checkout));
 
-        assert!(delivery.is_err());
+        let panic = panic_boundary.into_first_panic().unwrap();
+        assert_eq!(
+            panic.downcast_ref::<&'static str>(),
+            Some(&"injected callback panic after reentrant replacement")
+        );
+        mem::forget(panic);
         let mut replacement = slot
             .borrow_mut()
             .take()
@@ -5772,17 +5985,21 @@ mod creation_projection_tests {
             1,
         ));
         events.record(MacWindowPendingObservationEvent::observed(
-            MacWindowObservationEvent::Fullscreen(MacFullscreenTransitionTerminal::Entered),
+            MacWindowObservationEvent::Moved,
             2,
         ));
+        events.record(MacWindowPendingObservationEvent::observed(
+            MacWindowObservationEvent::Fullscreen(MacFullscreenTransitionTerminal::Entered),
+            3,
+        ));
 
-        let batches = events.into_effect_batches(3);
+        let batches = events.into_effect_batches(4);
         assert_eq!(
             batches
                 .iter()
                 .map(|batch| batch.observation)
                 .collect::<Vec<_>>(),
-            vec![1, 2, 3]
+            vec![1, 2, 3, 4]
         );
         assert_eq!(
             batches
@@ -5793,6 +6010,7 @@ mod creation_projection_tests {
                 Some(MacWindowObservationEvent::Active(
                     MacWindowActiveEvent::BecameKey,
                 )),
+                Some(MacWindowObservationEvent::Moved),
                 Some(MacWindowObservationEvent::Fullscreen(
                     MacFullscreenTransitionTerminal::Entered,
                 )),
@@ -6290,8 +6508,15 @@ mod creation_projection_tests {
         }
 
         let mut mismatched_transition = Some(MacFullscreenTransition::Entering);
-        assert!(!MacFullscreenTransitionTerminal::FailedToExit.finish(&mut mismatched_transition));
-        assert_eq!(mismatched_transition, None);
+        let mut published_side_effects = 0;
+        if MacFullscreenTransitionTerminal::FailedToExit.finish(&mut mismatched_transition) {
+            published_side_effects += 1;
+        }
+        assert_eq!(
+            mismatched_transition,
+            Some(MacFullscreenTransition::Entering)
+        );
+        assert_eq!(published_side_effects, 0);
     }
 
     #[test]
