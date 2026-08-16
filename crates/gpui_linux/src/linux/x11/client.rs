@@ -1645,6 +1645,20 @@ impl X11Client {
     }
 }
 
+fn x11_viewport_capabilities() -> PlatformViewportCapabilities {
+    PlatformViewportCapabilities {
+        platform_viewport_windows: true,
+        // XInput enter/leave tracks cached pointer focus, not a current global hit-test.
+        window_stack: true,
+        // X11 currently exposes one process-wide scale and unreconciled ConfigureNotify bounds.
+        // Keep global geometry and target-display DPI explicitly unsupported until the RandR and
+        // frame-extents authority is connected to the production open/window-facts path.
+        global_window_bounds: false,
+        dpi_scale: false,
+        ..Default::default()
+    }
+}
+
 fn x11_window_capabilities(
     kind: &WindowKind,
     alpha_creation_supported: bool,
@@ -1692,7 +1706,7 @@ fn x11_window_capabilities(
             } else {
                 WindowMutationSupport::Unsupported
             },
-            coordinate_space: WindowCoordinateSpace::GlobalScreen,
+            coordinate_space: WindowCoordinateSpace::WindowLocal,
             ..Default::default()
         },
         activation: PlatformWindowActivationSupport::Observed,
@@ -2031,14 +2045,7 @@ impl LinuxClient for X11Client {
     }
 
     fn viewport_capabilities(&self) -> PlatformViewportCapabilities {
-        PlatformViewportCapabilities {
-            platform_viewport_windows: true,
-            global_window_bounds: true,
-            // XInput enter/leave tracks cached pointer focus, not a current global hit-test.
-            window_stack: true,
-            dpi_scale: true,
-            ..Default::default()
-        }
+        x11_viewport_capabilities()
     }
 
     fn window_capabilities(
@@ -3125,7 +3132,7 @@ mod tests {
             alpha,
             topmost: WindowMutationSupport::Unsupported,
             taskbar_visibility: WindowMutationSupport::Unsupported,
-            coordinate_space: WindowCoordinateSpace::GlobalScreen,
+            coordinate_space: WindowCoordinateSpace::WindowLocal,
         }
     }
 
@@ -3168,6 +3175,16 @@ mod tests {
             root_depth: 24,
             allowed_depths,
         }
+    }
+
+    #[test]
+    fn viewport_capabilities_do_not_claim_unproven_global_geometry() {
+        let capabilities = x11_viewport_capabilities();
+
+        assert!(capabilities.platform_viewport_windows);
+        assert!(capabilities.window_stack);
+        assert!(!capabilities.global_window_bounds);
+        assert!(!capabilities.dpi_scale);
     }
 
     #[test]
