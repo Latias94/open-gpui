@@ -8,10 +8,11 @@ use crate::{
     PlatformNativeWindowRetirementOutcome, PlatformPhysicalDisplayObservation,
     PlatformPointerCaptureReleaseOutcome, PlatformPresentationShutdownOutcome, PlatformWindow,
     PlatformWindowActiveStatusObservation, PlatformWindowCommand, PlatformWindowCommandDispatcher,
-    PlatformWindowCommandOutcome, PlatformWindowDispatch, PlatformWindowMutationObservation,
-    PlatformWindowMutationTerminal, PlatformWindowPhysicalGeometry, PlatformWindowPresentOutcome,
-    Point, PreparedPlatformPointerCaptureRelease, PreparedPlatformPresentationShutdown,
-    PromptButton, RequestFrameOptions, Scene, Size, TestPlatform, TileId, WindowAppearance,
+    PlatformWindowCommandOutcome, PlatformWindowDispatch, PlatformWindowInteractionQuiescence,
+    PlatformWindowMutationObservation, PlatformWindowMutationTerminal,
+    PlatformWindowPhysicalGeometry, PlatformWindowPresentOutcome, Point,
+    PreparedPlatformPointerCaptureRelease, PreparedPlatformPresentationShutdown, PromptButton,
+    RequestFrameOptions, Scene, Size, TestPlatform, TileId, WindowAppearance,
     WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowCreationFacts,
     WindowMutationDomain, WindowMutationRequest, WindowParams, WindowPlacementState,
     WindowPlatformFacts, WindowPresentationShutdownTicket, WindowProvisionalPlacementNativeFacts,
@@ -100,6 +101,7 @@ pub(crate) struct TestWindowState {
     is_maximized: bool,
     is_fullscreen: bool,
     is_active: bool,
+    interaction_quiesced: bool,
     accepts_pointer_input: bool,
     focus_on_appearing: bool,
     accepts_activation: bool,
@@ -351,6 +353,7 @@ impl TestWindow {
                 is_maximized: matches!(params.window_bounds, WindowBounds::Maximized(_)),
                 is_fullscreen: matches!(params.window_bounds, WindowBounds::Fullscreen(_)),
                 is_active: false,
+                interaction_quiesced: false,
                 accepts_pointer_input: params.accepts_pointer_input,
                 focus_on_appearing: params.focus_on_appearing,
                 accepts_activation: params.activation_policy.accepts_activation,
@@ -1236,6 +1239,9 @@ impl TestWindow {
     #[cfg(test)]
     pub(crate) fn simulate_window_control_hit_test(&self) -> Option<WindowControlArea> {
         let mut lock = self.0.lock();
+        if lock.interaction_quiesced {
+            return None;
+        }
         let mut callback = lock.hit_test_window_control_callback.take()?;
         drop(lock);
         let result = callback();
@@ -1332,6 +1338,19 @@ impl PlatformWindow for TestWindow {
                 })
             },
         )
+    }
+
+    fn interaction_quiescence(&self) -> PlatformWindowInteractionQuiescence {
+        let window = Rc::downgrade(&self.0);
+        PlatformWindowInteractionQuiescence::new(move || {
+            if let Some(window) = window.upgrade() {
+                let mut window = window.lock();
+                window.interaction_quiesced = true;
+                window.is_active = false;
+                window.accepts_activation = false;
+                window.focus_on_click = false;
+            }
+        })
     }
 
     fn prepare_presentation_shutdown(
@@ -3877,6 +3896,149 @@ mod window_mutation_tests {
     }
 
     #[crate::test]
+    fn panicking_second_initial_presentation_attempt_settles_failure_before_propagation(
+        cx: &mut TestAppContext,
+    ) {
+        let attempts = Rc::new(Cell::new(0usize));
+        let observations = Rc::new(RefCell::new(Vec::new()));
+        let platform_window = Rc::new(RefCell::new(None));
+        let diagnostic_cursor = cx
+            .app
+            .native_boundary_diagnostics(crate::NativeBoundaryDiagnosticCursor::default())
+            .cursor;
+
+        let panic = catch_unwind(AssertUnwindSafe(|| {
+            cx.update(|app| {
+                app.open_window(WindowOptions::default(), {
+                    let attempts = attempts.clone();
+                    let observations = observations.clone();
+                    let platform_window_slot = platform_window.clone();
+                    move |window, app| {
+                        let test_window = window
+                            .platform_window
+                            .as_test()
+                            .expect("the test backend must provide a TestWindow")
+                            .clone();
+                        platform_window_slot.replace(Some(test_window.clone()));
+                        test_window.set_platform_command_callback({
+                            let attempts = attempts.clone();
+                            move |command, _| {
+                                assert_eq!(
+                                    command,
+                                    PlatformWindowCommand::CompleteInitialPresentation {
+                                        activate: true,
+                                    }
+                                );
+                                let attempt = attempts.get().saturating_add(1);
+                                attempts.set(attempt);
+                                if attempt == 1 {
+                                    PlatformWindowCommandOutcome::Rejected
+                                } else {
+                                    panic!("injected initial-presentation command panic");
+                                }
+                            }
+                        });
+                        app.new(|cx| {
+                            InitialPresentationObserverProbe::new(window, observations, cx)
+                        })
+                    }
+                })
+                .expect("the committed window must survive command dispatch failure")
+            });
+        }))
+        .expect_err("the dispatcher panic must propagate after terminal convergence");
+        let panic_message = panic
+            .downcast_ref::<&str>()
+            .copied()
+            .or_else(|| panic.downcast_ref::<String>().map(String::as_str));
+        assert_eq!(
+            panic_message,
+            Some("injected initial-presentation command panic")
+        );
+
+        assert_eq!(attempts.get(), 2);
+        assert_eq!(
+            observations.borrow().as_slice(),
+            [WindowInitialPresentationStatus::Rejected],
+            "the unique failure terminal must publish before the dispatcher panic escapes"
+        );
+        let platform_window = platform_window
+            .borrow()
+            .clone()
+            .expect("the root builder must retain the test window");
+        let handle = platform_window.0.lock().handle;
+        assert_eq!(
+            platform_window.initial_presentation_state(),
+            (false, false, 0)
+        );
+        assert_eq!(
+            platform_window.platform_command_history(),
+            [
+                PlatformWindowCommand::CompleteInitialPresentation { activate: true },
+                PlatformWindowCommand::CompleteInitialPresentation { activate: true },
+            ]
+        );
+        assert_eq!(
+            cx.update_window(handle, |_, window, _| {
+                window.presentation_facts().initial_presentation
+            })
+            .expect("the failed window must remain registered"),
+            WindowInitialPresentationStatus::Rejected
+        );
+
+        let diagnostics = cx.app.native_boundary_diagnostics(diagnostic_cursor);
+        let command_terminals = diagnostics
+            .terminal
+            .iter()
+            .filter(|diagnostic| {
+                diagnostic.target == crate::NativeBoundaryTarget::Window(handle.window_id())
+                    && diagnostic.kind
+                        == crate::NativeBoundaryKind::Command(
+                            crate::NativePlatformCommandKind::CompleteInitialPresentation,
+                        )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(command_terminals.len(), 2);
+        assert_eq!(
+            command_terminals[0].disposition,
+            crate::NativeBoundaryDisposition::Rejected
+        );
+        assert_eq!(
+            command_terminals[1].disposition,
+            crate::NativeBoundaryDisposition::InvariantFailure(
+                crate::NativeInvariantFailure::CallbackPanicked,
+            )
+        );
+        let failure_terminals = diagnostics
+            .terminal
+            .iter()
+            .filter(|diagnostic| {
+                diagnostic.target == crate::NativeBoundaryTarget::Window(handle.window_id())
+                    && diagnostic.kind
+                        == crate::NativeBoundaryKind::Callback(
+                            crate::NativeCallbackKind::InitialPresentationFailed,
+                        )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(failure_terminals.len(), 1);
+        assert_eq!(
+            failure_terminals[0].disposition,
+            crate::NativeBoundaryDisposition::DELIVERED
+        );
+        assert!(diagnostics.pending.iter().all(|diagnostic| {
+            diagnostic.target != crate::NativeBoundaryTarget::Window(handle.window_id())
+                || !matches!(
+                    diagnostic.kind,
+                    crate::NativeBoundaryKind::Command(
+                        crate::NativePlatformCommandKind::CompleteInitialPresentation,
+                    ) | crate::NativeBoundaryKind::Callback(
+                        crate::NativeCallbackKind::InitialPresentationFailed,
+                    )
+                )
+        }));
+    }
+
+    #[crate::test]
     fn committed_window_completes_initial_presentation_once(cx: &mut TestAppContext) {
         let handle: AnyWindowHandle = cx
             .update(|app| app.open_window(WindowOptions::default(), |_, app| app.new(|_| Empty)))
@@ -3925,6 +4087,57 @@ mod window_mutation_tests {
         assert_eq!(
             platform_window.platform_command_history(),
             [PlatformWindowCommand::CompleteInitialPresentation { activate: false }]
+        );
+    }
+
+    #[crate::test]
+    fn activating_initial_presentation_is_rejected_after_window_quiescence(
+        cx: &mut TestAppContext,
+    ) {
+        let command_callback_count = Rc::new(Cell::new(0usize));
+        let (handle, platform_window) = cx.update(|app| {
+            let handle: AnyWindowHandle = app
+                .open_window(WindowOptions::default(), |_, app| app.new(|_| Empty))
+                .expect("the test window should commit before quiescence")
+                .into();
+            let platform_window = handle
+                .update(app, {
+                    let command_callback_count = command_callback_count.clone();
+                    move |_, window, app| {
+                        let platform_window = window
+                            .platform_window
+                            .as_test()
+                            .expect("the test backend must provide a TestWindow")
+                            .clone();
+                        platform_window.set_platform_command_callback({
+                            let command_callback_count = command_callback_count.clone();
+                            move |_, _| {
+                                command_callback_count
+                                    .set(command_callback_count.get().saturating_add(1));
+                                PlatformWindowCommandOutcome::Accepted
+                            }
+                        });
+                        assert!(window.quiesce_interaction(app));
+                        platform_window
+                    }
+                })
+                .expect("the committed window should remain available for quiescence");
+            (handle, platform_window)
+        });
+        cx.run_until_parked();
+
+        assert_eq!(command_callback_count.get(), 0);
+        assert!(platform_window.platform_command_history().is_empty());
+        assert_eq!(
+            platform_window.initial_presentation_state(),
+            (false, false, 0)
+        );
+        assert_eq!(
+            cx.update_window(handle, |_, window, _| {
+                window.presentation_facts().initial_presentation
+            })
+            .expect("the quiesced window must remain registered for retirement"),
+            crate::WindowInitialPresentationStatus::Rejected
         );
     }
 
@@ -4388,6 +4601,71 @@ mod window_mutation_tests {
             1,
             "later submitted frames must not reveal the same provisional generation twice"
         );
+    }
+
+    #[crate::test]
+    fn panicking_provisional_reveal_dispatch_settles_ticket_before_propagation(
+        cx: &mut TestAppContext,
+    ) {
+        let session =
+            WindowProvisionalSession::new(414).expect("the provisional generation should be valid");
+        let handle: AnyWindowHandle = cx
+            .update(|app| {
+                app.open_window(
+                    WindowOptions {
+                        focus_on_appearing: false,
+                        provisional_session: Some(session.clone()),
+                        ..Default::default()
+                    },
+                    |_, app| app.new(|_| PaintedRoot),
+                )
+            })
+            .expect("the provisional test window should open")
+            .into();
+        let platform_window = cx.test_window(handle);
+        platform_window.set_platform_command_callback(|command, _| {
+            assert!(matches!(
+                command,
+                PlatformWindowCommand::RevealDeferredInitialPresentation { .. }
+            ));
+            panic!("injected provisional reveal command panic");
+        });
+        let ticket = Rc::new(RefCell::new(None));
+
+        let panic = catch_unwind(AssertUnwindSafe(|| {
+            cx.update_window(handle, |_, window, app| {
+                let reveal = window
+                    .arm_provisional_presentation(
+                        &session,
+                        point(DevicePixels(40), DevicePixels(50)),
+                        [],
+                        app,
+                    )
+                    .expect("the matching bound session should arm presentation");
+                ticket.replace(Some(reveal));
+            })
+            .expect("the provisional window should remain live");
+            cx.run_until_parked();
+        }))
+        .expect_err("the provisional dispatcher panic must propagate after settlement");
+        let panic_message = panic
+            .downcast_ref::<&str>()
+            .copied()
+            .or_else(|| panic.downcast_ref::<String>().map(String::as_str));
+        assert_eq!(
+            panic_message,
+            Some("injected provisional reveal command panic")
+        );
+        assert_eq!(
+            ticket
+                .borrow()
+                .as_ref()
+                .expect("arming must publish the reveal ticket before dispatch")
+                .snapshot()
+                .outcome(),
+            crate::WindowProvisionalRevealOutcome::Rejected
+        );
+        assert!(!platform_window.is_visible());
     }
 
     #[crate::test]
@@ -6011,7 +6289,10 @@ mod window_mutation_tests {
 #[cfg(test)]
 mod platform_command_tests {
     use super::*;
-    use crate::{AppContext, Empty, Modifiers, MouseMoveEvent, TestAppContext, point, px, size};
+    use crate::{
+        AppContext, Empty, Modifiers, MouseMoveEvent, TestAppContext, WindowActivationPolicy,
+        WindowMutationDispatch, WindowMutationOutcome, point, px, size,
+    };
     use std::{
         cell::{Cell, RefCell},
         panic::{AssertUnwindSafe, catch_unwind},
@@ -6114,6 +6395,38 @@ mod platform_command_tests {
 
         assert_eq!(
             ticket.snapshot().status(),
+            crate::WindowActivationStatus::Terminal(crate::WindowActivationTerminal::Rejected)
+        );
+    }
+
+    #[crate::test]
+    fn panicking_activation_dispatch_settles_ticket_before_propagation(cx: &mut TestAppContext) {
+        let (handle, platform_window) = open_test_window(cx);
+        platform_window.set_platform_command_callback(|command, _| {
+            assert!(matches!(command, PlatformWindowCommand::Activate { .. }));
+            panic!("injected activation command panic");
+        });
+        let ticket = Rc::new(RefCell::new(None));
+
+        let panic = catch_unwind(AssertUnwindSafe(|| {
+            cx.update_window(handle, |_, window, _| {
+                ticket.replace(Some(window.activate_window()));
+            })
+            .expect("the activation target must remain live");
+        }))
+        .expect_err("the activation dispatcher panic must propagate after settlement");
+        let panic_message = panic
+            .downcast_ref::<&str>()
+            .copied()
+            .or_else(|| panic.downcast_ref::<String>().map(String::as_str));
+        assert_eq!(panic_message, Some("injected activation command panic"));
+        assert_eq!(
+            ticket
+                .borrow()
+                .as_ref()
+                .expect("the command must publish its ticket before dispatch")
+                .snapshot()
+                .status(),
             crate::WindowActivationStatus::Terminal(crate::WindowActivationTerminal::Rejected)
         );
     }
@@ -6231,6 +6544,104 @@ mod platform_command_tests {
         assert_eq!(platform_window.platform_command_history(), expected);
         assert_eq!(&*callback_history.borrow(), &expected);
         assert!(!callback_active.get());
+    }
+
+    #[crate::test]
+    fn queued_interactive_platform_commands_are_rejected_after_window_quiescence(
+        cx: &mut TestAppContext,
+    ) {
+        let (handle, platform_window) = open_test_window(cx);
+        let menu_position = point(px(24.0), px(36.0));
+        let callback_count = Rc::new(Cell::new(0));
+        platform_window.set_platform_command_callback({
+            let callback_count = callback_count.clone();
+            move |_, _| {
+                callback_count.set(callback_count.get() + 1);
+                PlatformWindowCommandOutcome::Accepted
+            }
+        });
+
+        cx.update_window(handle, |_, window, _| {
+            assert!(matches!(
+                window.request_pointer_input(false),
+                WindowMutationDispatch::Queued(_)
+            ));
+        })
+        .expect("test window should remain live");
+        assert!(platform_window.flush_window_mutation(WindowMutationDomain::PointerInput));
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, _| {
+            assert!(!window.platform_facts().accepts_pointer_input);
+            assert!(window.platform_facts().accepts_activation);
+        })
+        .expect("disabled pointer-input facts should commit before the queued requests");
+
+        let (pointer_ticket, activation_policy_ticket, activation_command_ticket) = cx
+            .update_window(handle, |_, window, cx| {
+                let pointer_ticket = match window.request_pointer_input(true) {
+                    WindowMutationDispatch::Queued(ticket) => ticket,
+                    dispatch => panic!("expected queued pointer-input mutation, got {dispatch:?}"),
+                };
+                let activation_policy_ticket =
+                    match window.request_activation_policy(WindowActivationPolicy {
+                        accepts_activation: false,
+                        focus_on_click: false,
+                    }) {
+                        WindowMutationDispatch::Queued(ticket) => ticket,
+                        dispatch => {
+                            panic!("expected queued activation-policy mutation, got {dispatch:?}")
+                        }
+                    };
+                let activation_command_ticket = window.activate_window();
+                window.start_window_move();
+                window.show_window_menu(menu_position);
+                window.start_window_resize(crate::ResizeEdge::BottomRight);
+                assert!(window.quiesce_interaction(cx));
+                window.bounds_changed(cx);
+                assert!(!window.is_window_active());
+                assert!(matches!(
+                    window.request_pointer_input(true),
+                    WindowMutationDispatch::Rejected
+                ));
+                assert!(matches!(
+                    window.request_activation_policy(WindowActivationPolicy::default()),
+                    WindowMutationDispatch::Rejected
+                ));
+                (
+                    pointer_ticket,
+                    activation_policy_ticket,
+                    activation_command_ticket,
+                )
+            })
+            .expect("test window should remain live");
+
+        assert_eq!(callback_count.get(), 0);
+        assert!(platform_window.platform_command_history().is_empty());
+        assert_eq!(
+            activation_command_ticket.snapshot().status(),
+            crate::WindowActivationStatus::Terminal(crate::WindowActivationTerminal::PolicyChanged,)
+        );
+        assert_eq!(
+            pointer_ticket
+                .observation()
+                .expect("quiescence must settle pending pointer input")
+                .outcome,
+            WindowMutationOutcome::Rejected
+        );
+        assert_eq!(
+            activation_policy_ticket
+                .observation()
+                .expect("quiescence must settle pending activation policy")
+                .outcome,
+            WindowMutationOutcome::Rejected
+        );
+        assert!(!platform_window.flush_window_mutation(WindowMutationDomain::PointerInput));
+        assert!(!platform_window.flush_window_mutation(WindowMutationDomain::ActivationPolicy));
+        let facts = platform_window.platform_facts();
+        assert!(!facts.accepts_pointer_input);
+        assert!(!facts.accepts_activation);
+        assert!(!facts.focus_on_click);
+        assert!(!facts.is_active);
     }
 
     #[crate::test]

@@ -156,6 +156,18 @@ impl PressedMouseButtons {
         self.0 == 0
     }
 
+    fn first(self) -> Option<MouseButton> {
+        [
+            MouseButton::Left,
+            MouseButton::Right,
+            MouseButton::Middle,
+            MouseButton::Navigate(crate::NavigationDirection::Back),
+            MouseButton::Navigate(crate::NavigationDirection::Forward),
+        ]
+        .into_iter()
+        .find(|button| self.contains(*button))
+    }
+
     fn mask(button: MouseButton) -> u8 {
         match button {
             MouseButton::Left => 1 << 0,
@@ -231,7 +243,7 @@ impl Window {
         button: MouseButton,
     ) -> Result<(), PointerCaptureError> {
         self.ensure_pointer_capture_window(handle)?;
-        if !self.subtree_presentation().is_interactive() {
+        if !self.user_interaction_is_admitted() || !self.subtree_presentation().is_interactive() {
             return Err(PointerCaptureError::HandleNotBound { handle: *handle });
         }
         if !self.is_window_active() {
@@ -332,7 +344,9 @@ impl Window {
     }
 
     pub(crate) fn can_commit_pointer_session_start(&self) -> bool {
-        !self.removed && self.removal_state == super::WindowRemovalState::Open
+        !self.removed
+            && self.removal_state == super::WindowRemovalState::Open
+            && self.user_interaction_is_admitted()
     }
 
     pub(crate) fn owns_pointer_capture(
@@ -354,12 +368,61 @@ impl Window {
             return;
         }
 
-        let _ = self.dispatch_event(
+        // Framework terminal cleanup must remain deliverable after the one-way interaction gate
+        // closes. Keep this typed path limited to PointerCanceled so ordinary input cannot reuse
+        // it to cross the retirement boundary.
+        let _ = self.dispatch_event_without_pending_pointer_cancellations(
             PlatformInput::PointerCanceled(PointerCancelEvent { reason }),
             cx,
         );
         if self.has_active_pointer_session(cx) {
             self.clear_pointer_session(reason, cx);
+        }
+    }
+
+    pub(super) fn quiesce_pointer_session(&mut self, reason: PointerCancelReason, cx: &mut App) {
+        if !self.input_dispatch_active.get() {
+            self.flush_pending_pointer_cancellations(cx);
+        }
+        if !self.has_active_pointer_session(cx) {
+            return;
+        }
+
+        let owner = self
+            .captured_pointer
+            .map(|capture| capture.handle)
+            .or_else(|| {
+                cx.active_drag
+                    .as_ref()
+                    .filter(|drag| drag.window_id == self.handle.window_id())
+                    .and_then(|drag| drag.source)
+            });
+        let button = self
+            .captured_pointer
+            .map(|capture| capture.button)
+            .or_else(|| {
+                cx.active_drag
+                    .as_ref()
+                    .filter(|drag| drag.window_id == self.handle.window_id())
+                    .map(|drag| drag.button)
+            })
+            .or_else(|| self.pressed_mouse_buttons.first())
+            .expect("an active pointer session must retain an initiating button");
+        let native_release =
+            cx.reserve_native_pointer_capture_release(self.handle.window_id(), None);
+        self.queue_exact_pointer_session_cancellation(
+            owner,
+            button,
+            reason,
+            native_release,
+            true,
+            cx,
+        );
+        self.pressed_mouse_buttons.clear();
+        self.captured_pointer = None;
+        let _ = cx.clear_active_drag_for_window(self.handle.window_id());
+        if !self.input_dispatch_active.get() {
+            self.flush_pending_pointer_cancellations(cx);
         }
     }
 
@@ -409,6 +472,18 @@ impl Window {
             true,
             cx,
         );
+        if !self.interaction_authority.is_admitted()
+            && self
+                .interaction_authority
+                .pointer_cleanup_is_deferred_to_native_capture()
+        {
+            self.pressed_mouse_buttons.clear();
+            self.captured_pointer = None;
+            self.interaction_quiescence_pointer_cleanup =
+                super::WindowInteractionCleanupState::Complete;
+            self.interaction_authority
+                .complete_deferred_pointer_cleanup();
+        }
     }
 
     fn ensure_pointer_capture_window(

@@ -799,7 +799,7 @@ impl WindowsNonClientPointerBoundary<'_> {
 impl WindowsWindowInner {
     pub(crate) fn dispatch_input(&self, input: PlatformInput) -> DispatchEventResult {
         if !matches!(&input, PlatformInput::PointerCanceled(_))
-            && !self.provisional_accepts_interaction()
+            && (self.state.interaction_is_quiesced() || !self.provisional_accepts_interaction())
         {
             return DispatchEventResult {
                 propagate: false,
@@ -1027,6 +1027,38 @@ impl WindowsWindowInner {
         wparam: WPARAM,
         lparam: LPARAM,
     ) -> LRESULT {
+        if self.state.interaction_is_quiesced() {
+            let blocked = match msg {
+                WM_NCHITTEST => Some(HTCLIENT as isize),
+                WM_MOUSEACTIVATE => Some(MA_NOACTIVATEANDEAT as isize),
+                WM_MOUSEMOVE
+                | WM_NCMOUSEMOVE
+                | WM_NCLBUTTONDBLCLK
+                | WM_NCLBUTTONDOWN
+                | WM_NCRBUTTONDOWN
+                | WM_NCMBUTTONDOWN
+                | WM_NCLBUTTONUP
+                | WM_NCRBUTTONUP
+                | WM_NCMBUTTONUP
+                | WM_MOUSEWHEEL
+                | WM_MOUSEHWHEEL
+                | WM_SYSKEYUP
+                | WM_KEYUP
+                | WM_GPUI_KEYDOWN
+                | WM_CHAR
+                | WM_IME_STARTCOMPOSITION
+                | WM_IME_COMPOSITION
+                | WM_IME_ENDCOMPOSITION
+                | DM_POINTERHITTEST
+                | WM_GETOBJECT => Some(0),
+                WM_SETCURSOR => Some(1),
+                _ if decode_client_mouse_button_message(msg, wparam).is_some() => Some(0),
+                _ => None,
+            };
+            if let Some(result) = blocked {
+                return LRESULT(result);
+            }
+        }
         if self.provisional_requires_hit_transparency() {
             let blocked = match msg {
                 WM_NCHITTEST => Some(HTTRANSPARENT as isize),
@@ -1768,6 +1800,10 @@ impl WindowsWindowInner {
     fn handle_activate_msg(self: &Rc<Self>, handle: HWND, wparam: WPARAM) -> Option<isize> {
         let activated = wparam.loword() > 0;
 
+        if activated && self.state.interaction_is_quiesced() {
+            self.revoke_native_focus_and_activation().log_err();
+            return Some(0);
+        }
         if activated && !self.provisional_accepts_interaction() {
             return Some(0);
         }
@@ -1824,6 +1860,9 @@ impl WindowsWindowInner {
     }
 
     fn handle_wm_getobject(&self, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
+        if self.state.interaction_is_quiesced() {
+            return Some(0);
+        }
         let result = {
             let mut a11y = self.state.a11y.borrow_mut();
             let a11y = a11y.as_mut()?;

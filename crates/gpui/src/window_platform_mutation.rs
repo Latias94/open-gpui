@@ -485,25 +485,32 @@ impl WindowMutationState {
         outcome: WindowMutationOutcome,
         facts: &WindowPlatformFacts,
     ) -> Vec<WindowMutationTicketDelivery> {
-        let mut deliveries = Vec::new();
-        for domain in WindowMutationDomain::ALL {
-            let pending = self.pending_slot_mut(domain).take();
-            let Some(pending) = pending else {
-                continue;
-            };
-            if !pending.ticket.belongs_to(
-                authority,
-                pending.ticket.request(),
-                pending.ticket.generation(),
-            ) {
-                *self.pending_slot_mut(domain) = Some(pending);
-                continue;
-            }
-            if let Some(delivery) = pending.ticket.settle(outcome, facts.clone()) {
-                deliveries.push(delivery);
-            }
+        WindowMutationDomain::ALL
+            .into_iter()
+            .filter_map(|domain| self.settle_domain(authority, domain, outcome, facts))
+            .collect()
+    }
+
+    pub(crate) fn settle_domain(
+        &mut self,
+        authority: &Arc<WindowPlatformMutationAuthority>,
+        domain: WindowMutationDomain,
+        outcome: WindowMutationOutcome,
+        facts: &WindowPlatformFacts,
+    ) -> Option<WindowMutationTicketDelivery> {
+        let pending = self.pending_slot_mut(domain).take();
+        let Some(pending) = pending else {
+            return None;
+        };
+        if !pending.ticket.belongs_to(
+            authority,
+            pending.ticket.request(),
+            pending.ticket.generation(),
+        ) {
+            *self.pending_slot_mut(domain) = Some(pending);
+            return None;
         }
-        deliveries
+        pending.ticket.settle(outcome, facts.clone())
     }
 
     fn next_generation(&mut self, domain: WindowMutationDomain) -> Option<u64> {
@@ -525,21 +532,7 @@ impl WindowMutationState {
         domain: WindowMutationDomain,
         facts: &WindowPlatformFacts,
     ) -> Vec<WindowMutationTicketDelivery> {
-        let pending = self.pending_slot_mut(domain).take();
-        let Some(pending) = pending else {
-            return Vec::new();
-        };
-        if !pending.ticket.belongs_to(
-            authority,
-            pending.ticket.request(),
-            pending.ticket.generation(),
-        ) {
-            *self.pending_slot_mut(domain) = Some(pending);
-            return Vec::new();
-        }
-        pending
-            .ticket
-            .settle(WindowMutationOutcome::Superseded, facts.clone())
+        self.settle_domain(authority, domain, WindowMutationOutcome::Superseded, facts)
             .into_iter()
             .collect()
     }

@@ -4,7 +4,10 @@ use std::{
     rc::Weak,
 };
 
-use crate::{AnyView, AnyWindowHandle, PreparedPlatformPresentationShutdown, Window, WindowId};
+use crate::{
+    AnyView, AnyWindowHandle, PreparedPlatformPresentationShutdown, Window, WindowId,
+    window::WindowInteractionAuthority,
+};
 
 use super::{App, AppCell, Effect, QuitMode, native_captured_drag::WindowUpdateProvenance};
 
@@ -24,6 +27,7 @@ pub(super) struct ReservedWindow<'a> {
     app: &'a mut App,
     id: WindowId,
     epoch: u64,
+    interaction_authority: WindowInteractionAuthority,
     pending: bool,
 }
 
@@ -90,6 +94,10 @@ impl ReservedWindow<'_> {
         &mut *self.app
     }
 
+    pub(super) fn interaction_authority(&self) -> WindowInteractionAuthority {
+        self.interaction_authority.clone()
+    }
+
     pub(super) fn with_update_scope<R>(&mut self, update: impl FnOnce(&mut App) -> R) -> R {
         WindowUpdateStackScope::new(&mut *self.app, self.id).run(update)
     }
@@ -134,13 +142,15 @@ pub(super) fn reserve(app: &mut App) -> Result<ReservedWindow<'_>, WindowReserva
 
     let epoch = app.window_open_epoch;
     let id = app.windows.insert(None);
+    let interaction_authority = WindowInteractionAuthority::new();
     if let Some(cell) = app.this.upgrade() {
-        cell.reserve_native_window(id);
+        cell.reserve_native_window(id, interaction_authority.clone());
     }
     Ok(ReservedWindow {
         app,
         id,
         epoch,
+        interaction_authority,
         pending: true,
     })
 }
@@ -293,7 +303,7 @@ impl<'a> WindowUpdateTransaction<'a> {
             .window
             .take()
             .expect("window update transaction must own its window");
-        finish_window_update(&mut *self.app, self.id, window)
+        settle_taken_window(&mut *self.app, self.id, window)
     }
 
     fn restore_stack(&mut self) {
@@ -310,11 +320,7 @@ impl<'a> WindowUpdateTransaction<'a> {
         let Some(window) = self.window.take() else {
             return;
         };
-        if window.removed {
-            let _ = finish_window_update(&mut *self.app, self.id, window);
-        } else {
-            restore_taken_window(&mut *self.app, self.id, window);
-        }
+        let _ = settle_taken_window(&mut *self.app, self.id, window);
     }
 }
 
@@ -323,11 +329,7 @@ impl Drop for WindowUpdateTransaction<'_> {
         let mut settle = || {
             self.restore_stack();
             if let Some(window) = self.window.take() {
-                if window.removed {
-                    let _ = finish_window_update(&mut *self.app, self.id, window);
-                } else {
-                    restore_taken_window(&mut *self.app, self.id, window);
-                }
+                let _ = settle_taken_window(&mut *self.app, self.id, window);
             }
         };
 
@@ -336,6 +338,40 @@ impl Drop for WindowUpdateTransaction<'_> {
         } else {
             settle();
         }
+    }
+}
+
+fn settle_taken_window(app: &mut App, id: WindowId, mut window: Box<Window>) -> Option<()> {
+    if !window.has_pending_interaction_quiescence_cleanup() {
+        if window.removed {
+            return finish_window_update(app, id, window);
+        }
+        restore_taken_window(app, id, window);
+        return Some(());
+    }
+
+    let cleanup = catch_unwind(AssertUnwindSafe(|| {
+        window.finish_pending_interaction_quiescence(app);
+    }));
+    let settlement = catch_unwind(AssertUnwindSafe(|| {
+        if window.removed {
+            finish_window_update(app, id, window)
+        } else {
+            restore_taken_window(app, id, window);
+            Some(())
+        }
+    }));
+    match (cleanup, settlement) {
+        (Ok(()), Ok(result)) => result,
+        (Err(payload), Ok(_)) => resume_unwind(payload),
+        (Err(primary), Err(_secondary)) => {
+            log::error!(
+                "suppressed secondary panic while settling window {:?} after interaction cleanup",
+                id
+            );
+            resume_unwind(primary)
+        }
+        (Ok(()), Err(payload)) => resume_unwind(payload),
     }
 }
 

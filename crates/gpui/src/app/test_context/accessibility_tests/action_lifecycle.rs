@@ -39,6 +39,36 @@ struct BuiltinClickWindowRemovalProbeView {
     lifecycle: Rc<RefCell<Vec<&'static str>>>,
 }
 
+struct InteractionQuiescenceAccessibilityProbeView {
+    lifecycle: Rc<RefCell<Vec<&'static str>>>,
+}
+
+impl Render for InteractionQuiescenceAccessibilityProbeView {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        let fallback_lifecycle = self.lifecycle.clone();
+        let quiescer_lifecycle = self.lifecycle.clone();
+        let later_lifecycle = self.lifecycle.clone();
+
+        div()
+            .id("interaction-quiescence-accessibility-probe")
+            .size_full()
+            .role(Role::Button)
+            .aria_label("Interaction quiescence accessibility probe")
+            .aria_action(AccessibleAction::Click)
+            .on_mouse_down(MouseButton::Left, move |_, _, _| {
+                fallback_lifecycle.borrow_mut().push("fallback-down");
+            })
+            .on_a11y_action(AccessibleAction::Click, move |_, window, cx| {
+                quiescer_lifecycle.borrow_mut().push("quiescer");
+                assert!(window.quiesce_interaction(cx));
+                quiescer_lifecycle.borrow_mut().push("quiescer-returned");
+            })
+            .on_a11y_action(AccessibleAction::Click, move |_, _, _| {
+                later_lifecycle.borrow_mut().push("later-listener");
+            })
+    }
+}
+
 impl Render for BuiltinClickWindowRemovalProbeView {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         let mouse_down_lifecycle = self.lifecycle.clone();
@@ -174,6 +204,50 @@ impl Render for GenerationFlipAccessibilityProbeView {
                 |_, _, _, _| {},
             ))
     }
+}
+
+#[open_gpui::test]
+fn accessibility_action_quiescence_stops_same_dispatch_listeners_and_fallback(
+    cx: &mut TestAppContext,
+) {
+    let lifecycle = Rc::new(RefCell::new(Vec::new()));
+    let typed_window = cx.open_window(size(px(320.0), px(200.0)), {
+        let lifecycle = lifecycle.clone();
+        move |_, _| InteractionQuiescenceAccessibilityProbeView { lifecycle }
+    });
+    let window = typed_window.into();
+
+    assert!(cx.activate_accessibility(window));
+    let update = cx.latest_accessibility_tree_update(window).unwrap();
+    let (node_id, node) = node_with_label(&update, "Interaction quiescence accessibility probe");
+    assert!(node.supports_action(AccessibleAction::Click));
+
+    assert!(cx.dispatch_accessibility_action(
+        window,
+        ActionRequest {
+            action: AccessibleAction::Click,
+            target_tree: TreeId::ROOT,
+            target_node: node_id,
+            data: None,
+        },
+    ));
+    assert_eq!(
+        lifecycle.borrow().as_slice(),
+        &["quiescer", "quiescer-returned"],
+        "quiescence must stop later AccessKit listeners and the built-in click fallback"
+    );
+
+    cx.run_until_parked();
+    assert!(
+        cx.latest_accessibility_tree_update(window)
+            .unwrap()
+            .nodes
+            .iter()
+            .all(|(_, node)| {
+                node.label() != Some("Interaction quiescence accessibility probe")
+            }),
+        "the inert replacement frame must remove the action target from the published tree"
+    );
 }
 
 #[open_gpui::test]

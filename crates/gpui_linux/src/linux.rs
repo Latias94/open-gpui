@@ -1,5 +1,7 @@
 mod dispatcher;
 mod headless;
+#[cfg(any(feature = "wayland", feature = "x11"))]
+mod interaction_gate;
 mod keyboard;
 mod platform;
 #[cfg(any(feature = "wayland", feature = "x11"))]

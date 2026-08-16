@@ -41,6 +41,19 @@ pub(crate) struct WindowsWindow(pub Rc<WindowsWindowInner>);
 
 static NEXT_EMERGENCY_PRESENTATION_SHUTDOWN_GENERATION: AtomicU64 = AtomicU64::new(1);
 
+#[derive(Clone, Default)]
+struct WindowInteractionGate(Arc<AtomicBool>);
+
+impl WindowInteractionGate {
+    fn is_quiesced(&self) -> bool {
+        self.0.load(Ordering::Acquire)
+    }
+
+    fn quiesce(&self) {
+        self.0.store(true, Ordering::Release);
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum NativeWindowLifecycle {
     Live,
@@ -448,6 +461,7 @@ pub struct WindowsWindowState {
     /// Prevents terminal pointer cancellation from re-entering the core input callback.
     pub input_dispatch: Cell<WindowsInputDispatchState>,
     pub pressed_caption_button: Cell<Option<WindowsCaptionButtonAction>>,
+    interaction_gate: WindowInteractionGate,
     accepts_pointer_input: Cell<bool>,
     pointer_input_observation_generation: Cell<u64>,
     activation_policy: Cell<WindowActivationPolicy>,
@@ -608,6 +622,7 @@ impl WindowsWindowState {
         let native_pointer_physical_frame = WindowsNativePointerPhysicalFrameState::default();
         let input_dispatch = Cell::new(WindowsInputDispatchState::default());
         let pressed_caption_button = None;
+        let interaction_gate = WindowInteractionGate::default();
         let fullscreen = None;
         let initial_placement = None;
         let native_placement_epoch = Cell::new(0);
@@ -647,6 +662,7 @@ impl WindowsWindowState {
             native_pointer_physical_frame,
             input_dispatch,
             pressed_caption_button: Cell::new(pressed_caption_button),
+            interaction_gate,
             accepts_pointer_input: Cell::new(accepts_pointer_input),
             pointer_input_observation_generation,
             activation_policy: Cell::new(activation_policy),
@@ -703,6 +719,10 @@ impl WindowsWindowState {
 
     pub(crate) fn accepts_pointer_input(&self) -> bool {
         self.accepts_pointer_input.get()
+    }
+
+    pub(crate) fn interaction_is_quiesced(&self) -> bool {
+        self.interaction_gate.is_quiesced()
     }
 
     pub(crate) fn activation_policy(&self) -> WindowActivationPolicy {
@@ -988,10 +1008,85 @@ impl WindowsWindowInner {
         }
         self.native_window_lifecycle
             .set(NativeWindowLifecycle::Destroying);
+        self.state.interaction_gate.quiesce();
         self.settle_pointer_capture_before_native_teardown();
         self.retire_native_callbacks();
         self.unregister_from_platform();
         self.revoke_drag_drop();
+    }
+
+    pub(crate) fn revoke_native_focus_and_activation(&self) -> Result<()> {
+        let owns_focus = |focus: HWND| {
+            focus == self.hwnd
+                || (!focus.is_invalid() && unsafe { IsChild(self.hwnd, focus).as_bool() })
+        };
+
+        if unsafe { IsWindowEnabled(self.hwnd).as_bool() } {
+            unsafe {
+                let _ = EnableWindow(self.hwnd, false);
+            }
+        }
+
+        let focus_result = if owns_focus(unsafe { GetFocus() }) {
+            unsafe { SetFocus(None) }
+                .map(|_| ())
+                .context("clearing focus from a quiesced native window")
+        } else {
+            Ok(())
+        };
+        if owns_focus(unsafe { GetFocus() }) {
+            focus_result?;
+            anyhow::bail!("quiesced native window retained keyboard focus");
+        }
+        if unsafe { IsWindowEnabled(self.hwnd).as_bool() } {
+            anyhow::bail!("quiesced native window remained enabled");
+        }
+        Ok(())
+    }
+
+    fn deactivate_accessibility(&self) -> Result<()> {
+        let events = {
+            let mut a11y =
+                self.state.a11y.try_borrow_mut().map_err(|_| {
+                    anyhow::anyhow!("accessibility adapter is reentrantly borrowed")
+                })?;
+            a11y.as_mut()
+                .and_then(|a11y| a11y.adapter.update_window_focus_state(false))
+        };
+        if let Some(events) = events {
+            events.raise();
+        }
+        Ok(())
+    }
+
+    fn quiesce_interaction(&self) -> Result<()> {
+        self.state.interaction_gate.quiesce();
+        self.state.pressed_caption_button.set(None);
+        if self.is_native_window_terminal() {
+            return Ok(());
+        }
+
+        let mut policy = self.state.activation_policy();
+        policy.accepts_activation = false;
+        policy.focus_on_click = false;
+
+        // Run every idempotent step before returning an error so a partial native failure still
+        // leaves the window fail-closed. The retained platform authority retries the full set.
+        let policy_result = self
+            .set_activation_policy_now(policy)
+            .context("disabling native activation for a quiesced window");
+        let focus_result = self.revoke_native_focus_and_activation();
+        let accessibility_result = self.deactivate_accessibility();
+
+        policy_result?;
+        focus_result?;
+        accessibility_result?;
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn quiesce_interaction_for_test(&self) -> Result<()> {
+        self.quiesce_interaction()
     }
 
     pub(crate) fn mark_native_window_destroyed(&self) {
@@ -1588,6 +1683,9 @@ impl WindowsWindowInner {
         if self.is_native_window_terminal() {
             return PlatformWindowCommandOutcome::Rejected;
         }
+        if activate && self.state.interaction_is_quiesced() {
+            return PlatformWindowCommandOutcome::Rejected;
+        }
         #[cfg(test)]
         self.lifecycle_test_probe
             .run_initial_presentation_hook(self.hwnd);
@@ -1606,6 +1704,12 @@ impl WindowsWindowInner {
             let snapshot = session.snapshot();
             snapshot.window_id() == Some(self.handle.window_id()) && snapshot.accepts_interaction()
         })
+    }
+
+    fn activation_command_is_admitted(&self) -> bool {
+        !self.state.interaction_is_quiesced()
+            && self.provisional_accepts_interaction()
+            && self.state.activation_policy.get().accepts_activation
     }
 
     pub(crate) fn provisional_requires_hit_transparency(&self) -> bool {
@@ -2239,9 +2343,7 @@ impl WindowsWindowInner {
         if self.is_native_window_terminal() {
             return PlatformWindowCommandOutcome::WindowClosed;
         }
-        if !self.provisional_accepts_interaction()
-            || !self.state.activation_policy.get().accepts_activation
-        {
+        if !self.activation_command_is_admitted() {
             return PlatformWindowCommandOutcome::Rejected;
         }
 
@@ -2260,6 +2362,9 @@ impl WindowsWindowInner {
         if self.is_native_window_terminal() {
             return PlatformWindowCommandOutcome::WindowClosed;
         }
+        if !self.activation_command_is_admitted() {
+            return PlatformWindowCommandOutcome::Rejected;
+        }
         if !had_initial_placement && unsafe { !IsWindowVisible(hwnd).as_bool() } {
             let command = if self.state.is_maximized() {
                 SW_MAXIMIZE
@@ -2274,6 +2379,9 @@ impl WindowsWindowInner {
         if self.is_native_window_terminal() {
             return PlatformWindowCommandOutcome::WindowClosed;
         }
+        if !self.activation_command_is_admitted() {
+            return PlatformWindowCommandOutcome::Rejected;
+        }
         // If the window is minimized, restore it.
         if unsafe { IsIconic(hwnd).as_bool() } {
             unsafe {
@@ -2284,12 +2392,18 @@ impl WindowsWindowInner {
         if self.is_native_window_terminal() {
             return PlatformWindowCommandOutcome::WindowClosed;
         }
+        if !self.activation_command_is_admitted() {
+            return PlatformWindowCommandOutcome::Rejected;
+        }
         unsafe {
             SetActiveWindow(hwnd).ok();
         }
 
         if self.is_native_window_terminal() {
             return PlatformWindowCommandOutcome::WindowClosed;
+        }
+        if !self.activation_command_is_admitted() {
+            return PlatformWindowCommandOutcome::Rejected;
         }
         unsafe {
             SetFocus(Some(hwnd)).ok();
@@ -2298,10 +2412,17 @@ impl WindowsWindowInner {
         if self.is_native_window_terminal() {
             return PlatformWindowCommandOutcome::WindowClosed;
         }
+        if !self.activation_command_is_admitted() {
+            return PlatformWindowCommandOutcome::Rejected;
+        }
         // Foreground activation remains subject to the operating system's focus-stealing policy.
         // Never synthesize keyboard input to bypass that policy: framework commands must not
         // fabricate user input or feed it back through GPUI's must-immediate input boundary.
-        if unsafe { SetForegroundWindow(hwnd).as_bool() } {
+        let foreground_accepted = unsafe { SetForegroundWindow(hwnd).as_bool() };
+        if !self.activation_command_is_admitted() {
+            return PlatformWindowCommandOutcome::Rejected;
+        }
+        if foreground_accepted {
             PlatformWindowCommandOutcome::Accepted
         } else {
             PlatformWindowCommandOutcome::Rejected
@@ -3303,6 +3424,11 @@ impl WindowsWindowInner {
     }
 
     fn set_activation_policy_now(&self, requested: WindowActivationPolicy) -> Result<()> {
+        anyhow::ensure!(
+            !self.state.interaction_is_quiesced()
+                || (!requested.accepts_activation && !requested.focus_on_click),
+            "a quiesced window cannot restore native activation policy"
+        );
         let original = self.native_activation_policy()?;
         if original == requested {
             return Ok(());
@@ -3697,13 +3823,15 @@ impl WindowsWindowInner {
             is_minimized,
             is_maximized,
             is_fullscreen,
-            accepts_pointer_input,
-            accepts_activation: activation_policy.accepts_activation,
-            focus_on_click,
+            accepts_pointer_input: !self.state.interaction_is_quiesced() && accepts_pointer_input,
+            accepts_activation: !self.state.interaction_is_quiesced()
+                && activation_policy.accepts_activation,
+            focus_on_click: !self.state.interaction_is_quiesced() && focus_on_click,
             background_appearance: self.state.background_appearance.get(),
             topmost,
             taskbar_visible,
-            is_active: self.hwnd == unsafe { GetForegroundWindow() },
+            is_active: !self.state.interaction_is_quiesced()
+                && self.hwnd == unsafe { GetForegroundWindow() },
         };
         anyhow::ensure!(
             self.state.native_placement_epoch() == observation_epoch,
@@ -3915,13 +4043,17 @@ impl WindowsWindowInner {
             is_minimized: unsafe { IsIconic(self.hwnd).as_bool() },
             is_maximized: self.state.is_maximized(),
             is_fullscreen: self.state.is_fullscreen(),
-            accepts_pointer_input: self.state.accepts_pointer_input(),
-            accepts_activation: self.state.activation_policy.get().accepts_activation,
-            focus_on_click: self.state.activation_policy.get().focus_on_click,
+            accepts_pointer_input: !self.state.interaction_is_quiesced()
+                && self.state.accepts_pointer_input(),
+            accepts_activation: !self.state.interaction_is_quiesced()
+                && self.state.activation_policy.get().accepts_activation,
+            focus_on_click: !self.state.interaction_is_quiesced()
+                && self.state.activation_policy.get().focus_on_click,
             background_appearance: self.state.background_appearance.get(),
             topmost: false,
             taskbar_visible: self.state.taskbar_visible,
-            is_active: self.hwnd == unsafe { GetForegroundWindow() },
+            is_active: !self.state.interaction_is_quiesced()
+                && self.hwnd == unsafe { GetForegroundWindow() },
         }
     }
 
@@ -4816,6 +4948,9 @@ impl WindowsWindow {
         generation: u64,
         activation_policy: WindowActivationPolicy,
     ) -> PlatformWindowDispatch {
+        if self.0.state.interaction_is_quiesced() {
+            return PlatformWindowDispatch::Rejected;
+        }
         let current = match self.0.native_activation_policy() {
             Ok(current) => current,
             Err(error) => {
@@ -4955,6 +5090,17 @@ impl PlatformWindow for WindowsWindow {
                 })
             },
         )
+    }
+
+    fn interaction_quiescence(&self) -> PlatformWindowInteractionQuiescence {
+        let window = Rc::downgrade(&self.0);
+        PlatformWindowInteractionQuiescence::new(move || {
+            if let Some(window) = window.upgrade() {
+                window.quiesce_interaction().unwrap_or_else(|error| {
+                    panic!("failed to quiesce Windows native interaction: {error:#}")
+                });
+            }
+        })
     }
 
     fn prepare_presentation_shutdown(
@@ -5278,7 +5424,7 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn is_active(&self) -> bool {
-        self.0.hwnd == unsafe { GetForegroundWindow() }
+        !self.state.interaction_is_quiesced() && self.0.hwnd == unsafe { GetForegroundWindow() }
     }
 
     fn is_hovered(&self) -> bool {
@@ -5476,12 +5622,16 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn a11y_init(&self, callbacks: open_gpui::A11yCallbacks) {
-        let action_handler = A11yActionHandler {
-            callback: callbacks.action,
+        let interaction_authority = A11yInteractionAuthority {
+            interaction_gate: self.state.interaction_gate.clone(),
             provisional_session: self.0.provisional_session.clone(),
             window_id: self.0.handle.window_id(),
         };
-        let is_focused = self.0.provisional_accepts_interaction()
+        let action_handler = A11yActionHandler {
+            callback: callbacks.action,
+            interaction_authority: interaction_authority.clone(),
+        };
+        let is_focused = interaction_authority.accepts_interaction()
             && unsafe { GetForegroundWindow() } == self.0.hwnd;
 
         let adapter = accesskit_windows::Adapter::new(
@@ -5492,8 +5642,7 @@ impl PlatformWindow for WindowsWindow {
 
         let activation_handler = A11yActivationHandler {
             callback: callbacks.activation,
-            provisional_session: self.0.provisional_session.clone(),
-            window_id: self.0.handle.window_id(),
+            interaction_authority,
         };
 
         *self.state.a11y.borrow_mut() = Some(A11yState {
@@ -5503,7 +5652,7 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn a11y_tree_update(&self, tree_update: accesskit::TreeUpdate) {
-        if !self.0.provisional_accepts_interaction() {
+        if !self.state.interaction_is_quiesced() && !self.0.provisional_accepts_interaction() {
             return;
         }
         let events = {
@@ -5531,18 +5680,31 @@ pub(crate) struct A11yState {
     pub(crate) activation_handler: A11yActivationHandler,
 }
 
-pub(crate) struct A11yActivationHandler {
-    callback: Box<dyn Fn() -> Option<accesskit::TreeUpdate> + Send + 'static>,
+#[derive(Clone)]
+struct A11yInteractionAuthority {
+    interaction_gate: WindowInteractionGate,
     provisional_session: Option<WindowProvisionalSession>,
     window_id: WindowId,
 }
 
+impl A11yInteractionAuthority {
+    fn accepts_interaction(&self) -> bool {
+        !self.interaction_gate.is_quiesced()
+            && self.provisional_session.as_ref().is_none_or(|session| {
+                let snapshot = session.snapshot();
+                snapshot.window_id() == Some(self.window_id) && snapshot.accepts_interaction()
+            })
+    }
+}
+
+pub(crate) struct A11yActivationHandler {
+    callback: Box<dyn Fn() -> Option<accesskit::TreeUpdate> + Send + 'static>,
+    interaction_authority: A11yInteractionAuthority,
+}
+
 impl accesskit::ActivationHandler for A11yActivationHandler {
     fn request_initial_tree(&mut self) -> Option<accesskit::TreeUpdate> {
-        if self.provisional_session.as_ref().is_some_and(|session| {
-            let snapshot = session.snapshot();
-            snapshot.window_id() != Some(self.window_id) || !snapshot.accepts_interaction()
-        }) {
+        if !self.interaction_authority.accepts_interaction() {
             return None;
         }
         (self.callback)()
@@ -5551,16 +5713,12 @@ impl accesskit::ActivationHandler for A11yActivationHandler {
 
 struct A11yActionHandler {
     callback: Box<dyn Fn(accesskit::ActionRequest) + Send + 'static>,
-    provisional_session: Option<WindowProvisionalSession>,
-    window_id: WindowId,
+    interaction_authority: A11yInteractionAuthority,
 }
 
 impl accesskit::ActionHandler for A11yActionHandler {
     fn do_action(&mut self, request: accesskit::ActionRequest) {
-        if self.provisional_session.as_ref().is_some_and(|session| {
-            let snapshot = session.snapshot();
-            snapshot.window_id() != Some(self.window_id) || !snapshot.accepts_interaction()
-        }) {
+        if !self.interaction_authority.accepts_interaction() {
             return;
         }
         (self.callback)(request);
@@ -5585,7 +5743,7 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
         pt: &POINTL,
         pdweffect: *mut DROPEFFECT,
     ) -> windows::core::Result<()> {
-        if !self.0.provisional_accepts_interaction() {
+        if self.0.state.interaction_is_quiesced() || !self.0.provisional_accepts_interaction() {
             unsafe {
                 *pdweffect = DROPEFFECT_NONE;
             }
@@ -5648,7 +5806,7 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
         pt: &POINTL,
         pdweffect: *mut DROPEFFECT,
     ) -> windows::core::Result<()> {
-        if !self.0.provisional_accepts_interaction() {
+        if self.0.state.interaction_is_quiesced() || !self.0.provisional_accepts_interaction() {
             unsafe {
                 *pdweffect = DROPEFFECT_NONE;
             }
@@ -5695,7 +5853,7 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
         pt: &POINTL,
         pdweffect: *mut DROPEFFECT,
     ) -> windows::core::Result<()> {
-        if !self.0.provisional_accepts_interaction() {
+        if self.0.state.interaction_is_quiesced() || !self.0.provisional_accepts_interaction() {
             unsafe {
                 *pdweffect = DROPEFFECT_NONE;
             }
@@ -6436,26 +6594,80 @@ fn set_non_rude_hwnd(hwnd: HWND, non_rude: bool) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ClickState, NativeRect, ProvisionalPlacementCompensation,
-        ProvisionalPlacementCompensationComponent, StyleAndBounds, WindowOpenState,
+        A11yActionHandler, A11yActivationHandler, A11yInteractionAuthority, ClickState, NativeRect,
+        ProvisionalPlacementCompensation, ProvisionalPlacementCompensationComponent,
+        StyleAndBounds, WindowInteractionGate, WindowOpenState,
         WindowsNativePointerPhysicalFrameScope, WindowsNativePointerPhysicalFrameState,
         adjusted_window_rect_for_dpi, non_rude_hwnd_for_fullscreen,
         physical_geometry_sample_is_stable, window_rect_from_observed_frame, with_windows_callback,
     };
     use open_gpui::{
         Bounds, DevicePixels, MouseButton, PlatformNativePointerPhysicalFrame,
-        PlatformWindowPhysicalGeometry, WindowBounds, point, size,
+        PlatformWindowPhysicalGeometry, WindowBounds, WindowId, point, size,
     };
     use std::time::Duration;
     use std::{
         cell::Cell,
         panic::{AssertUnwindSafe, catch_unwind},
         rc::Rc,
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
     };
     use windows::Win32::{
         Foundation::RECT,
         UI::WindowsAndMessaging::{WINDOW_EX_STYLE, WINDOW_STYLE, WS_OVERLAPPEDWINDOW},
     };
+
+    fn accesskit_action_request() -> accesskit::ActionRequest {
+        accesskit::ActionRequest {
+            action: accesskit::Action::Focus,
+            target_tree: accesskit::TreeId::ROOT,
+            target_node: accesskit::NodeId(1),
+            data: None,
+        }
+    }
+
+    #[test]
+    fn accesskit_activation_and_action_share_the_irreversible_interaction_gate() {
+        let interaction_gate = WindowInteractionGate::default();
+        let authority = A11yInteractionAuthority {
+            interaction_gate: interaction_gate.clone(),
+            provisional_session: None,
+            window_id: WindowId::from(1),
+        };
+        let activation_calls = Arc::new(AtomicUsize::new(0));
+        let action_calls = Arc::new(AtomicUsize::new(0));
+        let mut activation_handler = A11yActivationHandler {
+            callback: Box::new({
+                let activation_calls = activation_calls.clone();
+                move || {
+                    activation_calls.fetch_add(1, Ordering::Relaxed);
+                    None
+                }
+            }),
+            interaction_authority: authority.clone(),
+        };
+        let mut action_handler = A11yActionHandler {
+            callback: Box::new({
+                let action_calls = action_calls.clone();
+                move |_| {
+                    action_calls.fetch_add(1, Ordering::Relaxed);
+                }
+            }),
+            interaction_authority: authority,
+        };
+
+        accesskit::ActivationHandler::request_initial_tree(&mut activation_handler);
+        accesskit::ActionHandler::do_action(&mut action_handler, accesskit_action_request());
+        interaction_gate.quiesce();
+        accesskit::ActivationHandler::request_initial_tree(&mut activation_handler);
+        accesskit::ActionHandler::do_action(&mut action_handler, accesskit_action_request());
+
+        assert_eq!(activation_calls.load(Ordering::Relaxed), 1);
+        assert_eq!(action_calls.load(Ordering::Relaxed), 1);
+    }
 
     #[test]
     fn target_dpi_changes_the_prepared_native_frame() {

@@ -207,6 +207,8 @@ pub enum AccessibilityAnnouncementDropReason {
     AccessibilityInactive,
     /// The fixed per-window queue already contains 32 pending or retained requests.
     QueueFull,
+    /// The live window permanently revoked user interaction while retaining its final visuals.
+    InteractionQuiesced,
     /// The window has started closing or has already closed.
     WindowClosed,
 }
@@ -218,6 +220,8 @@ pub enum AccessibilityAnnouncementClearReason {
     AccessibilityDeactivated,
     /// A replacement accessibility activation generation superseded the request.
     ActivationReplaced,
+    /// The live window permanently revoked user interaction while retaining its final visuals.
+    InteractionQuiesced,
     /// The window started closing.
     WindowClosed,
 }
@@ -696,8 +700,25 @@ impl A11y {
         )
     }
 
+    pub(crate) fn reject_announcement_for_interaction_quiescence(
+        &mut self,
+        announcement: AccessibilityAnnouncement,
+    ) -> AccessibilityAnnouncementOutcome {
+        let request_id = self.next_request_id();
+        self.drop_announcement(
+            request_id,
+            announcement.politeness,
+            AccessibilityAnnouncementDropReason::InteractionQuiesced,
+        )
+    }
+
     pub(crate) fn clear_announcements_for_window_close(&mut self) {
         self.clear_announcements(AccessibilityAnnouncementClearReason::WindowClosed);
+        self.announcement_generation = None;
+    }
+
+    pub(crate) fn clear_announcements_for_interaction_quiescence(&mut self) {
+        self.clear_announcements(AccessibilityAnnouncementClearReason::InteractionQuiesced);
         self.announcement_generation = None;
     }
 

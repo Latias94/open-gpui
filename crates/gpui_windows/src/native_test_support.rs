@@ -28,24 +28,24 @@ use windows::Win32::{
     UI::{
         Controls::WM_MOUSELEAVE,
         Input::KeyboardAndMouse::{
-            GetActiveWindow, GetAsyncKeyState, GetCapture, INPUT, INPUT_0, INPUT_MOUSE,
+            GetActiveWindow, GetAsyncKeyState, GetCapture, GetFocus, INPUT, INPUT_0, INPUT_MOUSE,
             IsWindowEnabled, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
             MOUSEEVENTF_MOVE, MOUSEEVENTF_MOVE_NOCOALESCE, MOUSEEVENTF_VIRTUALDESK, MOUSEINPUT,
-            ReleaseCapture, SendInput, SetActiveWindow, VK_LBUTTON,
+            ReleaseCapture, SendInput, SetActiveWindow, SetFocus, VK_LBUTTON,
         },
         WindowsAndMessaging::{
             CreateWindowExW, DestroyWindow, DispatchMessageW, GW_HWNDFIRST, GW_HWNDNEXT,
             GW_HWNDPREV, GW_OWNER, GWL_EXSTYLE, GetClientRect, GetCursorPos, GetForegroundWindow,
-            GetMessageExtraInfo, GetSystemMetrics, GetWindow, GetWindowRect, HTTRANSPARENT,
-            HWND_MESSAGE, HWND_TOPMOST, IsWindow, IsWindowVisible, IsZoomed, MA_NOACTIVATE,
-            MA_NOACTIVATEANDEAT, MSG, PM_REMOVE, PeekMessageW, PostMessageW, SIZE_MINIMIZED,
-            SIZE_RESTORED, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
-            SM_YVIRTUALSCREEN, SPI_SETWORKAREA, SWP_NOACTIVATE, SWP_SHOWWINDOW, SendMessageW,
-            SetCursorPos, SetForegroundWindow, SetWindowPos, TranslateMessage, WINDOW_EX_STYLE,
-            WINDOW_STYLE, WM_CLOSE, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP,
-            WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_MOVE, WM_NCHITTEST, WM_PAINT, WM_QUIT,
-            WM_SETTINGCHANGE, WM_SIZE, WM_SYSKEYDOWN, WM_SYSKEYUP, WS_EX_NOACTIVATE,
-            WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
+            GetMessageExtraInfo, GetSystemMetrics, GetWindow, GetWindowRect, HTCLIENT,
+            HTTRANSPARENT, HWND_MESSAGE, HWND_TOPMOST, IsWindow, IsWindowVisible, IsZoomed,
+            MA_NOACTIVATE, MA_NOACTIVATEANDEAT, MSG, PM_REMOVE, PeekMessageW, PostMessageW,
+            SIZE_MINIMIZED, SIZE_RESTORED, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
+            SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SPI_SETWORKAREA, SWP_NOACTIVATE, SWP_SHOWWINDOW,
+            SendMessageW, SetCursorPos, SetForegroundWindow, SetWindowPos, TranslateMessage,
+            WA_ACTIVE, WINDOW_EX_STYLE, WINDOW_STYLE, WM_ACTIVATE, WM_CLOSE, WM_GETOBJECT,
+            WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE,
+            WM_MOVE, WM_NCHITTEST, WM_PAINT, WM_QUIT, WM_SETTINGCHANGE, WM_SIZE, WM_SYSKEYDOWN,
+            WM_SYSKEYUP, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
         },
     },
 };
@@ -4064,6 +4064,154 @@ fn queued_activate_commands_precede_activation_facts_without_synthetic_keyboard_
     app.update_for_test(|cx| window.update(cx, |_, window, cx| window.remove_window(cx)))
         .expect("native test window should close");
     pump_messages_until("activate-command test window teardown", || {
+        !unsafe { IsWindow(Some(hwnd)).as_bool() } && !is_registered(&platform, hwnd)
+    });
+}
+
+#[test]
+fn quiesced_real_hwnd_retries_native_revocation_and_cannot_reactivate() {
+    discard_stale_quit_messages();
+
+    let platform = Rc::new(
+        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+    );
+    let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
+    let window = app
+        .update_for_test(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::centered(size(px(320.0), px(220.0)), cx)),
+                    focus_on_appearing: false,
+                    show: true,
+                    ..WindowOptions::default()
+                },
+                |_, cx| cx.new(|_| Empty),
+            )
+        })
+        .expect("native quiescence test window should open");
+    let hwnd = platform
+        .raw_window_handles
+        .read()
+        .last()
+        .expect("native quiescence test should register an HWND")
+        .as_raw();
+    let native_window = platform
+        .window_from_hwnd(hwnd)
+        .expect("native quiescence test window should remain registered");
+    pump_messages_until_idle("initial native quiescence messages");
+
+    let active_observations = Rc::new(RefCell::new(Vec::new()));
+    let mut active_callback = native_window
+        .state
+        .callbacks
+        .active_status_change
+        .take()
+        .expect("native quiescence test window should install an active callback");
+    native_window
+        .state
+        .callbacks
+        .active_status_change
+        .set(Some(Box::new({
+            let active_observations = active_observations.clone();
+            move |observation| {
+                active_observations.borrow_mut().push(observation.active());
+                active_callback(observation);
+            }
+        })));
+
+    crate::native_test_foreground::acquire_foreground_window(hwnd)
+        .expect("native quiescence test should acquire foreground authority");
+    let _ = unsafe { SetFocus(Some(hwnd)) };
+    assert_eq!(unsafe { GetActiveWindow() }, hwnd);
+    assert_eq!(unsafe { GetFocus() }, hwnd);
+
+    native_window
+        .state
+        .fail_next_activation_policy_frame_change
+        .set(true);
+    assert!(
+        native_window.quiesce_interaction_for_test().is_err(),
+        "the injected frame-change failure should reject the first native attempt"
+    );
+    assert!(native_window.state.interaction_is_quiesced());
+    assert!(!unsafe { IsWindowEnabled(hwnd).as_bool() });
+    assert_eq!(
+        unsafe { get_window_long(hwnd, GWL_EXSTYLE) } as u32 & WS_EX_NOACTIVATE.0,
+        0,
+        "the failed native attempt should roll back its activation style"
+    );
+    assert_ne!(unsafe { GetFocus() }, hwnd);
+    assert!(platform.active_window().is_none());
+
+    native_window
+        .quiesce_interaction_for_test()
+        .expect("the idempotent native retry should converge");
+    assert_ne!(
+        unsafe { get_window_long(hwnd, GWL_EXSTYLE) } as u32 & WS_EX_NOACTIVATE.0,
+        0,
+        "the retry should install the native no-activate style"
+    );
+    assert!(platform.active_window().is_none());
+
+    active_observations.borrow_mut().clear();
+    let activate_result = unsafe {
+        SendMessageW(
+            hwnd,
+            WM_ACTIVATE,
+            Some(WPARAM(WA_ACTIVE as usize)),
+            Some(LPARAM::default()),
+        )
+    };
+    assert_eq!(activate_result.0, 0);
+    assert!(
+        active_observations.borrow().iter().all(|active| !active),
+        "a positive WM_ACTIVATE must not revive the framework active callback"
+    );
+
+    let hit_test_result = unsafe {
+        SendMessageW(
+            hwnd,
+            WM_NCHITTEST,
+            Some(WPARAM::default()),
+            Some(LPARAM::default()),
+        )
+    };
+    assert_eq!(hit_test_result.0, HTCLIENT as isize);
+    let mouse_activate_result = unsafe {
+        SendMessageW(
+            hwnd,
+            WM_MOUSEACTIVATE,
+            Some(WPARAM::default()),
+            Some(LPARAM::default()),
+        )
+    };
+    assert_eq!(mouse_activate_result.0, MA_NOACTIVATEANDEAT as isize);
+    let get_object_result = unsafe {
+        SendMessageW(
+            hwnd,
+            WM_GETOBJECT,
+            Some(WPARAM::default()),
+            Some(LPARAM::default()),
+        )
+    };
+    assert_eq!(get_object_result.0, 0);
+
+    app.update_for_test(|cx| {
+        window
+            .update(cx, |_, window, _| {
+                let _ = window.activate_window();
+            })
+            .expect("quiesced native test window should remain live");
+    });
+    platform.inner.run_foreground_task();
+    pump_messages_until_idle("quiesced activation command follow-up");
+    assert_ne!(unsafe { GetFocus() }, hwnd);
+    assert!(platform.active_window().is_none());
+    assert!(active_observations.borrow().iter().all(|active| !active));
+
+    app.update_for_test(|cx| window.update(cx, |_, window, cx| window.remove_window(cx)))
+        .expect("quiesced native test window should close");
+    pump_messages_until("quiesced native test window teardown", || {
         !unsafe { IsWindow(Some(hwnd)).as_bool() } && !is_registered(&platform, hwnd)
     });
 }

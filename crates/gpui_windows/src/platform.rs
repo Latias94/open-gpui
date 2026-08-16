@@ -2153,6 +2153,7 @@ impl Platform for WindowsPlatform {
     fn active_window(&self) -> Option<AnyWindowHandle> {
         let foreground_window_hwnd = unsafe { GetForegroundWindow() };
         self.window_from_hwnd(foreground_window_hwnd)
+            .filter(|inner| !inner.state.interaction_is_quiesced())
             .map(|inner| inner.handle)
     }
 

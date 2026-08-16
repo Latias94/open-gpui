@@ -1,4 +1,5 @@
 use crate::viewport_registry::DockViewportRegistrationKey;
+use crate::viewport_runtime_effects::extend_unique_windows;
 use crate::{
     DockActionApplyError, DockActionOutcome, DockGraph, DockItemId, DockNodeId, DockSpaceId,
     DockViewportActivationTransaction, DockViewportFocusRequest, DockViewportWindowCloseEffect,
@@ -487,21 +488,6 @@ impl DockViewportDropRouteOutcome {
                 DockViewportTearOffOpenOutcome::Duplicate(_) => Ok(DockActionOutcome::Unchanged),
             },
         }
-    }
-}
-
-fn extend_unique_windows(
-    windows: &mut Vec<AnyWindowHandle>,
-    next_windows: impl IntoIterator<Item = AnyWindowHandle>,
-) {
-    for window in next_windows {
-        if windows
-            .iter()
-            .any(|existing| existing.window_id() == window.window_id())
-        {
-            continue;
-        }
-        windows.push(window);
     }
 }
 

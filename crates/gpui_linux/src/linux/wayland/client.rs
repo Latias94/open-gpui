@@ -357,6 +357,13 @@ impl WaylandClientStatePtr {
     ) {
         let client = self.0.upgrade().unwrap();
         let mut state = client.borrow_mut();
+        if state
+            .windows
+            .get(&surface)
+            .is_some_and(WaylandWindowStatePtr::interaction_is_quiesced)
+        {
+            return;
+        }
         state.pending_window_activation =
             Some((token, PendingWindowActivation { surface, handle }));
     }
@@ -364,6 +371,14 @@ impl WaylandClientStatePtr {
     pub fn enable_ime(&self) {
         let client = self.get_client();
         let mut state = client.borrow_mut();
+        if state
+            .keyboard_focused_window
+            .as_ref()
+            .is_some_and(WaylandWindowStatePtr::interaction_is_quiesced)
+        {
+            disable_ime_state(&mut state);
+            return;
+        }
         state.ime_enabled = Some(true);
         let Some(text_input) = state.text_input.take() else {
             return;
@@ -382,6 +397,13 @@ impl WaylandClientStatePtr {
                 );
             }
             state = client.borrow_mut();
+            if window.interaction_is_quiesced() {
+                state.ime_enabled = Some(false);
+                text_input.disable();
+                text_input.commit();
+                state.text_input = Some(text_input);
+                return;
+            }
         }
         text_input.commit();
         state.text_input = Some(text_input);
@@ -390,17 +412,51 @@ impl WaylandClientStatePtr {
     pub fn disable_ime(&self) {
         let client = self.get_client();
         let mut state = client.borrow_mut();
-        state.ime_enabled = Some(false);
-        state.composing = false;
-        if let Some(text_input) = &state.text_input {
-            text_input.disable();
-            text_input.commit();
-        }
+        disable_ime_state(&mut state);
     }
 
     pub fn ime_enabled(&self) -> Option<bool> {
         let client = self.get_client();
         client.borrow().ime_enabled
+    }
+
+    pub(crate) fn quiesce_window_interaction(&self, handle: AnyWindowHandle) {
+        let Some(client) = self.0.upgrade() else {
+            return;
+        };
+        let mut state = client.borrow_mut();
+        let keyboard_focused = state
+            .keyboard_focused_window
+            .as_ref()
+            .is_some_and(|window| window.handle() == handle);
+        let mouse_focused = state
+            .mouse_focused_window
+            .as_ref()
+            .is_some_and(|window| window.handle() == handle);
+
+        if keyboard_focused {
+            disable_ime_state(&mut state);
+            state.keyboard_focused_window = None;
+            state.enter_token = None;
+            state.pre_edit_text.take();
+            state.repeat.current_id += 1;
+            state.repeat.current_keycode = None;
+            if let Some(compose_state) = state.compose_state.as_mut() {
+                compose_state.reset();
+            }
+        }
+        if mouse_focused {
+            state.restore_cursor_after_hide();
+            state.mouse_focused_window = None;
+            state.button_pressed = None;
+        }
+        if state
+            .pending_window_activation
+            .as_ref()
+            .is_some_and(|(_, pending)| pending.handle == handle)
+        {
+            state.pending_window_activation = None;
+        }
     }
 
     pub fn set_cursor_style_for_window(&self, window: &WaylandWindowStatePtr, style: CursorStyle) {
@@ -496,19 +552,32 @@ impl WaylandClientStatePtr {
         }
         if let Some(window) = state.mouse_focused_window.take()
             && !window.ptr_eq(&closed_window)
+            && !window.interaction_is_quiesced()
         {
             state.mouse_focused_window = Some(window);
         }
         if let Some(window) = state.keyboard_focused_window.take()
             && !window.ptr_eq(&closed_window)
+            && !window.interaction_is_quiesced()
         {
             state.keyboard_focused_window = Some(window);
         }
         if let Some(window) = state.cursor_hidden_window.take()
             && !window.ptr_eq(&closed_window)
+            && !window.interaction_is_quiesced()
         {
             state.cursor_hidden_window = Some(window);
         }
+    }
+}
+
+fn disable_ime_state(state: &mut WaylandClientState) {
+    state.ime_enabled = Some(false);
+    state.composing = false;
+    state.ime_pre_edit = None;
+    if let Some(text_input) = &state.text_input {
+        text_input.disable();
+        text_input.commit();
     }
 }
 
@@ -1121,6 +1190,7 @@ impl LinuxClient for WaylandClient {
             .borrow_mut()
             .keyboard_focused_window
             .as_ref()
+            .filter(|window| !window.interaction_is_quiesced())
             .map(|window| window.handle())
     }
 
@@ -1169,7 +1239,10 @@ impl LinuxClient for WaylandClient {
         }
 
         let client_state = self.0.borrow();
-        let active_window = client_state.keyboard_focused_window.as_ref();
+        let active_window = client_state
+            .keyboard_focused_window
+            .as_ref()
+            .filter(|window| !window.interaction_is_quiesced());
         inner(active_window.map(|aw| aw.surface()))
     }
 }
@@ -1518,7 +1591,14 @@ impl Dispatch<xdg_activation_token_v1::XdgActivationTokenV1, ()> for WaylandClie
 
                 match resolve_window_activation(&handle, live_handle.as_ref()) {
                     WindowActivationResolution::Current => {
-                        if let (Some(window), Some(activation)) =
+                        if window
+                            .as_ref()
+                            .is_some_and(WaylandWindowStatePtr::interaction_is_quiesced)
+                        {
+                            log::debug!(
+                                "wayland: ignoring an activation token for a quiesced window"
+                            );
+                        } else if let (Some(window), Some(activation)) =
                             (window, state.globals.activation.as_ref())
                         {
                             activation.activate(activation_token, &window.surface());
@@ -1664,7 +1744,17 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 this.handle_keyboard_layout_change();
             }
             wl_keyboard::Event::Enter { surface, .. } => {
-                state.keyboard_focused_window = get_window(&mut state, &surface.id());
+                let focused_window = get_window(&mut state, &surface.id());
+                if focused_window
+                    .as_ref()
+                    .is_some_and(WaylandWindowStatePtr::interaction_is_quiesced)
+                {
+                    state.keyboard_focused_window = None;
+                    state.enter_token = None;
+                    disable_ime_state(&mut state);
+                    return;
+                }
+                state.keyboard_focused_window = focused_window;
                 state.enter_token = Some(());
 
                 if let Some(window) = state.keyboard_focused_window.clone() {
@@ -1894,8 +1984,17 @@ impl Dispatch<zwp_text_input_v3::ZwpTextInputV3, ()> for WaylandClientStatePtr {
                 }
             }
             zwp_text_input_v3::Event::PreeditString { text, .. } => {
-                state.composing = true;
-                state.ime_pre_edit = text;
+                if state
+                    .keyboard_focused_window
+                    .as_ref()
+                    .is_some_and(|window| !window.interaction_is_quiesced())
+                {
+                    state.composing = true;
+                    state.ime_pre_edit = text;
+                } else {
+                    state.composing = false;
+                    state.ime_pre_edit = None;
+                }
             }
             zwp_text_input_v3::Event::Done { serial } => {
                 let last_serial = state.serial_tracker.get(SerialKind::InputMethod);
@@ -1974,6 +2073,11 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 state.button_pressed = None;
 
                 if let Some(window) = get_window(&mut state, &surface.id()) {
+                    if window.interaction_is_quiesced() {
+                        state.mouse_focused_window = None;
+                        state.button_pressed = None;
+                        return;
+                    }
                     state.mouse_focused_window = Some(window.clone());
 
                     if state.enter_token.is_some() {

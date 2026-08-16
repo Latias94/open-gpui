@@ -179,6 +179,65 @@ fn repeated_text_and_two_windows_keep_sequences_and_nodes_isolated(cx: &mut Test
 }
 
 #[open_gpui::test]
+fn interaction_quiescence_clears_accepted_announcements_and_drops_new_requests(
+    cx: &mut TestAppContext,
+) {
+    const ACCEPTED: &str = "Accepted before interaction quiescence";
+    const DROPPED: &str = "Dropped after interaction quiescence";
+
+    let typed_window = open_probe(cx);
+    let window = typed_window.into();
+    assert!(cx.activate_accessibility(window));
+    let history_start = cx.accessibility_tree_update_history(window).len();
+
+    let (accepted, dropped, diagnostics) = typed_window
+        .update(cx, |_, window, cx| {
+            let accepted = window.announce(AccessibilityAnnouncement::polite(ACCEPTED), cx);
+            assert!(window.quiesce_interaction(cx));
+            let dropped = window.announce(AccessibilityAnnouncement::assertive(DROPPED), cx);
+            (
+                accepted,
+                dropped,
+                window.accessibility_announcement_diagnostics().to_vec(),
+            )
+        })
+        .unwrap();
+
+    assert!(accepted.is_accepted());
+    assert!(accepted.sequence().is_some());
+    assert_eq!(
+        dropped.drop_reason(),
+        Some(AccessibilityAnnouncementDropReason::InteractionQuiesced)
+    );
+    assert_eq!(dropped.sequence(), None);
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic.lifecycle()
+            == AccessibilityAnnouncementLifecycle::Cleared(
+                AccessibilityAnnouncementClearReason::InteractionQuiesced,
+            )
+    }));
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic.lifecycle()
+            == AccessibilityAnnouncementLifecycle::Dropped(
+                AccessibilityAnnouncementDropReason::InteractionQuiesced,
+            )
+    }));
+    assert!(!format!("{diagnostics:?}").contains(ACCEPTED));
+    assert!(!format!("{diagnostics:?}").contains(DROPPED));
+
+    cx.run_until_parked();
+    assert!(
+        cx.accessibility_tree_update_history(window)[history_start..]
+            .iter()
+            .all(|update| {
+                nodes_with_label(update, ACCEPTED).is_empty()
+                    && nodes_with_label(update, DROPPED).is_empty()
+            }),
+        "interaction-quiesced announcements must never publish or replay"
+    );
+}
+
+#[open_gpui::test]
 fn inactive_replacement_and_close_drop_without_replay(cx: &mut TestAppContext) {
     const INACTIVE: &str = "Inactive announcement must not replay";
     const DEACTIVATED: &str = "Deactivated announcement must not replay";

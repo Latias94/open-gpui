@@ -440,6 +440,10 @@ impl NativePlatformCommand {
         }
     }
 
+    pub(super) fn requires_interaction_authority(&self) -> bool {
+        self.command.requires_interaction_authority()
+    }
+
     pub(super) fn pending_diagnostic(&self, sequence: u64) -> NativeBoundaryDiagnostic {
         let (kind, generation) = match self.command {
             PlatformWindowCommand::CompleteInitialPresentation { .. } => {

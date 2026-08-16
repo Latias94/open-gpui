@@ -1547,6 +1547,42 @@ impl App {
         self.platform.mouse_button_is_pressed(button)
     }
 
+    /// Permanently revokes interaction for one exact full window identity.
+    ///
+    /// This gate is stored outside the checked-out [`Window`] value so lifecycle coordinators can
+    /// revoke a window synchronously from a reentrant callback. Local pointer, focus, IME, and
+    /// accessibility cleanup runs when the window is next available.
+    #[doc(hidden)]
+    pub fn quiesce_window_interaction_authority(&mut self, window_id: WindowId) -> bool {
+        self.quiesce_window_interaction_authority_with_pointer_policy(window_id, false)
+    }
+
+    /// Revokes interaction while preserving the exact active native captured-drag release.
+    #[doc(hidden)]
+    pub fn quiesce_window_interaction_authority_preserving_native_pointer_capture(
+        &mut self,
+        window_id: WindowId,
+    ) -> bool {
+        self.quiesce_window_interaction_authority_with_pointer_policy(window_id, true)
+    }
+
+    fn quiesce_window_interaction_authority_with_pointer_policy(
+        &mut self,
+        window_id: WindowId,
+        preserve_native_pointer_capture: bool,
+    ) -> bool {
+        let Some(app) = self.this.upgrade() else {
+            return false;
+        };
+        let Some(()) = app.revoke_window_interaction(window_id, preserve_native_pointer_capture)
+        else {
+            return false;
+        };
+        app.quiesce_native_window_activation_target(window_id);
+        self.stop_propagation();
+        true
+    }
+
     /// Opens a new window with the given option and the root view returned by the given function.
     /// The function is invoked with a `Window`, which can be used to interact with window-specific
     /// functionality.
@@ -1573,7 +1609,13 @@ impl App {
                 window_registry::reserve(cx).map_err(WindowOpenError::from_reservation)?;
             let id = reservation.id();
             let handle = WindowHandle::new(id);
-            match Window::new(handle.into(), options, reservation.app_mut()) {
+            let interaction_authority = reservation.interaction_authority();
+            match Window::new(
+                handle.into(),
+                options,
+                interaction_authority,
+                reservation.app_mut(),
+            ) {
                 Ok(window) => {
                     let mut rollback = window_registry::WindowCreationRollback::new(
                         id,
@@ -2308,6 +2350,13 @@ impl App {
         });
     }
 
+    pub(crate) fn retain_post_borrow_panic(&mut self, payload: Box<dyn std::any::Any + Send>) {
+        let Some(cell) = self.this.upgrade() else {
+            std::panic::resume_unwind(payload);
+        };
+        cell.retain_post_borrow_panic(payload);
+    }
+
     /// Schedules lifecycle-critical work before an active shutdown clears the window registry.
     ///
     /// Outside shutdown this behaves like [`Self::defer`], while retaining the callback in
@@ -2427,7 +2476,7 @@ impl App {
             return;
         }
 
-        let ticket = cell.protect_pre_shutdown_critical(callback);
+        let ticket = cell.protect_externally_scheduled_pre_shutdown_critical(callback);
         let weak_cell = Rc::downgrade(&cell);
         let background_executor = self.background_executor.clone();
         self.foreground_executor

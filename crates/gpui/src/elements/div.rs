@@ -3483,6 +3483,7 @@ impl Interactivity {
                                 .active_drag
                                 .take()
                                 .expect("checked for a matching active drag above");
+                            cx.retire_native_captured_drag_authority();
 
                             let mut can_drop = true;
                             if let Some(predicate) = &can_drop_predicate {
@@ -4111,8 +4112,11 @@ impl Interactivity {
                     can_drop = can_drop_predicate(drag.value.as_ref(), window, cx);
                 }
 
-                if can_drop {
+                if can_drop && window.user_interaction_is_admitted() {
                     for (state_type, group_drag_style) in &self.group_drag_over_styles {
+                        if !window.user_interaction_is_admitted() {
+                            break;
+                        }
                         if let Some(group_hitbox_id) =
                             GroupHitboxes::get(&group_drag_style.group, cx)
                             && *state_type == drag.value.as_ref().type_id()
@@ -4123,6 +4127,9 @@ impl Interactivity {
                     }
 
                     for (state_type, build_drag_over_style) in &self.drag_over_styles {
+                        if !window.user_interaction_is_admitted() {
+                            break;
+                        }
                         if *state_type == drag.value.as_ref().type_id() && hitbox.is_hovered(window)
                         {
                             style.refine(&build_drag_over_style(drag.value.as_ref(), window, cx));
@@ -4130,12 +4137,17 @@ impl Interactivity {
                     }
                 }
 
-                style.mouse_cursor = if window.is_mouse_in_window() {
-                    drag.cursor_style
-                } else {
-                    None
-                };
-                cx.active_drag = Some(drag);
+                if window.user_interaction_is_admitted() && cx.active_drag.is_none() {
+                    style.mouse_cursor = if window.is_mouse_in_window() {
+                        drag.cursor_style
+                    } else {
+                        None
+                    };
+                    cx.active_drag = Some(drag);
+                } else if cx.active_drag.is_none() {
+                    cx.retire_native_captured_drag_authority();
+                    window.refresh();
+                }
             }
         }
 

@@ -1124,6 +1124,14 @@ impl App {
         .is_some()
     }
 
+    /// Returns the exact source window of the current native captured drag, if any.
+    #[doc(hidden)]
+    pub fn active_native_captured_drag_source_window(&self) -> Option<WindowId> {
+        self.active_native_captured_drag
+            .as_ref()
+            .map(|authority| authority.source_window)
+    }
+
     /// Cancels one exact native captured drag and invokes `on_terminal` after its release barrier
     /// reaches a terminal outcome.
     ///

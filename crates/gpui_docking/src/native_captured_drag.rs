@@ -97,8 +97,22 @@ struct DockNativeCapturedDragRetiredPending {
 struct DockNativeCapturedRouteCleanup {
     route: DockNativeCapturedDragRoute,
     first_panic: Option<Box<dyn Any + Send>>,
+    cancel: Option<DockNativeCapturedRouteCancelCleanup>,
     locked_drop: Option<Result<DockViewportLockedDropRoute, crate::DockActionApplyError>>,
     live_undock_release_adopted: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct DockNativeCapturedRouteCancelCleanup {
+    reason: PointerCancelReason,
+    completed: bool,
+}
+
+#[cfg(test)]
+#[derive(Clone)]
+struct DockNativeCapturedCancelCleanupTestFault {
+    attempts: Rc<Cell<usize>>,
+    panics_remaining: Rc<Cell<usize>>,
 }
 
 impl DockNativeCapturedDragRetiredKey {
@@ -244,6 +258,8 @@ struct DockNativeCapturedDragRoute {
     latest_event: Rc<RefCell<Option<NativeCapturedDragEvent>>>,
     preview_refresh_scheduled: Rc<Cell<bool>>,
     published_scene_frames: Rc<RefCell<Vec<DockNativeCapturedScenePublication>>>,
+    #[cfg(test)]
+    cancel_cleanup_fault: Option<DockNativeCapturedCancelCleanupTestFault>,
 }
 
 #[derive(Clone)]
@@ -329,7 +345,6 @@ impl DockNativeCapturedSurfaceReleaseOutcome {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct DockNativeCapturedSurfaceRelease {
     outcome: DockNativeCapturedSurfaceReleaseOutcome,
-    cleanup_completed: bool,
     evidence: Vec<(
         NativeCapturedDragReleaseBarrier,
         NativeCapturedDragReleaseTerminal,
@@ -339,29 +354,20 @@ pub(crate) struct DockNativeCapturedSurfaceRelease {
 impl DockNativeCapturedSurfaceRelease {
     fn new(
         outcome: DockNativeCapturedSurfaceReleaseOutcome,
-        cleanup_completed: bool,
         evidence: Vec<(
             NativeCapturedDragReleaseBarrier,
             NativeCapturedDragReleaseTerminal,
         )>,
     ) -> Self {
-        Self {
-            outcome,
-            cleanup_completed,
-            evidence,
-        }
+        Self { outcome, evidence }
     }
 
     pub(crate) fn without_evidence(outcome: DockNativeCapturedSurfaceReleaseOutcome) -> Self {
-        Self::new(outcome, true, Vec::new())
+        Self::new(outcome, Vec::new())
     }
 
     pub(crate) const fn outcome(&self) -> DockNativeCapturedSurfaceReleaseOutcome {
         self.outcome
-    }
-
-    pub(crate) const fn cleanup_completed(&self) -> bool {
-        self.cleanup_completed
     }
 
     pub(crate) fn evidence(
@@ -464,6 +470,7 @@ fn claim_locked_release_route(
     Some(DockNativeCapturedRouteCleanup {
         route,
         first_panic: reservation.take_resolution_panic(),
+        cancel: None,
         locked_drop: reservation.locked_drop.borrow_mut().take(),
         live_undock_release_adopted: reservation.live_undock_release_adopted.get(),
     })
@@ -701,6 +708,25 @@ pub(crate) fn active_live_undock_route_facts_for_test(
 }
 
 #[cfg(test)]
+pub(crate) fn panic_active_native_captured_cancel_cleanup_attempts_for_test(
+    panic_attempts: usize,
+    cx: &mut App,
+) -> Rc<Cell<usize>> {
+    let attempts = Rc::new(Cell::new(0));
+    let state = router_state(cx).expect("a test cleanup fault requires the installed router");
+    let mut state = state.borrow_mut();
+    let route = state
+        .active
+        .as_mut()
+        .expect("a test cleanup fault requires one active captured route");
+    route.cancel_cleanup_fault = Some(DockNativeCapturedCancelCleanupTestFault {
+        attempts: attempts.clone(),
+        panics_remaining: Rc::new(Cell::new(panic_attempts)),
+    });
+    attempts
+}
+
+#[cfg(test)]
 pub(crate) fn has_failed_native_captured_release_for_surface_for_test(
     runtime_identity: DockViewportRuntimeIdentity,
     lease: crate::surface::window_session::DockSurfaceWindowSessionLease,
@@ -862,6 +888,8 @@ pub(crate) fn begin_native_captured_drag_route(
         latest_event: Rc::new(RefCell::new(None)),
         preview_refresh_scheduled: Rc::new(Cell::new(false)),
         published_scene_frames: Rc::new(RefCell::new(published_scene_frames)),
+        #[cfg(test)]
+        cancel_cleanup_fault: None,
     };
     let displaced = state.borrow_mut().active.replace(route);
     let install = catch_unwind(AssertUnwindSafe(|| {
@@ -1157,6 +1185,7 @@ pub(crate) fn cancel_native_captured_drag_route(
 pub(crate) fn cancel_native_captured_drag_route_for_surface(
     runtime_identity: DockViewportRuntimeIdentity,
     lease: crate::surface::window_session::DockSurfaceWindowSessionLease,
+    expect_native_capture_evidence: bool,
     on_native_capture_terminal: impl FnOnce(
         DockNativeCapturedSurfaceRelease,
         &mut Option<Box<dyn Any + Send + 'static>>,
@@ -1166,9 +1195,11 @@ pub(crate) fn cancel_native_captured_drag_route_for_surface(
 ) {
     let Some(state) = router_state(cx) else {
         defer_native_captured_surface_terminal(
-            DockNativeCapturedSurfaceRelease::without_evidence(
-                DockNativeCapturedSurfaceReleaseOutcome::Released,
-            ),
+            DockNativeCapturedSurfaceRelease::without_evidence(if expect_native_capture_evidence {
+                DockNativeCapturedSurfaceReleaseOutcome::Failed
+            } else {
+                DockNativeCapturedSurfaceReleaseOutcome::Released
+            }),
             Box::new(on_native_capture_terminal),
             cx,
         );
@@ -1212,11 +1243,13 @@ pub(crate) fn cancel_native_captured_drag_route_for_surface(
     let pending_count = usize::from(active.is_some()) + locked.len() + retired_pending.len();
     if pending_count == 0 {
         defer_native_captured_surface_terminal(
-            DockNativeCapturedSurfaceRelease::without_evidence(if release_failed {
-                DockNativeCapturedSurfaceReleaseOutcome::Failed
-            } else {
-                DockNativeCapturedSurfaceReleaseOutcome::Released
-            }),
+            DockNativeCapturedSurfaceRelease::without_evidence(
+                if release_failed || expect_native_capture_evidence {
+                    DockNativeCapturedSurfaceReleaseOutcome::Failed
+                } else {
+                    DockNativeCapturedSurfaceReleaseOutcome::Released
+                },
+            ),
             Box::new(on_native_capture_terminal),
             cx,
         );
@@ -1227,7 +1260,6 @@ pub(crate) fn cancel_native_captured_drag_route_for_surface(
         remaining: pending_count,
         on_native_capture_terminal: Some(Box::new(on_native_capture_terminal)),
         release_failed,
-        cleanup_completed: true,
         first_panic: None,
         evidence: Vec::with_capacity(pending_count),
     }));
@@ -1237,6 +1269,7 @@ pub(crate) fn cancel_native_captured_drag_route_for_surface(
             DockNativeCapturedRouteCleanup {
                 route,
                 first_panic: None,
+                cancel: None,
                 locked_drop: None,
                 live_undock_release_adopted: false,
             },
@@ -1264,7 +1297,6 @@ struct DockNativeCapturedSurfaceCancellation {
     remaining: usize,
     on_native_capture_terminal: Option<DockNativeCapturedSurfaceTerminal>,
     release_failed: bool,
-    cleanup_completed: bool,
     first_panic: Option<Box<dyn Any + Send + 'static>>,
     evidence: Vec<(
         NativeCapturedDragReleaseBarrier,
@@ -1306,12 +1338,14 @@ fn invoke_native_captured_surface_terminal(
 
 fn attach_active_surface_route_release(
     state: &Rc<RefCell<DockNativeCapturedDragState>>,
-    cleanup: DockNativeCapturedRouteCleanup,
+    mut cleanup: DockNativeCapturedRouteCleanup,
     completion: Rc<RefCell<DockNativeCapturedSurfaceCancellation>>,
     cx: &mut App,
 ) {
-    retire_route_transport_proxy(&cleanup.route);
-    cancel_live_undock_route(&cleanup.route, PointerCancelReason::WindowClosed, cx);
+    // Persist cleanup authority before attaching the exact native release barrier. A cancellation
+    // callback panic remains on that authority so the terminal stage can retry it and report the
+    // final completion state before the first panic is rethrown.
+    record_route_cleanup_cancel(&mut cleanup, PointerCancelReason::WindowClosed, cx);
     let key = DockNativeCapturedDragRetiredKey::for_route(&cleanup.route)
         .expect("a surface shutdown route must carry its exact surface lease");
     let pending_cleanup = Rc::new(RefCell::new(Some(cleanup)));
@@ -1351,7 +1385,7 @@ fn attach_active_surface_route_release(
     cx.defer_shutdown_critical_before_window_registry_clear(move |cx| {
         finish_surface_route_cancellation(
             Some(cleanup),
-            DockNativeCapturedSurfaceReleaseOutcome::Released,
+            DockNativeCapturedSurfaceReleaseOutcome::Failed,
             None,
             completion,
             cx,
@@ -1441,9 +1475,9 @@ fn finish_surface_route_cancellation(
                 "suppressed a Dock route-retirement panic while awaiting surface capture terminals"
             );
         }
-        completion.release_failed |=
-            release_outcome == DockNativeCapturedSurfaceReleaseOutcome::Failed;
-        completion.cleanup_completed &= route_cleanup_completed;
+        completion.release_failed |= release_outcome
+            == DockNativeCapturedSurfaceReleaseOutcome::Failed
+            || !route_cleanup_completed;
         if let Some(evidence) = evidence {
             completion.evidence.push(evidence);
         }
@@ -1462,25 +1496,18 @@ fn finish_surface_route_cancellation(
                 } else {
                     DockNativeCapturedSurfaceReleaseOutcome::Released
                 },
-                completion.cleanup_completed,
                 completion.first_panic.take(),
                 std::mem::take(&mut completion.evidence),
             )
         })
     };
-    let Some((
-        on_native_capture_terminal,
-        release_outcome,
-        cleanup_completed,
-        first_panic,
-        evidence,
-    )) = terminal
+    let Some((on_native_capture_terminal, release_outcome, first_panic, evidence)) = terminal
     else {
         return;
     };
     invoke_native_captured_surface_terminal(
         on_native_capture_terminal,
-        DockNativeCapturedSurfaceRelease::new(release_outcome, cleanup_completed, evidence),
+        DockNativeCapturedSurfaceRelease::new(release_outcome, evidence),
         first_panic,
         cx,
     );
@@ -1703,6 +1730,7 @@ fn consume_native_captured_drag_event(
                     Some(DockNativeCapturedRouteCleanup {
                         route: active,
                         first_panic: None,
+                        cancel: None,
                         locked_drop: None,
                         live_undock_release_adopted: false,
                     }),
@@ -2535,6 +2563,20 @@ fn cancel_live_undock_route(
     reason: PointerCancelReason,
     cx: &mut App,
 ) {
+    #[cfg(test)]
+    if let Some(fault) = route.cancel_cleanup_fault.as_ref() {
+        let attempt = fault
+            .attempts
+            .get()
+            .checked_add(1)
+            .expect("test cleanup attempt count should not overflow");
+        fault.attempts.set(attempt);
+        let panics_remaining = fault.panics_remaining.get();
+        if panics_remaining > 0 {
+            fault.panics_remaining.set(panics_remaining - 1);
+            panic!("injected native captured route cancel-cleanup panic");
+        }
+    }
     let Some(identity) = route.live_undock_identity.get() else {
         return;
     };
@@ -2818,6 +2860,7 @@ fn finish_matching_route_cleanup(
     let mut cleanup = DockNativeCapturedRouteCleanup {
         route: route?,
         first_panic: None,
+        cancel: None,
         locked_drop: None,
         live_undock_release_adopted: false,
     };
@@ -2837,6 +2880,7 @@ fn schedule_route_retirement(
         DockNativeCapturedRouteCleanup {
             route,
             first_panic: None,
+            cancel: None,
             locked_drop: None,
             live_undock_release_adopted: false,
         },
@@ -2856,6 +2900,7 @@ fn schedule_route_retirement_with_reason(
         DockNativeCapturedRouteCleanup {
             route,
             first_panic: None,
+            cancel: None,
             locked_drop: None,
             live_undock_release_adopted: false,
         },
@@ -3024,13 +3069,15 @@ fn finish_route_cleanup(
     mut cleanup: DockNativeCapturedRouteCleanup,
     cx: &mut App,
 ) -> DockNativeCapturedRouteCleanupResult {
+    let cancel_completed = retry_route_cleanup_cancel(&mut cleanup, cx);
     let mut cleanup_result = retire_route_cleanup(cleanup.route, cx);
+    cleanup_result.completed &= cancel_completed;
     if cleanup.first_panic.is_none() {
         return cleanup_result;
     }
     if cleanup_result.first_panic.is_some() {
         log::error!(
-            "suppressed a Dock route-retirement panic after an earlier locked-release panic"
+            "suppressed a Dock route-retirement panic after an earlier route cleanup panic"
         );
     }
     cleanup_result.first_panic = cleanup.first_panic.take();
@@ -3051,13 +3098,44 @@ fn record_route_cleanup_cancel(
     reason: PointerCancelReason,
     cx: &mut App,
 ) {
+    match cleanup.cancel {
+        Some(cancel) => {
+            debug_assert_eq!(
+                cancel.reason, reason,
+                "one Dock route cleanup authority must retain one cancellation reason"
+            );
+        }
+        None => {
+            cleanup.cancel = Some(DockNativeCapturedRouteCancelCleanup {
+                reason,
+                completed: false,
+            });
+        }
+    }
     let route = cleanup.route.clone();
     run_idempotent_cleanup_stage(&mut cleanup.first_panic, || {
         retire_route_transport_proxy(&route)
     });
-    run_idempotent_cleanup_stage(&mut cleanup.first_panic, || {
-        cancel_live_undock_route(&route, reason, cx)
+    retry_route_cleanup_cancel(cleanup, cx);
+}
+
+fn retry_route_cleanup_cancel(cleanup: &mut DockNativeCapturedRouteCleanup, cx: &mut App) -> bool {
+    let Some(cancel) = cleanup.cancel else {
+        return true;
+    };
+    if cancel.completed {
+        return true;
+    }
+    let route = cleanup.route.clone();
+    let completed = run_idempotent_cleanup_stage(&mut cleanup.first_panic, || {
+        cancel_live_undock_route(&route, cancel.reason, cx)
     });
+    cleanup
+        .cancel
+        .as_mut()
+        .expect("a recorded route cancellation must remain owned until cleanup")
+        .completed = completed;
+    completed
 }
 
 fn retire_route_transport_proxy(route: &DockNativeCapturedDragRoute) {

@@ -4,6 +4,7 @@ use crate::{
     drag::DockDragPayload, drop_preview::DockDropRoutePreview, interaction::DockRuntimeDragSession,
     viewport_drop_scene::DockViewportHostSceneFrame,
     viewport_registry::DockViewportRegistrationKey,
+    viewport_runtime_effects::extend_unique_windows,
 };
 use open_gpui::{
     AnyWindowHandle, NativeCapturedDragGeneration, NativeIngressSequence, Point, WindowId,
@@ -487,16 +488,7 @@ pub(crate) fn push_unique_window(
     windows: &mut Vec<AnyWindowHandle>,
     window: Option<AnyWindowHandle>,
 ) {
-    let Some(window) = window else {
-        return;
-    };
-    if windows
-        .iter()
-        .any(|existing| existing.window_id() == window.window_id())
-    {
-        return;
-    }
-    windows.push(window);
+    extend_unique_windows(windows, window);
 }
 
 fn push_unique_space(spaces: &mut Vec<DockSpaceId>, space: &DockSpaceId) {

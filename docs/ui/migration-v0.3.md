@@ -631,6 +631,36 @@ For custom platform backends:
   `WindowPresentationShutdownTicket::acknowledge_quiesced`, and only then returns
   `PlatformPresentationShutdownOutcome::Quiesced`. Keep `retire_native_window` rejected until
   quiescence is proven; a fallible native destroy remains retryable while GPUI retains the owner.
+- Implement the mandatory `PlatformWindow::interaction_quiescence` seam. Return a cloneable
+  `PlatformWindowInteractionQuiescence` whose callback is idempotent, one-way, backend-owned, and
+  safe to invoke while the Rust `Window` is checked out by a reentrant callback. The callback must
+  not enter `App`. It must synchronously revoke native activation and focus admission, client and
+  non-client pointer input, keyboard and IME callbacks, accessibility actions, native window menu,
+  move, and resize entry points. Interactive commands queued before revocation must recheck the
+  same gate at dispatch. Continue accepting paint, resize/display facts needed for cleanup,
+  presentation shutdown, pointer-capture release, close/terminal callbacks, and native retirement.
+  A typical backend retains a weak reference to its native state:
+
+  ```rust
+  fn interaction_quiescence(&self) -> PlatformWindowInteractionQuiescence {
+      let state = Rc::downgrade(&self.state);
+      PlatformWindowInteractionQuiescence::new(move || {
+          if let Some(state) = state.upgrade() {
+              state.revoke_user_interaction();
+          }
+      })
+  }
+  ```
+
+  Do not return a no-op closure. A facade-managed Dock host intentionally remains laid out and
+  painted while its surface is `ShuttingDown`, so a permissive implementation would leave a
+  visible retiring native window able to steal focus or start a new modal move/resize session.
+  Treat accessibility announcements as part of the same one-way boundary. A request submitted
+  after revocation returns `AccessibilityAnnouncementDropReason::InteractionQuiesced`. A request
+  accepted before revocation but not yet terminal emits a cleared lifecycle diagnostic with
+  `AccessibilityAnnouncementClearReason::InteractionQuiesced` and is never replayed. These cases
+  are intentionally distinct from `AccessibilityInactive` and `WindowClosed`, because the native
+  window may remain visible and paintable while its semantic interaction authority is gone.
 - Keep `map_window` synchronous and unable to pump `on_input`. A backend may keep the native target
   hidden, or perform only a backend-proven non-activating map/commit whose callbacks cannot enter
   the hybrid input path. Any show, focus, or activation work that can pump input belongs to

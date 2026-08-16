@@ -5808,6 +5808,178 @@ fn live_rehost_session_checkout_restores_authority_after_unwind(cx: &mut TestApp
 }
 
 #[open_gpui::test]
+fn surface_capture_cancel_cleanup_retries_after_initial_panic_budget_before_rethrow(
+    cx: &mut TestAppContext,
+) {
+    let mut fixture = native_captured_source_fixture(cx);
+    begin_native_live_undock_with_released_source(&mut fixture, cx);
+    let source_transport = cx
+        .read_entity(&fixture.source_host, |host, _| {
+            host.native_drag_transport_proxy()
+        })
+        .expect("the active native route must retain its transport proxy");
+    let shutdown_observation = cx.update(|app| fixture.surface.observe_shutdown_for_test(app));
+    let cleanup_attempts = cx.update(|app| {
+        crate::native_captured_drag::panic_active_native_captured_cancel_cleanup_attempts_for_test(
+            2, app,
+        )
+    });
+    let release_attempts = Rc::new(Cell::new(0));
+    cx.set_pointer_capture_release_callback(fixture.source_window, {
+        let release_attempts = release_attempts.clone();
+        move |_| {
+            release_attempts.set(release_attempts.get() + 1);
+            PlatformPointerCaptureReleaseOutcome::Released
+        }
+    });
+
+    let panic = catch_unwind(AssertUnwindSafe(|| {
+        let close = cx.simulate_window_close_request(fixture.source_window);
+        assert!(!close.native_close_allowed());
+        assert!(close.terminal_transition_started());
+        cx.run_until_parked();
+    }))
+    .expect_err("the first cancel-cleanup panic must remain observable after convergence");
+    assert_eq!(
+        panic.downcast_ref::<&'static str>().copied(),
+        Some("injected native captured route cancel-cleanup panic")
+    );
+
+    assert_eq!(
+        cleanup_attempts.get(),
+        3,
+        "terminal cleanup must retry cancellation after the initial idempotent budget is exhausted"
+    );
+    assert_eq!(
+        release_attempts.get(),
+        1,
+        "surface shutdown must attach and settle the exact native release barrier once"
+    );
+    assert!(!source_transport.is_active());
+    assert!(cx.read(|app| {
+        !crate::native_captured_drag::has_active_native_captured_drag_route_for_test(app)
+    }));
+    assert!(
+        fixture
+            .runtime
+            .active_payload_drag_session(&fixture.payload)
+            .is_none(),
+        "payload finalization must complete before the retained panic is rethrown"
+    );
+    let (live_phase, execution_count) = cx.read_entity(fixture.surface.owner(), |owner, _| {
+        (
+            owner.live_undock_phase(),
+            owner.live_undock_runtime().execution_count_for_test(),
+        )
+    });
+    assert_eq!(
+        live_phase,
+        crate::surface::live_undock::DockLiveUndockPhase::Idle
+    );
+    assert_eq!(execution_count, 0);
+
+    let shutdown_events = shutdown_observation.events();
+    let cleanup_index = shutdown_events
+        .iter()
+        .position(|event| {
+            matches!(
+                event.kind(),
+                crate::surface::DockSurfaceShutdownTestEventKind::CaptureCleanupCompleted { releases }
+                    if releases.len() == 1
+                        && releases[0].barrier().source_window()
+                            == fixture.source_window.window_id()
+                        && releases[0].terminal()
+                            == NativeCapturedDragReleaseTerminal::Released
+            )
+        })
+        .expect("the real capture terminal must be recorded before the panic escapes");
+    let anchor_close_index = shutdown_events
+        .iter()
+        .position(|event| {
+            matches!(
+                event.kind(),
+                crate::surface::DockSurfaceShutdownTestEventKind::AnchorCloseDispatched { window }
+                    if *window == fixture.source_window.window_id()
+            )
+        })
+        .expect("the anchor close must remain downstream of capture cleanup");
+    assert!(cleanup_index < anchor_close_index);
+
+    catch_unwind(AssertUnwindSafe(|| cx.run_until_parked()))
+        .expect("the retained cleanup panic must propagate exactly once");
+    let status = cx.update(|app| fixture.surface.window_session_status(app));
+    assert_eq!(status.phase(), crate::DockSurfaceWindowSessionPhase::Closed);
+    assert_eq!(status.pending_terminal_ticket_count(), 0);
+    assert_eq!(status.runtime_empty(), Some(true));
+}
+
+#[open_gpui::test]
+fn surface_capture_cancel_cleanup_exhaustion_never_reports_completed(cx: &mut TestAppContext) {
+    let mut fixture = native_captured_source_fixture(cx);
+    begin_native_live_undock_with_released_source(&mut fixture, cx);
+    let shutdown_observation = cx.update(|app| fixture.surface.observe_shutdown_for_test(app));
+    let cleanup_attempts = cx.update(|app| {
+        crate::native_captured_drag::panic_active_native_captured_cancel_cleanup_attempts_for_test(
+            4, app,
+        )
+    });
+    let release_attempts = Rc::new(Cell::new(0));
+    cx.set_pointer_capture_release_callback(fixture.source_window, {
+        let release_attempts = release_attempts.clone();
+        move |_| {
+            release_attempts.set(release_attempts.get() + 1);
+            PlatformPointerCaptureReleaseOutcome::Released
+        }
+    });
+
+    let panic = catch_unwind(AssertUnwindSafe(|| {
+        let close = cx.simulate_window_close_request(fixture.source_window);
+        assert!(!close.native_close_allowed());
+        assert!(close.terminal_transition_started());
+        cx.run_until_parked();
+    }))
+    .expect_err("an exhausted cancel-cleanup stage must publish a typed capture failure");
+    assert!(
+        panic
+            .downcast_ref::<crate::surface::DockSurfaceCaptureReleaseFailure>()
+            .is_some(),
+        "cleanup exhaustion must enter the DockSurface capture-failure terminal"
+    );
+    assert_eq!(
+        cleanup_attempts.get(),
+        4,
+        "terminal cleanup must consume its own retry budget after the initial budget"
+    );
+    assert_eq!(release_attempts.get(), 1);
+    let shutdown_events = shutdown_observation.events();
+    assert!(
+        shutdown_events.iter().any(|event| matches!(
+            event.kind(),
+            crate::surface::DockSurfaceShutdownTestEventKind::AnchorCloseDispatched { window }
+                if *window == fixture.source_window.window_id()
+        )),
+        "the real capture terminal must still release the downstream shutdown continuation"
+    );
+    assert!(
+        shutdown_events.iter().all(|event| !matches!(
+            event.kind(),
+            crate::surface::DockSurfaceShutdownTestEventKind::CaptureCleanupCompleted { .. }
+        )),
+        "an exhausted route cancellation cannot mint a completed cleanup receipt"
+    );
+    assert!(cx.read(|app| {
+        !crate::native_captured_drag::has_active_native_captured_drag_route_for_test(app)
+    }));
+
+    catch_unwind(AssertUnwindSafe(|| cx.run_until_parked()))
+        .expect("the retained cleanup panic must propagate exactly once");
+    let status = cx.update(|app| fixture.surface.window_session_status(app));
+    assert_eq!(status.phase(), crate::DockSurfaceWindowSessionPhase::Closed);
+    assert_eq!(status.pending_terminal_ticket_count(), 0);
+    assert_eq!(status.runtime_empty(), Some(true));
+}
+
+#[open_gpui::test]
 fn native_source_restoration_activates_only_after_the_visible_receipt(cx: &mut TestAppContext) {
     let mut fixture = native_captured_source_fixture(cx);
     begin_native_live_undock_with_released_source(&mut fixture, cx);
@@ -7984,6 +8156,7 @@ fn reentrant_surface_claim_attaches_to_delivering_native_release(cx: &mut TestAp
                         crate::native_captured_drag::cancel_native_captured_drag_route_for_surface(
                             runtime_identity,
                             lease,
+                            false,
                             move |release, _, _| release_outcome.set(Some(release.outcome())),
                             app,
                         );

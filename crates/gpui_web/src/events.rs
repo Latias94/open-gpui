@@ -24,10 +24,38 @@ pub struct WebEventListeners {
     _listeners: Vec<WebEventListener>,
 }
 
-struct WebEventListener {
+#[derive(Default)]
+pub(crate) struct WebInteractionGate(Cell<bool>);
+
+impl WebInteractionGate {
+    pub(crate) fn quiesce(&self) {
+        self.0.set(true);
+    }
+
+    pub(crate) fn is_quiesced(&self) -> bool {
+        self.0.get()
+    }
+
+    fn dispatch_input(
+        &self,
+        callbacks: &RefCell<WebWindowCallbacks>,
+        input: PlatformInput,
+    ) -> DispatchEventResult {
+        let terminal_cleanup = matches!(&input, PlatformInput::PointerCanceled(_));
+        if self.is_quiesced() && !terminal_cleanup {
+            return DispatchEventResult::default();
+        }
+
+        let input_callback = callbacks.borrow().input.clone();
+        input_callback.dispatch(input)
+    }
+}
+
+pub(crate) struct WebEventListener {
     target: web_sys::EventTarget,
     event_name: &'static str,
-    closure: Closure<dyn FnMut(JsValue)>,
+    closure: Rc<Closure<dyn FnMut(JsValue)>>,
+    capture: bool,
     registered: bool,
 }
 
@@ -37,15 +65,16 @@ impl WebEventListener {
         event_name: &'static str,
         handler: impl FnMut(JsValue) + 'static,
     ) -> Self {
-        let closure = Closure::<dyn FnMut(JsValue)>::new(handler);
+        let closure = Rc::new(Closure::<dyn FnMut(JsValue)>::new(handler));
         let registered = target
-            .add_event_listener_with_callback(event_name, closure.as_ref().unchecked_ref())
+            .add_event_listener_with_callback(event_name, closure.as_ref().as_ref().unchecked_ref())
             .is_ok();
 
         Self {
             target: target.clone(),
             event_name,
             closure,
+            capture: false,
             registered,
         }
     }
@@ -55,9 +84,9 @@ impl WebEventListener {
         event_name: &'static str,
         handler: impl FnMut(JsValue) + 'static,
     ) -> Self {
-        let closure = Closure::<dyn FnMut(JsValue)>::new(handler);
+        let closure = Rc::new(Closure::<dyn FnMut(JsValue)>::new(handler));
         let target_js: &JsValue = target.as_ref();
-        let callback_js: &JsValue = closure.as_ref();
+        let callback_js: &JsValue = closure.as_ref().as_ref();
         let options = js_sys::Object::new();
         js_sys::Reflect::set(&options, &"passive".into(), &false.into()).ok();
         let registered = js_sys::Reflect::get(target_js, &"addEventListener".into())
@@ -73,21 +102,55 @@ impl WebEventListener {
             target: target.clone(),
             event_name,
             closure,
+            capture: false,
             registered,
         }
+    }
+
+    pub(crate) fn register_shared_capture(
+        target: &web_sys::EventTarget,
+        event_name: &'static str,
+        closure: Rc<Closure<dyn FnMut(JsValue)>>,
+    ) -> Result<Self, JsValue> {
+        target.add_event_listener_with_callback_and_bool(
+            event_name,
+            closure.as_ref().as_ref().unchecked_ref(),
+            true,
+        )?;
+        Ok(Self {
+            target: target.clone(),
+            event_name,
+            closure,
+            capture: true,
+            registered: true,
+        })
+    }
+
+    pub(crate) fn event_name(&self) -> &'static str {
+        self.event_name
     }
 }
 
 impl Drop for WebEventListener {
     fn drop(&mut self) {
         if self.registered {
-            // DOM removal matches type, callback, and capture; passive need not be repeated.
-            self.target
-                .remove_event_listener_with_callback(
-                    self.event_name,
-                    self.closure.as_ref().unchecked_ref(),
-                )
-                .ok();
+            if self.capture {
+                self.target
+                    .remove_event_listener_with_callback_and_bool(
+                        self.event_name,
+                        self.closure.as_ref().as_ref().unchecked_ref(),
+                        true,
+                    )
+                    .ok();
+            } else {
+                // DOM removal matches type, callback, and capture; passive need not be repeated.
+                self.target
+                    .remove_event_listener_with_callback(
+                        self.event_name,
+                        self.closure.as_ref().as_ref().unchecked_ref(),
+                    )
+                    .ok();
+            }
         }
     }
 }
@@ -197,7 +260,7 @@ impl WebWindowInner {
     }
 
     fn dispatch_input(&self, input: PlatformInput) -> DispatchEventResult {
-        dispatch_web_input(&self.callbacks, input)
+        self.interaction_gate.dispatch_input(&self.callbacks, input)
     }
 
     fn pointer_input_boundary(&self) -> WebPointerInputBoundary<'_> {
@@ -205,6 +268,7 @@ impl WebWindowInner {
             pointer_capture: &self.pointer_capture,
             click_state: &self.click_state,
             callbacks: &self.callbacks,
+            interaction_gate: &self.interaction_gate,
         }
     }
 
@@ -372,6 +436,9 @@ impl WebWindowInner {
         self.listen_non_passive("wheel", move |event: JsValue| {
             let event: web_sys::WheelEvent = event.unchecked_into();
             event.prevent_default();
+            if this.interaction_gate.is_quiesced() {
+                return;
+            }
 
             let mouse_event: &web_sys::MouseEvent = event.as_ref();
             let position = mouse_position_in_element(mouse_event);
@@ -413,6 +480,9 @@ impl WebWindowInner {
         self.listen("dragover", move |event: JsValue| {
             let event: web_sys::DragEvent = event.unchecked_into();
             event.prevent_default();
+            if this.interaction_gate.is_quiesced() {
+                return;
+            }
 
             let mouse_event: &web_sys::MouseEvent = event.as_ref();
             let position = mouse_position_in_element(mouse_event);
@@ -431,6 +501,9 @@ impl WebWindowInner {
         self.listen("drop", move |event: JsValue| {
             let event: web_sys::DragEvent = event.unchecked_into();
             event.prevent_default();
+            if this.interaction_gate.is_quiesced() {
+                return;
+            }
 
             let mouse_event: &web_sys::MouseEvent = event.as_ref();
             let position = mouse_position_in_element(mouse_event);
@@ -454,6 +527,9 @@ impl WebWindowInner {
     fn register_dragleave(self: &Rc<Self>) -> WebEventListener {
         let this = Rc::clone(self);
         self.listen("dragleave", move |_event: JsValue| {
+            if this.interaction_gate.is_quiesced() {
+                return;
+            }
             this.dispatch_input(PlatformInput::FileDrop(FileDropEvent::Exited));
         })
     }
@@ -462,6 +538,9 @@ impl WebWindowInner {
         let this = Rc::clone(self);
         self.listen_input("keydown", move |event: JsValue| {
             let event: web_sys::KeyboardEvent = event.unchecked_into();
+            if this.interaction_gate.is_quiesced() {
+                return;
+            }
 
             let modifiers = modifiers_from_keyboard_event(&event, this.is_mac);
             let capslock = capslock_from_keyboard_event(&event);
@@ -476,6 +555,9 @@ impl WebWindowInner {
                 modifiers,
                 capslock,
             }));
+            if this.interaction_gate.is_quiesced() {
+                return;
+            }
 
             let key = dom_key_to_gpui_key(&event);
 
@@ -521,6 +603,9 @@ impl WebWindowInner {
         let this = Rc::clone(self);
         self.listen_input("keyup", move |event: JsValue| {
             let event: web_sys::KeyboardEvent = event.unchecked_into();
+            if this.interaction_gate.is_quiesced() {
+                return;
+            }
 
             let modifiers = modifiers_from_keyboard_event(&event, this.is_mac);
             let capslock = capslock_from_keyboard_event(&event);
@@ -535,6 +620,9 @@ impl WebWindowInner {
                 modifiers,
                 capslock,
             }));
+            if this.interaction_gate.is_quiesced() {
+                return;
+            }
 
             let key = dom_key_to_gpui_key(&event);
 
@@ -559,6 +647,9 @@ impl WebWindowInner {
     fn register_composition_start(self: &Rc<Self>) -> WebEventListener {
         let this = Rc::clone(self);
         self.listen_input("compositionstart", move |_event: JsValue| {
+            if this.interaction_gate.is_quiesced() {
+                return;
+            }
             this.is_composing.set(true);
         })
     }
@@ -567,6 +658,9 @@ impl WebWindowInner {
         let this = Rc::clone(self);
         self.listen_input("compositionupdate", move |event: JsValue| {
             let event: web_sys::CompositionEvent = event.unchecked_into();
+            if this.interaction_gate.is_quiesced() {
+                return;
+            }
             let data = event.data().unwrap_or_default();
             this.is_composing.set(true);
             let _ = this.with_input_handler(|handler| {
@@ -579,12 +673,15 @@ impl WebWindowInner {
         let this = Rc::clone(self);
         self.listen_input("compositionend", move |event: JsValue| {
             let event: web_sys::CompositionEvent = event.unchecked_into();
+            if this.interaction_gate.is_quiesced() {
+                this.is_composing.set(false);
+                this.input_element.set_value("");
+                return;
+            }
             let data = event.data().unwrap_or_default();
             this.is_composing.set(false);
-            let _ = this.with_input_handler(|handler| {
-                handler.replace_text_in_range(None, &data);
-                handler.unmark_text();
-            });
+            let _ = this.with_input_handler(|handler| handler.replace_text_in_range(None, &data));
+            let _ = this.with_input_handler(|handler| handler.unmark_text());
             this.input_element.set_value("");
         })
     }
@@ -602,6 +699,9 @@ impl WebWindowInner {
     fn register_pointer_enter(self: &Rc<Self>) -> WebEventListener {
         let this = Rc::clone(self);
         self.listen("pointerenter", move |_event: JsValue| {
+            if this.interaction_gate.is_quiesced() {
+                return;
+            }
             {
                 let mut state = this.state.borrow_mut();
                 state.is_hovered = true;
@@ -613,6 +713,9 @@ impl WebWindowInner {
     fn register_pointer_leave_hover(self: &Rc<Self>) -> WebEventListener {
         let this = Rc::clone(self);
         self.listen("pointerleave", move |_event: JsValue| {
+            if this.interaction_gate.is_quiesced() {
+                return;
+            }
             {
                 let mut state = this.state.borrow_mut();
                 state.is_hovered = false;
@@ -681,14 +784,6 @@ fn pointer_button_change_to_platform_input(
     }
 }
 
-fn dispatch_web_input(
-    callbacks: &RefCell<WebWindowCallbacks>,
-    input: PlatformInput,
-) -> DispatchEventResult {
-    let input_callback = callbacks.borrow().input.clone();
-    input_callback.dispatch(input)
-}
-
 #[derive(Clone, Copy)]
 struct WebPointerEventData {
     pointer_id: i32,
@@ -709,6 +804,7 @@ struct WebPointerInputBoundary<'a> {
     pointer_capture: &'a Cell<WebPointerCaptureState>,
     click_state: &'a RefCell<ClickState>,
     callbacks: &'a RefCell<WebWindowCallbacks>,
+    interaction_gate: &'a WebInteractionGate,
 }
 
 impl WebPointerInputBoundary<'_> {
@@ -721,7 +817,7 @@ impl WebPointerInputBoundary<'_> {
         self.pointer_capture.set(next_state);
         apply_capture_command(transition.capture_command);
         if let Some(reason) = transition.cancel_reason {
-            let _ = dispatch_web_input(
+            let _ = self.interaction_gate.dispatch_input(
                 self.callbacks,
                 PlatformInput::PointerCanceled(PointerCancelEvent { reason }),
             );
@@ -733,6 +829,9 @@ impl WebPointerInputBoundary<'_> {
         change: WebPointerButtonChange,
         event: WebPointerEventData,
     ) {
+        if self.interaction_gate.is_quiesced() {
+            return;
+        }
         let click_count = match change {
             WebPointerButtonChange::Down(button) => self.click_state.borrow_mut().register_click(
                 button,
@@ -741,7 +840,7 @@ impl WebPointerInputBoundary<'_> {
             ),
             WebPointerButtonChange::Up(_) => self.click_state.borrow().current_count(),
         };
-        let _ = dispatch_web_input(
+        let _ = self.interaction_gate.dispatch_input(
             self.callbacks,
             pointer_button_change_to_platform_input(
                 change,
@@ -758,6 +857,9 @@ impl WebPointerInputBoundary<'_> {
         apply_capture_command: impl FnMut(WebPointerCaptureCommand),
         update_pointer_state: impl FnOnce(Point<Pixels>, Modifiers),
     ) {
+        if self.interaction_gate.is_quiesced() {
+            return;
+        }
         let (next_state, transition) =
             self.pointer_capture
                 .get()
@@ -780,6 +882,9 @@ impl WebPointerInputBoundary<'_> {
         apply_capture_command: impl FnMut(WebPointerCaptureCommand),
         update_pointer_state: impl FnOnce(Point<Pixels>, Modifiers),
     ) {
+        if self.interaction_gate.is_quiesced() {
+            return;
+        }
         let (next_state, transition) =
             self.pointer_capture
                 .get()
@@ -803,6 +908,9 @@ impl WebPointerInputBoundary<'_> {
         apply_capture_command: impl FnMut(WebPointerCaptureCommand),
         update_pointer_state: impl FnOnce(Point<Pixels>, Modifiers),
     ) {
+        if self.interaction_gate.is_quiesced() {
+            return;
+        }
         let current_pressed = dom_buttons_to_pressed_button(event.buttons);
         let (next_state, transition) = self.pointer_capture.get().pointer_motion(
             event.pointer_id,
@@ -831,7 +939,7 @@ impl WebPointerInputBoundary<'_> {
                 modifiers: event.modifiers,
             }),
         };
-        let _ = dispatch_web_input(self.callbacks, input);
+        let _ = self.interaction_gate.dispatch_input(self.callbacks, input);
     }
 }
 
@@ -960,13 +1068,14 @@ mod tests {
     };
 
     use open_gpui::{
-        DispatchEventResult, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, PlatformInput,
-        PlatformInputCallback, Point, PointerCancelReason, TestAppContext,
+        DispatchEventResult, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+        PlatformInput, PlatformInputCallback, Point, PointerCancelEvent, PointerCancelReason,
+        TestAppContext,
     };
 
     use super::{
-        ClickState, WebPointerButtonChange, WebPointerCaptureCommand, WebPointerCaptureState,
-        WebPointerEventData, WebPointerInputBoundary, WebPointerMotionKind,
+        ClickState, WebInteractionGate, WebPointerButtonChange, WebPointerCaptureCommand,
+        WebPointerCaptureState, WebPointerEventData, WebPointerInputBoundary, WebPointerMotionKind,
         pointer_button_change_to_platform_input,
     };
     use crate::window::WebWindowCallbacks;
@@ -1164,10 +1273,12 @@ mod tests {
 
         let pointer_capture = Cell::new(WebPointerCaptureState::default());
         let click_state = RefCell::new(ClickState::default());
+        let interaction_gate = WebInteractionGate::default();
         let boundary = WebPointerInputBoundary {
             pointer_capture: &pointer_capture,
             click_state: &click_state,
             callbacks: &callbacks,
+            interaction_gate: &interaction_gate,
         };
         let position = Point::default();
         let event = |button, buttons, click_time| WebPointerEventData {
@@ -1219,6 +1330,175 @@ mod tests {
             vec![
                 WebPointerCaptureCommand::Set(7),
                 WebPointerCaptureCommand::None,
+                WebPointerCaptureCommand::None,
+                WebPointerCaptureCommand::Release(7),
+            ]
+        );
+        assert_eq!(pointer_capture.get(), WebPointerCaptureState::default());
+    }
+
+    #[test]
+    fn interaction_gate_suppresses_ordinary_input_but_allows_terminal_pointer_cleanup() {
+        #[derive(Debug, Eq, PartialEq)]
+        enum ObservedInput {
+            Moved,
+            Canceled(PointerCancelReason),
+        }
+
+        let observed = Rc::new(RefCell::new(Vec::new()));
+        let callbacks = RefCell::new(WebWindowCallbacks::default());
+        callbacks
+            .borrow()
+            .input
+            .clone()
+            .set(PlatformInputCallback::new_unleased_for_test(Box::new({
+                let observed = observed.clone();
+                move |input| {
+                    match input {
+                        PlatformInput::MouseMove(_) => {
+                            observed.borrow_mut().push(ObservedInput::Moved)
+                        }
+                        PlatformInput::PointerCanceled(event) => observed
+                            .borrow_mut()
+                            .push(ObservedInput::Canceled(event.reason)),
+                        _ => {}
+                    }
+                    DispatchEventResult::default()
+                }
+            })));
+        let interaction_gate = WebInteractionGate::default();
+        let mouse_move = || {
+            PlatformInput::MouseMove(MouseMoveEvent {
+                position: Point::default(),
+                pressed_button: None,
+                modifiers: Modifiers::default(),
+            })
+        };
+
+        interaction_gate.dispatch_input(&callbacks, mouse_move());
+        interaction_gate.quiesce();
+        interaction_gate.quiesce();
+        interaction_gate.dispatch_input(&callbacks, mouse_move());
+        interaction_gate.dispatch_input(
+            &callbacks,
+            PlatformInput::PointerCanceled(PointerCancelEvent {
+                reason: PointerCancelReason::CaptureRevoked,
+            }),
+        );
+
+        assert_eq!(
+            observed.borrow().as_slice(),
+            &[
+                ObservedInput::Moved,
+                ObservedInput::Canceled(PointerCancelReason::CaptureRevoked),
+            ]
+        );
+    }
+
+    #[test]
+    fn pointer_boundary_rechecks_quiescence_after_a_reentrant_button_callback() {
+        #[derive(Debug, Eq, PartialEq)]
+        enum ObservedInput {
+            Down(MouseButton),
+            Moved,
+            Canceled(PointerCancelReason),
+        }
+
+        let interaction_gate = Rc::new(WebInteractionGate::default());
+        let observed = Rc::new(RefCell::new(Vec::new()));
+        let callbacks = RefCell::new(WebWindowCallbacks::default());
+        callbacks
+            .borrow()
+            .input
+            .clone()
+            .set(PlatformInputCallback::new_unleased_for_test(Box::new({
+                let interaction_gate = interaction_gate.clone();
+                let observed = observed.clone();
+                move |input| {
+                    match input {
+                        PlatformInput::MouseDown(event) => {
+                            observed
+                                .borrow_mut()
+                                .push(ObservedInput::Down(event.button));
+                            if event.button == MouseButton::Right {
+                                interaction_gate.quiesce();
+                            }
+                        }
+                        PlatformInput::MouseMove(_) => {
+                            observed.borrow_mut().push(ObservedInput::Moved)
+                        }
+                        PlatformInput::PointerCanceled(event) => observed
+                            .borrow_mut()
+                            .push(ObservedInput::Canceled(event.reason)),
+                        _ => {}
+                    }
+                    DispatchEventResult::default()
+                }
+            })));
+
+        let pointer_capture = Cell::new(WebPointerCaptureState::default());
+        let click_state = RefCell::new(ClickState::default());
+        let boundary = WebPointerInputBoundary {
+            pointer_capture: &pointer_capture,
+            click_state: &click_state,
+            callbacks: &callbacks,
+            interaction_gate: interaction_gate.as_ref(),
+        };
+        let event = |button, buttons, click_time| WebPointerEventData {
+            pointer_id: 7,
+            button,
+            buttons,
+            position: Point::default(),
+            modifiers: Modifiers::default(),
+            click_time,
+        };
+        let mut capture_commands = Vec::new();
+
+        boundary.handle_pointer_down(
+            event(0, 1, 100.0),
+            |command| capture_commands.push(command),
+            |_, _| {},
+        );
+        boundary.handle_pointer_motion(
+            event(2, 3, 150.0),
+            WebPointerMotionKind::Moved,
+            |command| capture_commands.push(command),
+            |_, _| {},
+        );
+
+        assert_eq!(
+            observed.borrow().as_slice(),
+            &[
+                ObservedInput::Down(MouseButton::Left),
+                ObservedInput::Down(MouseButton::Right),
+            ],
+            "the button callback may revoke authority before the same DOM event emits movement"
+        );
+
+        let (next_state, cleanup) = pointer_capture
+            .get()
+            .cleanup(PointerCancelReason::CaptureRevoked);
+        boundary.apply_pointer_transition(next_state, cleanup, |command| {
+            capture_commands.push(command)
+        });
+        boundary.handle_pointer_down(
+            event(0, 1, 200.0),
+            |command| capture_commands.push(command),
+            |_, _| panic!("quiesced pointer input must not update window state"),
+        );
+
+        assert_eq!(
+            observed.borrow().as_slice(),
+            &[
+                ObservedInput::Down(MouseButton::Left),
+                ObservedInput::Down(MouseButton::Right),
+                ObservedInput::Canceled(PointerCancelReason::CaptureRevoked),
+            ]
+        );
+        assert_eq!(
+            capture_commands,
+            vec![
+                WebPointerCaptureCommand::Set(7),
                 WebPointerCaptureCommand::None,
                 WebPointerCaptureCommand::Release(7),
             ]

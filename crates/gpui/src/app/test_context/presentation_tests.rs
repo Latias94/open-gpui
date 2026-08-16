@@ -2,7 +2,9 @@ use std::{
     any::TypeId,
     cell::{Cell, RefCell},
     ops::Range,
+    panic::{AssertUnwindSafe, catch_unwind},
     rc::Rc,
+    sync::Arc,
 };
 
 use accesskit::{
@@ -11,15 +13,16 @@ use accesskit::{
 use open_gpui_refineable::Refineable as _;
 
 use crate::{
-    AnyElement, AnyView, AnyWindowHandle, App, AppContext as _, Bounds, Context, CursorStyle,
-    DispatchPhase, Element, ElementId, Entity, FocusClaimOutcome, FocusHandle, GlobalElementId,
-    Hitbox, HitboxBehavior, InputHandler, InspectorElementId, InteractiveElement, IntoElement,
-    Keystroke, LayoutId, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    ParentElement, Pixels, PlatformInput, PointerCancelEvent, PointerCancelReason,
-    PointerCaptureError, PointerCaptureHandle, Render, ScrollHandle, StatefulInteractiveElement,
-    Style, StyleRefinement, Styled, Subscription, SubtreePresentation, SubtreePresentationExt,
-    TestAppContext, UTF16Selection, Window, WindowMouseEvent, canvas, deferred, div, fill, point,
-    px, red, size, window_portal,
+    AnyDrag, AnyElement, AnyView, AnyWindowHandle, App, AppContext as _, Bounds, Context,
+    CursorStyle, DispatchPhase, Element, ElementId, Empty, Entity, FocusClaimOutcome, FocusHandle,
+    GlobalElementId, Hitbox, HitboxBehavior, InputHandler, InspectorElementId, InteractiveElement,
+    IntoElement, KeyBinding, Keystroke, LayoutId, Modifiers, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, PlatformInput, PointerCancelEvent,
+    PointerCancelReason, PointerCaptureError, PointerCaptureHandle, Render, ScrollHandle,
+    StatefulInteractiveElement, Style, StyleRefinement, Styled, Subscription, SubtreePresentation,
+    SubtreePresentationExt, TestAppContext, UTF16Selection, Window, WindowActivationStatus,
+    WindowActivationTerminal, WindowMouseEvent, canvas, deferred, div, fill, point, px, red, size,
+    window_portal,
 };
 
 crate::actions!(presentation_probe_actions, [PresentationProbeAction]);
@@ -74,6 +77,7 @@ struct PresentationImeState {
     marked: Rc<Cell<bool>>,
     marked_updates: Rc<Cell<usize>>,
     unmarks: Rc<Cell<usize>>,
+    quiesce_on_mark: Rc<Cell<bool>>,
     focus_on_unmark: Rc<RefCell<Option<FocusHandle>>>,
     platform_handler_present_on_unmark: Rc<Cell<bool>>,
 }
@@ -125,13 +129,16 @@ impl InputHandler for PresentationInputHandler {
         _: Option<Range<usize>>,
         _: &str,
         _: Option<Range<usize>>,
-        _: &mut Window,
-        _: &mut App,
+        window: &mut Window,
+        cx: &mut App,
     ) {
         self.state.marked.set(true);
         self.state
             .marked_updates
             .set(self.state.marked_updates.get() + 1);
+        if self.state.quiesce_on_mark.replace(false) {
+            window.quiesce_interaction(cx);
+        }
     }
 
     fn unmark_text(&mut self, window: &mut Window, cx: &mut App) {
@@ -3060,6 +3067,546 @@ fn dynamic_presentation_suppression_revokes_every_raw_interaction_channel(cx: &m
         },
     );
     assert_eq!(counters.mouse_downs.get(), before_restored_input + 1);
+}
+
+#[open_gpui::test]
+fn window_quiescence_revokes_committed_interaction_before_redraw_and_preserves_paint(
+    cx: &mut TestAppContext,
+) {
+    let counters = Rc::new(PresentationCounters::default());
+    let ime = PresentationImeState::default();
+    let key_interceptions = Rc::new(Cell::new(0));
+    let typed_window = cx.open_window(size(px(320.0), px(200.0)), {
+        let counters = counters.clone();
+        let ime = ime.clone();
+        move |window, cx| PresentationProbeView {
+            presentation: SubtreePresentation::Visible,
+            descendant_presentation: SubtreePresentation::Visible,
+            focus: cx.focus_handle(),
+            capture: window.new_pointer_capture_handle(),
+            counters,
+            ime,
+        }
+    });
+    let view = typed_window.root(cx).unwrap();
+    let window = typed_window.into();
+    let _cancel_subscription = cx
+        .update_window(window, |_, window, _| {
+            let counters = counters.clone();
+            window.intercept_window_mouse_events(move |event, _, _| {
+                if let WindowMouseEvent::Cancel(PointerCancelEvent {
+                    reason: PointerCancelReason::CaptureRevoked,
+                }) = event
+                {
+                    counters
+                        .pointer_cancellations
+                        .set(counters.pointer_cancellations.get() + 1);
+                }
+            })
+        })
+        .unwrap();
+    let _key_subscription = cx
+        .update_window(window, |_, window, _| {
+            let key_interceptions = key_interceptions.clone();
+            window.intercept_window_key_down(move |_, _, _| {
+                key_interceptions.set(key_interceptions.get() + 1);
+            })
+        })
+        .unwrap();
+
+    let _ = cx
+        .update_window(window, |_, window, _| window.activate_window())
+        .unwrap();
+    assert!(cx.activate_accessibility(window));
+    let focus = cx.read(|cx| view.read(cx).focus.clone());
+    *ime.focus_on_unmark.borrow_mut() = Some(focus.clone());
+    cx.update_window(window, |_, window, cx| focus.focus(window, cx))
+        .unwrap();
+    view.update(cx, |_, cx| cx.notify());
+    cx.run_until_parked();
+    assert!(platform_has_input_handler(cx, window));
+
+    cx.simulate_event(
+        window,
+        MouseDownEvent {
+            button: MouseButton::Left,
+            position: point(px(10.0), px(10.0)),
+            modifiers: Modifiers::none(),
+            click_count: 1,
+            first_mouse: false,
+        },
+    );
+    assert_eq!(counters.mouse_downs.get(), 1);
+    assert!(
+        cx.update_window(window, |_, window, _| window.captured_pointer().is_some())
+            .unwrap()
+    );
+    cx.dispatch_keystroke(window, Keystroke::parse("a").unwrap());
+    assert_eq!(counters.key_downs.get(), 1);
+    assert_eq!(key_interceptions.get(), 1);
+    cx.update_window(window, |_, window, cx| {
+        focus.dispatch_action(&PresentationProbeAction, window, cx);
+    })
+    .unwrap();
+    assert_eq!(counters.actions.get(), 1);
+
+    let visible_update = cx.latest_accessibility_tree_update(window).unwrap();
+    let node_id = node_id_with_label(&visible_update, "Raw presentation probe").unwrap();
+    assert!(cx.dispatch_accessibility_action(
+        window,
+        ActionRequest {
+            action: AccessibleAction::Click,
+            target_tree: TreeId::ROOT,
+            target_node: node_id,
+            data: None,
+        },
+    ));
+    assert_eq!(counters.accessibility_actions.get(), 1);
+    cx.simulate_marked_text(window, None, "marked", None);
+    assert!(ime.marked.get());
+
+    let drag_source = cx.read(|cx| view.read(cx).capture);
+    let window_id = window.window_id();
+    cx.update_window(window, |_, window, cx| {
+        assert!(window.captured_pointer().is_some());
+        let drag_view = cx.new(|_| Empty).into();
+        cx.start_active_drag(AnyDrag {
+            window_id,
+            source: Some(drag_source),
+            view: drag_view,
+            value: Arc::new("quiescence-drag"),
+            window_preview_offset: point(px(0.0), px(0.0)),
+            cursor_style: Some(CursorStyle::ClosedHand),
+            button: MouseButton::Left,
+        });
+    })
+    .unwrap();
+    assert!(cx.read(|cx| cx.has_active_drag()));
+    assert_eq!(
+        cx.read(|cx| cx.active_native_captured_drag_source_window()),
+        Some(window_id)
+    );
+
+    let before_quiescence = counters.snapshot();
+    cx.set_platform_focused_window_available(false);
+    let pending_activation = cx
+        .update_window(window, |_, window, _| window.activate_window())
+        .unwrap();
+    cx.run_until_parked();
+    let (frame_before, frame_after, direct_result, focus_cleared, capture_cleared) = cx
+        .update_window(window, |_, window, cx| {
+            assert!(
+                cx.has_active_drag(),
+                "the window-local drag must still be active at the quiescence boundary"
+            );
+            assert_eq!(
+                cx.active_native_captured_drag_source_window(),
+                Some(window_id)
+            );
+            let frame_before = window.presentation_facts().frame_accepted_generation;
+            assert!(window.quiesce_interaction(cx));
+            let frame_after = window.presentation_facts().frame_accepted_generation;
+
+            let direct_result = window.dispatch_event(
+                PlatformInput::MouseDown(MouseDownEvent {
+                    button: MouseButton::Left,
+                    position: point(px(10.0), px(10.0)),
+                    modifiers: Modifiers::none(),
+                    click_count: 1,
+                    first_mouse: false,
+                }),
+                cx,
+            );
+            let late_cancel = window.dispatch_event(
+                PlatformInput::PointerCanceled(PointerCancelEvent {
+                    reason: PointerCancelReason::CaptureRevoked,
+                }),
+                cx,
+            );
+            assert!(!late_cancel.propagate);
+            assert!(late_cancel.default_prevented);
+            window.dispatch_keystroke(Keystroke::parse("b").unwrap(), cx);
+            focus.dispatch_action(&PresentationProbeAction, window, cx);
+            assert!(!window.is_action_available_in(&PresentationProbeAction, &focus));
+            let activation = window.activate_window();
+            assert_eq!(
+                activation.snapshot().status(),
+                WindowActivationStatus::Terminal(WindowActivationTerminal::Rejected)
+            );
+
+            (
+                frame_before,
+                frame_after,
+                direct_result,
+                window.focused(cx).is_none(),
+                window.captured_pointer().is_none(),
+            )
+        })
+        .unwrap();
+    assert_eq!(
+        frame_after, frame_before,
+        "interaction authority must be revoked before any replacement frame commits"
+    );
+    assert_eq!(
+        pending_activation.snapshot().status(),
+        WindowActivationStatus::Terminal(WindowActivationTerminal::PolicyChanged)
+    );
+    cx.set_platform_focused_window_available(true);
+    assert_eq!(ime.unmarks.get(), 1);
+    assert!(!ime.marked.get());
+    assert!(!ime.platform_handler_present_on_unmark.get());
+    assert!(!platform_has_input_handler(cx, window));
+    assert!(!cx.read(|cx| cx.has_active_drag()));
+    assert_eq!(
+        cx.read(|cx| cx.active_native_captured_drag_source_window()),
+        None,
+        "quiescence must retire the exact native captured-drag authority"
+    );
+    assert!(focus_cleared);
+    assert!(capture_cleared);
+    assert_eq!(
+        counters.pointer_cancellations.get(),
+        before_quiescence.pointer_cancellations + 2,
+        "the element listener and window interceptor must each observe exactly one terminal cancel"
+    );
+    assert!(!direct_result.propagate);
+    assert!(direct_result.default_prevented);
+    let _ = cx.dispatch_accessibility_action(
+        window,
+        ActionRequest {
+            action: AccessibleAction::Click,
+            target_tree: TreeId::ROOT,
+            target_node: node_id,
+            data: None,
+        },
+    );
+    assert_eq!(counters.mouse_downs.get(), before_quiescence.mouse_downs);
+    assert_eq!(counters.key_downs.get(), before_quiescence.key_downs);
+    assert_eq!(key_interceptions.get(), 1);
+    assert_eq!(counters.actions.get(), before_quiescence.actions);
+    assert_eq!(
+        counters.accessibility_actions.get(),
+        before_quiescence.accessibility_actions
+    );
+    assert!(
+        !cx.update_window(window, |_, window, cx| window.quiesce_interaction(cx))
+            .unwrap()
+    );
+    assert_eq!(ime.unmarks.get(), 1);
+
+    cx.run_until_parked();
+    let after_redraw = counters.snapshot();
+    assert!(after_redraw.layouts > before_quiescence.layouts);
+    assert!(after_redraw.prepaints > before_quiescence.prepaints);
+    assert!(after_redraw.paints > before_quiescence.paints);
+    assert_eq!(
+        after_redraw.pointer_bindings,
+        before_quiescence.pointer_bindings
+    );
+    assert_eq!(after_redraw.autoscrolls, before_quiescence.autoscrolls);
+    assert!(!platform_has_input_handler(cx, window));
+    let inert_update = cx.latest_accessibility_tree_update(window).unwrap();
+    assert!(node_id_with_label(&inert_update, "Raw presentation probe").is_none());
+}
+
+#[open_gpui::test]
+fn window_quiescence_cleanup_panic_still_revokes_every_interaction_authority(
+    cx: &mut TestAppContext,
+) {
+    let counters = Rc::new(PresentationCounters::default());
+    let ime = PresentationImeState::default();
+    let typed_window = cx.open_window(size(px(320.0), px(200.0)), {
+        let counters = counters.clone();
+        let ime = ime.clone();
+        move |window, cx| PresentationProbeView {
+            presentation: SubtreePresentation::Visible,
+            descendant_presentation: SubtreePresentation::Visible,
+            focus: cx.focus_handle(),
+            capture: window.new_pointer_capture_handle(),
+            counters,
+            ime,
+        }
+    });
+    let view = typed_window.root(cx).unwrap();
+    let window = typed_window.into();
+    let focus = cx.read(|cx| view.read(cx).focus.clone());
+    *ime.focus_on_unmark.borrow_mut() = Some(focus.clone());
+    let _ = cx
+        .update_window(window, |_, window, _| window.activate_window())
+        .unwrap();
+    cx.update_window(window, |_, window, cx| focus.focus(window, cx))
+        .unwrap();
+    view.update(cx, |_, cx| cx.notify());
+    cx.run_until_parked();
+    cx.simulate_event(
+        window,
+        MouseDownEvent {
+            button: MouseButton::Left,
+            position: point(px(10.0), px(10.0)),
+            modifiers: Modifiers::none(),
+            click_count: 1,
+            first_mouse: false,
+        },
+    );
+    cx.simulate_marked_text(window, None, "marked", None);
+    assert!(ime.marked.get());
+    assert!(platform_has_input_handler(cx, window));
+
+    let _panic_subscription = cx
+        .update_window(window, |_, window, _| {
+            window.intercept_window_mouse_events(|event, _, _| {
+                if matches!(event, WindowMouseEvent::Cancel(_)) {
+                    panic!("injected pointer-cancel cleanup panic");
+                }
+            })
+        })
+        .unwrap();
+    let paint_before = counters.paints.get();
+    let panic = catch_unwind(AssertUnwindSafe(|| {
+        cx.update_window(window, |_, window, cx| {
+            window.quiesce_interaction(cx);
+        })
+        .unwrap();
+    }))
+    .expect_err("the injected cleanup panic should propagate after quiescence completes");
+    let panic_message = panic
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| panic.downcast_ref::<String>().map(String::as_str));
+    assert_eq!(panic_message, Some("injected pointer-cancel cleanup panic"));
+
+    assert_eq!(ime.unmarks.get(), 1);
+    assert!(!ime.marked.get());
+    assert!(!platform_has_input_handler(cx, window));
+    cx.update_window(window, |_, window, cx| {
+        assert!(window.focused(cx).is_none());
+        assert!(window.captured_pointer().is_none());
+        assert!(!window.quiesce_interaction(cx));
+        assert_eq!(
+            window.activate_window().snapshot().status(),
+            WindowActivationStatus::Terminal(WindowActivationTerminal::Rejected)
+        );
+        let input = window.dispatch_event(
+            PlatformInput::MouseDown(MouseDownEvent {
+                button: MouseButton::Left,
+                position: point(px(10.0), px(10.0)),
+                modifiers: Modifiers::none(),
+                click_count: 1,
+                first_mouse: false,
+            }),
+            cx,
+        );
+        assert!(!input.propagate);
+        assert!(input.default_prevented);
+    })
+    .unwrap();
+
+    cx.run_until_parked();
+    assert!(
+        counters.paints.get() > paint_before,
+        "a cleanup panic must not prevent the inert replacement frame"
+    );
+}
+
+#[open_gpui::test]
+fn native_ime_callback_quiescence_finishes_checked_out_composition_before_retirement(
+    cx: &mut TestAppContext,
+) {
+    let ime = PresentationImeState::default();
+    let typed_window = cx.open_window(size(px(320.0), px(200.0)), {
+        let ime = ime.clone();
+        move |window, cx| PresentationProbeView {
+            presentation: SubtreePresentation::Visible,
+            descendant_presentation: SubtreePresentation::Visible,
+            focus: cx.focus_handle(),
+            capture: window.new_pointer_capture_handle(),
+            counters: Rc::new(PresentationCounters::default()),
+            ime,
+        }
+    });
+    let view = typed_window.root(cx).unwrap();
+    let window = typed_window.into();
+    let focus = cx.read(|cx| view.read(cx).focus.clone());
+    cx.update_window(window, |_, window, cx| focus.focus(window, cx))
+        .unwrap();
+    view.update(cx, |_, cx| cx.notify());
+    cx.run_until_parked();
+    assert!(platform_has_input_handler(cx, window));
+
+    ime.quiesce_on_mark.set(true);
+    cx.simulate_marked_text(window, None, "marked", None);
+
+    assert_eq!(ime.marked_updates.get(), 1);
+    assert_eq!(ime.unmarks.get(), 1);
+    assert!(
+        !ime.marked.get(),
+        "the checked-out handler must finish composition before retirement"
+    );
+    assert!(!platform_has_input_handler(cx, window));
+    cx.update_window(window, |_, window, cx| {
+        assert!(window.focused(cx).is_none());
+        assert_eq!(
+            window.activate_window().snapshot().status(),
+            WindowActivationStatus::Terminal(WindowActivationTerminal::Rejected)
+        );
+    })
+    .unwrap();
+}
+
+#[open_gpui::test]
+fn quiescence_pending_input_panic_yields_to_shutdown_critical_cleanup(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        cx.bind_keys([KeyBinding::new("ctrl-b h", PresentationProbeAction, None)]);
+    });
+    let counters = Rc::new(PresentationCounters::default());
+    let ime = PresentationImeState::default();
+    let typed_window = cx.open_window(size(px(320.0), px(200.0)), {
+        let counters = counters.clone();
+        let ime = ime.clone();
+        move |window, cx| PresentationProbeView {
+            presentation: SubtreePresentation::Visible,
+            descendant_presentation: SubtreePresentation::Visible,
+            focus: cx.focus_handle(),
+            capture: window.new_pointer_capture_handle(),
+            counters,
+            ime,
+        }
+    });
+    let view = typed_window.root(cx).unwrap();
+    let window = typed_window.into();
+    let focus = cx.read(|cx| view.read(cx).focus.clone());
+    cx.update_window(window, |_, window, cx| {
+        focus.focus(window, cx);
+        let _ = window.activate_window();
+    })
+    .unwrap();
+    view.update(cx, |_, cx| cx.notify());
+    cx.run_until_parked();
+    cx.dispatch_keystroke(window, Keystroke::parse("ctrl-b").unwrap());
+    assert!(
+        cx.update_window(window, |_, window, _| window.has_pending_keystrokes())
+            .unwrap()
+    );
+
+    let _panic_subscription = cx
+        .update_window(window, |_, window, _| {
+            let (subscription, activate) = window.pending_input_observers.insert(
+                (),
+                Box::new(|_, _| -> bool {
+                    panic!("injected pending-input observer panic");
+                }),
+            );
+            activate();
+            subscription
+        })
+        .unwrap();
+    let critical_ran = Rc::new(Cell::new(false));
+    let panic = catch_unwind(AssertUnwindSafe(|| {
+        cx.update_window(window, {
+            let critical_ran = critical_ran.clone();
+            move |_, window, cx| {
+                assert!(window.quiesce_interaction(cx));
+                cx.defer(move |cx| {
+                    cx.defer_shutdown_critical_before_window_registry_clear(move |_| {
+                        critical_ran.set(true);
+                    });
+                });
+            }
+        })
+        .unwrap();
+        cx.run_until_parked();
+    }))
+    .expect_err("the observer panic should propagate after critical cleanup");
+    let panic_message = panic
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| panic.downcast_ref::<String>().map(String::as_str));
+    assert_eq!(panic_message, Some("injected pending-input observer panic"));
+    assert!(
+        critical_ran.get(),
+        "shutdown-critical cleanup must complete before the observer panic escapes"
+    );
+    cx.update_window(window, |_, window, _| {
+        assert!(!window.has_pending_keystrokes());
+        assert!(!window.user_interaction_is_admitted());
+    })
+    .unwrap();
+}
+
+#[open_gpui::test]
+fn same_dispatch_propagate_cannot_reopen_quiesced_window_authority(cx: &mut TestAppContext) {
+    let mouse_window: AnyWindowHandle = cx
+        .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+        .into();
+    let key_window: AnyWindowHandle = cx
+        .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+        .into();
+    let action_window: AnyWindowHandle = cx
+        .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+        .into();
+    cx.run_until_parked();
+
+    let later_mouse_listener = Rc::new(Cell::new(0));
+    let (_mouse_quiescer, _later_mouse) = cx
+        .update_window(mouse_window, |_, window, _| {
+            let quiescer = window.intercept_window_mouse_events(|event, window, cx| {
+                if matches!(event, WindowMouseEvent::Down(_)) {
+                    cx.quiesce_window_interaction_authority(window.window_handle().window_id());
+                    cx.propagate();
+                }
+            });
+            let later_mouse_listener = later_mouse_listener.clone();
+            let later = window.intercept_window_mouse_events(move |event, _, _| {
+                if matches!(event, WindowMouseEvent::Down(_)) {
+                    later_mouse_listener.set(later_mouse_listener.get() + 1);
+                }
+            });
+            (quiescer, later)
+        })
+        .unwrap();
+    cx.simulate_event(
+        mouse_window,
+        MouseDownEvent {
+            button: MouseButton::Left,
+            position: point(px(10.0), px(10.0)),
+            modifiers: Modifiers::none(),
+            click_count: 1,
+            first_mouse: false,
+        },
+    );
+    assert_eq!(later_mouse_listener.get(), 0);
+
+    let later_key_listener = Rc::new(Cell::new(0));
+    let (_key_quiescer, _later_key) = cx
+        .update_window(key_window, |_, window, _| {
+            let quiescer = window.intercept_window_key_down(|_, window, cx| {
+                cx.quiesce_window_interaction_authority(window.window_handle().window_id());
+                cx.propagate();
+            });
+            let later_key_listener = later_key_listener.clone();
+            let later = window.intercept_window_key_down(move |_, _, _| {
+                later_key_listener.set(later_key_listener.get() + 1);
+            });
+            (quiescer, later)
+        })
+        .unwrap();
+    cx.dispatch_keystroke(key_window, Keystroke::parse("a").unwrap());
+    assert_eq!(later_key_listener.get(), 0);
+
+    let later_action_listener = Rc::new(Cell::new(0));
+    let action_window_id = action_window.window_id();
+    cx.update(|cx| {
+        let later_action_listener = later_action_listener.clone();
+        cx.on_action::<PresentationProbeAction>(move |_, _| {
+            later_action_listener.set(later_action_listener.get() + 1);
+        });
+        cx.on_action::<PresentationProbeAction>(move |_, cx| {
+            cx.quiesce_window_interaction_authority(action_window_id);
+            cx.propagate();
+        });
+    });
+    cx.dispatch_action(action_window, PresentationProbeAction);
+    assert_eq!(later_action_listener.get(), 0);
 }
 
 struct PresentationFocusStyleView {

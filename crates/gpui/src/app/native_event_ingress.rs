@@ -276,6 +276,7 @@ pub(super) struct NativeEventIngress {
     next_wake_ticket: Cell<u64>,
     scheduled_wake: Cell<Option<u64>>,
     unwind_recovery_scheduled: Cell<bool>,
+    post_borrow_convergence_scheduled: Cell<bool>,
     terminated: Cell<bool>,
     shutdown_generation: Cell<Option<u64>>,
     delayed_wake_tasks: RefCell<Vec<NativeOwnedLocalTask>>,
@@ -321,6 +322,7 @@ impl NativeEventIngress {
             next_wake_ticket: Cell::new(0),
             scheduled_wake: Cell::new(None),
             unwind_recovery_scheduled: Cell::new(false),
+            post_borrow_convergence_scheduled: Cell::new(false),
             terminated: Cell::new(false),
             shutdown_generation: Cell::new(None),
             delayed_wake_tasks: RefCell::new(Vec::new()),
@@ -843,6 +845,28 @@ impl NativeEventIngress {
         } else {
             self.scheduled_wake.take();
         }
+    }
+
+    pub(super) fn resume_after_post_borrow_convergence(&self) {
+        self.schedule_wake_if_needed();
+    }
+
+    pub(super) fn schedule_post_borrow_convergence(&self) {
+        if self.post_borrow_convergence_scheduled.replace(true) {
+            return;
+        }
+        let app = self.app.clone();
+        self.foreground_executor
+            .spawn(async move {
+                if let Some(app) = app.upgrade() {
+                    app.run_post_borrow_convergence_from_wake();
+                }
+            })
+            .detach();
+    }
+
+    pub(super) fn finish_post_borrow_convergence_wake(&self) {
+        self.post_borrow_convergence_scheduled.set(false);
     }
 
     pub(super) fn schedule_drain_after_unwind(&self) {
@@ -1639,29 +1663,32 @@ impl NativeEventEnvelope {
                     window.native_frame_requested(options, cx);
                 })
             }
-            NativeWindowEvent::SystemTabCommand(command) => deliver_window_event(
-                app,
-                window_id,
-                ingress_sequence,
-                |window, cx| match command {
-                    NativeSystemTabCommand::MergeAll => {
-                        SystemWindowTabController::merge_all_windows(cx, window_id);
+            NativeWindowEvent::SystemTabCommand(command) => {
+                deliver_window_event_if(app, window_id, ingress_sequence, |window, cx| {
+                    if !window.user_interaction_is_admitted() {
+                        return false;
                     }
-                    NativeSystemTabCommand::MoveToNewWindow => {
-                        SystemWindowTabController::move_tab_to_new_window(cx, window_id);
+                    match command {
+                        NativeSystemTabCommand::MergeAll => {
+                            SystemWindowTabController::merge_all_windows(cx, window_id);
+                        }
+                        NativeSystemTabCommand::MoveToNewWindow => {
+                            SystemWindowTabController::move_tab_to_new_window(cx, window_id);
+                        }
+                        NativeSystemTabCommand::SelectNext => {
+                            SystemWindowTabController::select_next_tab(cx, window_id);
+                        }
+                        NativeSystemTabCommand::SelectPrevious => {
+                            SystemWindowTabController::select_previous_tab(cx, window_id);
+                        }
+                        NativeSystemTabCommand::ToggleBar => {
+                            let visible = window.platform_window.tab_bar_visible();
+                            SystemWindowTabController::set_visible(cx, visible);
+                        }
                     }
-                    NativeSystemTabCommand::SelectNext => {
-                        SystemWindowTabController::select_next_tab(cx, window_id);
-                    }
-                    NativeSystemTabCommand::SelectPrevious => {
-                        SystemWindowTabController::select_previous_tab(cx, window_id);
-                    }
-                    NativeSystemTabCommand::ToggleBar => {
-                        let visible = window.platform_window.tab_bar_visible();
-                        SystemWindowTabController::set_visible(cx, visible);
-                    }
-                },
-            ),
+                    true
+                })
+            }
             NativeWindowEvent::WindowMutationObserved(observation) => {
                 deliver_window_event_if(app, window_id, ingress_sequence, |window, cx| {
                     window.window_mutation_observed(observation, cx)

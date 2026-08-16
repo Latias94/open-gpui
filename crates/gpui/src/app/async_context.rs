@@ -544,7 +544,7 @@ impl AsyncWindowContext {
         &mut self,
         operation: crate::NativeInputHandlerOperation,
         update: impl FnOnce(&mut Window, &mut App) -> R,
-    ) -> std::result::Result<R, NativeInputInvariantViolation> {
+    ) -> std::result::Result<Option<R>, NativeInputInvariantViolation> {
         let app = self
             .app
             .app

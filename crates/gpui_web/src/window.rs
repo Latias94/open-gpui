@@ -1,7 +1,7 @@
 use crate::display::WebDisplay;
 use crate::platform::set_body_cursor;
 use crate::{
-    events::{WebEventListeners, is_mac_platform},
+    events::{WebEventListener, WebEventListeners, WebInteractionGate, is_mac_platform},
     pointer_session::{ClickState, WebPointerCaptureState},
 };
 use std::sync::Arc;
@@ -15,12 +15,12 @@ use open_gpui::{
     Pixels, PlatformAtlas, PlatformDisplay, PlatformInputCallback, PlatformInputCallbackSlot,
     PlatformInputHandler, PlatformInputHandlerSlot, PlatformPresentationShutdownOutcome,
     PlatformWindow, PlatformWindowActiveStatusObservation, PlatformWindowCommand,
-    PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome, PlatformWindowPresentOutcome,
-    Point, PointerCancelReason, PreparedPlatformPresentationShutdown, PromptButton, PromptLevel,
-    RequestFrameOptions, Scene, Size, WindowActivationPolicy, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls,
-    WindowCoordinateSpace, WindowCreationFacts, WindowDecorations, WindowParams,
-    WindowPlatformFacts, WindowPresentationShutdownTicket, px,
+    PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome,
+    PlatformWindowInteractionQuiescence, PlatformWindowPresentOutcome, Point, PointerCancelReason,
+    PreparedPlatformPresentationShutdown, PromptButton, PromptLevel, RequestFrameOptions, Scene,
+    Size, WindowActivationPolicy, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    WindowControlArea, WindowControls, WindowCoordinateSpace, WindowCreationFacts,
+    WindowDecorations, WindowParams, WindowPlatformFacts, WindowPresentationShutdownTicket, px,
 };
 use open_gpui_wgpu::{WgpuContext, WgpuRenderer, WgpuSurfaceConfig, WgpuSurfaceShutdownProgress};
 use wasm_bindgen::prelude::*;
@@ -82,6 +82,8 @@ pub(crate) struct WebWindowInner {
     raf_function: RefCell<Option<js_sys::Function>>,
     mql_handle: RefCell<Option<MqlHandle>>,
     pending_physical_size: Cell<Option<(u32, u32)>>,
+    pub(crate) interaction_gate: WebInteractionGate,
+    interaction_blockers: RefCell<Vec<WebEventListener>>,
 }
 
 pub struct WebWindow {
@@ -249,6 +251,8 @@ impl WebWindow {
             raf_function: RefCell::new(None),
             mql_handle: RefCell::new(None),
             pending_physical_size: Cell::new(None),
+            interaction_gate: WebInteractionGate::default(),
+            interaction_blockers: RefCell::new(Vec::new()),
         });
 
         let raf_closure = inner.create_raf_closure();
@@ -412,6 +416,9 @@ impl WebWindowInner {
     }
 
     fn dispatch_active_status_change(&self, observation: PlatformWindowActiveStatusObservation) {
+        if self.interaction_gate.is_quiesced() && observation.active() {
+            return;
+        }
         let mut callback = {
             let mut callbacks = self.callbacks.borrow_mut();
             callbacks.active_status_change.take()
@@ -427,18 +434,19 @@ impl WebWindowInner {
     }
 
     pub(crate) fn sync_dom_activation(&self) {
-        let is_active = self.browser_window.document().is_some_and(|document| {
-            let is_visible = js_sys::Reflect::get(&document, &"visibilityState".into())
-                .ok()
-                .and_then(|state| state.as_string())
-                .as_deref()
-                == Some("visible");
-            let document_has_focus = document.has_focus().unwrap_or(false);
-            let input_element: &web_sys::Element = self.input_element.as_ref();
-            let input_has_focus = document.active_element().as_ref() == Some(input_element);
+        let is_active = !self.interaction_gate.is_quiesced()
+            && self.browser_window.document().is_some_and(|document| {
+                let is_visible = js_sys::Reflect::get(&document, &"visibilityState".into())
+                    .ok()
+                    .and_then(|state| state.as_string())
+                    .as_deref()
+                    == Some("visible");
+                let document_has_focus = document.has_focus().unwrap_or(false);
+                let input_element: &web_sys::Element = self.input_element.as_ref();
+                let input_has_focus = document.active_element().as_ref() == Some(input_element);
 
-            is_visible && document_has_focus && input_has_focus
-        });
+                is_visible && document_has_focus && input_has_focus
+            });
 
         let changed = {
             let mut state = self.state.borrow_mut();
@@ -475,7 +483,7 @@ impl WebWindowInner {
     }
 
     fn focus_input(&self) -> bool {
-        if !self.is_mapped.get() {
+        if self.interaction_gate.is_quiesced() || !self.is_mapped.get() {
             return false;
         }
         if let Err(error) = self.input_element.focus() {
@@ -484,15 +492,17 @@ impl WebWindowInner {
         }
 
         self.sync_dom_activation();
-        true
+        !self.interaction_gate.is_quiesced()
     }
 
     fn activate(&self) -> bool {
-        self.activation_policy.accepts_activation && self.focus_input()
+        !self.interaction_gate.is_quiesced()
+            && self.activation_policy.accepts_activation
+            && self.focus_input()
     }
 
     pub(crate) fn focus_from_pointer(&self) {
-        if self.activation_policy.focus_on_click {
+        if !self.interaction_gate.is_quiesced() && self.activation_policy.focus_on_click {
             let _ = self.focus_input();
         }
     }
@@ -507,6 +517,9 @@ impl WebWindowInner {
     }
 
     pub(crate) fn dispatch_hover_status_change(&self, is_hovered: bool) {
+        if self.interaction_gate.is_quiesced() {
+            return;
+        }
         let mut callback = {
             let mut callbacks = self.callbacks.borrow_mut();
             callbacks.hover_status_change.take()
@@ -632,8 +645,80 @@ impl WebWindowInner {
         &self,
         f: impl FnOnce(&mut PlatformInputHandler) -> R,
     ) -> Option<R> {
+        if self.interaction_gate.is_quiesced() {
+            return None;
+        }
         let input_handler_slot = self.state.borrow().input_handler.clone();
-        input_handler_slot.with_handler(f)
+        input_handler_slot
+            .with_handler(|handler| (!self.interaction_gate.is_quiesced()).then(|| f(handler)))
+            .flatten()
+    }
+
+    fn quiesce_interaction(&self) {
+        self.interaction_gate.quiesce();
+        self.is_composing.set(false);
+        self.input_element.set_value("");
+        self.input_element.set_disabled(true);
+        self.root_element.set_attribute("aria-hidden", "true").ok();
+
+        {
+            let mut state = self.state.borrow_mut();
+            state.is_active = false;
+            state.is_hovered = false;
+        }
+        self.update_active_window(false);
+        self.cleanup_pointer_capture(PointerCancelReason::CaptureRevoked);
+
+        // Capture-phase blockers run before the canvas and hidden-input listeners while leaving
+        // requestAnimationFrame and resize observation intact for the final painted frames.
+        let target: &web_sys::EventTarget = self.root_element.as_ref();
+        let event_names = [
+            "pointerdown",
+            "pointerup",
+            "pointermove",
+            "pointerenter",
+            "pointerleave",
+            "wheel",
+            "contextmenu",
+            "dragover",
+            "drop",
+            "dragleave",
+            "keydown",
+            "keyup",
+            "compositionstart",
+            "compositionupdate",
+            "compositionend",
+            "beforeinput",
+            "input",
+            "focus",
+            "click",
+            "dblclick",
+            "auxclick",
+        ];
+        let blocker = Rc::new(Closure::<dyn FnMut(JsValue)>::new(|event: JsValue| {
+            let event = event.unchecked_into::<web_sys::Event>();
+            event.prevent_default();
+            event.stop_immediate_propagation();
+        }));
+        let mut blockers = self.interaction_blockers.borrow_mut();
+        for event_name in event_names {
+            if blockers
+                .iter()
+                .any(|listener| listener.event_name() == event_name)
+            {
+                continue;
+            }
+            match WebEventListener::register_shared_capture(target, event_name, blocker.clone()) {
+                Ok(listener) => blockers.push(listener),
+                Err(error) => log::error!(
+                    "failed to install web interaction blocker for {event_name}: {error:?}"
+                ),
+            }
+        }
+        drop(blockers);
+
+        self.input_element.blur().ok();
+        self.canvas.blur().ok();
     }
 }
 
@@ -788,6 +873,9 @@ impl PlatformWindow for WebWindow {
             let Some(inner) = inner.upgrade() else {
                 return PlatformWindowCommandOutcome::WindowClosed;
             };
+            if inner.interaction_gate.is_quiesced() && command.requires_interaction_authority() {
+                return PlatformWindowCommandOutcome::Rejected;
+            }
 
             match command {
                 PlatformWindowCommand::CompleteInitialPresentation { activate } => {
@@ -809,6 +897,15 @@ impl PlatformWindow for WebWindow {
                 | PlatformWindowCommand::StartWindowResize(_) => {
                     PlatformWindowCommandOutcome::Rejected
                 }
+            }
+        })
+    }
+
+    fn interaction_quiescence(&self) -> PlatformWindowInteractionQuiescence {
+        let inner = Rc::downgrade(&self.inner);
+        PlatformWindowInteractionQuiescence::new(move || {
+            if let Some(inner) = inner.upgrade() {
+                inner.quiesce_interaction();
             }
         })
     }
@@ -903,7 +1000,7 @@ impl PlatformWindow for WebWindow {
     }
 
     fn accepts_pointer_input(&self) -> bool {
-        self.inner.accepts_pointer_input
+        !self.inner.interaction_gate.is_quiesced() && self.inner.accepts_pointer_input
     }
 
     fn creation_facts(&self) -> WindowCreationFacts {
@@ -916,6 +1013,7 @@ impl PlatformWindow for WebWindow {
 
     fn platform_facts(&self) -> WindowPlatformFacts {
         let state = self.inner.state.borrow();
+        let interaction_quiesced = self.inner.interaction_gate.is_quiesced();
         WindowPlatformFacts {
             bounds: state.bounds,
             coordinate_space: WindowCoordinateSpace::WindowLocal,
@@ -928,13 +1026,14 @@ impl PlatformWindow for WebWindow {
             is_minimized: false,
             is_maximized: false,
             is_fullscreen: state.is_fullscreen,
-            accepts_pointer_input: self.inner.accepts_pointer_input,
-            accepts_activation: self.inner.activation_policy.accepts_activation,
-            focus_on_click: self.inner.activation_policy.focus_on_click,
+            accepts_pointer_input: !interaction_quiesced && self.inner.accepts_pointer_input,
+            accepts_activation: !interaction_quiesced
+                && self.inner.activation_policy.accepts_activation,
+            focus_on_click: !interaction_quiesced && self.inner.activation_policy.focus_on_click,
             background_appearance: WindowBackgroundAppearance::Opaque,
             topmost: false,
             taskbar_visible: false,
-            is_active: state.is_active,
+            is_active: !interaction_quiesced && state.is_active,
         }
     }
 
@@ -1000,11 +1099,11 @@ impl PlatformWindow for WebWindow {
     }
 
     fn is_active(&self) -> bool {
-        self.inner.state.borrow().is_active
+        !self.inner.interaction_gate.is_quiesced() && self.inner.state.borrow().is_active
     }
 
     fn is_hovered(&self) -> bool {
-        self.inner.state.borrow().is_hovered
+        !self.inner.interaction_gate.is_quiesced() && self.inner.state.borrow().is_hovered
     }
 
     fn background_appearance(&self) -> WindowBackgroundAppearance {

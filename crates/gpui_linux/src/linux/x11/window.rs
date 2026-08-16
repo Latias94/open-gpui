@@ -1,7 +1,11 @@
 use anyhow::{Context as _, anyhow};
 use x11rb::connection::RequestConnection;
 
-use crate::linux::{X11ClientStatePtr, should_close_callback::ShouldCloseCallbackSlot};
+use crate::linux::{
+    X11ClientStatePtr,
+    interaction_gate::{WindowInteractionGate, accesskit_adapter},
+    should_close_callback::ShouldCloseCallbackSlot,
+};
 use open_gpui::{
     AnyWindowHandle, Bounds, CursorStyle, Decorations, DevicePixels, DisplayId, ForegroundExecutor,
     GpuSpecs, Modifiers, NativeInputHandlerOutcome, Pixels, PlatformAtlas, PlatformDisplay,
@@ -9,11 +13,11 @@ use open_gpui::{
     PlatformInputHandlerSlot, PlatformNativeWindowRetirementOutcome,
     PlatformPresentationShutdownOutcome, PlatformWindow, PlatformWindowActiveStatusObservation,
     PlatformWindowCommand, PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome,
-    PlatformWindowPresentOutcome, Point, PreparedPlatformPresentationShutdown, PromptButton,
-    PromptLevel, RequestFrameOptions, ResizeEdge, ScaledPixels, Scene, Size, Tiling,
-    WindowActivationPolicy, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowControlArea, WindowCreationFacts, WindowDecorations, WindowKind, WindowParams,
-    WindowPresentationShutdownTicket, px,
+    PlatformWindowInteractionQuiescence, PlatformWindowPresentOutcome, Point,
+    PreparedPlatformPresentationShutdown, PromptButton, PromptLevel, RequestFrameOptions,
+    ResizeEdge, ScaledPixels, Scene, Size, Tiling, WindowActivationPolicy, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowCreationFacts,
+    WindowDecorations, WindowKind, WindowParams, WindowPresentationShutdownTicket, px,
 };
 use open_gpui_wgpu::{
     CompositorGpuHint, WgpuRenderer, WgpuSurfaceConfig, WgpuSurfaceShutdownProgress,
@@ -439,6 +443,7 @@ pub struct X11WindowState {
     maximized_horizontal: bool,
     hidden: bool,
     mapped: bool,
+    interaction_gate: WindowInteractionGate,
     active: bool,
     hovered: bool,
     fullscreen: bool,
@@ -491,6 +496,9 @@ impl X11WindowCommandTarget {
         let mut state = state.borrow_mut();
         if state.destroyed {
             return PlatformWindowCommandOutcome::WindowClosed;
+        }
+        if state.interaction_gate.is_quiesced() && command.requires_interaction_authority() {
+            return PlatformWindowCommandOutcome::Rejected;
         }
 
         match command {
@@ -1195,6 +1203,7 @@ impl X11WindowState {
                 maximized_horizontal: false,
                 hidden: false,
                 mapped: false,
+                interaction_gate: WindowInteractionGate::default(),
                 appearance,
                 handle,
                 background_appearance: WindowBackgroundAppearance::Opaque,
@@ -1368,6 +1377,10 @@ impl X11Window {
 }
 
 impl X11WindowStatePtr {
+    pub(crate) fn interaction_is_quiesced(&self) -> bool {
+        self.state.borrow().interaction_gate.is_quiesced()
+    }
+
     fn terminate_callback_slots(&self) {
         let (input_callback, should_close) = {
             let callbacks = self.callbacks.borrow();
@@ -1489,7 +1502,7 @@ impl X11WindowStatePtr {
         state.hidden = false;
 
         for atom in atoms {
-            if atom == state.atoms._NET_WM_STATE_FOCUSED {
+            if atom == state.atoms._NET_WM_STATE_FOCUSED && !state.interaction_gate.is_quiesced() {
                 state.active = true;
             } else if atom == state.atoms._NET_WM_STATE_FULLSCREEN {
                 state.fullscreen = true;
@@ -1529,11 +1542,17 @@ impl X11WindowStatePtr {
     }
 
     pub fn handle_input(&self, input: PlatformInput) {
+        if self.interaction_is_quiesced() {
+            return;
+        }
         let input_callback = self.callbacks.borrow().input.clone();
         if input_callback
             .dispatch(input.clone())
             .is_some_and(|result| !result.propagate)
         {
+            return;
+        }
+        if self.interaction_is_quiesced() {
             return;
         }
         if let PlatformInput::KeyDown(event) = input {
@@ -1550,12 +1569,18 @@ impl X11WindowStatePtr {
     }
 
     pub fn handle_ime_commit(&self, text: String) {
+        if self.interaction_is_quiesced() {
+            return;
+        }
         let input_handler = self.state.borrow().input_handler.clone();
         let _ = input_handler
             .with_handler(|input_handler| input_handler.replace_text_in_range(None, &text));
     }
 
     pub fn handle_ime_preedit(&self, text: String) {
+        if self.interaction_is_quiesced() {
+            return;
+        }
         let input_handler = self.state.borrow().input_handler.clone();
         let _ = input_handler.with_handler(|input_handler| {
             input_handler.replace_and_mark_text_in_range(None, &text, None)
@@ -1563,11 +1588,17 @@ impl X11WindowStatePtr {
     }
 
     pub fn handle_ime_unmark(&self) {
+        if self.interaction_is_quiesced() {
+            return;
+        }
         let input_handler = self.state.borrow().input_handler.clone();
         let _ = input_handler.with_handler(|input_handler| input_handler.unmark_text());
     }
 
     pub fn handle_ime_delete(&self) {
+        if self.interaction_is_quiesced() {
+            return;
+        }
         let input_handler = self.state.borrow().input_handler.clone();
         let _ =
             input_handler.with_handler(|input_handler| match input_handler.marked_text_range() {
@@ -1585,6 +1616,9 @@ impl X11WindowStatePtr {
     pub fn get_ime_area(&self) -> Option<Bounds<ScaledPixels>> {
         let (scale_factor, input_handler) = {
             let state = self.state.borrow();
+            if state.interaction_gate.is_quiesced() {
+                return None;
+            }
             (state.scale_factor, state.input_handler.clone())
         };
         let bounds = input_handler
@@ -1650,22 +1684,46 @@ impl X11WindowStatePtr {
 
     pub fn set_active(&self, observation: PlatformWindowActiveStatusObservation) {
         let focus = observation.active();
+        let interaction_gate = self.state.borrow().interaction_gate.clone();
+        if !interaction_gate.admits_status(focus) {
+            let mut state = self.state.borrow_mut();
+            state.active = false;
+            if let Some(adapter) = state.accesskit_adapter.as_mut() {
+                adapter.update_window_focus_state(false);
+            }
+            return;
+        }
+
+        self.state.borrow_mut().active = focus;
         let callback = self.callbacks.borrow_mut().active_status_change.take();
         if let Some(mut fun) = callback {
             fun(observation);
             self.callbacks.borrow_mut().active_status_change = Some(fun);
         }
-        if let Some(adapter) = self.state.borrow_mut().accesskit_adapter.as_mut() {
-            adapter.update_window_focus_state(focus);
+
+        let effective_focus = focus && !interaction_gate.is_quiesced();
+        let mut state = self.state.borrow_mut();
+        state.active = effective_focus;
+        if let Some(adapter) = state.accesskit_adapter.as_mut() {
+            adapter.update_window_focus_state(effective_focus);
         }
     }
 
     pub fn set_hovered(&self, focus: bool) {
+        let interaction_gate = self.state.borrow().interaction_gate.clone();
+        if !interaction_gate.admits_status(focus) {
+            self.state.borrow_mut().hovered = false;
+            return;
+        }
+
         self.state.borrow_mut().hovered = focus;
         let callback = self.callbacks.borrow_mut().hovered_status_change.take();
         if let Some(mut fun) = callback {
             fun(focus);
             self.callbacks.borrow_mut().hovered_status_change = Some(fun);
+        }
+        if focus && interaction_gate.is_quiesced() {
+            self.state.borrow_mut().hovered = false;
         }
     }
 
@@ -1696,6 +1754,29 @@ impl PlatformWindow for X11Window {
     fn command_dispatcher(&self) -> PlatformWindowCommandDispatcher {
         let target = X11WindowCommandTarget::new(self);
         PlatformWindowCommandDispatcher::new(move |command| target.dispatch(command))
+    }
+
+    fn interaction_quiescence(&self) -> PlatformWindowInteractionQuiescence {
+        let state = Rc::downgrade(&self.0.state);
+        let interaction_gate = self.0.state.borrow().interaction_gate.clone();
+        let client = self.0.state.borrow().client.clone();
+        let x_window = self.0.x_window;
+        PlatformWindowInteractionQuiescence::new(move || {
+            interaction_gate.quiesce();
+            if let Some(state) = state.upgrade() {
+                let mut state = state.borrow_mut();
+                state.active = false;
+                state.hovered = false;
+                state.activation_policy = WindowActivationPolicy {
+                    accepts_activation: false,
+                    focus_on_click: false,
+                };
+                if let Some(adapter) = state.accesskit_adapter.as_mut() {
+                    adapter.update_window_focus_state(false);
+                }
+            }
+            client.quiesce_window_interaction(x_window);
+        })
     }
 
     fn prepare_presentation_shutdown(
@@ -1785,10 +1866,11 @@ impl PlatformWindow for X11Window {
 
     fn platform_facts(&self) -> open_gpui::WindowPlatformFacts {
         let window_bounds = self.window_bounds();
-        let (activation_policy, topmost, taskbar_visible) = {
+        let (activation_policy, interaction_quiesced, topmost, taskbar_visible) = {
             let state = self.0.state.borrow();
             (
                 state.activation_policy,
+                state.interaction_gate.is_quiesced(),
                 state.topmost,
                 state.taskbar_visible,
             )
@@ -1806,8 +1888,8 @@ impl PlatformWindow for X11Window {
             is_maximized: self.is_maximized(),
             is_fullscreen: self.is_fullscreen(),
             accepts_pointer_input: self.accepts_pointer_input(),
-            accepts_activation: activation_policy.accepts_activation,
-            focus_on_click: activation_policy.focus_on_click,
+            accepts_activation: !interaction_quiesced && activation_policy.accepts_activation,
+            focus_on_click: !interaction_quiesced && activation_policy.focus_on_click,
             background_appearance: self.background_appearance(),
             topmost,
             taskbar_visible,
@@ -1931,11 +2013,13 @@ impl PlatformWindow for X11Window {
     }
 
     fn is_active(&self) -> bool {
-        self.0.state.borrow().active
+        let state = self.0.state.borrow();
+        state.active && !state.interaction_gate.is_quiesced()
     }
 
     fn is_hovered(&self) -> bool {
-        self.0.state.borrow().hovered
+        let state = self.0.state.borrow();
+        state.hovered && !state.interaction_gate.is_quiesced()
     }
 
     fn set_title(&mut self, title: &str) {
@@ -2246,6 +2330,9 @@ impl PlatformWindow for X11Window {
 
     fn update_ime_position(&self, bounds: Bounds<Pixels>) {
         let state = self.0.state.borrow();
+        if state.interaction_gate.is_quiesced() {
+            return;
+        }
         let client = state.client.clone();
         drop(state);
         client.update_ime_position(bounds);
@@ -2261,17 +2348,8 @@ impl PlatformWindow for X11Window {
     }
 
     fn a11y_init(&self, callbacks: open_gpui::A11yCallbacks) {
-        let activation_handler = TrivialActivationHandler {
-            callback: callbacks.activation,
-        };
-        let action_handler = TrivialActionHandler(callbacks.action);
-        let deactivation_handler = TrivialDeactivationHandler {
-            callback: callbacks.deactivation,
-        };
-
-        let adapter =
-            accesskit_unix::Adapter::new(activation_handler, action_handler, deactivation_handler);
-
+        let interaction_gate = self.0.state.borrow().interaction_gate.clone();
+        let adapter = accesskit_adapter(callbacks, interaction_gate);
         self.0.state.borrow_mut().accesskit_adapter = Some(adapter);
     }
 
@@ -2310,34 +2388,6 @@ impl PlatformWindow for X11Window {
         if let Some(adapter) = state.accesskit_adapter.as_mut() {
             adapter.set_root_window_bounds(outer, inner);
         }
-    }
-}
-
-struct TrivialActivationHandler {
-    callback: Box<dyn Fn() -> Option<accesskit::TreeUpdate> + Send + 'static>,
-}
-
-impl accesskit::ActivationHandler for TrivialActivationHandler {
-    fn request_initial_tree(&mut self) -> Option<accesskit::TreeUpdate> {
-        (self.callback)()
-    }
-}
-
-struct TrivialActionHandler(Box<dyn Fn(accesskit::ActionRequest) + Send + 'static>);
-
-impl accesskit::ActionHandler for TrivialActionHandler {
-    fn do_action(&mut self, request: accesskit::ActionRequest) {
-        (self.0)(request);
-    }
-}
-
-struct TrivialDeactivationHandler {
-    callback: Box<dyn Fn() + Send + 'static>,
-}
-
-impl accesskit::DeactivationHandler for TrivialDeactivationHandler {
-    fn deactivate_accessibility(&mut self) {
-        (self.callback)();
     }
 }
 

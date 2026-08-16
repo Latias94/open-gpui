@@ -32,7 +32,7 @@ use super::{
         ReservedPointerCancel,
     },
     native_platform_commands::{
-        NativePlatformCommandRejection, NativePointerCaptureRelease,
+        NativePlatformCommand, NativePlatformCommandRejection, NativePointerCaptureRelease,
         NativePointerCaptureReleaseToken, NativeShutdownCompletion, NativeWindowRetirement,
         NativeWindowRetirementAttempt,
     },
@@ -46,6 +46,7 @@ use crate::{
     PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome, PointerCancelReason,
     PreparedPlatformPresentationShutdown, WindowActivationCancellationOutcome,
     WindowActivationTerminal, WindowActivationTicket, WindowControlArea, WindowId,
+    window::WindowInteractionAuthority,
 };
 
 type OpenUrlsHandler = dyn FnMut(Vec<String>, &mut App);
@@ -55,35 +56,75 @@ type NativeShutdownCriticalCallback = Box<dyn FnOnce(&mut App)>;
 #[derive(Default)]
 struct PreShutdownCriticalState {
     next_ticket: u64,
-    callbacks: VecDeque<(u64, NativeShutdownCriticalCallback)>,
+    post_borrow_pending: VecDeque<PreShutdownCriticalEntry>,
+    explicit_pending: VecDeque<PreShutdownCriticalEntry>,
+    post_borrow_backlog: VecDeque<PreShutdownCriticalEntry>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PreShutdownCriticalReadiness {
+    PostBorrow,
+    ExplicitClaim,
+}
+
+struct PreShutdownCriticalEntry {
+    ticket: u64,
+    callback: NativeShutdownCriticalCallback,
 }
 
 impl PreShutdownCriticalState {
-    fn protect(&mut self, callback: NativeShutdownCriticalCallback) -> u64 {
+    fn protect(
+        &mut self,
+        callback: NativeShutdownCriticalCallback,
+        readiness: PreShutdownCriticalReadiness,
+    ) -> u64 {
         self.next_ticket = self
             .next_ticket
             .checked_add(1)
             .expect("pre-shutdown critical ticket space exhausted");
         let ticket = self.next_ticket;
-        self.callbacks.push_back((ticket, callback));
+        let entry = PreShutdownCriticalEntry { ticket, callback };
+        match readiness {
+            PreShutdownCriticalReadiness::PostBorrow => self.post_borrow_pending.push_back(entry),
+            PreShutdownCriticalReadiness::ExplicitClaim => self.explicit_pending.push_back(entry),
+        }
         ticket
     }
 
     fn take(&mut self, ticket: u64) -> Option<NativeShutdownCriticalCallback> {
-        let index = self
-            .callbacks
-            .iter()
-            .position(|(current, _)| *current == ticket)?;
-        self.callbacks.remove(index).map(|(_, callback)| callback)
+        for pending in [&mut self.post_borrow_pending, &mut self.explicit_pending] {
+            if let Some(index) = pending.iter().position(|entry| entry.ticket == ticket) {
+                return pending.remove(index).map(|entry| entry.callback);
+            }
+        }
+        None
     }
 
     fn take_all(&mut self) -> VecDeque<NativeShutdownCriticalCallback> {
-        std::mem::take(&mut self.callbacks)
+        let mut entries = std::mem::take(&mut self.post_borrow_pending)
             .into_iter()
-            .map(|(_, callback)| callback)
+            .chain(std::mem::take(&mut self.explicit_pending))
+            .chain(std::mem::take(&mut self.post_borrow_backlog))
+            .collect::<Vec<_>>();
+        entries.sort_by_key(|entry| entry.ticket);
+        entries.into_iter().map(|entry| entry.callback).collect()
+    }
+
+    fn take_post_borrow_wave(&mut self, limit: usize) -> VecDeque<NativeShutdownCriticalCallback> {
+        self.post_borrow_backlog
+            .append(&mut self.post_borrow_pending);
+        self.post_borrow_backlog
+            .drain(..limit.min(self.post_borrow_backlog.len()))
+            .map(|entry| entry.callback)
             .collect()
     }
+
+    fn has_post_borrow_ready(&self) -> bool {
+        !self.post_borrow_pending.is_empty() || !self.post_borrow_backlog.is_empty()
+    }
 }
+
+const MAX_PRE_SHUTDOWN_CRITICAL_PER_CONVERGENCE: usize = 64;
 
 const POINTER_CAPTURE_RELEASE_RETRY_DELAYS: [Duration; 3] = [
     Duration::from_millis(8),
@@ -510,6 +551,50 @@ impl Drop for NativeBoundaryTerminalGuard<'_> {
     }
 }
 
+struct AppBorrowReleaseConvergence<'a> {
+    active: &'a Cell<bool>,
+    rerun_requested: &'a Cell<bool>,
+    native_events: &'a NativeEventIngress,
+}
+
+fn merge_post_borrow_panic(
+    first_panic: &mut Option<Box<dyn std::any::Any + Send>>,
+    retained: Box<dyn std::any::Any + Send>,
+    stage: &'static str,
+) {
+    if first_panic.is_none() {
+        *first_panic = Some(retained);
+    } else {
+        log::error!("suppressed a panic while converging {stage} after an earlier panic");
+    }
+}
+
+impl<'a> AppBorrowReleaseConvergence<'a> {
+    fn acquire(
+        active: &'a Cell<bool>,
+        rerun_requested: &'a Cell<bool>,
+        native_events: &'a NativeEventIngress,
+    ) -> Option<Self> {
+        (!active.replace(true)).then_some(Self {
+            active,
+            rerun_requested,
+            native_events,
+        })
+    }
+}
+
+impl Drop for AppBorrowReleaseConvergence<'_> {
+    fn drop(&mut self) {
+        self.active.set(false);
+        if self.rerun_requested.get() {
+            self.native_events.postpone_drain(None);
+            self.native_events.schedule_post_borrow_convergence();
+        } else {
+            self.native_events.resume_after_post_borrow_convergence();
+        }
+    }
+}
+
 /// Temporary wrapper around [`RefCell<App>`] to help debug double borrows.
 /// Strongly consider removing after stabilization.
 #[doc(hidden)]
@@ -519,6 +604,7 @@ pub struct AppCell {
     native_events: NativeEventIngress,
     native_captured_drags: NativeCapturedDragOutbox,
     native_queries: NativeQuerySnapshots,
+    window_interaction_authorities: RefCell<HashMap<WindowId, WindowInteractionAuthority>>,
     native_window_activations: NativeWindowActivationAuthority,
     platform: Rc<dyn Platform>,
     background_executor: BackgroundExecutor,
@@ -532,6 +618,9 @@ pub struct AppCell {
     shutdown_fence: RefCell<Option<NativeShutdownFence>>,
     shutdown_critical: RefCell<NativeShutdownCriticalState>,
     pre_shutdown_critical: RefCell<PreShutdownCriticalState>,
+    retained_post_borrow_panic: RefCell<Option<Box<dyn std::any::Any + Send>>>,
+    app_borrow_release_convergence_active: Cell<bool>,
+    post_borrow_convergence_requested: Cell<bool>,
     active_shutdown_completion_generation: Cell<Option<u64>>,
     shutdown_terminate_ingress_requested: Cell<bool>,
     terminal_platform_quit: Cell<TerminalPlatformQuit>,
@@ -555,6 +644,7 @@ impl AppCell {
             native_events: NativeEventIngress::new(foreground_executor, this),
             native_captured_drags: NativeCapturedDragOutbox::default(),
             native_queries: NativeQuerySnapshots::default(),
+            window_interaction_authorities: RefCell::new(HashMap::new()),
             native_window_activations: NativeWindowActivationAuthority::default(),
             platform,
             background_executor,
@@ -568,6 +658,9 @@ impl AppCell {
             shutdown_fence: RefCell::new(None),
             shutdown_critical: RefCell::new(NativeShutdownCriticalState::default()),
             pre_shutdown_critical: RefCell::new(PreShutdownCriticalState::default()),
+            retained_post_borrow_panic: RefCell::new(None),
+            app_borrow_release_convergence_active: Cell::new(false),
+            post_borrow_convergence_requested: Cell::new(false),
             active_shutdown_completion_generation: Cell::new(None),
             shutdown_terminate_ingress_requested: Cell::new(false),
             terminal_platform_quit: Cell::new(TerminalPlatformQuit::NotRequested),
@@ -663,9 +756,21 @@ impl AppCell {
         available
     }
 
-    pub(super) fn reserve_native_window(&self, window_id: WindowId) {
+    pub(super) fn reserve_native_window(
+        &self,
+        window_id: WindowId,
+        interaction_authority: WindowInteractionAuthority,
+    ) {
         self.native_events.reopen_window(window_id);
         self.native_queries.reserve_window(window_id);
+        let previous = self
+            .window_interaction_authorities
+            .borrow_mut()
+            .insert(window_id, interaction_authority);
+        assert!(
+            previous.is_none(),
+            "one full window id cannot reserve multiple interaction authorities"
+        );
         self.observed_native_window_terminals
             .borrow_mut()
             .remove(&window_id);
@@ -679,10 +784,38 @@ impl AppCell {
         self.close_native_window_activation_target(window_id);
         self.native_events.close_window(window_id);
         self.native_queries.remove_window(window_id);
+        self.window_interaction_authorities
+            .borrow_mut()
+            .remove(&window_id);
     }
 
     pub(super) fn clear_native_windows(&self) {
         self.native_queries.clear();
+        self.window_interaction_authorities.borrow_mut().clear();
+    }
+
+    pub(crate) fn revoke_window_interaction(
+        &self,
+        window_id: WindowId,
+        preserve_native_pointer_capture: bool,
+    ) -> Option<()> {
+        let authority = self
+            .window_interaction_authorities
+            .borrow()
+            .get(&window_id)
+            .cloned()?;
+        if preserve_native_pointer_capture {
+            authority.defer_pointer_cleanup_to_native_capture();
+        }
+        authority.revoke();
+        Some(())
+    }
+
+    fn window_interaction_is_admitted(&self, window_id: WindowId) -> bool {
+        self.window_interaction_authorities
+            .borrow()
+            .get(&window_id)
+            .is_some_and(WindowInteractionAuthority::is_admitted)
     }
 
     fn next_native_pointer_capture_release_token(
@@ -1185,7 +1318,21 @@ impl AppCell {
         &self,
         callback: NativeShutdownCriticalCallback,
     ) -> u64 {
-        self.pre_shutdown_critical.borrow_mut().protect(callback)
+        let ticket = self
+            .pre_shutdown_critical
+            .borrow_mut()
+            .protect(callback, PreShutdownCriticalReadiness::PostBorrow);
+        self.post_borrow_convergence_requested.set(true);
+        ticket
+    }
+
+    pub(super) fn protect_externally_scheduled_pre_shutdown_critical(
+        &self,
+        callback: NativeShutdownCriticalCallback,
+    ) -> u64 {
+        self.pre_shutdown_critical
+            .borrow_mut()
+            .protect(callback, PreShutdownCriticalReadiness::ExplicitClaim)
     }
 
     pub(super) fn take_pre_shutdown_critical(
@@ -1193,6 +1340,15 @@ impl AppCell {
         ticket: u64,
     ) -> Option<NativeShutdownCriticalCallback> {
         self.pre_shutdown_critical.borrow_mut().take(ticket)
+    }
+
+    pub(crate) fn retain_post_borrow_panic(&self, payload: Box<dyn std::any::Any + Send>) {
+        let mut retained = self.retained_post_borrow_panic.borrow_mut();
+        if retained.is_none() {
+            *retained = Some(payload);
+        } else {
+            log::error!("suppressed a second panic while a post-borrow panic was retained");
+        }
     }
 
     pub(crate) fn enqueue_platform_window_retirement(
@@ -2042,6 +2198,7 @@ impl AppCell {
 
     pub(super) fn enqueue_native_captured_drag(&self, event: NativeCapturedDragEvent) {
         self.native_captured_drags.enqueue(event);
+        self.request_post_borrow_convergence();
     }
 
     pub(super) fn retire_native_captured_drag_generation(
@@ -2067,6 +2224,9 @@ impl AppCell {
         &self,
         window_id: WindowId,
     ) -> Option<WindowControlArea> {
+        if !self.window_interaction_is_admitted(window_id) {
+            return None;
+        }
         self.native_queries.window_control_area(window_id)
     }
 
@@ -2127,6 +2287,71 @@ impl AppCell {
             .enqueue_command(window_id, dispatcher, command);
     }
 
+    fn settle_native_platform_command_rejection(
+        &self,
+        window_id: WindowId,
+        command: NativePlatformCommand,
+    ) {
+        match command.settle_rejection() {
+            NativePlatformCommandRejection::Retry(retry) => {
+                self.native_events.enqueue_native_command(retry);
+            }
+            NativePlatformCommandRejection::InitialPresentationFailed => {
+                self.enqueue_native_window_event(
+                    window_id,
+                    NativeWindowEvent::InitialPresentationFailed,
+                );
+            }
+            NativePlatformCommandRejection::Terminal => {}
+        }
+    }
+
+    fn settle_panicking_native_platform_command(
+        &self,
+        sequence: u64,
+        window_id: WindowId,
+        command: NativePlatformCommand,
+    ) {
+        // The backend may have crossed irreversible native side effects before unwinding, so a
+        // panicking attempt is terminal and must never be replayed as an ordinary rejection.
+        if !command.completes_initial_presentation() {
+            return;
+        }
+        let diagnostic = self
+            .native_events
+            .prepare(window_id, NativeWindowEvent::InitialPresentationFailed)
+            .pending_diagnostic();
+        let mut terminal = NativeBoundaryTerminalGuard::new(&self.native_events, diagnostic);
+        let settlement = catch_unwind(AssertUnwindSafe(|| {
+            let mut app = self
+                .app
+                .try_borrow_mut()
+                .expect("platform command terminal must run after releasing the App borrow");
+            app.update(|app| {
+                app.update_window_id_from_native(
+                    window_id,
+                    super::native_captured_drag::NativeIngressSequence::new(sequence),
+                    |_, window, cx| window.initial_presentation_failed(cx),
+                )
+                .is_ok()
+            })
+        }));
+        self.wake_app_borrow_waiters();
+        match settlement {
+            Ok(true) => terminal.settle(NativeBoundaryDisposition::DELIVERED),
+            Ok(false) => terminal.settle(NativeBoundaryDisposition::Stale),
+            Err(payload) => {
+                terminal.settle(NativeBoundaryDisposition::InvariantFailure(
+                    NativeInvariantFailure::CallbackPanicked,
+                ));
+                log::error!(
+                    "suppressed an initial-presentation terminal panic after its platform command panicked"
+                );
+                drop(payload);
+            }
+        }
+    }
+
     pub(crate) fn begin_native_window_activation(
         self: &Rc<Self>,
         window_id: WindowId,
@@ -2143,6 +2368,14 @@ impl AppCell {
         }
 
         let request_generation = begin.ticket.request_generation();
+        if !self.window_interaction_is_admitted(window_id) {
+            self.settle_native_window_activation_command(
+                window_id,
+                request_generation,
+                WindowActivationTerminal::PolicyChanged,
+            );
+            return begin.ticket;
+        }
         let sequence = self.native_events.enqueue_command(
             window_id,
             dispatcher,
@@ -2293,6 +2526,15 @@ impl AppCell {
         }
     }
 
+    pub(crate) fn quiesce_native_window_activation_target(&self, window_id: WindowId) {
+        for delivery in self
+            .native_window_activations
+            .interaction_quiesced(window_id)
+        {
+            self.enqueue_window_activation_delivery(delivery);
+        }
+    }
+
     pub(super) fn schedule_native_window_activation_delivery(
         &self,
         delivery: WindowActivationTicketDelivery,
@@ -2366,6 +2608,14 @@ impl AppCell {
                 ));
             }
             Some(_) => {}
+        }
+        if !self.window_interaction_is_admitted(window_id) {
+            let result = DispatchEventResult {
+                propagate: false,
+                default_prevented: true,
+            };
+            terminal.settle(NativeBoundaryDisposition::Rejected);
+            return Ok(result);
         }
 
         let mut barrier = match self.native_events.begin_input_barrier() {
@@ -2480,7 +2730,7 @@ impl AppCell {
         window_id: WindowId,
         operation: NativeInputHandlerOperation,
         callback: impl FnOnce(&mut crate::Window, &mut App) -> R,
-    ) -> Result<R, NativeInputInvariantViolation> {
+    ) -> Result<Option<R>, NativeInputInvariantViolation> {
         let sequence_cutoff = self.native_events.reserve_input_sequence();
         let kind = NativeCallbackKind::PlatformInputHandler(operation);
         let boundary = NativeInputBoundary::InputHandler;
@@ -2523,6 +2773,10 @@ impl AppCell {
                 ));
             }
             Some(_) => {}
+        }
+        if !self.window_interaction_is_admitted(window_id) {
+            terminal.settle(NativeBoundaryDisposition::Rejected);
+            return Ok(None);
         }
 
         let mut barrier = match self.native_events.begin_input_barrier() {
@@ -2600,7 +2854,9 @@ impl AppCell {
         let result = terminal.run_callback_with_panic_cleanup(
             || {
                 app.update_window_id_from_native(window_id, sequence_cutoff, |_, window, cx| {
-                    callback(window, cx)
+                    window
+                        .user_interaction_is_admitted()
+                        .then(|| callback(window, cx))
                 })
             },
             || self.native_captured_drags.retire_sequence(sequence_cutoff),
@@ -2609,9 +2865,13 @@ impl AppCell {
         terminal.run_callback(|| self.drain_native_captured_drags());
 
         let outcome = match result {
-            Ok(result) => {
+            Ok(Some(result)) => {
                 terminal.settle(NativeBoundaryDisposition::DELIVERED);
-                Ok(result)
+                Ok(Some(result))
+            }
+            Ok(None) => {
+                terminal.settle(NativeBoundaryDisposition::Rejected);
+                Ok(None)
             }
             Err(_) => Err(terminal.reject_input(
                 window_id,
@@ -2756,7 +3016,12 @@ impl AppCell {
 
     pub(super) fn recover_native_work_after_unwind(&self) {
         self.native_events.finish_unwind_recovery_wake();
-        self.app_borrow_released();
+        self.request_post_borrow_convergence();
+    }
+
+    pub(super) fn run_post_borrow_convergence_from_wake(&self) {
+        self.native_events.finish_post_borrow_convergence_wake();
+        self.request_post_borrow_convergence();
     }
 
     pub(super) fn retry_native_pointer_capture_release_from_wake(
@@ -2780,6 +3045,26 @@ impl AppCell {
     }
 
     fn drain_native_work(&self, wake_ticket: Option<u64>) {
+        if self.app_borrow_release_convergence_active.get() {
+            self.native_events.postpone_drain(wake_ticket);
+            self.post_borrow_convergence_requested.set(true);
+            return;
+        }
+        let drain = catch_unwind(AssertUnwindSafe(|| {
+            self.drain_native_work_pass(wake_ticket)
+        }));
+        if let Err(payload) = drain {
+            self.retain_post_borrow_panic(payload);
+        }
+        let panic_retained = self.retained_post_borrow_panic.borrow().is_some();
+        if panic_retained || self.post_borrow_convergence_requested.get() {
+            // A native-work panic is retained only after its boundary terminal has been recorded.
+            // Run the ordinary post-borrow convergence before allowing that first panic to escape.
+            self.request_post_borrow_convergence();
+        }
+    }
+
+    fn drain_native_work_pass(&self, wake_ticket: Option<u64>) {
         if self.native_callback_lease_active() {
             self.native_events.postpone_drain(wake_ticket);
             return;
@@ -2884,8 +3169,11 @@ impl AppCell {
                             let base_dispatchable = !quitting
                                 && self.native_queries.committed(window_id).is_some()
                                 && command.provisional_reveal_is_pending();
+                            let interaction_revoked = command.requires_interaction_authority()
+                                && !self.window_interaction_is_admitted(window_id);
                             drop(app);
                             let dispatchable = base_dispatchable
+                                && !interaction_revoked
                                 && activation_request_generation.is_none_or(|generation| {
                                     self.begin_native_window_activation_dispatch(
                                         window_id, generation, sequence,
@@ -2898,21 +3186,10 @@ impl AppCell {
                                 let completes_initial_presentation =
                                     command.completes_initial_presentation();
                                 let command_guard = drain.enter_command();
-                                let outcome = terminal.run_callback_with_panic_cleanup(
-                                    || command.dispatch(),
-                                    || {
-                                        if let Some(generation) = activation_request_generation {
-                                            self.settle_native_window_activation_command(
-                                                window_id,
-                                                generation,
-                                                WindowActivationTerminal::Rejected,
-                                            );
-                                        }
-                                    },
-                                );
+                                let outcome = catch_unwind(AssertUnwindSafe(|| command.dispatch()));
                                 drop(command_guard);
                                 match outcome {
-                                    PlatformWindowCommandOutcome::Accepted => {
+                                    Ok(PlatformWindowCommandOutcome::Accepted) => {
                                         if let Some(generation) = activation_request_generation {
                                             self.finish_native_window_activation_dispatch_accepted(
                                                 window_id, generation,
@@ -2929,9 +3206,11 @@ impl AppCell {
                                             );
                                         }
                                     }
-                                    PlatformWindowCommandOutcome::Rejected
-                                    | PlatformWindowCommandOutcome::Unsupported
-                                    | PlatformWindowCommandOutcome::WindowClosed => {
+                                    Ok(
+                                        outcome @ (PlatformWindowCommandOutcome::Rejected
+                                        | PlatformWindowCommandOutcome::Unsupported
+                                        | PlatformWindowCommandOutcome::WindowClosed),
+                                    ) => {
                                         if let Some(generation) = activation_request_generation {
                                             let activation_terminal = match outcome {
                                                 PlatformWindowCommandOutcome::Rejected => {
@@ -2965,26 +3244,43 @@ impl AppCell {
                                         } else {
                                             NativeBoundaryDisposition::Rejected
                                         });
-                                        match command.settle_rejection() {
-                                            NativePlatformCommandRejection::Retry(retry) => {
-                                                self.native_events.enqueue_native_command(retry);
-                                            }
-                                            NativePlatformCommandRejection::InitialPresentationFailed => {
-                                                self.enqueue_native_window_event(
-                                                    window_id,
-                                                    NativeWindowEvent::InitialPresentationFailed,
-                                                );
-                                            }
-                                            NativePlatformCommandRejection::Terminal => {}
+                                        self.settle_native_platform_command_rejection(
+                                            window_id, command,
+                                        );
+                                    }
+                                    Err(payload) => {
+                                        if let Some(generation) = activation_request_generation {
+                                            self.settle_native_window_activation_command(
+                                                window_id,
+                                                generation,
+                                                WindowActivationTerminal::Rejected,
+                                            );
                                         }
+                                        command.settle_provisional_reveal(
+                                            crate::WindowProvisionalRevealOutcome::Rejected,
+                                        );
+                                        terminal.settle(
+                                            NativeBoundaryDisposition::InvariantFailure(
+                                                NativeInvariantFailure::CallbackPanicked,
+                                            ),
+                                        );
+                                        self.settle_panicking_native_platform_command(
+                                            sequence, window_id, command,
+                                        );
+                                        self.retain_post_borrow_panic(payload);
+                                        return;
                                     }
                                 }
                             } else {
+                                let initial_presentation_failed =
+                                    interaction_revoked && command.completes_initial_presentation();
                                 if let Some(generation) = activation_request_generation {
                                     self.settle_native_window_activation_command(
                                         window_id,
                                         generation,
-                                        if base_dispatchable {
+                                        if interaction_revoked {
+                                            WindowActivationTerminal::PolicyChanged
+                                        } else if base_dispatchable {
                                             WindowActivationTerminal::Superseded
                                         } else {
                                             WindowActivationTerminal::WindowClosed
@@ -2993,17 +3289,32 @@ impl AppCell {
                                 }
                                 command.settle_provisional_reveal(if quitting {
                                     crate::WindowProvisionalRevealOutcome::WindowTerminal
+                                } else if interaction_revoked {
+                                    crate::WindowProvisionalRevealOutcome::Rejected
                                 } else {
                                     crate::WindowProvisionalRevealOutcome::Stale
                                 });
                                 terminal.settle(if quitting {
                                     NativeBoundaryDisposition::Closed
+                                } else if interaction_revoked {
+                                    NativeBoundaryDisposition::Rejected
                                 } else {
                                     NativeBoundaryDisposition::Stale
                                 });
                                 log::trace!(
-                                    "native platform command sequence={sequence} window={window_id:?} disposition=StaleWindow"
+                                    "native platform command sequence={sequence} window={window_id:?} disposition={}",
+                                    if interaction_revoked {
+                                        "InteractionQuiesced"
+                                    } else {
+                                        "StaleWindow"
+                                    }
                                 );
+                                if initial_presentation_failed {
+                                    self.enqueue_native_window_event(
+                                        window_id,
+                                        NativeWindowEvent::InitialPresentationFailed,
+                                    );
+                                }
                             }
                         }
                         NativeWorkEnvelope::PointerCaptureRelease { release, .. } => {
@@ -3306,19 +3617,114 @@ impl AppCell {
         }
     }
 
+    fn run_post_borrow_convergence_stage(
+        &self,
+        stage: &'static str,
+        first_panic: &mut Option<Box<dyn std::any::Any + Send>>,
+        callback: impl FnOnce(),
+    ) {
+        let result = catch_unwind(AssertUnwindSafe(callback));
+        let retained = self.retained_post_borrow_panic.borrow_mut().take();
+        if let Some(retained) = retained {
+            merge_post_borrow_panic(first_panic, retained, stage);
+            if let Err(payload) = result {
+                log::error!(
+                    "suppressed a cleanup panic while draining {stage} after a retained post-borrow panic"
+                );
+                drop(payload);
+            }
+        } else if let Err(payload) = result {
+            merge_post_borrow_panic(first_panic, payload, stage);
+        }
+    }
+
+    fn request_post_borrow_convergence(&self) {
+        self.app_borrow_released();
+    }
+
     fn app_borrow_released(&self) {
+        self.post_borrow_convergence_requested.set(true);
         if self.native_callback_lease_active() {
             return;
         }
         if !self.app_is_idle() {
             return;
         }
-        self.request_active_shutdown_completion();
-        self.drain_native_window_activation_deliveries();
-        self.drain_native_captured_drags();
-        self.native_events.resume_after_app_borrow();
-        self.drain_native_work(None);
-        self.wake_app_borrow_waiters();
+        let Some(_convergence) = AppBorrowReleaseConvergence::acquire(
+            &self.app_borrow_release_convergence_active,
+            &self.post_borrow_convergence_requested,
+            &self.native_events,
+        ) else {
+            return;
+        };
+        self.post_borrow_convergence_requested.set(false);
+        let mut first_panic = None;
+        if let Some(retained) = self.retained_post_borrow_panic.borrow_mut().take() {
+            merge_post_borrow_panic(&mut first_panic, retained, "App borrow release");
+        }
+        self.run_post_borrow_convergence_stage("shutdown completion", &mut first_panic, || {
+            self.request_active_shutdown_completion()
+        });
+        self.run_post_borrow_convergence_stage(
+            "window activation deliveries",
+            &mut first_panic,
+            || self.drain_native_window_activation_deliveries(),
+        );
+        self.run_post_borrow_convergence_stage("native captured drags", &mut first_panic, || {
+            self.drain_native_captured_drags()
+        });
+        self.run_post_borrow_convergence_stage("native event ingress", &mut first_panic, || {
+            self.native_events.resume_after_app_borrow();
+        });
+        self.run_post_borrow_convergence_stage("native work", &mut first_panic, || {
+            self.drain_native_work_pass(None)
+        });
+        self.run_post_borrow_convergence_stage(
+            "pre-shutdown critical callbacks",
+            &mut first_panic,
+            || self.drain_pre_shutdown_critical_callbacks(),
+        );
+        self.run_post_borrow_convergence_stage(
+            "post-critical native work",
+            &mut first_panic,
+            || {
+                self.request_active_shutdown_completion();
+                self.drain_native_work_pass(None);
+            },
+        );
+        self.run_post_borrow_convergence_stage("App borrow waiters", &mut first_panic, || {
+            self.wake_app_borrow_waiters()
+        });
+        if let Some(retained) = self.retained_post_borrow_panic.borrow_mut().take() {
+            merge_post_borrow_panic(&mut first_panic, retained, "App borrow waiter delivery");
+        }
+        if let Some(payload) = first_panic {
+            resume_unwind(payload);
+        }
+    }
+
+    fn drain_pre_shutdown_critical_callbacks(&self) {
+        let mut first_panic = None;
+        let callbacks = self
+            .pre_shutdown_critical
+            .borrow_mut()
+            .take_post_borrow_wave(MAX_PRE_SHUTDOWN_CRITICAL_PER_CONVERGENCE);
+        for callback in callbacks {
+            let result = catch_unwind(AssertUnwindSafe(|| {
+                let mut app = self
+                    .app
+                    .try_borrow_mut()
+                    .expect("pre-shutdown critical drain requires an idle App");
+                app.update(callback);
+            }));
+            retain_shutdown_panic(&mut first_panic, result.err());
+        }
+        if self.pre_shutdown_critical.borrow().has_post_borrow_ready() {
+            self.post_borrow_convergence_requested.set(true);
+        }
+        if let Some(payload) = first_panic {
+            resume_unwind(payload);
+        }
     }
 
     // Registering after a failed borrow and checking idle happen on the application thread, so a
@@ -3675,6 +4081,329 @@ mod tests {
     }
 
     #[crate::test]
+    fn active_post_borrow_convergence_defers_direct_native_drain(cx: &mut TestAppContext) {
+        let window: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        let attempts = Rc::new(Cell::new(0usize));
+        cx.app.enqueue_platform_window_command(
+            window.window_id(),
+            PlatformWindowCommandDispatcher::new({
+                let attempts = attempts.clone();
+                move |_| {
+                    attempts.set(attempts.get() + 1);
+                    PlatformWindowCommandOutcome::Accepted
+                }
+            }),
+            PlatformWindowCommand::StartWindowMove,
+        );
+
+        let convergence = AppBorrowReleaseConvergence::acquire(
+            &cx.app.app_borrow_release_convergence_active,
+            &cx.app.post_borrow_convergence_requested,
+            &cx.app.native_events,
+        )
+        .expect("the test must own the post-borrow convergence guard");
+        cx.app.drain_native_work_for_test();
+
+        assert_eq!(attempts.get(), 0);
+        assert!(cx.app.post_borrow_convergence_requested.get());
+        drop(convergence);
+        cx.run_until_parked();
+
+        assert_eq!(attempts.get(), 1);
+        assert!(!cx.app.post_borrow_convergence_requested.get());
+    }
+
+    #[crate::test]
+    fn post_borrow_rerun_drains_non_native_work_without_a_native_fifo(cx: &mut TestAppContext) {
+        let calls = Rc::new(Cell::new(0usize));
+        let convergence = AppBorrowReleaseConvergence::acquire(
+            &cx.app.app_borrow_release_convergence_active,
+            &cx.app.post_borrow_convergence_requested,
+            &cx.app.native_events,
+        )
+        .expect("the test must own the post-borrow convergence guard");
+        cx.app.protect_pre_shutdown_critical(Box::new({
+            let calls = calls.clone();
+            move |_| calls.set(calls.get() + 1)
+        }));
+        cx.app.app_borrow_released();
+
+        assert_eq!(calls.get(), 0);
+        assert!(cx.app.post_borrow_convergence_requested.get());
+        drop(convergence);
+        cx.run_until_parked();
+
+        assert_eq!(calls.get(), 1);
+        assert!(!cx.app.post_borrow_convergence_requested.get());
+    }
+
+    #[crate::test]
+    fn native_command_panic_precedes_a_later_native_event_panic(cx: &mut TestAppContext) {
+        let window: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        let observer_calls = Rc::new(Cell::new(0usize));
+        let _presentation_subscription = cx
+            .update_window(window, {
+                let observer_calls = observer_calls.clone();
+                move |_, window, _| {
+                    window.observe_window_initial_presentation(move |_, _| {
+                        observer_calls.set(observer_calls.get() + 1);
+                        panic!("injected native-event observer panic");
+                    })
+                }
+            })
+            .expect("the test window must remain registered");
+
+        let app = cx.app.clone();
+        app.enqueue_platform_window_command(
+            window.window_id(),
+            PlatformWindowCommandDispatcher::new(|command| {
+                assert_eq!(command, PlatformWindowCommand::StartWindowMove);
+                panic!("injected native-command dispatcher panic");
+            }),
+            PlatformWindowCommand::StartWindowMove,
+        );
+        app.enqueue_native_window_event(
+            window.window_id(),
+            NativeWindowEvent::InitialPresentationFailed,
+        );
+
+        let first = catch_unwind(AssertUnwindSafe(|| app.drain_native_work_for_test()))
+            .expect_err("the retained command panic must propagate after convergence");
+        let follow_up = catch_unwind(AssertUnwindSafe(|| app.drain_native_work_for_test()));
+        let first_message = first
+            .downcast_ref::<&str>()
+            .copied()
+            .or_else(|| first.downcast_ref::<String>().map(String::as_str));
+
+        assert_eq!(
+            first_message,
+            Some("injected native-command dispatcher panic"),
+            "the first boundary panic must win over a later terminal observer panic"
+        );
+        assert!(
+            follow_up.is_ok(),
+            "post-borrow convergence must consume the queued event and clear the retained panic"
+        );
+        assert_eq!(observer_calls.get(), 1);
+    }
+
+    #[crate::test]
+    fn native_event_panic_converges_protected_work_before_propagation(cx: &mut TestAppContext) {
+        let window: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        let cleanup_calls = Rc::new(Cell::new(0usize));
+        let _presentation_subscription = cx
+            .update_window(window, {
+                let cleanup_calls = cleanup_calls.clone();
+                move |_, window, _| {
+                    window.observe_window_initial_presentation(move |_, app| {
+                        app.defer_shutdown_critical_before_window_registry_clear({
+                            let cleanup_calls = cleanup_calls.clone();
+                            move |_| cleanup_calls.set(cleanup_calls.get() + 1)
+                        });
+                        panic!("injected native-event observer panic");
+                    })
+                }
+            })
+            .expect("the test window must remain registered");
+
+        cx.app.enqueue_native_window_event(
+            window.window_id(),
+            NativeWindowEvent::InitialPresentationFailed,
+        );
+
+        let panic = catch_unwind(AssertUnwindSafe(|| cx.app.drain_native_work_for_test()))
+            .expect_err("the native-event observer panic must remain observable");
+        let panic_message = panic
+            .downcast_ref::<&str>()
+            .copied()
+            .or_else(|| panic.downcast_ref::<String>().map(String::as_str));
+
+        assert_eq!(panic_message, Some("injected native-event observer panic"));
+        assert_eq!(
+            cleanup_calls.get(),
+            1,
+            "protected lifecycle work must settle before the native-event panic escapes"
+        );
+        cx.run_until_parked();
+        assert_eq!(
+            cleanup_calls.get(),
+            1,
+            "the deferred placeholder must not repeat protected lifecycle work"
+        );
+    }
+
+    #[crate::test]
+    fn protected_post_borrow_work_yields_after_one_bounded_wave(cx: &mut TestAppContext) {
+        const PROTECTED_CALLBACK_COUNT: usize = MAX_PRE_SHUTDOWN_CRITICAL_PER_CONVERGENCE * 2 + 1;
+
+        let window: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        let cleanup_calls = Rc::new(Cell::new(0usize));
+        let _presentation_subscription = cx
+            .update_window(window, {
+                let cleanup_calls = cleanup_calls.clone();
+                move |_, window, _| {
+                    window.observe_window_initial_presentation(move |_, app| {
+                        app.defer(|_| panic!("injected leading effect panic"));
+                        for _ in 0..PROTECTED_CALLBACK_COUNT {
+                            app.defer_shutdown_critical_before_window_registry_clear({
+                                let cleanup_calls = cleanup_calls.clone();
+                                move |_| cleanup_calls.set(cleanup_calls.get() + 1)
+                            });
+                        }
+                    })
+                }
+            })
+            .expect("the test window must remain registered");
+
+        cx.app.enqueue_native_window_event(
+            window.window_id(),
+            NativeWindowEvent::InitialPresentationFailed,
+        );
+
+        let panic = catch_unwind(AssertUnwindSafe(|| cx.app.drain_native_work_for_test()))
+            .expect_err("the leading effect panic must remain observable");
+        let panic_message = panic
+            .downcast_ref::<&str>()
+            .copied()
+            .or_else(|| panic.downcast_ref::<String>().map(String::as_str));
+
+        assert_eq!(panic_message, Some("injected leading effect panic"));
+        assert_eq!(
+            cleanup_calls.get(),
+            MAX_PRE_SHUTDOWN_CRITICAL_PER_CONVERGENCE,
+            "placeholder effects must not bypass the convergence wave budget"
+        );
+
+        cx.run_until_parked();
+        assert_eq!(cleanup_calls.get(), PROTECTED_CALLBACK_COUNT);
+    }
+
+    #[crate::test]
+    fn panicking_initial_presentation_waits_for_its_domain_settlement(cx: &mut TestAppContext) {
+        const FOLLOW_UP_COMMAND_COUNT: usize = 128;
+
+        let window: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        let observer_calls = Rc::new(Cell::new(0usize));
+        let _presentation_subscription = cx
+            .update_window(window, {
+                let observer_calls = observer_calls.clone();
+                move |_, window, _| {
+                    window.observe_window_initial_presentation(move |_, _| {
+                        observer_calls.set(observer_calls.get() + 1);
+                    })
+                }
+            })
+            .expect("the test window must remain registered");
+        let attempts = Rc::new(Cell::new(0usize));
+        let panic_enabled = Rc::new(Cell::new(true));
+        let dispatcher = PlatformWindowCommandDispatcher::new({
+            let attempts = attempts.clone();
+            let panic_enabled = panic_enabled.clone();
+            move |_| {
+                attempts.set(attempts.get() + 1);
+                if panic_enabled.get() {
+                    panic!("injected ordered native-command panic");
+                }
+                PlatformWindowCommandOutcome::Accepted
+            }
+        });
+        cx.app.enqueue_platform_window_command(
+            window.window_id(),
+            dispatcher.clone(),
+            PlatformWindowCommand::CompleteInitialPresentation { activate: true },
+        );
+        for _ in 0..FOLLOW_UP_COMMAND_COUNT {
+            cx.app.enqueue_platform_window_command(
+                window.window_id(),
+                dispatcher.clone(),
+                PlatformWindowCommand::StartWindowMove,
+            );
+        }
+
+        let panic = catch_unwind(AssertUnwindSafe(|| cx.app.drain_native_work_for_test()))
+            .expect_err("the first platform command panic must remain observable");
+        let panic_message = panic
+            .downcast_ref::<&str>()
+            .copied()
+            .or_else(|| panic.downcast_ref::<String>().map(String::as_str));
+        let attempts_before_yield = attempts.get();
+        panic_enabled.set(false);
+        cx.run_until_parked();
+
+        assert_eq!(panic_message, Some("injected ordered native-command panic"));
+        assert!(
+            attempts_before_yield < FOLLOW_UP_COMMAND_COUNT + 1,
+            "settling the first command must not synchronously drain the unrelated command FIFO"
+        );
+        assert_eq!(
+            observer_calls.get(),
+            1,
+            "the initial-presentation failure terminal must settle before its command panic escapes"
+        );
+    }
+
+    #[crate::test]
+    fn repeated_native_command_panics_yield_without_recursive_convergence(cx: &mut TestAppContext) {
+        const COMMAND_COUNT: usize = 128;
+
+        let window: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        let attempts = Rc::new(Cell::new(0usize));
+        let panic_enabled = Rc::new(Cell::new(true));
+        let dispatcher = PlatformWindowCommandDispatcher::new({
+            let attempts = attempts.clone();
+            let panic_enabled = panic_enabled.clone();
+            move |command| {
+                assert_eq!(command, PlatformWindowCommand::StartWindowMove);
+                attempts.set(attempts.get() + 1);
+                if panic_enabled.get() {
+                    panic!("injected repeated native-command panic");
+                }
+                PlatformWindowCommandOutcome::Accepted
+            }
+        });
+        for _ in 0..COMMAND_COUNT {
+            cx.app.enqueue_platform_window_command(
+                window.window_id(),
+                dispatcher.clone(),
+                PlatformWindowCommand::StartWindowMove,
+            );
+        }
+
+        let panic = catch_unwind(AssertUnwindSafe(|| cx.app.drain_native_work_for_test()))
+            .expect_err("the first repeated command panic must remain observable");
+        let panic_message = panic
+            .downcast_ref::<&str>()
+            .copied()
+            .or_else(|| panic.downcast_ref::<String>().map(String::as_str));
+        let attempts_before_yield = attempts.get();
+        panic_enabled.set(false);
+        cx.app.drain_native_work_for_test();
+        cx.run_until_parked();
+
+        assert_eq!(
+            panic_message,
+            Some("injected repeated native-command panic")
+        );
+        assert!(
+            attempts_before_yield < COMMAND_COUNT,
+            "post-borrow convergence must yield instead of recursively resetting the native-work budget"
+        );
+        assert_eq!(attempts.get(), COMMAND_COUNT);
+    }
+
+    #[crate::test]
     fn shutdown_started_inside_app_update_cannot_double_panic_during_borrow_drop(
         cx: &mut TestAppContext,
     ) {
@@ -3918,6 +4647,37 @@ mod tests {
     }
 
     #[crate::test]
+    fn delayed_shutdown_critical_work_honors_its_timer_before_explicit_claim(
+        cx: &mut TestAppContext,
+    ) {
+        let callback_ran = Rc::new(Cell::new(false));
+        cx.update({
+            let callback_ran = callback_ran.clone();
+            move |app| {
+                app.defer_after_or_shutdown_critical_before_window_registry_clear(
+                    Duration::from_millis(32),
+                    move |_| callback_ran.set(true),
+                );
+            }
+        });
+        cx.run_until_parked();
+
+        assert!(
+            !callback_ran.get(),
+            "an unrelated App borrow release must not bypass the retry delay"
+        );
+        cx.background_executor
+            .advance_clock(Duration::from_millis(31));
+        cx.run_until_parked();
+        assert!(!callback_ran.get());
+
+        cx.background_executor
+            .advance_clock(Duration::from_millis(1));
+        cx.run_until_parked();
+        assert!(callback_ran.get());
+    }
+
+    #[crate::test]
     fn delayed_shutdown_critical_work_transfers_into_active_shutdown(cx: &mut TestAppContext) {
         let _: AnyWindowHandle = cx
             .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
@@ -4142,7 +4902,8 @@ mod tests {
         let unknown_anchor = WindowId::from((9_001_u64 << 32) | 1);
         let unknown_dependency = WindowId::from((9_002_u64 << 32) | 1);
         let rolled_back_dependency = WindowId::from((9_003_u64 << 32) | 1);
-        cx.app.reserve_native_window(rolled_back_dependency);
+        cx.app
+            .reserve_native_window(rolled_back_dependency, WindowInteractionAuthority::new());
         cx.app.remove_native_window(rolled_back_dependency);
 
         cx.update(|app| {

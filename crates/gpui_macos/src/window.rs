@@ -23,7 +23,6 @@ use cocoa::{
         NSUserDefaults,
     },
 };
-use dispatch2::DispatchQueue;
 #[cfg(any(test, feature = "test-support"))]
 use image::RgbaImage;
 use open_gpui::{
@@ -34,11 +33,11 @@ use open_gpui::{
     PlatformInputHandler, PlatformInputHandlerSlot, PlatformNativeWindowRetirementOutcome,
     PlatformPresentationShutdownOutcome, PlatformWindow, PlatformWindowActiveStatusObservation,
     PlatformWindowCommand, PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome,
-    PlatformWindowPresentOutcome, Point, PreparedPlatformPresentationShutdown, PromptButton,
-    PromptLevel, RequestFrameOptions, SharedString, Size, SystemWindowTab, WindowActivationPolicy,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
-    WindowCreationFacts, WindowId, WindowKind, WindowParams, WindowPresentationShutdownTicket,
-    point, px, size,
+    PlatformWindowInteractionQuiescence, PlatformWindowPresentOutcome, Point,
+    PreparedPlatformPresentationShutdown, PromptButton, PromptLevel, RequestFrameOptions,
+    SharedString, Size, SystemWindowTab, WindowActivationPolicy, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowCreationFacts, WindowId,
+    WindowKind, WindowParams, WindowPresentationShutdownTicket, point, px, size,
 };
 
 use core_foundation::base::{CFRelease, CFTypeRef};
@@ -51,6 +50,7 @@ use objc::{
     class,
     declare::ClassDecl,
     msg_send,
+    rc::StrongPtr,
     runtime::{BOOL, Class, NO, Object, Protocol, Sel, YES},
     sel, sel_impl,
 };
@@ -386,7 +386,7 @@ unsafe fn hovered_gpui_native_window() -> Option<id> {
             if window_state.is_closed() {
                 return None;
             }
-            if window_state.accepts_pointer_input {
+            if window_state.accepts_pointer_input && !window_state.interaction_is_quiesced() {
                 return Some(window);
             }
         }
@@ -746,6 +746,7 @@ struct MacWindowState {
     creation_facts: WindowCreationFacts,
     initial_presentation: MacInitialPresentation,
     attempted_window_draw: bool,
+    interaction_quiesced: Arc<AtomicBool>,
 }
 
 impl MacWindowState {
@@ -753,8 +754,13 @@ impl MacWindowState {
         self.closed.load(Ordering::Acquire)
     }
 
+    fn interaction_is_quiesced(&self) -> bool {
+        self.interaction_quiesced.load(Ordering::Acquire)
+    }
+
     fn mark_closed(&mut self) -> (PlatformInputCallbackSlot, PlatformInputHandlerSlot) {
         self.closed.store(true, Ordering::Release);
+        self.interaction_quiesced.store(true, Ordering::Release);
         self.stop_display_link();
         self.synthetic_drag_counter += 1;
         self.request_frame_callback = None;
@@ -999,6 +1005,55 @@ pub(crate) struct MacWindow(
     Arc<Mutex<MacPresentationShutdownAuthority>>,
 );
 
+struct MacWindowInteractionQuiescenceTarget {
+    native_window: StrongPtr,
+    window_state: Weak<Mutex<MacWindowState>>,
+    quiesced: Arc<AtomicBool>,
+}
+
+impl MacWindowInteractionQuiescenceTarget {
+    unsafe fn new(
+        native_window: id,
+        window_state: Weak<Mutex<MacWindowState>>,
+        quiesced: Arc<AtomicBool>,
+    ) -> Self {
+        Self {
+            native_window: unsafe { StrongPtr::retain(native_window) },
+            window_state,
+            quiesced,
+        }
+    }
+
+    fn revoke(&self) {
+        // Closing the logical gate and completing AppKit cleanup are separate
+        // authorities. Retry every idempotent native effect until this call
+        // returns; the platform quiescence receipt is the completion proof.
+        self.quiesced.store(true, Ordering::Release);
+
+        unsafe {
+            let native_window = *self.native_window;
+            let _: () = msg_send![native_window, setIgnoresMouseEvents: YES];
+            let _: () = msg_send![native_window, setMovable: NO];
+            let _: () = msg_send![native_window, resignKeyWindow];
+        }
+
+        let a11y_events = self.window_state.upgrade().and_then(|window_state| {
+            let mut state = window_state.lock();
+            if state.is_closed() {
+                None
+            } else {
+                state
+                    .accesskit_adapter
+                    .as_mut()
+                    .and_then(|adapter| adapter.update_view_focus_state(false))
+            }
+        });
+        if let Some(events) = a11y_events {
+            events.raise();
+        }
+    }
+}
+
 impl MacWindow {
     pub fn open(
         handle: AnyWindowHandle,
@@ -1234,6 +1289,7 @@ impl MacWindow {
                     taskbar_visible: creation.taskbar_visible,
                     initial_presentation,
                     attempted_window_draw: false,
+                    interaction_quiesced: Arc::new(AtomicBool::new(false)),
                 })),
                 presentation_shutdown_authority,
             );
@@ -1497,7 +1553,9 @@ fn complete_mac_initial_presentation(window_state: &Arc<Mutex<MacWindowState>>, 
         (
             state.native_window,
             state.initial_presentation,
-            activate && state.activation_policy.accepts_activation,
+            activate
+                && !state.interaction_is_quiesced()
+                && state.activation_policy.accepts_activation,
         )
     };
 
@@ -1554,7 +1612,10 @@ fn complete_mac_initial_presentation(window_state: &Arc<Mutex<MacWindowState>>, 
 fn activate_mac_window(window_state: &Arc<Mutex<MacWindowState>>) -> bool {
     let window = {
         let state = window_state.lock();
-        if state.is_closed() || !state.activation_policy.accepts_activation {
+        if state.is_closed()
+            || state.interaction_is_quiesced()
+            || !state.activation_policy.accepts_activation
+        {
             return false;
         }
         state.native_window
@@ -1566,11 +1627,11 @@ fn activate_mac_window(window_state: &Arc<Mutex<MacWindowState>>) -> bool {
     true
 }
 
-fn start_mac_window_move(window_state: &Arc<Mutex<MacWindowState>>) {
+fn start_mac_window_move(window_state: &Arc<Mutex<MacWindowState>>) -> bool {
     let window = {
         let state = window_state.lock();
-        if state.is_closed() {
-            return;
+        if state.is_closed() || state.interaction_is_quiesced() {
+            return false;
         }
         state.native_window
     };
@@ -1580,6 +1641,7 @@ fn start_mac_window_move(window_state: &Arc<Mutex<MacWindowState>>) {
         let event: id = msg_send![app, currentEvent];
         let _: () = msg_send![window, performWindowDragWithEvent: event];
     }
+    true
 }
 
 fn dispatch_mac_window_command(
@@ -1609,8 +1671,11 @@ fn dispatch_mac_window_command(
             }
         }
         PlatformWindowCommand::StartWindowMove => {
-            start_mac_window_move(&window_state);
-            PlatformWindowCommandOutcome::Accepted
+            if start_mac_window_move(&window_state) {
+                PlatformWindowCommandOutcome::Accepted
+            } else {
+                PlatformWindowCommandOutcome::Rejected
+            }
         }
         PlatformWindowCommand::ShowWindowMenu(_) | PlatformWindowCommand::StartWindowResize(_) => {
             PlatformWindowCommandOutcome::Rejected
@@ -1624,6 +1689,20 @@ impl PlatformWindow for MacWindow {
         PlatformWindowCommandDispatcher::new(move |command| {
             dispatch_mac_window_command(&window_state, command)
         })
+    }
+
+    fn interaction_quiescence(&self) -> PlatformWindowInteractionQuiescence {
+        let target = {
+            let state = self.0.lock();
+            unsafe {
+                Rc::new(MacWindowInteractionQuiescenceTarget::new(
+                    state.native_window,
+                    Arc::downgrade(&self.0),
+                    state.interaction_quiesced.clone(),
+                ))
+            }
+        };
+        PlatformWindowInteractionQuiescence::new(move || target.revoke())
     }
 
     fn prepare_presentation_shutdown(
@@ -1743,7 +1822,16 @@ impl PlatformWindow for MacWindow {
 
     fn platform_facts(&self) -> open_gpui::WindowPlatformFacts {
         let window_bounds = self.window_bounds();
-        let activation_policy = self.0.as_ref().lock().activation_policy;
+        let state = self.0.as_ref().lock();
+        let activation_policy = if state.interaction_is_quiesced() {
+            WindowActivationPolicy {
+                accepts_activation: false,
+                focus_on_click: false,
+            }
+        } else {
+            state.activation_policy
+        };
+        drop(state);
         open_gpui::WindowPlatformFacts {
             bounds: self.bounds(),
             coordinate_space: open_gpui::WindowCoordinateSpace::GlobalScreen,
@@ -1771,38 +1859,77 @@ impl PlatformWindow for MacWindow {
     }
 
     fn merge_all_windows(&self) {
-        let native_window = self.0.lock().native_window;
-        extern "C" fn merge_windows_async(context: *mut std::ffi::c_void) {
-            unsafe {
-                let native_window = context as id;
-                let _: () = msg_send![native_window, mergeAllWindows:nil];
+        let (window_state, executor) = {
+            let state = self.0.lock();
+            if state.interaction_is_quiesced() {
+                return;
             }
-        }
-
-        unsafe {
-            DispatchQueue::main()
-                .exec_async_f(native_window as *mut std::ffi::c_void, merge_windows_async);
-        }
+            (Arc::downgrade(&self.0), state.foreground_executor.clone())
+        };
+        executor
+            .spawn(async move {
+                let Some(window_state) = window_state.upgrade() else {
+                    return;
+                };
+                let native_window = {
+                    let state = window_state.lock();
+                    if state.is_closed() || state.interaction_is_quiesced() {
+                        return;
+                    }
+                    state.native_window
+                };
+                unsafe {
+                    let _: () = msg_send![native_window, mergeAllWindows:nil];
+                }
+            })
+            .detach();
     }
 
     fn move_tab_to_new_window(&self) {
-        let native_window = self.0.lock().native_window;
-        extern "C" fn move_tab_async(context: *mut std::ffi::c_void) {
-            unsafe {
-                let native_window = context as id;
-                let _: () = msg_send![native_window, moveTabToNewWindow:nil];
-                let _: () = msg_send![native_window, makeKeyAndOrderFront: nil];
+        let (window_state, executor) = {
+            let state = self.0.lock();
+            if state.interaction_is_quiesced() {
+                return;
             }
-        }
+            (Arc::downgrade(&self.0), state.foreground_executor.clone())
+        };
+        executor
+            .spawn(async move {
+                let Some(window_state) = window_state.upgrade() else {
+                    return;
+                };
+                let native_window = {
+                    let state = window_state.lock();
+                    if state.is_closed() || state.interaction_is_quiesced() {
+                        return;
+                    }
+                    state.native_window
+                };
+                unsafe {
+                    let _: () = msg_send![native_window, moveTabToNewWindow:nil];
+                }
 
-        unsafe {
-            DispatchQueue::main()
-                .exec_async_f(native_window as *mut std::ffi::c_void, move_tab_async);
-        }
+                let state = window_state.lock();
+                if state.is_closed() || state.interaction_is_quiesced() {
+                    return;
+                }
+                let native_window = state.native_window;
+                drop(state);
+                unsafe {
+                    let _: () = msg_send![native_window, makeKeyAndOrderFront: nil];
+                }
+            })
+            .detach();
     }
 
     fn toggle_window_tab_overview(&self) {
-        let native_window = self.0.lock().native_window;
+        let native_window = {
+            let state = self.0.lock();
+            if state.interaction_is_quiesced() {
+                return;
+            }
+            state.native_window
+        };
         unsafe {
             let _: () = msg_send![native_window, toggleTabOverview:nil];
         }
@@ -2006,7 +2133,8 @@ impl PlatformWindow for MacWindow {
     }
 
     fn is_active(&self) -> bool {
-        unsafe { self.0.lock().native_window.isKeyWindow() == YES }
+        let state = self.0.lock();
+        !state.interaction_is_quiesced() && unsafe { state.native_window.isKeyWindow() == YES }
     }
 
     // is_hovered is unused on macOS. See Window::is_window_hovered.
@@ -2395,11 +2523,16 @@ impl PlatformWindow for MacWindow {
 
     fn a11y_init(&self, callbacks: open_gpui::A11yCallbacks) {
         let mut lock = self.0.lock();
+        let interaction_quiesced = lock.interaction_quiesced.clone();
 
         let activation_handler = A11yActivationHandler {
             callback: callbacks.activation,
+            interaction_quiesced: interaction_quiesced.clone(),
         };
-        let action_handler = A11yActionHandler(callbacks.action);
+        let action_handler = A11yActionHandler {
+            callback: callbacks.action,
+            interaction_quiesced,
+        };
 
         let adapter = unsafe {
             accesskit_macos::SubclassingAdapter::for_window(
@@ -2431,19 +2564,29 @@ impl PlatformWindow for MacWindow {
 
 struct A11yActivationHandler {
     callback: Box<dyn Fn() -> Option<accesskit::TreeUpdate> + Send + 'static>,
+    interaction_quiesced: Arc<AtomicBool>,
 }
 
 impl accesskit::ActivationHandler for A11yActivationHandler {
     fn request_initial_tree(&mut self) -> Option<accesskit::TreeUpdate> {
-        (self.callback)()
+        if self.interaction_quiesced.load(Ordering::Acquire) {
+            None
+        } else {
+            (self.callback)()
+        }
     }
 }
 
-struct A11yActionHandler(Box<dyn Fn(accesskit::ActionRequest) + Send + 'static>);
+struct A11yActionHandler {
+    callback: Box<dyn Fn(accesskit::ActionRequest) + Send + 'static>,
+    interaction_quiesced: Arc<AtomicBool>,
+}
 
 impl accesskit::ActionHandler for A11yActionHandler {
     fn do_action(&mut self, request: accesskit::ActionRequest) {
-        (self.0)(request);
+        if !self.interaction_quiesced.load(Ordering::Acquire) {
+            (self.callback)(request);
+        }
     }
 }
 
@@ -2528,6 +2671,7 @@ extern "C" fn can_become_active_window(this: &Object, _: Sel) -> BOOL {
         let state = get_window_state(this);
         let state = state.lock();
         if !state.is_closed()
+            && !state.interaction_is_quiesced()
             && (state.activation_policy.accepts_activation
                 || state.activation_policy.focus_on_click)
         {
@@ -2681,10 +2825,11 @@ unsafe fn is_ime_input_source_active() -> bool {
 }
 
 extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: bool) -> BOOL {
+    let blocked = if key_equivalent { YES } else { NO };
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
-    if lock.is_closed() {
-        return NO;
+    if lock.is_closed() || lock.interaction_is_quiesced() {
+        return blocked;
     }
 
     let window_height = lock.content_size().height;
@@ -2695,8 +2840,14 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
     };
 
     let event_callback = lock.event_callback.clone();
-    let run_callback =
-        |event: PlatformInput| -> BOOL { (!event_callback.dispatch(event).propagate) as BOOL };
+    let interaction_quiesced = lock.interaction_quiesced.clone();
+    let run_callback = |event: PlatformInput| -> BOOL {
+        if interaction_quiesced.load(Ordering::Acquire) {
+            blocked
+        } else {
+            (!event_callback.dispatch(event).propagate) as BOOL
+        }
+    };
 
     match event {
         PlatformInput::KeyDown(key_down_event) => {
@@ -2761,6 +2912,9 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
                     drop(lock);
                 }
 
+                if interaction_quiesced.load(Ordering::Acquire) {
+                    return blocked;
+                }
                 let handled: BOOL = unsafe {
                     let input_context: id = msg_send![this, inputContext];
                     msg_send![input_context, handleEvent: native_event]
@@ -2803,6 +2957,9 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
                 return NO;
             }
 
+            if interaction_quiesced.load(Ordering::Acquire) {
+                return blocked;
+            }
             unsafe {
                 let input_context: id = msg_send![this, inputContext];
                 msg_send![input_context, handleEvent: native_event]
@@ -2822,7 +2979,7 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
     let window_state = unsafe { get_window_state(this) };
     let weak_window_state = Arc::downgrade(&window_state);
     let mut lock = window_state.as_ref().lock();
-    if lock.is_closed() {
+    if lock.is_closed() || lock.interaction_is_quiesced() {
         return;
     }
     let window_height = lock.content_size().height;
@@ -2909,6 +3066,9 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
                     msg_send![input_context, handleEvent: native_event]
                 }
                 lock = window_state.as_ref().lock();
+                if lock.interaction_is_quiesced() {
+                    return;
+                }
             }
             PlatformInput::MouseMove(
                 event @ MouseMoveEvent {
@@ -2959,8 +3119,11 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
         }
 
         let event_callback = lock.event_callback.clone();
+        let interaction_quiesced = lock.interaction_quiesced.clone();
         drop(lock);
-        event_callback.dispatch(event);
+        if !interaction_quiesced.load(Ordering::Acquire) {
+            event_callback.dispatch(event);
+        }
     }
 }
 
@@ -3101,7 +3264,7 @@ extern "C" fn window_did_change_screen(this: &Object, _: Sel, _: id) {
 extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
     let lock = window_state.lock();
-    if lock.is_closed() {
+    if lock.is_closed() || lock.interaction_is_quiesced() {
         return;
     }
     let is_active = unsafe { lock.native_window.isKeyWindow() == YES };
@@ -3132,9 +3295,13 @@ extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) 
 
     let a11y_events = {
         let mut lock = window_state.lock();
-        lock.accesskit_adapter
-            .as_mut()
-            .and_then(|adapter| adapter.update_view_focus_state(is_active))
+        if lock.interaction_is_quiesced() {
+            None
+        } else {
+            lock.accesskit_adapter
+                .as_mut()
+                .and_then(|adapter| adapter.update_view_focus_state(is_active))
+        }
     };
     if let Some(events) = a11y_events {
         events.raise();
@@ -3174,7 +3341,7 @@ extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) 
     executor
         .spawn(async move {
             let mut lock = window_state.as_ref().lock();
-            if lock.is_closed() {
+            if lock.is_closed() || lock.interaction_is_quiesced() {
                 return;
             }
             if is_active {
@@ -3493,7 +3660,7 @@ extern "C" fn attributed_substring_for_proposed_range(
 extern "C" fn do_command_by_selector(this: &Object, _: Sel, _: Sel) {
     let state = unsafe { get_window_state(this) };
     let mut lock = state.as_ref().lock();
-    if lock.is_closed() {
+    if lock.is_closed() || lock.interaction_is_quiesced() {
         return;
     }
     let keystroke = lock.keystroke_for_do_command.take();
@@ -3532,6 +3699,10 @@ extern "C" fn view_did_change_effective_appearance(this: &Object, _: Sel) {
 extern "C" fn accepts_first_mouse(this: &Object, _: Sel, _: id) -> BOOL {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
+    if lock.interaction_is_quiesced() {
+        lock.first_mouse = false;
+        return NO;
+    }
     lock.first_mouse = macos_click_can_activate(lock.activation_policy);
     YES
 }
@@ -3620,7 +3791,10 @@ async fn synthetic_drag(
         if let Some(window_state) = window_state.upgrade() {
             let event_callback = {
                 let lock = window_state.lock();
-                if lock.is_closed() || lock.synthetic_drag_counter != drag_id {
+                if lock.is_closed()
+                    || lock.interaction_is_quiesced()
+                    || lock.synthetic_drag_counter != drag_id
+                {
                     break;
                 }
                 lock.event_callback.clone()
@@ -3644,7 +3818,7 @@ fn send_file_drop_event(
 
     let event_callback = {
         let lock = window_state.lock();
-        if lock.is_closed() {
+        if lock.is_closed() || lock.interaction_is_quiesced() {
             return false;
         }
         lock.event_callback.clone()
@@ -3675,11 +3849,19 @@ where
     F: FnOnce(&mut PlatformInputHandler) -> R,
 {
     let window_state = unsafe { get_window_state(window) };
-    let input_handler_slot = {
+    let (input_handler_slot, interaction_quiesced) = {
         let lock = window_state.as_ref().lock();
-        lock.input_handler.clone()
+        if lock.is_closed() || lock.interaction_is_quiesced() {
+            return None;
+        }
+        (
+            lock.input_handler.clone(),
+            lock.interaction_quiesced.clone(),
+        )
     };
-    input_handler_slot.with_handler(f)
+    input_handler_slot
+        .with_handler(|handler| (!interaction_quiesced.load(Ordering::Acquire)).then(|| f(handler)))
+        .flatten()
 }
 
 unsafe fn display_id_for_screen(screen: id) -> CGDirectDisplayID {
@@ -3781,12 +3963,15 @@ extern "C" fn add_titlebar_accessory_view_controller(this: &Object, _: Sel, view
 
 extern "C" fn move_tab_to_new_window(this: &Object, _: Sel, _: id) {
     unsafe {
+        let window_state = get_window_state(this);
+        if window_state.lock().interaction_is_quiesced() {
+            return;
+        }
         let superclass = window_callback_superclass(this);
         let _: () = msg_send![super(this, superclass), moveTabToNewWindow:nil];
 
-        let window_state = get_window_state(this);
         let mut lock = window_state.as_ref().lock();
-        if lock.is_closed() {
+        if lock.is_closed() || lock.interaction_is_quiesced() {
             return;
         }
         if let Some(mut callback) = lock.move_tab_to_new_window_callback.take() {
@@ -3802,12 +3987,15 @@ extern "C" fn move_tab_to_new_window(this: &Object, _: Sel, _: id) {
 
 extern "C" fn merge_all_windows(this: &Object, _: Sel, _: id) {
     unsafe {
+        let window_state = get_window_state(this);
+        if window_state.lock().interaction_is_quiesced() {
+            return;
+        }
         let superclass = window_callback_superclass(this);
         let _: () = msg_send![super(this, superclass), mergeAllWindows:nil];
 
-        let window_state = get_window_state(this);
         let mut lock = window_state.as_ref().lock();
-        if lock.is_closed() {
+        if lock.is_closed() || lock.interaction_is_quiesced() {
             return;
         }
         if let Some(mut callback) = lock.merge_all_windows_callback.take() {
@@ -3824,7 +4012,7 @@ extern "C" fn merge_all_windows(this: &Object, _: Sel, _: id) {
 extern "C" fn select_next_tab(this: &Object, _sel: Sel, _id: id) {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
-    if lock.is_closed() {
+    if lock.is_closed() || lock.interaction_is_quiesced() {
         return;
     }
     if let Some(mut callback) = lock.select_next_tab_callback.take() {
@@ -3840,7 +4028,7 @@ extern "C" fn select_next_tab(this: &Object, _sel: Sel, _id: id) {
 extern "C" fn select_previous_tab(this: &Object, _sel: Sel, _id: id) {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
-    if lock.is_closed() {
+    if lock.is_closed() || lock.interaction_is_quiesced() {
         return;
     }
     if let Some(mut callback) = lock.select_previous_tab_callback.take() {
@@ -3855,12 +4043,15 @@ extern "C" fn select_previous_tab(this: &Object, _sel: Sel, _id: id) {
 
 extern "C" fn toggle_tab_bar(this: &Object, _sel: Sel, _id: id) {
     unsafe {
+        let window_state = get_window_state(this);
+        if window_state.lock().interaction_is_quiesced() {
+            return;
+        }
         let superclass = window_callback_superclass(this);
         let _: () = msg_send![super(this, superclass), toggleTabBar:nil];
 
-        let window_state = get_window_state(this);
         let mut lock = window_state.as_ref().lock();
-        if lock.is_closed() {
+        if lock.is_closed() || lock.interaction_is_quiesced() {
             return;
         }
         lock.move_traffic_light();

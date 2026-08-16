@@ -268,6 +268,41 @@ impl X11ClientStatePtr {
         state.cursor_styles.remove(&x_window);
     }
 
+    pub(crate) fn quiesce_window_interaction(&self, x_window: xproto::Window) {
+        let Some(client) = self.get_client() else {
+            return;
+        };
+        let should_reset_ime = {
+            let mut state = client.0.borrow_mut();
+            let should_reset_ime = state.keyboard_focused_window == Some(x_window)
+                || state
+                    .xim_handler
+                    .as_ref()
+                    .is_some_and(|handler| handler.window == x_window);
+
+            if state.keyboard_focused_window == Some(x_window) {
+                state.keyboard_focused_window = None;
+                state.pre_edit_text.take();
+                if let Some(compose_state) = state.compose_state.as_mut() {
+                    compose_state.reset();
+                }
+            }
+            if state.mouse_focused_window == Some(x_window) {
+                state.mouse_focused_window = None;
+                reset_all_pointer_device_scroll_positions(&mut state.pointer_device_states);
+            }
+            if state.cursor_hidden_window == Some(x_window) {
+                state.restore_cursor_after_hide();
+            }
+
+            should_reset_ime
+        };
+
+        if should_reset_ime {
+            client.reset_ime();
+        }
+    }
+
     pub fn update_ime_position(&self, bounds: Bounds<Pixels>) {
         let Some(client) = self.get_client() else {
             return;
@@ -771,6 +806,15 @@ impl X11Client {
         if !state.has_xim() {
             return;
         }
+        if state
+            .keyboard_focused_window
+            .and_then(|window| state.windows.get(&window))
+            .is_some_and(|window| window.window.interaction_is_quiesced())
+        {
+            drop(state);
+            self.reset_ime();
+            return;
+        }
 
         let Some((mut ximc, xim_handler)) = state.take_xim() else {
             return;
@@ -802,6 +846,13 @@ impl X11Client {
                             },
                         );
                     });
+            }
+            if window.interaction_is_quiesced() {
+                let mut state = self.0.borrow_mut();
+                state.restore_xim(ximc, xim_handler);
+                drop(state);
+                self.reset_ime();
+                return;
             }
         }
         ximc.create_ic(xim_handler.im_id, ic_attributes.build())
@@ -1039,6 +1090,10 @@ impl X11Client {
                     true,
                     exact_native_positive,
                 ));
+                if window.interaction_is_quiesced() {
+                    self.reset_ime();
+                    return Some(());
+                }
                 let mut state = self.0.borrow_mut();
                 state.keyboard_focused_window = Some(event.event);
                 if let Some(handler) = state.xim_handler.as_mut() {
@@ -1123,6 +1178,9 @@ impl X11Client {
             }
             Event::KeyPress(event) => {
                 let window = self.get_window(event.event)?;
+                if window.interaction_is_quiesced() {
+                    return Some(());
+                }
                 let mut state = self.0.borrow_mut();
 
                 let modifiers = modifiers_from_state(event.state);
@@ -1187,6 +1245,9 @@ impl X11Client {
             }
             Event::KeyRelease(event) => {
                 let window = self.get_window(event.event)?;
+                if window.interaction_is_quiesced() {
+                    return Some(());
+                }
                 let mut state = self.0.borrow_mut();
 
                 let modifiers = modifiers_from_state(event.state);
@@ -1346,6 +1407,9 @@ impl X11Client {
             Event::XinputEnter(event) if event.mode == xinput::NotifyMode::NORMAL => {
                 let window = self.get_window(event.event)?;
                 window.set_hovered(true);
+                if window.interaction_is_quiesced() {
+                    return Some(());
+                }
                 let mut state = self.0.borrow_mut();
                 state.mouse_focused_window = Some(event.event);
                 state.restore_cursor_after_hide();
@@ -1509,6 +1573,10 @@ impl X11Client {
             log::error!("bug: Failed to get window for XIM commit");
             return None;
         };
+        if window.interaction_is_quiesced() {
+            self.reset_ime();
+            return Some(());
+        }
         let mut state = self.0.borrow_mut();
         state.composing = false;
         drop(state);
@@ -1521,6 +1589,10 @@ impl X11Client {
             log::error!("bug: Failed to get window for XIM preedit");
             return None;
         };
+        if window.interaction_is_quiesced() {
+            self.reset_ime();
+            return Some(());
+        }
 
         let mut state = self.0.borrow_mut();
         let (mut ximc, xim_handler) = state.take_xim()?;
@@ -1895,7 +1967,8 @@ impl LinuxClient for X11Client {
             state
                 .windows
                 .get(&focused_window)
-                .map(|window| window.handle())
+                .filter(|window| !window.interaction_is_quiesced())
+                .map(WindowRef::handle)
         })
     }
 
@@ -2006,6 +2079,7 @@ impl LinuxClient for X11Client {
         state
             .keyboard_focused_window
             .and_then(|focused_window| state.windows.get(&focused_window))
+            .filter(|window| !window.window.interaction_is_quiesced())
             .map(|window| window.window.x_window as u64)
             .map(|x_window| std::future::ready(Some(WindowIdentifier::from_xid(x_window))))
             .unwrap_or(std::future::ready(None))
@@ -2051,7 +2125,8 @@ impl X11ClientState {
 
     fn live_window_handle(&self, window: xproto::Window) -> Option<AnyWindowHandle> {
         let window_ref = self.windows.get(&window)?;
-        if window_ref.window.state.borrow().destroyed {
+        if window_ref.window.state.borrow().destroyed || window_ref.window.interaction_is_quiesced()
+        {
             return None;
         }
         Some(window_ref.handle())

@@ -60,7 +60,7 @@ use seahash::SeaHasher;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::borrow::Cow;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::hash::{Hash, Hasher};
 use std::io::Cursor;
 use std::ops;
@@ -3831,6 +3831,21 @@ pub enum PlatformWindowCommand {
     StartWindowResize(ResizeEdge),
 }
 
+impl PlatformWindowCommand {
+    /// Returns whether dispatching this command can begin a new native user-interaction session.
+    #[doc(hidden)]
+    pub fn requires_interaction_authority(self) -> bool {
+        matches!(
+            self,
+            Self::CompleteInitialPresentation { activate: true }
+                | Self::Activate { .. }
+                | Self::ShowWindowMenu(_)
+                | Self::StartWindowMove
+                | Self::StartWindowResize(_)
+        )
+    }
+}
+
 /// The synchronous terminal result of a platform-window command.
 ///
 /// A rejected initial-presentation command is retried by the native command authority and must
@@ -4800,9 +4815,156 @@ pub struct RequestFrameOptions {
     pub force_render: bool,
 }
 
+/// A cloneable, one-way native interaction gate for one platform window.
+///
+/// GPUI retains this authority outside the [`Window`] value so framework-managed shutdown can
+/// revoke native activation and non-client interaction even while the window is checked out by a
+/// reentrant callback. Backends must make the callback idempotent.
+#[derive(Clone)]
+#[doc(hidden)]
+pub struct PlatformWindowInteractionQuiescence {
+    state: Rc<PlatformWindowInteractionQuiescenceState>,
+}
+
+struct PlatformWindowInteractionQuiescenceState {
+    phase: Cell<PlatformWindowInteractionQuiescencePhase>,
+    revoke: Box<dyn Fn()>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PlatformWindowInteractionQuiescencePhase {
+    Pending,
+    Running,
+    Complete,
+}
+
+struct PlatformWindowInteractionQuiescenceAttempt {
+    state: Rc<PlatformWindowInteractionQuiescenceState>,
+}
+
+impl PlatformWindowInteractionQuiescenceAttempt {
+    fn complete(self) {
+        debug_assert_eq!(
+            self.state.phase.get(),
+            PlatformWindowInteractionQuiescencePhase::Running
+        );
+        self.state
+            .phase
+            .set(PlatformWindowInteractionQuiescencePhase::Complete);
+    }
+}
+
+impl Drop for PlatformWindowInteractionQuiescenceAttempt {
+    fn drop(&mut self) {
+        if self.state.phase.get() == PlatformWindowInteractionQuiescencePhase::Running {
+            self.state
+                .phase
+                .set(PlatformWindowInteractionQuiescencePhase::Pending);
+        }
+    }
+}
+
+impl PlatformWindowInteractionQuiescence {
+    /// Creates a backend-owned interaction-quiescence authority.
+    #[doc(hidden)]
+    pub fn new(revoke: impl Fn() + 'static) -> Self {
+        Self {
+            state: Rc::new(PlatformWindowInteractionQuiescenceState {
+                phase: Cell::new(PlatformWindowInteractionQuiescencePhase::Pending),
+                revoke: Box::new(revoke),
+            }),
+        }
+    }
+
+    pub(crate) fn revoke(&self) -> bool {
+        if self.state.phase.get() != PlatformWindowInteractionQuiescencePhase::Pending {
+            return false;
+        }
+
+        self.state
+            .phase
+            .set(PlatformWindowInteractionQuiescencePhase::Running);
+        let attempt = PlatformWindowInteractionQuiescenceAttempt {
+            state: self.state.clone(),
+        };
+        (self.state.revoke)();
+        attempt.complete();
+        true
+    }
+
+    pub(crate) fn has_pending_revocation(&self) -> bool {
+        self.state.phase.get() == PlatformWindowInteractionQuiescencePhase::Pending
+    }
+}
+
+#[cfg(test)]
+mod platform_window_interaction_quiescence_tests {
+    use super::*;
+    use std::{
+        cell::{Cell, RefCell},
+        panic::{AssertUnwindSafe, catch_unwind},
+        rc::Rc,
+    };
+
+    #[test]
+    fn interaction_quiescence_retries_after_panic_then_is_idempotent() {
+        let attempts = Rc::new(Cell::new(0));
+        let panic_once = Rc::new(Cell::new(true));
+        let quiescence = PlatformWindowInteractionQuiescence::new({
+            let attempts = attempts.clone();
+            let panic_once = panic_once.clone();
+            move || {
+                attempts.set(attempts.get() + 1);
+                if panic_once.replace(false) {
+                    panic!("injected platform interaction-quiescence panic");
+                }
+            }
+        });
+
+        assert!(
+            catch_unwind(AssertUnwindSafe(|| quiescence.revoke())).is_err(),
+            "the first platform revocation attempt should propagate its panic"
+        );
+        assert!(quiescence.has_pending_revocation());
+        assert!(quiescence.revoke());
+        assert!(!quiescence.has_pending_revocation());
+        assert!(!quiescence.revoke());
+        assert_eq!(attempts.get(), 2);
+    }
+
+    #[test]
+    fn interaction_quiescence_reentrant_revoke_does_not_recurse() {
+        let calls = Rc::new(Cell::new(0));
+        let bound: Rc<RefCell<Option<PlatformWindowInteractionQuiescence>>> =
+            Rc::new(RefCell::new(None));
+        let quiescence = PlatformWindowInteractionQuiescence::new({
+            let calls = calls.clone();
+            let bound = bound.clone();
+            move || {
+                calls.set(calls.get() + 1);
+                let nested = bound
+                    .borrow()
+                    .as_ref()
+                    .cloned()
+                    .expect("the reentrant authority should be installed");
+                assert!(!nested.revoke());
+            }
+        });
+        bound.borrow_mut().replace(quiescence.clone());
+
+        assert!(quiescence.revoke());
+        assert_eq!(calls.get(), 1);
+        assert!(!quiescence.revoke());
+        assert_eq!(calls.get(), 1);
+    }
+}
+
 #[expect(missing_docs)]
 pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn command_dispatcher(&self) -> PlatformWindowCommandDispatcher;
+    /// Returns a cloneable one-way authority that disables native interaction for this window.
+    #[doc(hidden)]
+    fn interaction_quiescence(&self) -> PlatformWindowInteractionQuiescence;
     /// Prepares renderer quiescence without performing native or renderer effects.
     ///
     /// The returned operation is dispatched only after GPUI has released its application borrow.
@@ -6218,8 +6380,16 @@ impl PlatformInputHandler {
     }
 
     pub(crate) fn finish_composition(&mut self, window: &mut Window, cx: &mut App) {
-        if self.handler.marked_text_range(window, cx).is_some() {
-            self.handler.unmark_text(window, cx);
+        Self::finish_handler_composition(self.handler.as_mut(), window, cx);
+    }
+
+    fn finish_handler_composition(
+        handler: &mut dyn InputHandler,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        if handler.marked_text_range(window, cx).is_some() {
+            handler.unmark_text(window, cx);
         }
     }
 
@@ -6227,21 +6397,45 @@ impl PlatformInputHandler {
         &mut self,
         operation: NativeInputHandlerOperation,
         callback: impl FnOnce(&mut dyn InputHandler, &mut Window, &mut App) -> R,
-    ) -> std::result::Result<R, NativeInputInvariantViolation> {
+    ) -> std::result::Result<Option<R>, NativeInputInvariantViolation> {
         let Self { cx, handler, .. } = self;
         cx.update_native_input_handler(operation, |window, app| {
-            window
-                .with_input_transaction(app, |window, app| callback(handler.as_mut(), window, app))
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                window.with_input_transaction(app, |window, app| {
+                    callback(handler.as_mut(), window, app)
+                })
+            }));
+            let cleanup = if window.user_interaction_is_admitted() {
+                Ok(())
+            } else {
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    Self::finish_handler_composition(handler.as_mut(), window, app);
+                }))
+            };
+            match (result, cleanup) {
+                (Ok(result), Ok(())) => result,
+                (Err(payload), Ok(())) => std::panic::resume_unwind(payload),
+                (Ok(_), Err(payload)) => std::panic::resume_unwind(payload),
+                (Err(payload), Err(_)) => {
+                    log::error!(
+                        "suppressed secondary IME cleanup panic after a native input callback panic"
+                    );
+                    std::panic::resume_unwind(payload)
+                }
+            }
         })
     }
 
-    fn native_callback<R>(
+    fn native_callback<R: Default>(
         &mut self,
         operation: NativeInputHandlerOperation,
         callback: impl FnOnce(&mut dyn InputHandler, &mut Window, &mut App) -> R,
     ) -> R {
-        self.update_in_input_transaction(operation, callback)
-            .unwrap_or_else(|violation| std::panic::panic_any(violation))
+        match self.update_in_input_transaction(operation, callback) {
+            Ok(Some(result)) => result,
+            Ok(None) => R::default(),
+            Err(violation) => std::panic::panic_any(violation),
+        }
     }
 
     pub fn selected_text_range(&mut self, ignore_disabled_input: bool) -> Option<UTF16Selection> {

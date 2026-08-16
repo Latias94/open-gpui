@@ -17,22 +17,23 @@ use crate::{
     MonochromeSprite, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
     PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
     PlatformWindowCapabilities, PlatformWindowCommand, PlatformWindowDispatch,
-    PlatformWindowMutationObservation, PlatformWindowMutationTerminal,
-    PlatformWindowPresentOutcome, PlatformWindowProfile, Point, PointerCancelEvent,
-    PointerCancelReason, PolychromeSprite, PreparedPlatformPresentationShutdown, Primitive,
-    PrimitiveTransform, Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams,
-    RenderImage, RenderImageParams, RenderSvgParams, Replay, RequestFrameOptions, ResizeEdge,
-    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Shadow,
-    SharedString, Size, StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription,
-    SubtreeClip, SubtreeClipError, SubtreePresentation, SubtreeTransform, SubtreeTransformError,
-    SystemWindowTab, SystemWindowTabController, TaffyLayoutEngine, Task, TextRenderingMode,
-    TextStyle, TextStyleRefinement, Underline, UnderlineStyle, WindowActivationPolicy,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls,
-    WindowCreationFacts, WindowDecorations, WindowInitialPresentationOrder,
-    WindowInitialPresentationStatus, WindowKind, WindowMutationDispatch, WindowMutationDomain,
-    WindowMutationOutcome, WindowOptions, WindowParams, WindowPhysicalPlacementRequest,
-    WindowPlacementRequest, WindowPlacementState, WindowPlatformFacts, WindowPresentAttemptFacts,
-    WindowPresentationFacts, WindowProvisionalOpeningClaim, WindowProvisionalPlacementOutcome,
+    PlatformWindowInteractionQuiescence, PlatformWindowMutationObservation,
+    PlatformWindowMutationTerminal, PlatformWindowPresentOutcome, PlatformWindowProfile, Point,
+    PointerCancelEvent, PointerCancelReason, PolychromeSprite,
+    PreparedPlatformPresentationShutdown, Primitive, PrimitiveTransform, Priority, PromptButton,
+    PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams,
+    Replay, RequestFrameOptions, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X,
+    SUBPIXEL_VARIANTS_Y, ScaledPixels, Shadow, SharedString, Size, StrikethroughStyle, Style,
+    SubpixelSprite, SubscriberSet, Subscription, SubtreeClip, SubtreeClipError,
+    SubtreePresentation, SubtreeTransform, SubtreeTransformError, SystemWindowTab,
+    SystemWindowTabController, TaffyLayoutEngine, Task, TextRenderingMode, TextStyle,
+    TextStyleRefinement, Underline, UnderlineStyle, WindowActivationPolicy, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControls, WindowCreationFacts,
+    WindowDecorations, WindowInitialPresentationOrder, WindowInitialPresentationStatus, WindowKind,
+    WindowMutationDispatch, WindowMutationDomain, WindowMutationOutcome, WindowOptions,
+    WindowParams, WindowPhysicalPlacementRequest, WindowPlacementRequest, WindowPlacementState,
+    WindowPlatformFacts, WindowPresentAttemptFacts, WindowPresentationFacts,
+    WindowProvisionalOpeningClaim, WindowProvisionalPlacementOutcome,
     WindowProvisionalPlacementRequest, WindowProvisionalPlacementTicket,
     WindowProvisionalRevealCancellationOutcome, WindowProvisionalRevealOutcome,
     WindowProvisionalRevealTicket, WindowProvisionalSemanticsOutcome,
@@ -1504,6 +1505,123 @@ struct InitialPresentationRetryState {
 const FRESH_INITIAL_PRESENTATION_ATTEMPT_LIMIT: u8 = 3;
 const INITIAL_PRESENTATION_RETRY_LIMIT: u8 = 3;
 
+/// A one-way admission authority shared by a Window and its AppCell native boundary.
+#[derive(Clone)]
+pub(crate) struct WindowInteractionAuthority {
+    state: Rc<WindowInteractionAuthorityState>,
+}
+
+struct WindowInteractionAuthorityState {
+    admitted: Cell<bool>,
+    defer_pointer_cleanup_to_native_capture: Cell<bool>,
+    platform: RefCell<Option<PlatformWindowInteractionQuiescence>>,
+}
+
+impl WindowInteractionAuthority {
+    pub(crate) fn new() -> Self {
+        Self {
+            state: Rc::new(WindowInteractionAuthorityState {
+                admitted: Cell::new(true),
+                defer_pointer_cleanup_to_native_capture: Cell::new(false),
+                platform: RefCell::new(None),
+            }),
+        }
+    }
+
+    fn bind_platform(&self, platform: PlatformWindowInteractionQuiescence) {
+        let should_revoke = !self.is_admitted();
+        {
+            let mut current = self.state.platform.borrow_mut();
+            assert!(
+                current.is_none(),
+                "one window interaction authority cannot bind multiple platform windows"
+            );
+            current.replace(platform.clone());
+        }
+        if should_revoke {
+            platform.revoke();
+        }
+    }
+
+    pub(crate) fn is_admitted(&self) -> bool {
+        self.state.admitted.get()
+    }
+
+    pub(crate) fn revoke(&self) -> bool {
+        let logical_revoked_now = self.state.admitted.replace(false);
+        let platform = self.state.platform.borrow().clone();
+        let platform_revoked_now = platform.is_some_and(|platform| platform.revoke());
+        logical_revoked_now || platform_revoked_now
+    }
+
+    fn has_pending_platform_revocation(&self) -> bool {
+        if self.is_admitted() {
+            return false;
+        }
+        let platform = self.state.platform.borrow().clone();
+        platform.is_some_and(|platform| platform.has_pending_revocation())
+    }
+
+    pub(crate) fn defer_pointer_cleanup_to_native_capture(&self) {
+        self.state.defer_pointer_cleanup_to_native_capture.set(true);
+    }
+
+    fn pointer_cleanup_is_deferred_to_native_capture(&self) -> bool {
+        self.state.defer_pointer_cleanup_to_native_capture.get()
+    }
+
+    fn complete_deferred_pointer_cleanup(&self) {
+        self.state
+            .defer_pointer_cleanup_to_native_capture
+            .set(false);
+    }
+}
+
+#[cfg(test)]
+mod window_interaction_authority_tests {
+    use super::*;
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    #[test]
+    fn binding_after_logical_revocation_retains_platform_retry_authority() {
+        let authority = WindowInteractionAuthority::new();
+        assert!(authority.revoke());
+        assert!(!authority.is_admitted());
+
+        let attempts = Rc::new(Cell::new(0));
+        let panic_once = Rc::new(Cell::new(true));
+        let platform = PlatformWindowInteractionQuiescence::new({
+            let attempts = attempts.clone();
+            let panic_once = panic_once.clone();
+            move || {
+                attempts.set(attempts.get() + 1);
+                if panic_once.replace(false) {
+                    panic!("injected bind-time platform revocation panic");
+                }
+            }
+        });
+
+        assert!(
+            catch_unwind(AssertUnwindSafe(|| authority.bind_platform(platform))).is_err(),
+            "binding an already-revoked authority should propagate the first platform panic"
+        );
+        assert!(!authority.is_admitted());
+        assert!(authority.has_pending_platform_revocation());
+        assert!(authority.revoke());
+        assert!(!authority.has_pending_platform_revocation());
+        assert!(!authority.revoke());
+        assert_eq!(attempts.get(), 2);
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum WindowInteractionCleanupState {
+    #[default]
+    Pending,
+    Running,
+    Complete,
+}
+
 /// Holds the state for a specific window.
 pub struct Window {
     pub(crate) handle: AnyWindowHandle,
@@ -1518,6 +1636,9 @@ pub struct Window {
     initial_presentation_retry: InitialPresentationRetryState,
     presentation_shutdown: Option<PreparedPlatformPresentationShutdown>,
     provisional_session: Option<WindowProvisionalSession>,
+    interaction_authority: WindowInteractionAuthority,
+    interaction_quiescence_non_pointer_cleanup: WindowInteractionCleanupState,
+    interaction_quiescence_pointer_cleanup: WindowInteractionCleanupState,
     _provisional_opening_claim: Option<WindowProvisionalOpeningClaim>,
     creation_facts: WindowCreationFacts,
     presentation_state: WindowPresentationState,
@@ -1767,6 +1888,7 @@ impl CandidateFrameTransaction {
 }
 
 struct CandidateFrameAuthorityCheckpoint {
+    interaction_quiesced: bool,
     focus: Option<FocusId>,
     pending_focus_claim: Option<PendingFocusClaim>,
     pending_focus_reveal_fence: Option<PendingFocusRevealFence>,
@@ -1908,7 +2030,7 @@ fn retain_first_window_cleanup_panic(
     if first.is_none() {
         *first = Some(payload);
     } else {
-        log::error!("suppressed secondary panic while settling window removal stage `{stage}`");
+        log::error!("suppressed secondary panic while settling window lifecycle stage `{stage}`");
     }
 }
 
@@ -2207,6 +2329,7 @@ impl Window {
     pub(crate) fn new(
         handle: AnyWindowHandle,
         options: WindowOptions,
+        interaction_authority: WindowInteractionAuthority,
         cx: &mut App,
     ) -> Result<Self> {
         let WindowOptions {
@@ -2583,6 +2706,7 @@ impl Window {
         let active = Rc::new(Cell::new(platform_facts.is_active));
         let hovered = Rc::new(Cell::new(platform_window.is_hovered()));
 
+        interaction_authority.bind_platform(platform_window.interaction_quiescence());
         let platform_window = platform_window.into_platform_window();
 
         Ok(Window {
@@ -2605,6 +2729,9 @@ impl Window {
             initial_presentation_retry: InitialPresentationRetryState::default(),
             presentation_shutdown: None,
             provisional_session,
+            interaction_authority,
+            interaction_quiescence_non_pointer_cleanup: WindowInteractionCleanupState::Pending,
+            interaction_quiescence_pointer_cleanup: WindowInteractionCleanupState::Pending,
             _provisional_opening_claim: provisional_opening_claim,
             creation_facts,
             presentation_state: WindowPresentationState::default(),
@@ -2729,7 +2856,10 @@ impl Window {
     }
 
     pub(crate) fn creation_can_commit(&self) -> bool {
-        !self.removed && !self.native_closed.get() && self.removal_state == WindowRemovalState::Open
+        self.interaction_authority.is_admitted()
+            && !self.removed
+            && !self.native_closed.get()
+            && self.removal_state == WindowRemovalState::Open
     }
 
     pub(crate) fn bind_provisional_session(
@@ -3229,6 +3359,10 @@ impl Window {
         })
     }
 
+    pub(crate) fn user_interaction_is_admitted(&self) -> bool {
+        self.interaction_authority.is_admitted() && self.provisional_session_accepts_interaction()
+    }
+
     fn provisional_session_projects_destination_semantics(&self) -> bool {
         self.provisional_session.as_ref().is_none_or(|session| {
             let snapshot = session.snapshot();
@@ -3331,11 +3465,7 @@ impl Window {
     }
 
     fn request_renderer_repaint_frame(&mut self) {
-        self.refresh();
-        self.platform_window.request_frame(RequestFrameOptions {
-            force_render: true,
-            require_presentation: true,
-        });
+        self.request_fresh_initial_presentation_frame();
     }
 
     fn begin_fresh_initial_presentation_attempt(&mut self, cx: &mut App) -> bool {
@@ -3790,13 +3920,38 @@ impl Window {
         if self.removed || self.removal_state != WindowRemovalState::Open {
             return;
         }
+        let mut first_panic = None;
+        retain_first_window_cleanup_panic(
+            &mut first_panic,
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                self.interaction_authority.revoke();
+            })),
+            "platform interaction-authority revocation",
+        );
+        retain_first_window_cleanup_panic(
+            &mut first_panic,
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                if let Some(app) = cx.this.upgrade() {
+                    app.quiesce_native_window_activation_target(self.handle.window_id());
+                }
+            })),
+            "native activation-authority quiescence",
+        );
+        cx.stop_propagation();
+        self.default_prevented = true;
         let removal_state = if self.input_transaction_depth.get() > 0 {
             WindowRemovalState::PendingAfterInput
         } else {
             WindowRemovalState::Removing
         };
-        self.claim_presentation_shutdown();
         self.removal_state = removal_state;
+        retain_first_window_cleanup_panic(
+            &mut first_panic,
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                self.claim_presentation_shutdown();
+            })),
+            "presentation-shutdown claim",
+        );
         let preparation = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             self.terminate_provisional_presentation_for_window_close();
             self.invalidate_platform_window_mutations();
@@ -3812,8 +3967,13 @@ impl Window {
                 std::panic::resume_unwind(payload);
             }
         }));
+        retain_first_window_cleanup_panic(
+            &mut first_panic,
+            preparation,
+            "window-removal preparation",
+        );
         if self.input_transaction_depth.get() > 0 {
-            if let Err(payload) = preparation {
+            if let Some(payload) = first_panic {
                 std::panic::resume_unwind(payload);
             }
             return;
@@ -3822,7 +3982,188 @@ impl Window {
         let cleanup = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             self.finish_remove_window(cx)
         }));
-        finish_after_window_cleanup(preparation, cleanup, "direct window removal");
+        retain_first_window_cleanup_panic(&mut first_panic, cleanup, "direct window removal");
+        if let Some(payload) = first_panic {
+            std::panic::resume_unwind(payload);
+        }
+    }
+
+    /// Permanently revokes user interaction for this window while preserving layout and paint.
+    ///
+    /// This is a one-way retirement boundary for framework-managed window lifecycles. The same
+    /// native window may continue painting while asynchronous shutdown converges, but pointer,
+    /// keyboard, focus, IME, activation, and accessibility authority cannot be reacquired. A new
+    /// interactive lifecycle must use a new [`WindowId`](crate::WindowId).
+    #[doc(hidden)]
+    pub fn quiesce_interaction(&mut self, cx: &mut App) -> bool {
+        self.finish_interaction_quiescence(true, cx)
+    }
+
+    pub(crate) fn finish_pending_interaction_quiescence(&mut self, cx: &mut App) -> bool {
+        if self.interaction_authority.is_admitted() {
+            return false;
+        }
+        self.finish_interaction_quiescence(true, cx)
+    }
+
+    pub(crate) fn has_pending_interaction_quiescence_cleanup(&self) -> bool {
+        !self.interaction_authority.is_admitted()
+            && (self.interaction_authority.has_pending_platform_revocation()
+                || self.interaction_quiescence_non_pointer_cleanup
+                    == WindowInteractionCleanupState::Pending
+                || (self.interaction_quiescence_pointer_cleanup
+                    == WindowInteractionCleanupState::Pending
+                    && !self
+                        .interaction_authority
+                        .pointer_cleanup_is_deferred_to_native_capture()))
+    }
+
+    /// Revokes interaction without consuming an exact native captured-drag release authority.
+    #[doc(hidden)]
+    pub fn quiesce_interaction_preserving_native_pointer_capture(&mut self, cx: &mut App) -> bool {
+        self.interaction_authority
+            .defer_pointer_cleanup_to_native_capture();
+        self.finish_interaction_quiescence(false, cx)
+    }
+
+    fn finish_interaction_quiescence(&mut self, cleanup_pointer: bool, cx: &mut App) -> bool {
+        let mut first_panic = None;
+        let revoked_now = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.interaction_authority.revoke()
+        })) {
+            Ok(revoked_now) => revoked_now,
+            Err(payload) => {
+                retain_first_window_cleanup_panic(
+                    &mut first_panic,
+                    Err(payload),
+                    "platform interaction-authority revocation",
+                );
+                false
+            }
+        };
+        cx.stop_propagation();
+        self.default_prevented = true;
+
+        let mut cleanup_ran = false;
+        if self.interaction_quiescence_non_pointer_cleanup == WindowInteractionCleanupState::Pending
+        {
+            cleanup_ran = true;
+            self.interaction_quiescence_non_pointer_cleanup =
+                WindowInteractionCleanupState::Running;
+            retain_first_window_cleanup_panic(
+                &mut first_panic,
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let mut deliveries = Vec::new();
+                    for domain in [
+                        WindowMutationDomain::PointerInput,
+                        WindowMutationDomain::ActivationPolicy,
+                    ] {
+                        self.platform_window.invalidate_window_mutation(domain);
+                        deliveries.extend(self.window_mutations.settle_domain(
+                            &self.window_mutation_authority,
+                            domain,
+                            WindowMutationOutcome::Rejected,
+                            &self.platform_facts,
+                        ));
+                    }
+                    self.platform_facts.accepts_pointer_input = false;
+                    self.platform_facts.accepts_activation = false;
+                    self.platform_facts.focus_on_click = false;
+                    self.platform_facts.is_active = false;
+                    if let Err(payload) =
+                        Self::deliver_window_mutation_ticket_deliveries_panic_safe(deliveries)
+                    {
+                        std::panic::resume_unwind(payload);
+                    }
+                })),
+                "interaction-quiescence mutation cleanup",
+            );
+            retain_first_window_cleanup_panic(
+                &mut first_panic,
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    if let Some(app) = cx.this.upgrade() {
+                        app.quiesce_native_window_activation_target(self.handle.window_id());
+                    }
+                })),
+                "interaction-quiescence activation cleanup",
+            );
+            retain_first_window_cleanup_panic(
+                &mut first_panic,
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    if self.active.replace(false) {
+                        self.activation_observers
+                            .clone()
+                            .retain(&(), |callback| callback(self, cx));
+                        self.bounds_changed(cx);
+                    }
+                })),
+                "interaction-quiescence active-state cleanup",
+            );
+            retain_first_window_cleanup_panic(
+                &mut first_panic,
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    self.quiesce_focus_authority(cx);
+                })),
+                "interaction-quiescence focus cleanup",
+            );
+            retain_first_window_cleanup_panic(
+                &mut first_panic,
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    if let Some(mut input_handler) = self.platform_window.take_input_handler() {
+                        input_handler.finish_composition(self, cx);
+                    }
+                })),
+                "interaction-quiescence IME cleanup",
+            );
+            retain_first_window_cleanup_panic(
+                &mut first_panic,
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    self.a11y.clear_announcements_for_interaction_quiescence();
+                })),
+                "interaction-quiescence accessibility cleanup",
+            );
+            retain_first_window_cleanup_panic(
+                &mut first_panic,
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    self.close_bring_into_view_authority(cx);
+                })),
+                "interaction-quiescence bring-into-view cleanup",
+            );
+            self.interaction_quiescence_non_pointer_cleanup =
+                WindowInteractionCleanupState::Complete;
+        }
+        if cleanup_pointer
+            && !self
+                .interaction_authority
+                .pointer_cleanup_is_deferred_to_native_capture()
+            && self.interaction_quiescence_pointer_cleanup == WindowInteractionCleanupState::Pending
+        {
+            cleanup_ran = true;
+            self.interaction_quiescence_pointer_cleanup = WindowInteractionCleanupState::Running;
+            retain_first_window_cleanup_panic(
+                &mut first_panic,
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    self.quiesce_pointer_session(PointerCancelReason::CaptureRevoked, cx);
+                })),
+                "interaction-quiescence pointer cancellation",
+            );
+            retain_first_window_cleanup_panic(
+                &mut first_panic,
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    self.clear_pointer_session(PointerCancelReason::CaptureRevoked, cx);
+                })),
+                "interaction-quiescence pointer cleanup",
+            );
+            self.interaction_quiescence_pointer_cleanup = WindowInteractionCleanupState::Complete;
+        }
+
+        if revoked_now || cleanup_ran {
+            self.refresh();
+        }
+        if let Some(payload) = first_panic {
+            std::panic::resume_unwind(payload);
+        }
+        revoked_now || cleanup_ran
     }
 
     fn finish_pending_window_removal(&mut self, cx: &mut App) {
@@ -4266,9 +4607,33 @@ impl Window {
 
     fn focus_mutations_enabled(&self) -> bool {
         self.focus_enabled
-            && self.provisional_session_accepts_interaction()
+            && self.user_interaction_is_admitted()
             && self.subtree_presentation().is_interactive()
             && self.prepaint_commit_phase.get() != Some(PrepaintCommitPhase::FocusStable)
+    }
+
+    fn quiesce_focus_authority(&mut self, cx: &mut App) {
+        self.focus_enabled = false;
+        self.supersede_pending_focus_completion();
+        self.focus_claim_revision = self.focus_claim_revision.wrapping_add(1);
+        self.pending_focus_claim = None;
+        self.pending_focus_reveal_fence = None;
+        self.pending_blur_claim_generation = None;
+        self.provisional_focus_claim = None;
+        self.candidate_accessibility_focus = None;
+        self.focus = None;
+        self.next_frame.focus = None;
+        self.sealed_focus_retry_rejection = None;
+        self.focus_followup_requested = false;
+        self.requested_autoscroll = None;
+        self.tooltip_bounds = None;
+        let pending_input_changed = self.pending_input.take().is_some();
+        self.pending_modifier = ModifierState::default();
+        self.refresh_focus_authority();
+        if pending_input_changed {
+            self.defer_pending_input_changed_after_interaction_quiescence(cx);
+        }
+        self.schedule_focus_claim_resolution_dispatch(cx);
     }
 
     fn sealed_focus_authority_frame(&self) -> &Frame {
@@ -4379,6 +4744,14 @@ impl Window {
     }
 
     fn defer_pending_input_changed(&mut self, cx: &mut App) {
+        self.defer_pending_input_changed_inner(false, cx);
+    }
+
+    fn defer_pending_input_changed_after_interaction_quiescence(&mut self, cx: &mut App) {
+        self.defer_pending_input_changed_inner(true, cx);
+    }
+
+    fn defer_pending_input_changed_inner(&mut self, protected: bool, cx: &mut App) {
         if self.invalidator.is_building_frame() {
             self.candidate_pending_input_notification = true;
             return;
@@ -4388,11 +4761,20 @@ impl Window {
         // current effect cycle, and only for this window.
         let window_handle = self.handle;
         cx.defer(move |cx| {
-            window_handle
-                .update(cx, |_, window, cx| {
-                    window.pending_input_changed(cx);
-                })
-                .ok();
+            let delivery = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                window_handle
+                    .update(cx, |_, window, cx| {
+                        window.pending_input_changed(cx);
+                    })
+                    .ok();
+            }));
+            match delivery {
+                Ok(()) => {}
+                Err(payload) if protected => {
+                    cx.retain_post_borrow_panic(payload);
+                }
+                Err(payload) => std::panic::resume_unwind(payload),
+            }
         });
     }
 
@@ -4904,7 +5286,11 @@ impl Window {
         };
 
         cx.keystroke_observers.clone().retain(&(), move |callback| {
-            (callback)(
+            if !self.user_interaction_is_admitted() {
+                cx.stop_propagation();
+                return true;
+            }
+            let retain = (callback)(
                 &KeystrokeEvent {
                     keystroke: key_down_event.keystroke.clone(),
                     action: action.as_ref().map(|action| action.boxed_clone()),
@@ -4912,7 +5298,9 @@ impl Window {
                 },
                 self,
                 cx,
-            )
+            );
+            self.interaction_dispatch_continues(cx);
+            retain
         });
     }
 
@@ -4929,7 +5317,11 @@ impl Window {
         cx.keystroke_interceptors
             .clone()
             .retain(&(), move |callback| {
-                (callback)(
+                if !self.user_interaction_is_admitted() {
+                    cx.stop_propagation();
+                    return true;
+                }
+                let retain = (callback)(
                     &KeystrokeEvent {
                         keystroke: key_down_event.keystroke.clone(),
                         action: None,
@@ -4937,7 +5329,9 @@ impl Window {
                     },
                     self,
                     cx,
-                )
+                );
+                self.interaction_dispatch_continues(cx);
+                retain
             });
     }
 
@@ -5142,6 +5536,12 @@ impl Window {
         }
         if !capabilities.taskbar_visibility.is_live() {
             facts.taskbar_visible = self.platform_facts.taskbar_visible;
+        }
+        if !self.interaction_authority.is_admitted() {
+            facts.accepts_pointer_input = false;
+            facts.accepts_activation = false;
+            facts.focus_on_click = false;
+            facts.is_active = false;
         }
         self.viewport_size = facts.content_size;
         self.scale_factor = facts.scale_factor;
@@ -5614,6 +6014,14 @@ impl Window {
         if self.removal_state != WindowRemovalState::Open || self.removed {
             return WindowMutationDispatch::WindowClosed;
         }
+        if !self.interaction_authority.is_admitted()
+            && matches!(
+                request.domain(),
+                WindowMutationDomain::PointerInput | WindowMutationDomain::ActivationPolicy
+            )
+        {
+            return WindowMutationDispatch::Rejected;
+        }
         if let WindowMutationRequest::Placement(placement) = request
             && !placement_request_is_valid(placement, &self.platform_facts)
         {
@@ -5820,7 +6228,7 @@ impl Window {
     }
 
     pub(crate) fn native_active_status_change_is_admissible(&self, active: bool) -> bool {
-        !active || self.provisional_session_accepts_interaction()
+        !active || self.user_interaction_is_admitted()
     }
 
     pub(crate) fn native_active_status_changed(&mut self, active: bool, cx: &mut App) {
@@ -5886,6 +6294,11 @@ impl Window {
         announcement: AccessibilityAnnouncement,
         _cx: &mut App,
     ) -> AccessibilityAnnouncementOutcome {
+        if !self.interaction_authority.is_admitted() {
+            return self
+                .a11y
+                .reject_announcement_for_interaction_quiescence(announcement);
+        }
         if self.removal_state != WindowRemovalState::Open || self.removed {
             return self
                 .a11y
@@ -6194,6 +6607,9 @@ impl Window {
 
     /// Determine whether the given action is available along the dispatch path to the currently focused element.
     pub fn is_action_available(&self, action: &dyn Action, cx: &App) -> bool {
+        if !self.user_interaction_is_admitted() {
+            return false;
+        }
         let node_id =
             self.focus_node_id_in_rendered_frame(self.focused(cx).map(|handle| handle.id));
         self.rendered_frame
@@ -6203,6 +6619,9 @@ impl Window {
 
     /// Determine whether the given action is available along the dispatch path to the given focus_handle.
     pub fn is_action_available_in(&self, action: &dyn Action, focus_handle: &FocusHandle) -> bool {
+        if !self.user_interaction_is_admitted() {
+            return false;
+        }
         let node_id = self.focus_node_id_in_rendered_frame(Some(focus_handle.id));
         self.rendered_frame
             .dispatch_tree
@@ -6347,6 +6766,7 @@ impl Window {
 
     fn candidate_frame_authority_checkpoint(&self) -> CandidateFrameAuthorityCheckpoint {
         CandidateFrameAuthorityCheckpoint {
+            interaction_quiesced: !self.interaction_authority.is_admitted(),
             focus: self.focus,
             pending_focus_claim: self.pending_focus_claim,
             pending_focus_reveal_fence: self.pending_focus_reveal_fence.clone(),
@@ -6361,7 +6781,14 @@ impl Window {
         }
     }
 
-    fn restore_candidate_frame_authority(&mut self, checkpoint: CandidateFrameAuthorityCheckpoint) {
+    fn restore_candidate_frame_authority(
+        &mut self,
+        checkpoint: CandidateFrameAuthorityCheckpoint,
+    ) -> bool {
+        if !checkpoint.interaction_quiesced && !self.interaction_authority.is_admitted() {
+            self.candidate_pending_input_clear = false;
+            return mem::take(&mut self.candidate_pending_input_notification);
+        }
         self.focus = checkpoint.focus;
         self.pending_focus_claim = checkpoint.pending_focus_claim;
         self.pending_focus_reveal_fence = checkpoint.pending_focus_reveal_fence;
@@ -6376,6 +6803,7 @@ impl Window {
         self.focus_followup_requested = checkpoint.focus_followup_requested;
         self.candidate_pending_input_clear = false;
         self.candidate_pending_input_notification = false;
+        false
     }
 
     fn focus_resolutions_for_rejected_candidate(
@@ -6593,7 +7021,15 @@ impl Window {
             self.a11y.discard_candidate_frame();
             self.rollback_candidate_frame_transfers();
             self.next_frame.clear();
-            self.restore_candidate_frame_authority(authority_checkpoint);
+            let notify_pending_input_changed =
+                self.restore_candidate_frame_authority(authority_checkpoint);
+            if notify_pending_input_changed {
+                if self.interaction_authority.is_admitted() {
+                    self.defer_pending_input_changed(cx);
+                } else {
+                    self.defer_pending_input_changed_after_interaction_quiescence(cx);
+                }
+            }
             self.append_focus_claim_resolutions(rejected_focus_resolutions);
             self.schedule_focus_claim_resolution_dispatch(cx);
             self.candidate_accessibility_focus = None;
@@ -6601,7 +7037,7 @@ impl Window {
             if let Some(index) = restored_input_handler_index
                 && let Some(input_handler) = self.rendered_frame.input_handlers[index].value.take()
             {
-                self.platform_window.set_input_handler(input_handler);
+                self.restore_input_handler_if_admitted(input_handler, cx);
             }
             self.rendered_frame
                 .input_handlers
@@ -6650,14 +7086,18 @@ impl Window {
         self.refreshing = false;
         self.invalidator.set_phase(DrawPhase::None);
         if notify_pending_input_changed {
-            self.defer_pending_input_changed(cx);
+            if self.interaction_authority.is_admitted() {
+                self.defer_pending_input_changed(cx);
+            } else {
+                self.defer_pending_input_changed_after_interaction_quiescence(cx);
+            }
         }
         if let Some(input_handler) = self.select_frame_input_handler_after_composition_cleanup(
             &mut rendered_input_handlers,
             &mut next_input_handlers,
             cx,
         ) {
-            self.platform_window.set_input_handler(input_handler);
+            self.restore_input_handler_if_admitted(input_handler, cx);
         }
 
         self.layout_engine.as_mut().unwrap().clear();
@@ -6875,10 +7315,25 @@ impl Window {
         }
     }
 
+    fn restore_input_handler_if_admitted(
+        &mut self,
+        mut input_handler: PlatformInputHandler,
+        cx: &mut App,
+    ) {
+        if self.user_interaction_is_admitted() {
+            self.platform_window.set_input_handler(input_handler);
+        } else {
+            input_handler.finish_composition(self, cx);
+        }
+    }
+
     fn next_input_handler_index(
         &self,
         handlers: &[(bool, Option<PlatformInputHandler>)],
     ) -> Option<usize> {
+        if !self.user_interaction_is_admitted() {
+            return None;
+        }
         let focus = self.focus?;
         self.next_frame.dispatch_tree.focusable_node_id(focus)?;
         handlers
@@ -7112,7 +7567,11 @@ impl Window {
             let offset = self.mouse_position() - active_drag.window_preview_offset;
             element.prepaint_as_root(offset, AvailableSpace::min_size(), self, cx);
             active_drag_element = Some(element);
-            cx.active_drag = Some(active_drag);
+            if self.user_interaction_is_admitted() && cx.active_drag.is_none() {
+                cx.active_drag = Some(active_drag);
+            } else if cx.active_drag.is_none() {
+                cx.retire_native_captured_drag_authority();
+            }
         } else if prompt_element.is_none() && !window_owns_active_drag {
             tooltip_element = self.prepaint_tooltip(cx);
         }
@@ -8190,7 +8649,7 @@ impl Window {
     /// during the paint phase of element drawing.
     pub fn set_cursor_style(&mut self, style: CursorStyle, hitbox: &Hitbox) {
         self.invalidator.debug_assert_paint();
-        if !self.subtree_presentation().is_interactive() {
+        if !self.user_interaction_is_admitted() || !self.subtree_presentation().is_interactive() {
             return;
         }
         self.next_frame.cursor_styles.push(CursorStyleRequest {
@@ -8785,11 +9244,17 @@ impl Window {
 
     /// Returns the effective layout-preserving presentation state for the current element subtree.
     pub fn subtree_presentation(&self) -> SubtreePresentation {
-        self.subtree_presentation_stack
+        let presentation = self
+            .subtree_presentation_stack
             .borrow()
             .last()
             .copied()
-            .unwrap_or_default()
+            .unwrap_or_default();
+        if !self.interaction_authority.is_admitted() {
+            presentation.resolve_under(SubtreePresentation::Inert)
+        } else {
+            presentation
+        }
     }
 
     pub(crate) fn with_subtree_presentation<R>(
@@ -10951,7 +11416,7 @@ impl Window {
                 && let Some(mut input_handler) = window.platform_window.take_input_handler()
             {
                 input_handler.dispatch_input(&input, window, cx);
-                window.platform_window.set_input_handler(input_handler);
+                window.restore_input_handler_if_admitted(input_handler, cx);
                 return true;
             }
 
@@ -10989,7 +11454,7 @@ impl Window {
                     default_prevented: false,
                 });
         }
-        if !incoming_pointer_cancel && !self.provisional_session_accepts_interaction() {
+        if !self.user_interaction_is_admitted() {
             return DispatchEventResult {
                 propagate: false,
                 default_prevented: true,
@@ -11004,6 +11469,15 @@ impl Window {
         cx: &mut App,
     ) -> DispatchEventResult {
         self.with_input_transaction(cx, move |window, cx| window.dispatch_event_inner(event, cx))
+    }
+
+    fn interaction_dispatch_continues(&mut self, cx: &mut App) -> bool {
+        if !self.user_interaction_is_admitted() {
+            cx.stop_propagation();
+            self.default_prevented = true;
+            return false;
+        }
+        cx.propagate_event
     }
 
     fn dispatch_event_inner(&mut self, event: PlatformInput, cx: &mut App) -> DispatchEventResult {
@@ -11101,8 +11575,14 @@ impl Window {
 
             if !inspector_picking && let Some(event) = WindowMouseEvent::from_any(event) {
                 self.mouse_interceptors.clone().retain(&(), |interceptor| {
-                    if is_pointer_cancel || cx.propagate_event {
-                        interceptor(event, self, cx)
+                    if is_pointer_cancel
+                        || (cx.propagate_event && self.user_interaction_is_admitted())
+                    {
+                        let retain = interceptor(event, self, cx);
+                        if !is_pointer_cancel {
+                            self.interaction_dispatch_continues(cx);
+                        }
+                        retain
                     } else {
                         true
                     }
@@ -11147,7 +11627,7 @@ impl Window {
                                     continue;
                                 };
                                 listener(event, DispatchPhase::Capture, self, cx);
-                                if !cx.propagate_event {
+                                if !self.interaction_dispatch_continues(cx) {
                                     break;
                                 }
                             }
@@ -11163,7 +11643,7 @@ impl Window {
                                     continue;
                                 };
                                 listener(event, DispatchPhase::Bubble, self, cx);
-                                if !cx.propagate_event {
+                                if !self.interaction_dispatch_continues(cx) {
                                     break;
                                 }
                             }
@@ -11194,6 +11674,10 @@ impl Window {
 
         if self.invalidator.is_dirty() {
             self.draw(cx).clear();
+            if !self.user_interaction_is_admitted() {
+                cx.stop_propagation();
+                return;
+            }
         }
 
         let node_id = self.focus_node_id_in_rendered_frame(self.focus);
@@ -11252,12 +11736,18 @@ impl Window {
             self.key_down_interceptors
                 .clone()
                 .retain(&(), |interceptor| {
-                    if cx.propagate_event {
-                        interceptor(event, self, cx)
+                    if cx.propagate_event && self.user_interaction_is_admitted() {
+                        let retain = interceptor(event, self, cx);
+                        self.interaction_dispatch_continues(cx);
+                        retain
                     } else {
                         true
                     }
                 });
+        }
+        if !self.user_interaction_is_admitted() {
+            cx.stop_propagation();
+            return;
         }
         if !cx.propagate_event {
             let current_context_stack = self.context_stack();
@@ -11278,6 +11768,10 @@ impl Window {
             return;
         }
         self.dispatch_keystroke_interceptors(event, self.context_stack(), cx);
+        if !self.user_interaction_is_admitted() {
+            cx.stop_propagation();
+            return;
+        }
         if !cx.propagate_event {
             self.finish_dispatch_key_event(event, dispatch_path, self.context_stack(), cx);
             return;
@@ -11303,6 +11797,10 @@ impl Window {
 
         if !match_result.to_replay.is_empty() {
             self.replay_pending_input(match_result.to_replay, cx);
+            if !self.user_interaction_is_admitted() {
+                cx.stop_propagation();
+                return;
+            }
             cx.propagate_event = true;
         }
 
@@ -11318,9 +11816,14 @@ impl Window {
                 .and_then(|_| self.platform_window.take_input_handler())
                 .map_or(false, |mut input_handler| {
                     let accepts = input_handler.accepts_text_input(self, cx);
-                    self.platform_window.set_input_handler(input_handler);
-                    accepts
+                    self.restore_input_handler_if_admitted(input_handler, cx);
+                    accepts && self.user_interaction_is_admitted()
                 });
+
+            if !self.user_interaction_is_admitted() {
+                cx.stop_propagation();
+                return;
+            }
 
             currently_pending.needs_timeout |=
                 match_result.pending_has_binding || text_input_requires_timeout;
@@ -11373,10 +11876,10 @@ impl Window {
                     .take_input_handler()
                     .map_or(false, |mut input_handler| {
                         let accepts = input_handler.accepts_text_input(self, cx);
-                        self.platform_window.set_input_handler(input_handler);
+                        self.restore_input_handler_if_admitted(input_handler, cx);
                         // If modifiers are not excessive (e.g. AltGr), and the input handler is accepting text input,
                         // we prefer the text input over bindings.
-                        accepts
+                        accepts && self.user_interaction_is_admitted()
                     })
             })
             .unwrap_or(false);
@@ -11384,6 +11887,10 @@ impl Window {
         if !skip_bindings {
             for binding in match_result.bindings {
                 self.dispatch_action_on_node(node_id, binding.action.as_ref(), cx);
+                if !self.user_interaction_is_admitted() {
+                    cx.stop_propagation();
+                    return;
+                }
                 if !cx.propagate_event {
                     self.dispatch_keystroke_observers(
                         event,
@@ -11408,13 +11915,17 @@ impl Window {
         context_stack: Vec<KeyContext>,
         cx: &mut App,
     ) {
+        if !self.user_interaction_is_admitted() {
+            cx.stop_propagation();
+            return;
+        }
         self.dispatch_key_down_up_event(event, &dispatch_path, cx);
-        if !cx.propagate_event {
+        if !self.interaction_dispatch_continues(cx) {
             return;
         }
 
         self.dispatch_modifiers_changed_event(event, &dispatch_path, cx);
-        if !cx.propagate_event {
+        if !self.interaction_dispatch_continues(cx) {
             return;
         }
 
@@ -11439,7 +11950,7 @@ impl Window {
 
             for key_listener in node.key_listeners.clone() {
                 key_listener(event, DispatchPhase::Capture, self, cx);
-                if !cx.propagate_event {
+                if !self.interaction_dispatch_continues(cx) {
                     return;
                 }
             }
@@ -11451,7 +11962,7 @@ impl Window {
             let node = self.rendered_frame.dispatch_tree.node(*node_id);
             for key_listener in node.key_listeners.clone() {
                 key_listener(event, DispatchPhase::Bubble, self, cx);
-                if !cx.propagate_event {
+                if !self.interaction_dispatch_continues(cx) {
                     return;
                 }
             }
@@ -11471,7 +11982,7 @@ impl Window {
             let node = self.rendered_frame.dispatch_tree.node(*node_id);
             for listener in node.modifiers_changed_listeners.clone() {
                 listener(event, self, cx);
-                if !cx.propagate_event {
+                if !self.interaction_dispatch_continues(cx) {
                     return;
                 }
             }
@@ -11499,10 +12010,16 @@ impl Window {
     }
 
     fn replay_pending_input(&mut self, replays: SmallVec<[Replay; 1]>, cx: &mut App) {
+        if !self.user_interaction_is_admitted() {
+            return;
+        }
         let node_id = self.focus_node_id_in_rendered_frame(self.focus);
         let dispatch_path = self.rendered_frame.dispatch_tree.dispatch_path(node_id);
 
         'replay: for replay in replays {
+            if !self.user_interaction_is_admitted() {
+                break;
+            }
             let event = KeyDownEvent {
                 keystroke: replay.keystroke.clone(),
                 is_held: false,
@@ -11512,6 +12029,10 @@ impl Window {
             cx.propagate_event = true;
             for binding in replay.bindings {
                 self.dispatch_action_on_node(node_id, binding.action.as_ref(), cx);
+                if !self.user_interaction_is_admitted() {
+                    cx.stop_propagation();
+                    break 'replay;
+                }
                 if !cx.propagate_event {
                     self.dispatch_keystroke_observers(
                         &event,
@@ -11524,14 +12045,14 @@ impl Window {
             }
 
             self.dispatch_key_down_up_event(&event, &dispatch_path, cx);
-            if !cx.propagate_event {
+            if !self.interaction_dispatch_continues(cx) {
                 continue 'replay;
             }
             if let Some(input) = replay.keystroke.key_char.as_ref().cloned()
                 && let Some(mut input_handler) = self.platform_window.take_input_handler()
             {
                 input_handler.dispatch_input(&input, self, cx);
-                self.platform_window.set_input_handler(input_handler)
+                self.restore_input_handler_if_admitted(input_handler, cx)
             }
         }
     }
@@ -11552,6 +12073,10 @@ impl Window {
         action: &dyn Action,
         cx: &mut App,
     ) {
+        if !self.user_interaction_is_admitted() {
+            cx.stop_propagation();
+            return;
+        }
         self.dispatch_action_on_node_inner(node_id, action, cx);
 
         if !cx.propagate_event
@@ -11580,6 +12105,10 @@ impl Window {
                 profiler::update_running_action(action, cx);
                 listener(action.as_any(), DispatchPhase::Capture, cx);
                 profiler::save_action_timing();
+                if !self.user_interaction_is_admitted() {
+                    cx.stop_propagation();
+                    break;
+                }
                 if !cx.propagate_event {
                     break;
                 }
@@ -11595,7 +12124,7 @@ impl Window {
                 .insert(action.as_any().type_id(), global_listeners);
         }
 
-        if !cx.propagate_event {
+        if !self.interaction_dispatch_continues(cx) {
             return;
         }
 
@@ -11613,7 +12142,7 @@ impl Window {
                     listener(any_action, DispatchPhase::Capture, self, cx);
                     profiler::save_action_timing();
 
-                    if !cx.propagate_event {
+                    if !self.interaction_dispatch_continues(cx) {
                         return;
                     }
                 }
@@ -11635,6 +12164,10 @@ impl Window {
                     listener(any_action, DispatchPhase::Bubble, self, cx);
                     profiler::save_action_timing();
 
+                    if !self.user_interaction_is_admitted() {
+                        cx.stop_propagation();
+                        return;
+                    }
                     if !cx.propagate_event {
                         return;
                     }
@@ -11653,6 +12186,10 @@ impl Window {
                 profiler::update_running_action(action, cx);
                 listener(action.as_any(), DispatchPhase::Bubble, cx);
                 profiler::save_action_timing();
+                if !self.user_interaction_is_admitted() {
+                    cx.stop_propagation();
+                    break;
+                }
                 if !cx.propagate_event {
                     break;
                 }
@@ -11703,9 +12240,7 @@ impl Window {
             != crate::PlatformWindowActivationSupport::Observed
         {
             Some(crate::WindowActivationTerminal::Unsupported)
-        } else if !self.provisional_session_accepts_interaction()
-            || !activation_policy.accepts_activation()
-        {
+        } else if !self.user_interaction_is_admitted() || !activation_policy.accepts_activation() {
             Some(crate::WindowActivationTerminal::Rejected)
         } else {
             None
@@ -11751,7 +12286,7 @@ impl Window {
         if let Some(bounds) = input_handler.selected_bounds(self, cx) {
             self.platform_window.update_ime_position(bounds);
         }
-        self.platform_window.set_input_handler(input_handler);
+        self.restore_input_handler_if_admitted(input_handler, cx);
     }
 
     /// Present a platform dialog.
@@ -12095,7 +12630,7 @@ impl Window {
         request: accesskit::ActionRequest,
         cx: &mut App,
     ) -> bool {
-        if !self.provisional_session_accepts_interaction() {
+        if !self.user_interaction_is_admitted() {
             return false;
         }
         if !self.a11y.accepts_action(
@@ -12122,6 +12657,9 @@ impl Window {
             let extra_data = request.data.as_ref();
             let mut matched = false;
             for (action, listener) in &mut listeners {
+                if !self.user_interaction_is_admitted() {
+                    break;
+                }
                 if *action == request.action {
                     listener(extra_data, self, cx);
                     matched = true;
@@ -12132,6 +12670,9 @@ impl Window {
                 request.target_node,
                 listeners,
             );
+            if !self.user_interaction_is_admitted() {
+                return matched;
+            }
             if matched {
                 return true;
             }

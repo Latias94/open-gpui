@@ -19,11 +19,11 @@ use open_gpui::{
     GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInputCallback,
     PlatformInputHandler, PlatformInputHandlerSlot, PlatformPresentationShutdownOutcome,
     PlatformWindow, PlatformWindowActiveStatusObservation, PlatformWindowCommand,
-    PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome, PlatformWindowPresentOutcome,
-    Point, PreparedPlatformPresentationShutdown, PromptButton, PromptLevel, RequestFrameOptions,
-    Scene, Size, TileId, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowControlArea, WindowCreationFacts, WindowParams, WindowPlatformFacts,
-    WindowPresentationShutdownTicket, px,
+    PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome,
+    PlatformWindowInteractionQuiescence, PlatformWindowPresentOutcome, Point,
+    PreparedPlatformPresentationShutdown, PromptButton, PromptLevel, RequestFrameOptions, Scene,
+    Size, TileId, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
+    WindowCreationFacts, WindowParams, WindowPlatformFacts, WindowPresentationShutdownTicket, px,
 };
 
 #[derive(Debug)]
@@ -62,6 +62,7 @@ struct HeadlessWindowState {
     title: Option<String>,
     cursor_style: CursorStyle,
     accepts_pointer_input: bool,
+    interaction_quiesced: bool,
     creation_facts: WindowCreationFacts,
     atlas: Arc<HeadlessAtlas>,
     close_callback: Option<Box<dyn FnOnce()>>,
@@ -115,6 +116,7 @@ impl HeadlessWindow {
             title: None,
             cursor_style: CursorStyle::Arrow,
             accepts_pointer_input: params.accepts_pointer_input,
+            interaction_quiesced: false,
             creation_facts: WindowCreationFacts {
                 show: params.show,
                 focus_on_appearing: params.focus_on_appearing,
@@ -128,15 +130,35 @@ impl HeadlessWindow {
 
 impl PlatformWindow for HeadlessWindow {
     fn command_dispatcher(&self) -> PlatformWindowCommandDispatcher {
-        PlatformWindowCommandDispatcher::new(|command| match command {
-            PlatformWindowCommand::CompleteInitialPresentation { .. } => {
-                PlatformWindowCommandOutcome::Accepted
+        let state = Rc::downgrade(&self.0);
+        PlatformWindowCommandDispatcher::new(move |command| {
+            let Some(state) = state.upgrade() else {
+                return PlatformWindowCommandOutcome::WindowClosed;
+            };
+            if state.borrow().interaction_quiesced && command.requires_interaction_authority() {
+                return PlatformWindowCommandOutcome::Rejected;
             }
-            PlatformWindowCommand::Activate { .. } => PlatformWindowCommandOutcome::Unsupported,
-            PlatformWindowCommand::RevealDeferredInitialPresentation { .. }
-            | PlatformWindowCommand::ShowWindowMenu(_)
-            | PlatformWindowCommand::StartWindowMove
-            | PlatformWindowCommand::StartWindowResize(_) => PlatformWindowCommandOutcome::Rejected,
+            match command {
+                PlatformWindowCommand::CompleteInitialPresentation { .. } => {
+                    PlatformWindowCommandOutcome::Accepted
+                }
+                PlatformWindowCommand::Activate { .. } => PlatformWindowCommandOutcome::Unsupported,
+                PlatformWindowCommand::RevealDeferredInitialPresentation { .. }
+                | PlatformWindowCommand::ShowWindowMenu(_)
+                | PlatformWindowCommand::StartWindowMove
+                | PlatformWindowCommand::StartWindowResize(_) => {
+                    PlatformWindowCommandOutcome::Rejected
+                }
+            }
+        })
+    }
+
+    fn interaction_quiescence(&self) -> PlatformWindowInteractionQuiescence {
+        let state = Rc::downgrade(&self.0);
+        PlatformWindowInteractionQuiescence::new(move || {
+            if let Some(state) = state.upgrade() {
+                state.borrow_mut().interaction_quiesced = true;
+            }
         })
     }
 

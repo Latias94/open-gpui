@@ -670,6 +670,21 @@ impl NativeWindowActivationAuthority {
     }
 
     pub(super) fn window_closed(&self, window_id: WindowId) -> Vec<WindowActivationTicketDelivery> {
+        self.settle_window(window_id, WindowActivationTerminal::WindowClosed)
+    }
+
+    pub(super) fn interaction_quiesced(
+        &self,
+        window_id: WindowId,
+    ) -> Vec<WindowActivationTicketDelivery> {
+        self.settle_window(window_id, WindowActivationTerminal::PolicyChanged)
+    }
+
+    fn settle_window(
+        &self,
+        window_id: WindowId,
+        terminal: WindowActivationTerminal,
+    ) -> Vec<WindowActivationTicketDelivery> {
         let generations = self
             .records
             .borrow()
@@ -678,7 +693,7 @@ impl NativeWindowActivationAuthority {
                 (record.ticket.target() == window_id).then_some(*generation)
             })
             .collect::<Vec<_>>();
-        self.settle_generations(generations, WindowActivationTerminal::WindowClosed)
+        self.settle_generations(generations, terminal)
     }
 
     pub(super) fn cancel(

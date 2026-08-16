@@ -29,7 +29,9 @@ use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1;
 
 use crate::linux::wayland::{display::WaylandDisplay, serial::SerialKind};
 use crate::linux::{
-    Globals, Output, WaylandClientStatePtr, should_close_callback::ShouldCloseCallbackSlot,
+    Globals, Output, WaylandClientStatePtr,
+    interaction_gate::{WindowInteractionGate, accesskit_adapter},
+    should_close_callback::ShouldCloseCallbackSlot,
 };
 use open_gpui::{
     AnyWindowHandle, Bounds, Capslock, CursorStyle, Decorations, DevicePixels, GpuSpecs, Modifiers,
@@ -37,10 +39,10 @@ use open_gpui::{
     PlatformInputCallback, PlatformInputCallbackSlot, PlatformInputHandler,
     PlatformInputHandlerSlot, PlatformPresentationShutdownOutcome, PlatformWindow,
     PlatformWindowActiveStatusObservation, PlatformWindowCommand, PlatformWindowCommandDispatcher,
-    PlatformWindowCommandOutcome, PlatformWindowPresentOutcome, Point,
-    PreparedPlatformPresentationShutdown, PromptButton, PromptLevel, RequestFrameOptions,
-    ResizeEdge, Scene, Size, Tiling, WindowActivationPolicy, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls,
+    PlatformWindowCommandOutcome, PlatformWindowInteractionQuiescence,
+    PlatformWindowPresentOutcome, Point, PreparedPlatformPresentationShutdown, PromptButton,
+    PromptLevel, RequestFrameOptions, ResizeEdge, Scene, Size, Tiling, WindowActivationPolicy,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls,
     WindowCreationFacts, WindowDecorations, WindowKind, WindowParams,
     WindowPresentationShutdownTicket, layer_shell::LayerShellNotSupportedError, px, size,
 };
@@ -258,6 +260,7 @@ pub struct WaylandWindowState {
     client: WaylandClientStatePtr,
     handle: AnyWindowHandle,
     active: bool,
+    interaction_gate: WindowInteractionGate,
     hovered: bool,
     cursor_style: CursorStyle,
     renderer_presented: bool,
@@ -497,6 +500,10 @@ impl WaylandWindowCommandTarget {
         };
         let mut state = state.borrow_mut();
 
+        if state.interaction_gate.is_quiesced() && command.requires_interaction_authority() {
+            return PlatformWindowCommandOutcome::Rejected;
+        }
+
         match command {
             PlatformWindowCommand::CompleteInitialPresentation { activate } => {
                 if state.initial_presentation_completed {
@@ -676,6 +683,7 @@ impl WaylandWindowState {
             appearance,
             handle,
             active: false,
+            interaction_gate: WindowInteractionGate::default(),
             hovered: false,
             cursor_style: CursorStyle::Arrow,
             renderer_presented: false,
@@ -895,6 +903,10 @@ impl WaylandWindow {
 }
 
 impl WaylandWindowStatePtr {
+    pub(crate) fn interaction_is_quiesced(&self) -> bool {
+        self.state.borrow().interaction_gate.is_quiesced()
+    }
+
     fn terminate_callback_slots(&self) {
         let (input_callback, should_close) = {
             let callbacks = self.callbacks.borrow();
@@ -963,14 +975,27 @@ impl WaylandWindowStatePtr {
     }
 
     fn update_ime_enabled(&self) {
-        let (client, input_handler) = {
+        let (client, handle, input_handler, interaction_gate) = {
             let state = self.state.borrow();
-            (state.client.clone(), state.input_handler.clone())
+            (
+                state.client.clone(),
+                state.handle,
+                state.input_handler.clone(),
+                state.interaction_gate.clone(),
+            )
         };
+        if interaction_gate.is_quiesced() {
+            client.quiesce_window_interaction(handle);
+            return;
+        }
         let ime_enabled = input_handler
             .with_handler(|input_handler| input_handler.query_accepts_text_input())
             .and_then(NativeInputHandlerOutcome::into_delivered)
             .unwrap_or(false);
+        if interaction_gate.is_quiesced() {
+            client.quiesce_window_interaction(handle);
+            return;
+        }
         if Some(ime_enabled) == client.ime_enabled() {
             return;
         }
@@ -1299,7 +1324,12 @@ impl WaylandWindowStatePtr {
     }
 
     pub fn handle_ime(&self, ime: ImeInput) {
-        let input_handler = self.state.borrow().input_handler.clone();
+        let state = self.state.borrow();
+        if state.interaction_gate.is_quiesced() {
+            return;
+        }
+        let input_handler = state.input_handler.clone();
+        drop(state);
         let _ = input_handler.with_handler(|input_handler| match ime {
             ImeInput::InsertText(text) => input_handler.replace_text_in_range(None, &text),
             ImeInput::SetMarkedText(text) => {
@@ -1320,7 +1350,12 @@ impl WaylandWindowStatePtr {
     }
 
     pub fn get_ime_area(&self) -> Option<Bounds<Pixels>> {
-        let input_handler = self.state.borrow().input_handler.clone();
+        let state = self.state.borrow();
+        if state.interaction_gate.is_quiesced() {
+            return None;
+        }
+        let input_handler = state.input_handler.clone();
+        drop(state);
         input_handler
             .with_handler(|input_handler| input_handler.ime_candidate_bounds())
             .and_then(NativeInputHandlerOutcome::into_delivered)
@@ -1378,11 +1413,17 @@ impl WaylandWindowStatePtr {
     }
 
     pub fn handle_input(&self, input: PlatformInput) {
+        if self.interaction_is_quiesced() {
+            return;
+        }
         let input_callback = self.callbacks.borrow().input.clone();
         if input_callback
             .dispatch(input.clone())
             .is_some_and(|result| !result.propagate)
         {
+            return;
+        }
+        if self.interaction_is_quiesced() {
             return;
         }
         if let PlatformInput::KeyDown(event) = input
@@ -1397,23 +1438,46 @@ impl WaylandWindowStatePtr {
 
     pub fn set_focused(&self, observation: PlatformWindowActiveStatusObservation) {
         let focus = observation.active();
+        let interaction_gate = self.state.borrow().interaction_gate.clone();
+        if !interaction_gate.admits_status(focus) {
+            let mut state = self.state.borrow_mut();
+            state.active = false;
+            if let Some(adapter) = state.accesskit_adapter.as_mut() {
+                adapter.update_window_focus_state(false);
+            }
+            return;
+        }
+
         self.state.borrow_mut().active = focus;
         let callback = self.callbacks.borrow_mut().active_status_change.take();
         if let Some(mut fun) = callback {
             fun(observation);
             self.callbacks.borrow_mut().active_status_change = Some(fun);
         }
-        if let Some(adapter) = self.state.borrow_mut().accesskit_adapter.as_mut() {
-            adapter.update_window_focus_state(focus);
+
+        let effective_focus = focus && !interaction_gate.is_quiesced();
+        let mut state = self.state.borrow_mut();
+        state.active = effective_focus;
+        if let Some(adapter) = state.accesskit_adapter.as_mut() {
+            adapter.update_window_focus_state(effective_focus);
         }
     }
 
     pub fn set_hovered(&self, focus: bool) {
+        let interaction_gate = self.state.borrow().interaction_gate.clone();
+        if !interaction_gate.admits_status(focus) {
+            self.state.borrow_mut().hovered = false;
+            return;
+        }
+
         self.state.borrow_mut().hovered = focus;
         let callback = self.callbacks.borrow_mut().hover_status_change.take();
         if let Some(mut fun) = callback {
             fun(focus);
             self.callbacks.borrow_mut().hover_status_change = Some(fun);
+        }
+        if focus && interaction_gate.is_quiesced() {
+            self.state.borrow_mut().hovered = false;
         }
     }
 
@@ -1482,6 +1546,31 @@ impl PlatformWindow for WaylandWindow {
     fn command_dispatcher(&self) -> PlatformWindowCommandDispatcher {
         let target = WaylandWindowCommandTarget::new(self);
         PlatformWindowCommandDispatcher::new(move |command| target.dispatch(command))
+    }
+
+    fn interaction_quiescence(&self) -> PlatformWindowInteractionQuiescence {
+        let state = Rc::downgrade(&self.0.state);
+        let interaction_gate = self.0.state.borrow().interaction_gate.clone();
+        let client = self.0.state.borrow().client.clone();
+        let handle = self.0.state.borrow().handle;
+        PlatformWindowInteractionQuiescence::new(move || {
+            interaction_gate.quiesce();
+            let Some(state) = state.upgrade() else {
+                return;
+            };
+            let mut state = state.borrow_mut();
+            state.active = false;
+            state.hovered = false;
+            state.creation.activation_policy = WindowActivationPolicy {
+                accepts_activation: false,
+                focus_on_click: false,
+            };
+            if let Some(adapter) = state.accesskit_adapter.as_mut() {
+                adapter.update_window_focus_state(false);
+            }
+            drop(state);
+            client.quiesce_window_interaction(handle);
+        })
     }
 
     fn prepare_presentation_shutdown(
@@ -1586,12 +1675,14 @@ impl PlatformWindow for WaylandWindow {
             is_maximized: state.maximized,
             is_fullscreen: state.fullscreen,
             accepts_pointer_input: true,
-            accepts_activation: state.creation.activation_policy.accepts_activation,
-            focus_on_click: state.creation.activation_policy.focus_on_click,
+            accepts_activation: !state.interaction_gate.is_quiesced()
+                && state.creation.activation_policy.accepts_activation,
+            focus_on_click: !state.interaction_gate.is_quiesced()
+                && state.creation.activation_policy.focus_on_click,
             background_appearance: state.background_appearance,
             topmost: state.creation.topmost,
             taskbar_visible: state.creation.taskbar_visible,
-            is_active: state.active,
+            is_active: !state.interaction_gate.is_quiesced() && state.active,
         }
     }
 
@@ -1691,11 +1782,13 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn is_active(&self) -> bool {
-        self.borrow().active
+        let state = self.borrow();
+        !state.interaction_gate.is_quiesced() && state.active
     }
 
     fn is_hovered(&self) -> bool {
-        self.borrow().hovered
+        let state = self.borrow();
+        !state.interaction_gate.is_quiesced() && state.hovered
     }
 
     fn set_title(&mut self, title: &str) {
@@ -1900,6 +1993,9 @@ impl PlatformWindow for WaylandWindow {
 
     fn update_ime_position(&self, bounds: Bounds<Pixels>) {
         let state = self.borrow();
+        if state.interaction_gate.is_quiesced() {
+            return;
+        }
         state.client.update_ime_position(bounds);
     }
 
@@ -1920,17 +2016,8 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn a11y_init(&self, callbacks: open_gpui::A11yCallbacks) {
-        let activation_handler = TrivialActivationHandler {
-            callback: callbacks.activation,
-        };
-        let action_handler = TrivialActionHandler(callbacks.action);
-        let deactivation_handler = TrivialDeactivationHandler {
-            callback: callbacks.deactivation,
-        };
-
-        let adapter =
-            accesskit_unix::Adapter::new(activation_handler, action_handler, deactivation_handler);
-
+        let interaction_gate = self.borrow().interaction_gate.clone();
+        let adapter = accesskit_adapter(callbacks, interaction_gate);
         self.borrow_mut().accesskit_adapter = Some(adapter);
     }
 
@@ -1943,34 +2030,6 @@ impl PlatformWindow for WaylandWindow {
 
     fn a11y_update_window_bounds(&self) {
         // Wayland doesn't expose window position, so this is a no-op
-    }
-}
-
-struct TrivialActivationHandler {
-    callback: Box<dyn Fn() -> Option<accesskit::TreeUpdate> + Send + 'static>,
-}
-
-impl accesskit::ActivationHandler for TrivialActivationHandler {
-    fn request_initial_tree(&mut self) -> Option<accesskit::TreeUpdate> {
-        (self.callback)()
-    }
-}
-
-struct TrivialActionHandler(Box<dyn Fn(accesskit::ActionRequest) + Send + 'static>);
-
-impl accesskit::ActionHandler for TrivialActionHandler {
-    fn do_action(&mut self, request: accesskit::ActionRequest) {
-        (self.0)(request);
-    }
-}
-
-struct TrivialDeactivationHandler {
-    callback: Box<dyn Fn() + Send + 'static>,
-}
-
-impl accesskit::DeactivationHandler for TrivialDeactivationHandler {
-    fn deactivate_accessibility(&mut self) {
-        (self.callback)();
     }
 }
 
