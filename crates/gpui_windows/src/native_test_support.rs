@@ -6,7 +6,8 @@ use open_gpui::{
     NativeBoundaryGeneration, NativeBoundaryKind, NativeBoundaryTarget, NativeCallbackKind,
     NativePlatformCommandKind, ParentElement, Platform, PlatformInput,
     PlatformWindowPresentOutcome, PointerCancelEvent, PointerCancelReason, QuitMode, Render,
-    Styled, Window, WindowActivationPolicy, WindowBounds, WindowId, WindowKind, WindowMouseEvent,
+    Styled, TitlebarOptions, Window, WindowActivationPolicy, WindowActivationStatus,
+    WindowActivationTerminal, WindowBounds, WindowId, WindowKind, WindowMouseEvent,
     WindowMutationDispatch, WindowMutationOutcome, WindowMutationTicket, WindowOptions,
     WindowPhysicalPlacementRequest, WindowProvisionalPlacementOutcome,
     WindowProvisionalPlacementPurpose, WindowProvisionalPlacementRequest,
@@ -35,17 +36,19 @@ use windows::Win32::{
         },
         WindowsAndMessaging::{
             CreateWindowExW, DestroyWindow, DispatchMessageW, GW_HWNDFIRST, GW_HWNDNEXT,
-            GW_HWNDPREV, GW_OWNER, GWL_EXSTYLE, GetClientRect, GetCursorPos, GetForegroundWindow,
-            GetMessageExtraInfo, GetSystemMetrics, GetWindow, GetWindowRect, HTCLIENT,
-            HTTRANSPARENT, HWND_MESSAGE, HWND_TOPMOST, IsWindow, IsWindowVisible, IsZoomed,
-            MA_NOACTIVATE, MA_NOACTIVATEANDEAT, MSG, PM_REMOVE, PeekMessageW, PostMessageW,
-            SIZE_MINIMIZED, SIZE_RESTORED, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
-            SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SPI_SETWORKAREA, SWP_NOACTIVATE, SWP_SHOWWINDOW,
-            SendMessageW, SetCursorPos, SetForegroundWindow, SetWindowPos, TranslateMessage,
-            WA_ACTIVE, WINDOW_EX_STYLE, WINDOW_STYLE, WM_ACTIVATE, WM_CLOSE, WM_GETOBJECT,
-            WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE,
-            WM_MOVE, WM_NCHITTEST, WM_PAINT, WM_QUIT, WM_SETTINGCHANGE, WM_SIZE, WM_SYSKEYDOWN,
-            WM_SYSKEYUP, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
+            GW_HWNDPREV, GW_OWNER, GWL_EXSTYLE, GWL_STYLE, GetClientRect, GetCursorPos,
+            GetForegroundWindow, GetMessageExtraInfo, GetSystemMetrics, GetWindow, GetWindowRect,
+            HTCLIENT, HTTRANSPARENT, HWND_MESSAGE, HWND_TOPMOST, IsWindow, IsWindowVisible,
+            IsZoomed, MA_NOACTIVATE, MA_NOACTIVATEANDEAT, MSG, PM_REMOVE, PeekMessageW,
+            PostMessageW, SIZE_MINIMIZED, SIZE_RESTORED, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
+            SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SPI_SETWORKAREA, SWP_NOACTIVATE, SWP_NOMOVE,
+            SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, SendMessageW,
+            SetCursorPos, SetForegroundWindow, SetWindowPos, TranslateMessage, WA_ACTIVE,
+            WINDOW_EX_STYLE, WINDOW_STYLE, WM_ACTIVATE, WM_CLOSE, WM_GETOBJECT, WM_KEYDOWN,
+            WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_MOVE,
+            WM_NCHITTEST, WM_PAINT, WM_QUIT, WM_SETTINGCHANGE, WM_SIZE, WM_SYSKEYDOWN, WM_SYSKEYUP,
+            WS_CAPTION, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT,
+            WS_POPUP, WS_VISIBLE,
         },
     },
 };
@@ -475,19 +478,33 @@ fn inject_system_pointer(
     );
 }
 
-fn client_center_in_screen_coordinates(hwnd: HWND) -> POINT {
+fn physical_client_bounds(hwnd: HWND) -> Bounds<DevicePixels> {
     let mut client_bounds = RECT::default();
     unsafe { GetClientRect(hwnd, &mut client_bounds) }
-        .expect("interactive native sentinel must query its client bounds");
-    let mut point = POINT {
-        x: client_bounds.left + (client_bounds.right - client_bounds.left) / 2,
-        y: client_bounds.top + (client_bounds.bottom - client_bounds.top) / 2,
+        .expect("native window must expose its client bounds");
+    let mut origin = POINT {
+        x: client_bounds.left,
+        y: client_bounds.top,
     };
     assert!(
-        unsafe { ClientToScreen(hwnd, &mut point).as_bool() },
-        "interactive native sentinel must convert client coordinates to screen coordinates"
+        unsafe { ClientToScreen(hwnd, &mut origin).as_bool() },
+        "native window must convert its client origin to screen coordinates"
     );
-    point
+    Bounds::new(
+        point(DevicePixels(origin.x), DevicePixels(origin.y)),
+        size(
+            DevicePixels(client_bounds.right - client_bounds.left),
+            DevicePixels(client_bounds.bottom - client_bounds.top),
+        ),
+    )
+}
+
+fn client_center_in_screen_coordinates(hwnd: HWND) -> POINT {
+    let client_bounds = physical_client_bounds(hwnd);
+    POINT {
+        x: client_bounds.center().x.0,
+        y: client_bounds.center().y.0,
+    }
 }
 
 struct PaintedRoot;
@@ -1394,15 +1411,26 @@ fn real_hwnd_initial_presentation_is_post_commit_idle_and_retries_rejection() {
         WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
     );
     let synchronous_results = Rc::new(RefCell::new(Vec::new()));
+    let prepared_client_bounds = Rc::new(Cell::new(None));
     platform
         .lifecycle_test_probe
         .install_initial_presentation_hook({
             let synchronous_results = synchronous_results.clone();
+            let prepared_client_bounds = prepared_client_bounds.clone();
             move |hwnd| {
                 assert!(
                     unsafe { !IsWindowVisible(hwnd).as_bool() },
                     "the HWND must remain hidden until the committed presentation command runs"
                 );
+                let observed_client_bounds = physical_client_bounds(hwnd);
+                if let Some(prepared) = prepared_client_bounds.get() {
+                    assert_eq!(
+                        observed_client_bounds, prepared,
+                        "a rejected presentation retry must retain the exact hidden client geometry"
+                    );
+                } else {
+                    prepared_client_bounds.set(Some(observed_client_bounds));
+                }
                 let propagated = unsafe {
                     SendMessageW(
                         hwnd,
@@ -1493,6 +1521,42 @@ fn real_hwnd_initial_presentation_is_post_commit_idle_and_retries_rejection() {
         unsafe { IsWindowVisible(hwnd).as_bool() },
         "the bounded retry must eventually present the committed HWND"
     );
+    assert_eq!(
+        physical_client_bounds(hwnd),
+        prepared_client_bounds
+            .get()
+            .expect("the initial-presentation hook must capture hidden client geometry"),
+        "windowed initial presentation must reveal the prepared client geometry without replaying it"
+    );
+    let native_style = WINDOW_STYLE(unsafe { get_window_long(hwnd, GWL_STYLE) } as u32);
+    assert!(
+        native_style.contains(WS_CAPTION),
+        "a normal window with an opaque native titlebar must retain WS_CAPTION"
+    );
+    let native_window = platform
+        .window_from_hwnd(hwnd)
+        .expect("the presented test window should remain registered");
+    let reveal_flags = native_window
+        .initial_presentation_window_pos_flags_for_test()
+        .into_iter()
+        .filter(|flags| flags.contains(SWP_SHOWWINDOW))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        reveal_flags.len(),
+        1,
+        "one accepted windowed presentation must emit one native reveal message"
+    );
+    assert!(
+        reveal_flags[0].contains(
+            SWP_SHOWWINDOW
+                | SWP_NOMOVE
+                | SWP_NOSIZE
+                | SWP_NOZORDER
+                | SWP_NOOWNERZORDER
+                | SWP_NOACTIVATE
+        ),
+        "windowed initial presentation must be a nonactivating show-only SetWindowPos"
+    );
 
     let target = NativeBoundaryTarget::Window(window.window_id());
     let diagnostics = app.update_for_test(|cx| {
@@ -1551,6 +1615,269 @@ fn real_hwnd_initial_presentation_is_post_commit_idle_and_retries_rejection() {
 }
 
 #[test]
+fn real_hwnd_presenting_placement_is_generation_bound_before_reveal() {
+    discard_stale_quit_messages();
+
+    let platform = Rc::new(
+        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+    );
+    let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
+    let initial_bounds = app
+        .update_for_test(|cx| WindowBounds::centered(size(px(320.0), px(220.0)), cx).get_bounds());
+    let target_bounds = Bounds::new(
+        point(
+            initial_bounds.origin.x + px(36.0),
+            initial_bounds.origin.y + px(24.0),
+        ),
+        initial_bounds.size,
+    );
+    let presenting_observed = Rc::new(Cell::new(false));
+    platform
+        .lifecycle_test_probe
+        .install_initial_presentation_hook({
+            let platform = platform.clone();
+            let presenting_observed = presenting_observed.clone();
+            move |hwnd| {
+                let native_window = platform
+                    .window_from_hwnd(hwnd)
+                    .expect("the presenting HWND should remain registered");
+                assert!(native_window.initial_presentation_is_presenting_for_test());
+                assert!(unsafe { !IsWindowVisible(hwnd).as_bool() });
+                presenting_observed.set(true);
+                let _ = unsafe {
+                    SendMessageW(
+                        hwnd,
+                        WM_MOUSEMOVE,
+                        Some(WPARAM::default()),
+                        Some(mouse_position_lparam(18, 22)),
+                    )
+                };
+            }
+        });
+
+    let interceptor = Rc::new(RefCell::new(None));
+    let placement_ticket = Rc::new(RefCell::new(None::<WindowMutationTicket>));
+    let window = app
+        .update_for_test(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(initial_bounds)),
+                    focus_on_appearing: false,
+                    show: true,
+                    ..WindowOptions::default()
+                },
+                {
+                    let interceptor = interceptor.clone();
+                    let placement_ticket = placement_ticket.clone();
+                    let requested_bounds = target_bounds.clone();
+                    move |window, cx| {
+                        interceptor
+                            .borrow_mut()
+                            .replace(window.intercept_window_mouse_events({
+                                let placement_ticket = placement_ticket.clone();
+                                move |event, window, _| {
+                                    if !matches!(event, WindowMouseEvent::Move(_))
+                                        || placement_ticket.borrow().is_some()
+                                    {
+                                        return;
+                                    }
+                                    let request = WindowPhysicalPlacementRequest::try_new(
+                                        requested_bounds
+                                            .clone()
+                                            .to_device_pixels(window.scale_factor()),
+                                    )
+                                    .expect("the Presenting placement should be representable");
+                                    let ticket = match window
+                                        .request_physical_window_placement(request)
+                                    {
+                                        WindowMutationDispatch::Queued(ticket) => ticket,
+                                        dispatch => panic!(
+                                            "Presenting placement must queue for the next generation-bound attempt, got {dispatch:?}"
+                                        ),
+                                    };
+                                    placement_ticket.borrow_mut().replace(ticket);
+                                }
+                            }));
+                        cx.new(|_| Empty)
+                    }
+                },
+            )
+        })
+        .expect("a Presenting placement request should converge through one bounded retry");
+    let hwnd = platform
+        .lifecycle_test_probe
+        .last_created_hwnd()
+        .expect("the Presenting placement test should retain its HWND");
+    let placement_ticket = placement_ticket
+        .borrow()
+        .clone()
+        .expect("the synchronous Presenting callback should create one placement ticket");
+
+    pump_messages_until("generation-bound Presenting placement", || {
+        placement_ticket.observation().is_some() && unsafe { IsWindowVisible(hwnd).as_bool() }
+    });
+    assert!(presenting_observed.get());
+    let observation = placement_ticket
+        .observation()
+        .expect("the retried Presenting placement must reach a terminal observation");
+    assert!(matches!(
+        observation.outcome,
+        WindowMutationOutcome::Exact | WindowMutationOutcome::Adjusted
+    ));
+    assert_eq!(
+        observation.facts.window_bounds,
+        WindowBounds::Windowed(target_bounds)
+    );
+    let observed_bounds = app.update_for_test(|cx| {
+        window
+            .update(cx, |_, window, _| window.window_bounds())
+            .expect("the Presenting placement target should remain live")
+    });
+    assert_eq!(observed_bounds, WindowBounds::Windowed(target_bounds));
+
+    let target = NativeBoundaryTarget::Window(window.window_id());
+    let dispositions = app.update_for_test(|cx| {
+        cx.native_boundary_diagnostics(NativeBoundaryDiagnosticCursor::default())
+            .terminal
+            .into_iter()
+            .filter(|diagnostic| {
+                diagnostic.target == target
+                    && diagnostic.kind
+                        == NativeBoundaryKind::Command(
+                            NativePlatformCommandKind::CompleteInitialPresentation,
+                        )
+            })
+            .map(|diagnostic| diagnostic.disposition)
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(
+        dispositions,
+        [
+            NativeBoundaryDisposition::Rejected,
+            NativeBoundaryDisposition::Delivered { input_result: None },
+        ],
+        "the callback request must reject the in-flight reveal and settle on its next generation-bound attempt"
+    );
+
+    let any_window = AnyWindowHandle::from(window);
+    app.update_for_test(|cx| any_window.update(cx, |_, window, cx| window.remove_window(cx)))
+        .expect("Presenting placement test window should close");
+    pump_messages_until("Presenting placement test teardown", || {
+        !unsafe { IsWindow(Some(hwnd)).as_bool() } && !is_registered(&platform, hwnd)
+    });
+}
+
+#[test]
+fn real_hwnd_windowed_initial_presentation_rejects_client_drift_before_retry() {
+    discard_stale_quit_messages();
+
+    let platform = Rc::new(
+        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+    );
+    let prepared_client_bounds = Rc::new(Cell::new(None));
+    let perturb_next_reveal = Rc::new(Cell::new(true));
+    platform
+        .lifecycle_test_probe
+        .install_initial_presentation_hook({
+            let prepared_client_bounds = prepared_client_bounds.clone();
+            let perturb_next_reveal = perturb_next_reveal.clone();
+            move |hwnd| {
+                assert!(unsafe { !IsWindowVisible(hwnd).as_bool() });
+                let observed = physical_client_bounds(hwnd);
+                if let Some(prepared) = prepared_client_bounds.get() {
+                    assert_eq!(
+                        observed, prepared,
+                        "a rejected visible drift must be repaired before the retry"
+                    );
+                    return;
+                }
+
+                prepared_client_bounds.set(Some(observed));
+                assert!(perturb_next_reveal.replace(false));
+                let mut outer = RECT::default();
+                unsafe { GetWindowRect(hwnd, &mut outer) }
+                    .expect("the hidden window must expose its prepared outer frame");
+                unsafe {
+                    SetWindowPos(
+                        hwnd,
+                        None,
+                        0,
+                        0,
+                        outer.right - outer.left + 19,
+                        outer.bottom - outer.top,
+                        SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOOWNERZORDER | SWP_NOZORDER,
+                    )
+                }
+                .expect("the test must perturb the hidden client geometry before reveal");
+            }
+        });
+
+    let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
+    let window = app
+        .update_for_test(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::centered(size(px(320.0), px(220.0)), cx)),
+                    titlebar: Some(TitlebarOptions {
+                        appears_transparent: true,
+                        ..TitlebarOptions::default()
+                    }),
+                    focus_on_appearing: false,
+                    show: true,
+                    ..WindowOptions::default()
+                },
+                |_, cx| cx.new(|_| Empty),
+            )
+        })
+        .expect("the bounded retry must recover the prepared windowed client geometry");
+    let hwnd = platform
+        .lifecycle_test_probe
+        .last_created_hwnd()
+        .expect("the drift test must retain its HWND");
+    let prepared = prepared_client_bounds
+        .get()
+        .expect("the drift test must capture the prepared hidden client geometry");
+
+    assert!(unsafe { IsWindowVisible(hwnd).as_bool() });
+    assert_eq!(physical_client_bounds(hwnd), prepared);
+    let custom_titlebar_style = WINDOW_STYLE(unsafe { get_window_long(hwnd, GWL_STYLE) } as u32);
+    assert!(
+        custom_titlebar_style.contains(WS_CAPTION),
+        "a custom-titlebar window must retain caption style semantics while owning NCCALCSIZE"
+    );
+    let target = NativeBoundaryTarget::Window(window.window_id());
+    let dispositions = app.update_for_test(|cx| {
+        cx.native_boundary_diagnostics(NativeBoundaryDiagnosticCursor::default())
+            .terminal
+            .into_iter()
+            .filter(|diagnostic| {
+                diagnostic.target == target
+                    && diagnostic.kind
+                        == NativeBoundaryKind::Command(
+                            NativePlatformCommandKind::CompleteInitialPresentation,
+                        )
+            })
+            .map(|diagnostic| diagnostic.disposition)
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(
+        dispositions,
+        [
+            NativeBoundaryDisposition::Rejected,
+            NativeBoundaryDisposition::Delivered { input_result: None },
+        ],
+        "post-show client drift must be rejected before the repaired hidden placement is retried"
+    );
+
+    let any_window = AnyWindowHandle::from(window);
+    app.update_for_test(|cx| any_window.update(cx, |_, window, cx| window.remove_window(cx)))
+        .expect("drift test window should close");
+    pump_messages_until("drift test window teardown", || {
+        !unsafe { IsWindow(Some(hwnd)).as_bool() } && !is_registered(&platform, hwnd)
+    });
+}
+
+#[test]
 fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in_place() {
     discard_stale_quit_messages();
 
@@ -1567,6 +1894,7 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
             cx.open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::centered(size(px(320.0), px(220.0)), cx)),
+                    titlebar: None,
                     focus_on_appearing: false,
                     show: true,
                     provisional_session: Some(session.clone()),
@@ -1590,6 +1918,16 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
     let native_window = platform
         .window_from_hwnd(hwnd)
         .expect("native provisional window should remain registered");
+    assert_eq!(
+        native_window.non_client_policy(),
+        crate::window::WindowsNonClientPolicy::Undecorated,
+        "the provisional window must retain its undecorated client-geometry policy",
+    );
+    let provisional_style = WINDOW_STYLE(unsafe { get_window_long(hwnd, GWL_STYLE) } as u32);
+    assert!(
+        provisional_style.contains(WS_CAPTION) && !provisional_style.contains(WS_POPUP),
+        "a normal undecorated window must retain overlapped caption semantics"
+    );
     let mut reveal_rect = RECT::default();
     unsafe { GetWindowRect(hwnd, &mut reveal_rect) }
         .expect("native provisional window should expose its retained placement");
@@ -1601,6 +1939,16 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
         .expect("hidden provisional client origin should map to screen coordinates");
     let client_width = hidden_client_rect.right - hidden_client_rect.left;
     let client_height = hidden_client_rect.bottom - hidden_client_rect.top;
+    assert_eq!(
+        reveal_rect,
+        RECT {
+            left: hidden_client_origin.x,
+            top: hidden_client_origin.y,
+            right: hidden_client_origin.x + client_width,
+            bottom: hidden_client_origin.y + client_height,
+        },
+        "the undecorated policy must make the real HWND client rect authoritative despite WS_CAPTION"
+    );
     let virtual_screen = VirtualScreenBounds::current();
     let right_candidate = hidden_client_origin
         .x
@@ -1813,6 +2161,10 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
                 .is_err(),
             "a fully obscured final placement must reject"
         );
+        assert!(
+            unsafe { IsWindowVisible(hwnd).as_bool() },
+            "a rejected post-mutation placement must reveal only after exact compensation"
+        );
 
         let mut window_rect_after = RECT::default();
         unsafe { GetWindowRect(hwnd, &mut window_rect_after) }
@@ -1856,11 +2208,37 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
         );
         assert_eq!(native_window.state.display.get().display_id, display_before);
         assert_eq!(native_window.state.scale_factor.get(), scale_before);
+        assert!(
+            unsafe { IsWindowVisible(hwnd).as_bool() },
+            "an exact rollback must restore the provisional window's original visibility"
+        );
     }
 
     native_window
         .provisional_delayed_rollback_rejects_native_rect_aba_for_test(&final_request)
         .expect("a delayed provisional compensation must reject native placement ABA");
+    assert!(
+        unsafe { !IsWindowVisible(hwnd).as_bool() },
+        "authority-changing compensation must remain hidden instead of restoring stale visibility"
+    );
+    unsafe {
+        SetWindowPos(
+            hwnd,
+            None,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOACTIVATE
+                | SWP_NOMOVE
+                | SWP_NOSIZE
+                | SWP_NOOWNERZORDER
+                | SWP_NOZORDER
+                | SWP_SHOWWINDOW,
+        )
+    }
+    .expect("the test's newer native authority should explicitly reveal its retained geometry");
+    assert!(unsafe { IsWindowVisible(hwnd).as_bool() });
 
     let (placement_dispatch, placement_ticket) = app
         .update_for_test(|cx| {
@@ -2104,7 +2482,7 @@ fn hidden_initial_presentation_keeps_deferred_placement_unpublished_until_forced
 }
 
 #[test]
-fn hidden_initial_presentation_binds_unscoped_physical_placement_on_forced_show() {
+fn hidden_initial_presentation_commits_sampled_facts_for_physical_placement() {
     discard_stale_quit_messages();
 
     let platform = Rc::new(
@@ -2171,14 +2549,16 @@ fn hidden_initial_presentation_binds_unscoped_physical_placement_on_forced_show(
 
     assert!(!unsafe { IsWindowVisible(hwnd).as_bool() });
     assert!(placement_ticket.observation().is_none());
-    let hidden_geometry = platform
+    let native_window = platform
         .window_from_hwnd(hwnd)
-        .expect("hidden physical-placement target should remain registered")
+        .expect("hidden physical-placement target should remain registered");
+    let hidden_geometry = native_window
         .observed_platform_facts_for_test()
         .expect("hidden physical-placement target facts should be readable")
         .physical_geometry
         .expect("Windows should report hidden physical geometry");
     assert_ne!(hidden_geometry.client_bounds(), target_client_bounds);
+    native_window.fail_next_presented_platform_facts_readback_for_test();
 
     let _ = app.update_for_test(|cx| {
         window
@@ -2204,7 +2584,6 @@ fn hidden_initial_presentation_binds_unscoped_physical_placement_on_forced_show(
             .client_bounds(),
         target_client_bounds
     );
-
     app.update_for_test(|cx| {
         window
             .update(cx, |_, window, cx| window.remove_window(cx))
@@ -2214,7 +2593,283 @@ fn hidden_initial_presentation_binds_unscoped_physical_placement_on_forced_show(
 }
 
 #[test]
-fn failed_forced_initial_presentation_rejects_activation_and_rolls_back_deferred_placement() {
+fn successful_pointer_input_mutation_rolls_back_when_terminal_facts_cannot_be_observed() {
+    discard_stale_quit_messages();
+
+    let platform = Rc::new(
+        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+    );
+    let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
+    let window = app
+        .update_for_test(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::centered(size(px(340.0), px(240.0)), cx)),
+                    focus_on_appearing: false,
+                    show: true,
+                    ..WindowOptions::default()
+                },
+                |_, cx| cx.new(|_| Empty),
+            )
+        })
+        .expect("pointer-input rollback target should open");
+    let hwnd = platform
+        .raw_window_handles
+        .read()
+        .last()
+        .expect("pointer-input rollback target should register an HWND")
+        .as_raw();
+    platform.inner.run_foreground_task();
+    pump_messages_until(
+        "pointer-input rollback target initial presentation",
+        || unsafe { IsWindowVisible(hwnd).as_bool() },
+    );
+
+    let native_window = platform
+        .window_from_hwnd(hwnd)
+        .expect("pointer-input rollback target should remain registered");
+    assert_eq!(
+        unsafe { get_window_long(hwnd, GWL_EXSTYLE) } as u32 & WS_EX_TRANSPARENT.0,
+        0,
+        "the rollback baseline must accept native pointer input"
+    );
+    native_window.fail_next_mutation_terminal_facts_readback_for_test();
+
+    let mutation_ticket = app.update_for_test(|cx| {
+        window
+            .update(cx, |_, window, _| {
+                match window.request_pointer_input(false) {
+                    WindowMutationDispatch::Queued(ticket) => ticket,
+                    dispatch => panic!("pointer-input mutation should queue, got {dispatch:?}"),
+                }
+            })
+            .expect("pointer-input rollback target should remain live")
+    });
+    platform.inner.run_foreground_task();
+    pump_messages_until("pointer-input terminal-facts rollback", || {
+        mutation_ticket.observation().is_some()
+    });
+
+    let observation = mutation_ticket
+        .observation()
+        .expect("pointer-input mutation should publish one terminal observation");
+    assert_eq!(observation.outcome, WindowMutationOutcome::Rejected);
+    assert!(observation.facts.accepts_pointer_input);
+    assert_eq!(
+        unsafe { get_window_long(hwnd, GWL_EXSTYLE) } as u32 & WS_EX_TRANSPARENT.0,
+        0,
+        "failed terminal fact readback must roll back the native pointer-input style"
+    );
+    assert!(
+        native_window
+            .observed_platform_facts_for_test()
+            .expect("restored pointer-input native facts should remain readable")
+            .accepts_pointer_input
+    );
+
+    app.update_for_test(|cx| {
+        window
+            .update(cx, |_, window, cx| window.remove_window(cx))
+            .expect("pointer-input rollback target should close")
+    });
+    pump_messages_until_idle("pointer-input terminal-facts rollback teardown");
+}
+
+#[test]
+fn successful_activation_policy_mutation_rolls_back_when_terminal_facts_cannot_be_observed() {
+    discard_stale_quit_messages();
+
+    let platform = Rc::new(
+        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+    );
+    let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
+    let window = app
+        .update_for_test(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::centered(size(px(340.0), px(240.0)), cx)),
+                    focus_on_appearing: false,
+                    show: true,
+                    ..WindowOptions::default()
+                },
+                |_, cx| cx.new(|_| Empty),
+            )
+        })
+        .expect("activation-policy rollback target should open");
+    let hwnd = platform
+        .raw_window_handles
+        .read()
+        .last()
+        .expect("activation-policy rollback target should register an HWND")
+        .as_raw();
+    platform.inner.run_foreground_task();
+    pump_messages_until(
+        "activation-policy rollback target initial presentation",
+        || unsafe { IsWindowVisible(hwnd).as_bool() },
+    );
+
+    let native_window = platform
+        .window_from_hwnd(hwnd)
+        .expect("activation-policy rollback target should remain registered");
+    assert_eq!(
+        unsafe { get_window_long(hwnd, GWL_EXSTYLE) } as u32 & WS_EX_NOACTIVATE.0,
+        0,
+        "the rollback baseline must allow native click activation"
+    );
+    native_window.fail_next_mutation_terminal_facts_readback_for_test();
+
+    let mutation_ticket = app.update_for_test(|cx| {
+        window
+            .update(cx, |_, window, _| {
+                match window.request_activation_policy(WindowActivationPolicy {
+                    accepts_activation: false,
+                    focus_on_click: false,
+                }) {
+                    WindowMutationDispatch::Queued(ticket) => ticket,
+                    dispatch => {
+                        panic!("activation-policy mutation should queue, got {dispatch:?}")
+                    }
+                }
+            })
+            .expect("activation-policy rollback target should remain live")
+    });
+    platform.inner.run_foreground_task();
+    pump_messages_until("activation-policy terminal-facts rollback", || {
+        mutation_ticket.observation().is_some()
+    });
+
+    let observation = mutation_ticket
+        .observation()
+        .expect("activation-policy mutation should publish one terminal observation");
+    assert_eq!(observation.outcome, WindowMutationOutcome::Rejected);
+    assert!(observation.facts.accepts_activation);
+    assert!(observation.facts.focus_on_click);
+    assert_eq!(
+        unsafe { get_window_long(hwnd, GWL_EXSTYLE) } as u32 & WS_EX_NOACTIVATE.0,
+        0,
+        "failed terminal fact readback must roll back the native activation style"
+    );
+    let restored_facts = native_window
+        .observed_platform_facts_for_test()
+        .expect("restored activation-policy native facts should remain readable");
+    assert!(restored_facts.accepts_activation);
+    assert!(restored_facts.focus_on_click);
+
+    app.update_for_test(|cx| {
+        window
+            .update(cx, |_, window, cx| window.remove_window(cx))
+            .expect("activation-policy rollback target should close")
+    });
+    pump_messages_until_idle("activation-policy terminal-facts rollback teardown");
+}
+
+#[test]
+fn successful_physical_placement_rolls_back_when_terminal_facts_cannot_be_observed() {
+    discard_stale_quit_messages();
+
+    let platform = Rc::new(
+        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+    );
+    let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
+    let window = app
+        .update_for_test(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::centered(size(px(340.0), px(240.0)), cx)),
+                    focus_on_appearing: false,
+                    show: true,
+                    ..WindowOptions::default()
+                },
+                |_, cx| cx.new(|_| Empty),
+            )
+        })
+        .expect("physical-placement rollback target should open");
+    let hwnd = platform
+        .raw_window_handles
+        .read()
+        .last()
+        .expect("physical-placement rollback target should register an HWND")
+        .as_raw();
+    platform.inner.run_foreground_task();
+    pump_messages_until(
+        "physical-placement rollback target initial presentation",
+        || unsafe { IsWindowVisible(hwnd).as_bool() },
+    );
+
+    let native_window = platform
+        .window_from_hwnd(hwnd)
+        .expect("physical-placement rollback target should remain registered");
+    let baseline_facts = native_window
+        .observed_platform_facts_for_test()
+        .expect("physical-placement rollback baseline facts should be readable");
+    let baseline_geometry = baseline_facts
+        .physical_geometry
+        .expect("Windows should expose the rollback baseline physical geometry");
+    let target_display = baseline_geometry
+        .display_observation()
+        .expect("the rollback baseline should identify its display");
+    let target_client_bounds = Bounds::new(
+        point(
+            DevicePixels(baseline_geometry.client_bounds().origin.x.0 + 24),
+            DevicePixels(baseline_geometry.client_bounds().origin.y.0 + 16),
+        ),
+        baseline_geometry.client_bounds().size,
+    );
+    let request = WindowPhysicalPlacementRequest::try_new_for_display(
+        target_client_bounds,
+        target_client_bounds.center(),
+        target_display,
+    )
+    .expect("the rollback target should accept a same-display physical request");
+    native_window.fail_next_mutation_terminal_facts_readback_for_test();
+
+    let mutation_ticket = app.update_for_test(|cx| {
+        window
+            .update(cx, |_, window, _| {
+                match window.request_physical_window_placement(request) {
+                    WindowMutationDispatch::Queued(ticket) => ticket,
+                    dispatch => {
+                        panic!("physical-placement mutation should queue, got {dispatch:?}")
+                    }
+                }
+            })
+            .expect("physical-placement rollback target should remain live")
+    });
+    platform.inner.run_foreground_task();
+    pump_messages_until("physical-placement terminal-facts rollback", || {
+        mutation_ticket.observation().is_some()
+    });
+
+    let observation = mutation_ticket
+        .observation()
+        .expect("physical-placement mutation should publish one terminal observation");
+    assert_eq!(observation.outcome, WindowMutationOutcome::Rejected);
+    assert_eq!(
+        observation
+            .facts
+            .physical_geometry
+            .expect("rejected placement should publish restored physical geometry"),
+        baseline_geometry
+    );
+    assert_eq!(
+        native_window
+            .observed_platform_facts_for_test()
+            .expect("restored physical-placement facts should remain readable")
+            .physical_geometry
+            .expect("restored physical-placement facts should retain geometry"),
+        baseline_geometry
+    );
+
+    app.update_for_test(|cx| {
+        window
+            .update(cx, |_, window, cx| window.remove_window(cx))
+            .expect("physical-placement rollback target should close")
+    });
+    pump_messages_until_idle("physical-placement terminal-facts rollback teardown");
+}
+
+#[test]
+fn partial_deferred_merge_failure_rejects_activation_and_restores_native_placement() {
     discard_stale_quit_messages();
 
     let platform = Rc::new(
@@ -2305,9 +2960,10 @@ fn failed_forced_initial_presentation_rejects_activation_and_rolls_back_deferred
         WindowBounds::Maximized(initial_bounds)
     );
     assert!(initial_projected_facts.is_maximized);
-    let initial_physical_geometry = platform
+    let native_window = platform
         .window_from_hwnd(hwnd)
-        .expect("hidden activation target should remain registered")
+        .expect("hidden activation target should remain registered");
+    let initial_physical_geometry = native_window
         .observed_platform_facts_for_test()
         .expect("hidden activation target native facts should be readable")
         .physical_geometry
@@ -2321,9 +2977,7 @@ fn failed_forced_initial_presentation_rejects_activation_and_rolls_back_deferred
         .clone()
         .expect("the root builder should retain the deferred placement ticket");
     assert!(placement_ticket.observation().is_none());
-    platform
-        .lifecycle_test_probe
-        .fail_next_initial_presentation();
+    native_window.fail_next_deferred_initial_placement_after_merge_for_test();
     let diagnostic_cursor = app.update_for_test(|cx| {
         cx.native_boundary_diagnostics(NativeBoundaryDiagnosticCursor::default())
             .cursor
@@ -2335,19 +2989,19 @@ fn failed_forced_initial_presentation_rejects_activation_and_rolls_back_deferred
             .expect("hidden activation target should remain live")
     });
     platform.inner.run_foreground_task();
-    pump_messages_until("rejected forced initial presentation", || {
+    pump_messages_until("rejected partial deferred placement merge", || {
         placement_ticket.observation().is_some()
     });
-    pump_messages_until_idle("rejected forced initial presentation follow-up");
+    pump_messages_until_idle("rejected partial deferred placement merge follow-up");
 
     assert_eq!(unsafe { GetActiveWindow() }, foreground_hwnd);
     assert!(
         !unsafe { IsWindowVisible(hwnd).as_bool() },
-        "a rejected forced presentation must leave the target hidden"
+        "a rejected partial deferred merge must leave the target hidden"
     );
     let placement_observation = placement_ticket
         .observation()
-        .expect("the deferred placement ticket must settle on presentation failure");
+        .expect("the deferred placement ticket must settle on merge failure");
     assert_eq!(
         placement_observation.outcome,
         WindowMutationOutcome::Rejected
@@ -2365,9 +3019,7 @@ fn failed_forced_initial_presentation_rejects_activation_and_rolls_back_deferred
             .client_bounds(),
         initial_physical_geometry.client_bounds()
     );
-    let restored_native_geometry = platform
-        .window_from_hwnd(hwnd)
-        .expect("hidden activation target should remain registered")
+    let restored_native_geometry = native_window
         .observed_platform_facts_for_test()
         .expect("restored hidden activation target facts should be readable")
         .physical_geometry
@@ -2393,7 +3045,7 @@ fn failed_forced_initial_presentation_rejects_activation_and_rolls_back_deferred
     assert_eq!(
         activation_dispositions,
         [NativeBoundaryDisposition::Rejected],
-        "activation must reject immediately after forced presentation fails"
+        "activation must reject immediately after the deferred merge fails"
     );
 
     let _ = app.update_for_test(|cx| {
@@ -2402,9 +3054,10 @@ fn failed_forced_initial_presentation_rejects_activation_and_rolls_back_deferred
             .expect("hidden activation target should remain live")
     });
     platform.inner.run_foreground_task();
-    pump_messages_until("retried activation after presentation failure", || unsafe {
-        IsWindowVisible(hwnd).as_bool() && GetActiveWindow() == hwnd
-    });
+    pump_messages_until(
+        "retried activation after deferred merge failure",
+        || unsafe { IsWindowVisible(hwnd).as_bool() && GetActiveWindow() == hwnd },
+    );
     pump_messages_until_idle("retried activation follow-up");
     let retry_facts = platform
         .window_from_hwnd(hwnd)
@@ -4010,12 +4663,15 @@ fn queued_activate_commands_precede_activation_facts_without_synthetic_keyboard_
         cx.native_boundary_diagnostics(NativeBoundaryDiagnosticCursor::default())
             .cursor
     });
+    let activation_tickets = Rc::new(RefCell::new(Vec::new()));
 
     app.update_for_test(|cx| {
+        let activation_tickets = activation_tickets.clone();
         window
             .update(cx, |_, window, _| {
-                let _ = window.activate_window();
-                let _ = window.activate_window();
+                activation_tickets
+                    .borrow_mut()
+                    .extend([window.activate_window(), window.activate_window()]);
             })
             .expect("native test window should remain live")
     });
@@ -4044,11 +4700,56 @@ fn queued_activate_commands_precede_activation_facts_without_synthetic_keyboard_
             _ => None,
         })
         .collect::<Vec<_>>();
-    assert_eq!(
-        ordered.iter().map(|(kind, _)| *kind).collect::<Vec<_>>(),
-        ["command", "command", "active", "modifiers"]
-    );
+    let activation_commands = diagnostic_delta
+        .terminal
+        .iter()
+        .filter(|diagnostic| {
+            diagnostic.target == target
+                && diagnostic.kind
+                    == NativeBoundaryKind::Command(NativePlatformCommandKind::Activate)
+        })
+        .collect::<Vec<_>>();
+    assert!(matches!(
+        activation_commands
+            .first()
+            .map(|diagnostic| diagnostic.disposition),
+        Some(NativeBoundaryDisposition::Stale)
+    ));
+    let expected_second_status = match activation_commands
+        .get(1)
+        .map(|diagnostic| diagnostic.disposition)
+    {
+        Some(NativeBoundaryDisposition::Rejected) => {
+            assert_eq!(activation_commands.len(), 2);
+            assert_eq!(
+                ordered.iter().map(|(kind, _)| *kind).collect::<Vec<_>>(),
+                ["command", "command", "active", "modifiers"],
+                "a rejected activation command must settle before later callback facts"
+            );
+            WindowActivationTerminal::Rejected
+        }
+        Some(NativeBoundaryDisposition::Delivered { input_result: None }) => {
+            assert_eq!(activation_commands.len(), 3);
+            assert_eq!(
+                ordered.iter().map(|(kind, _)| *kind).collect::<Vec<_>>(),
+                ["command", "command", "active", "modifiers", "command"],
+                "an accepted activation command must read back after queued callback facts"
+            );
+            WindowActivationTerminal::Activated
+        }
+        disposition => panic!("unexpected second activation command disposition: {disposition:?}"),
+    };
     assert!(ordered.windows(2).all(|pair| pair[0].1 < pair[1].1));
+    let activation_tickets = activation_tickets.borrow();
+    assert_eq!(activation_tickets.len(), 2);
+    assert_eq!(
+        activation_tickets[0].snapshot().status(),
+        WindowActivationStatus::Terminal(WindowActivationTerminal::Superseded)
+    );
+    assert_eq!(
+        activation_tickets[1].snapshot().status(),
+        WindowActivationStatus::Terminal(expected_second_status)
+    );
     assert!(diagnostic_delta.terminal.iter().any(|diagnostic| {
         diagnostic.target == target
             && diagnostic.kind == NativeBoundaryKind::Callback(NativeCallbackKind::ActiveChanged)

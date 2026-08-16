@@ -1107,6 +1107,8 @@ impl WindowsWindowInner {
             WM_MOVE => self.handle_move_msg(handle, lparam),
             WM_SIZE => self.handle_size_msg(wparam, lparam),
             WM_WINDOWPOSCHANGED => {
+                #[cfg(test)]
+                self.record_initial_presentation_window_pos_for_test(lparam);
                 self.state.advance_native_placement_epoch();
                 None
             }
@@ -1780,20 +1782,37 @@ impl WindowsWindowInner {
         wparam: WPARAM,
         lparam: LPARAM,
     ) -> Option<isize> {
-        if !self.hide_title_bar || self.state.is_fullscreen() || wparam.0 == 0 {
+        if self.state.is_fullscreen() || wparam.0 == 0 {
             return None;
         }
 
-        unsafe {
-            let params = lparam.0 as *mut NCCALCSIZE_PARAMS;
-            let saved_top = (*params).rgrc[0].top;
-            let result = DefWindowProcW(handle, WM_NCCALCSIZE, wparam, lparam);
-            (*params).rgrc[0].top = saved_top;
-            if self.state.is_maximized() {
-                let dpi = GetDpiForWindow(handle);
-                (*params).rgrc[0].top += get_frame_thicknessx(dpi);
-            }
-            Some(result.0 as isize)
+        match self.non_client_policy() {
+            WindowsNonClientPolicy::NativeCaption => None,
+            WindowsNonClientPolicy::CustomTitlebar => unsafe {
+                let params = lparam.0 as *mut NCCALCSIZE_PARAMS;
+                let saved_top = (*params).rgrc[0].top;
+                let result = DefWindowProcW(handle, WM_NCCALCSIZE, wparam, lparam);
+                (*params).rgrc[0].top = saved_top;
+                if self.state.is_maximized() {
+                    let dpi = GetDpiForWindow(handle);
+                    (*params).rgrc[0].top += get_frame_thicknessy(dpi);
+                }
+                Some(result.0 as isize)
+            },
+            WindowsNonClientPolicy::Undecorated => unsafe {
+                let params = &mut *(lparam.0 as *mut NCCALCSIZE_PARAMS);
+                if self.state.is_maximized() {
+                    let monitor = MonitorFromRect(&params.rgrc[0], MONITOR_DEFAULTTONULL);
+                    if !monitor.is_invalid() {
+                        let mut monitor_info: MONITORINFO = std::mem::zeroed();
+                        monitor_info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+                        if GetMonitorInfoW(monitor, &mut monitor_info).as_bool() {
+                            params.rgrc[0] = monitor_info.rcWork;
+                        }
+                    }
+                }
+                Some(0)
+            },
         }
     }
 
@@ -1880,7 +1899,10 @@ impl WindowsWindowInner {
     }
 
     fn handle_create_msg(&self, handle: HWND) -> Option<isize> {
-        if self.hide_title_bar {
+        if !matches!(
+            self.non_client_policy(),
+            WindowsNonClientPolicy::NativeCaption
+        ) {
             notify_frame_changed(handle);
             Some(0)
         } else {
@@ -2022,38 +2044,30 @@ impl WindowsWindowInner {
             .flatten()
             .and_then(|area| hit_test_window_control_area(area, self.is_movable));
 
-        if !self.hide_title_bar {
+        if matches!(
+            self.non_client_policy(),
+            WindowsNonClientPolicy::NativeCaption
+        ) {
             // If the OS draws the title bar, we don't need to handle hit test messages.
             return drag_area;
         }
 
-        let dpi = unsafe { GetDpiForWindow(handle) };
-        // We do not use the OS title bar, so the default `DefWindowProcW` will only register a 1px edge for resizes
-        // We need to calculate the frame thickness ourselves and do the hit test manually.
-        let frame_y = get_frame_thicknessx(dpi);
-        let frame_x = get_frame_thicknessy(dpi);
-        let mut cursor_point = POINT {
-            x: lparam.signed_loword().into(),
-            y: lparam.signed_hiword().into(),
-        };
-
-        unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
-        if !self.state.is_maximized() && 0 <= cursor_point.y && cursor_point.y <= frame_y {
-            // x-axis actually goes from -frame_x to 0
-            return Some(if cursor_point.x <= 0 {
-                HTTOPLEFT
-            } else {
-                let mut rect = Default::default();
-                unsafe { GetWindowRect(handle, &mut rect) }.log_err();
-                // right and bottom bounds of RECT are exclusive, thus `-1`
-                let right = rect.right - rect.left - 1;
-                // the bounds include the padding frames, so accomodate for both of them
-                if right - 2 * frame_x <= cursor_point.x {
-                    HTTOPRIGHT
-                } else {
-                    HTTOP
-                }
-            } as _);
+        let style = WINDOW_STYLE(unsafe { get_window_long(handle, GWL_STYLE) } as u32);
+        if !self.state.is_maximized() && style.contains(WS_THICKFRAME) {
+            let dpi = unsafe { GetDpiForWindow(handle) };
+            let frame_x = get_frame_thicknessx(dpi);
+            let frame_y = get_frame_thicknessy(dpi);
+            let cursor_point = POINT {
+                x: lparam.signed_loword().into(),
+                y: lparam.signed_hiword().into(),
+            };
+            let mut window_rect = RECT::default();
+            if unsafe { GetWindowRect(handle, &mut window_rect) }.is_ok()
+                && let Some(hit) =
+                    non_client_resize_hit_test(cursor_point, window_rect, frame_x, frame_y)
+            {
+                return Some(hit);
+            }
         }
 
         drag_area
@@ -2724,6 +2738,40 @@ fn get_frame_thicknessy(dpi: u32) -> i32 {
     resize_frame_thickness + padding_thickness
 }
 
+fn non_client_resize_hit_test(
+    cursor: POINT,
+    window: RECT,
+    frame_x: i32,
+    frame_y: i32,
+) -> Option<isize> {
+    if frame_x <= 0
+        || frame_y <= 0
+        || cursor.x < window.left
+        || cursor.x >= window.right
+        || cursor.y < window.top
+        || cursor.y >= window.bottom
+    {
+        return None;
+    }
+
+    let left = cursor.x < window.left.saturating_add(frame_x);
+    let right = cursor.x >= window.right.saturating_sub(frame_x);
+    let top = cursor.y < window.top.saturating_add(frame_y);
+    let bottom = cursor.y >= window.bottom.saturating_sub(frame_y);
+
+    match (left, right, top, bottom) {
+        (true, _, true, _) => Some(HTTOPLEFT as isize),
+        (_, true, true, _) => Some(HTTOPRIGHT as isize),
+        (true, _, _, true) => Some(HTBOTTOMLEFT as isize),
+        (_, true, _, true) => Some(HTBOTTOMRIGHT as isize),
+        (_, _, true, _) => Some(HTTOP as isize),
+        (_, _, _, true) => Some(HTBOTTOM as isize),
+        (true, _, _, _) => Some(HTLEFT as isize),
+        (_, true, _, _) => Some(HTRIGHT as isize),
+        _ => None,
+    }
+}
+
 fn hit_test_window_control_area(area: WindowControlArea, is_movable: bool) -> Option<isize> {
     match area {
         WindowControlArea::Drag if is_movable => Some(HTCAPTION as _),
@@ -2774,10 +2822,11 @@ mod tests {
         WindowControlArea,
     };
     use windows::Win32::{
-        Foundation::WPARAM,
+        Foundation::{POINT, RECT, WPARAM},
         UI::Controls::WM_MOUSELEAVE,
         UI::WindowsAndMessaging::{
-            HTCAPTION, HTCLOSE, HTMAXBUTTON, HTMINBUTTON, SPI_SETLOGICALDPIOVERRIDE,
+            HTBOTTOM, HTBOTTOMLEFT, HTBOTTOMRIGHT, HTCAPTION, HTCLOSE, HTLEFT, HTMAXBUTTON,
+            HTMINBUTTON, HTRIGHT, HTTOP, HTTOPLEFT, HTTOPRIGHT, SPI_SETLOGICALDPIOVERRIDE,
             SPI_SETWORKAREA, SYSTEM_PARAMETERS_INFO_ACTION, WM_LBUTTONDOWN, WM_LBUTTONUP,
             WM_MOUSEMOVE, WM_NCMOUSELEAVE, WM_RBUTTONDOWN, WM_RBUTTONUP,
         },
@@ -2789,7 +2838,7 @@ mod tests {
         WindowsNativePointerCaptureReleaseState, WindowsNonClientPointerBoundary,
         WindowsPointerCaptureEffect, WindowsPointerCaptureInput, WindowsPointerCaptureState,
         decode_client_mouse_button_message, hit_test_window_control_area, may_own_pointer_session,
-        should_reserve_pointer_cancel_after_callback_panic,
+        non_client_resize_hit_test, should_reserve_pointer_cancel_after_callback_panic,
         system_setting_changes_display_topology,
     };
     use crate::Callbacks;
@@ -2803,6 +2852,27 @@ mod tests {
         assert!(!system_setting_changes_display_topology(
             SYSTEM_PARAMETERS_INFO_ACTION(29)
         ));
+    }
+
+    #[test]
+    fn undecorated_resize_hit_test_covers_every_window_edge() {
+        let window = RECT {
+            left: -400,
+            top: 120,
+            right: 400,
+            bottom: 720,
+        };
+        let hit = |x, y| non_client_resize_hit_test(POINT { x, y }, window, 8, 10);
+
+        assert_eq!(hit(-400, 120), Some(HTTOPLEFT as isize));
+        assert_eq!(hit(399, 120), Some(HTTOPRIGHT as isize));
+        assert_eq!(hit(-400, 719), Some(HTBOTTOMLEFT as isize));
+        assert_eq!(hit(399, 719), Some(HTBOTTOMRIGHT as isize));
+        assert_eq!(hit(0, 120), Some(HTTOP as isize));
+        assert_eq!(hit(0, 719), Some(HTBOTTOM as isize));
+        assert_eq!(hit(-400, 400), Some(HTLEFT as isize));
+        assert_eq!(hit(399, 400), Some(HTRIGHT as isize));
+        assert_eq!(hit(0, 400), None);
     }
 
     #[test]
