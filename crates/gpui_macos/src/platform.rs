@@ -1,7 +1,6 @@
 use crate::{
     BoolExt, MacDispatcher, MacDisplayTopologyHandle, MacDisplayTopologyRefresh,
-    MacDisplayTopologyRetry, MacDisplayTopologySnapshot, MacDisplayTopologyUnavailable,
-    MacKeyboardLayout, MacKeyboardMapper, MacWindow,
+    MacDisplayTopologyRetry, MacKeyboardLayout, MacKeyboardMapper, MacWindow,
     events::key_to_native,
     ns_string,
     pasteboard::Pasteboard,
@@ -252,16 +251,6 @@ impl MacPlatform {
             keyboard_mapper,
             cursor_visible: Arc::new(AtomicBool::new(true)),
         }))
-    }
-
-    pub(crate) fn retained_display_topology_snapshot(&self) -> Option<MacDisplayTopologySnapshot> {
-        self.display_topology().retained_snapshot()
-    }
-
-    pub(crate) fn exact_display_topology_snapshot(
-        &self,
-    ) -> Result<MacDisplayTopologySnapshot, MacDisplayTopologyUnavailable> {
-        self.display_topology().exact_snapshot()
     }
 
     fn display_topology(&self) -> MacDisplayTopologyHandle {
