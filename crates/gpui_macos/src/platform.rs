@@ -1,5 +1,7 @@
 use crate::{
-    BoolExt, MacDispatcher, MacDisplay, MacKeyboardLayout, MacKeyboardMapper, MacWindow,
+    BoolExt, MacDispatcher, MacDisplayTopologyHandle, MacDisplayTopologyRefresh,
+    MacDisplayTopologyRetry, MacDisplayTopologySnapshot, MacDisplayTopologyUnavailable,
+    MacKeyboardLayout, MacKeyboardMapper, MacWindow,
     events::key_to_native,
     ns_string,
     pasteboard::Pasteboard,
@@ -28,7 +30,7 @@ use core_foundation::{
     string::{CFString, CFStringRef},
 };
 use ctor::ctor;
-use dispatch2::DispatchQueue;
+use dispatch2::{DispatchQueue, DispatchTime};
 use futures::channel::oneshot;
 use itertools::Itertools;
 use objc::{
@@ -41,8 +43,8 @@ use objc::{
 use open_gpui::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, DisplayId, ForegroundExecutor,
     KeyContext, Keymap, Menu, MenuItem, MouseButton, NavigationDirection, OsMenu, OwnedMenu,
-    PathPromptOptions, Platform, PlatformDisplay, PlatformFocusedWindow, PlatformHoveredWindow,
-    PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
+    PathPromptOptions, Platform, PlatformDisplay, PlatformDisplaySnapshot, PlatformFocusedWindow,
+    PlatformHoveredWindow, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
     PlatformViewportCapabilities, PlatformWindow, PlatformWindowActivationSupport,
     PlatformWindowCapabilities, PlatformWindowCreationCapabilities,
     PlatformWindowMutationCapabilities, Result, SystemMenuType, Task, ThermalState,
@@ -167,6 +169,11 @@ unsafe fn build_classes() {
                 on_system_wake as extern "C" fn(&mut Object, Sel, id),
             );
 
+            decl.add_method(
+                sel!(onScreenParametersChange:),
+                on_screen_parameters_change as extern "C" fn(&mut Object, Sel, id),
+            );
+
             decl.register()
         }
     }
@@ -179,6 +186,7 @@ pub(crate) struct MacPlatformState {
     foreground_executor: ForegroundExecutor,
     text_system: Arc<dyn PlatformTextSystem>,
     renderer_context: renderer::Context,
+    display_topology: MacDisplayTopologyHandle,
     headless: bool,
     general_pasteboard: Pasteboard,
     find_pasteboard: Pasteboard,
@@ -213,6 +221,10 @@ impl MacPlatform {
 
         let keyboard_layout = MacKeyboardLayout::new();
         let keyboard_mapper = Rc::new(MacKeyboardMapper::new(keyboard_layout.id()));
+        let display_topology = MacDisplayTopologyHandle::from_native();
+        if let Err(error) = display_topology.exact_snapshot() {
+            log::error!("cannot collect the initial macOS display topology: {error}");
+        }
 
         Self(Mutex::new(MacPlatformState {
             headless,
@@ -220,6 +232,7 @@ impl MacPlatform {
             background_executor: BackgroundExecutor::new(dispatcher.clone()),
             foreground_executor: ForegroundExecutor::new(dispatcher),
             renderer_context: renderer::Context::default(),
+            display_topology,
             general_pasteboard: Pasteboard::general(),
             find_pasteboard: Pasteboard::find(),
             reopen: None,
@@ -239,6 +252,94 @@ impl MacPlatform {
             keyboard_mapper,
             cursor_visible: Arc::new(AtomicBool::new(true)),
         }))
+    }
+
+    pub(crate) fn retained_display_topology_snapshot(&self) -> Option<MacDisplayTopologySnapshot> {
+        self.display_topology().retained_snapshot()
+    }
+
+    pub(crate) fn exact_display_topology_snapshot(
+        &self,
+    ) -> Result<MacDisplayTopologySnapshot, MacDisplayTopologyUnavailable> {
+        self.display_topology().exact_snapshot()
+    }
+
+    fn display_topology(&self) -> MacDisplayTopologyHandle {
+        self.0.lock().display_topology.clone()
+    }
+
+    fn request_display_topology_refresh(&self) {
+        let display_topology = self.display_topology();
+        let request = display_topology.request_refresh();
+        if !request.should_schedule {
+            return;
+        }
+        let context = Box::into_raw(Box::new(display_topology)) as *mut c_void;
+        unsafe {
+            DispatchQueue::main()
+                .exec_async_f(context, complete_scheduled_display_topology_refresh);
+        }
+    }
+
+    fn refresh_display_topology_now(&self) {
+        let display_topology = self.display_topology();
+        display_topology.request_refresh();
+        let request_epoch = display_topology.begin_scheduled_refresh();
+        if let Some(request_epoch) = request_epoch {
+            self.complete_display_topology_refresh(request_epoch);
+        }
+    }
+
+    fn complete_display_topology_refresh(&self, request_epoch: u64) {
+        complete_mac_display_topology_refresh(self.display_topology(), request_epoch);
+    }
+
+    fn open_window_against_display_topology(
+        &self,
+        handle: AnyWindowHandle,
+        options: WindowParams,
+        expected_generation: Option<u64>,
+    ) -> Result<Box<dyn PlatformWindow>> {
+        let (
+            cursor_visible,
+            foreground_executor,
+            background_executor,
+            renderer_context,
+            display_topology,
+        ) = {
+            let guard = self.0.lock();
+            (
+                guard.cursor_visible.clone(),
+                guard.foreground_executor.clone(),
+                guard.background_executor.clone(),
+                guard.renderer_context.clone(),
+                guard.display_topology.clone(),
+            )
+        };
+        let display_snapshot = display_topology.exact_snapshot().map_err(|error| {
+            anyhow!("cannot open a macOS window without an exact display topology: {error}")
+        })?;
+        if let Some(expected_generation) = expected_generation {
+            anyhow::ensure!(
+                display_snapshot.generation() == expected_generation,
+                "display topology changed after GPUI resolved the macOS window placement"
+            );
+        }
+        let target_display = display_snapshot
+            .resolve_native_target(options.display_id)
+            .map_err(|error| anyhow!("cannot resolve the macOS target display: {error}"))?;
+
+        Ok(Box::new(MacWindow::open(
+            handle,
+            options,
+            display_topology,
+            display_snapshot,
+            target_display,
+            cursor_visible,
+            foreground_executor,
+            background_executor,
+            renderer_context,
+        )?))
     }
 
     unsafe fn create_menu_bar(
@@ -475,6 +576,65 @@ impl MacPlatform {
     }
 }
 
+fn complete_mac_display_topology_refresh(
+    display_topology: MacDisplayTopologyHandle,
+    request_epoch: u64,
+) {
+    let candidate = MacDisplayTopologyHandle::refresh_candidate_from_native();
+    let refresh = display_topology.finish_refresh(request_epoch, candidate);
+    match refresh {
+        MacDisplayTopologyRefresh::Unchanged { .. }
+        | MacDisplayTopologyRefresh::Published { .. }
+        | MacDisplayTopologyRefresh::Superseded { .. } => {}
+        MacDisplayTopologyRefresh::RetainedAfterFailure {
+            generation,
+            failure,
+            retry,
+        } => {
+            log::error!(
+                "retaining macOS display topology generation {:?} after refresh failure: {}",
+                generation,
+                failure
+            );
+            if let Some(retry) = retry {
+                schedule_mac_display_topology_retry(display_topology, retry);
+            }
+        }
+    }
+}
+
+fn schedule_mac_display_topology_retry(
+    display_topology: MacDisplayTopologyHandle,
+    retry: MacDisplayTopologyRetry,
+) {
+    let Ok(delay_nanos) = i64::try_from(retry.delay().as_nanos()) else {
+        display_topology.cancel_retry(retry.retry_epoch());
+        log::error!(
+            "cannot schedule macOS display-topology retry {}: delay is out of range",
+            retry.attempt()
+        );
+        return;
+    };
+    let when = DispatchTime::NOW.time(delay_nanos);
+    let retry_topology = display_topology.downgrade();
+    if let Err(error) = DispatchQueue::main().after(when, move || {
+        let Some(retry_topology) = retry_topology.upgrade() else {
+            return;
+        };
+        let Some(request_epoch) = retry_topology.begin_retry(retry.retry_epoch()) else {
+            return;
+        };
+        complete_mac_display_topology_refresh(retry_topology.clone(), request_epoch);
+    }) {
+        display_topology.cancel_retry(retry.retry_epoch());
+        log::error!(
+            "cannot schedule macOS display-topology retry {}: {:?}",
+            retry.attempt(),
+            error
+        );
+    }
+}
+
 fn macos_window_capabilities(kind: &WindowKind) -> PlatformWindowCapabilities {
     let supports_toplevel_state = macos_supports_toplevel_creation_state(kind);
     PlatformWindowCapabilities {
@@ -656,13 +816,15 @@ impl Platform for MacPlatform {
     }
 
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
-        Some(Rc::new(MacDisplay::primary()))
+        self.display_snapshot().primary_display()
     }
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
-        MacDisplay::all()
-            .map(|screen| Rc::new(screen) as Rc<_>)
-            .collect()
+        self.display_snapshot().displays()
+    }
+
+    fn display_snapshot(&self) -> PlatformDisplaySnapshot {
+        self.display_topology().retained_platform_snapshot()
     }
 
     #[cfg(feature = "screen-capture")]
@@ -734,24 +896,19 @@ impl Platform for MacPlatform {
         handle: AnyWindowHandle,
         options: WindowParams,
     ) -> Result<Box<dyn PlatformWindow>> {
-        let (cursor_visible, foreground_executor, background_executor, renderer_context) = {
-            let guard = self.0.lock();
-            (
-                guard.cursor_visible.clone(),
-                guard.foreground_executor.clone(),
-                guard.background_executor.clone(),
-                guard.renderer_context.clone(),
-            )
-        };
+        self.open_window_against_display_topology(handle, options, None)
+    }
 
-        Ok(Box::new(MacWindow::open(
-            handle,
-            options,
-            cursor_visible,
-            foreground_executor,
-            background_executor,
-            renderer_context,
-        )))
+    fn open_window_with_display_snapshot(
+        &self,
+        handle: AnyWindowHandle,
+        options: WindowParams,
+        display_snapshot: PlatformDisplaySnapshot,
+    ) -> Result<Box<dyn PlatformWindow>> {
+        let expected_generation = display_snapshot.generation().ok_or_else(|| {
+            anyhow!("macOS window creation requires an atomic display publication")
+        })?;
+        self.open_window_against_display_topology(handle, options, Some(expected_generation))
     }
 
     fn window_appearance(&self) -> WindowAppearance {
@@ -1323,8 +1480,17 @@ extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
             object: process_info
         ];
 
+        let screen_parameters_name =
+            ns_string("NSApplicationDidChangeScreenParametersNotification");
+        let _: () = msg_send![notification_center, addObserver: this as id
+            selector: sel!(onScreenParametersChange:)
+            name: screen_parameters_name
+            object: app
+        ];
+
         let observer = this as *mut Object as id;
         let platform = get_mac_platform(this);
+        platform.refresh_display_topology_now();
         let callback = {
             let mut state = platform.0.lock();
             if state.on_system_wake.is_some() && !state.system_wake_observer_registered {
@@ -1432,6 +1598,19 @@ extern "C" fn on_system_wake(this: &mut Object, _: Sel, _: id) {
             callback();
             platform.0.lock().on_system_wake.get_or_insert(callback);
         }
+    }
+}
+
+extern "C" fn on_screen_parameters_change(this: &mut Object, _: Sel, _: id) {
+    let platform = unsafe { get_mac_platform(this) };
+    platform.request_display_topology_refresh();
+}
+
+extern "C" fn complete_scheduled_display_topology_refresh(context: *mut c_void) {
+    let display_topology = unsafe { Box::from_raw(context as *mut MacDisplayTopologyHandle) };
+    let request_epoch = display_topology.begin_scheduled_refresh();
+    if let Some(request_epoch) = request_epoch {
+        complete_mac_display_topology_refresh((*display_topology).clone(), request_epoch);
     }
 }
 

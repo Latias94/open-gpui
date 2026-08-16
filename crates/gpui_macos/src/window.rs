@@ -1,11 +1,11 @@
 use crate::{
-    BoolExt, DisplayLink, DisplayLinkError, MacDisplay, NSRange, NSStringExt,
-    TISCopyCurrentKeyboardInputSource, TISGetInputSourceProperty,
+    BoolExt, DisplayLink, DisplayLinkError, MacDisplay, MacDisplayTopologyHandle,
+    MacDisplayTopologySnapshot, MacDisplayTopologySubscription, NSRange, NSStringExt,
+    TISCopyCurrentKeyboardInputSource, TISGetInputSourceProperty, ValidatedMacDisplayTarget,
     events::platform_input_from_native, kTISPropertyInputSourceIsASCIICapable,
     kTISPropertyInputSourceType, kTISTypeKeyboardInputMode, ns_string, renderer,
 };
-#[cfg(any(test, feature = "test-support"))]
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use block2::RcBlock;
 use cocoa::{
     appkit::{
@@ -18,7 +18,7 @@ use cocoa::{
     },
     base::{id, nil},
     foundation::{
-        NSArray, NSAutoreleasePool, NSDictionary, NSFastEnumeration, NSInteger, NSNotFound,
+        NSArray, NSAutoreleasePool, NSFastEnumeration, NSInteger, NSNotFound,
         NSOperatingSystemVersion, NSPoint, NSProcessInfo, NSRect, NSSize, NSString, NSUInteger,
         NSUserDefaults,
     },
@@ -45,6 +45,7 @@ use core_foundation_sys::base::CFEqual;
 use core_foundation_sys::number::{CFBooleanGetValue, CFBooleanRef};
 use core_graphics::display::{CGDirectDisplayID, CGPoint, CGRect};
 use ctor::ctor;
+use dispatch2::{DispatchQueue, DispatchTime};
 use futures::channel::oneshot;
 use objc::{
     class,
@@ -60,6 +61,7 @@ use raw_window_handle as rwh;
 use smallvec::SmallVec;
 use std::{
     cell::Cell,
+    collections::VecDeque,
     ffi::{CStr, c_void},
     mem,
     ops::Range,
@@ -426,11 +428,19 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
         );
         decl.add_method(
             sel!(windowDidEnterFullScreen:),
-            window_state_did_change as extern "C" fn(&Object, Sel, id),
+            window_fullscreen_transition_did_finish as extern "C" fn(&Object, Sel, id),
         );
         decl.add_method(
             sel!(windowDidExitFullScreen:),
-            window_state_did_change as extern "C" fn(&Object, Sel, id),
+            window_fullscreen_transition_did_finish as extern "C" fn(&Object, Sel, id),
+        );
+        decl.add_method(
+            sel!(windowDidFailToEnterFullScreen:),
+            window_fullscreen_transition_did_finish as extern "C" fn(&Object, Sel, id),
+        );
+        decl.add_method(
+            sel!(windowDidFailToExitFullScreen:),
+            window_fullscreen_transition_did_finish as extern "C" fn(&Object, Sel, id),
         );
         decl.add_method(
             sel!(windowDidMiniaturize:),
@@ -560,6 +570,96 @@ fn should_defer_occluded_draw(attempted_window_draw: bool, visible: bool) -> boo
     attempted_window_draw && !visible
 }
 
+fn global_client_bounds_to_appkit_content_rect(
+    bounds: Bounds<Pixels>,
+    screen_frame: NSRect,
+    display_bounds: Bounds<Pixels>,
+) -> NSRect {
+    let relative_x = (bounds.origin.x - display_bounds.origin.x).as_f32() as f64;
+    let relative_y = (bounds.origin.y - display_bounds.origin.y).as_f32() as f64;
+    let content_top =
+        screen_frame.origin.y + display_bounds.size.height.as_f32() as f64 - relative_y;
+    NSRect::new(
+        NSPoint::new(
+            screen_frame.origin.x + relative_x,
+            content_top - bounds.size.height.as_f32() as f64,
+        ),
+        NSSize::new(
+            bounds.size.width.as_f32() as f64,
+            bounds.size.height.as_f32() as f64,
+        ),
+    )
+}
+
+fn appkit_content_rect_to_global_client_bounds(
+    content_rect: NSRect,
+    screen_frame: NSRect,
+    display_bounds: Bounds<Pixels>,
+) -> Bounds<Pixels> {
+    let relative_x = content_rect.origin.x - screen_frame.origin.x;
+    let relative_y = screen_frame.origin.y + display_bounds.size.height.as_f32() as f64
+        - content_rect.origin.y
+        - content_rect.size.height;
+    Bounds::new(
+        point(
+            display_bounds.origin.x + px(relative_x as f32),
+            display_bounds.origin.y + px(relative_y as f32),
+        ),
+        size(
+            px(content_rect.size.width as f32),
+            px(content_rect.size.height as f32),
+        ),
+    )
+}
+
+fn native_rect_is_valid(rect: NSRect) -> bool {
+    rect.origin.x.is_finite()
+        && rect.origin.y.is_finite()
+        && rect.size.width.is_finite()
+        && rect.size.height.is_finite()
+        && rect.size.width >= 0.0
+        && rect.size.height >= 0.0
+}
+
+fn client_bounds_are_valid(bounds: Bounds<Pixels>) -> bool {
+    let values = [
+        bounds.origin.x.as_f32(),
+        bounds.origin.y.as_f32(),
+        bounds.size.width.as_f32(),
+        bounds.size.height.as_f32(),
+    ];
+    values.into_iter().all(f32::is_finite)
+        && bounds.size.width >= px(0.0)
+        && bounds.size.height >= px(0.0)
+}
+
+fn native_scale_matches(actual: f64, expected: f32) -> bool {
+    actual.is_finite() && actual > 0.0 && actual as f32 == expected
+}
+
+fn backing_scale_matches(logical: NSRect, backing: NSRect, expected: f32) -> bool {
+    if logical.size.width <= 0.0 || logical.size.height <= 0.0 {
+        return false;
+    }
+    native_scale_matches(backing.size.width / logical.size.width, expected)
+        && native_scale_matches(backing.size.height / logical.size.height, expected)
+}
+
+fn commit_stable_native_observation<T: Copy + PartialEq>(
+    committed: &mut Option<T>,
+    first: Option<T>,
+    second: Option<T>,
+) -> bool {
+    let (Some(first), Some(second)) = (first, second) else {
+        return false;
+    };
+    if first != second {
+        return false;
+    }
+    *committed = Some(second);
+    true
+}
+
 impl MacWindowCreationProjection {
     fn new(
         window_bounds: WindowBounds,
@@ -656,6 +756,527 @@ struct MacPresentationShutdownAuthority {
     ticket: Option<WindowPresentationShutdownTicket>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct MacRendererGeometry {
+    content_size: Size<Pixels>,
+    scale_factor: f32,
+}
+
+impl MacRendererGeometry {
+    fn with_content_size(self, content_size: Size<Pixels>) -> Self {
+        Self {
+            content_size,
+            ..self
+        }
+    }
+
+    fn differs_from(self, previous: Self) -> bool {
+        self != previous
+    }
+}
+
+fn renderer_geometry_for_frame_size(
+    current: MacRendererGeometry,
+    content_size: Size<Pixels>,
+) -> MacRendererGeometry {
+    current.with_content_size(content_size)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MacFullscreenTransition {
+    Entering,
+    Exiting,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MacFullscreenTransitionTerminal {
+    Entered,
+    Exited,
+    FailedToEnter,
+    FailedToExit,
+}
+
+impl MacFullscreenTransitionTerminal {
+    fn expected_transition(self) -> MacFullscreenTransition {
+        match self {
+            Self::Entered | Self::FailedToEnter => MacFullscreenTransition::Entering,
+            Self::Exited | Self::FailedToExit => MacFullscreenTransition::Exiting,
+        }
+    }
+
+    fn is_fullscreen(self) -> bool {
+        matches!(self, Self::Entered | Self::FailedToExit)
+    }
+
+    fn finish(self, transition: &mut Option<MacFullscreenTransition>) -> bool {
+        let matched = *transition == Some(self.expected_transition());
+        *transition = None;
+        matched
+    }
+
+    fn titlebar_appears_transparent(self, requested_transparent: bool) -> bool {
+        requested_transparent && !self.is_fullscreen()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MacWindowActiveEvent {
+    BecameKey,
+    ResignedKey,
+}
+
+impl MacWindowActiveEvent {
+    fn is_active(self) -> bool {
+        matches!(self, Self::BecameKey)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct MacWindowStateExpectation {
+    is_minimized: bool,
+    is_maximized: bool,
+}
+
+impl MacWindowStateExpectation {
+    fn new(is_minimized: bool, is_maximized: bool) -> Self {
+        Self {
+            is_minimized,
+            is_maximized,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MacWindowStateEventSource {
+    Resized,
+    Miniaturized,
+    Deminiaturized,
+}
+
+impl MacWindowStateEventSource {
+    fn expected_state(self, native: MacWindowStateExpectation) -> MacWindowStateExpectation {
+        match self {
+            Self::Resized => native,
+            Self::Miniaturized => MacWindowStateExpectation::new(true, native.is_maximized),
+            Self::Deminiaturized => MacWindowStateExpectation::new(false, native.is_maximized),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct MacWindowStateEvent {
+    source: MacWindowStateEventSource,
+    expected: MacWindowStateExpectation,
+}
+
+impl MacWindowStateEvent {
+    fn new(source: MacWindowStateEventSource, expected: MacWindowStateExpectation) -> Self {
+        Self { source, expected }
+    }
+
+    fn is_coalescible_resize_with(self, other: Self) -> bool {
+        self.source == MacWindowStateEventSource::Resized
+            && other.source == MacWindowStateEventSource::Resized
+            && self.expected == other.expected
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MacWindowObservationEvent {
+    Active(MacWindowActiveEvent),
+    Fullscreen(MacFullscreenTransitionTerminal),
+    Moved,
+    State(MacWindowStateEvent),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct MacWindowPendingObservationEvent<O = MacWindowNativeObservation> {
+    kind: MacWindowObservationEvent,
+    observation: Option<O>,
+}
+
+impl<O> MacWindowPendingObservationEvent<O> {
+    fn observed(kind: MacWindowObservationEvent, observation: O) -> Self {
+        Self {
+            kind,
+            observation: Some(observation),
+        }
+    }
+
+    fn unobserved(kind: MacWindowObservationEvent) -> Self {
+        Self {
+            kind,
+            observation: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct MacWindowPendingObservationEvents<O = MacWindowNativeObservation> {
+    events: SmallVec<[MacWindowPendingObservationEvent<O>; 4]>,
+}
+
+impl<O> Default for MacWindowPendingObservationEvents<O> {
+    fn default() -> Self {
+        Self {
+            events: SmallVec::new(),
+        }
+    }
+}
+
+impl<O> MacWindowPendingObservationEvents<O> {
+    fn record(&mut self, event: MacWindowPendingObservationEvent<O>) {
+        // An unresolved fullscreen terminal has no historical fact to expose. Retain only its
+        // latest native terminal instead of replaying the final observation multiple times.
+        if matches!(event.kind, MacWindowObservationEvent::Fullscreen(_)) {
+            self.events.retain(|pending| {
+                !matches!(pending.kind, MacWindowObservationEvent::Fullscreen(_))
+                    || pending.observation.is_some()
+            });
+        }
+
+        if let Some(last) = self.events.last_mut() {
+            let coalesces_move = matches!(event.kind, MacWindowObservationEvent::Moved)
+                && matches!(last.kind, MacWindowObservationEvent::Moved);
+            let coalesces_resize = match (last.kind, event.kind) {
+                (
+                    MacWindowObservationEvent::State(previous),
+                    MacWindowObservationEvent::State(current),
+                ) => previous.is_coalescible_resize_with(current),
+                _ => false,
+            };
+            if coalesces_move || coalesces_resize {
+                if event.observation.is_some() || last.observation.is_none() {
+                    *last = event;
+                }
+                return;
+            }
+        }
+
+        self.events.push(event);
+    }
+
+    #[cfg(test)]
+    fn fullscreen_terminal_count(&self) -> usize {
+        self.events
+            .iter()
+            .filter(|event| matches!(event.kind, MacWindowObservationEvent::Fullscreen(_)))
+            .count()
+    }
+
+    #[cfg(test)]
+    fn has_window_state_event(&self) -> bool {
+        self.events
+            .iter()
+            .any(|event| matches!(event.kind, MacWindowObservationEvent::State(_)))
+    }
+
+    #[cfg(test)]
+    fn has_moved_event(&self) -> bool {
+        self.events
+            .iter()
+            .any(|event| matches!(event.kind, MacWindowObservationEvent::Moved))
+    }
+
+    fn last_active_event_index(&self) -> Option<usize> {
+        self.events
+            .iter()
+            .rposition(|event| matches!(event.kind, MacWindowObservationEvent::Active(_)))
+    }
+}
+
+#[derive(Debug)]
+struct MacWindowSerialEffectDrain<T> {
+    pending: VecDeque<T>,
+    owner: MacWindowSerialEffectDrainOwner,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MacWindowSerialEffectDrainOwner {
+    Idle,
+    Draining,
+    RecoveryScheduled,
+}
+
+impl<T> Default for MacWindowSerialEffectDrain<T> {
+    fn default() -> Self {
+        Self {
+            pending: VecDeque::new(),
+            owner: MacWindowSerialEffectDrainOwner::Idle,
+        }
+    }
+}
+
+impl<T> MacWindowSerialEffectDrain<T> {
+    fn enqueue(&mut self, effect: T) -> bool {
+        // The current drain retains ownership across callbacks. Reentrant commits append only.
+        self.pending.push_back(effect);
+        match self.owner {
+            MacWindowSerialEffectDrainOwner::Idle => {
+                self.owner = MacWindowSerialEffectDrainOwner::Draining;
+                true
+            }
+            MacWindowSerialEffectDrainOwner::Draining
+            | MacWindowSerialEffectDrainOwner::RecoveryScheduled => false,
+        }
+    }
+
+    fn pop_next(&mut self) -> Option<T> {
+        if self.owner != MacWindowSerialEffectDrainOwner::Draining {
+            return None;
+        }
+        let next = self.pending.pop_front();
+        if next.is_none() {
+            self.owner = MacWindowSerialEffectDrainOwner::Idle;
+        }
+        next
+    }
+
+    fn mark_recovery_scheduled_after_panic(&mut self) -> bool {
+        if self.owner != MacWindowSerialEffectDrainOwner::Draining {
+            return false;
+        }
+        // Keep reentrant enqueues attached to the deferred owner while the original panic unwinds.
+        self.owner = MacWindowSerialEffectDrainOwner::RecoveryScheduled;
+        true
+    }
+
+    fn begin_scheduled_recovery(&mut self) -> bool {
+        if self.owner != MacWindowSerialEffectDrainOwner::RecoveryScheduled {
+            return false;
+        }
+        if self.pending.is_empty() {
+            self.owner = MacWindowSerialEffectDrainOwner::Idle;
+            false
+        } else {
+            self.owner = MacWindowSerialEffectDrainOwner::Draining;
+            true
+        }
+    }
+
+    fn cancel(&mut self) {
+        self.pending.clear();
+        self.owner = MacWindowSerialEffectDrainOwner::Idle;
+    }
+}
+
+const MAC_WINDOW_OBSERVATION_RETRY_DELAYS: [Duration; 5] = [
+    Duration::from_millis(16),
+    Duration::from_millis(64),
+    Duration::from_millis(250),
+    Duration::from_secs(1),
+    Duration::from_secs(2),
+];
+
+// Owns the one window-level observation obligation. A newer topology generation supersedes the
+// in-flight job epoch while retaining typed native events for the eventual complete-fact commit.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct MacWindowObservationCommitCoordinator {
+    target_generation: Option<u64>,
+    job_epoch: u64,
+    job_scheduled: bool,
+    retry_attempt: usize,
+    pending_events: MacWindowPendingObservationEvents,
+}
+
+impl MacWindowObservationCommitCoordinator {
+    fn request(
+        &mut self,
+        target_generation: u64,
+        event: Option<MacWindowPendingObservationEvent>,
+    ) -> Option<u64> {
+        if let Some(event) = event {
+            self.pending_events.record(event);
+        }
+
+        let target_was_replaced = self
+            .target_generation
+            .is_none_or(|current| target_generation > current);
+        if target_was_replaced {
+            self.target_generation = Some(target_generation);
+            self.retry_attempt = 0;
+            return Some(self.start_job());
+        }
+
+        if self.job_scheduled {
+            None
+        } else {
+            Some(self.start_job())
+        }
+    }
+
+    fn start_job(&mut self) -> u64 {
+        self.job_epoch = self.job_epoch.wrapping_add(1);
+        self.job_scheduled = true;
+        self.job_epoch
+    }
+
+    fn target_for_job(&self, job_epoch: u64) -> Option<u64> {
+        if self.job_scheduled && self.job_epoch == job_epoch {
+            self.target_generation
+        } else {
+            None
+        }
+    }
+
+    fn pause(&mut self, job_epoch: u64) {
+        if self.job_scheduled && self.job_epoch == job_epoch {
+            self.job_scheduled = false;
+        }
+    }
+
+    fn retry_delay(&mut self, job_epoch: u64) -> Option<Duration> {
+        self.target_for_job(job_epoch)?;
+        let index = self
+            .retry_attempt
+            .min(MAC_WINDOW_OBSERVATION_RETRY_DELAYS.len() - 1);
+        let delay = MAC_WINDOW_OBSERVATION_RETRY_DELAYS[index];
+        self.retry_attempt = self.retry_attempt.saturating_add(1);
+        Some(delay)
+    }
+
+    fn commit(
+        &mut self,
+        job_epoch: u64,
+        observed_generation: u64,
+    ) -> Option<MacWindowPendingObservationEvents> {
+        let target_generation = self.target_for_job(job_epoch)?;
+        if observed_generation < target_generation {
+            return None;
+        }
+
+        self.target_generation = None;
+        self.job_scheduled = false;
+        self.retry_attempt = 0;
+        Some(mem::take(&mut self.pending_events))
+    }
+
+    fn cancel(&mut self) {
+        self.target_generation = None;
+        self.job_epoch = self.job_epoch.wrapping_add(1);
+        self.job_scheduled = false;
+        self.retry_attempt = 0;
+        self.pending_events = MacWindowPendingObservationEvents::default();
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct MacWindowNativeObservation {
+    topology_generation: u64,
+    bounds: Bounds<Pixels>,
+    display: MacDisplay,
+    is_minimized: bool,
+    is_maximized: bool,
+    is_fullscreen: bool,
+    is_active: bool,
+    style_mask: NSUInteger,
+    titlebar_appears_transparent: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MacWindowNativeObservationRefreshFailure {
+    AwaitTopologyPublication,
+    AwaitFullscreenTerminal,
+    UnstableNativeSample,
+}
+
+impl MacWindowNativeObservation {
+    fn renderer_geometry(self) -> MacRendererGeometry {
+        MacRendererGeometry {
+            content_size: self.bounds.size,
+            scale_factor: self.display.scale_factor(),
+        }
+    }
+
+    fn state_expectation(self) -> MacWindowStateExpectation {
+        MacWindowStateExpectation::new(self.is_minimized, self.is_maximized)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct MacWindowObservationEffectEvent {
+    kind: MacWindowObservationEvent,
+    is_latest_active: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct MacWindowObservationEffectBatch<O = MacWindowNativeObservation> {
+    observation: O,
+    event: Option<MacWindowObservationEffectEvent>,
+}
+
+impl<O: Copy + PartialEq> MacWindowPendingObservationEvents<O> {
+    fn into_effect_batches(
+        self,
+        final_observation: O,
+    ) -> SmallVec<[MacWindowObservationEffectBatch<O>; 4]> {
+        // Replay each event-bound complete fact in native order, then converge to the newest exact
+        // topology fact. Unobserved events use that final fact and are subject to their typed
+        // fallback semantics (notably latest-wins fullscreen terminals).
+        let last_active_event_index = self.last_active_event_index();
+        let mut batches = SmallVec::with_capacity(self.events.len() + 1);
+        for (event_index, event) in self.events.into_iter().enumerate() {
+            batches.push(MacWindowObservationEffectBatch {
+                observation: event.observation.unwrap_or(final_observation),
+                event: Some(MacWindowObservationEffectEvent {
+                    kind: event.kind,
+                    is_latest_active: Some(event_index) == last_active_event_index,
+                }),
+            });
+        }
+        if batches
+            .last()
+            .is_none_or(|batch| batch.observation != final_observation)
+        {
+            batches.push(MacWindowObservationEffectBatch {
+                observation: final_observation,
+                event: None,
+            });
+        }
+        batches
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct MacWindowNativeObservationChanges {
+    renderer_geometry_changed: bool,
+    moved: bool,
+    minimized_or_maximized_changed: bool,
+    state_changed: bool,
+}
+
+fn moved_or_display_facts_changed<D: PartialEq>(
+    previous_origin: Point<Pixels>,
+    previous_display: &D,
+    current_origin: Point<Pixels>,
+    current_display: &D,
+) -> bool {
+    previous_origin != current_origin || previous_display != current_display
+}
+
+impl MacWindowNativeObservationChanges {
+    fn between(previous: MacWindowNativeObservation, current: MacWindowNativeObservation) -> Self {
+        let minimized_or_maximized_changed = previous.is_minimized != current.is_minimized
+            || previous.is_maximized != current.is_maximized;
+        Self {
+            renderer_geometry_changed: current
+                .renderer_geometry()
+                .differs_from(previous.renderer_geometry()),
+            moved: moved_or_display_facts_changed(
+                previous.bounds.origin,
+                &previous.display,
+                current.bounds.origin,
+                &current.display,
+            ),
+            minimized_or_maximized_changed,
+            state_changed: minimized_or_maximized_changed
+                || previous.is_fullscreen != current.is_fullscreen
+                || previous.style_mask != current.style_mask
+                || previous.titlebar_appears_transparent != current.titlebar_appears_transparent,
+        }
+    }
+}
+
 impl MacPresentationShutdownAuthority {
     fn new(window_id: WindowId) -> Self {
         Self {
@@ -732,9 +1353,17 @@ struct MacWindowState {
     external_files_dragged: bool,
     // Whether the next left-mouse click is also the focusing click.
     first_mouse: bool,
+    display_topology: MacDisplayTopologyHandle,
+    display_topology_subscription: Option<MacDisplayTopologySubscription>,
+    observation_commit: MacWindowObservationCommitCoordinator,
+    observation_effects: MacWindowSerialEffectDrain<MacWindowObservationEffectBatch>,
+    renderer_geometry: MacRendererGeometry,
+    renderer_geometry_initialized: bool,
+    native_observation: Option<MacWindowNativeObservation>,
     windowed_restore_bounds: Bounds<Pixels>,
     fullscreen_restore_bounds: Bounds<Pixels>,
     pending_fullscreen_restore_bounds: Option<Bounds<Pixels>>,
+    fullscreen_transition: Option<MacFullscreenTransition>,
     move_tab_to_new_window_callback: Option<Box<dyn FnMut()>>,
     merge_all_windows_callback: Option<Box<dyn FnMut()>>,
     select_next_tab_callback: Option<Box<dyn FnMut()>>,
@@ -763,6 +1392,9 @@ impl MacWindowState {
         self.interaction_quiesced.store(true, Ordering::Release);
         self.stop_display_link();
         self.synthetic_drag_counter += 1;
+        self.fullscreen_transition = None;
+        self.observation_commit.cancel();
+        self.observation_effects.cancel();
         self.request_frame_callback = None;
         self.activate_callback = None;
         self.resize_callback = None;
@@ -770,6 +1402,7 @@ impl MacWindowState {
         self.window_state_change_callback = None;
         self.should_close_callback = None;
         self.appearance_changed_callback = None;
+        self.display_topology_subscription.take();
         (self.event_callback.clone(), self.input_handler.clone())
     }
 
@@ -917,60 +1550,215 @@ impl MacWindowState {
         self.display_link = None;
     }
 
-    fn is_maximized(&self) -> bool {
-        fn rect_to_size(rect: NSRect) -> Size<Pixels> {
-            let NSSize { width, height } = rect.size;
-            size(width.into(), height.into())
+    fn committed_native_observation(&self) -> MacWindowNativeObservation {
+        self.native_observation
+            .expect("an open macOS window must have a committed native observation")
+    }
+
+    fn observation_target_generation(&self) -> u64 {
+        let committed_generation = self
+            .native_observation
+            .map(|observation| observation.topology_generation)
+            .unwrap_or(0);
+        self.display_topology
+            .retained_snapshot()
+            .map(|snapshot| snapshot.generation())
+            .unwrap_or(committed_generation)
+            .max(committed_generation)
+    }
+
+    fn native_state_expectation(&self) -> MacWindowStateExpectation {
+        unsafe {
+            let style_mask = NSWindow::styleMask(self.native_window);
+            let is_fullscreen = style_mask.contains(NSWindowStyleMask::NSFullScreenWindowMask);
+            let is_minimized: BOOL = msg_send![self.native_window, isMiniaturized];
+            let is_maximized: BOOL = msg_send![self.native_window, isZoomed];
+            MacWindowStateExpectation::new(
+                is_minimized == YES,
+                !is_fullscreen && is_maximized == YES,
+            )
+        }
+    }
+
+    fn pending_observation_event(
+        &self,
+        kind: MacWindowObservationEvent,
+    ) -> MacWindowPendingObservationEvent {
+        match self.retained_native_observation() {
+            Some(observation) => MacWindowPendingObservationEvent::observed(kind, observation),
+            None => MacWindowPendingObservationEvent::unobserved(kind),
+        }
+    }
+
+    fn sample_native_observation(
+        &self,
+        topology: &MacDisplayTopologySnapshot,
+    ) -> Option<MacWindowNativeObservation> {
+        unsafe {
+            let screen_before = NSWindow::screen(self.native_window);
+            let target_before = topology.validate_native_screen(screen_before).ok()?;
+            let display = target_before.display();
+            let screen_frame = NSScreen::frame(screen_before);
+            let window_frame = NSWindow::frame(self.native_window);
+            let content_rect = NSWindow::contentRectForFrameRect_(self.native_window, window_frame);
+            let content_view = NSWindow::contentView(self.native_window);
+            if content_view == nil {
+                return None;
+            }
+            let content_view_bounds = NSView::bounds(content_view);
+            let content_view_backing_bounds: NSRect =
+                msg_send![content_view, convertRectToBacking: content_view_bounds];
+            let window_scale_factor: f64 = msg_send![self.native_window, backingScaleFactor];
+            let style_mask = NSWindow::styleMask(self.native_window);
+            let titlebar_appears_transparent: BOOL =
+                msg_send![self.native_window, titlebarAppearsTransparent];
+            let is_minimized: BOOL = msg_send![self.native_window, isMiniaturized];
+            let is_maximized: BOOL = msg_send![self.native_window, isZoomed];
+            let is_active = NSWindow::isKeyWindow(self.native_window) == YES;
+            let screen_after = NSWindow::screen(self.native_window);
+            let target_after = topology.validate_native_screen(screen_after).ok()?;
+
+            if screen_before != screen_after
+                || target_before.generation() != topology.generation()
+                || target_after.generation() != topology.generation()
+                || target_before.display() != target_after.display()
+                || !native_rect_is_valid(window_frame)
+                || !native_rect_is_valid(content_rect)
+                || !native_rect_is_valid(content_view_bounds)
+                || !native_rect_is_valid(content_view_backing_bounds)
+                || content_rect.size.width != content_view_bounds.size.width
+                || content_rect.size.height != content_view_bounds.size.height
+                || !backing_scale_matches(
+                    content_view_bounds,
+                    content_view_backing_bounds,
+                    display.scale_factor(),
+                )
+                || !native_scale_matches(window_scale_factor, display.scale_factor())
+            {
+                return None;
+            }
+
+            let is_fullscreen = style_mask.contains(NSWindowStyleMask::NSFullScreenWindowMask);
+            let bounds = appkit_content_rect_to_global_client_bounds(
+                content_rect,
+                screen_frame,
+                display.bounds(),
+            );
+            if !client_bounds_are_valid(bounds) {
+                return None;
+            }
+
+            Some(MacWindowNativeObservation {
+                topology_generation: topology.generation(),
+                bounds,
+                display,
+                is_minimized: is_minimized == YES,
+                is_maximized: !is_fullscreen && is_maximized == YES,
+                is_fullscreen,
+                is_active,
+                style_mask: style_mask.bits(),
+                titlebar_appears_transparent: titlebar_appears_transparent == YES,
+            })
+        }
+    }
+
+    fn stable_native_observation(
+        &self,
+        topology: &MacDisplayTopologySnapshot,
+    ) -> Option<MacWindowNativeObservation> {
+        let first = self.sample_native_observation(topology);
+        let second = self.sample_native_observation(topology);
+        let mut observation = None;
+        commit_stable_native_observation(&mut observation, first, second).then_some(())?;
+        observation
+    }
+
+    fn retained_native_observation(&self) -> Option<MacWindowNativeObservation> {
+        let topology = self.display_topology.retained_snapshot()?;
+        // Event-bound facts cannot be reconstructed after a later native edge. Retry only within
+        // this delegate turn and keep the attempt count bounded.
+        (0..3).find_map(|_| self.stable_native_observation(&topology))
+    }
+
+    fn native_observation_for_generation(
+        &self,
+        target_generation: u64,
+    ) -> Result<MacWindowNativeObservation, MacWindowNativeObservationRefreshFailure> {
+        if self.fullscreen_transition.is_some() {
+            return Err(MacWindowNativeObservationRefreshFailure::AwaitFullscreenTerminal);
+        }
+        let Ok(topology) = self.display_topology.exact_snapshot() else {
+            return Err(MacWindowNativeObservationRefreshFailure::AwaitTopologyPublication);
+        };
+        if topology.generation() < target_generation {
+            return Err(MacWindowNativeObservationRefreshFailure::AwaitTopologyPublication);
+        }
+        self.stable_native_observation(&topology)
+            .ok_or(MacWindowNativeObservationRefreshFailure::UnstableNativeSample)
+    }
+
+    fn refresh_native_observation(&mut self) -> bool {
+        let Ok(observation) = self.native_observation_for_generation(0) else {
+            return false;
+        };
+        self.store_native_observation(observation);
+        true
+    }
+
+    fn store_native_observation(&mut self, observation: MacWindowNativeObservation) {
+        self.native_observation = Some(observation);
+        if !observation.is_fullscreen && !observation.is_maximized && !observation.is_minimized {
+            self.windowed_restore_bounds = observation.bounds;
+        }
+    }
+
+    fn apply_native_observation(
+        &mut self,
+        observation: MacWindowNativeObservation,
+    ) -> MacWindowNativeObservationChanges {
+        let previous = self.committed_native_observation();
+        self.store_native_observation(observation);
+        let changes = MacWindowNativeObservationChanges::between(previous, observation);
+        self.update_renderer_geometry(observation.renderer_geometry());
+        changes
+    }
+
+    fn update_renderer_geometry(&mut self, geometry: MacRendererGeometry) -> bool {
+        if self.renderer_geometry_initialized && self.renderer_geometry == geometry {
+            return false;
         }
 
-        unsafe {
-            let bounds = self.bounds();
-            let screen_size = rect_to_size(self.native_window.screen().visibleFrame());
-            bounds.size == screen_size
+        if let Some(layer) = self.renderer.layer() {
+            layer.set_contents_scale(geometry.scale_factor as f64);
         }
+        self.renderer.update_drawable_size(
+            geometry
+                .content_size
+                .to_device_pixels(geometry.scale_factor),
+        );
+        self.renderer_geometry = geometry;
+        self.renderer_geometry_initialized = true;
+        true
+    }
+
+    fn is_maximized(&self) -> bool {
+        self.committed_native_observation().is_maximized
     }
 
     fn is_fullscreen(&self) -> bool {
-        unsafe {
-            let style_mask = self.native_window.styleMask();
-            style_mask.contains(NSWindowStyleMask::NSFullScreenWindowMask)
-        }
+        self.committed_native_observation().is_fullscreen
     }
 
     fn bounds(&self) -> Bounds<Pixels> {
-        let window_frame = unsafe { NSWindow::frame(self.native_window) };
-        let screen = unsafe { NSWindow::screen(self.native_window) };
-        if screen == nil {
-            return Bounds::new(point(px(0.), px(0.)), open_gpui::DEFAULT_WINDOW_SIZE);
-        }
-        let screen_frame = unsafe { NSScreen::frame(screen) };
-        let display_id = unsafe { display_id_for_screen(screen) };
-        let display_bounds = MacDisplay(display_id).bounds();
-        let window_x_in_screen = window_frame.origin.x - screen_frame.origin.x;
-        let window_y_in_screen = window_frame.origin.y - screen_frame.origin.y;
-        let global_x = display_bounds.origin.x.as_f32() as f64 + window_x_in_screen;
-        let global_y = display_bounds.origin.y.as_f32() as f64
-            + display_bounds.size.height.as_f32() as f64
-            - window_y_in_screen
-            - window_frame.size.height;
-
-        Bounds::new(
-            point(px(global_x as f32), px(global_y as f32)),
-            size(
-                px(window_frame.size.width as f32),
-                px(window_frame.size.height as f32),
-            ),
-        )
+        self.committed_native_observation().bounds
     }
 
     fn content_size(&self) -> Size<Pixels> {
-        let NSSize { width, height, .. } =
-            unsafe { NSView::frame(self.native_window.contentView()) }.size;
-        size(px(width as f32), px(height as f32))
+        self.committed_native_observation().bounds.size
     }
 
     fn scale_factor(&self) -> f32 {
-        get_scale_factor(self.native_window)
+        self.committed_native_observation().display.scale_factor()
     }
 
     fn titlebar_height(&self) -> Pixels {
@@ -982,18 +1770,26 @@ impl MacWindowState {
     }
 
     fn window_bounds(&self) -> WindowBounds {
-        if self.is_fullscreen() {
-            WindowBounds::Fullscreen(self.fullscreen_restore_bounds)
-        } else if self.is_maximized() {
-            WindowBounds::Maximized(self.windowed_restore_bounds)
-        } else {
-            WindowBounds::Windowed(self.bounds())
-        }
+        let observation = self.committed_native_observation();
+        self.window_bounds_from_client_bounds(
+            observation.bounds,
+            observation.is_fullscreen,
+            observation.is_maximized,
+        )
     }
 
-    fn record_windowed_restore_bounds(&mut self) {
-        if !self.is_fullscreen() && !self.is_maximized() {
-            self.windowed_restore_bounds = self.bounds();
+    fn window_bounds_from_client_bounds(
+        &self,
+        bounds: Bounds<Pixels>,
+        is_fullscreen: bool,
+        is_maximized: bool,
+    ) -> WindowBounds {
+        if is_fullscreen {
+            WindowBounds::Fullscreen(self.fullscreen_restore_bounds)
+        } else if is_maximized {
+            WindowBounds::Maximized(self.windowed_restore_bounds)
+        } else {
+            WindowBounds::Windowed(bounds)
         }
     }
 }
@@ -1003,7 +1799,66 @@ unsafe impl Send for MacWindowState {}
 pub(crate) struct MacWindow(
     Arc<Mutex<MacWindowState>>,
     Arc<Mutex<MacPresentationShutdownAuthority>>,
+    // Native disposal has either completed synchronously or been queued on the main executor.
+    bool,
 );
+
+struct MacNativeObjectConstructionGuard {
+    object: id,
+}
+
+impl MacNativeObjectConstructionGuard {
+    unsafe fn new(object: id) -> Self {
+        debug_assert!(!object.is_null());
+        Self { object }
+    }
+
+    fn disarm(&mut self) {
+        self.object = nil;
+    }
+
+    unsafe fn into_autoreleased(mut self) -> id {
+        let object = self.object;
+        self.disarm();
+        unsafe { object.autorelease() }
+    }
+}
+
+impl Drop for MacNativeObjectConstructionGuard {
+    fn drop(&mut self) {
+        if !self.object.is_null() {
+            unsafe {
+                let _: () = msg_send![self.object, release];
+            }
+        }
+    }
+}
+
+struct MacWindowConstructionGuard<'a> {
+    window: &'a mut MacWindow,
+    armed: bool,
+}
+
+impl<'a> MacWindowConstructionGuard<'a> {
+    fn new(window: &'a mut MacWindow) -> Self {
+        Self {
+            window,
+            armed: true,
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for MacWindowConstructionGuard<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            self.window.dispose_native_window(true);
+        }
+    }
+}
 
 struct MacWindowInteractionQuiescenceTarget {
     native_window: StrongPtr,
@@ -1055,6 +1910,49 @@ impl MacWindowInteractionQuiescenceTarget {
 }
 
 impl MacWindow {
+    fn dispose_native_window(&mut self, synchronously: bool) {
+        if self.2 {
+            return;
+        }
+        self.2 = true;
+
+        let (event_callback, input_handler, window, foreground_executor) = {
+            let mut state = self.0.lock();
+            let (event_callback, input_handler) = state.mark_closed();
+            state.renderer.destroy();
+            let window = state.native_window;
+            unsafe {
+                state.native_window.setDelegate_(nil);
+            }
+            (
+                event_callback,
+                input_handler,
+                window,
+                state.foreground_executor.clone(),
+            )
+        };
+        event_callback.terminate();
+        input_handler.terminate();
+
+        if synchronously {
+            unsafe {
+                let window = &*window;
+                let superclass = window_callback_superclass(window);
+                let _: () = msg_send![super(window, superclass), close];
+                let _: () = msg_send![window, release];
+            }
+        } else {
+            foreground_executor
+                .spawn(async move {
+                    unsafe {
+                        window.close();
+                        window.autorelease();
+                    }
+                })
+                .detach();
+        }
+    }
+
     pub fn open(
         handle: AnyWindowHandle,
         WindowParams {
@@ -1069,16 +1967,28 @@ impl MacWindow {
             activation_policy,
             transient_for: _,
             show,
-            display_id,
+            display_id: _,
             window_min_size,
             tabbing_identifier,
             ..
         }: WindowParams,
+        display_topology: MacDisplayTopologyHandle,
+        display_snapshot: MacDisplayTopologySnapshot,
+        target_display: ValidatedMacDisplayTarget,
         cursor_visible: Arc<AtomicBool>,
         foreground_executor: ForegroundExecutor,
         background_executor: BackgroundExecutor,
         renderer_context: renderer::Context,
-    ) -> Self {
+    ) -> Result<Self> {
+        let display = target_display.display();
+        if target_display.generation() != display_snapshot.generation()
+            || display_snapshot.display(display.id()) != Some(display)
+        {
+            return Err(anyhow!(
+                "the resolved macOS display target does not belong to the creation snapshot"
+            ));
+        }
+
         unsafe {
             let creation = MacWindowCreationProjection::new(
                 window_bounds,
@@ -1147,47 +2057,11 @@ impl MacWindow {
                 }
             };
 
-            let display = display_id
-                .and_then(MacDisplay::find_by_id)
-                .unwrap_or_else(MacDisplay::primary);
-
-            let mut target_screen = nil;
-            let mut screen_frame = None;
-
-            let screens = NSScreen::screens(nil);
-            let count: u64 = cocoa::foundation::NSArray::count(screens);
-            for i in 0..count {
-                let screen = cocoa::foundation::NSArray::objectAtIndex(screens, i);
-                let frame = NSScreen::frame(screen);
-                let display_id = display_id_for_screen(screen);
-                if display_id == display.0 {
-                    screen_frame = Some(frame);
-                    target_screen = screen;
-                }
-            }
-
-            let screen_frame = screen_frame.unwrap_or_else(|| {
-                let screen = NSScreen::mainScreen(nil);
-                target_screen = screen;
-                NSScreen::frame(screen)
-            });
+            let target_screen = target_display.screen();
+            let screen_frame = NSScreen::frame(target_screen);
             let display_bounds = display.bounds();
-            let frame_top_left = NSPoint::new(
-                screen_frame.origin.x + (bounds.origin.x - display_bounds.origin.x).as_f32() as f64,
-                screen_frame.origin.y + display_bounds.size.height.as_f32() as f64
-                    - (bounds.origin.y - display_bounds.origin.y).as_f32() as f64,
-            );
-
-            let content_rect = NSRect::new(
-                NSPoint::new(
-                    frame_top_left.x,
-                    frame_top_left.y - bounds.size.height.as_f32() as f64,
-                ),
-                NSSize::new(
-                    bounds.size.width.as_f32() as f64,
-                    bounds.size.height.as_f32() as f64,
-                ),
-            );
+            let content_rect =
+                global_client_bounds_to_appkit_content_rect(bounds, screen_frame, display_bounds);
 
             let native_window = native_window.initWithContentRect_styleMask_backing_defer_screen_(
                 content_rect,
@@ -1197,6 +2071,7 @@ impl MacWindow {
                 target_screen,
             );
             assert!(!native_window.is_null());
+            let mut native_window_ownership = MacNativeObjectConstructionGuard::new(native_window);
             if creation.requires_nonactivating_panel() {
                 let hides_on_deactivate = creation.panel_hides_on_deactivate().to_objc();
                 let _: () = msg_send![native_window, setHidesOnDeactivate: hides_on_deactivate];
@@ -1220,6 +2095,7 @@ impl MacWindow {
             let native_view: id = msg_send![VIEW_CLASS, alloc];
             let native_view = NSView::initWithFrame_(native_view, NSView::bounds(content_view));
             assert!(!native_view.is_null());
+            let native_view_ownership = MacNativeObjectConstructionGuard::new(native_view);
 
             let presentation_shutdown_authority = Arc::new(Mutex::new(
                 MacPresentationShutdownAuthority::new(handle.window_id()),
@@ -1267,6 +2143,16 @@ impl MacWindow {
                     do_command_handled: None,
                     external_files_dragged: false,
                     first_mouse: false,
+                    display_topology,
+                    display_topology_subscription: None,
+                    observation_commit: MacWindowObservationCommitCoordinator::default(),
+                    observation_effects: MacWindowSerialEffectDrain::default(),
+                    renderer_geometry: MacRendererGeometry {
+                        content_size: bounds.size,
+                        scale_factor: display.scale_factor(),
+                    },
+                    renderer_geometry_initialized: false,
+                    native_observation: None,
                     windowed_restore_bounds: creation.restore_bounds,
                     fullscreen_restore_bounds: creation.restore_bounds,
                     pending_fullscreen_restore_bounds: matches!(
@@ -1274,6 +2160,7 @@ impl MacWindow {
                         MacWindowCreationState::Fullscreen
                     )
                     .then_some(creation.restore_bounds),
+                    fullscreen_transition: None,
                     move_tab_to_new_window_callback: None,
                     merge_all_windows_callback: None,
                     select_next_tab_callback: None,
@@ -1292,23 +2179,26 @@ impl MacWindow {
                     interaction_quiesced: Arc::new(AtomicBool::new(false)),
                 })),
                 presentation_shutdown_authority,
+                false,
             );
+            let mut construction_guard = MacWindowConstructionGuard::new(&mut window);
+            native_window_ownership.disarm();
 
             (*native_window).set_ivar(
                 WINDOW_STATE_IVAR,
-                Arc::into_raw(window.0.clone()) as *const c_void,
+                Arc::into_raw(construction_guard.window.0.clone()) as *const c_void,
             );
             native_window.setDelegate_(native_window);
             (*native_view).set_ivar(
                 WINDOW_STATE_IVAR,
-                Arc::into_raw(window.0.clone()) as *const c_void,
+                Arc::into_raw(construction_guard.window.0.clone()) as *const c_void,
             );
 
             if let Some(title) = titlebar
                 .as_ref()
                 .and_then(|t| t.title.as_ref().map(AsRef::as_ref))
             {
-                window.set_title(title);
+                construction_guard.window.set_title(title);
             }
 
             native_window.setMovable_(is_movable as BOOL);
@@ -1343,12 +2233,15 @@ impl MacWindow {
             setLayerContentsRedrawPolicy: NSViewLayerContentsRedrawDuringViewResize
             ];
 
-            content_view.addSubview_(native_view.autorelease());
+            let native_view = native_view_ownership.into_autoreleased();
+            content_view.addSubview_(native_view);
             native_window.makeFirstResponder_(native_view);
 
-            // Reapply the requested normal frame before entering a non-windowed state. AppKit
-            // otherwise derives the restore frame from whichever screen happened to be active.
-            NSWindow::setFrameTopLeftPoint_(native_window, frame_top_left);
+            // Reapply the requested content rect after titlebar configuration. AppKit accepts an
+            // outer frame here, so projecting through the live window decoration policy keeps
+            // WindowBounds in client coordinates.
+            let frame_rect = NSWindow::frameRectForContentRect_(native_window, content_rect);
+            NSWindow::setFrame_display_(native_window, frame_rect, NO);
             if creation.state == MacWindowCreationState::Maximized {
                 let visible_frame = NSScreen::visibleFrame(target_screen);
                 let _: () = msg_send![native_window, setFrame: visible_frame display: NO];
@@ -1399,14 +2292,36 @@ impl MacWindow {
                 WindowKind::Dialog => {}
             }
 
-            {
-                let mut window_state = window.0.lock();
-                window_state.move_traffic_light();
+            let observation_committed = {
+                let mut window_state = construction_guard.window.0.lock();
+                let committed = window_state.refresh_native_observation();
+                if committed {
+                    let observation = window_state.committed_native_observation();
+                    window_state.update_renderer_geometry(observation.renderer_geometry());
+                    window_state.move_traffic_light();
+                }
+                committed
+            };
+            if !observation_committed {
+                drop(construction_guard);
+                pool.drain();
+                return Err(anyhow!(
+                    "AppKit did not provide a coherent initial client-geometry observation"
+                ));
+            }
+            if let Err(error) = subscribe_window_to_display_topology(&construction_guard.window.0) {
+                drop(construction_guard);
+                pool.drain();
+                return Err(anyhow!(
+                    "cannot subscribe the macOS window to display publications: {error}"
+                ));
             }
 
+            construction_guard.disarm();
+            drop(construction_guard);
             pool.drain();
 
-            window
+            Ok(window)
         }
     }
 
@@ -1502,33 +2417,480 @@ fn ns_rect_contains_point(rect: NSRect, point: NSPoint) -> bool {
         && point.y < rect.origin.y + rect.size.height
 }
 
+fn subscribe_window_to_display_topology(window_state: &Arc<Mutex<MacWindowState>>) -> Result<()> {
+    let (display_topology, observed_generation) = {
+        let state = window_state.lock();
+        (
+            state.display_topology.clone(),
+            state.committed_native_observation().topology_generation,
+        )
+    };
+    let weak_window_state = Arc::downgrade(window_state);
+    let listener = Arc::new(move |generation| {
+        let Some(window_state) = weak_window_state.upgrade() else {
+            return;
+        };
+        request_window_observation_commit(&window_state, generation, None, false);
+    }) as Arc<dyn Fn(u64) + Send + Sync>;
+    let subscription = display_topology.subscribe_publications(observed_generation, listener)?;
+    let mut state = window_state.lock();
+    if !state.is_closed() {
+        state.display_topology_subscription = Some(subscription);
+    }
+    Ok(())
+}
+
+#[derive(Clone)]
+struct MacWindowObservationCommitJob {
+    window_state: Weak<Mutex<MacWindowState>>,
+    job_epoch: u64,
+}
+
+fn enqueue_window_observation_commit_job(job: MacWindowObservationCommitJob, delay: Duration) {
+    let queue = DispatchQueue::main();
+    if delay.is_zero() {
+        queue.exec_async(move || complete_window_observation_commit_job(job));
+        return;
+    }
+
+    let delay_nanos = i64::try_from(delay.as_nanos())
+        .expect("macOS window observation retry delay must fit in dispatch time");
+    let when = DispatchTime::NOW.time(delay_nanos);
+    let fallback_job = job.clone();
+    if let Err(error) = queue.after(when, move || complete_window_observation_commit_job(job)) {
+        log::error!("cannot schedule macOS window observation retry: {error:?}");
+        queue.exec_async(move || complete_window_observation_commit_job(fallback_job));
+    }
+}
+
+fn complete_window_observation_commit_job(job: MacWindowObservationCommitJob) {
+    let Some(window_state) = job.window_state.upgrade() else {
+        return;
+    };
+    let job_is_current = {
+        let state = window_state.lock();
+        !state.is_closed()
+            && state
+                .observation_commit
+                .target_for_job(job.job_epoch)
+                .is_some()
+    };
+    if !job_is_current {
+        return;
+    }
+
+    complete_window_observation_commit(&window_state, job.job_epoch);
+}
+
+fn request_window_observation_commit(
+    window_state: &Arc<Mutex<MacWindowState>>,
+    target_generation: u64,
+    event: Option<MacWindowPendingObservationEvent>,
+    attempt_immediately: bool,
+) {
+    let job_epoch = {
+        let mut state = window_state.lock();
+        if state.is_closed() {
+            return;
+        }
+        state.observation_commit.request(target_generation, event)
+    };
+    let Some(job_epoch) = job_epoch else {
+        return;
+    };
+
+    if attempt_immediately {
+        complete_window_observation_commit(window_state, job_epoch);
+    } else {
+        enqueue_window_observation_commit_job(
+            MacWindowObservationCommitJob {
+                window_state: Arc::downgrade(window_state),
+                job_epoch,
+            },
+            Duration::ZERO,
+        );
+    }
+}
+
+fn request_window_observation_commit_for_retained_topology(
+    window_state: &Arc<Mutex<MacWindowState>>,
+    event: Option<MacWindowPendingObservationEvent>,
+    attempt_immediately: bool,
+) {
+    let target_generation = {
+        let state = window_state.lock();
+        if state.is_closed() {
+            return;
+        }
+        state.observation_target_generation()
+    };
+    request_window_observation_commit(window_state, target_generation, event, attempt_immediately);
+}
+
+enum MacWindowObservationCommitOutcome {
+    Committed { should_drain_effects: bool },
+    Retry { delay: Duration },
+    Paused,
+}
+
+fn complete_window_observation_commit(window_state: &Arc<Mutex<MacWindowState>>, job_epoch: u64) {
+    let outcome = {
+        let mut state = window_state.lock();
+        if state.is_closed() {
+            state.observation_commit.cancel();
+            return;
+        }
+        let Some(target_generation) = state.observation_commit.target_for_job(job_epoch) else {
+            return;
+        };
+
+        match state.native_observation_for_generation(target_generation) {
+            Ok(observation) => {
+                let Some(events) = state
+                    .observation_commit
+                    .commit(job_epoch, observation.topology_generation)
+                else {
+                    return;
+                };
+                // Commit ownership and effect publication are atomic under the window lock, so a
+                // newer native event cannot publish effects ahead of this committed batch.
+                MacWindowObservationCommitOutcome::Committed {
+                    should_drain_effects: enqueue_window_observation_effect_batches(
+                        &mut state,
+                        events.into_effect_batches(observation),
+                    ),
+                }
+            }
+            Err(MacWindowNativeObservationRefreshFailure::UnstableNativeSample) => {
+                // A delay only spaces repeated native reads; it never decides success or failure.
+                let Some(delay) = state.observation_commit.retry_delay(job_epoch) else {
+                    return;
+                };
+                MacWindowObservationCommitOutcome::Retry { delay }
+            }
+            Err(
+                MacWindowNativeObservationRefreshFailure::AwaitTopologyPublication
+                | MacWindowNativeObservationRefreshFailure::AwaitFullscreenTerminal,
+            ) => {
+                state.observation_commit.pause(job_epoch);
+                MacWindowObservationCommitOutcome::Paused
+            }
+        }
+    };
+
+    match outcome {
+        MacWindowObservationCommitOutcome::Committed {
+            should_drain_effects,
+        } => {
+            if should_drain_effects {
+                drain_window_observation_effects(window_state);
+            }
+        }
+        MacWindowObservationCommitOutcome::Retry { delay } => {
+            enqueue_window_observation_commit_job(
+                MacWindowObservationCommitJob {
+                    window_state: Arc::downgrade(window_state),
+                    job_epoch,
+                },
+                delay,
+            );
+        }
+        MacWindowObservationCommitOutcome::Paused => {}
+    }
+}
+
+fn enqueue_window_observation_effect_batches(
+    state: &mut MacWindowState,
+    batches: impl IntoIterator<Item = MacWindowObservationEffectBatch>,
+) -> bool {
+    let mut should_drain = false;
+    for batch in batches {
+        should_drain |= state.observation_effects.enqueue(batch);
+    }
+    should_drain
+}
+
+fn drain_window_observation_effects(window_state: &Arc<Mutex<MacWindowState>>) {
+    loop {
+        let batch = {
+            let mut state = window_state.lock();
+            if state.is_closed() {
+                state.observation_effects.cancel();
+                return;
+            }
+            state.observation_effects.pop_next()
+        };
+        let Some(batch) = batch else {
+            return;
+        };
+        let delivery = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            deliver_window_observation_effect_batch(window_state, batch);
+        }));
+        if let Err(panic) = delivery {
+            // The current batch has already been removed and may be partially applied. Transfer
+            // the original payload without replaying it; a later main-queue owner drains the FIFO.
+            let panic_owner = {
+                let mut state = window_state.lock();
+                let panic_owner = state.foreground_executor.clone();
+                if state.is_closed() {
+                    state.observation_effects.cancel();
+                } else {
+                    let recovery_scheduled = state
+                        .observation_effects
+                        .mark_recovery_scheduled_after_panic();
+                    debug_assert!(recovery_scheduled);
+                }
+                panic_owner
+            };
+            transfer_window_observation_effect_panic(window_state, panic_owner, panic);
+            return;
+        }
+    }
+}
+
+fn transfer_window_observation_effect_panic(
+    window_state: &Arc<Mutex<MacWindowState>>,
+    panic_owner: ForegroundExecutor,
+    panic: Box<dyn std::any::Any + Send>,
+) {
+    let weak_window_state = Arc::downgrade(window_state);
+    // The foreground task is the Rust panic owner: it first resumes any unapplied FIFO batches,
+    // then isolates the original payload without unwinding through the dispatch trampoline.
+    panic_owner
+        .spawn(async move {
+            if let Some(window_state) = weak_window_state.upgrade() {
+                let should_drain = {
+                    let mut state = window_state.lock();
+                    if state.is_closed() {
+                        state.observation_effects.cancel();
+                        false
+                    } else {
+                        state.observation_effects.begin_scheduled_recovery()
+                    }
+                };
+                if should_drain {
+                    drain_window_observation_effects(&window_state);
+                }
+            }
+            log::error!(
+                "isolated a panic from a macOS window observation effect at the native callback boundary"
+            );
+            // An arbitrary panic payload may itself panic from Drop. Leaking only this isolated
+            // payload mirrors the native-boundary policy used by the Win32 backend.
+            mem::forget(panic);
+        })
+        .detach();
+}
+
+fn deliver_window_observation_effect_batch(
+    window_state: &Arc<Mutex<MacWindowState>>,
+    batch: MacWindowObservationEffectBatch,
+) {
+    let changes = {
+        let mut state = window_state.lock();
+        if state.is_closed() {
+            return;
+        }
+        let changes = state.apply_native_observation(batch.observation);
+        if matches!(
+            batch.event.map(|event| event.kind),
+            Some(MacWindowObservationEvent::Fullscreen(_) | MacWindowObservationEvent::State(_))
+        ) {
+            state.move_traffic_light();
+        }
+        changes
+    };
+
+    if changes.renderer_geometry_changed {
+        notify_window_resize(window_state);
+    }
+    if changes.moved
+        || matches!(
+            batch.event.map(|event| event.kind),
+            Some(MacWindowObservationEvent::Moved)
+        )
+    {
+        notify_window_moved(window_state);
+    }
+
+    let Some(event) = batch.event else {
+        if changes.state_changed {
+            notify_window_state_changed(window_state);
+        }
+        return;
+    };
+    match event.kind {
+        MacWindowObservationEvent::Active(active_event) => {
+            deliver_window_active_event(
+                window_state,
+                active_event,
+                batch.observation.is_active,
+                event.is_latest_active,
+            );
+            if changes.state_changed {
+                notify_window_state_changed(window_state);
+            }
+        }
+        MacWindowObservationEvent::Fullscreen(terminal) => {
+            if batch.observation.is_fullscreen == terminal.is_fullscreen() {
+                notify_window_state_changed(window_state);
+            } else {
+                log::warn!(
+                    "discarding macOS fullscreen terminal {terminal:?} without a matching complete observation"
+                );
+                if changes.state_changed {
+                    notify_window_state_changed(window_state);
+                }
+            }
+        }
+        MacWindowObservationEvent::State(state_event) => {
+            let observation_matches = batch.observation.state_expectation() == state_event.expected;
+            let should_notify = match state_event.source {
+                MacWindowStateEventSource::Resized => changes.minimized_or_maximized_changed,
+                MacWindowStateEventSource::Miniaturized
+                | MacWindowStateEventSource::Deminiaturized => observation_matches,
+            };
+            if should_notify && observation_matches {
+                notify_window_state_changed(window_state);
+            } else if !observation_matches {
+                log::warn!(
+                    "discarding macOS window-state edge {:?} without a matching complete observation",
+                    state_event.source
+                );
+                if changes.state_changed {
+                    notify_window_state_changed(window_state);
+                }
+            }
+        }
+        MacWindowObservationEvent::Moved => {
+            if changes.state_changed {
+                notify_window_state_changed(window_state);
+            }
+        }
+    }
+}
+
+struct MacWindowCallbackCheckout<T, Restore>
+where
+    Restore: FnOnce(T),
+{
+    callback: Option<T>,
+    restore: Option<Restore>,
+}
+
+impl<T, Restore> MacWindowCallbackCheckout<T, Restore>
+where
+    Restore: FnOnce(T),
+{
+    fn new(callback: T, restore: Restore) -> Self {
+        Self {
+            callback: Some(callback),
+            restore: Some(restore),
+        }
+    }
+
+    fn callback(&mut self) -> &mut T {
+        self.callback
+            .as_mut()
+            .expect("checked-out macOS window callback must remain available")
+    }
+}
+
+impl<T, Restore> Drop for MacWindowCallbackCheckout<T, Restore>
+where
+    Restore: FnOnce(T),
+{
+    fn drop(&mut self) {
+        if let (Some(callback), Some(restore)) = (self.callback.take(), self.restore.take()) {
+            restore(callback);
+        }
+    }
+}
+
+fn restore_callback_if_vacant<T>(slot: &mut Option<T>, callback: T) {
+    if slot.is_none() {
+        *slot = Some(callback);
+    }
+}
+
+fn checkout_mac_window_callback<T>(
+    window_state: &Arc<Mutex<MacWindowState>>,
+    callback: T,
+    slot: for<'a> fn(&'a mut MacWindowState) -> &'a mut Option<T>,
+) -> MacWindowCallbackCheckout<T, impl FnOnce(T)> {
+    let window_state = window_state.clone();
+    MacWindowCallbackCheckout::new(callback, move |callback| {
+        let mut state = window_state.lock();
+        if state.is_closed() {
+            return;
+        }
+        restore_callback_if_vacant(slot(&mut state), callback);
+    })
+}
+
+fn resize_callback_slot(
+    state: &mut MacWindowState,
+) -> &mut Option<Box<dyn FnMut(Size<Pixels>, f32)>> {
+    &mut state.resize_callback
+}
+
+fn moved_callback_slot(state: &mut MacWindowState) -> &mut Option<Box<dyn FnMut()>> {
+    &mut state.moved_callback
+}
+
+fn window_state_change_callback_slot(state: &mut MacWindowState) -> &mut Option<Box<dyn FnMut()>> {
+    &mut state.window_state_change_callback
+}
+
+fn notify_window_resize(window_state: &Arc<Mutex<MacWindowState>>) {
+    let (callback, content_size, scale_factor) = {
+        let mut state = window_state.lock();
+        if state.is_closed() {
+            return;
+        }
+        let Some(callback) = state.resize_callback.take() else {
+            return;
+        };
+        (callback, state.content_size(), state.scale_factor())
+    };
+    let mut callback = checkout_mac_window_callback(window_state, callback, resize_callback_slot);
+    (callback.callback())(content_size, scale_factor);
+}
+
+fn notify_window_moved(window_state: &Arc<Mutex<MacWindowState>>) {
+    let callback = {
+        let mut state = window_state.lock();
+        if state.is_closed() {
+            return;
+        }
+        let Some(callback) = state.moved_callback.take() else {
+            return;
+        };
+        callback
+    };
+    let mut callback = checkout_mac_window_callback(window_state, callback, moved_callback_slot);
+    (callback.callback())();
+}
+
+fn notify_window_state_changed(window_state: &Arc<Mutex<MacWindowState>>) {
+    let callback = {
+        let mut state = window_state.lock();
+        if state.is_closed() {
+            return;
+        }
+        let Some(callback) = state.window_state_change_callback.take() else {
+            return;
+        };
+        callback
+    };
+    let mut callback =
+        checkout_mac_window_callback(window_state, callback, window_state_change_callback_slot);
+    (callback.callback())();
+}
+
 impl Drop for MacWindow {
     fn drop(&mut self) {
-        let (event_callback, input_handler, window, foreground_executor) = {
-            let mut this = self.0.lock();
-            let (event_callback, input_handler) = this.mark_closed();
-            this.renderer.destroy();
-            let window = this.native_window;
-            unsafe {
-                this.native_window.setDelegate_(nil);
-            }
-            (
-                event_callback,
-                input_handler,
-                window,
-                this.foreground_executor.clone(),
-            )
-        };
-        event_callback.terminate();
-        input_handler.terminate();
-        foreground_executor
-            .spawn(async move {
-                unsafe {
-                    window.close();
-                    window.autorelease();
-                }
-            })
-            .detach();
+        self.dispose_native_window(false);
     }
 }
 
@@ -1801,11 +3163,11 @@ impl PlatformWindow for MacWindow {
     }
 
     fn is_minimized(&self) -> bool {
-        let this = self.0.as_ref().lock();
-        unsafe {
-            let minimized: BOOL = msg_send![this.native_window, isMiniaturized];
-            minimized == YES
-        }
+        self.0
+            .as_ref()
+            .lock()
+            .committed_native_observation()
+            .is_minimized
     }
 
     fn accepts_pointer_input(&self) -> bool {
@@ -1821,8 +3183,13 @@ impl PlatformWindow for MacWindow {
     }
 
     fn platform_facts(&self) -> open_gpui::WindowPlatformFacts {
-        let window_bounds = self.window_bounds();
         let state = self.0.as_ref().lock();
+        let observation = state.committed_native_observation();
+        let window_bounds = state.window_bounds_from_client_bounds(
+            observation.bounds,
+            observation.is_fullscreen,
+            observation.is_maximized,
+        );
         let activation_policy = if state.interaction_is_quiesced() {
             WindowActivationPolicy {
                 accepts_activation: false,
@@ -1831,26 +3198,25 @@ impl PlatformWindow for MacWindow {
         } else {
             state.activation_policy
         };
-        drop(state);
         open_gpui::WindowPlatformFacts {
-            bounds: self.bounds(),
+            bounds: observation.bounds,
             coordinate_space: open_gpui::WindowCoordinateSpace::GlobalScreen,
             physical_geometry: None,
             window_bounds,
             inner_window_bounds: window_bounds,
-            content_size: self.content_size(),
-            scale_factor: self.scale_factor(),
-            display_id: self.display().map(|display| display.id()),
-            is_minimized: self.is_minimized(),
-            is_maximized: self.is_maximized(),
-            is_fullscreen: self.is_fullscreen(),
-            accepts_pointer_input: self.accepts_pointer_input(),
+            content_size: observation.bounds.size,
+            scale_factor: observation.display.scale_factor(),
+            display_id: Some(observation.display.id()),
+            is_minimized: observation.is_minimized,
+            is_maximized: observation.is_maximized,
+            is_fullscreen: observation.is_fullscreen,
+            accepts_pointer_input: state.accepts_pointer_input,
             accepts_activation: activation_policy.accepts_activation,
             focus_on_click: activation_policy.focus_on_click,
-            background_appearance: self.background_appearance(),
-            topmost: self.0.as_ref().lock().topmost,
-            taskbar_visible: self.0.as_ref().lock().taskbar_visible,
-            is_active: self.is_active(),
+            background_appearance: state.background_appearance,
+            topmost: state.topmost,
+            taskbar_visible: state.taskbar_visible,
+            is_active: !state.interaction_is_quiesced() && observation.is_active,
         }
     }
 
@@ -1971,19 +3337,9 @@ impl PlatformWindow for MacWindow {
     }
 
     fn display(&self) -> Option<Rc<dyn PlatformDisplay>> {
-        unsafe {
-            let screen = self.0.lock().native_window.screen();
-            if screen.is_null() {
-                return None;
-            }
-            let device_description: id = msg_send![screen, deviceDescription];
-            let screen_number: id =
-                NSDictionary::valueForKey_(device_description, ns_string("NSScreenNumber"));
-
-            let screen_number: u32 = msg_send![screen_number, unsignedIntValue];
-
-            Some(Rc::new(MacDisplay(screen_number)))
-        }
+        let state = self.0.lock();
+        let display = state.committed_native_observation().display;
+        Some(Rc::new(display) as Rc<dyn PlatformDisplay>)
     }
 
     fn mouse_position(&self) -> Point<Pixels> {
@@ -2134,7 +3490,7 @@ impl PlatformWindow for MacWindow {
 
     fn is_active(&self) -> bool {
         let state = self.0.lock();
-        !state.interaction_is_quiesced() && unsafe { state.native_window.isKeyWindow() == YES }
+        !state.interaction_is_quiesced() && state.committed_native_observation().is_active
     }
 
     // is_hovered is unused on macOS. See Window::is_window_hovered.
@@ -2268,14 +3624,7 @@ impl PlatformWindow for MacWindow {
     }
 
     fn is_fullscreen(&self) -> bool {
-        let this = self.0.lock();
-        let window = this.native_window;
-
-        unsafe {
-            window
-                .styleMask()
-                .contains(NSWindowStyleMask::NSFullScreenWindowMask)
-        }
+        self.0.lock().is_fullscreen()
     }
 
     fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>) {
@@ -2607,24 +3956,6 @@ impl rwh::HasDisplayHandle for MacWindow {
     }
 }
 
-fn get_scale_factor(native_window: id) -> f32 {
-    let factor = unsafe {
-        let screen: id = msg_send![native_window, screen];
-        if screen.is_null() {
-            return 2.0;
-        }
-        NSScreen::backingScaleFactor(screen) as f32
-    };
-
-    // We are not certain what triggers this, but it seems that sometimes
-    // this method would return 0 (https://github.com/zed-industries/zed/issues/6412)
-    // It seems most likely that this would happen if the window has no screen
-    // (if it is off-screen), though we'd expect to see viewDidChangeBackingProperties before
-    // it was rendered for real.
-    // Regardless, attempt to avoid the issue here.
-    if factor == 0.0 { 2. } else { factor }
-}
-
 /// Returns whether `window` is one of GPUI's managed windows.
 unsafe fn is_gpui_window(window: id) -> bool {
     unsafe {
@@ -2646,7 +3977,10 @@ unsafe fn get_window_state(object: &Object) -> Arc<Mutex<MacWindowState>> {
 unsafe fn drop_window_state(object: &Object) {
     unsafe {
         let raw: *mut c_void = *object.get_ivar(WINDOW_STATE_IVAR);
-        Arc::from_raw(raw as *mut Mutex<MacWindowState>);
+        if raw.is_null() {
+            return;
+        }
+        drop(Arc::from_raw(raw as *mut Mutex<MacWindowState>));
     }
 }
 
@@ -3147,18 +4481,14 @@ extern "C" fn window_did_change_occlusion_state(this: &Object, _: Sel, _: id) {
     }
 }
 
-extern "C" fn window_did_resize(this: &Object, _: Sel, _: id) {
-    let window_state = unsafe { get_window_state(this) };
-    let mut lock = window_state.as_ref().lock();
-    if !lock.is_closed() {
-        lock.record_windowed_restore_bounds();
-        lock.move_traffic_light();
-    }
+extern "C" fn window_did_resize(this: &Object, selector: Sel, _: id) {
+    window_state_observation_did_change(this, selector);
 }
 
 extern "C" fn window_will_enter_fullscreen(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
+    lock.fullscreen_transition = Some(MacFullscreenTransition::Entering);
     lock.fullscreen_restore_bounds = lock
         .pending_fullscreen_restore_bounds
         .take()
@@ -3175,7 +4505,8 @@ extern "C" fn window_will_enter_fullscreen(this: &Object, _: Sel, _: id) {
 
 extern "C" fn window_will_exit_fullscreen(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
-    let lock = window_state.as_ref().lock();
+    let mut lock = window_state.as_ref().lock();
+    lock.fullscreen_transition = Some(MacFullscreenTransition::Exiting);
 
     let min_version = NSOperatingSystemVersion::new(15, 3, 0);
 
@@ -3186,20 +4517,111 @@ extern "C" fn window_will_exit_fullscreen(this: &Object, _: Sel, _: id) {
     }
 }
 
-extern "C" fn window_state_did_change(this: &Object, _: Sel, _: id) {
-    let window_state = unsafe { get_window_state(this) };
-    let mut lock = window_state.as_ref().lock();
-    if lock.is_closed() {
+fn fullscreen_terminal_for_delegate_selector(
+    selector: Sel,
+) -> Option<MacFullscreenTransitionTerminal> {
+    if selector == sel!(windowDidEnterFullScreen:) {
+        Some(MacFullscreenTransitionTerminal::Entered)
+    } else if selector == sel!(windowDidExitFullScreen:) {
+        Some(MacFullscreenTransitionTerminal::Exited)
+    } else if selector == sel!(windowDidFailToEnterFullScreen:) {
+        Some(MacFullscreenTransitionTerminal::FailedToEnter)
+    } else if selector == sel!(windowDidFailToExitFullScreen:) {
+        Some(MacFullscreenTransitionTerminal::FailedToExit)
+    } else {
+        None
+    }
+}
+
+extern "C" fn window_fullscreen_transition_did_finish(this: &Object, selector: Sel, _: id) {
+    let Some(terminal) = fullscreen_terminal_for_delegate_selector(selector) else {
+        log::error!("received an unknown macOS fullscreen terminal delegate selector");
         return;
-    }
-    if let Some(mut callback) = lock.window_state_change_callback.take() {
-        drop(lock);
-        callback();
-        let mut lock = window_state.lock();
-        if !lock.is_closed() {
-            lock.window_state_change_callback = Some(callback);
+    };
+    let window_state = unsafe { get_window_state(this) };
+    let (target_generation, event) = {
+        let mut lock = window_state.as_ref().lock();
+        let transition_matched = terminal.finish(&mut lock.fullscreen_transition);
+        if !transition_matched {
+            log::debug!(
+                "received unexpected macOS fullscreen terminal {terminal:?} for window {:?}",
+                lock.handle.window_id()
+            );
         }
+
+        if lock.is_closed() {
+            return;
+        }
+
+        if is_macos_version_at_least(NSOperatingSystemVersion::new(15, 3, 0)) {
+            let appears_transparent =
+                terminal.titlebar_appears_transparent(lock.transparent_titlebar);
+            unsafe {
+                lock.native_window
+                    .setTitlebarAppearsTransparent_(appears_transparent.to_objc());
+            }
+        }
+
+        let kind = MacWindowObservationEvent::Fullscreen(terminal);
+        let mut event = lock.pending_observation_event(kind);
+        if event
+            .observation
+            .is_some_and(|observation| observation.is_fullscreen != terminal.is_fullscreen())
+        {
+            event.observation = None;
+        }
+        (lock.observation_target_generation(), event)
+    };
+
+    request_window_observation_commit(&window_state, target_generation, Some(event), true);
+}
+
+fn state_event_for_delegate_selector(selector: Sel) -> Option<MacWindowStateEventSource> {
+    if selector == sel!(windowDidResize:) {
+        Some(MacWindowStateEventSource::Resized)
+    } else if selector == sel!(windowDidMiniaturize:) {
+        Some(MacWindowStateEventSource::Miniaturized)
+    } else if selector == sel!(windowDidDeminiaturize:) {
+        Some(MacWindowStateEventSource::Deminiaturized)
+    } else {
+        None
     }
+}
+
+fn request_window_state_observation(this: &Object, source: MacWindowStateEventSource) {
+    let window_state = unsafe { get_window_state(this) };
+    let (target_generation, event) = {
+        let state = window_state.lock();
+        if state.is_closed() {
+            return;
+        }
+        let observation = state.retained_native_observation();
+        let native_state = observation
+            .map(MacWindowNativeObservation::state_expectation)
+            .unwrap_or_else(|| state.native_state_expectation());
+        let expected = source.expected_state(native_state);
+        let kind = MacWindowObservationEvent::State(MacWindowStateEvent::new(source, expected));
+        let observation =
+            observation.filter(|observation| observation.state_expectation() == expected);
+        let event = match observation {
+            Some(observation) => MacWindowPendingObservationEvent::observed(kind, observation),
+            None => MacWindowPendingObservationEvent::unobserved(kind),
+        };
+        (state.observation_target_generation(), event)
+    };
+    request_window_observation_commit(&window_state, target_generation, Some(event), true);
+}
+
+extern "C" fn window_state_did_change(this: &Object, selector: Sel, _: id) {
+    window_state_observation_did_change(this, selector);
+}
+
+fn window_state_observation_did_change(this: &Object, selector: Sel) {
+    let Some(event) = state_event_for_delegate_selector(selector) else {
+        log::error!("received an unknown macOS window-state delegate selector");
+        return;
+    };
+    request_window_state_observation(this, event);
 }
 
 pub(crate) fn is_macos_version_at_least(version: NSOperatingSystemVersion) -> bool {
@@ -3208,46 +4630,22 @@ pub(crate) fn is_macos_version_at_least(version: NSOperatingSystemVersion) -> bo
 
 extern "C" fn window_did_move(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
-    let mut lock = window_state.as_ref().lock();
-    if lock.is_closed() {
-        return;
-    }
-    lock.record_windowed_restore_bounds();
-    if let Some(mut callback) = lock.moved_callback.take() {
-        drop(lock);
-        callback();
-        let mut lock = window_state.lock();
-        if !lock.is_closed() {
-            lock.moved_callback = Some(callback);
+    let (target_generation, event) = {
+        let state = window_state.lock();
+        if state.is_closed() {
+            return;
         }
-    }
+        (
+            state.observation_target_generation(),
+            state.pending_observation_event(MacWindowObservationEvent::Moved),
+        )
+    };
+    request_window_observation_commit(&window_state, target_generation, Some(event), true);
 }
 
 // Update the window scale factor and drawable size, and call the resize callback if any.
 fn update_window_scale_factor(window_state: &Arc<Mutex<MacWindowState>>) {
-    let mut lock = window_state.as_ref().lock();
-    if lock.is_closed() {
-        return;
-    }
-    let scale_factor = lock.scale_factor();
-    let size = lock.content_size();
-    let drawable_size = size.to_device_pixels(scale_factor);
-    if let Some(layer) = lock.renderer.layer() {
-        layer.set_contents_scale(scale_factor as f64);
-    }
-
-    lock.renderer.update_drawable_size(drawable_size);
-
-    if let Some(mut callback) = lock.resize_callback.take() {
-        let content_size = lock.content_size();
-        let scale_factor = lock.scale_factor();
-        drop(lock);
-        callback(content_size, scale_factor);
-        let mut lock = window_state.as_ref().lock();
-        if !lock.is_closed() {
-            lock.resize_callback = Some(callback);
-        }
-    };
+    request_window_observation_commit_for_retained_topology(window_state, None, true);
 }
 
 extern "C" fn window_did_change_screen(this: &Object, _: Sel, _: id) {
@@ -3261,13 +4659,46 @@ extern "C" fn window_did_change_screen(this: &Object, _: Sel, _: id) {
     update_window_scale_factor(&window_state);
 }
 
+fn active_event_for_delegate_selector(selector: Sel) -> Option<MacWindowActiveEvent> {
+    if selector == sel!(windowDidBecomeKey:) {
+        Some(MacWindowActiveEvent::BecameKey)
+    } else if selector == sel!(windowDidResignKey:) {
+        Some(MacWindowActiveEvent::ResignedKey)
+    } else {
+        None
+    }
+}
+
 extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) {
+    let Some(event) = active_event_for_delegate_selector(selector) else {
+        log::error!("received an unknown macOS key-status delegate selector");
+        return;
+    };
     let window_state = unsafe { get_window_state(this) };
-    let lock = window_state.lock();
+    let (target_generation, event) = {
+        let state = window_state.lock();
+        if state.is_closed() || state.interaction_is_quiesced() {
+            return;
+        }
+        (
+            state.observation_target_generation(),
+            state.pending_observation_event(MacWindowObservationEvent::Active(event)),
+        )
+    };
+    request_window_observation_commit(&window_state, target_generation, Some(event), true);
+}
+
+fn deliver_window_active_event(
+    window_state: &Arc<Mutex<MacWindowState>>,
+    event: MacWindowActiveEvent,
+    observed_is_active: bool,
+    event_is_latest: bool,
+) {
+    let is_active = event.is_active();
+    let mut lock = window_state.lock();
     if lock.is_closed() || lock.interaction_is_quiesced() {
         return;
     }
-    let is_active = unsafe { lock.native_window.isKeyWindow() == YES };
 
     // AppKit also unhides the cursor on activation changes, so mirror that here.
     lock.cursor_visible.store(true, Ordering::Relaxed);
@@ -3281,7 +4712,7 @@ extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) 
     // The following code detects the spurious event and invokes `resignKeyWindow`:
     // in theory, we're not supposed to invoke this method manually but it balances out
     // the spurious `becomeKeyWindow` event and helps us work around that bug.
-    if selector == sel!(windowDidBecomeKey:) && !is_active {
+    if event == MacWindowActiveEvent::BecameKey && event_is_latest && !observed_is_active {
         let native_window = lock.native_window;
         drop(lock);
         unsafe {
@@ -3313,8 +4744,7 @@ extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) 
     // This is only done on subsequent activations (not the first) to ensure the initial focus
     // path is properly established. Without this guard, the focus state would remain unset until
     // the first mouse click, causing keybindings to be non-functional.
-    if selector == sel!(windowDidBecomeKey:) && is_active {
-        let window_state = unsafe { get_window_state(this) };
+    if event == MacWindowActiveEvent::BecameKey && is_active {
         let mut lock = window_state.lock();
 
         if lock.is_closed() {
@@ -3338,9 +4768,10 @@ extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) 
         }
     }
 
+    let window_state = window_state.clone();
     executor
         .spawn(async move {
-            let mut lock = window_state.as_ref().lock();
+            let mut lock = window_state.lock();
             if lock.is_closed() || lock.interaction_is_quiesced() {
                 return;
             }
@@ -3352,6 +4783,8 @@ extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) 
                 let native_window = lock.native_window;
                 drop(lock);
                 let exact_native_positive = is_active
+                    && event_is_latest
+                    && observed_is_active
                     && unsafe {
                         let app = NSApplication::sharedApplication(nil);
                         let key_window: id = msg_send![app, keyWindow];
@@ -3454,20 +4887,8 @@ extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
         let _: () = msg_send![super(this, class!(NSView)), setFrameSize: size];
     }
 
-    let scale_factor = lock.scale_factor();
-    let drawable_size = new_size.to_device_pixels(scale_factor);
-    lock.renderer.update_drawable_size(drawable_size);
-
-    if let Some(mut callback) = lock.resize_callback.take() {
-        let content_size = lock.content_size();
-        let scale_factor = lock.scale_factor();
-        drop(lock);
-        callback(content_size, scale_factor);
-        let mut lock = window_state.lock();
-        if !lock.is_closed() {
-            lock.resize_callback = Some(callback);
-        }
-    };
+    let renderer_geometry = renderer_geometry_for_frame_size(lock.renderer_geometry, new_size);
+    lock.update_renderer_geometry(renderer_geometry);
 }
 
 extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
@@ -4073,6 +5494,804 @@ mod creation_projection_tests {
 
     fn restore_bounds() -> Bounds<Pixels> {
         Bounds::new(point(px(120.0), px(80.0)), size(px(1024.0), px(768.0)))
+    }
+
+    fn assert_client_geometry_round_trip(
+        screen_frame: NSRect,
+        display_bounds: Bounds<Pixels>,
+        client_bounds: Bounds<Pixels>,
+    ) {
+        let content_rect = global_client_bounds_to_appkit_content_rect(
+            client_bounds,
+            screen_frame,
+            display_bounds,
+        );
+        assert_eq!(
+            appkit_content_rect_to_global_client_bounds(content_rect, screen_frame, display_bounds,),
+            client_bounds
+        );
+    }
+
+    #[test]
+    fn client_geometry_round_trips_across_signed_desktop_coordinates() {
+        assert_client_geometry_round_trip(
+            NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(1920.0, 1080.0)),
+            Bounds::new(point(px(0.0), px(0.0)), size(px(1920.0), px(1080.0))),
+            restore_bounds(),
+        );
+        assert_client_geometry_round_trip(
+            NSRect::new(NSPoint::new(-1440.0, 0.0), NSSize::new(1440.0, 900.0)),
+            Bounds::new(point(px(-1440.0), px(0.0)), size(px(1440.0), px(900.0))),
+            Bounds::new(point(px(-1300.0), px(140.0)), size(px(900.0), px(600.0))),
+        );
+        assert_client_geometry_round_trip(
+            NSRect::new(NSPoint::new(0.0, 1080.0), NSSize::new(1440.0, 900.0)),
+            Bounds::new(point(px(0.0), px(-900.0)), size(px(1440.0), px(900.0))),
+            Bounds::new(point(px(160.0), px(-780.0)), size(px(800.0), px(500.0))),
+        );
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    struct TestNativeObservation {
+        topology_generation: u64,
+        bounds: Bounds<Pixels>,
+        scale_factor: f32,
+        display_id: u64,
+        is_fullscreen: bool,
+        is_active: bool,
+    }
+
+    fn native_observation(
+        bounds: Bounds<Pixels>,
+        topology_generation: u64,
+    ) -> TestNativeObservation {
+        TestNativeObservation {
+            topology_generation,
+            bounds,
+            scale_factor: 2.0,
+            display_id: 7,
+            is_fullscreen: false,
+            is_active: true,
+        }
+    }
+
+    #[test]
+    fn unstable_native_sample_retains_the_previous_whole_fact() {
+        let previous = native_observation(restore_bounds(), 1);
+        let mut committed = Some(previous);
+        let next_bounds = Bounds::new(point(px(-800.0), px(120.0)), size(px(900.0), px(640.0)));
+        let first = native_observation(next_bounds, 2);
+        let second = TestNativeObservation {
+            is_fullscreen: true,
+            ..first
+        };
+
+        assert!(!commit_stable_native_observation(
+            &mut committed,
+            Some(first),
+            Some(second),
+        ));
+        assert_eq!(committed, Some(previous));
+    }
+
+    #[test]
+    fn stable_native_sample_commits_geometry_display_scale_and_state_together() {
+        let previous = native_observation(restore_bounds(), 1);
+        let next = TestNativeObservation {
+            topology_generation: 2,
+            bounds: Bounds::new(point(px(-800.0), px(120.0)), size(px(900.0), px(640.0))),
+            scale_factor: 1.0,
+            display_id: 9,
+            is_active: false,
+            ..previous
+        };
+        let mut committed = Some(previous);
+
+        assert!(commit_stable_native_observation(
+            &mut committed,
+            Some(next),
+            Some(next),
+        ));
+        assert_eq!(committed, Some(next));
+    }
+
+    #[test]
+    fn display_fact_only_changes_wake_window_consumers() {
+        let origin = point(px(40.0), px(60.0));
+        let moved_origin = point(px(41.0), px(60.0));
+
+        assert!(!moved_or_display_facts_changed(
+            origin, &7_u64, origin, &7_u64
+        ));
+        assert!(moved_or_display_facts_changed(
+            origin,
+            &7_u64,
+            moved_origin,
+            &7_u64
+        ));
+        assert!(moved_or_display_facts_changed(
+            origin, &7_u64, origin, &8_u64
+        ));
+    }
+
+    #[test]
+    fn observation_effect_drain_keeps_reentrant_batches_fifo() {
+        let mut drain = MacWindowSerialEffectDrain::default();
+
+        assert!(drain.enqueue("became-key"));
+        assert!(!drain.enqueue("state-changed"));
+        assert!(!drain.enqueue("fullscreen-entered"));
+        assert_eq!(drain.pop_next(), Some("became-key"));
+        assert_eq!(drain.pop_next(), Some("state-changed"));
+
+        // This models a state callback committing a new batch while the outer drain still owns an
+        // older fullscreen effect. The reentrant edge must append after every older batch.
+        assert!(!drain.enqueue("resigned-key"));
+        assert_eq!(drain.pop_next(), Some("fullscreen-entered"));
+        assert_eq!(drain.pop_next(), Some("resigned-key"));
+
+        // Ownership also remains with the active drain while the last popped callback runs.
+        assert!(!drain.enqueue("reentrant-after-last-pop"));
+        assert_eq!(drain.pop_next(), Some("reentrant-after-last-pop"));
+        assert_eq!(drain.pop_next(), None);
+
+        assert!(drain.enqueue("next-independent-drain"));
+        assert_eq!(drain.pop_next(), Some("next-independent-drain"));
+        assert_eq!(drain.pop_next(), None);
+
+        assert!(drain.enqueue("cancelled"));
+        drain.cancel();
+        assert_eq!(drain.pop_next(), None);
+        assert!(drain.enqueue("after-cancel"));
+        assert_eq!(drain.pop_next(), Some("after-cancel"));
+        assert_eq!(drain.pop_next(), None);
+    }
+
+    #[test]
+    fn observation_effect_drain_recovers_after_callback_panic_without_replay() {
+        let mut drain = MacWindowSerialEffectDrain::default();
+        assert!(drain.enqueue("already-applied"));
+        assert!(!drain.enqueue("older-pending"));
+
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            assert_eq!(drain.pop_next(), Some("already-applied"));
+            assert!(!drain.enqueue("callback-reentrant"));
+            panic!("effect callback panic");
+        }))
+        .unwrap_err();
+        assert_eq!(
+            panic.downcast_ref::<&'static str>(),
+            Some(&"effect callback panic")
+        );
+
+        assert!(drain.mark_recovery_scheduled_after_panic());
+        assert!(!drain.mark_recovery_scheduled_after_panic());
+        assert!(!drain.enqueue("after-panic"));
+        assert!(drain.begin_scheduled_recovery());
+        assert!(!drain.begin_scheduled_recovery());
+
+        let mut resumed = Vec::new();
+        while let Some(effect) = drain.pop_next() {
+            resumed.push(effect);
+        }
+        assert_eq!(
+            resumed,
+            vec!["older-pending", "callback-reentrant", "after-panic"]
+        );
+        assert!(!resumed.contains(&"already-applied"));
+
+        assert!(drain.enqueue("next-independent-drain"));
+        assert_eq!(drain.pop_next(), Some("next-independent-drain"));
+        assert_eq!(drain.pop_next(), None);
+    }
+
+    #[test]
+    fn window_callback_checkout_restores_the_callback_after_panic() {
+        let calls = Rc::new(Cell::new(0));
+        let callback_calls = Rc::clone(&calls);
+        let slot: Rc<std::cell::RefCell<Option<Box<dyn FnMut()>>>> =
+            Rc::new(std::cell::RefCell::new(Some(Box::new(move || {
+                let next = callback_calls.get() + 1;
+                callback_calls.set(next);
+                if next == 1 {
+                    panic!("injected macOS window callback panic");
+                }
+            }))));
+
+        let delivery = std::panic::catch_unwind(std::panic::AssertUnwindSafe({
+            let slot = Rc::clone(&slot);
+            move || {
+                let callback = slot
+                    .borrow_mut()
+                    .take()
+                    .expect("the callback must be installed before checkout");
+                let restore_slot = Rc::clone(&slot);
+                let mut checkout = MacWindowCallbackCheckout::new(callback, move |callback| {
+                    let mut slot = restore_slot.borrow_mut();
+                    restore_callback_if_vacant(&mut slot, callback);
+                });
+                (checkout.callback())();
+            }
+        }));
+
+        assert!(delivery.is_err());
+        let mut callback = slot
+            .borrow_mut()
+            .take()
+            .expect("the panicking callback must be restored");
+        callback();
+        assert_eq!(calls.get(), 2);
+    }
+
+    #[test]
+    fn window_callback_checkout_preserves_a_reentrant_replacement_during_unwind() {
+        let replacement_calls = Rc::new(Cell::new(0));
+        let slot: Rc<std::cell::RefCell<Option<Box<dyn FnMut()>>>> =
+            Rc::new(std::cell::RefCell::new(None));
+        let slot_from_callback = Rc::clone(&slot);
+        let replacement_calls_from_callback = Rc::clone(&replacement_calls);
+        *slot.borrow_mut() = Some(Box::new(move || {
+            let replacement_calls = Rc::clone(&replacement_calls_from_callback);
+            *slot_from_callback.borrow_mut() = Some(Box::new(move || {
+                replacement_calls.set(replacement_calls.get() + 1);
+            }));
+            panic!("injected callback panic after reentrant replacement");
+        }));
+
+        let delivery = std::panic::catch_unwind(std::panic::AssertUnwindSafe({
+            let slot = Rc::clone(&slot);
+            move || {
+                let callback = slot
+                    .borrow_mut()
+                    .take()
+                    .expect("the callback must be installed before checkout");
+                let restore_slot = Rc::clone(&slot);
+                let mut checkout = MacWindowCallbackCheckout::new(callback, move |callback| {
+                    let mut slot = restore_slot.borrow_mut();
+                    restore_callback_if_vacant(&mut slot, callback);
+                });
+                (checkout.callback())();
+            }
+        }));
+
+        assert!(delivery.is_err());
+        let mut replacement = slot
+            .borrow_mut()
+            .take()
+            .expect("the reentrant replacement must remain authoritative");
+        replacement();
+        assert_eq!(replacement_calls.get(), 1);
+    }
+
+    #[test]
+    fn observation_effect_batches_preserve_cross_domain_native_order() {
+        let mut events: MacWindowPendingObservationEvents<u8> =
+            MacWindowPendingObservationEvents::default();
+        events.record(MacWindowPendingObservationEvent::observed(
+            MacWindowObservationEvent::Active(MacWindowActiveEvent::BecameKey),
+            1,
+        ));
+        events.record(MacWindowPendingObservationEvent::observed(
+            MacWindowObservationEvent::Fullscreen(MacFullscreenTransitionTerminal::Entered),
+            2,
+        ));
+
+        let batches = events.into_effect_batches(3);
+        assert_eq!(
+            batches
+                .iter()
+                .map(|batch| batch.observation)
+                .collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+        assert_eq!(
+            batches
+                .iter()
+                .map(|batch| batch.event.map(|event| event.kind))
+                .collect::<Vec<_>>(),
+            vec![
+                Some(MacWindowObservationEvent::Active(
+                    MacWindowActiveEvent::BecameKey,
+                )),
+                Some(MacWindowObservationEvent::Fullscreen(
+                    MacFullscreenTransitionTerminal::Entered,
+                )),
+                None,
+            ]
+        );
+    }
+
+    #[test]
+    fn paused_state_edges_preserve_maximize_restore_and_minimize_restore_order() {
+        let zoomed = MacWindowStateExpectation::new(false, true);
+        assert_eq!(
+            MacWindowStateEventSource::Miniaturized.expected_state(zoomed),
+            MacWindowStateExpectation::new(true, true)
+        );
+        assert_eq!(
+            MacWindowStateEventSource::Deminiaturized
+                .expected_state(MacWindowStateExpectation::new(true, true)),
+            zoomed
+        );
+
+        let mut events: MacWindowPendingObservationEvents<u8> =
+            MacWindowPendingObservationEvents::default();
+        let cases = [
+            MacWindowStateEvent::new(
+                MacWindowStateEventSource::Resized,
+                MacWindowStateExpectation::new(false, true),
+            ),
+            MacWindowStateEvent::new(
+                MacWindowStateEventSource::Resized,
+                MacWindowStateExpectation::new(false, false),
+            ),
+            MacWindowStateEvent::new(
+                MacWindowStateEventSource::Miniaturized,
+                MacWindowStateExpectation::new(true, false),
+            ),
+            MacWindowStateEvent::new(
+                MacWindowStateEventSource::Deminiaturized,
+                MacWindowStateExpectation::new(false, false),
+            ),
+        ];
+
+        for (observation, event) in (1_u8..).zip(cases) {
+            events.record(MacWindowPendingObservationEvent::observed(
+                MacWindowObservationEvent::State(event),
+                observation,
+            ));
+        }
+
+        assert_eq!(
+            events
+                .events
+                .iter()
+                .map(|event| event.kind)
+                .collect::<Vec<_>>(),
+            cases.map(MacWindowObservationEvent::State)
+        );
+        assert_eq!(
+            events
+                .events
+                .iter()
+                .map(|event| event.observation)
+                .collect::<Vec<_>>(),
+            vec![Some(1), Some(2), Some(3), Some(4)]
+        );
+        assert_eq!(
+            events
+                .into_effect_batches(5)
+                .into_iter()
+                .map(|batch| batch.observation)
+                .collect::<Vec<_>>(),
+            vec![1, 2, 3, 4, 5]
+        );
+    }
+
+    #[test]
+    fn coalesced_resize_never_replaces_a_complete_fact_with_an_unobserved_candidate() {
+        let mut events: MacWindowPendingObservationEvents<u8> =
+            MacWindowPendingObservationEvents::default();
+        let state_event = MacWindowObservationEvent::State(MacWindowStateEvent::new(
+            MacWindowStateEventSource::Resized,
+            MacWindowStateExpectation::new(false, true),
+        ));
+        events.record(MacWindowPendingObservationEvent::observed(state_event, 7));
+        events.record(MacWindowPendingObservationEvent::unobserved(state_event));
+
+        assert_eq!(events.events.len(), 1);
+        assert_eq!(events.events[0].observation, Some(7));
+
+        events.record(MacWindowPendingObservationEvent::observed(state_event, 8));
+        assert_eq!(events.events.len(), 1);
+        assert_eq!(events.events[0].observation, Some(8));
+    }
+
+    #[test]
+    fn unresolved_fullscreen_terminals_use_latest_wins_without_duplicate_final_callbacks() {
+        let mut events: MacWindowPendingObservationEvents<()> =
+            MacWindowPendingObservationEvents::default();
+        events.record(MacWindowPendingObservationEvent::unobserved(
+            MacWindowObservationEvent::Fullscreen(MacFullscreenTransitionTerminal::Entered),
+        ));
+        events.record(MacWindowPendingObservationEvent::unobserved(
+            MacWindowObservationEvent::Active(MacWindowActiveEvent::ResignedKey),
+        ));
+        events.record(MacWindowPendingObservationEvent::unobserved(
+            MacWindowObservationEvent::Fullscreen(MacFullscreenTransitionTerminal::Exited),
+        ));
+
+        assert_eq!(events.fullscreen_terminal_count(), 1);
+        assert_eq!(
+            events
+                .events
+                .iter()
+                .map(|event| event.kind)
+                .collect::<Vec<_>>(),
+            vec![
+                MacWindowObservationEvent::Active(MacWindowActiveEvent::ResignedKey),
+                MacWindowObservationEvent::Fullscreen(MacFullscreenTransitionTerminal::Exited),
+            ]
+        );
+        assert_eq!(
+            events
+                .into_effect_batches(())
+                .into_iter()
+                .filter(|batch| {
+                    matches!(
+                        batch.event.map(|event| event.kind),
+                        Some(MacWindowObservationEvent::Fullscreen(_))
+                    )
+                })
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn observed_fullscreen_terminals_keep_their_own_complete_facts() {
+        let mut events: MacWindowPendingObservationEvents<u8> =
+            MacWindowPendingObservationEvents::default();
+        events.record(MacWindowPendingObservationEvent::observed(
+            MacWindowObservationEvent::Fullscreen(MacFullscreenTransitionTerminal::Entered),
+            1,
+        ));
+        events.record(MacWindowPendingObservationEvent::observed(
+            MacWindowObservationEvent::Fullscreen(MacFullscreenTransitionTerminal::Exited),
+            2,
+        ));
+
+        assert_eq!(events.fullscreen_terminal_count(), 2);
+        assert_eq!(
+            events
+                .events
+                .iter()
+                .map(|event| event.observation)
+                .collect::<Vec<_>>(),
+            vec![Some(1), Some(2)]
+        );
+        assert_eq!(
+            events
+                .into_effect_batches(2)
+                .into_iter()
+                .map(|batch| batch.observation)
+                .collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+    }
+
+    #[test]
+    fn observation_commit_waits_for_the_target_topology_generation() {
+        let mut coordinator = MacWindowObservationCommitCoordinator::default();
+        let first_epoch = coordinator
+            .request(
+                4,
+                Some(MacWindowPendingObservationEvent::unobserved(
+                    MacWindowObservationEvent::Active(MacWindowActiveEvent::BecameKey),
+                )),
+            )
+            .unwrap();
+
+        assert_eq!(coordinator.target_for_job(first_epoch), Some(4));
+        assert!(coordinator.commit(first_epoch, 3).is_none());
+        assert_eq!(coordinator.target_for_job(first_epoch), Some(4));
+
+        let replacement_epoch = coordinator.request(5, None).unwrap();
+        assert_ne!(replacement_epoch, first_epoch);
+        assert_eq!(coordinator.target_for_job(first_epoch), None);
+        assert_eq!(coordinator.target_for_job(replacement_epoch), Some(5));
+
+        let events = coordinator.commit(replacement_epoch, 5).unwrap();
+        assert_eq!(
+            events
+                .events
+                .iter()
+                .map(|event| event.kind)
+                .collect::<Vec<_>>(),
+            vec![MacWindowObservationEvent::Active(
+                MacWindowActiveEvent::BecameKey
+            )]
+        );
+        assert!(coordinator.commit(replacement_epoch, 5).is_none());
+        assert!(coordinator.pending_events.events.is_empty());
+    }
+
+    #[test]
+    fn paused_observation_commit_rearms_without_dropping_typed_events() {
+        let mut coordinator = MacWindowObservationCommitCoordinator::default();
+        let first_epoch = coordinator
+            .request(
+                8,
+                Some(MacWindowPendingObservationEvent::unobserved(
+                    MacWindowObservationEvent::Fullscreen(
+                        MacFullscreenTransitionTerminal::FailedToEnter,
+                    ),
+                )),
+            )
+            .unwrap();
+        assert_eq!(
+            coordinator.request(
+                8,
+                Some(MacWindowPendingObservationEvent::unobserved(
+                    MacWindowObservationEvent::Active(MacWindowActiveEvent::BecameKey),
+                )),
+            ),
+            None
+        );
+
+        coordinator.pause(first_epoch);
+        assert_eq!(coordinator.target_for_job(first_epoch), None);
+
+        let rearmed_epoch = coordinator.request(8, None).unwrap();
+        assert_ne!(rearmed_epoch, first_epoch);
+        let events = coordinator.commit(rearmed_epoch, 8).unwrap();
+        assert_eq!(events.fullscreen_terminal_count(), 1);
+        assert_eq!(
+            events
+                .events
+                .iter()
+                .map(|event| event.kind)
+                .collect::<Vec<_>>(),
+            vec![
+                MacWindowObservationEvent::Fullscreen(
+                    MacFullscreenTransitionTerminal::FailedToEnter,
+                ),
+                MacWindowObservationEvent::Active(MacWindowActiveEvent::BecameKey),
+            ]
+        );
+        assert!(coordinator.commit(rearmed_epoch, 8).is_none());
+    }
+
+    #[test]
+    fn observation_commit_retries_with_bounded_delayed_backoff() {
+        let mut coordinator = MacWindowObservationCommitCoordinator::default();
+        let job_epoch = coordinator.request(2, None).unwrap();
+        let delays = (0..7)
+            .map(|_| coordinator.retry_delay(job_epoch).unwrap())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            delays,
+            vec![
+                Duration::from_millis(16),
+                Duration::from_millis(64),
+                Duration::from_millis(250),
+                Duration::from_secs(1),
+                Duration::from_secs(2),
+                Duration::from_secs(2),
+                Duration::from_secs(2),
+            ]
+        );
+
+        let replacement_epoch = coordinator.request(3, None).unwrap();
+        assert_eq!(
+            coordinator.retry_delay(replacement_epoch),
+            Some(Duration::from_millis(16))
+        );
+    }
+
+    #[test]
+    fn observation_commit_preserves_active_and_state_edges_and_coalesces_moves() {
+        let mut coordinator = MacWindowObservationCommitCoordinator::default();
+        let job_epoch = coordinator
+            .request(
+                3,
+                Some(MacWindowPendingObservationEvent::unobserved(
+                    MacWindowObservationEvent::Active(MacWindowActiveEvent::BecameKey),
+                )),
+            )
+            .unwrap();
+        assert_eq!(
+            coordinator.request(
+                3,
+                Some(MacWindowPendingObservationEvent::unobserved(
+                    MacWindowObservationEvent::State(MacWindowStateEvent::new(
+                        MacWindowStateEventSource::Resized,
+                        MacWindowStateExpectation::new(false, true),
+                    )),
+                )),
+            ),
+            None
+        );
+        assert_eq!(
+            coordinator.request(
+                3,
+                Some(MacWindowPendingObservationEvent::unobserved(
+                    MacWindowObservationEvent::Active(MacWindowActiveEvent::ResignedKey),
+                )),
+            ),
+            None
+        );
+        assert_eq!(
+            coordinator.request(
+                3,
+                Some(MacWindowPendingObservationEvent::unobserved(
+                    MacWindowObservationEvent::State(MacWindowStateEvent::new(
+                        MacWindowStateEventSource::Miniaturized,
+                        MacWindowStateExpectation::new(true, false),
+                    )),
+                )),
+            ),
+            None
+        );
+        assert_eq!(
+            coordinator.request(
+                3,
+                Some(MacWindowPendingObservationEvent::unobserved(
+                    MacWindowObservationEvent::Moved,
+                )),
+            ),
+            None
+        );
+        assert_eq!(
+            coordinator.request(
+                3,
+                Some(MacWindowPendingObservationEvent::unobserved(
+                    MacWindowObservationEvent::Moved,
+                )),
+            ),
+            None
+        );
+
+        let events = coordinator.commit(job_epoch, 3).unwrap();
+        assert_eq!(events.last_active_event_index(), Some(2));
+        assert!(events.has_window_state_event());
+        assert!(events.has_moved_event());
+        assert_eq!(
+            events
+                .events
+                .iter()
+                .map(|event| event.kind)
+                .collect::<Vec<_>>(),
+            vec![
+                MacWindowObservationEvent::Active(MacWindowActiveEvent::BecameKey),
+                MacWindowObservationEvent::State(MacWindowStateEvent::new(
+                    MacWindowStateEventSource::Resized,
+                    MacWindowStateExpectation::new(false, true),
+                )),
+                MacWindowObservationEvent::Active(MacWindowActiveEvent::ResignedKey),
+                MacWindowObservationEvent::State(MacWindowStateEvent::new(
+                    MacWindowStateEventSource::Miniaturized,
+                    MacWindowStateExpectation::new(true, false),
+                )),
+                MacWindowObservationEvent::Moved,
+            ]
+        );
+    }
+
+    #[test]
+    fn closing_cancels_pending_observation_work_and_events() {
+        let mut coordinator = MacWindowObservationCommitCoordinator::default();
+        let job_epoch = coordinator
+            .request(
+                6,
+                Some(MacWindowPendingObservationEvent::unobserved(
+                    MacWindowObservationEvent::Active(MacWindowActiveEvent::ResignedKey),
+                )),
+            )
+            .unwrap();
+
+        coordinator.cancel();
+
+        assert_eq!(coordinator.target_for_job(job_epoch), None);
+        assert!(coordinator.pending_events.events.is_empty());
+        assert!(coordinator.commit(job_epoch, 6).is_none());
+    }
+
+    #[test]
+    fn renderer_geometry_uses_frame_callback_size_until_a_complete_fact_commits() {
+        let initial = MacRendererGeometry {
+            content_size: size(px(800.0), px(600.0)),
+            scale_factor: 2.0,
+        };
+        let new_size = size(px(1440.0), px(900.0));
+        let resized = renderer_geometry_for_frame_size(initial, new_size);
+
+        assert_eq!(resized.content_size, new_size);
+        assert_eq!(resized.scale_factor, initial.scale_factor);
+        assert!(resized.differs_from(initial));
+        assert!(!initial.differs_from(initial));
+    }
+
+    #[test]
+    fn fullscreen_delegate_selectors_cover_success_and_failure_terminals() {
+        let cases = [
+            (
+                sel!(windowDidEnterFullScreen:),
+                MacFullscreenTransitionTerminal::Entered,
+            ),
+            (
+                sel!(windowDidExitFullScreen:),
+                MacFullscreenTransitionTerminal::Exited,
+            ),
+            (
+                sel!(windowDidFailToEnterFullScreen:),
+                MacFullscreenTransitionTerminal::FailedToEnter,
+            ),
+            (
+                sel!(windowDidFailToExitFullScreen:),
+                MacFullscreenTransitionTerminal::FailedToExit,
+            ),
+        ];
+
+        for (selector, terminal) in cases {
+            assert_eq!(
+                fullscreen_terminal_for_delegate_selector(selector),
+                Some(terminal)
+            );
+        }
+        assert_eq!(
+            fullscreen_terminal_for_delegate_selector(sel!(description)),
+            None
+        );
+    }
+
+    #[test]
+    fn observation_delegate_selectors_map_to_typed_events() {
+        assert_eq!(
+            active_event_for_delegate_selector(sel!(windowDidBecomeKey:)),
+            Some(MacWindowActiveEvent::BecameKey)
+        );
+        assert_eq!(
+            active_event_for_delegate_selector(sel!(windowDidResignKey:)),
+            Some(MacWindowActiveEvent::ResignedKey)
+        );
+        assert!(MacWindowActiveEvent::BecameKey.is_active());
+        assert!(!MacWindowActiveEvent::ResignedKey.is_active());
+
+        assert_eq!(
+            state_event_for_delegate_selector(sel!(windowDidResize:)),
+            Some(MacWindowStateEventSource::Resized)
+        );
+        assert_eq!(
+            state_event_for_delegate_selector(sel!(windowDidMiniaturize:)),
+            Some(MacWindowStateEventSource::Miniaturized)
+        );
+        assert_eq!(
+            state_event_for_delegate_selector(sel!(windowDidDeminiaturize:)),
+            Some(MacWindowStateEventSource::Deminiaturized)
+        );
+        assert_eq!(active_event_for_delegate_selector(sel!(description)), None);
+        assert_eq!(state_event_for_delegate_selector(sel!(description)), None);
+    }
+
+    #[test]
+    fn fullscreen_terminals_clear_transition_and_restore_titlebar_policy() {
+        let cases = [
+            (
+                MacFullscreenTransition::Entering,
+                MacFullscreenTransitionTerminal::Entered,
+                true,
+            ),
+            (
+                MacFullscreenTransition::Exiting,
+                MacFullscreenTransitionTerminal::Exited,
+                false,
+            ),
+            (
+                MacFullscreenTransition::Entering,
+                MacFullscreenTransitionTerminal::FailedToEnter,
+                false,
+            ),
+            (
+                MacFullscreenTransition::Exiting,
+                MacFullscreenTransitionTerminal::FailedToExit,
+                true,
+            ),
+        ];
+
+        for (pending, terminal, is_fullscreen) in cases {
+            let mut transition = Some(pending);
+            assert!(terminal.finish(&mut transition));
+            assert_eq!(transition, None);
+            assert_eq!(terminal.is_fullscreen(), is_fullscreen);
+            assert_eq!(terminal.titlebar_appears_transparent(true), !is_fullscreen);
+            assert!(!terminal.titlebar_appears_transparent(false));
+        }
+
+        let mut mismatched_transition = Some(MacFullscreenTransition::Entering);
+        assert!(!MacFullscreenTransitionTerminal::FailedToExit.finish(&mut mismatched_transition));
+        assert_eq!(mismatched_transition, None);
     }
 
     #[test]
