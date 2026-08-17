@@ -766,6 +766,27 @@ impl NativeEventIngress {
     }
 
     pub(super) fn try_begin_drain(&self, wake_ticket: Option<u64>) -> Option<NativeDrainLease<'_>> {
+        self.try_begin_drain_inner(wake_ticket, None)
+    }
+
+    pub(super) fn try_begin_drain_with_budget<'a>(
+        &'a self,
+        budget: &'a NativeWorkDrainBudget,
+    ) -> Option<NativeDrainLease<'a>> {
+        self.try_begin_drain_inner(None, Some(budget))
+    }
+
+    fn try_begin_drain_inner<'a>(
+        &'a self,
+        wake_ticket: Option<u64>,
+        budget: Option<&'a NativeWorkDrainBudget>,
+    ) -> Option<NativeDrainLease<'a>> {
+        let remaining = budget
+            .map(NativeWorkDrainBudget::remaining)
+            .unwrap_or(MAX_NATIVE_WORK_PER_DRAIN);
+        if remaining == 0 {
+            return None;
+        }
         if self.terminated.get() || self.pending.borrow().is_empty() {
             if wake_ticket.is_some() {
                 self.consume_wake_ticket(wake_ticket?);
@@ -785,12 +806,13 @@ impl NativeEventIngress {
         let generation = self.next_generation();
         self.phase.set(NativeWorkPhase::Draining {
             generation,
-            remaining: MAX_NATIVE_WORK_PER_DRAIN,
+            remaining,
             executing_command: false,
         });
         Some(NativeDrainLease {
             ingress: self,
             generation,
+            budget,
             active: true,
         })
     }
@@ -1037,57 +1059,49 @@ impl NativeEventIngress {
         )
     }
 
-    fn event_prefix_state(&self, sequence_cutoff: u64) -> NativeEventPrefixState {
+    fn event_before_index(&self, sequence_cutoff: u64) -> Option<usize> {
         let pending = self.pending.borrow();
-        match pending.front() {
-            None => NativeEventPrefixState::NoPriorEvent,
-            Some(envelope) if envelope.sequence() >= sequence_cutoff => {
-                NativeEventPrefixState::NoPriorEvent
-            }
-            Some(NativeWorkEnvelope::Event(_)) => NativeEventPrefixState::EventAtFront,
-            Some(_) => {
-                let prior_event_is_blocked = pending
-                    .iter()
-                    .take_while(|envelope| envelope.sequence() < sequence_cutoff)
-                    .any(|envelope| matches!(envelope, NativeWorkEnvelope::Event(_)));
-                if prior_event_is_blocked {
-                    NativeEventPrefixState::PriorEventBlockedByNativeWork
-                } else {
-                    NativeEventPrefixState::NoPriorEvent
-                }
-            }
-        }
+        pending
+            .iter()
+            .take_while(|envelope| envelope.sequence() < sequence_cutoff)
+            .position(|envelope| matches!(envelope, NativeWorkEnvelope::Event(_)))
+    }
+
+    fn checkout_event(&self, queue_index: usize) -> NativeEventCheckout {
+        let Some(NativeWorkEnvelope::Event(event)) = self.pending.borrow_mut().remove(queue_index)
+        else {
+            unreachable!("eligible native event must remain at its queue position");
+        };
+        NativeEventCheckout { event, queue_index }
     }
 
     fn pop_event_before(&self, generation: u64, sequence_cutoff: u64) -> NativeEventPrefixPop {
-        match self.event_prefix_state(sequence_cutoff) {
-            NativeEventPrefixState::NoPriorEvent => return NativeEventPrefixPop::NoPriorEvent,
-            NativeEventPrefixState::EventAtFront => {}
-            NativeEventPrefixState::PriorEventBlockedByNativeWork => {
-                return NativeEventPrefixPop::PriorEventBlockedByNativeWork;
-            }
-        }
+        let Some(queue_index) = self.event_before_index(sequence_cutoff) else {
+            return NativeEventPrefixPop::NoPriorEvent;
+        };
         if !self.consume_budget(generation) {
             return NativeEventPrefixPop::BudgetExhausted;
         }
-        let Some(NativeWorkEnvelope::Event(event)) = self.pending.borrow_mut().pop_front() else {
-            unreachable!("eligible native event prefix must remain at the queue front");
-        };
-        NativeEventPrefixPop::Event(event)
+        NativeEventPrefixPop::Event(self.checkout_event(queue_index))
     }
 
     fn pop_event_before_unbounded(&self, sequence_cutoff: u64) -> NativeEventPrefixPop {
-        match self.event_prefix_state(sequence_cutoff) {
-            NativeEventPrefixState::NoPriorEvent => return NativeEventPrefixPop::NoPriorEvent,
-            NativeEventPrefixState::EventAtFront => {}
-            NativeEventPrefixState::PriorEventBlockedByNativeWork => {
-                return NativeEventPrefixPop::PriorEventBlockedByNativeWork;
-            }
-        }
-        let Some(NativeWorkEnvelope::Event(event)) = self.pending.borrow_mut().pop_front() else {
-            unreachable!("eligible native event prefix must remain at the queue front");
+        let Some(queue_index) = self.event_before_index(sequence_cutoff) else {
+            return NativeEventPrefixPop::NoPriorEvent;
         };
-        NativeEventPrefixPop::Event(event)
+        NativeEventPrefixPop::Event(self.checkout_event(queue_index))
+    }
+
+    fn restore_event(&self, checkout: NativeEventCheckout) {
+        let mut pending = self.pending.borrow_mut();
+        assert!(
+            checkout.queue_index <= pending.len(),
+            "checked-out native event queue position must remain restorable"
+        );
+        pending.insert(
+            checkout.queue_index,
+            NativeWorkEnvelope::Event(checkout.event),
+        );
     }
 
     fn push_front(&self, envelope: NativeWorkEnvelope) {
@@ -1373,9 +1387,31 @@ pub(super) enum NativeWorkPop {
     BudgetExhausted,
 }
 
+pub(super) struct NativeWorkDrainBudget {
+    remaining: Cell<u8>,
+}
+
+impl NativeWorkDrainBudget {
+    /// Creates one bounded budget shared by every native-work phase in a convergence turn.
+    pub(super) fn new() -> Self {
+        Self {
+            remaining: Cell::new(MAX_NATIVE_WORK_PER_DRAIN),
+        }
+    }
+
+    fn remaining(&self) -> u8 {
+        self.remaining.get()
+    }
+
+    fn update(&self, remaining: u8) {
+        self.remaining.set(remaining);
+    }
+}
+
 pub(super) struct NativeDrainLease<'a> {
     ingress: &'a NativeEventIngress,
     generation: u64,
+    budget: Option<&'a NativeWorkDrainBudget>,
     active: bool,
 }
 
@@ -1389,6 +1425,7 @@ impl NativeDrainLease<'_> {
     }
 
     pub(super) fn block_on_app(&mut self) {
+        self.sync_budget();
         self.ingress.block_on_app(self.generation);
         self.active = false;
     }
@@ -1400,11 +1437,29 @@ impl NativeDrainLease<'_> {
     pub(super) fn terminate(&mut self) {
         self.ingress.terminate();
     }
+
+    fn sync_budget(&self) {
+        let Some(budget) = self.budget else {
+            return;
+        };
+        match self.ingress.phase.get() {
+            NativeWorkPhase::Draining {
+                generation,
+                remaining,
+                ..
+            } if generation == self.generation => budget.update(remaining),
+            _ => debug_assert!(
+                false,
+                "shared native-work budget requires the active drain generation"
+            ),
+        }
+    }
 }
 
 impl Drop for NativeDrainLease<'_> {
     fn drop(&mut self) {
         if self.active {
+            self.sync_budget();
             self.ingress.finish_drain(self.generation);
         }
     }
@@ -1427,17 +1482,28 @@ pub(super) enum NativeInputBarrierError {
 }
 
 pub(super) enum NativeEventPrefixPop {
-    Event(NativeEventEnvelope),
+    Event(NativeEventCheckout),
     NoPriorEvent,
-    PriorEventBlockedByNativeWork,
     BudgetExhausted,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum NativeEventPrefixState {
-    NoPriorEvent,
-    EventAtFront,
-    PriorEventBlockedByNativeWork,
+pub(super) struct NativeEventCheckout {
+    event: NativeEventEnvelope,
+    queue_index: usize,
+}
+
+impl NativeEventCheckout {
+    pub(super) fn ingress_sequence(&self) -> NativeIngressSequence {
+        self.event.ingress_sequence()
+    }
+
+    pub(super) fn pending_diagnostic(&self) -> NativeBoundaryDiagnostic {
+        self.event.pending_diagnostic()
+    }
+
+    pub(super) fn deliver(self, app: &mut App) -> NativeEventDelivery {
+        self.event.deliver(app)
+    }
 }
 
 pub(super) struct NativeInputBarrier<'a> {
@@ -1461,8 +1527,8 @@ impl NativeInputBarrier<'_> {
         self.root
     }
 
-    pub(super) fn push_front(&self, envelope: NativeWorkEnvelope) {
-        self.ingress.push_front(envelope);
+    pub(super) fn restore_event(&self, checkout: NativeEventCheckout) {
+        self.ingress.restore_event(checkout);
     }
 
     pub(super) fn finish_without_wake(&mut self) {

@@ -6011,7 +6011,10 @@ impl Window {
         before_platform_dispatch: impl FnOnce(u64),
         dispatch_platform: impl FnOnce(&mut dyn PlatformWindow, u64) -> PlatformWindowDispatch,
     ) -> WindowMutationDispatch {
-        if self.removal_state != WindowRemovalState::Open || self.removed {
+        if self.native_closed.get()
+            || self.removal_state != WindowRemovalState::Open
+            || self.removed
+        {
             return WindowMutationDispatch::WindowClosed;
         }
         if !self.interaction_authority.is_admitted()
@@ -6294,15 +6297,18 @@ impl Window {
         announcement: AccessibilityAnnouncement,
         _cx: &mut App,
     ) -> AccessibilityAnnouncementOutcome {
+        if self.native_closed.get()
+            || self.removal_state != WindowRemovalState::Open
+            || self.removed
+        {
+            return self
+                .a11y
+                .reject_announcement_for_closed_window(announcement);
+        }
         if !self.interaction_authority.is_admitted() {
             return self
                 .a11y
                 .reject_announcement_for_interaction_quiescence(announcement);
-        }
-        if self.removal_state != WindowRemovalState::Open || self.removed {
-            return self
-                .a11y
-                .reject_announcement_for_closed_window(announcement);
         }
 
         let outcome = self.a11y.enqueue_announcement(announcement);

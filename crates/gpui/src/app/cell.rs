@@ -28,8 +28,8 @@ use super::{
     },
     native_event_ingress::{
         NativeAppEvent, NativeEventDisposition, NativeEventDrainControl, NativeEventIngress,
-        NativeEventPrefixPop, NativeWindowEvent, NativeWorkEnvelope, NativeWorkPop,
-        ReservedPointerCancel,
+        NativeEventPrefixPop, NativeInputBarrier, NativeWindowEvent, NativeWorkDrainBudget,
+        NativeWorkEnvelope, NativeWorkPop, ReservedPointerCancel,
     },
     native_platform_commands::{
         NativePlatformCommand, NativePlatformCommandRejection, NativePointerCaptureRelease,
@@ -2562,6 +2562,57 @@ impl AppCell {
             .enqueue_provisional_reveal(window_id, dispatcher, command, ticket);
     }
 
+    fn drain_native_events_before_input(
+        &self,
+        barrier: &mut NativeInputBarrier<'_>,
+        sequence_cutoff: u64,
+        window_id: WindowId,
+        boundary: NativeInputBoundary,
+        slot_generation: u64,
+        terminal: &mut NativeBoundaryTerminalGuard<'_>,
+    ) -> Result<(), NativeInputInvariantViolation> {
+        loop {
+            match barrier.pop_event_before(sequence_cutoff) {
+                NativeEventPrefixPop::Event(checkout) => {
+                    let event_sequence = checkout.ingress_sequence();
+                    let Ok(mut app) = self.app.try_borrow_mut() else {
+                        barrier.restore_event(checkout);
+                        return Err(terminal.reject_input(
+                            window_id,
+                            boundary,
+                            Some(slot_generation),
+                            NativeInvariantFailure::AppBorrowBusy,
+                        ));
+                    };
+                    let mut event_terminal = NativeBoundaryTerminalGuard::new(
+                        &self.native_events,
+                        checkout.pending_diagnostic(),
+                    );
+                    let delivery = event_terminal.run_callback_with_panic_cleanup(
+                        || app.update(|app| checkout.deliver(app)),
+                        || self.native_captured_drags.retire_sequence(event_sequence),
+                    );
+                    drop(app);
+                    event_terminal.run_callback(|| self.drain_native_captured_drags());
+                    event_terminal.settle_event(delivery.disposition);
+                    if delivery.control == NativeEventDrainControl::Terminate {
+                        barrier.terminate();
+                        return Ok(());
+                    }
+                }
+                NativeEventPrefixPop::NoPriorEvent => return Ok(()),
+                NativeEventPrefixPop::BudgetExhausted => {
+                    return Err(terminal.reject_input(
+                        window_id,
+                        boundary,
+                        Some(slot_generation),
+                        NativeInvariantFailure::BarrierBudgetExhausted,
+                    ));
+                }
+            }
+        }
+    }
+
     pub(super) fn dispatch_native_window_input(
         &self,
         window_id: WindowId,
@@ -2629,54 +2680,14 @@ impl AppCell {
                 ));
             }
         };
-        loop {
-            match barrier.pop_event_before(sequence_cutoff.value()) {
-                NativeEventPrefixPop::Event(envelope) => {
-                    let event_sequence = envelope.ingress_sequence();
-                    let Ok(mut app) = self.app.try_borrow_mut() else {
-                        barrier.push_front(NativeWorkEnvelope::Event(envelope));
-                        return Err(terminal.reject_input(
-                            window_id,
-                            boundary,
-                            Some(slot_generation),
-                            NativeInvariantFailure::AppBorrowBusy,
-                        ));
-                    };
-                    let mut event_terminal = NativeBoundaryTerminalGuard::new(
-                        &self.native_events,
-                        envelope.pending_diagnostic(),
-                    );
-                    let delivery = event_terminal.run_callback_with_panic_cleanup(
-                        || app.update(|app| envelope.deliver(app)),
-                        || self.native_captured_drags.retire_sequence(event_sequence),
-                    );
-                    drop(app);
-                    event_terminal.run_callback(|| self.drain_native_captured_drags());
-                    event_terminal.settle_event(delivery.disposition);
-                    if delivery.control == NativeEventDrainControl::Terminate {
-                        barrier.terminate();
-                        break;
-                    }
-                }
-                NativeEventPrefixPop::NoPriorEvent => break,
-                NativeEventPrefixPop::PriorEventBlockedByNativeWork => {
-                    return Err(terminal.reject_input(
-                        window_id,
-                        boundary,
-                        Some(slot_generation),
-                        NativeInvariantFailure::PriorEventBlockedByNativeWork,
-                    ));
-                }
-                NativeEventPrefixPop::BudgetExhausted => {
-                    return Err(terminal.reject_input(
-                        window_id,
-                        boundary,
-                        Some(slot_generation),
-                        NativeInvariantFailure::BarrierBudgetExhausted,
-                    ));
-                }
-            }
-        }
+        self.drain_native_events_before_input(
+            &mut barrier,
+            sequence_cutoff.value(),
+            window_id,
+            boundary,
+            slot_generation,
+            &mut terminal,
+        )?;
 
         let Ok(mut app) = self.app.try_borrow_mut() else {
             return Err(terminal.reject_input(
@@ -2798,54 +2809,14 @@ impl AppCell {
                 ));
             }
         };
-        loop {
-            match barrier.pop_event_before(sequence_cutoff.value()) {
-                NativeEventPrefixPop::Event(envelope) => {
-                    let event_sequence = envelope.ingress_sequence();
-                    let Ok(mut app) = self.app.try_borrow_mut() else {
-                        barrier.push_front(NativeWorkEnvelope::Event(envelope));
-                        return Err(terminal.reject_input(
-                            window_id,
-                            boundary,
-                            Some(slot_generation),
-                            NativeInvariantFailure::AppBorrowBusy,
-                        ));
-                    };
-                    let mut event_terminal = NativeBoundaryTerminalGuard::new(
-                        &self.native_events,
-                        envelope.pending_diagnostic(),
-                    );
-                    let delivery = event_terminal.run_callback_with_panic_cleanup(
-                        || app.update(|app| envelope.deliver(app)),
-                        || self.native_captured_drags.retire_sequence(event_sequence),
-                    );
-                    drop(app);
-                    event_terminal.run_callback(|| self.drain_native_captured_drags());
-                    event_terminal.settle_event(delivery.disposition);
-                    if delivery.control == NativeEventDrainControl::Terminate {
-                        barrier.terminate();
-                        break;
-                    }
-                }
-                NativeEventPrefixPop::NoPriorEvent => break,
-                NativeEventPrefixPop::PriorEventBlockedByNativeWork => {
-                    return Err(terminal.reject_input(
-                        window_id,
-                        boundary,
-                        Some(slot_generation),
-                        NativeInvariantFailure::PriorEventBlockedByNativeWork,
-                    ));
-                }
-                NativeEventPrefixPop::BudgetExhausted => {
-                    return Err(terminal.reject_input(
-                        window_id,
-                        boundary,
-                        Some(slot_generation),
-                        NativeInvariantFailure::BarrierBudgetExhausted,
-                    ));
-                }
-            }
-        }
+        self.drain_native_events_before_input(
+            &mut barrier,
+            sequence_cutoff.value(),
+            window_id,
+            boundary,
+            slot_generation,
+            &mut terminal,
+        )?;
 
         let Ok(mut app) = self.app.try_borrow_mut() else {
             return Err(terminal.reject_input(
@@ -3081,11 +3052,23 @@ impl AppCell {
     }
 
     fn drain_native_work_pass(&self, wake_ticket: Option<u64>) {
+        self.drain_native_work_pass_with_budget(wake_ticket, None);
+    }
+
+    fn drain_native_work_pass_with_budget(
+        &self,
+        wake_ticket: Option<u64>,
+        budget: Option<&NativeWorkDrainBudget>,
+    ) {
         if self.native_callback_lease_active() {
             self.native_events.postpone_drain(wake_ticket);
             return;
         }
-        let Some(mut drain) = self.native_events.try_begin_drain(wake_ticket) else {
+        let drain = match budget {
+            Some(budget) => self.native_events.try_begin_drain_with_budget(budget),
+            None => self.native_events.try_begin_drain(wake_ticket),
+        };
+        let Some(mut drain) = drain else {
             return;
         };
 
@@ -3692,8 +3675,9 @@ impl AppCell {
         self.run_post_borrow_convergence_stage("native event ingress", &mut first_panic, || {
             self.native_events.resume_after_app_borrow();
         });
+        let native_work_budget = NativeWorkDrainBudget::new();
         self.run_post_borrow_convergence_stage("native work", &mut first_panic, || {
-            self.drain_native_work_pass(None)
+            self.drain_native_work_pass_with_budget(None, Some(&native_work_budget))
         });
         self.run_post_borrow_convergence_stage(
             "pre-shutdown critical callbacks",
@@ -3705,7 +3689,7 @@ impl AppCell {
             &mut first_panic,
             || {
                 self.request_active_shutdown_completion();
-                self.drain_native_work_pass(None);
+                self.drain_native_work_pass_with_budget(None, Some(&native_work_budget));
             },
         );
         self.run_post_borrow_convergence_stage("App borrow waiters", &mut first_panic, || {
@@ -4001,6 +3985,7 @@ impl Drop for AppRefMut<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::native_event_ingress::MAX_NATIVE_WORK_PER_DRAIN;
     use crate::{
         AnyWindowHandle, AppContext, Empty, Modifiers, MouseMoveEvent, QuitMode, Subscription,
         TestAppContext, WindowOptions, point, px, size,
@@ -4154,7 +4139,7 @@ mod tests {
     }
 
     #[crate::test]
-    fn immediate_native_input_does_not_bypass_an_older_platform_command_and_close(
+    fn immediate_native_input_drains_an_older_close_without_recursing_into_a_platform_command(
         cx: &mut TestAppContext,
     ) {
         let source: AnyWindowHandle = cx
@@ -4166,13 +4151,33 @@ mod tests {
         let mut source_window = cx.test_window(source);
         let target_window = cx.test_window(target);
         source_window.clear_platform_command_history();
-        let input_calls = Rc::new(Cell::new(0usize));
-        let _interceptor = count_mouse_input(cx, source, input_calls.clone());
-        let failure = Rc::new(Cell::new(None));
+        let order = Rc::new(RefCell::new(Vec::new()));
+        let target_id = target.window_id();
+        let _close_subscription = cx.update({
+            let order = order.clone();
+            move |cx| {
+                cx.on_window_closed(move |_, window_id| {
+                    if window_id == target_id {
+                        order.borrow_mut().push("closed");
+                    }
+                })
+            }
+        });
+        let _interceptor = cx
+            .update_window(source, {
+                let order = order.clone();
+                move |_, window, _| {
+                    window.intercept_window_mouse_events(move |_, _, _| {
+                        order.borrow_mut().push("input");
+                    })
+                }
+            })
+            .expect("the source window must remain registered");
+        let input_result = Rc::new(Cell::new(None));
         let app = cx.app.clone();
         let source_id = source.window_id();
         source_window.set_platform_command_callback({
-            let failure = failure.clone();
+            let input_result = input_result.clone();
             move |command, mut source_window| {
                 if command == PlatformWindowCommand::StartWindowMove {
                     app.enqueue_platform_window_command(
@@ -4181,14 +4186,9 @@ mod tests {
                         PlatformWindowCommand::StartWindowResize(crate::ResizeEdge::BottomRight),
                     );
                     assert!(target_window.simulate_close());
-                    let panic = catch_unwind(AssertUnwindSafe(|| {
-                        source_window.simulate_input_result(immediate_mouse_move(24.0))
-                    }))
-                    .expect_err("a queued close behind older work must block immediate input");
-                    let violation = panic
-                        .downcast_ref::<NativeInputInvariantViolation>()
-                        .expect("the input rejection must preserve its typed invariant");
-                    failure.set(Some(violation.failure));
+                    input_result.set(Some(
+                        source_window.simulate_input_result(immediate_mouse_move(24.0)),
+                    ));
                 }
                 PlatformWindowCommandOutcome::Accepted
             }
@@ -4198,24 +4198,27 @@ mod tests {
             .expect("the source window must remain registered for the outer command");
 
         assert_eq!(
-            failure.get(),
-            Some(NativeInvariantFailure::PriorEventBlockedByNativeWork)
+            input_result.get(),
+            Some(DispatchEventResult {
+                propagate: true,
+                default_prevented: false,
+            })
         );
-        assert_eq!(input_calls.get(), 0);
+        assert_eq!(order.borrow().as_slice(), &["closed", "input"]);
         assert_eq!(
             source_window.platform_command_history(),
             [
                 PlatformWindowCommand::StartWindowMove,
                 PlatformWindowCommand::StartWindowResize(crate::ResizeEdge::BottomRight),
             ],
-            "the older command must run before the queued close terminal"
+            "the input barrier must not recursively dispatch the queued command"
         );
         assert!(cx.windows().contains(&source));
         assert!(!cx.windows().contains(&target));
     }
 
     #[crate::test]
-    fn immediate_native_input_does_not_bypass_an_older_activation_readback_and_close(
+    fn immediate_native_input_drains_an_older_close_without_recursing_into_activation_readback(
         cx: &mut TestAppContext,
     ) {
         let source: AnyWindowHandle = cx
@@ -4227,24 +4230,37 @@ mod tests {
         let mut source_window = cx.test_window(source);
         let target_window = cx.test_window(target);
         source_window.clear_platform_command_history();
-        let input_calls = Rc::new(Cell::new(0usize));
-        let _interceptor = count_mouse_input(cx, source, input_calls.clone());
-        let failure = Rc::new(Cell::new(None));
+        let order = Rc::new(RefCell::new(Vec::new()));
+        let target_id = target.window_id();
+        let _close_subscription = cx.update({
+            let order = order.clone();
+            move |cx| {
+                cx.on_window_closed(move |_, window_id| {
+                    if window_id == target_id {
+                        order.borrow_mut().push("closed");
+                    }
+                })
+            }
+        });
+        let _interceptor = cx
+            .update_window(source, {
+                let order = order.clone();
+                move |_, window, _| {
+                    window.intercept_window_mouse_events(move |_, _, _| {
+                        order.borrow_mut().push("input");
+                    })
+                }
+            })
+            .expect("the source window must remain registered");
+        let input_result = Rc::new(Cell::new(None));
         source_window.set_platform_command_callback({
-            let failure = failure.clone();
+            let input_result = input_result.clone();
             move |command, mut source_window| {
                 if command == PlatformWindowCommand::StartWindowMove {
                     assert!(target_window.simulate_close());
-                    let panic = catch_unwind(AssertUnwindSafe(|| {
-                        source_window.simulate_input_result(immediate_mouse_move(28.0))
-                    }))
-                    .expect_err(
-                        "a queued close behind an activation readback must block immediate input",
-                    );
-                    let violation = panic
-                        .downcast_ref::<NativeInputInvariantViolation>()
-                        .expect("the input rejection must preserve its typed invariant");
-                    failure.set(Some(violation.failure));
+                    input_result.set(Some(
+                        source_window.simulate_input_result(immediate_mouse_move(28.0)),
+                    ));
                 }
                 PlatformWindowCommandOutcome::Accepted
             }
@@ -4259,10 +4275,13 @@ mod tests {
             .expect("the source window must remain registered for the command sequence");
 
         assert_eq!(
-            failure.get(),
-            Some(NativeInvariantFailure::PriorEventBlockedByNativeWork)
+            input_result.get(),
+            Some(DispatchEventResult {
+                propagate: true,
+                default_prevented: false,
+            })
         );
-        assert_eq!(input_calls.get(), 0);
+        assert_eq!(order.borrow().as_slice(), &["closed", "input"]);
         assert!(matches!(
             source_window.platform_command_history().as_slice(),
             [
@@ -4270,6 +4289,66 @@ mod tests {
                 PlatformWindowCommand::StartWindowMove
             ]
         ));
+        assert!(cx.windows().contains(&source));
+        assert!(!cx.windows().contains(&target));
+    }
+
+    #[crate::test]
+    fn busy_app_restores_a_checked_out_close_behind_its_older_command(cx: &mut TestAppContext) {
+        let source: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        let target: AnyWindowHandle = cx
+            .open_window(size(px(280.0), px(180.0)), |_, _| Empty)
+            .into();
+        let mut source_window = cx.test_window(source);
+        let target_window = cx.test_window(target);
+        source_window.clear_platform_command_history();
+        let order = Rc::new(RefCell::new(Vec::new()));
+        let target_id = target.window_id();
+        let _close_subscription = cx.update({
+            let order = order.clone();
+            move |cx| {
+                cx.on_window_closed(move |_, window_id| {
+                    if window_id == target_id {
+                        order.borrow_mut().push("closed");
+                    }
+                })
+            }
+        });
+        let input_calls = Rc::new(Cell::new(0usize));
+        let _interceptor = count_mouse_input(cx, source, input_calls.clone());
+        source_window.set_platform_command_callback({
+            let order = order.clone();
+            move |command, _| {
+                assert_eq!(command, PlatformWindowCommand::StartWindowMove);
+                order.borrow_mut().push("command");
+                PlatformWindowCommandOutcome::Accepted
+            }
+        });
+        let app = cx.app.clone();
+        let source_id = source.window_id();
+
+        let failure = cx.update(move |_| {
+            app.enqueue_platform_window_command(
+                source_id,
+                source_window.command_dispatcher(),
+                PlatformWindowCommand::StartWindowMove,
+            );
+            assert!(target_window.simulate_close());
+            let panic = catch_unwind(AssertUnwindSafe(|| {
+                source_window.simulate_input_result(immediate_mouse_move(30.0))
+            }))
+            .expect_err("the held App borrow must reject immediate input");
+            panic
+                .downcast_ref::<NativeInputInvariantViolation>()
+                .expect("the busy-input rejection must preserve its typed invariant")
+                .failure
+        });
+
+        assert_eq!(failure, NativeInvariantFailure::AppBorrowBusy);
+        assert_eq!(input_calls.get(), 0);
+        assert_eq!(order.borrow().as_slice(), &["command", "closed"]);
         assert!(cx.windows().contains(&source));
         assert!(!cx.windows().contains(&target));
     }
@@ -4656,6 +4735,55 @@ mod tests {
             "post-borrow convergence must yield instead of recursively resetting the native-work budget"
         );
         assert_eq!(attempts.get(), COMMAND_COUNT);
+    }
+
+    #[crate::test]
+    fn post_borrow_native_work_stages_share_one_drain_budget(cx: &mut TestAppContext) {
+        const FIRST_STAGE_COMMANDS: usize = MAX_NATIVE_WORK_PER_DRAIN as usize - 1;
+
+        let window: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        cx.run_until_parked();
+        let attempts = Rc::new(Cell::new(0usize));
+        let dispatcher = PlatformWindowCommandDispatcher::new({
+            let attempts = attempts.clone();
+            move |command| {
+                assert_eq!(command, PlatformWindowCommand::StartWindowMove);
+                attempts.set(attempts.get() + 1);
+                PlatformWindowCommandOutcome::Accepted
+            }
+        });
+        for _ in 0..FIRST_STAGE_COMMANDS {
+            cx.app.enqueue_platform_window_command(
+                window.window_id(),
+                dispatcher.clone(),
+                PlatformWindowCommand::StartWindowMove,
+            );
+        }
+        let app = cx.app.clone();
+        cx.app.protect_pre_shutdown_critical(Box::new({
+            let dispatcher = dispatcher.clone();
+            move |_| {
+                for _ in 0..2 {
+                    app.enqueue_platform_window_command(
+                        window.window_id(),
+                        dispatcher.clone(),
+                        PlatformWindowCommand::StartWindowMove,
+                    );
+                }
+            }
+        }));
+
+        cx.app.app_borrow_released();
+
+        assert_eq!(
+            attempts.get(),
+            usize::from(MAX_NATIVE_WORK_PER_DRAIN),
+            "the post-critical phase may consume only the first phase's remaining budget"
+        );
+        cx.run_until_parked();
+        assert_eq!(attempts.get(), FIRST_STAGE_COMMANDS + 2);
     }
 
     #[crate::test]

@@ -1346,6 +1346,7 @@ impl PlatformWindow for TestWindow {
             if let Some(window) = window.upgrade() {
                 let mut window = window.lock();
                 window.interaction_quiesced = true;
+                window.accepts_pointer_input = false;
                 window.is_active = false;
                 window.accepts_activation = false;
                 window.focus_on_click = false;
@@ -6232,7 +6233,12 @@ mod window_mutation_tests {
         );
         assert!(!platform_window.flush_window_mutation(WindowMutationDomain::Placement));
         assert!(!platform_window.flush_window_mutation(WindowMutationDomain::PointerInput));
-        assert_eq!(platform_window.platform_facts(), native_before);
+        let mut expected_after_close = native_before;
+        expected_after_close.accepts_pointer_input = false;
+        expected_after_close.accepts_activation = false;
+        expected_after_close.focus_on_click = false;
+        expected_after_close.is_active = false;
+        assert_eq!(platform_window.platform_facts(), expected_after_close);
     }
 
     #[crate::test]

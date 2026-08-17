@@ -14,8 +14,7 @@ use crate::{
     MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, NativeBoundaryDiagnosticCursor,
     NativeBoundaryDisposition, NativeBoundaryGeneration, NativeBoundaryKind, NativeBoundaryTarget,
     NativeCallbackKind, NativeCapturedDragGeneration, NativeCapturedDragPhase,
-    NativeCapturedDragReleaseBarrier, NativeCapturedDragReleaseTerminal,
-    NativeInputInvariantViolation, NativeInvariantFailure, NativePlatformCommandKind,
+    NativeCapturedDragReleaseBarrier, NativeCapturedDragReleaseTerminal, NativePlatformCommandKind,
     ParentElement, Pixels, PlatformInput, PlatformPointerCaptureReleaseOutcome, PlatformWindow,
     PlatformWindowCommand, PlatformWindowCommandOutcome, Point, PointerCancelEvent,
     PointerCancelReason, PointerCaptureError, PointerCaptureHandle, PromptLevel, PromptResponse,
@@ -2230,7 +2229,7 @@ fn platform_input_handler_root_barrier_drains_queued_window_command(cx: &mut Tes
 }
 
 #[open_gpui::test]
-fn platform_input_handler_does_not_bypass_an_older_command_and_cross_window_close(
+fn platform_input_handler_drains_an_older_close_without_recursing_into_a_command(
     cx: &mut TestAppContext,
 ) {
     let target = cx
@@ -2238,6 +2237,17 @@ fn platform_input_handler_does_not_bypass_an_older_command_and_cross_window_clos
         .into();
     let target_window = cx.test_window(target);
     let lifecycle = Rc::new(RefCell::new(Vec::new()));
+    let target_id = target.window_id();
+    let _close_subscription = cx.update({
+        let lifecycle = lifecycle.clone();
+        move |cx| {
+            cx.on_window_closed(move |_, window_id| {
+                if window_id == target_id {
+                    lifecycle.borrow_mut().push("closed");
+                }
+            })
+        }
+    });
     let (view, mut cx) = cx.add_window_view({
         let lifecycle = lifecycle.clone();
         move |_, cx| MarkedTextWindowRemovalProbe {
@@ -2261,10 +2271,10 @@ fn platform_input_handler_does_not_bypass_an_older_command_and_cross_window_clos
     let input_handler_slot = cx
         .update(|window, _| window.platform_window.input_handler_slot_for_test())
         .expect("the source window should expose its input-handler slot");
-    let failure = Rc::new(Cell::new(None));
+    let handler_called = Rc::new(Cell::new(false));
     let app = cx.app.clone();
     source_window.set_platform_command_callback({
-        let failure = failure.clone();
+        let handler_called = handler_called.clone();
         move |command, source_window| {
             if command == PlatformWindowCommand::StartWindowMove {
                 app.enqueue_platform_window_command(
@@ -2273,16 +2283,13 @@ fn platform_input_handler_does_not_bypass_an_older_command_and_cross_window_clos
                     PlatformWindowCommand::StartWindowResize(crate::ResizeEdge::BottomRight),
                 );
                 assert!(target_window.simulate_close());
-                let panic = catch_unwind(AssertUnwindSafe(|| {
-                    input_handler_slot.with_handler(|input_handler| {
-                        input_handler.replace_and_mark_text_in_range(None, "blocked", None)
-                    })
-                }))
-                .expect_err("the queued close must block the immediate input-handler callback");
-                let violation = panic
-                    .downcast_ref::<NativeInputInvariantViolation>()
-                    .expect("the input-handler rejection must preserve its typed invariant");
-                failure.set(Some(violation.failure));
+                handler_called.set(
+                    input_handler_slot
+                        .with_handler(|input_handler| {
+                            input_handler.replace_and_mark_text_in_range(None, "blocked", None)
+                        })
+                        .is_some(),
+                );
             }
             PlatformWindowCommandOutcome::Accepted
         }
@@ -2290,11 +2297,8 @@ fn platform_input_handler_does_not_bypass_an_older_command_and_cross_window_clos
 
     cx.update(|window, _| window.start_window_move());
 
-    assert_eq!(
-        failure.get(),
-        Some(NativeInvariantFailure::PriorEventBlockedByNativeWork)
-    );
-    assert!(lifecycle.borrow().is_empty());
+    assert!(handler_called.get());
+    assert_eq!(lifecycle.borrow().as_slice(), &["closed", "marked-input"]);
     assert_eq!(
         source_window.platform_command_history(),
         [

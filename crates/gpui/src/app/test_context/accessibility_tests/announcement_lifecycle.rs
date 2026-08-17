@@ -333,3 +333,25 @@ fn inactive_replacement_and_close_drop_without_replay(cx: &mut TestAppContext) {
     }));
     assert!(!format!("{close_diagnostics:?}").contains(CLOSING));
 }
+
+#[open_gpui::test]
+fn native_close_rejects_announcement_before_logical_close_delivery(cx: &mut TestAppContext) {
+    let typed_window = open_probe(cx);
+    let window = typed_window.into();
+    assert!(cx.activate_accessibility(window));
+
+    let platform_window = cx.test_window(window);
+    assert!(platform_window.simulate_close());
+
+    let outcome = typed_window
+        .update(cx, |_, window, cx| {
+            window.announce(AccessibilityAnnouncement::polite("native closed"), cx)
+        })
+        .expect("the logical window remains registered until its close event is delivered");
+    assert_eq!(
+        outcome.drop_reason(),
+        Some(AccessibilityAnnouncementDropReason::WindowClosed)
+    );
+
+    cx.run_until_parked();
+}
