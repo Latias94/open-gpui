@@ -1,6 +1,6 @@
 use crate::{
     BoolExt, MacDispatcher, MacDisplayTopologyHandle, MacDisplayTopologyRefresh,
-    MacDisplayTopologyRetry, MacKeyboardLayout, MacKeyboardMapper, MacWindow,
+    MacDisplayTopologyRetry, MacKeyboardLayout, MacKeyboardMapper, MacWindow, MacWindowRegistry,
     events::key_to_native,
     ns_string,
     pasteboard::Pasteboard,
@@ -186,6 +186,7 @@ pub(crate) struct MacPlatformState {
     text_system: Arc<dyn PlatformTextSystem>,
     renderer_context: renderer::Context,
     display_topology: MacDisplayTopologyHandle,
+    window_registry: MacWindowRegistry,
     headless: bool,
     general_pasteboard: Pasteboard,
     find_pasteboard: Pasteboard,
@@ -232,6 +233,7 @@ impl MacPlatform {
             foreground_executor: ForegroundExecutor::new(dispatcher),
             renderer_context: renderer::Context::default(),
             display_topology,
+            window_registry: MacWindowRegistry::default(),
             general_pasteboard: Pasteboard::general(),
             find_pasteboard: Pasteboard::find(),
             reopen: None,
@@ -295,6 +297,7 @@ impl MacPlatform {
             background_executor,
             renderer_context,
             display_topology,
+            window_registry,
         ) = {
             let guard = self.0.lock();
             (
@@ -303,6 +306,7 @@ impl MacPlatform {
                 guard.background_executor.clone(),
                 guard.renderer_context.clone(),
                 guard.display_topology.clone(),
+                guard.window_registry.clone(),
             )
         };
         let display_snapshot = display_topology.exact_snapshot().map_err(|error| {
@@ -317,10 +321,16 @@ impl MacPlatform {
         let target_display = display_snapshot
             .resolve_native_target(options.display_id)
             .map_err(|error| anyhow!("cannot resolve the macOS target display: {error}"))?;
+        let transient_owner = options
+            .transient_for
+            .map(|owner| window_registry.resolve_transient_owner(owner))
+            .transpose()?;
 
         Ok(Box::new(MacWindow::open(
             handle,
             options,
+            transient_owner,
+            window_registry,
             display_topology,
             display_snapshot,
             target_display,
@@ -626,6 +636,7 @@ fn schedule_mac_display_topology_retry(
 
 fn macos_window_capabilities(kind: &WindowKind) -> PlatformWindowCapabilities {
     let supports_toplevel_state = macos_supports_toplevel_creation_state(kind);
+    let supports_transient_owner = !matches!(kind, WindowKind::PopUp);
     PlatformWindowCapabilities {
         creation: PlatformWindowCreationCapabilities {
             focus_on_appearing: if macos_supports_focus_on_appearing(kind) {
@@ -633,7 +644,11 @@ fn macos_window_capabilities(kind: &WindowKind) -> PlatformWindowCapabilities {
             } else {
                 WindowCreationSupport::Unsupported
             },
-            transient_for: WindowCreationSupport::Unsupported,
+            transient_for: if supports_transient_owner {
+                WindowCreationSupport::Supported
+            } else {
+                WindowCreationSupport::Unsupported
+            },
             provisional_presentation: WindowCreationSupport::Unsupported,
             initial_presentation_order: WindowInitialPresentationOrder::AfterVisibility,
         },
@@ -1765,7 +1780,10 @@ mod window_capability_tests {
         WindowMutationSupport,
     };
 
-    fn expected_macos_capabilities(supports_toplevel_state: bool) -> PlatformWindowCapabilities {
+    fn expected_macos_capabilities(
+        supports_toplevel_state: bool,
+        supports_transient_owner: bool,
+    ) -> PlatformWindowCapabilities {
         let toplevel_state = if supports_toplevel_state {
             WindowMutationSupport::CreationOnly
         } else {
@@ -1778,7 +1796,11 @@ mod window_capability_tests {
                 } else {
                     WindowCreationSupport::Unsupported
                 },
-                transient_for: WindowCreationSupport::Unsupported,
+                transient_for: if supports_transient_owner {
+                    WindowCreationSupport::Supported
+                } else {
+                    WindowCreationSupport::Unsupported
+                },
                 provisional_presentation: WindowCreationSupport::Unsupported,
                 initial_presentation_order: WindowInitialPresentationOrder::AfterVisibility,
             },
@@ -1806,19 +1828,19 @@ mod window_capability_tests {
     fn capabilities_match_exact_kind_specific_creation_paths() {
         assert_eq!(
             super::macos_window_capabilities(&open_gpui::WindowKind::Normal),
-            expected_macos_capabilities(true)
+            expected_macos_capabilities(true, true)
         );
         assert_eq!(
             super::macos_window_capabilities(&open_gpui::WindowKind::Floating),
-            expected_macos_capabilities(true)
+            expected_macos_capabilities(true, true)
         );
         assert_eq!(
             super::macos_window_capabilities(&open_gpui::WindowKind::PopUp),
-            expected_macos_capabilities(false)
+            expected_macos_capabilities(false, false)
         );
         assert_eq!(
             super::macos_window_capabilities(&open_gpui::WindowKind::Dialog),
-            expected_macos_capabilities(false)
+            expected_macos_capabilities(false, true)
         );
     }
 }

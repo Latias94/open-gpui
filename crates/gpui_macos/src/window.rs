@@ -14,7 +14,7 @@ use cocoa::{
         NSView, NSViewHeightSizable, NSViewWidthSizable, NSVisualEffectMaterial,
         NSVisualEffectState, NSVisualEffectView, NSWindow, NSWindowButton,
         NSWindowCollectionBehavior, NSWindowOcclusionState, NSWindowOrderingMode,
-        NSWindowStyleMask, NSWindowTitleVisibility,
+        NSWindowStyleMask, NSWindowTabbingMode, NSWindowTitleVisibility,
     },
     base::{id, nil},
     foundation::{
@@ -61,7 +61,7 @@ use raw_window_handle as rwh;
 use smallvec::SmallVec;
 use std::{
     cell::Cell,
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     ffi::{CStr, c_void},
     mem,
     ops::Range,
@@ -116,6 +116,252 @@ pub enum UserTabbingPreference {
     Never,
     Always,
     InFullScreen,
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct MacWindowRegistry(Arc<Mutex<MacWindowRegistryState>>);
+
+#[derive(Default)]
+struct MacWindowRegistryState {
+    windows: HashMap<WindowId, Weak<RegisteredMacWindow>>,
+}
+
+struct RegisteredMacWindow {
+    handle: AnyWindowHandle,
+    native_window: StrongPtr,
+    closed: Arc<AtomicBool>,
+    interaction_quiesced: Arc<AtomicBool>,
+}
+
+struct MacWindowRegistration {
+    registry: Weak<Mutex<MacWindowRegistryState>>,
+    entry: Arc<RegisteredMacWindow>,
+}
+
+pub(crate) struct MacTransientOwnerLease {
+    registry: Weak<Mutex<MacWindowRegistryState>>,
+    entry: Arc<RegisteredMacWindow>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MacTransientOwnerLeaseState {
+    Current,
+    Retired,
+}
+
+enum MacTransientOwnerResolution {
+    Current(MacTransientOwnerLease),
+    Retired(MacTransientOwnerLease),
+    Gone,
+    Busy,
+}
+
+impl MacWindowRegistry {
+    fn observe_transient_owner(&self, owner: AnyWindowHandle) -> MacTransientOwnerResolution {
+        let entry = {
+            let Some(mut registry) = self.0.try_lock() else {
+                return MacTransientOwnerResolution::Busy;
+            };
+            registry
+                .windows
+                .retain(|_, entry| entry.upgrade().is_some());
+            let Some(entry) = registry
+                .windows
+                .get(&owner.window_id())
+                .and_then(Weak::upgrade)
+            else {
+                return MacTransientOwnerResolution::Gone;
+            };
+            entry
+        };
+        if entry.handle != owner {
+            return MacTransientOwnerResolution::Gone;
+        }
+        let lease = MacTransientOwnerLease {
+            registry: Arc::downgrade(&self.0),
+            entry,
+        };
+        if lease.entry.closed.load(Ordering::Acquire)
+            || lease.entry.interaction_quiesced.load(Ordering::Acquire)
+        {
+            return MacTransientOwnerResolution::Retired(lease);
+        }
+        match lease.state() {
+            MacTransientOwnerLeaseState::Current => MacTransientOwnerResolution::Current(lease),
+            MacTransientOwnerLeaseState::Retired => MacTransientOwnerResolution::Retired(lease),
+        }
+    }
+
+    pub(crate) fn resolve_transient_owner(
+        &self,
+        owner: AnyWindowHandle,
+    ) -> Result<MacTransientOwnerLease> {
+        let lease = match self.observe_transient_owner(owner) {
+            MacTransientOwnerResolution::Current(lease) => lease,
+            MacTransientOwnerResolution::Gone => {
+                return Err(anyhow!(
+                    "transient owner is not a live macOS platform window"
+                ));
+            }
+            MacTransientOwnerResolution::Retired(_) => {
+                return Err(anyhow!("macOS transient owner is already retiring"));
+            }
+            MacTransientOwnerResolution::Busy => {
+                return Err(anyhow!(
+                    "macOS window registry is busy while resolving a transient owner"
+                ));
+            }
+        };
+        anyhow::ensure!(
+            !lease.entry.interaction_quiesced.load(Ordering::Acquire),
+            "macOS transient owner is already quiescing"
+        );
+        Ok(lease)
+    }
+
+    fn register(
+        &self,
+        window: &MacWindow,
+        transient_owner: Option<&MacTransientOwnerLease>,
+    ) -> Result<MacWindowRegistration> {
+        let entry = {
+            let window_state = window
+                .0
+                .try_lock()
+                .ok_or_else(|| anyhow!("new macOS window state is busy before registry commit"))?;
+            anyhow::ensure!(
+                !window_state.is_closed(),
+                "cannot register a closed macOS platform window"
+            );
+            Arc::new(RegisteredMacWindow {
+                handle: window_state.handle,
+                native_window: unsafe { StrongPtr::retain(window_state.native_window) },
+                closed: window_state.closed.clone(),
+                interaction_quiesced: window_state.interaction_quiesced.clone(),
+            })
+        };
+        let mut registry = self
+            .0
+            .try_lock()
+            .ok_or_else(|| anyhow!("macOS window registry is busy during window commit"))?;
+        registry
+            .windows
+            .retain(|_, entry| entry.upgrade().is_some());
+        if let Some(owner) = transient_owner {
+            anyhow::ensure!(
+                owner
+                    .registry
+                    .upgrade()
+                    .is_some_and(|owner_registry| Arc::ptr_eq(&owner_registry, &self.0))
+                    && registry
+                        .windows
+                        .get(&owner.entry.handle.window_id())
+                        .and_then(Weak::upgrade)
+                        .is_some_and(|current| Arc::ptr_eq(&current, &owner.entry))
+                    && !owner.entry.closed.load(Ordering::Acquire)
+                    && !owner.entry.interaction_quiesced.load(Ordering::Acquire),
+                "macOS transient owner changed before the logical relationship was committed"
+            );
+        }
+        if let Some(existing) = registry.windows.get(&entry.handle.window_id()) {
+            anyhow::ensure!(
+                existing.upgrade().is_none(),
+                "macOS window registry already contains this live window generation"
+            );
+        }
+        registry
+            .windows
+            .insert(entry.handle.window_id(), Arc::downgrade(&entry));
+        if let Some(owner) = transient_owner {
+            if owner.entry.closed.load(Ordering::Acquire)
+                || owner.entry.interaction_quiesced.load(Ordering::Acquire)
+            {
+                registry.windows.remove(&entry.handle.window_id());
+                return Err(anyhow!(
+                    "macOS transient owner retired during logical relationship commit"
+                ));
+            }
+        }
+        Ok(MacWindowRegistration {
+            registry: Arc::downgrade(&self.0),
+            entry,
+        })
+    }
+}
+
+impl Drop for MacWindowRegistration {
+    fn drop(&mut self) {
+        let Some(registry) = self.registry.upgrade() else {
+            return;
+        };
+        let mut registry = registry.lock();
+        if registry
+            .windows
+            .get(&self.entry.handle.window_id())
+            .and_then(Weak::upgrade)
+            .is_some_and(|entry| Arc::ptr_eq(&entry, &self.entry))
+        {
+            registry.windows.remove(&self.entry.handle.window_id());
+        }
+    }
+}
+
+impl MacTransientOwnerLease {
+    fn handle(&self) -> AnyWindowHandle {
+        self.entry.handle
+    }
+
+    fn native_window(&self) -> id {
+        *self.entry.native_window
+    }
+
+    fn state(&self) -> MacTransientOwnerLeaseState {
+        if self.entry.closed.load(Ordering::Acquire)
+            || self.entry.interaction_quiesced.load(Ordering::Acquire)
+        {
+            return MacTransientOwnerLeaseState::Retired;
+        }
+        let Some(registry) = self.registry.upgrade() else {
+            return MacTransientOwnerLeaseState::Retired;
+        };
+        let registry = registry.lock();
+        if !registry
+            .windows
+            .get(&self.entry.handle.window_id())
+            .and_then(Weak::upgrade)
+            .is_some_and(|entry| Arc::ptr_eq(&entry, &self.entry))
+        {
+            return MacTransientOwnerLeaseState::Retired;
+        }
+        if self.entry.closed.load(Ordering::Acquire)
+            || self.entry.interaction_quiesced.load(Ordering::Acquire)
+        {
+            MacTransientOwnerLeaseState::Retired
+        } else {
+            MacTransientOwnerLeaseState::Current
+        }
+    }
+
+    fn is_current(&self) -> bool {
+        self.state() == MacTransientOwnerLeaseState::Current
+    }
+
+    fn is_presentable(&self) -> bool {
+        if self.entry.closed.load(Ordering::Acquire)
+            || self.entry.interaction_quiesced.load(Ordering::Acquire)
+        {
+            return false;
+        }
+
+        let native_window = self.native_window();
+        let presentable = unsafe {
+            let visible: BOOL = msg_send![native_window, isVisible];
+            let miniaturized: BOOL = msg_send![native_window, isMiniaturized];
+            let on_active_space: BOOL = msg_send![native_window, isOnActiveSpace];
+            visible == YES && miniaturized == NO && on_active_space == YES
+        };
+        presentable && self.is_current()
+    }
 }
 
 #[link(name = "CoreGraphics", kind = "framework")]
@@ -1333,6 +1579,7 @@ impl MacPresentationShutdownAuthority {
 
 struct MacWindowState {
     handle: AnyWindowHandle,
+    window_registry: MacWindowRegistry,
     foreground_executor: ForegroundExecutor,
     background_executor: BackgroundExecutor,
     native_window: id,
@@ -1389,6 +1636,7 @@ struct MacWindowState {
     accesskit_adapter: Option<accesskit_macos::SubclassingAdapter>,
     creation_facts: WindowCreationFacts,
     initial_presentation: MacInitialPresentation,
+    transient_ordering_in_progress: bool,
     attempted_window_draw: bool,
     interaction_quiesced: Arc<AtomicBool>,
 }
@@ -1400,6 +1648,12 @@ impl MacWindowState {
 
     fn interaction_is_quiesced(&self) -> bool {
         self.interaction_quiesced.load(Ordering::Acquire)
+    }
+
+    fn admits_native_tabbing(&self) -> bool {
+        !self.is_closed()
+            && !self.interaction_is_quiesced()
+            && self.creation_facts.transient_for.is_none()
     }
 
     fn mark_closed(&mut self) -> (PlatformInputCallbackSlot, PlatformInputHandlerSlot) {
@@ -1816,6 +2070,7 @@ pub(crate) struct MacWindow(
     Arc<Mutex<MacPresentationShutdownAuthority>>,
     // Native disposal has either completed synchronously or been queued on the main executor.
     bool,
+    Option<MacWindowRegistration>,
 );
 
 struct MacNativeObjectConstructionGuard {
@@ -1875,6 +2130,560 @@ impl Drop for MacWindowConstructionGuard<'_> {
     }
 }
 
+struct MacTransientAttachmentGuard {
+    owner: MacTransientOwnerLease,
+    child_window: StrongPtr,
+    expected_child: AnyWindowHandle,
+    expected_level: NSInteger,
+    prior_parent: Option<StrongPtr>,
+    prior_visible: bool,
+    armed: bool,
+}
+
+struct MacTransientOrderingScope {
+    window_state: Weak<Mutex<MacWindowState>>,
+    native_window: id,
+}
+
+impl MacTransientOrderingScope {
+    fn begin(window_state: &Arc<Mutex<MacWindowState>>) -> Option<Self> {
+        let native_window = {
+            let mut state = window_state.lock();
+            if state.is_closed()
+                || state.interaction_is_quiesced()
+                || state.transient_ordering_in_progress
+            {
+                return None;
+            }
+            state.transient_ordering_in_progress = true;
+            state.native_window
+        };
+        Some(Self {
+            window_state: Arc::downgrade(window_state),
+            native_window,
+        })
+    }
+}
+
+impl Drop for MacTransientOrderingScope {
+    fn drop(&mut self) {
+        let Some(window_state) = self.window_state.upgrade() else {
+            return;
+        };
+        let mut state = window_state.lock();
+        if state.native_window == self.native_window {
+            state.transient_ordering_in_progress = false;
+        }
+    }
+}
+
+impl MacTransientAttachmentGuard {
+    fn prepare(
+        owner: MacTransientOwnerLease,
+        child_window: id,
+        expected_child: AnyWindowHandle,
+    ) -> Result<Self> {
+        anyhow::ensure!(
+            owner.is_current(),
+            "transient owner is no longer current before AppKit attachment"
+        );
+        anyhow::ensure!(
+            unsafe { native_window_matches_handle(child_window, expected_child) },
+            "macOS transient child changed before AppKit attachment"
+        );
+        anyhow::ensure!(
+            owner.native_window() != child_window,
+            "a macOS transient window cannot own itself"
+        );
+        let parent_before: id = unsafe { msg_send![child_window, parentWindow] };
+        anyhow::ensure!(
+            parent_before.is_null() || parent_before == owner.native_window(),
+            "macOS transient window already has an unexpected native parent"
+        );
+        let child_level: NSInteger = unsafe { msg_send![child_window, level] };
+        let child_visible: BOOL = unsafe { msg_send![child_window, isVisible] };
+        let guard = Self {
+            owner,
+            child_window: unsafe { StrongPtr::retain(child_window) },
+            expected_child,
+            expected_level: child_level,
+            prior_parent: (!parent_before.is_null())
+                .then(|| unsafe { StrongPtr::retain(parent_before) }),
+            prior_visible: child_visible == YES,
+            armed: true,
+        };
+
+        unsafe {
+            if !parent_before.is_null() {
+                let _: () = msg_send![parent_before, removeChildWindow: child_window];
+            }
+            let parent_after_detach: id = msg_send![child_window, parentWindow];
+            anyhow::ensure!(
+                parent_after_detach.is_null(),
+                "macOS transient child could not leave its previous sibling order"
+            );
+            anyhow::ensure!(
+                guard.owner.is_current(),
+                "transient owner retired while preparing AppKit attachment"
+            );
+            let _: () = msg_send![
+                guard.owner.native_window(),
+                addChildWindow: child_window
+                ordered: NSWindowOrderingMode::NSWindowAbove
+            ];
+            child_window.setLevel_(child_level);
+        }
+        let parent_after: id = unsafe { msg_send![child_window, parentWindow] };
+        let level_after: NSInteger = unsafe { msg_send![child_window, level] };
+        anyhow::ensure!(
+            guard.owner.is_current()
+                && parent_after == guard.owner.native_window()
+                && level_after == child_level,
+            "macOS transient owner or window level changed while the native relationship was installed"
+        );
+        Ok(guard)
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+
+    fn is_committed(&self, expected_child: AnyWindowHandle) -> bool {
+        let child_window = *self.child_window;
+        let parent_window: id = unsafe { msg_send![child_window, parentWindow] };
+        let child_level: NSInteger = unsafe { msg_send![child_window, level] };
+        self.owner.is_presentable()
+            && parent_window == self.owner.native_window()
+            && child_level == self.expected_level
+            && unsafe { native_window_matches_handle(child_window, expected_child) }
+    }
+
+    fn commit_after_owner_retirement(&self) -> bool {
+        if self.owner.state() != MacTransientOwnerLeaseState::Retired {
+            return false;
+        }
+        let child_window = *self.child_window;
+        if !unsafe { native_window_matches_handle(child_window, self.expected_child) } {
+            return false;
+        }
+        if detach_retired_mac_transient_owner(
+            child_window,
+            self.owner.handle(),
+            Some(self.owner.native_window()),
+        )
+        .is_err()
+        {
+            return false;
+        }
+        unsafe {
+            child_window.setLevel_(self.expected_level);
+        }
+        let parent_after: id = unsafe { msg_send![child_window, parentWindow] };
+        let level_after: NSInteger = unsafe { msg_send![child_window, level] };
+        let visible_after: BOOL = unsafe { msg_send![child_window, isVisible] };
+        let committed = parent_after.is_null()
+            && level_after == self.expected_level
+            && visible_after == YES
+            && unsafe { native_window_matches_handle(child_window, self.expected_child) };
+        committed
+    }
+
+    fn rollback(&self) {
+        let child_window = *self.child_window;
+        for _ in 0..2 {
+            // Quiescence revokes forward interaction authority, but an exact live child must
+            // still receive the native compensation for side effects already performed.
+            if !unsafe { native_window_is_exact_live_handle(child_window, self.expected_child) } {
+                return;
+            }
+            let expected_parent = self
+                .owner
+                .is_current()
+                .then(|| self.prior_parent.as_ref().map(|parent| **parent))
+                .flatten();
+            let current_parent: id = unsafe { msg_send![child_window, parentWindow] };
+            if !current_parent.is_null() && Some(current_parent) != expected_parent {
+                unsafe {
+                    let _: () = msg_send![current_parent, removeChildWindow: child_window];
+                }
+            }
+            let parent_after_remove: id = unsafe { msg_send![child_window, parentWindow] };
+            if let Some(expected_parent) = expected_parent {
+                if parent_after_remove != expected_parent {
+                    if !parent_after_remove.is_null() {
+                        continue;
+                    }
+                    unsafe {
+                        let _: () = msg_send![
+                            expected_parent,
+                            addChildWindow: child_window
+                            ordered: NSWindowOrderingMode::NSWindowAbove
+                        ];
+                    }
+                }
+            } else if !parent_after_remove.is_null() {
+                continue;
+            }
+
+            unsafe {
+                child_window.setLevel_(self.expected_level);
+                if self.prior_visible {
+                    let _: () = msg_send![child_window, orderFront: nil];
+                } else {
+                    let _: () = msg_send![child_window, orderOut: nil];
+                }
+            }
+            let committed_parent: id = unsafe { msg_send![child_window, parentWindow] };
+            let committed_level: NSInteger = unsafe { msg_send![child_window, level] };
+            let committed_visible: BOOL = unsafe { msg_send![child_window, isVisible] };
+            let parent_restored = expected_parent.map_or_else(
+                || committed_parent.is_null(),
+                |expected_parent| committed_parent == expected_parent,
+            );
+            if parent_restored
+                && committed_level == self.expected_level
+                && (committed_visible == YES) == self.prior_visible
+            {
+                return;
+            }
+        }
+        log::error!(
+            "failed to restore a macOS transient window's parent, visibility, and level after a rejected presentation transaction"
+        );
+    }
+}
+
+impl Drop for MacTransientAttachmentGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            self.rollback();
+        }
+    }
+}
+
+unsafe fn detach_native_transient_relationships(native_window: id) {
+    unsafe {
+        let parent_window: id = msg_send![native_window, parentWindow];
+        if !parent_window.is_null() {
+            let _: () = msg_send![parent_window, removeChildWindow: native_window];
+        }
+
+        let child_windows: id = msg_send![native_window, childWindows];
+        let child_count: NSUInteger = msg_send![child_windows, count];
+        let mut retained_children = Vec::with_capacity(child_count as usize);
+        for index in 0..child_count {
+            let child_window: id = msg_send![child_windows, objectAtIndex: index];
+            if is_gpui_window(child_window) {
+                retained_children.push(StrongPtr::retain(child_window));
+            }
+        }
+        for child_window in retained_children {
+            let child_window = *child_window;
+            let current_parent: id = msg_send![child_window, parentWindow];
+            if current_parent == native_window {
+                let _: () = msg_send![native_window, removeChildWindow: child_window];
+            }
+        }
+    }
+}
+
+unsafe fn native_window_matches_handle(
+    native_window: id,
+    expected_handle: AnyWindowHandle,
+) -> bool {
+    unsafe {
+        native_window_satisfies_handle(
+            native_window,
+            expected_handle,
+            MacNativeWindowHandleRequirement::InteractionAdmitted,
+        )
+    }
+}
+
+unsafe fn native_window_is_exact_live_handle(
+    native_window: id,
+    expected_handle: AnyWindowHandle,
+) -> bool {
+    unsafe {
+        native_window_satisfies_handle(
+            native_window,
+            expected_handle,
+            MacNativeWindowHandleRequirement::ExactLive,
+        )
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MacNativeWindowHandleRequirement {
+    ExactLive,
+    InteractionAdmitted,
+}
+
+unsafe fn native_window_satisfies_handle(
+    native_window: id,
+    expected_handle: AnyWindowHandle,
+    requirement: MacNativeWindowHandleRequirement,
+) -> bool {
+    unsafe {
+        if native_window.is_null() || !is_gpui_window(native_window) {
+            return false;
+        }
+        let state = get_window_state(&*native_window);
+        let Some(state) = state.try_lock() else {
+            return false;
+        };
+        !state.is_closed()
+            && state.native_window == native_window
+            && state.handle == expected_handle
+            && (requirement == MacNativeWindowHandleRequirement::ExactLive
+                || !state.interaction_is_quiesced())
+    }
+}
+
+unsafe fn native_window_has_handle(native_window: id, expected_handle: AnyWindowHandle) -> bool {
+    unsafe {
+        if native_window.is_null() || !is_gpui_window(native_window) {
+            return false;
+        }
+        let state = get_window_state(&*native_window);
+        let Some(state) = state.try_lock() else {
+            return false;
+        };
+        state.native_window == native_window && state.handle == expected_handle
+    }
+}
+
+fn detach_retired_mac_transient_owner(
+    native_window: id,
+    expected_owner: AnyWindowHandle,
+    expected_parent: Option<id>,
+) -> Result<()> {
+    let current_parent: id = unsafe { msg_send![native_window, parentWindow] };
+    let was_visible: BOOL = unsafe { msg_send![native_window, isVisible] };
+    if !current_parent.is_null() {
+        let parent_matches = expected_parent
+            .is_some_and(|expected_parent| current_parent == expected_parent)
+            || expected_parent.is_none()
+                && unsafe { native_window_has_handle(current_parent, expected_owner) };
+        anyhow::ensure!(
+            parent_matches,
+            "macOS transient child has an unexpected native parent after owner retirement"
+        );
+        unsafe {
+            let _: () = msg_send![current_parent, removeChildWindow: native_window];
+        }
+    }
+    let parent_after: id = unsafe { msg_send![native_window, parentWindow] };
+    anyhow::ensure!(
+        parent_after.is_null(),
+        "macOS transient child remained attached after owner retirement"
+    );
+    unsafe {
+        if was_visible == YES {
+            let _: () = msg_send![native_window, orderFront: nil];
+        } else {
+            let _: () = msg_send![native_window, orderOut: nil];
+        }
+    }
+    let visible_after: BOOL = unsafe { msg_send![native_window, isVisible] };
+    anyhow::ensure!(
+        visible_after == was_visible,
+        "macOS transient child visibility changed while retiring its owner"
+    );
+    Ok(())
+}
+
+fn prepare_mac_transient_attachment(
+    native_window: id,
+    expected_window: AnyWindowHandle,
+    transient_for: Option<AnyWindowHandle>,
+    registry: &MacWindowRegistry,
+) -> Result<Option<MacTransientAttachmentGuard>> {
+    let Some(expected_owner) = transient_for else {
+        return Ok(None);
+    };
+    anyhow::ensure!(
+        unsafe { native_window_matches_handle(native_window, expected_window) },
+        "macOS transient child changed before native presentation"
+    );
+
+    let owner = match registry.observe_transient_owner(expected_owner) {
+        MacTransientOwnerResolution::Current(owner) => owner,
+        MacTransientOwnerResolution::Retired(owner) => {
+            detach_retired_mac_transient_owner(
+                native_window,
+                expected_owner,
+                Some(owner.native_window()),
+            )?;
+            return Ok(None);
+        }
+        MacTransientOwnerResolution::Gone => {
+            detach_retired_mac_transient_owner(native_window, expected_owner, None)?;
+            return Ok(None);
+        }
+        MacTransientOwnerResolution::Busy => {
+            return Err(anyhow!(
+                "macOS transient owner authority is busy during native presentation"
+            ));
+        }
+    };
+    if !owner.is_presentable() {
+        if detach_mac_transient_after_concurrent_owner_retirement(
+            native_window,
+            expected_window,
+            expected_owner,
+            registry,
+        )? {
+            return Ok(None);
+        }
+        return Err(anyhow!(
+            "macOS transient owner is not visible on the active Space"
+        ));
+    }
+
+    match MacTransientAttachmentGuard::prepare(owner, native_window, expected_window) {
+        Ok(attachment) => Ok(Some(attachment)),
+        Err(error) => {
+            if detach_mac_transient_after_concurrent_owner_retirement(
+                native_window,
+                expected_window,
+                expected_owner,
+                registry,
+            )? {
+                Ok(None)
+            } else {
+                Err(error)
+            }
+        }
+    }
+}
+
+fn detach_mac_transient_after_concurrent_owner_retirement(
+    native_window: id,
+    expected_window: AnyWindowHandle,
+    expected_owner: AnyWindowHandle,
+    registry: &MacWindowRegistry,
+) -> Result<bool> {
+    if !unsafe { native_window_matches_handle(native_window, expected_window) } {
+        return Ok(false);
+    }
+    match registry.observe_transient_owner(expected_owner) {
+        MacTransientOwnerResolution::Retired(owner) => {
+            detach_retired_mac_transient_owner(
+                native_window,
+                expected_owner,
+                Some(owner.native_window()),
+            )?;
+            Ok(true)
+        }
+        MacTransientOwnerResolution::Gone => {
+            detach_retired_mac_transient_owner(native_window, expected_owner, None)?;
+            Ok(true)
+        }
+        MacTransientOwnerResolution::Current(_) | MacTransientOwnerResolution::Busy => Ok(false),
+    }
+}
+
+struct MacTransientPresentationTransaction {
+    attachment: Option<MacTransientAttachmentGuard>,
+    _ordering_scope: Option<MacTransientOrderingScope>,
+    expected_child: AnyWindowHandle,
+    native_window: id,
+    proof: MacTransientPresentationProof,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MacTransientPresentationProof {
+    Visible,
+    VisibleAndKey,
+}
+
+impl MacTransientPresentationProof {
+    fn is_satisfied(self, native_window: id, expected_child: AnyWindowHandle) -> bool {
+        let visible: BOOL = unsafe { msg_send![native_window, isVisible] };
+        if visible != YES || !unsafe { native_window_matches_handle(native_window, expected_child) }
+        {
+            return false;
+        }
+        if self == Self::VisibleAndKey {
+            unsafe {
+                let app = NSApplication::sharedApplication(nil);
+                let key_window: id = msg_send![app, keyWindow];
+                if key_window != native_window {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+}
+
+impl MacTransientPresentationTransaction {
+    fn begin(
+        window_state: &Arc<Mutex<MacWindowState>>,
+        native_window: id,
+        expected_child: AnyWindowHandle,
+        transient_for: Option<AnyWindowHandle>,
+        registry: &MacWindowRegistry,
+        proof: MacTransientPresentationProof,
+    ) -> Result<Self> {
+        if proof == MacTransientPresentationProof::VisibleAndKey {
+            anyhow::ensure!(
+                proof.is_satisfied(native_window, expected_child),
+                "macOS transient child lost exact key-window authority before sibling ordering"
+            );
+        }
+        let ordering_scope = if transient_for.is_some() {
+            Some(
+                MacTransientOrderingScope::begin(window_state).ok_or_else(|| {
+                    anyhow!("macOS transient sibling ordering is already in progress")
+                })?,
+            )
+        } else {
+            None
+        };
+        let attachment = prepare_mac_transient_attachment(
+            native_window,
+            expected_child,
+            transient_for,
+            registry,
+        )?;
+        Ok(Self {
+            attachment,
+            _ordering_scope: ordering_scope,
+            expected_child,
+            native_window,
+            proof,
+        })
+    }
+
+    fn commit(mut self) -> bool {
+        if !self
+            .proof
+            .is_satisfied(self.native_window, self.expected_child)
+        {
+            return false;
+        }
+        if let Some(attachment) = self.attachment.as_ref() {
+            if !attachment.is_committed(self.expected_child)
+                && !attachment.commit_after_owner_retirement()
+            {
+                return false;
+            }
+        }
+        if !self
+            .proof
+            .is_satisfied(self.native_window, self.expected_child)
+        {
+            return false;
+        }
+        if let Some(attachment) = self.attachment.as_mut() {
+            attachment.disarm();
+        }
+        true
+    }
+}
+
 struct MacWindowInteractionQuiescenceTarget {
     native_window: StrongPtr,
     window_state: Weak<Mutex<MacWindowState>>,
@@ -1930,6 +2739,7 @@ impl MacWindow {
             return;
         }
         self.2 = true;
+        self.3.take();
 
         let (event_callback, input_handler, window, foreground_executor) = {
             let mut state = self.0.lock();
@@ -1948,6 +2758,9 @@ impl MacWindow {
         };
         event_callback.terminate();
         input_handler.terminate();
+        unsafe {
+            detach_native_transient_relationships(window);
+        }
 
         if synchronously {
             unsafe {
@@ -1980,13 +2793,15 @@ impl MacWindow {
             accepts_pointer_input,
             focus_on_appearing,
             activation_policy,
-            transient_for: _,
+            transient_for,
             show,
             display_id: _,
             window_min_size,
             tabbing_identifier,
             ..
         }: WindowParams,
+        transient_owner: Option<MacTransientOwnerLease>,
+        window_registry: MacWindowRegistry,
         display_topology: MacDisplayTopologyHandle,
         display_snapshot: MacDisplayTopologySnapshot,
         target_display: ValidatedMacDisplayTarget,
@@ -1995,6 +2810,23 @@ impl MacWindow {
         background_executor: BackgroundExecutor,
         renderer_context: renderer::Context,
     ) -> Result<Self> {
+        match (transient_for, transient_owner.as_ref()) {
+            (Some(requested), Some(owner)) if requested == owner.handle() => {}
+            (None, None) => {}
+            _ => {
+                return Err(anyhow!(
+                    "macOS transient owner resolution did not match the requested owner"
+                ));
+            }
+        }
+        anyhow::ensure!(
+            transient_for.is_none() || !matches!(kind, WindowKind::PopUp),
+            "macOS popup windows do not support a transient owner relationship"
+        );
+        anyhow::ensure!(
+            transient_for.is_none() || tabbing_identifier.is_none(),
+            "macOS transient windows cannot also join a native tab group"
+        );
         let display = target_display.display();
         if target_display.generation() != display_snapshot.generation()
             || display_snapshot.display(display.id()) != Some(display)
@@ -2026,12 +2858,14 @@ impl MacWindow {
             let creation_facts = WindowCreationFacts {
                 show,
                 focus_on_appearing: creation.focus_on_appearing,
-                transient_for: None,
+                transient_for,
             };
-            if allows_automatic_window_tabbing {
-                let () = msg_send![class!(NSWindow), setAllowsAutomaticWindowTabbing: YES];
-            } else {
-                let () = msg_send![class!(NSWindow), setAllowsAutomaticWindowTabbing: NO];
+            if transient_for.is_none() {
+                if allows_automatic_window_tabbing {
+                    let () = msg_send![class!(NSWindow), setAllowsAutomaticWindowTabbing: YES];
+                } else {
+                    let () = msg_send![class!(NSWindow), setAllowsAutomaticWindowTabbing: NO];
+                }
             }
 
             let mut style_mask;
@@ -2105,6 +2939,10 @@ impl MacWindow {
                 native_window,
                 setReleasedWhenClosed: NO
             ];
+            if transient_for.is_some() {
+                native_window.setTabbingMode_(NSWindowTabbingMode::NSWindowTabbingModeDisallowed);
+                let _: () = msg_send![native_window, setTabbingIdentifier:nil];
+            }
 
             let content_view = native_window.contentView();
             let native_view: id = msg_send![VIEW_CLASS, alloc];
@@ -2118,6 +2956,7 @@ impl MacWindow {
             let mut window = Self(
                 Arc::new(Mutex::new(MacWindowState {
                     handle,
+                    window_registry: window_registry.clone(),
                     foreground_executor,
                     background_executor,
                     native_window,
@@ -2190,11 +3029,13 @@ impl MacWindow {
                     topmost: creation.topmost,
                     taskbar_visible: creation.taskbar_visible,
                     initial_presentation,
+                    transient_ordering_in_progress: false,
                     attempted_window_draw: false,
                     interaction_quiesced: Arc::new(AtomicBool::new(false)),
                 })),
                 presentation_shutdown_authority,
                 false,
+                None,
             );
             let mut construction_guard = MacWindowConstructionGuard::new(&mut window);
             native_window_ownership.disarm();
@@ -2331,6 +3172,18 @@ impl MacWindow {
                     "cannot subscribe the macOS window to display publications: {error}"
                 ));
             }
+
+            let registration = match window_registry
+                .register(construction_guard.window, transient_owner.as_ref())
+            {
+                Ok(registration) => registration,
+                Err(error) => {
+                    drop(construction_guard);
+                    pool.drain();
+                    return Err(error);
+                }
+            };
+            construction_guard.window.3 = Some(registration);
 
             construction_guard.disarm();
             drop(construction_guard);
@@ -2949,25 +3802,52 @@ fn if_window_not_closed(closed: Arc<AtomicBool>, f: impl FnOnce()) {
     }
 }
 
-fn complete_mac_initial_presentation(window_state: &Arc<Mutex<MacWindowState>>, activate: bool) {
-    let (native_window, presentation, activate) = {
+fn complete_mac_initial_presentation(
+    window_state: &Arc<Mutex<MacWindowState>>,
+    activate: bool,
+) -> bool {
+    let (handle, native_window, presentation, activate, transient_for, window_registry) = {
         let mut state = window_state.lock();
-        if state.is_closed() || state.initial_presentation.completed {
-            return;
+        if state.is_closed() {
+            return false;
+        }
+        if state.initial_presentation.completed {
+            return true;
         }
         state.initial_presentation.completed = true;
         (
+            state.handle,
             state.native_window,
             state.initial_presentation,
             activate
                 && !state.interaction_is_quiesced()
                 && state.activation_policy.accepts_activation,
+            state.creation_facts.transient_for,
+            state.window_registry.clone(),
         )
     };
 
     if !presentation.show {
-        return;
+        return true;
     }
+
+    let presentation_transaction = match MacTransientPresentationTransaction::begin(
+        window_state,
+        native_window,
+        handle,
+        transient_for,
+        &window_registry,
+        MacTransientPresentationProof::Visible,
+    ) {
+        Ok(attachment) => attachment,
+        Err(_) => {
+            let mut state = window_state.lock();
+            if !state.is_closed() && state.native_window == native_window {
+                state.initial_presentation.completed = false;
+            }
+            return false;
+        }
+    };
 
     unsafe {
         let app: id = NSApplication::sharedApplication(nil);
@@ -2992,7 +3872,15 @@ fn complete_mac_initial_presentation(window_state: &Arc<Mutex<MacWindowState>>, 
                     msg_send![main_window, respondsToSelector: sel!(addTabbedWindow:ordered:)];
                 let main_window_visible: BOOL = msg_send![main_window, isVisible];
 
-                if main_window_can_tab == YES && main_window_visible == YES {
+                let main_window_admits_tabbing = !is_gpui_window(main_window)
+                    || get_window_state(&*main_window)
+                        .try_lock()
+                        .is_some_and(|state| state.admits_native_tabbing());
+
+                if main_window_can_tab == YES
+                    && main_window_visible == YES
+                    && main_window_admits_tabbing
+                {
                     let _: () = msg_send![
                         main_window,
                         addTabbedWindow: native_window
@@ -3009,14 +3897,23 @@ fn complete_mac_initial_presentation(window_state: &Arc<Mutex<MacWindowState>>, 
             let _: () = msg_send![native_window, orderFront: nil];
         }
 
+        if !presentation_transaction.commit() {
+            let mut state = window_state.lock();
+            if !state.is_closed() && state.native_window == native_window {
+                state.initial_presentation.completed = false;
+            }
+            return false;
+        }
+
         if presentation.state == MacWindowCreationState::Fullscreen {
             let _: () = msg_send![native_window, toggleFullScreen: nil];
         }
     }
+    true
 }
 
 fn activate_mac_window(window_state: &Arc<Mutex<MacWindowState>>) -> bool {
-    let window = {
+    let (handle, window, transient_for, window_registry) = {
         let state = window_state.lock();
         if state.is_closed()
             || state.interaction_is_quiesced()
@@ -3024,13 +3921,59 @@ fn activate_mac_window(window_state: &Arc<Mutex<MacWindowState>>) -> bool {
         {
             return false;
         }
-        state.native_window
+        (
+            state.handle,
+            state.native_window,
+            state.creation_facts.transient_for,
+            state.window_registry.clone(),
+        )
     };
 
+    let activation_transaction = match MacTransientPresentationTransaction::begin(
+        window_state,
+        window,
+        handle,
+        transient_for,
+        &window_registry,
+        MacTransientPresentationProof::Visible,
+    ) {
+        Ok(transaction) => transaction,
+        Err(_) => return false,
+    };
     unsafe {
         let _: () = msg_send![window, makeKeyAndOrderFront: nil];
     }
-    true
+    activation_transaction.commit()
+}
+
+fn reorder_mac_transient_after_native_activation(
+    window_state: &Arc<Mutex<MacWindowState>>,
+) -> bool {
+    let (handle, native_window, transient_for, window_registry, ordering_in_progress) = {
+        let state = window_state.lock();
+        (
+            state.handle,
+            state.native_window,
+            state.creation_facts.transient_for,
+            state.window_registry.clone(),
+            state.transient_ordering_in_progress,
+        )
+    };
+    if transient_for.is_none() || ordering_in_progress {
+        return true;
+    }
+    let transaction = match MacTransientPresentationTransaction::begin(
+        window_state,
+        native_window,
+        handle,
+        transient_for,
+        &window_registry,
+        MacTransientPresentationProof::VisibleAndKey,
+    ) {
+        Ok(attachment) => attachment,
+        Err(_) => return false,
+    };
+    transaction.commit()
 }
 
 fn start_mac_window_move(window_state: &Arc<Mutex<MacWindowState>>) -> bool {
@@ -3063,8 +4006,11 @@ fn dispatch_mac_window_command(
 
     match command {
         PlatformWindowCommand::CompleteInitialPresentation { activate } => {
-            complete_mac_initial_presentation(&window_state, activate);
-            PlatformWindowCommandOutcome::Accepted
+            if complete_mac_initial_presentation(&window_state, activate) {
+                PlatformWindowCommandOutcome::Accepted
+            } else {
+                rejected_or_closed_mac_window_command(&window_state)
+            }
         }
         PlatformWindowCommand::RevealDeferredInitialPresentation { .. } => {
             PlatformWindowCommandOutcome::Rejected
@@ -3073,19 +4019,29 @@ fn dispatch_mac_window_command(
             if activate_mac_window(&window_state) {
                 PlatformWindowCommandOutcome::Accepted
             } else {
-                PlatformWindowCommandOutcome::Rejected
+                rejected_or_closed_mac_window_command(&window_state)
             }
         }
         PlatformWindowCommand::StartWindowMove => {
             if start_mac_window_move(&window_state) {
                 PlatformWindowCommandOutcome::Accepted
             } else {
-                PlatformWindowCommandOutcome::Rejected
+                rejected_or_closed_mac_window_command(&window_state)
             }
         }
         PlatformWindowCommand::ShowWindowMenu(_) | PlatformWindowCommand::StartWindowResize(_) => {
             PlatformWindowCommandOutcome::Rejected
         }
+    }
+}
+
+fn rejected_or_closed_mac_window_command(
+    window_state: &Arc<Mutex<MacWindowState>>,
+) -> PlatformWindowCommandOutcome {
+    if window_state.lock().is_closed() {
+        PlatformWindowCommandOutcome::WindowClosed
+    } else {
+        PlatformWindowCommandOutcome::Rejected
     }
 }
 
@@ -3271,7 +4227,7 @@ impl PlatformWindow for MacWindow {
     fn merge_all_windows(&self) {
         let (window_state, executor) = {
             let state = self.0.lock();
-            if state.interaction_is_quiesced() {
+            if !state.admits_native_tabbing() {
                 return;
             }
             (Arc::downgrade(&self.0), state.foreground_executor.clone())
@@ -3283,7 +4239,7 @@ impl PlatformWindow for MacWindow {
                 };
                 let native_window = {
                     let state = window_state.lock();
-                    if state.is_closed() || state.interaction_is_quiesced() {
+                    if !state.admits_native_tabbing() {
                         return;
                     }
                     state.native_window
@@ -3298,7 +4254,7 @@ impl PlatformWindow for MacWindow {
     fn move_tab_to_new_window(&self) {
         let (window_state, executor) = {
             let state = self.0.lock();
-            if state.interaction_is_quiesced() {
+            if !state.admits_native_tabbing() {
                 return;
             }
             (Arc::downgrade(&self.0), state.foreground_executor.clone())
@@ -3310,7 +4266,7 @@ impl PlatformWindow for MacWindow {
                 };
                 let native_window = {
                     let state = window_state.lock();
-                    if state.is_closed() || state.interaction_is_quiesced() {
+                    if !state.admits_native_tabbing() {
                         return;
                     }
                     state.native_window
@@ -3320,7 +4276,7 @@ impl PlatformWindow for MacWindow {
                 }
 
                 let state = window_state.lock();
-                if state.is_closed() || state.interaction_is_quiesced() {
+                if !state.admits_native_tabbing() {
                     return;
                 }
                 let native_window = state.native_window;
@@ -3335,7 +4291,7 @@ impl PlatformWindow for MacWindow {
     fn toggle_window_tab_overview(&self) {
         let native_window = {
             let state = self.0.lock();
-            if state.interaction_is_quiesced() {
+            if !state.admits_native_tabbing() {
                 return;
             }
             state.native_window
@@ -3346,7 +4302,13 @@ impl PlatformWindow for MacWindow {
     }
 
     fn set_tabbing_identifier(&self, tabbing_identifier: Option<String>) {
-        let native_window = self.0.lock().native_window;
+        let native_window = {
+            let state = self.0.lock();
+            if !state.admits_native_tabbing() {
+                return;
+            }
+            state.native_window
+        };
         unsafe {
             if tabbing_identifier.is_some() {
                 let () = msg_send![class!(NSWindow), setAllowsAutomaticWindowTabbing: YES];
@@ -4767,6 +5729,19 @@ fn deliver_window_active_event(
 
     drop(lock);
 
+    let exact_reorder_positive =
+        event == MacWindowActiveEvent::BecameKey && event_is_latest && observed_is_active && {
+            let native_window = window_state.lock().native_window;
+            unsafe {
+                let app = NSApplication::sharedApplication(nil);
+                let key_window: id = msg_send![app, keyWindow];
+                key_window == native_window
+            }
+        };
+    if exact_reorder_positive && !reorder_mac_transient_after_native_activation(window_state) {
+        log::error!("failed to reorder an exact active macOS transient window");
+    }
+
     let a11y_events = {
         let mut lock = window_state.lock();
         if lock.interaction_is_quiesced() {
@@ -4879,6 +5854,7 @@ extern "C" fn close_window(this: &Object, _: Sel) {
 
         event_callback.terminate();
         input_handler.terminate();
+        detach_native_transient_relationships(this as *const Object as id);
         if let Some(callback) = close_callback {
             callback();
         }
@@ -5416,21 +6392,21 @@ extern "C" fn add_titlebar_accessory_view_controller(this: &Object, _: Sel, view
 extern "C" fn move_tab_to_new_window(this: &Object, _: Sel, _: id) {
     unsafe {
         let window_state = get_window_state(this);
-        if window_state.lock().interaction_is_quiesced() {
+        if !window_state.lock().admits_native_tabbing() {
             return;
         }
         let superclass = window_callback_superclass(this);
         let _: () = msg_send![super(this, superclass), moveTabToNewWindow:nil];
 
         let mut lock = window_state.as_ref().lock();
-        if lock.is_closed() || lock.interaction_is_quiesced() {
+        if !lock.admits_native_tabbing() {
             return;
         }
         if let Some(mut callback) = lock.move_tab_to_new_window_callback.take() {
             drop(lock);
             callback();
             let mut lock = window_state.lock();
-            if !lock.is_closed() {
+            if lock.admits_native_tabbing() {
                 lock.move_tab_to_new_window_callback = Some(callback);
             }
         }
@@ -5440,21 +6416,21 @@ extern "C" fn move_tab_to_new_window(this: &Object, _: Sel, _: id) {
 extern "C" fn merge_all_windows(this: &Object, _: Sel, _: id) {
     unsafe {
         let window_state = get_window_state(this);
-        if window_state.lock().interaction_is_quiesced() {
+        if !window_state.lock().admits_native_tabbing() {
             return;
         }
         let superclass = window_callback_superclass(this);
         let _: () = msg_send![super(this, superclass), mergeAllWindows:nil];
 
         let mut lock = window_state.as_ref().lock();
-        if lock.is_closed() || lock.interaction_is_quiesced() {
+        if !lock.admits_native_tabbing() {
             return;
         }
         if let Some(mut callback) = lock.merge_all_windows_callback.take() {
             drop(lock);
             callback();
             let mut lock = window_state.lock();
-            if !lock.is_closed() {
+            if lock.admits_native_tabbing() {
                 lock.merge_all_windows_callback = Some(callback);
             }
         }
@@ -5464,14 +6440,14 @@ extern "C" fn merge_all_windows(this: &Object, _: Sel, _: id) {
 extern "C" fn select_next_tab(this: &Object, _sel: Sel, _id: id) {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
-    if lock.is_closed() || lock.interaction_is_quiesced() {
+    if !lock.admits_native_tabbing() {
         return;
     }
     if let Some(mut callback) = lock.select_next_tab_callback.take() {
         drop(lock);
         callback();
         let mut lock = window_state.lock();
-        if !lock.is_closed() {
+        if lock.admits_native_tabbing() {
             lock.select_next_tab_callback = Some(callback);
         }
     }
@@ -5480,14 +6456,14 @@ extern "C" fn select_next_tab(this: &Object, _sel: Sel, _id: id) {
 extern "C" fn select_previous_tab(this: &Object, _sel: Sel, _id: id) {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
-    if lock.is_closed() || lock.interaction_is_quiesced() {
+    if !lock.admits_native_tabbing() {
         return;
     }
     if let Some(mut callback) = lock.select_previous_tab_callback.take() {
         drop(lock);
         callback();
         let mut lock = window_state.lock();
-        if !lock.is_closed() {
+        if lock.admits_native_tabbing() {
             lock.select_previous_tab_callback = Some(callback);
         }
     }
@@ -5496,14 +6472,14 @@ extern "C" fn select_previous_tab(this: &Object, _sel: Sel, _id: id) {
 extern "C" fn toggle_tab_bar(this: &Object, _sel: Sel, _id: id) {
     unsafe {
         let window_state = get_window_state(this);
-        if window_state.lock().interaction_is_quiesced() {
+        if !window_state.lock().admits_native_tabbing() {
             return;
         }
         let superclass = window_callback_superclass(this);
         let _: () = msg_send![super(this, superclass), toggleTabBar:nil];
 
         let mut lock = window_state.as_ref().lock();
-        if lock.is_closed() || lock.interaction_is_quiesced() {
+        if !lock.admits_native_tabbing() {
             return;
         }
         lock.move_traffic_light();
@@ -5512,7 +6488,7 @@ extern "C" fn toggle_tab_bar(this: &Object, _sel: Sel, _id: id) {
             drop(lock);
             callback();
             let mut lock = window_state.lock();
-            if !lock.is_closed() {
+            if lock.admits_native_tabbing() {
                 lock.toggle_tab_bar_callback = Some(callback);
             }
         }

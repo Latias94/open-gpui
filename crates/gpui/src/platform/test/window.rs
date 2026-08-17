@@ -5438,10 +5438,15 @@ mod window_mutation_tests {
         assert!(gated.default_prevented);
         assert_eq!(pointer_calls.get(), 0);
         assert_eq!(element_pointer_calls.get(), 0);
-        let _ = cx
+        let gated_activation = cx
             .update_window(handle, |_, window, _| window.activate_window())
             .expect("the provisional window should remain live");
         cx.run_until_parked();
+        assert_eq!(
+            gated_activation.snapshot().status(),
+            crate::WindowActivationStatus::Terminal(crate::WindowActivationTerminal::Rejected),
+            "the provisional interaction gate must settle its exact activation ticket"
+        );
         assert!(
             platform_window.platform_command_history().is_empty(),
             "a gated window must not enqueue native activation"
@@ -5527,14 +5532,19 @@ mod window_mutation_tests {
             promoted.propagate || !promoted.default_prevented,
             "promotion admits only new input; it does not replay the gated event"
         );
-        let _ = cx
+        let promoted_activation = cx
             .update_window(handle, |_, window, _| window.activate_window())
             .expect("the promoted window should remain live");
         cx.run_until_parked();
+        let promoted_generation = promoted_activation.snapshot().request_generation();
+        assert!(
+            promoted_generation > gated_activation.snapshot().request_generation(),
+            "every activation attempt must retain a distinct monotonic generation"
+        );
         assert_eq!(
             platform_window.platform_command_history(),
             [PlatformWindowCommand::Activate {
-                request_generation: 1,
+                request_generation: promoted_generation,
             }]
         );
     }

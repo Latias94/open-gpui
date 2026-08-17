@@ -522,6 +522,14 @@ pub(crate) mod appkit {
         NSWindowTitleHidden = 1,
     }
 
+    #[repr(i64)]
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub enum NSWindowTabbingMode {
+        NSWindowTabbingModeAutomatic = 0,
+        NSWindowTabbingModePreferred = 1,
+        NSWindowTabbingModeDisallowed = 2,
+    }
+
     bitflags! {
         #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
         pub struct NSWindowOrderingMode: NSInteger {
@@ -881,6 +889,7 @@ pub(crate) mod appkit {
         unsafe fn setLevel_(self, level: NSInteger);
         unsafe fn setAcceptsMouseMovedEvents_(self, accepts: BOOL);
         unsafe fn setCollectionBehavior_(self, behavior: NSWindowCollectionBehavior);
+        unsafe fn setTabbingMode_(self, mode: NSWindowTabbingMode);
         unsafe fn makeKeyAndOrderFront_(self, sender: id);
         unsafe fn orderFront_(self, sender: id);
         unsafe fn setFrameTopLeftPoint_(self, point: NSPoint);
@@ -999,6 +1008,10 @@ pub(crate) mod appkit {
 
         unsafe fn setCollectionBehavior_(self, behavior: NSWindowCollectionBehavior) {
             unsafe { msg_send![self, setCollectionBehavior: behavior] }
+        }
+
+        unsafe fn setTabbingMode_(self, mode: NSWindowTabbingMode) {
+            unsafe { msg_send![self, setTabbingMode: mode as NSInteger] }
         }
 
         unsafe fn makeKeyAndOrderFront_(self, sender: id) {

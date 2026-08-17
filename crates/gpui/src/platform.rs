@@ -1326,7 +1326,10 @@ pub struct WindowCreationFacts {
     /// This records the applied show policy, not whether the operating system ultimately granted
     /// foreground ownership.
     pub focus_on_appearing: bool,
-    /// The applied top-level transient owner, if the backend supports and established one.
+    /// The committed logical top-level transient owner, if the backend supports one.
+    ///
+    /// A backend may defer its native parent/child attachment until the first presentation gate so
+    /// a hidden child cannot become visible merely because its owner is already visible.
     pub transient_for: Option<AnyWindowHandle>,
 }
 
