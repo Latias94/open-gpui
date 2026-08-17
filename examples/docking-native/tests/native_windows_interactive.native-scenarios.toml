@@ -31,6 +31,13 @@ observation_domains = ["system-input", "wnd-proc", "capture", "point-stack", "pr
 behavior = "provisional-same-hwnd-promotion"
 
 [[scenario]]
+id = "native.u29.live-route-and-release-lock"
+requirement_owner = "U29"
+test = "native_interactive_tests::native_interactive_live_route_reuses_same_hwnd_and_locks_release"
+observation_domains = ["system-input", "wnd-proc", "capture", "point-stack", "presentation"]
+behavior = "live-route-and-release-lock"
+
+[[scenario]]
 id = "native.u29.committed-loss-recovery"
 requirement_owner = "U29"
 test = "native_interactive_tests::native_interactive_committed_destination_loss_retires_runtime_authority"

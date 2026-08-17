@@ -142,6 +142,7 @@ enum NativeDockBehavior {
     OpaqueOcclusion,
     SurfaceShutdown,
     ProvisionalSameHwndPromotion,
+    LiveRouteAndReleaseLock,
     CommittedLossRecovery,
     ProcessConvergence,
     NoInputPassThrough,
@@ -160,6 +161,7 @@ impl NativeDockBehavior {
             Self::SourceCapture => run_captured_host_drop_scenario(cx, scenario, scenario_id).await,
             Self::OpaqueOcclusion
             | Self::ProvisionalSameHwndPromotion
+            | Self::LiveRouteAndReleaseLock
             | Self::CommittedLossRecovery
             | Self::MixedDpiPlacement => {
                 run_provisional_same_hwnd_promotion_scenario(cx, scenario, self, scenario_id).await
@@ -503,6 +505,12 @@ fn native_interactive_anchor_close_releases_capture_and_retires_dependent_hwnds(
 #[ignore = "requires the open-gpui-windows-native-interactive-ephemeral runner"]
 fn native_interactive_provisional_gate_presents_and_promotes_same_hwnd() {
     run_native_interactive_manifest_scenario(NativeDockBehavior::ProvisionalSameHwndPromotion);
+}
+
+#[test]
+#[ignore = "requires the open-gpui-windows-native-interactive-ephemeral runner"]
+fn native_interactive_live_route_reuses_same_hwnd_and_locks_release() {
+    run_native_interactive_manifest_scenario(NativeDockBehavior::LiveRouteAndReleaseLock);
 }
 
 #[test]
@@ -1945,6 +1953,7 @@ async fn run_provisional_same_hwnd_promotion_scenario(
             behavior,
             NativeDockBehavior::OpaqueOcclusion
                 | NativeDockBehavior::ProvisionalSameHwndPromotion
+                | NativeDockBehavior::LiveRouteAndReleaseLock
                 | NativeDockBehavior::CommittedLossRecovery
                 | NativeDockBehavior::MixedDpiPlacement
         ),
@@ -1991,7 +2000,7 @@ async fn run_provisional_same_hwnd_promotion_scenario(
     } else {
         open_desktop_release_point(scenario.source_hwnd, scenario.target_hwnd)?
     };
-    let continuous_route_points = if behavior == NativeDockBehavior::ProvisionalSameHwndPromotion {
+    let continuous_route_points = if behavior == NativeDockBehavior::LiveRouteAndReleaseLock {
         let second = open_desktop_release_point_away_from(
             scenario.source_hwnd,
             scenario.target_hwnd,
@@ -2034,8 +2043,11 @@ async fn run_provisional_same_hwnd_promotion_scenario(
     let placement_oracle =
         cx.update(|app| native_dock_placement_oracle(app, scenario, delivered_source_point))?;
     let exact_release_placement = if mixed_dpi_target.is_some()
-        || behavior == NativeDockBehavior::ProvisionalSameHwndPromotion
-    {
+        || matches!(
+            behavior,
+            NativeDockBehavior::ProvisionalSameHwndPromotion
+                | NativeDockBehavior::LiveRouteAndReleaseLock
+        ) {
         let target_display = native_test_display_at(release_point)?;
         let expected_bounds =
             placement_oracle.expected_client_bounds(release_point, target_display)?;

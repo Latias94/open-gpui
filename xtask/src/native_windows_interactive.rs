@@ -80,6 +80,7 @@ pub(crate) enum NativeScenarioBehavior {
     OpaqueOcclusion,
     SurfaceShutdown,
     ProvisionalSameHwndPromotion,
+    LiveRouteAndReleaseLock,
     CommittedLossRecovery,
     ProcessConvergence,
     NoInputPassThrough,
@@ -87,11 +88,12 @@ pub(crate) enum NativeScenarioBehavior {
 }
 
 impl NativeScenarioBehavior {
-    const ALL: [Self; 8] = [
+    const ALL: [Self; 9] = [
         Self::SourceCapture,
         Self::OpaqueOcclusion,
         Self::SurfaceShutdown,
         Self::ProvisionalSameHwndPromotion,
+        Self::LiveRouteAndReleaseLock,
         Self::CommittedLossRecovery,
         Self::ProcessConvergence,
         Self::NoInputPassThrough,
@@ -104,6 +106,7 @@ impl NativeScenarioBehavior {
             Self::OpaqueOcclusion => "opaque-occlusion",
             Self::SurfaceShutdown => "surface-shutdown",
             Self::ProvisionalSameHwndPromotion => "provisional-same-hwnd-promotion",
+            Self::LiveRouteAndReleaseLock => "live-route-and-release-lock",
             Self::CommittedLossRecovery => "committed-loss-recovery",
             Self::ProcessConvergence => "process-convergence",
             Self::NoInputPassThrough => "no-input-pass-through",
@@ -115,7 +118,9 @@ impl NativeScenarioBehavior {
         match self {
             Self::SourceCapture | Self::OpaqueOcclusion | Self::SurfaceShutdown => "U27",
             Self::ProcessConvergence | Self::NoInputPassThrough | Self::MixedDpiPlacement => "U28",
-            Self::ProvisionalSameHwndPromotion | Self::CommittedLossRecovery => "U29",
+            Self::ProvisionalSameHwndPromotion
+            | Self::LiveRouteAndReleaseLock
+            | Self::CommittedLossRecovery => "U29",
         }
     }
 
@@ -132,6 +137,9 @@ impl NativeScenarioBehavior {
             }
             Self::ProvisionalSameHwndPromotion => {
                 "native_interactive_tests::native_interactive_provisional_gate_presents_and_promotes_same_hwnd"
+            }
+            Self::LiveRouteAndReleaseLock => {
+                "native_interactive_tests::native_interactive_live_route_reuses_same_hwnd_and_locks_release"
             }
             Self::CommittedLossRecovery => {
                 "native_interactive_tests::native_interactive_committed_destination_loss_retires_runtime_authority"
