@@ -2,7 +2,10 @@ use super::{
     NATIVE_SCENARIO_ENV, NativeDockBehavior, NativeScenarioRegistration,
     inject_primary_button_up_best_effort,
 };
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, ensure};
+use open_gpui_windows::{
+    NativeTestDisplay, NativeTestMixedDpiDisplayPair, native_test_mixed_dpi_display_pair,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     env, fs,
@@ -38,7 +41,8 @@ use windows::Win32::{
 const WORKER_SCENARIO_ENV: &str = "OPEN_GPUI_NATIVE_DOCK_WORKER";
 const WORKER_SUBCASE_ENV: &str = "OPEN_GPUI_NATIVE_DOCK_WORKER_SUBCASE";
 const WORKER_PROTOCOL_NONCE_ENV: &str = "OPEN_GPUI_NATIVE_DOCK_PROTOCOL_NONCE";
-const WORKER_REPORT_SCHEMA_VERSION: u32 = 6;
+const WORKER_MIXED_DPI_PAIR_PLAN_ENV: &str = "OPEN_GPUI_NATIVE_DOCK_MIXED_DPI_PAIR_PLAN";
+const WORKER_REPORT_SCHEMA_VERSION: u32 = 7;
 const WORKER_PROCESS_TIMEOUT: Duration = Duration::from_secs(60);
 const WORKER_EXIT_AFTER_EOF_TIMEOUT: Duration = Duration::from_secs(2);
 const WORKER_JOB_TERMINATION_TIMEOUT: Duration = Duration::from_secs(1);
@@ -61,6 +65,7 @@ pub(super) struct NativeWorkerReport {
     milestones: Vec<String>,
     exit_path: NativeWorkerExitPath,
     census: NativeWorkerCensus,
+    mixed_dpi_pair: Option<NativeMixedDpiPairPlan>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -76,6 +81,8 @@ pub(super) enum NativeWorkerSubcase {
     Primary,
     LastWindowClosed,
     AppShutdown,
+    MixedDpiLowerToHigher,
+    MixedDpiHigherToLower,
 }
 
 impl NativeWorkerSubcase {
@@ -84,6 +91,8 @@ impl NativeWorkerSubcase {
             Self::Primary => "primary",
             Self::LastWindowClosed => "last_window_closed",
             Self::AppShutdown => "app_shutdown",
+            Self::MixedDpiLowerToHigher => "mixed_dpi_lower_to_higher",
+            Self::MixedDpiHigherToLower => "mixed_dpi_higher_to_lower",
         }
     }
 
@@ -92,6 +101,8 @@ impl NativeWorkerSubcase {
             "primary" => Some(Self::Primary),
             "last_window_closed" => Some(Self::LastWindowClosed),
             "app_shutdown" => Some(Self::AppShutdown),
+            "mixed_dpi_lower_to_higher" => Some(Self::MixedDpiLowerToHigher),
+            "mixed_dpi_higher_to_lower" => Some(Self::MixedDpiHigherToLower),
             _ => None,
         }
     }
@@ -101,6 +112,9 @@ impl NativeWorkerSubcase {
             Self::Primary => NativeWorkerExitPath::ExplicitCleanup,
             Self::LastWindowClosed => NativeWorkerExitPath::LastWindowClosed,
             Self::AppShutdown => NativeWorkerExitPath::AppShutdown,
+            Self::MixedDpiLowerToHigher | Self::MixedDpiHigherToLower => {
+                NativeWorkerExitPath::ExplicitCleanup
+            }
         }
     }
 
@@ -113,11 +127,29 @@ impl NativeWorkerSubcase {
     }
 
     fn is_allowed_for(self, behavior: NativeDockBehavior) -> bool {
-        if behavior == NativeDockBehavior::ProcessConvergence {
-            matches!(self, Self::LastWindowClosed | Self::AppShutdown)
-        } else {
-            matches!(self, Self::Primary)
-        }
+        worker_subcases_for(behavior).contains(&self)
+    }
+}
+
+pub(super) const fn worker_subcases_for(
+    behavior: NativeDockBehavior,
+) -> &'static [NativeWorkerSubcase] {
+    match behavior {
+        NativeDockBehavior::ProcessConvergence => &[
+            NativeWorkerSubcase::LastWindowClosed,
+            NativeWorkerSubcase::AppShutdown,
+        ],
+        NativeDockBehavior::MixedDpiPlacement => &[
+            NativeWorkerSubcase::MixedDpiLowerToHigher,
+            NativeWorkerSubcase::MixedDpiHigherToLower,
+        ],
+        NativeDockBehavior::SourceCapture
+        | NativeDockBehavior::OpaqueOcclusion
+        | NativeDockBehavior::SurfaceShutdown
+        | NativeDockBehavior::ProvisionalSameHwndPromotion
+        | NativeDockBehavior::LiveRouteAndReleaseLock
+        | NativeDockBehavior::CommittedLossRecovery
+        | NativeDockBehavior::NoInputPassThrough => &[NativeWorkerSubcase::Primary],
     }
 }
 
@@ -147,10 +179,139 @@ pub(super) struct NativeWorkerAppCensus {
     pub(super) window_registry_count: usize,
     pub(super) active_drag: bool,
     pub(super) native_exit_authority_settled: bool,
-    pub(super) surface_session_closed: bool,
-    pub(super) surface_runtime_empty: Option<bool>,
-    pub(super) pending_terminal_ticket_count: usize,
-    pub(super) failed_terminal_ticket_count: usize,
+    pub(super) surface: NativeWorkerSurfaceCensus,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub(super) enum NativeWorkerSurfaceCensus {
+    #[default]
+    NotConstructed,
+    Constructed {
+        session_closed: bool,
+        runtime_empty: Option<bool>,
+        pending_terminal_ticket_count: usize,
+        failed_terminal_ticket_count: usize,
+    },
+}
+
+impl NativeWorkerSurfaceCensus {
+    pub(super) fn constructed(
+        session_closed: bool,
+        runtime_empty: Option<bool>,
+        pending_terminal_ticket_count: usize,
+        failed_terminal_ticket_count: usize,
+    ) -> Self {
+        Self::Constructed {
+            session_closed,
+            runtime_empty,
+            pending_terminal_ticket_count,
+            failed_terminal_ticket_count,
+        }
+    }
+
+    pub(super) fn is_clean(&self) -> bool {
+        matches!(
+            self,
+            Self::Constructed {
+                session_closed: true,
+                runtime_empty: Some(true),
+                pending_terminal_ticket_count: 0,
+                failed_terminal_ticket_count: 0,
+            }
+        )
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(super) struct NativeMixedDpiDisplayFact {
+    display_id: u64,
+    physical_bounds: [i32; 4],
+    physical_visible_bounds: [i32; 4],
+    scale_factor_bits: u32,
+}
+
+impl NativeMixedDpiDisplayFact {
+    fn from_display(display: NativeTestDisplay) -> Self {
+        let physical_bounds = display.physical_bounds();
+        let physical_visible_bounds = display.physical_visible_bounds();
+        Self {
+            display_id: display.display_id().into(),
+            physical_bounds: [
+                physical_bounds.origin.x.0,
+                physical_bounds.origin.y.0,
+                physical_bounds.size.width.0,
+                physical_bounds.size.height.0,
+            ],
+            physical_visible_bounds: [
+                physical_visible_bounds.origin.x.0,
+                physical_visible_bounds.origin.y.0,
+                physical_visible_bounds.size.width.0,
+                physical_visible_bounds.size.height.0,
+            ],
+            scale_factor_bits: display.scale_factor().to_bits(),
+        }
+    }
+
+    #[cfg(test)]
+    fn for_test(display_id: u64, physical_bounds: [i32; 4], scale_factor: f32) -> Self {
+        Self {
+            display_id,
+            physical_bounds,
+            physical_visible_bounds: physical_bounds,
+            scale_factor_bits: scale_factor.to_bits(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(super) struct NativeMixedDpiPairPlan {
+    lower: NativeMixedDpiDisplayFact,
+    higher: NativeMixedDpiDisplayFact,
+    negative_display_id: u64,
+    negative_physical_point: [i32; 2],
+}
+
+impl NativeMixedDpiPairPlan {
+    fn from_pair(pair: NativeTestMixedDpiDisplayPair) -> Self {
+        Self {
+            lower: NativeMixedDpiDisplayFact::from_display(pair.lower()),
+            higher: NativeMixedDpiDisplayFact::from_display(pair.higher()),
+            negative_display_id: pair.negative_display().display_id().into(),
+            negative_physical_point: [
+                pair.negative_physical_point().x.0,
+                pair.negative_physical_point().y.0,
+            ],
+        }
+    }
+
+    fn capture() -> Result<Self> {
+        native_test_mixed_dpi_display_pair().map(Self::from_pair)
+    }
+
+    pub(super) fn validate_pair(self, pair: NativeTestMixedDpiDisplayPair) -> Result<()> {
+        ensure!(
+            self == Self::from_pair(pair),
+            "mixed-DPI display topology changed after the parent froze the worker pair plan: expected={self:?}, observed={:?}",
+            Self::from_pair(pair)
+        );
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn for_test(
+        lower: NativeMixedDpiDisplayFact,
+        higher: NativeMixedDpiDisplayFact,
+        negative_display_id: u64,
+        negative_physical_point: [i32; 2],
+    ) -> Self {
+        Self {
+            lower,
+            higher,
+            negative_display_id,
+            negative_physical_point,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -171,6 +332,7 @@ impl NativeWorkerReport {
         milestones: Vec<String>,
         exit_path: NativeWorkerExitPath,
         census: NativeWorkerCensus,
+        mixed_dpi_pair: Option<NativeMixedDpiPairPlan>,
     ) -> Self {
         Self {
             schema_version: WORKER_REPORT_SCHEMA_VERSION,
@@ -180,6 +342,7 @@ impl NativeWorkerReport {
             milestones,
             exit_path,
             census,
+            mixed_dpi_pair,
         }
     }
 
@@ -190,6 +353,7 @@ impl NativeWorkerReport {
         milestones: Vec<String>,
         exit_path: NativeWorkerExitPath,
         census: NativeWorkerCensus,
+        mixed_dpi_pair: Option<NativeMixedDpiPairPlan>,
     ) -> Self {
         Self {
             schema_version: WORKER_REPORT_SCHEMA_VERSION,
@@ -199,6 +363,7 @@ impl NativeWorkerReport {
             milestones,
             exit_path,
             census,
+            mixed_dpi_pair,
         }
     }
 }
@@ -242,6 +407,31 @@ pub(super) fn worker_subcase(
     subcase
 }
 
+pub(super) fn parent_mixed_dpi_pair_plan(
+    behavior: NativeDockBehavior,
+) -> Result<Option<NativeMixedDpiPairPlan>> {
+    if behavior == NativeDockBehavior::MixedDpiPlacement {
+        NativeMixedDpiPairPlan::capture().map(Some)
+    } else {
+        Ok(None)
+    }
+}
+
+pub(super) fn worker_mixed_dpi_pair_plan(
+    behavior: NativeDockBehavior,
+) -> Result<Option<NativeMixedDpiPairPlan>> {
+    if behavior != NativeDockBehavior::MixedDpiPlacement {
+        return Ok(None);
+    }
+
+    let encoded = env::var(WORKER_MIXED_DPI_PAIR_PLAN_ENV).with_context(|| {
+        format!("native Dock mixed-DPI worker is missing {WORKER_MIXED_DPI_PAIR_PLAN_ENV}")
+    })?;
+    Ok(Some(serde_json::from_str(&encoded).with_context(
+        || "native Dock mixed-DPI worker received an invalid frozen display-pair plan",
+    )?))
+}
+
 pub(super) fn await_worker_start() {
     let nonce = worker_protocol_nonce();
     let command = read_worker_command();
@@ -266,6 +456,7 @@ pub(super) fn finish_worker_report(
     observed_native_generations: usize,
     terminal_native_generations: usize,
     unterminated_native_generations: Vec<String>,
+    mixed_dpi_pair: Option<NativeMixedDpiPairPlan>,
 ) -> Result<NativeWorkerReport> {
     let census = NativeWorkerCensus {
         before_application,
@@ -277,12 +468,23 @@ pub(super) fn finish_worker_report(
         unterminated_native_generations,
     };
     Ok(match outcome {
-        NativeWorkerOutcome::Passed => {
-            NativeWorkerReport::passed(scenario_id, subcase, milestones, exit_path, census)
-        }
-        NativeWorkerOutcome::Failed(message) => {
-            NativeWorkerReport::failed(scenario_id, subcase, message, milestones, exit_path, census)
-        }
+        NativeWorkerOutcome::Passed => NativeWorkerReport::passed(
+            scenario_id,
+            subcase,
+            milestones,
+            exit_path,
+            census,
+            mixed_dpi_pair,
+        ),
+        NativeWorkerOutcome::Failed(message) => NativeWorkerReport::failed(
+            scenario_id,
+            subcase,
+            message,
+            milestones,
+            exit_path,
+            census,
+            mixed_dpi_pair,
+        ),
     })
 }
 
@@ -324,21 +526,19 @@ fn read_worker_command() -> String {
 }
 
 pub(super) fn run_case_in_worker(registration: &NativeScenarioRegistration) {
-    let subcases: &[NativeWorkerSubcase] =
-        if registration.behavior == NativeDockBehavior::ProcessConvergence {
-            &[
-                NativeWorkerSubcase::LastWindowClosed,
-                NativeWorkerSubcase::AppShutdown,
-            ]
-        } else {
-            &[NativeWorkerSubcase::Primary]
-        };
-    let failures = subcases
+    let mixed_dpi_pair =
+        parent_mixed_dpi_pair_plan(registration.behavior).unwrap_or_else(|error| {
+            panic!(
+                "scenario `{}` could not freeze its mixed-DPI display-pair capability: {error:#}",
+                registration.id
+            )
+        });
+    let failures = worker_subcases_for(registration.behavior)
         .iter()
         .copied()
         .filter_map(|subcase| {
             catch_unwind(AssertUnwindSafe(|| {
-                run_worker_subcase(registration, subcase)
+                run_worker_subcase(registration, subcase, mixed_dpi_pair)
             }))
             .err()
             .map(|panic| format!("{}: {}", subcase.as_env(), panic_payload_message(panic)))
@@ -352,7 +552,11 @@ pub(super) fn run_case_in_worker(registration: &NativeScenarioRegistration) {
     );
 }
 
-fn run_worker_subcase(registration: &NativeScenarioRegistration, subcase: NativeWorkerSubcase) {
+fn run_worker_subcase(
+    registration: &NativeScenarioRegistration,
+    subcase: NativeWorkerSubcase,
+    mixed_dpi_pair: Option<NativeMixedDpiPairPlan>,
+) {
     let scenario_id = registration.id.as_str();
     let _desktop = ParentDesktopState::capture();
     let artifacts = WorkerArtifacts::new(scenario_id, subcase);
@@ -364,7 +568,8 @@ fn run_worker_subcase(registration: &NativeScenarioRegistration, subcase: Native
         )
     });
     let executable = env::current_exe().expect("native Dock parent must resolve its test binary");
-    let child = Command::new(&executable)
+    let mut command = Command::new(&executable);
+    command
         .arg("--exact")
         .arg(&registration.test)
         .arg("--ignored")
@@ -374,6 +579,14 @@ fn run_worker_subcase(registration: &NativeScenarioRegistration, subcase: Native
         .env(WORKER_SCENARIO_ENV, scenario_id)
         .env(WORKER_SUBCASE_ENV, subcase.as_env())
         .env(WORKER_PROTOCOL_NONCE_ENV, &artifacts.protocol_nonce)
+        .env_remove(WORKER_MIXED_DPI_PAIR_PLAN_ENV);
+    if let Some(mixed_dpi_pair) = mixed_dpi_pair {
+        command.env(
+            WORKER_MIXED_DPI_PAIR_PLAN_ENV,
+            serde_json::to_string(&mixed_dpi_pair).expect("mixed-DPI pair plan should serialize"),
+        );
+    }
+    let child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::from(stderr))
@@ -414,6 +627,19 @@ fn run_worker_subcase(registration: &NativeScenarioRegistration, subcase: Native
         "scenario `{scenario_id}` worker reported a different subcase\n{}",
         artifacts.summary()
     );
+    let pair_plan_mismatch = if (matches!(report.outcome, NativeWorkerOutcome::Passed)
+        || report.mixed_dpi_pair.is_some())
+        && report.mixed_dpi_pair != mixed_dpi_pair
+    {
+        Some({
+            format!(
+                "scenario `{scenario_id}` worker did not echo the parent's frozen mixed-DPI pair plan: expected={mixed_dpi_pair:?}, observed={:?}",
+                report.mixed_dpi_pair
+            )
+        })
+    } else {
+        None
+    };
     if matches!(report.outcome, NativeWorkerOutcome::Passed) {
         assert_eq!(
             report.exit_path,
@@ -423,7 +649,7 @@ fn run_worker_subcase(registration: &NativeScenarioRegistration, subcase: Native
             artifacts.summary()
         );
     }
-    assert_worker_census(scenario_id, child.id(), &report.census, &artifacts);
+    assert_worker_census(scenario_id, child.id(), &report, &artifacts);
     assert_eq!(
         child.job_active_processes(),
         1,
@@ -444,6 +670,9 @@ fn run_worker_subcase(registration: &NativeScenarioRegistration, subcase: Native
         "scenario `{scenario_id}` left a process alive in its worker job\n{}",
         artifacts.summary()
     );
+    if let Some(message) = pair_plan_mismatch {
+        panic!("{message}\n{}", artifacts.summary());
+    }
     match report.outcome {
         NativeWorkerOutcome::Passed => {
             assert!(
@@ -481,9 +710,10 @@ fn panic_payload_message(panic: Box<dyn std::any::Any + Send>) -> String {
 fn assert_worker_census(
     scenario_id: &str,
     worker_pid: u32,
-    census: &NativeWorkerCensus,
+    report: &NativeWorkerReport,
     artifacts: &WorkerArtifacts,
 ) {
+    let census = &report.census;
     assert_eq!(
         census.after_application.top_level_hwnds,
         census.before_application.top_level_hwnds,
@@ -568,29 +798,47 @@ fn assert_worker_census(
         "scenario `{scenario_id}` returned before the application native-exit authority settled\n{}",
         artifacts.summary()
     );
-    assert!(
-        census.app.surface_session_closed,
-        "scenario `{scenario_id}` returned before its DockSurface window session closed\n{}",
-        artifacts.summary()
-    );
-    assert_eq!(
-        census.app.surface_runtime_empty,
-        Some(true),
-        "scenario `{scenario_id}` returned before its DockSurface runtime emptied\n{}",
-        artifacts.summary()
-    );
-    assert_eq!(
-        census.app.pending_terminal_ticket_count,
-        0,
-        "scenario `{scenario_id}` returned with pending terminal tickets\n{}",
-        artifacts.summary()
-    );
-    assert_eq!(
-        census.app.failed_terminal_ticket_count,
-        0,
-        "scenario `{scenario_id}` returned with failed terminal tickets\n{}",
-        artifacts.summary()
-    );
+    validate_worker_surface_census(&report.outcome, &census.app.surface).unwrap_or_else(|error| {
+        panic!(
+            "scenario `{scenario_id}` returned with invalid DockSurface census: {error:#}\n{}",
+            artifacts.summary()
+        )
+    });
+}
+
+fn validate_worker_surface_census(
+    outcome: &NativeWorkerOutcome,
+    surface: &NativeWorkerSurfaceCensus,
+) -> Result<()> {
+    match surface {
+        NativeWorkerSurfaceCensus::NotConstructed => {
+            ensure!(
+                matches!(outcome, NativeWorkerOutcome::Failed(_)),
+                "a passed worker must construct its DockSurface before reporting completion"
+            );
+        }
+        NativeWorkerSurfaceCensus::Constructed {
+            session_closed,
+            runtime_empty,
+            pending_terminal_ticket_count,
+            failed_terminal_ticket_count,
+        } => {
+            ensure!(*session_closed, "DockSurface window session is not closed");
+            ensure!(
+                *runtime_empty == Some(true),
+                "DockSurface runtime is not empty: {runtime_empty:?}"
+            );
+            ensure!(
+                *pending_terminal_ticket_count == 0,
+                "pending terminal tickets remain: {pending_terminal_ticket_count}"
+            );
+            ensure!(
+                *failed_terminal_ticket_count == 0,
+                "failed terminal tickets remain: {failed_terminal_ticket_count}"
+            );
+        }
+    }
+    Ok(())
 }
 
 fn describe_message_only_windows(windows: &[isize]) -> Vec<String> {
@@ -1192,4 +1440,90 @@ fn read_log_tail(path: &Path) -> String {
         return "<unavailable>".to_owned();
     }
     String::from_utf8_lossy(&bytes).into_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn worker_subcase_matrix_is_behavior_specific() {
+        assert_eq!(
+            worker_subcases_for(NativeDockBehavior::ProcessConvergence),
+            &[
+                NativeWorkerSubcase::LastWindowClosed,
+                NativeWorkerSubcase::AppShutdown,
+            ]
+        );
+        assert_eq!(
+            worker_subcases_for(NativeDockBehavior::MixedDpiPlacement),
+            &[
+                NativeWorkerSubcase::MixedDpiLowerToHigher,
+                NativeWorkerSubcase::MixedDpiHigherToLower,
+            ]
+        );
+
+        for behavior in [
+            NativeDockBehavior::SourceCapture,
+            NativeDockBehavior::OpaqueOcclusion,
+            NativeDockBehavior::SurfaceShutdown,
+            NativeDockBehavior::ProvisionalSameHwndPromotion,
+            NativeDockBehavior::LiveRouteAndReleaseLock,
+            NativeDockBehavior::CommittedLossRecovery,
+            NativeDockBehavior::NoInputPassThrough,
+        ] {
+            assert_eq!(
+                worker_subcases_for(behavior),
+                &[NativeWorkerSubcase::Primary],
+                "unexpected worker matrix for {behavior:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn mixed_dpi_worker_subcases_use_explicit_cleanup() {
+        for subcase in [
+            NativeWorkerSubcase::MixedDpiLowerToHigher,
+            NativeWorkerSubcase::MixedDpiHigherToLower,
+        ] {
+            assert_eq!(
+                subcase.expected_exit_path(),
+                NativeWorkerExitPath::ExplicitCleanup
+            );
+        }
+    }
+
+    #[test]
+    fn failed_worker_can_report_that_no_surface_was_constructed() {
+        assert!(
+            validate_worker_surface_census(
+                &NativeWorkerOutcome::Failed("capability unavailable".to_owned()),
+                &NativeWorkerSurfaceCensus::NotConstructed,
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_worker_surface_census(
+                &NativeWorkerOutcome::Passed,
+                &NativeWorkerSurfaceCensus::NotConstructed,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn mixed_dpi_pair_plan_is_lossless_across_the_worker_protocol() {
+        let plan = NativeMixedDpiPairPlan::for_test(
+            NativeMixedDpiDisplayFact::for_test(11, [-1_920, 0, 1_920, 1_080], 1.0),
+            NativeMixedDpiDisplayFact::for_test(22, [0, 0, 2_560, 1_440], 1.5),
+            11,
+            [-960, 540],
+        );
+
+        let encoded = serde_json::to_string(&plan).expect("the parent plan should serialize");
+        let decoded = serde_json::from_str::<NativeMixedDpiPairPlan>(&encoded)
+            .expect("the worker plan should deserialize");
+
+        assert_eq!(decoded, plan);
+    }
 }

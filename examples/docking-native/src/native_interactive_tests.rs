@@ -20,6 +20,7 @@ use open_gpui_windows::{
     NativeWindowTestMessageDisposition, NativeWindowTestObservation, NativeWindowTestPoint,
     WindowsPlatform, arm_native_no_input_generation_drift, begin_native_window_test_observation,
     native_test_acquire_foreground_window, native_test_displays,
+    native_test_mixed_dpi_display_pair,
 };
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use serde::Deserialize;
@@ -133,6 +134,60 @@ impl NativeDockPlacementOracle {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct OrderedMixedDpiDisplayPlan<T, P> {
+    source: T,
+    target: T,
+    negative_display: T,
+    negative_point: P,
+}
+
+type NativeMixedDpiDisplayPair = OrderedMixedDpiDisplayPlan<NativeTestDisplay, POINT>;
+
+fn order_mixed_dpi_display_pair<T: Copy + PartialEq, P: Copy>(
+    lower_higher: (T, T),
+    negative_route: (T, P),
+    subcase: process_harness::NativeWorkerSubcase,
+) -> Result<OrderedMixedDpiDisplayPlan<T, P>> {
+    ensure!(
+        negative_route.0 == lower_higher.0 || negative_route.0 == lower_higher.1,
+        "the mixed-DPI negative-route display must belong to the selected pair"
+    );
+    let (source, target) = match subcase {
+        process_harness::NativeWorkerSubcase::MixedDpiLowerToHigher => lower_higher,
+        process_harness::NativeWorkerSubcase::MixedDpiHigherToLower => {
+            (lower_higher.1, lower_higher.0)
+        }
+        _ => bail!("mixed-DPI display selection requires a mixed-DPI worker subcase"),
+    };
+    Ok(OrderedMixedDpiDisplayPlan {
+        source,
+        target,
+        negative_display: negative_route.0,
+        negative_point: negative_route.1,
+    })
+}
+
+fn select_native_mixed_dpi_display_pair(
+    subcase: process_harness::NativeWorkerSubcase,
+    expected_plan: process_harness::NativeMixedDpiPairPlan,
+) -> Result<NativeMixedDpiDisplayPair> {
+    let pair = native_test_mixed_dpi_display_pair()?;
+    expected_plan.validate_pair(pair)?;
+    let negative_point = pair.negative_physical_point();
+    order_mixed_dpi_display_pair(
+        (pair.lower(), pair.higher()),
+        (
+            pair.negative_display(),
+            POINT {
+                x: negative_point.x.0,
+                y: negative_point.y.0,
+            },
+        ),
+        subcase,
+    )
+}
+
 mod process_harness;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd)]
@@ -164,7 +219,14 @@ impl NativeDockBehavior {
             | Self::LiveRouteAndReleaseLock
             | Self::CommittedLossRecovery
             | Self::MixedDpiPlacement => {
-                run_provisional_same_hwnd_promotion_scenario(cx, scenario, self, scenario_id).await
+                run_provisional_same_hwnd_promotion_scenario(
+                    cx,
+                    scenario,
+                    self,
+                    worker_subcase,
+                    scenario_id,
+                )
+                .await
             }
             Self::SurfaceShutdown => {
                 run_captured_surface_shutdown_scenario(cx, scenario, scenario_id).await
@@ -440,6 +502,7 @@ struct NativeDockScenario {
     source_hwnd: HWND,
     target_hwnd: HWND,
     target_bounds: Bounds<Pixels>,
+    mixed_dpi_displays: Option<NativeMixedDpiDisplayPair>,
     initial_revision: u64,
     initial_window_count: usize,
     initial_owned_window_count: usize,
@@ -684,6 +747,8 @@ fn run_native_interactive_worker(registration: NativeScenarioRegistration) -> ! 
     let scenario_id = registration.id.clone();
     let behavior = registration.behavior;
     let worker_subcase = process_harness::worker_subcase(&scenario_id, behavior);
+    let mixed_dpi_pair_plan = process_harness::worker_mixed_dpi_pair_plan(behavior);
+    let reported_mixed_dpi_pair = mixed_dpi_pair_plan.as_ref().ok().copied().flatten();
     let (_native_observation_guard, native_observation) = begin_native_window_test_observation();
     let final_native_observation = native_observation.clone();
     let before_application = process_harness::capture_process_window_census().unwrap_or_else(
@@ -720,7 +785,40 @@ fn run_native_interactive_worker(registration: NativeScenarioRegistration) -> ! 
     ))
     .with_quit_mode(quit_mode);
     application.run_returning_for_test(
-            move |cx| match build_native_scenario(cx, native_observation, behavior) {
+            move |cx| match mixed_dpi_pair_plan.as_ref() {
+                Err(error) => {
+                    let completion = Arc::clone(&completion_for_application);
+                    let message = format!("native worker display-pair plan is invalid: {error:#}");
+                    cx.spawn(async move |cx| {
+                        let shutdown_result =
+                            shutdown_native_worker_application_without_surface(cx).await;
+                        let app_census = capture_worker_app_census_without_surface(cx);
+                        let message = match shutdown_result {
+                            Ok(()) => message,
+                            Err(shutdown_error) => format!(
+                                "{message}; native worker application did not converge after plan failure: {shutdown_error:#}"
+                            ),
+                        };
+                        *completion
+                            .lock()
+                            .expect("native worker completion lock must not be poisoned") =
+                            Some(NativeWorkerCompletion {
+                                outcome: process_harness::NativeWorkerOutcome::Failed(message),
+                                milestones: Vec::new(),
+                                exit_path: process_harness::NativeWorkerExitPath::ExplicitCleanup,
+                                app_census,
+                            });
+                        cx.update(|cx| cx.quit());
+                    })
+                    .detach();
+                }
+                Ok(mixed_dpi_pair_plan) => match build_native_scenario(
+                    cx,
+                    native_observation,
+                    behavior,
+                    worker_subcase,
+                    *mixed_dpi_pair_plan,
+                ) {
                 Ok(mut scenario) => {
                     if matches!(behavior, NativeDockBehavior::ProcessConvergence) {
                         process_probe_for_application.replace(Some(
@@ -848,6 +946,7 @@ fn run_native_interactive_worker(registration: NativeScenarioRegistration) -> ! 
                     })
                     .detach();
                 }
+                },
             },
         );
 
@@ -981,6 +1080,7 @@ fn run_native_interactive_worker(registration: NativeScenarioRegistration) -> ! 
         observed_native_generations.len(),
         terminal_native_generations.len(),
         unterminated_native_generations,
+        reported_mixed_dpi_pair,
     )
     .unwrap_or_else(|error| {
         eprintln!(
@@ -1009,10 +1109,12 @@ fn capture_worker_app_census(
             window_registry_count: app.windows().len(),
             active_drag: app.has_active_drag(),
             native_exit_authority_settled: app.native_exit_authority_is_settled_for_test(),
-            surface_session_closed: status.phase() == DockSurfaceWindowSessionPhase::Closed,
-            surface_runtime_empty: status.runtime_empty(),
-            pending_terminal_ticket_count: status.pending_terminal_ticket_count(),
-            failed_terminal_ticket_count: status.failed_terminal_ticket_count(),
+            surface: process_harness::NativeWorkerSurfaceCensus::constructed(
+                status.phase() == DockSurfaceWindowSessionPhase::Closed,
+                status.runtime_empty(),
+                status.pending_terminal_ticket_count(),
+                status.failed_terminal_ticket_count(),
+            ),
         }
     })
 }
@@ -1038,15 +1140,13 @@ fn capture_process_convergence_app_census(
         window_registry_count: app.windows().len(),
         active_drag: app.has_active_drag(),
         native_exit_authority_settled: app.native_exit_authority_is_settled_for_test(),
-        surface_session_closed: primary.phase() == DockSurfaceWindowSessionPhase::Closed
-            && survivor.phase() == DockSurfaceWindowSessionPhase::Closed,
-        surface_runtime_empty: Some(
-            primary.runtime_empty() == Some(true) && survivor.runtime_empty() == Some(true),
+        surface: process_harness::NativeWorkerSurfaceCensus::constructed(
+            primary.phase() == DockSurfaceWindowSessionPhase::Closed
+                && survivor.phase() == DockSurfaceWindowSessionPhase::Closed,
+            Some(primary.runtime_empty() == Some(true) && survivor.runtime_empty() == Some(true)),
+            primary.pending_terminal_ticket_count() + survivor.pending_terminal_ticket_count(),
+            primary.failed_terminal_ticket_count() + survivor.failed_terminal_ticket_count(),
         ),
-        pending_terminal_ticket_count: primary.pending_terminal_ticket_count()
-            + survivor.pending_terminal_ticket_count(),
-        failed_terminal_ticket_count: primary.failed_terminal_ticket_count()
-            + survivor.failed_terminal_ticket_count(),
     }
 }
 
@@ -1058,10 +1158,7 @@ fn validate_process_convergence_return(
         census.window_registry_count == 0
             && !census.active_drag
             && census.native_exit_authority_settled
-            && census.surface_session_closed
-            && census.surface_runtime_empty == Some(true)
-            && census.pending_terminal_ticket_count == 0
-            && census.failed_terminal_ticket_count == 0,
+            && census.surface.is_clean(),
         "the returning application retained logical authority: {census:?}"
     );
     ensure!(
@@ -1123,10 +1220,7 @@ fn validate_process_convergence_app_shutdown_return(
         census.window_registry_count == 0
             && !census.active_drag
             && census.native_exit_authority_settled
-            && census.surface_session_closed
-            && census.surface_runtime_empty == Some(true)
-            && census.pending_terminal_ticket_count == 0
-            && census.failed_terminal_ticket_count == 0,
+            && census.surface.is_clean(),
         "terminal App shutdown retained logical authority: {census:?}"
     );
     ensure!(
@@ -1232,10 +1326,7 @@ fn native_worker_application_is_converged(
     census.window_registry_count == 0
         && !census.active_drag
         && census.native_exit_authority_settled
-        && census.surface_session_closed
-        && census.surface_runtime_empty == Some(true)
-        && census.pending_terminal_ticket_count == 0
-        && census.failed_terminal_ticket_count == 0
+        && census.surface.is_clean()
         && unsafe { GetCapture() } == HWND::default()
         && !unsafe { IsWindow(Some(scenario.source_hwnd)).as_bool() }
         && !unsafe { IsWindow(Some(scenario.target_hwnd)).as_bool() }
@@ -1309,10 +1400,29 @@ fn build_native_scenario(
     cx: &mut App,
     native_observation: NativeWindowTestObservation,
     behavior: NativeDockBehavior,
+    worker_subcase: process_harness::NativeWorkerSubcase,
+    mixed_dpi_pair_plan: Option<process_harness::NativeMixedDpiPairPlan>,
 ) -> Result<NativeDockScenario> {
-    let display = cx
-        .primary_display()
-        .context("the native Dock scenario requires a primary display")?;
+    let mixed_dpi_displays = behavior
+        .crosses_dpi_boundary()
+        .then(|| {
+            let plan = mixed_dpi_pair_plan
+                .context("mixed-DPI scenario is missing its frozen display-pair plan")?;
+            select_native_mixed_dpi_display_pair(worker_subcase, plan)
+        })
+        .transpose()?;
+    let display = if let Some(displays) = mixed_dpi_displays {
+        cx.find_display(displays.source.display_id())
+            .with_context(|| {
+                format!(
+                    "the native Dock scenario could not resolve selected source display {:?}",
+                    displays.source
+                )
+            })?
+    } else {
+        cx.primary_display()
+            .context("the native Dock scenario requires a primary display")?
+    };
     let display_bounds = display.bounds();
     let gap = 32.0;
     let window_width = ((display_bounds.size.width.as_f32() - gap - 64.0) / 2.0).min(640.0);
@@ -1335,7 +1445,12 @@ fn build_native_scenario(
     let process_convergence_surface = matches!(behavior, NativeDockBehavior::ProcessConvergence)
         .then(|| build_process_convergence_surface(target_bounds, cx))
         .transpose()?;
-    let placement = saved_viewport_placement(target_bounds, source_bounds, central_bounds);
+    let mut placement = saved_viewport_placement(target_bounds, source_bounds, central_bounds);
+    if let Some(displays) = mixed_dpi_displays {
+        for viewport in &mut placement.viewports {
+            viewport.display_id = Some(displays.source.display_id().into());
+        }
+    }
     let surface_slot = Rc::new(RefCell::new(None));
     let surface = build_managed_surface(
         Rc::clone(&surface_slot),
@@ -1347,18 +1462,16 @@ fn build_native_scenario(
     );
     surface_slot.replace(Some(surface.clone()));
 
-    let target_window = match surface.open_primary_window(
-        restored_viewport_options(&placement, SPACE, target_bounds),
-        cx,
-    ) {
+    let target_options = restored_viewport_options(&placement, SPACE, target_bounds);
+    let source_options = restored_viewport_options(&placement, SECONDARY_SPACE, source_bounds);
+    let target_window = match surface.open_primary_window(target_options, cx) {
         DockSurfacePrimaryWindowOpenOutcome::Opened(opened) => opened.window(),
         outcome => bail!("native Dock target HWND failed to open: {outcome:?}"),
     };
-    let source_window = match surface.viewports().open(
-        SECONDARY_SPACE,
-        restored_viewport_options(&placement, SECONDARY_SPACE, source_bounds),
-        cx,
-    ) {
+    let source_window = match surface
+        .viewports()
+        .open(SECONDARY_SPACE, source_options, cx)
+    {
         DockSurfaceViewportOpenOutcome::Opened(opened) => opened.window(),
         outcome => bail!("native Dock source HWND failed to open: {outcome:?}"),
     };
@@ -1369,6 +1482,17 @@ fn build_native_scenario(
         source_hwnd != target_hwnd,
         "the native Dock scenario must own two distinct HWNDs"
     );
+    if let Some(displays) = mixed_dpi_displays {
+        let expected_display_id = Some(displays.source.display_id());
+        let source_facts = window_platform_facts(cx, source_window)?;
+        let target_facts = window_platform_facts(cx, target_window)?;
+        ensure!(
+            source_facts.display_id == expected_display_id
+                && target_facts.display_id == expected_display_id,
+            "the mixed-DPI base HWNDs must both be created on the selected source display: selected={:?}, source={source_facts:?}, target={target_facts:?}",
+            displays.source
+        );
+    }
 
     let trace = Arc::new(Mutex::new(NativeMouseTrace::default()));
     let source_trace = Arc::clone(&trace);
@@ -1427,6 +1551,7 @@ fn build_native_scenario(
         source_hwnd,
         target_hwnd,
         target_bounds,
+        mixed_dpi_displays,
         initial_revision,
         initial_window_count,
         initial_owned_window_count,
@@ -2075,6 +2200,7 @@ async fn run_provisional_same_hwnd_promotion_scenario(
     cx: &mut AsyncApp,
     scenario: &mut NativeDockScenario,
     behavior: NativeDockBehavior,
+    worker_subcase: process_harness::NativeWorkerSubcase,
     scenario_id: &str,
 ) -> Result<()> {
     ensure!(
@@ -2089,42 +2215,37 @@ async fn run_provisional_same_hwnd_promotion_scenario(
         "scenario `{scenario_id}` is not a provisional-promotion behavior"
     );
     let mixed_dpi_target = if behavior.crosses_dpi_boundary() {
+        let selected = scenario
+            .mixed_dpi_displays
+            .context("mixed-DPI live-undock lost its selected display pair")?;
+        match worker_subcase {
+            process_harness::NativeWorkerSubcase::MixedDpiLowerToHigher => ensure!(
+                selected.source.scale_factor() < selected.target.scale_factor(),
+                "the lower-to-higher worker received an inverted display pair: {selected:?}"
+            ),
+            process_harness::NativeWorkerSubcase::MixedDpiHigherToLower => ensure!(
+                selected.source.scale_factor() > selected.target.scale_factor(),
+                "the higher-to-lower worker received an inverted display pair: {selected:?}"
+            ),
+            _ => bail!("mixed-DPI behavior requires a mixed-DPI worker subcase"),
+        }
         let source_facts = cx.update(|app| window_platform_facts(app, scenario.source_window))?;
-        let source_display_id = source_facts
-            .display_id
-            .context("mixed-DPI live-undock requires a source display identity")?;
-        let displays = native_test_displays();
-        let source_display = displays
-            .iter()
-            .copied()
-            .find(|display| display.display_id() == source_display_id)
-            .with_context(|| {
-                format!(
-                    "mixed-DPI live-undock could not resolve source display {source_display_id:?}: {displays:?}"
-                )
-            })?;
-        let target_display = displays
-            .iter()
-            .copied()
-            .find(|display| {
-                display.display_id() != source_display_id
-                    && (display.scale_factor() - source_display.scale_factor()).abs() > 0.001
-            })
-            .with_context(|| {
-                format!(
-                    "mixed-DPI live-undock requires two real displays with distinct effective DPI: {displays:?}"
-                )
-            })?;
-        Some((source_display, target_display))
+        ensure!(
+            source_facts.display_id == Some(selected.source.display_id()),
+            "mixed-DPI live-undock source HWND diverged from the selected source display: selected={selected:?}, facts={source_facts:?}"
+        );
+        Some(selected)
     } else {
         None
     };
-    let reveal_point = if let Some((source_display, _)) = mixed_dpi_target {
+    let reveal_point = if let Some(selected) = mixed_dpi_target {
         open_desktop_release_point_on_display(
             scenario.source_hwnd,
             scenario.target_hwnd,
-            source_display,
+            selected.source,
             None,
+            (selected.source.display_id() == selected.negative_display.display_id())
+                .then_some(selected.negative_point),
         )?
     } else {
         open_desktop_release_point(scenario.source_hwnd, scenario.target_hwnd)?
@@ -2144,12 +2265,14 @@ async fn run_provisional_same_hwnd_promotion_scenario(
     } else {
         None
     };
-    let release_point = if let Some((_, target_display)) = mixed_dpi_target {
+    let release_point = if let Some(selected) = mixed_dpi_target {
         open_desktop_release_point_on_display(
             scenario.source_hwnd,
             scenario.target_hwnd,
-            target_display,
+            selected.target,
             Some(reveal_point),
+            (selected.target.display_id() == selected.negative_display.display_id())
+                .then_some(selected.negative_point),
         )?
     } else if behavior.uses_opaque_underlay() {
         open_desktop_release_point_away_from(
@@ -2162,6 +2285,25 @@ async fn run_provisional_same_hwnd_promotion_scenario(
     } else {
         reveal_point
     };
+    if let Some(selected) = mixed_dpi_target {
+        let negative_route_point =
+            if selected.source.display_id() == selected.negative_display.display_id() {
+                reveal_point
+            } else if selected.target.display_id() == selected.negative_display.display_id() {
+                release_point
+            } else {
+                bail!("the mixed-DPI negative-route display is not part of the ordered pair")
+            };
+        ensure!(
+            negative_route_point.x < 0 || negative_route_point.y < 0,
+            "mixed-DPI routing must use an actual negative capture or release point: selected={selected:?}, reveal={reveal_point:?}, release={release_point:?}"
+        );
+        ensure!(
+            native_test_display_at(negative_route_point)?.display_id()
+                == selected.negative_display.display_id(),
+            "the actual negative routing point must resolve to the selected negative display: selected={selected:?}, point={negative_route_point:?}"
+        );
+    }
     let post_release_divergence_point = continuous_route_points.map(|[second, _]| second);
     let opaque_barrier = behavior
         .uses_opaque_underlay()
@@ -2180,17 +2322,19 @@ async fn run_provisional_same_hwnd_promotion_scenario(
         let target_display = native_test_display_at(release_point)?;
         let expected_bounds =
             placement_oracle.expected_client_bounds(release_point, target_display)?;
-        if let Some((source_display, selected_target_display)) = mixed_dpi_target {
+        if let Some(selected) = mixed_dpi_target {
             ensure!(
-                target_display.display_id() == selected_target_display.display_id(),
-                "the release point resolved to a different target display than the mixed-DPI scenario selected: selected={selected_target_display:?}, resolved={target_display:?}"
+                target_display.display_id() == selected.target.display_id(),
+                "the release point resolved to a different target display than the mixed-DPI scenario selected: selected={:?}, resolved={target_display:?}",
+                selected.target
             );
             let source_scaled_size = placement_oracle
                 .logical_size
-                .to_device_pixels(source_display.scale_factor());
+                .to_device_pixels(selected.source.scale_factor());
             ensure!(
                 expected_bounds.size != source_scaled_size,
-                "the mixed-DPI native environment cannot distinguish target-scale placement from the historical source-scale bug: source={source_display:?}, target={target_display:?}, source_scaled={source_scaled_size:?}, expected={expected_bounds:?}"
+                "the mixed-DPI native environment cannot distinguish target-scale placement from the historical source-scale bug: source={:?}, target={target_display:?}, source_scaled={source_scaled_size:?}, expected={expected_bounds:?}",
+                selected.source
             );
         }
         Some((
@@ -2217,6 +2361,14 @@ async fn run_provisional_same_hwnd_promotion_scenario(
         "captured move onto the open-desktop provisional reveal point",
     )
     .await?;
+    if mixed_dpi_target.is_some() {
+        wait_until(
+            cx,
+            "the source WndProc observed the mixed-DPI provisional reveal move",
+            |_| Ok(source_native_captured_move_observed(scenario, reveal_point)),
+        )
+        .await?;
+    }
 
     let provisional_trace = Arc::new(Mutex::new(Vec::new()));
     let mut provisional_interceptor = None;
@@ -2574,6 +2726,10 @@ async fn run_provisional_same_hwnd_promotion_scenario(
             },
         )
         .await?;
+        ensure!(
+            point_is_open_desktop(release_point),
+            "the mixed-DPI release point must still resolve to open shell desktop immediately before LEFTUP"
+        );
     }
 
     if let Some(divergence_point) = post_release_divergence_point {
@@ -4282,19 +4438,29 @@ fn open_desktop_release_point_on_display(
     target: HWND,
     display: NativeTestDisplay,
     previous: Option<POINT>,
+    negative_probe: Option<POINT>,
 ) -> Result<POINT> {
     let source_rect = window_rect(source)?;
     let target_rect = window_rect(target)?;
-    let bounds = display.physical_bounds();
-    let inset = 64_i32;
-    let left = bounds.origin.x.0.saturating_add(inset);
-    let top = bounds.origin.y.0.saturating_add(inset);
-    let width = bounds.size.width.0.saturating_sub(inset.saturating_mul(2));
-    let height = bounds.size.height.0.saturating_sub(inset.saturating_mul(2));
+    let bounds = display.physical_visible_bounds();
+    let left = bounds.origin.x.0;
+    let top = bounds.origin.y.0;
+    let width = bounds.size.width.0;
+    let height = bounds.size.height.0;
     ensure!(
         width > 0 && height > 0,
         "native display is too small for a separated open-desktop point: {display:?}"
     );
+    if let Some(probe) = negative_probe {
+        ensure!(
+            probe.x < 0 || probe.y < 0,
+            "the mixed-DPI negative probe must carry an actual negative physical coordinate: {probe:?}"
+        );
+        ensure!(
+            bounds.contains(&point(DevicePixels(probe.x), DevicePixels(probe.y))),
+            "the mixed-DPI negative probe must belong to the selected display's visible bounds: display={display:?}, probe={probe:?}"
+        );
+    }
 
     let sufficiently_separated = |point: POINT| {
         previous.is_none_or(|previous| {
@@ -4303,24 +4469,46 @@ fn open_desktop_release_point_on_display(
             dx.saturating_mul(dx) + dy.saturating_mul(dy) >= 320_i64.pow(2)
         })
     };
+    let is_candidate = |candidate: POINT| {
+        !rect_contains(source_rect, candidate)
+            && !rect_contains(target_rect, candidate)
+            && sufficiently_separated(candidate)
+            && (negative_probe.is_none() || candidate.x < 0 || candidate.y < 0)
+            && point_is_open_desktop(candidate)
+    };
+    if let Some(candidate) = negative_probe.filter(|candidate| is_candidate(*candidate)) {
+        return Ok(candidate);
+    }
     for x_fraction in 1..8 {
         for y_fraction in 1..8 {
             let candidate = POINT {
                 x: left.saturating_add(((i64::from(width) * i64::from(x_fraction)) / 8) as i32),
                 y: top.saturating_add(((i64::from(height) * i64::from(y_fraction)) / 8) as i32),
             };
-            if !rect_contains(source_rect, candidate)
-                && !rect_contains(target_rect, candidate)
-                && sufficiently_separated(candidate)
-                && point_is_open_desktop(candidate)
-            {
+            if is_candidate(candidate) {
                 return Ok(candidate);
             }
         }
     }
+    let scan_stride = 64_i32;
+    let right = left.saturating_add(width);
+    let bottom = top.saturating_add(height);
+    let mut y = top.saturating_add(scan_stride / 2);
+    while y < bottom {
+        let mut x = left.saturating_add(scan_stride / 2);
+        while x < right {
+            let candidate = POINT { x, y };
+            if is_candidate(candidate) {
+                return Ok(candidate);
+            }
+            x = x.saturating_add(scan_stride);
+        }
+        y = y.saturating_add(scan_stride);
+    }
 
     bail!(
-        "scenario suite `{NATIVE_DOCK_SUITE_ID}` could not find an open-desktop point on display {display:?}, outside source={source_rect:?} and target={target_rect:?}, separated from {previous:?}"
+        "scenario suite `{NATIVE_DOCK_SUITE_ID}` could not find an open-desktop point on display {display:?}, outside source={source_rect:?} and target={target_rect:?}, separated from {previous:?}, with negative-coordinate requirement={}",
+        negative_probe.is_some()
     )
 }
 
@@ -4738,6 +4926,50 @@ fn native_test_display_at(point: POINT) -> Result<NativeTestDisplay> {
             "scenario suite `{NATIVE_DOCK_SUITE_ID}` found ambiguous displays for physical point {point:?}: {matches:?}"
         ),
     }
+}
+
+#[test]
+fn mixed_dpi_worker_direction_preserves_the_negative_route_plan() {
+    assert_eq!(
+        order_mixed_dpi_display_pair(
+            (10, 30),
+            (10, (-960, 540)),
+            process_harness::NativeWorkerSubcase::MixedDpiLowerToHigher,
+        )
+        .expect("the lower-to-higher pair should be available"),
+        OrderedMixedDpiDisplayPlan {
+            source: 10,
+            target: 30,
+            negative_display: 10,
+            negative_point: (-960, 540),
+        }
+    );
+    assert_eq!(
+        order_mixed_dpi_display_pair(
+            (10, 30),
+            (10, (-960, 540)),
+            process_harness::NativeWorkerSubcase::MixedDpiHigherToLower,
+        )
+        .expect("the higher-to-lower pair should be available"),
+        OrderedMixedDpiDisplayPlan {
+            source: 30,
+            target: 10,
+            negative_display: 10,
+            negative_point: (-960, 540),
+        }
+    );
+}
+
+#[test]
+fn mixed_dpi_worker_direction_rejects_unavailable_subcases() {
+    let error = order_mixed_dpi_display_pair(
+        (10, 30),
+        (10, (-960, 540)),
+        process_harness::NativeWorkerSubcase::Primary,
+    )
+    .expect_err("a non-mixed-DPI subcase must fail closed");
+
+    assert!(error.to_string().contains("mixed-DPI worker subcase"));
 }
 
 fn unique_dock_tabs_bounds(

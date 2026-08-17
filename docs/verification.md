@@ -1994,7 +1994,7 @@ cross:
 | `native.u28.event-driven-geometry-wake` | U28 | `wnd-proc`, `presentation` | two external native geometry callbacks coalesce behind one posted wake and publish the latest coherent physical geometry without polling the foreground executor |
 | `native.u28.process-convergence` | U28 | `system-input`, `wnd-proc`, `capture`, `presentation`, `lifetime` | active captured surface shutdown, live pre-exit HWND census, and whole worker process-tree convergence under a kill-on-close Job Object |
 | `native.u28.no-input-pass-through` | U28 | `system-input`, `wnd-proc`, `capture`, `point-stack`, `presentation` | two consecutive no-input GPUI HWNDs pass through to a lower GPUI HWND, stop at a lower external opaque HWND, and reject a generation-changing sample |
-| `native.u28.mixed-dpi-client-bounds` | U28 | `system-input`, `wnd-proc`, `capture`, `point-stack`, `presentation`, `lifetime` | captured desktop tear-off from one real DPI domain to another, same-HWND provisional promotion, and exact target-side physical client bounds; missing dual-DPI hardware is a gate failure |
+| `native.u28.mixed-dpi-client-bounds` | U28 | `system-input`, `wnd-proc`, `capture`, `point-stack`, `presentation`, `lifetime` | captured desktop tear-off across the same real distinct-DPI display pair in both lower-to-higher and higher-to-lower directions, with at least one negative physical display origin, same-HWND provisional promotion, and exact target-side physical client bounds; missing dual-DPI or negative-origin capacity is a gate failure |
 
 The schema 4 manifest is the native-scenario execution inventory and selector-metadata authority: its
 rows supply the scenario id, requirement owner, package/test coordinate, ignored policy, typed
