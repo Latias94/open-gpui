@@ -2419,6 +2419,12 @@ enum MacNativeWindowHandleRequirement {
     InteractionAdmitted,
 }
 
+impl MacNativeWindowHandleRequirement {
+    fn accepts_lifecycle(self, is_closed: bool, interaction_is_quiesced: bool) -> bool {
+        !is_closed && (self == Self::ExactLive || !interaction_is_quiesced)
+    }
+}
+
 unsafe fn native_window_satisfies_handle(
     native_window: id,
     expected_handle: AnyWindowHandle,
@@ -2432,11 +2438,9 @@ unsafe fn native_window_satisfies_handle(
         let Some(state) = state.try_lock() else {
             return false;
         };
-        !state.is_closed()
-            && state.native_window == native_window
+        state.native_window == native_window
             && state.handle == expected_handle
-            && (requirement == MacNativeWindowHandleRequirement::ExactLive
-                || !state.interaction_is_quiesced())
+            && requirement.accepts_lifecycle(state.is_closed(), state.interaction_is_quiesced())
     }
 }
 
@@ -7603,6 +7607,58 @@ mod creation_projection_tests {
             ..regular
         };
         assert!(tabbed.should_apply_automatic_tabbing());
+    }
+
+    #[test]
+    fn quiescence_after_transient_show_rejects_commit_but_preserves_compensation() {
+        #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+        struct NativeSideEffects {
+            attached_to_owner: bool,
+            visible: bool,
+            level: NSInteger,
+        }
+
+        let prior = NativeSideEffects {
+            attached_to_owner: false,
+            visible: false,
+            level: 7,
+        };
+        let mut after_show = NativeSideEffects {
+            attached_to_owner: true,
+            visible: true,
+            level: 19,
+        };
+        let is_closed = false;
+        let interaction_is_quiesced = true;
+
+        assert!(
+            MacNativeWindowHandleRequirement::InteractionAdmitted
+                .accepts_lifecycle(is_closed, false),
+            "the child must be admitted before the synchronous show callback"
+        );
+        assert!(
+            !MacNativeWindowHandleRequirement::InteractionAdmitted
+                .accepts_lifecycle(is_closed, interaction_is_quiesced),
+            "the presentation commit must reject a synchronously quiesced child"
+        );
+        assert!(
+            MacNativeWindowHandleRequirement::ExactLive
+                .accepts_lifecycle(is_closed, interaction_is_quiesced),
+            "the live exact child must retain rollback authority after quiescence"
+        );
+
+        if MacNativeWindowHandleRequirement::ExactLive
+            .accepts_lifecycle(is_closed, interaction_is_quiesced)
+        {
+            after_show = prior;
+        }
+        assert_eq!(after_show, prior);
+
+        assert!(
+            !MacNativeWindowHandleRequirement::ExactLive
+                .accepts_lifecycle(true, interaction_is_quiesced),
+            "a closed child must not be resurrected by compensation"
+        );
     }
 
     #[test]
