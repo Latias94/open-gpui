@@ -1037,12 +1037,35 @@ impl NativeEventIngress {
         )
     }
 
+    fn event_prefix_state(&self, sequence_cutoff: u64) -> NativeEventPrefixState {
+        let pending = self.pending.borrow();
+        match pending.front() {
+            None => NativeEventPrefixState::NoPriorEvent,
+            Some(envelope) if envelope.sequence() >= sequence_cutoff => {
+                NativeEventPrefixState::NoPriorEvent
+            }
+            Some(NativeWorkEnvelope::Event(_)) => NativeEventPrefixState::EventAtFront,
+            Some(_) => {
+                let prior_event_is_blocked = pending
+                    .iter()
+                    .take_while(|envelope| envelope.sequence() < sequence_cutoff)
+                    .any(|envelope| matches!(envelope, NativeWorkEnvelope::Event(_)));
+                if prior_event_is_blocked {
+                    NativeEventPrefixState::PriorEventBlockedByNativeWork
+                } else {
+                    NativeEventPrefixState::NoPriorEvent
+                }
+            }
+        }
+    }
+
     fn pop_event_before(&self, generation: u64, sequence_cutoff: u64) -> NativeEventPrefixPop {
-        let eligible = self.pending.borrow().front().is_some_and(|envelope| {
-            matches!(envelope, NativeWorkEnvelope::Event(event) if event.sequence() < sequence_cutoff)
-        });
-        if !eligible {
-            return NativeEventPrefixPop::BlockedOrEmpty;
+        match self.event_prefix_state(sequence_cutoff) {
+            NativeEventPrefixState::NoPriorEvent => return NativeEventPrefixPop::NoPriorEvent,
+            NativeEventPrefixState::EventAtFront => {}
+            NativeEventPrefixState::PriorEventBlockedByNativeWork => {
+                return NativeEventPrefixPop::PriorEventBlockedByNativeWork;
+            }
         }
         if !self.consume_budget(generation) {
             return NativeEventPrefixPop::BudgetExhausted;
@@ -1054,11 +1077,12 @@ impl NativeEventIngress {
     }
 
     fn pop_event_before_unbounded(&self, sequence_cutoff: u64) -> NativeEventPrefixPop {
-        let eligible = self.pending.borrow().front().is_some_and(|envelope| {
-            matches!(envelope, NativeWorkEnvelope::Event(event) if event.sequence() < sequence_cutoff)
-        });
-        if !eligible {
-            return NativeEventPrefixPop::BlockedOrEmpty;
+        match self.event_prefix_state(sequence_cutoff) {
+            NativeEventPrefixState::NoPriorEvent => return NativeEventPrefixPop::NoPriorEvent,
+            NativeEventPrefixState::EventAtFront => {}
+            NativeEventPrefixState::PriorEventBlockedByNativeWork => {
+                return NativeEventPrefixPop::PriorEventBlockedByNativeWork;
+            }
         }
         let Some(NativeWorkEnvelope::Event(event)) = self.pending.borrow_mut().pop_front() else {
             unreachable!("eligible native event prefix must remain at the queue front");
@@ -1404,8 +1428,16 @@ pub(super) enum NativeInputBarrierError {
 
 pub(super) enum NativeEventPrefixPop {
     Event(NativeEventEnvelope),
-    BlockedOrEmpty,
+    NoPriorEvent,
+    PriorEventBlockedByNativeWork,
     BudgetExhausted,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NativeEventPrefixState {
+    NoPriorEvent,
+    EventAtFront,
+    PriorEventBlockedByNativeWork,
 }
 
 pub(super) struct NativeInputBarrier<'a> {

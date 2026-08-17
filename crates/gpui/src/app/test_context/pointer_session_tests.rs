@@ -14,13 +14,14 @@ use crate::{
     MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, NativeBoundaryDiagnosticCursor,
     NativeBoundaryDisposition, NativeBoundaryGeneration, NativeBoundaryKind, NativeBoundaryTarget,
     NativeCallbackKind, NativeCapturedDragGeneration, NativeCapturedDragPhase,
-    NativeCapturedDragReleaseBarrier, NativeCapturedDragReleaseTerminal, NativePlatformCommandKind,
+    NativeCapturedDragReleaseBarrier, NativeCapturedDragReleaseTerminal,
+    NativeInputInvariantViolation, NativeInvariantFailure, NativePlatformCommandKind,
     ParentElement, Pixels, PlatformInput, PlatformPointerCaptureReleaseOutcome, PlatformWindow,
-    PlatformWindowCommand, Point, PointerCancelEvent, PointerCancelReason, PointerCaptureError,
-    PointerCaptureHandle, PromptLevel, PromptResponse, QuitMode, Render, RequestFrameOptions,
-    StatefulInteractiveElement, StyleRefinement, Styled, StyledText, SubtreePresentation,
-    SubtreePresentationExt, TestAppContext, UTF16Selection, VisualContext, Window,
-    WindowMouseEvent, canvas, deferred, div, point, px, size,
+    PlatformWindowCommand, PlatformWindowCommandOutcome, Point, PointerCancelEvent,
+    PointerCancelReason, PointerCaptureError, PointerCaptureHandle, PromptLevel, PromptResponse,
+    QuitMode, Render, RequestFrameOptions, StatefulInteractiveElement, StyleRefinement, Styled,
+    StyledText, SubtreePresentation, SubtreePresentationExt, TestAppContext, UTF16Selection,
+    VisualContext, Window, WindowMouseEvent, canvas, deferred, div, point, px, size,
 };
 
 crate::actions!(pointer_session_actions, [RemoveWindowWithPointer]);
@@ -2225,6 +2226,137 @@ fn platform_input_handler_root_barrier_drains_queued_window_command(cx: &mut Tes
     assert_eq!(
         activation.disposition,
         NativeBoundaryDisposition::Delivered { input_result: None }
+    );
+}
+
+#[open_gpui::test]
+fn platform_input_handler_does_not_bypass_an_older_command_and_cross_window_close(
+    cx: &mut TestAppContext,
+) {
+    let target = cx
+        .open_window(size(px(280.0), px(180.0)), |_, _| Empty)
+        .into();
+    let target_window = cx.test_window(target);
+    let lifecycle = Rc::new(RefCell::new(Vec::new()));
+    let (view, mut cx) = cx.add_window_view({
+        let lifecycle = lifecycle.clone();
+        move |_, cx| MarkedTextWindowRemovalProbe {
+            focus: cx.focus_handle(),
+            lifecycle,
+            remove_on_marked_text: false,
+            activate_on_marked_text: false,
+        }
+    });
+    cx.update_window_entity(&view, |_, _, cx| cx.notify());
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update_window_entity(&view, |view, window, cx| {
+        view.focus.focus(window, cx);
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    let source = cx.window_handle();
+    let source_id = source.window_id();
+    let source_window = cx.test_window(source);
+    source_window.clear_platform_command_history();
+    let input_handler_slot = cx
+        .update(|window, _| window.platform_window.input_handler_slot_for_test())
+        .expect("the source window should expose its input-handler slot");
+    let failure = Rc::new(Cell::new(None));
+    let app = cx.app.clone();
+    source_window.set_platform_command_callback({
+        let failure = failure.clone();
+        move |command, source_window| {
+            if command == PlatformWindowCommand::StartWindowMove {
+                app.enqueue_platform_window_command(
+                    source_id,
+                    source_window.command_dispatcher(),
+                    PlatformWindowCommand::StartWindowResize(crate::ResizeEdge::BottomRight),
+                );
+                assert!(target_window.simulate_close());
+                let panic = catch_unwind(AssertUnwindSafe(|| {
+                    input_handler_slot.with_handler(|input_handler| {
+                        input_handler.replace_and_mark_text_in_range(None, "blocked", None)
+                    })
+                }))
+                .expect_err("the queued close must block the immediate input-handler callback");
+                let violation = panic
+                    .downcast_ref::<NativeInputInvariantViolation>()
+                    .expect("the input-handler rejection must preserve its typed invariant");
+                failure.set(Some(violation.failure));
+            }
+            PlatformWindowCommandOutcome::Accepted
+        }
+    });
+
+    cx.update(|window, _| window.start_window_move());
+
+    assert_eq!(
+        failure.get(),
+        Some(NativeInvariantFailure::PriorEventBlockedByNativeWork)
+    );
+    assert!(lifecycle.borrow().is_empty());
+    assert_eq!(
+        source_window.platform_command_history(),
+        [
+            PlatformWindowCommand::StartWindowMove,
+            PlatformWindowCommand::StartWindowResize(crate::ResizeEdge::BottomRight),
+        ]
+    );
+    assert!(!cx.windows().contains(&target));
+}
+
+#[open_gpui::test]
+fn platform_input_handler_can_run_before_a_later_platform_command(cx: &mut TestAppContext) {
+    let lifecycle = Rc::new(RefCell::new(Vec::new()));
+    let (view, mut cx) = cx.add_window_view({
+        let lifecycle = lifecycle.clone();
+        move |_, cx| MarkedTextWindowRemovalProbe {
+            focus: cx.focus_handle(),
+            lifecycle,
+            remove_on_marked_text: false,
+            activate_on_marked_text: false,
+        }
+    });
+    cx.update_window_entity(&view, |_, _, cx| cx.notify());
+    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update_window_entity(&view, |view, window, cx| {
+        view.focus.focus(window, cx);
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear());
+    let source = cx.window_handle();
+    let source_id = source.window_id();
+    let source_window = cx.test_window(source);
+    source_window.clear_platform_command_history();
+    let input_handler_slot = cx
+        .update(|window, _| window.platform_window.input_handler_slot_for_test())
+        .expect("the source window should expose its input-handler slot");
+    let app = cx.app.clone();
+    source_window.set_platform_command_callback(move |command, source_window| {
+        if command == PlatformWindowCommand::StartWindowMove {
+            app.enqueue_platform_window_command(
+                source_id,
+                source_window.command_dispatcher(),
+                PlatformWindowCommand::StartWindowResize(crate::ResizeEdge::BottomRight),
+            );
+            input_handler_slot
+                .with_handler(|input_handler| {
+                    input_handler.replace_and_mark_text_in_range(None, "allowed", None)
+                })
+                .expect("the focused input handler should remain installed");
+        }
+        PlatformWindowCommandOutcome::Accepted
+    });
+
+    cx.update(|window, _| window.start_window_move());
+
+    assert_eq!(lifecycle.borrow().as_slice(), &["marked-input"]);
+    assert_eq!(
+        source_window.platform_command_history(),
+        [
+            PlatformWindowCommand::StartWindowMove,
+            PlatformWindowCommand::StartWindowResize(crate::ResizeEdge::BottomRight),
+        ]
     );
 }
 

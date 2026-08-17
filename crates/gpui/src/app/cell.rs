@@ -2658,7 +2658,15 @@ impl AppCell {
                         break;
                     }
                 }
-                NativeEventPrefixPop::BlockedOrEmpty => break,
+                NativeEventPrefixPop::NoPriorEvent => break,
+                NativeEventPrefixPop::PriorEventBlockedByNativeWork => {
+                    return Err(terminal.reject_input(
+                        window_id,
+                        boundary,
+                        Some(slot_generation),
+                        NativeInvariantFailure::PriorEventBlockedByNativeWork,
+                    ));
+                }
                 NativeEventPrefixPop::BudgetExhausted => {
                     return Err(terminal.reject_input(
                         window_id,
@@ -2819,7 +2827,15 @@ impl AppCell {
                         break;
                     }
                 }
-                NativeEventPrefixPop::BlockedOrEmpty => break,
+                NativeEventPrefixPop::NoPriorEvent => break,
+                NativeEventPrefixPop::PriorEventBlockedByNativeWork => {
+                    return Err(terminal.reject_input(
+                        window_id,
+                        boundary,
+                        Some(slot_generation),
+                        NativeInvariantFailure::PriorEventBlockedByNativeWork,
+                    ));
+                }
                 NativeEventPrefixPop::BudgetExhausted => {
                     return Err(terminal.reject_input(
                         window_id,
@@ -3986,8 +4002,30 @@ impl Drop for AppRefMut<'_> {
 mod tests {
     use super::*;
     use crate::{
-        AnyWindowHandle, AppContext, Empty, QuitMode, TestAppContext, WindowOptions, px, size,
+        AnyWindowHandle, AppContext, Empty, Modifiers, MouseMoveEvent, QuitMode, Subscription,
+        TestAppContext, WindowOptions, point, px, size,
     };
+
+    fn immediate_mouse_move(x: f32) -> PlatformInput {
+        PlatformInput::MouseMove(MouseMoveEvent {
+            position: point(px(x), px(10.0)),
+            pressed_button: None,
+            modifiers: Modifiers::default(),
+        })
+    }
+
+    fn count_mouse_input(
+        cx: &mut TestAppContext,
+        window: AnyWindowHandle,
+        input_calls: Rc<Cell<usize>>,
+    ) -> Subscription {
+        cx.update_window(window, move |_, window, _| {
+            window.intercept_window_mouse_events(move |_, _, _| {
+                input_calls.set(input_calls.get() + 1);
+            })
+        })
+        .expect("the test window must remain registered")
+    }
 
     fn enqueue_persistent_panicking_shutdown_effect(attempts: Rc<Cell<usize>>, app: &mut App) {
         app.defer(move |app| {
@@ -4113,6 +4151,223 @@ mod tests {
 
         assert_eq!(attempts.get(), 1);
         assert!(!cx.app.post_borrow_convergence_requested.get());
+    }
+
+    #[crate::test]
+    fn immediate_native_input_does_not_bypass_an_older_platform_command_and_close(
+        cx: &mut TestAppContext,
+    ) {
+        let source: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        let target: AnyWindowHandle = cx
+            .open_window(size(px(280.0), px(180.0)), |_, _| Empty)
+            .into();
+        let mut source_window = cx.test_window(source);
+        let target_window = cx.test_window(target);
+        source_window.clear_platform_command_history();
+        let input_calls = Rc::new(Cell::new(0usize));
+        let _interceptor = count_mouse_input(cx, source, input_calls.clone());
+        let failure = Rc::new(Cell::new(None));
+        let app = cx.app.clone();
+        let source_id = source.window_id();
+        source_window.set_platform_command_callback({
+            let failure = failure.clone();
+            move |command, mut source_window| {
+                if command == PlatformWindowCommand::StartWindowMove {
+                    app.enqueue_platform_window_command(
+                        source_id,
+                        source_window.command_dispatcher(),
+                        PlatformWindowCommand::StartWindowResize(crate::ResizeEdge::BottomRight),
+                    );
+                    assert!(target_window.simulate_close());
+                    let panic = catch_unwind(AssertUnwindSafe(|| {
+                        source_window.simulate_input_result(immediate_mouse_move(24.0))
+                    }))
+                    .expect_err("a queued close behind older work must block immediate input");
+                    let violation = panic
+                        .downcast_ref::<NativeInputInvariantViolation>()
+                        .expect("the input rejection must preserve its typed invariant");
+                    failure.set(Some(violation.failure));
+                }
+                PlatformWindowCommandOutcome::Accepted
+            }
+        });
+
+        cx.update_window(source, |_, window, _| window.start_window_move())
+            .expect("the source window must remain registered for the outer command");
+
+        assert_eq!(
+            failure.get(),
+            Some(NativeInvariantFailure::PriorEventBlockedByNativeWork)
+        );
+        assert_eq!(input_calls.get(), 0);
+        assert_eq!(
+            source_window.platform_command_history(),
+            [
+                PlatformWindowCommand::StartWindowMove,
+                PlatformWindowCommand::StartWindowResize(crate::ResizeEdge::BottomRight),
+            ],
+            "the older command must run before the queued close terminal"
+        );
+        assert!(cx.windows().contains(&source));
+        assert!(!cx.windows().contains(&target));
+    }
+
+    #[crate::test]
+    fn immediate_native_input_does_not_bypass_an_older_activation_readback_and_close(
+        cx: &mut TestAppContext,
+    ) {
+        let source: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        let target: AnyWindowHandle = cx
+            .open_window(size(px(280.0), px(180.0)), |_, _| Empty)
+            .into();
+        let mut source_window = cx.test_window(source);
+        let target_window = cx.test_window(target);
+        source_window.clear_platform_command_history();
+        let input_calls = Rc::new(Cell::new(0usize));
+        let _interceptor = count_mouse_input(cx, source, input_calls.clone());
+        let failure = Rc::new(Cell::new(None));
+        source_window.set_platform_command_callback({
+            let failure = failure.clone();
+            move |command, mut source_window| {
+                if command == PlatformWindowCommand::StartWindowMove {
+                    assert!(target_window.simulate_close());
+                    let panic = catch_unwind(AssertUnwindSafe(|| {
+                        source_window.simulate_input_result(immediate_mouse_move(28.0))
+                    }))
+                    .expect_err(
+                        "a queued close behind an activation readback must block immediate input",
+                    );
+                    let violation = panic
+                        .downcast_ref::<NativeInputInvariantViolation>()
+                        .expect("the input rejection must preserve its typed invariant");
+                    failure.set(Some(violation.failure));
+                }
+                PlatformWindowCommandOutcome::Accepted
+            }
+        });
+
+        let _activation_ticket = cx
+            .update_window(source, |_, window, _| {
+                let ticket = window.activate_window();
+                window.start_window_move();
+                ticket
+            })
+            .expect("the source window must remain registered for the command sequence");
+
+        assert_eq!(
+            failure.get(),
+            Some(NativeInvariantFailure::PriorEventBlockedByNativeWork)
+        );
+        assert_eq!(input_calls.get(), 0);
+        assert!(matches!(
+            source_window.platform_command_history().as_slice(),
+            [
+                PlatformWindowCommand::Activate { .. },
+                PlatformWindowCommand::StartWindowMove
+            ]
+        ));
+        assert!(cx.windows().contains(&source));
+        assert!(!cx.windows().contains(&target));
+    }
+
+    #[crate::test]
+    fn immediate_native_input_can_run_before_a_later_platform_command(cx: &mut TestAppContext) {
+        let window: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        let mut platform_window = cx.test_window(window);
+        platform_window.clear_platform_command_history();
+        let input_calls = Rc::new(Cell::new(0usize));
+        let _interceptor = count_mouse_input(cx, window, input_calls.clone());
+        let input_result = Rc::new(Cell::new(None));
+        let app = cx.app.clone();
+        let window_id = window.window_id();
+        platform_window.set_platform_command_callback({
+            let input_result = input_result.clone();
+            move |command, mut platform_window| {
+                if command == PlatformWindowCommand::StartWindowMove {
+                    app.enqueue_platform_window_command(
+                        window_id,
+                        platform_window.command_dispatcher(),
+                        PlatformWindowCommand::StartWindowResize(crate::ResizeEdge::BottomRight),
+                    );
+                    input_result.set(Some(
+                        platform_window.simulate_input_result(immediate_mouse_move(32.0)),
+                    ));
+                }
+                PlatformWindowCommandOutcome::Accepted
+            }
+        });
+
+        cx.update_window(window, |_, window, _| window.start_window_move())
+            .expect("the test window must remain registered for the outer command");
+
+        assert_eq!(
+            input_result.get(),
+            Some(DispatchEventResult {
+                propagate: true,
+                default_prevented: false,
+            })
+        );
+        assert_eq!(input_calls.get(), 1);
+        assert_eq!(
+            platform_window.platform_command_history(),
+            [
+                PlatformWindowCommand::StartWindowMove,
+                PlatformWindowCommand::StartWindowResize(crate::ResizeEdge::BottomRight),
+            ]
+        );
+    }
+
+    #[crate::test]
+    fn immediate_native_input_can_run_before_a_later_activation_readback(cx: &mut TestAppContext) {
+        let window: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        let mut platform_window = cx.test_window(window);
+        platform_window.clear_platform_command_history();
+        let input_calls = Rc::new(Cell::new(0usize));
+        let _interceptor = count_mouse_input(cx, window, input_calls.clone());
+        let input_result = Rc::new(Cell::new(None));
+        platform_window.set_platform_command_callback({
+            let input_result = input_result.clone();
+            move |command, mut platform_window| {
+                if command == PlatformWindowCommand::StartWindowMove {
+                    input_result.set(Some(
+                        platform_window.simulate_input_result(immediate_mouse_move(36.0)),
+                    ));
+                }
+                PlatformWindowCommandOutcome::Accepted
+            }
+        });
+
+        let _activation_ticket = cx
+            .update_window(window, |_, window, _| {
+                let ticket = window.activate_window();
+                window.start_window_move();
+                ticket
+            })
+            .expect("the test window must remain registered for the command sequence");
+
+        assert_eq!(
+            input_result.get(),
+            Some(DispatchEventResult {
+                propagate: true,
+                default_prevented: false,
+            })
+        );
+        assert_eq!(input_calls.get(), 1);
+        assert!(matches!(
+            platform_window.platform_command_history().as_slice(),
+            [
+                PlatformWindowCommand::Activate { .. },
+                PlatformWindowCommand::StartWindowMove
+            ]
+        ));
     }
 
     #[crate::test]

@@ -211,6 +211,7 @@ pub enum NativeInvariantFailure {
     AppBorrowBusy,
     ReservedWindow,
     EventTransactionReentry,
+    PriorEventBlockedByNativeWork,
     BarrierBudgetExhausted,
     CallbackPanicked,
 }
