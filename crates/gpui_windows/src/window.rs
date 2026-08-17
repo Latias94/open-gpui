@@ -177,10 +177,10 @@ struct ProvisionalPlacementRollback {
     visible: bool,
 }
 
-#[derive(Debug)]
 struct AppliedProvisionalFinalPlacement {
     facts: WindowProvisionalPlacementNativeFacts,
     platform_facts: WindowPlatformFacts,
+    native_authority: RegisteredWindowAuthority,
     rollback: ProvisionalPlacementRollback,
     applied: ProvisionalPlacementRollback,
     applied_epoch: u64,
@@ -198,6 +198,72 @@ impl AppliedProvisionalFinalPlacement {
 
     fn commit(self) -> WindowProvisionalPlacementNativeFacts {
         self.facts
+    }
+}
+
+#[derive(Clone)]
+struct ProvisionalPlacementAttempt {
+    mutation_generation: u64,
+    session: WindowProvisionalSession,
+    request: WindowProvisionalPlacementRequest,
+}
+
+enum ProvisionalPlacementLaneState {
+    Idle,
+    Active {
+        successor: Option<ProvisionalPlacementAttempt>,
+    },
+}
+
+impl Default for ProvisionalPlacementLaneState {
+    fn default() -> Self {
+        Self::Idle
+    }
+}
+
+#[derive(Default)]
+struct ProvisionalPlacementLane {
+    state: RefCell<ProvisionalPlacementLaneState>,
+}
+
+enum ProvisionalPlacementLaneAdmission {
+    Start(ProvisionalPlacementAttempt),
+    Queued,
+}
+
+impl ProvisionalPlacementLane {
+    fn is_active(&self) -> bool {
+        matches!(
+            *self.state.borrow(),
+            ProvisionalPlacementLaneState::Active { .. }
+        )
+    }
+
+    fn admit(&self, attempt: ProvisionalPlacementAttempt) -> ProvisionalPlacementLaneAdmission {
+        let mut state = self.state.borrow_mut();
+        match &mut *state {
+            ProvisionalPlacementLaneState::Idle => {
+                *state = ProvisionalPlacementLaneState::Active { successor: None };
+                ProvisionalPlacementLaneAdmission::Start(attempt)
+            }
+            ProvisionalPlacementLaneState::Active { successor } => {
+                successor.replace(attempt);
+                ProvisionalPlacementLaneAdmission::Queued
+            }
+        }
+    }
+
+    fn finish_current(&self) -> Option<ProvisionalPlacementAttempt> {
+        let mut state = self.state.borrow_mut();
+        let ProvisionalPlacementLaneState::Active { successor } = &mut *state else {
+            debug_assert!(false, "provisional placement lane finished while idle");
+            return None;
+        };
+        if let Some(successor) = successor.take() {
+            return Some(successor);
+        }
+        *state = ProvisionalPlacementLaneState::Idle;
+        None
     }
 }
 
@@ -373,40 +439,155 @@ impl Drop for CreatedNativeWindowGuard {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RegisteredWindowAuthorityStatus {
+    Current,
+    RegistrationMissing,
+    RegistrationReplaced,
+    RegistrationAmbiguous,
+    NativeOwnerMissing,
+    NativeOwnerReplaced,
+    NativeWindowTerminal,
+}
+
+#[derive(Clone)]
+struct RegisteredWindowAuthority {
+    window: Rc<WindowsWindowInner>,
+    registration: RegisteredWindow,
+    registry: Arc<RegisteredWindows>,
+}
+
+impl RegisteredWindowAuthority {
+    fn capture(window: &Rc<WindowsWindowInner>) -> Result<Self> {
+        let registry = window
+            .raw_window_handles
+            .upgrade()
+            .context("native window registry is no longer available")?;
+        let authority = Self {
+            window: window.clone(),
+            registration: window.registration,
+            registry,
+        };
+        authority.ensure_current("capturing registered native-window authority")?;
+        Ok(authority)
+    }
+
+    fn status(&self) -> RegisteredWindowAuthorityStatus {
+        let hwnd = self.registration.as_raw();
+        let registrations = {
+            let registry = self.registry.read();
+            registry
+                .iter()
+                .copied()
+                .filter(|candidate| candidate.as_raw() == hwnd)
+                .collect::<SmallVec<[RegisteredWindow; 2]>>()
+        };
+        let current = match registrations.as_slice() {
+            [] => return RegisteredWindowAuthorityStatus::RegistrationMissing,
+            [current] => *current,
+            _ => return RegisteredWindowAuthorityStatus::RegistrationAmbiguous,
+        };
+        if !current.matches(self.registration) {
+            return RegisteredWindowAuthorityStatus::RegistrationReplaced;
+        }
+        if unsafe { !IsWindow(Some(hwnd)).as_bool() } {
+            return RegisteredWindowAuthorityStatus::NativeWindowTerminal;
+        }
+        let Some(current_window) = window_from_hwnd(hwnd) else {
+            return RegisteredWindowAuthorityStatus::NativeOwnerMissing;
+        };
+        if !Rc::ptr_eq(&current_window, &self.window)
+            || !current_window.registration.matches(self.registration)
+            || current_window.handle.window_id() != self.registration.window_id()
+        {
+            return RegisteredWindowAuthorityStatus::NativeOwnerReplaced;
+        }
+        RegisteredWindowAuthorityStatus::Current
+    }
+
+    fn is_current(&self) -> bool {
+        self.status() == RegisteredWindowAuthorityStatus::Current
+    }
+
+    fn ensure_current(&self, operation: &str) -> Result<HWND> {
+        let status = self.status();
+        anyhow::ensure!(
+            status == RegisteredWindowAuthorityStatus::Current,
+            "{operation} rejected stale registered native-window authority: {status:?}"
+        );
+        Ok(self.registration.as_raw())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum InitialPresentationVisibilityOutcome {
+    Hidden,
+    AlreadyHidden,
+    AuthorityChanged,
+}
+
 struct InitialPresentationVisibilityGuard {
-    hwnd: Option<HWND>,
+    authority: RegisteredWindowAuthority,
+    armed: bool,
 }
 
 impl InitialPresentationVisibilityGuard {
-    fn new(hwnd: HWND) -> Self {
-        Self { hwnd: Some(hwnd) }
+    fn new(window: &Rc<WindowsWindowInner>) -> Result<Self> {
+        Ok(Self {
+            authority: RegisteredWindowAuthority::capture(window)?,
+            armed: true,
+        })
     }
 
-    fn commit(mut self) {
-        self.hwnd = None;
+    fn authority(&self) -> &RegisteredWindowAuthority {
+        &self.authority
     }
 
-    fn hide(&mut self) -> Result<()> {
-        let Some(hwnd) = self.hwnd else {
-            return Ok(());
-        };
-        if unsafe { IsWindow(Some(hwnd)).as_bool() && IsWindowVisible(hwnd).as_bool() } {
+    fn ensure_current(&self, operation: &str) -> Result<HWND> {
+        self.authority.ensure_current(operation)
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+
+    fn hide(&mut self) -> Result<InitialPresentationVisibilityOutcome> {
+        if !self.armed {
+            return Ok(InitialPresentationVisibilityOutcome::AlreadyHidden);
+        }
+        if !self.authority.is_current() {
+            self.armed = false;
+            return Ok(InitialPresentationVisibilityOutcome::AuthorityChanged);
+        }
+        let hwnd = self.authority.registration.as_raw();
+        let visible = unsafe { IsWindowVisible(hwnd).as_bool() };
+        if visible {
             unsafe {
                 let _ = ShowWindow(hwnd, SW_HIDE);
+            }
+            if !self.authority.is_current() {
+                self.armed = false;
+                return Ok(InitialPresentationVisibilityOutcome::AuthorityChanged);
             }
             anyhow::ensure!(
                 !unsafe { IsWindowVisible(hwnd).as_bool() },
                 "failed to compensate a rejected initial presentation by hiding its native window"
             );
         }
-        self.hwnd = None;
-        Ok(())
+        self.armed = false;
+        Ok(if visible {
+            InitialPresentationVisibilityOutcome::Hidden
+        } else {
+            InitialPresentationVisibilityOutcome::AlreadyHidden
+        })
     }
 }
 
 impl Drop for InitialPresentationVisibilityGuard {
     fn drop(&mut self) {
-        self.hide().log_err();
+        if let Err(error) = self.hide() {
+            log::error!("failed to hide rejected registered initial presentation: {error:#}");
+        }
     }
 }
 
@@ -426,26 +607,6 @@ impl Drop for InitialPresentationPhaseGuard<'_> {
         if self.phase.get() == InitialPlacementPhase::Presenting {
             self.phase.set(InitialPlacementPhase::Pending);
         }
-    }
-}
-
-struct ProvisionalPlacementCompensationGuard<'a> {
-    active: &'a Cell<bool>,
-}
-
-impl<'a> ProvisionalPlacementCompensationGuard<'a> {
-    fn begin(active: &'a Cell<bool>) -> Result<Self> {
-        anyhow::ensure!(
-            !active.replace(true),
-            "provisional placement compensation re-entered"
-        );
-        Ok(Self { active })
-    }
-}
-
-impl Drop for ProvisionalPlacementCompensationGuard<'_> {
-    fn drop(&mut self) {
-        self.active.set(false);
     }
 }
 
@@ -605,7 +766,7 @@ pub struct WindowsWindowState {
     /// as resizing them has failed, causing us to have lost at least the render target.
     pub invalidate_devices: Arc<AtomicBool>,
     native_placement_epoch: Cell<u64>,
-    provisional_placement_compensation: Cell<bool>,
+    provisional_placement_lane: ProvisionalPlacementLane,
     placement_mutation_generation: Cell<Option<u64>>,
     pointer_input_mutation_generation: Cell<Option<u64>>,
     activation_policy_mutation_generation: Cell<Option<u64>>,
@@ -768,7 +929,7 @@ impl WindowsWindowState {
         let initial_placement_phase = InitialPlacementPhase::Pending;
         let initial_placement = None;
         let native_placement_epoch = Cell::new(0);
-        let provisional_placement_compensation = Cell::new(false);
+        let provisional_placement_lane = ProvisionalPlacementLane::default();
         let placement_mutation_generation = Cell::new(None);
         let pointer_input_mutation_generation = Cell::new(None);
         let pointer_input_observation_generation = Cell::new(1);
@@ -814,7 +975,7 @@ impl WindowsWindowState {
             display_topology_generation: Cell::new(display_topology_generation),
             last_validated_platform_facts: RefCell::new(None),
             native_placement_epoch,
-            provisional_placement_compensation,
+            provisional_placement_lane,
             placement_mutation_generation,
             pointer_input_mutation_generation,
             activation_policy_mutation_generation,
@@ -1501,6 +1662,7 @@ impl WindowsWindowInner {
         self: &Rc<Self>,
         activate: bool,
         force_show: bool,
+        visibility_guard: &mut InitialPresentationVisibilityGuard,
     ) -> Result<Option<WindowPlatformFacts>> {
         if !force_show && !self.show_on_initial_presentation.get() {
             return Ok(None);
@@ -1509,9 +1671,9 @@ impl WindowsWindowInner {
             return Ok(None);
         };
         let _phase_guard = InitialPresentationPhaseGuard::new(&self.state.initial_placement_phase);
-        let native_rollback = self.capture_window_placement_snapshot()?;
+        let native_rollback =
+            self.capture_window_placement_snapshot_for(visibility_guard.authority())?;
         let activate = activate && self.state.activation_policy.get().accepts_activation;
-        let mut visibility_guard = InitialPresentationVisibilityGuard::new(self.hwnd);
         let result = (|| {
             #[cfg(test)]
             self.lifecycle_test_probe
@@ -1524,62 +1686,100 @@ impl WindowsWindowInner {
                 anyhow::bail!("injected initial-presentation failure");
             }
             self.ensure_initial_presentation_not_superseded()?;
-            self.with_owner_detached_for_nonactivating_show(activate, || {
-                match open_status.state {
-                    WindowOpenState::Maximized if !activate => {
-                        self.apply_nonactivating_initial_maximized_placement()?;
-                    }
-                    WindowOpenState::Fullscreen => {
-                        if !self.state.is_fullscreen() {
-                            self.toggle_fullscreen_now()?;
+            visibility_guard.ensure_current("starting the registered initial-presentation show")?;
+            self.with_owner_detached_for_nonactivating_show(
+                activate,
+                visibility_guard.authority(),
+                || {
+                    match open_status.state {
+                        WindowOpenState::Maximized if !activate => {
+                            visibility_guard.ensure_current(
+                                "applying the registered non-activating maximized presentation",
+                            )?;
+                            self.apply_nonactivating_initial_maximized_placement()?;
+                            visibility_guard.ensure_current(
+                                "validating the registered non-activating maximized presentation",
+                            )?;
                         }
+                        WindowOpenState::Fullscreen => {
+                            if !self.state.is_fullscreen() {
+                                visibility_guard.ensure_current(
+                                    "applying the registered fullscreen initial presentation",
+                                )?;
+                                self.toggle_fullscreen_now()?;
+                                visibility_guard.ensure_current(
+                                    "validating the registered fullscreen initial presentation",
+                                )?;
+                            }
+                        }
+                        WindowOpenState::Maximized | WindowOpenState::Windowed => {}
                     }
-                    WindowOpenState::Maximized | WindowOpenState::Windowed => {}
-                }
 
-                match open_status.state {
-                    WindowOpenState::Windowed => {
-                        self.reveal_windowed_initial_presentation(activate)?;
+                    match open_status.state {
+                        WindowOpenState::Windowed => {
+                            self.reveal_windowed_initial_presentation(
+                                activate,
+                                visibility_guard.authority(),
+                            )?;
+                        }
+                        WindowOpenState::Maximized => unsafe {
+                            visibility_guard.ensure_current(
+                                "showing the registered maximized initial presentation",
+                            )?;
+                            let _ = ShowWindow(
+                                self.hwnd,
+                                if activate { SW_MAXIMIZE } else { SW_SHOWNA },
+                            );
+                        },
+                        WindowOpenState::Fullscreen => unsafe {
+                            visibility_guard.ensure_current(
+                                "showing the registered fullscreen initial presentation",
+                            )?;
+                            let _ = ShowWindow(
+                                self.hwnd,
+                                if activate {
+                                    SW_SHOWNORMAL
+                                } else {
+                                    SW_SHOWNOACTIVATE
+                                },
+                            );
+                        },
                     }
-                    WindowOpenState::Maximized => unsafe {
-                        let _ =
-                            ShowWindow(self.hwnd, if activate { SW_MAXIMIZE } else { SW_SHOWNA });
-                    },
-                    WindowOpenState::Fullscreen => unsafe {
-                        let _ = ShowWindow(
-                            self.hwnd,
-                            if activate {
-                                SW_SHOWNORMAL
-                            } else {
-                                SW_SHOWNOACTIVATE
-                            },
-                        );
-                    },
-                }
-                anyhow::ensure!(
-                    unsafe { IsWindowVisible(self.hwnd).as_bool() },
-                    "initial presentation did not make the native window visible"
-                );
-                Ok(())
-            })?;
+                    visibility_guard
+                        .ensure_current("validating the registered initial-presentation show")?;
+                    anyhow::ensure!(
+                        unsafe { IsWindowVisible(self.hwnd).as_bool() },
+                        "initial presentation did not make the native window visible"
+                    );
+                    Ok(())
+                },
+            )?;
             if activate && !self.state.activation_policy.get().focus_on_click {
+                visibility_guard
+                    .ensure_current("activating the registered initial presentation")?;
                 unsafe {
                     SetActiveWindow(self.hwnd).ok();
                     SetFocus(Some(self.hwnd)).ok();
                     let _ = SetForegroundWindow(self.hwnd);
                 }
+                visibility_guard.ensure_current(
+                    "validating activation of the registered initial presentation",
+                )?;
             }
-            self.sample_validated_initial_presentation_facts(&open_status)
+            self.sample_validated_initial_presentation_facts(
+                &open_status,
+                visibility_guard.authority(),
+            )
         })();
         match result {
             Ok(facts) => {
                 self.show_on_initial_presentation.set(false);
-                visibility_guard.commit();
+                visibility_guard.disarm();
                 Ok(Some(facts))
             }
             Err(error) => {
                 if let Err(compensation_error) = self.restore_rejected_initial_presentation(
-                    &mut visibility_guard,
+                    visibility_guard,
                     native_rollback,
                     &mut open_status,
                 ) {
@@ -1592,34 +1792,49 @@ impl WindowsWindowInner {
         }
     }
 
-    fn reveal_windowed_initial_presentation(&self, activate: bool) -> Result<()> {
+    fn reveal_windowed_initial_presentation(
+        &self,
+        activate: bool,
+        authority: &RegisteredWindowAuthority,
+    ) -> Result<()> {
         let mut flags = SWP_NOOWNERZORDER | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_SHOWWINDOW;
         if !activate {
             flags |= SWP_NOACTIVATE;
         }
-        unsafe { SetWindowPos(self.hwnd, None, 0, 0, 0, 0, flags) }
-            .context("failed to reveal the prepared windowed placement without moving it")
+        let hwnd = authority.ensure_current("revealing the registered windowed presentation")?;
+        unsafe { SetWindowPos(hwnd, None, 0, 0, 0, 0, flags) }
+            .context("failed to reveal the prepared windowed placement without moving it")?;
+        authority.ensure_current("validating the registered windowed presentation reveal")?;
+        Ok(())
     }
 
     fn sample_validated_initial_presentation_facts(
         &self,
         open_status: &WindowOpenStatus,
+        authority: &RegisteredWindowAuthority,
     ) -> Result<WindowPlatformFacts> {
         anyhow::ensure!(
             self.state.initial_placement_phase.get() == InitialPlacementPhase::Presenting,
             "initial presentation facts were sampled outside the presenting transaction"
         );
+        let hwnd =
+            authority.ensure_current("sampling the registered initial-presentation visibility")?;
         anyhow::ensure!(
-            unsafe { IsWindowVisible(self.hwnd).as_bool() },
+            unsafe { IsWindowVisible(hwnd).as_bool() },
             "initial presentation became hidden before native acceptance"
         );
         self.validate_initial_placement_authority(open_status)?;
         if matches!(open_status.state, WindowOpenState::Windowed) {
+            authority.ensure_current("sampling the registered initial-presentation frame")?;
             self.state.border_offset.update_restored(self.hwnd)?;
+            authority.ensure_current("validating the registered initial-presentation frame")?;
         }
+        authority.ensure_current("reading registered initial-presentation facts")?;
         let facts = self.observed_platform_facts_from_native()?;
+        authority.ensure_current("validating registered initial-presentation facts")?;
         self.validate_presented_initial_facts(open_status, &facts)?;
         self.ensure_initial_presentation_not_superseded()?;
+        authority.ensure_current("committing the registered initial presentation")?;
         self.commit_initial_presentation()?;
         Ok(facts)
     }
@@ -1666,29 +1881,42 @@ impl WindowsWindowInner {
         open_status: &mut WindowOpenStatus,
     ) -> Result<()> {
         let result = (|| {
-            visibility_guard.hide()?;
-            self.restore_window_placement_snapshot(native_rollback)?;
-            let settled_geometry =
-                self.settle_physical_client_bounds_exactly(open_status.client_placement)?;
+            if matches!(
+                visibility_guard.hide()?,
+                InitialPresentationVisibilityOutcome::AuthorityChanged
+            ) {
+                return Ok(());
+            }
+            self.restore_window_placement_snapshot_for(
+                native_rollback,
+                visibility_guard.authority(),
+            )?;
+            let settled_geometry = self.settle_physical_client_bounds_exactly_for(
+                open_status.client_placement,
+                visibility_guard.authority(),
+            )?;
             self.checkpoint_settled_initial_placement(open_status, settled_geometry)?;
             self.validate_initial_placement_authority(open_status)?;
             Ok(())
         })();
         self.restore_pending_initial_placement(open_status.clone());
-        self.refresh_pending_initial_platform_facts();
+        if visibility_guard.authority().is_current() {
+            self.refresh_pending_initial_platform_facts();
+        }
         result
     }
 
     fn reveal_pending_initial_placement_without_geometry(
         self: &Rc<Self>,
         insert_after: HWND,
+        visibility_guard: &mut InitialPresentationVisibilityGuard,
     ) -> Result<Option<WindowPlatformFacts>> {
         let Some(mut open_status) = self.begin_initial_presentation()? else {
             return Ok(None);
         };
         let _phase_guard = InitialPresentationPhaseGuard::new(&self.state.initial_placement_phase);
-        let native_rollback = self.capture_window_placement_snapshot()?;
-        let mut visibility_guard = InitialPresentationVisibilityGuard::new(self.hwnd);
+        let native_rollback =
+            self.capture_window_placement_snapshot_for(visibility_guard.authority())?;
         let result = (|| {
             anyhow::ensure!(
                 matches!(open_status.state, WindowOpenState::Windowed),
@@ -1698,40 +1926,53 @@ impl WindowsWindowInner {
             self.lifecycle_test_probe
                 .run_initial_presentation_hook(self.hwnd);
             self.ensure_initial_presentation_not_superseded()?;
-            self.with_owner_detached_for_nonactivating_show(false, || {
-                unsafe {
-                    SetWindowPos(
-                        self.hwnd,
-                        Some(insert_after),
-                        0,
-                        0,
-                        0,
-                        0,
-                        SWP_NOACTIVATE
-                            | SWP_NOOWNERZORDER
-                            | SWP_NOMOVE
-                            | SWP_NOSIZE
-                            | SWP_SHOWWINDOW,
-                    )
-                }
-                .context("failed to reveal the prepared provisional window without moving it")?;
-                anyhow::ensure!(
-                    unsafe { IsWindowVisible(self.hwnd).as_bool() },
-                    "provisional reveal did not make the native window visible"
-                );
-                Ok(())
-            })?;
-            self.sample_validated_initial_presentation_facts(&open_status)
+            self.with_owner_detached_for_nonactivating_show(
+                false,
+                visibility_guard.authority(),
+                || {
+                    let hwnd = visibility_guard
+                        .ensure_current("revealing the registered provisional presentation")?;
+                    unsafe {
+                        SetWindowPos(
+                            hwnd,
+                            Some(insert_after),
+                            0,
+                            0,
+                            0,
+                            0,
+                            SWP_NOACTIVATE
+                                | SWP_NOOWNERZORDER
+                                | SWP_NOMOVE
+                                | SWP_NOSIZE
+                                | SWP_SHOWWINDOW,
+                        )
+                    }
+                    .context(
+                        "failed to reveal the prepared provisional window without moving it",
+                    )?;
+                    visibility_guard
+                        .ensure_current("validating the registered provisional reveal")?;
+                    anyhow::ensure!(
+                        unsafe { IsWindowVisible(hwnd).as_bool() },
+                        "provisional reveal did not make the native window visible"
+                    );
+                    Ok(())
+                },
+            )?;
+            self.sample_validated_initial_presentation_facts(
+                &open_status,
+                visibility_guard.authority(),
+            )
         })();
         match result {
             Ok(observed) => {
                 self.show_on_initial_presentation.set(false);
-                visibility_guard.commit();
+                visibility_guard.disarm();
                 Ok(Some(observed))
             }
             Err(error) => {
                 if let Err(compensation_error) = self.restore_rejected_initial_presentation(
-                    &mut visibility_guard,
+                    visibility_guard,
                     native_rollback,
                     &mut open_status,
                 ) {
@@ -1756,12 +1997,15 @@ impl WindowsWindowInner {
         if !force_show && !self.show_on_initial_presentation.get() {
             return Ok(None);
         }
+        let mut visibility_guard = InitialPresentationVisibilityGuard::new(self)?;
         let deferred = self.state.deferred_placement_mutation.take();
         let (native_rollback, rollback_capture_error) = match deferred {
-            Some(_) => match self.capture_window_placement_snapshot() {
-                Ok(snapshot) => (Some(snapshot), None),
-                Err(error) => (None, Some(error)),
-            },
+            Some(_) => {
+                match self.capture_window_placement_snapshot_for(visibility_guard.authority()) {
+                    Ok(snapshot) => (Some(snapshot), None),
+                    Err(error) => (None, Some(error)),
+                }
+            }
             None => (None, None),
         };
         let initial_placement_before_deferred = deferred
@@ -1782,14 +2026,16 @@ impl WindowsWindowInner {
                 if let Some(deferred) = deferred {
                     self.merge_deferred_initial_placement(deferred.request)?;
                 }
-                self.present_pending_initial_placement(activate, force_show)
+                self.present_pending_initial_placement(activate, force_show, &mut visibility_guard)
             })(),
         };
 
         if result.is_err() || matches!(&result, Ok(None)) {
             if let Some(native_rollback) = native_rollback {
-                if let Err(rollback_error) = self.restore_window_placement_snapshot(native_rollback)
-                {
+                if let Err(rollback_error) = self.restore_window_placement_snapshot_for(
+                    native_rollback,
+                    visibility_guard.authority(),
+                ) {
                     let original_outcome = match &result {
                         Ok(None) => "initial presentation was deferred".to_string(),
                         Err(error) => format!("initial presentation failed: {error:#}"),
@@ -1873,27 +2119,48 @@ impl WindowsWindowInner {
     fn with_owner_detached_for_nonactivating_show<T>(
         &self,
         activate: bool,
+        authority: &RegisteredWindowAuthority,
         show: impl FnOnce() -> Result<T>,
     ) -> Result<T> {
         if activate {
-            return show();
+            authority.ensure_current("starting the registered activating show")?;
+            let result = show();
+            authority.ensure_current("finishing the registered activating show")?;
+            return result;
         }
         let Some(owner_hwnd) = self.owner_hwnd else {
-            return show();
+            authority.ensure_current("starting the registered ownerless show")?;
+            let result = show();
+            authority.ensure_current("finishing the registered ownerless show")?;
+            return result;
         };
-        let observed_owner = unsafe { GetWindow(self.hwnd, GW_OWNER) }
+        let hwnd = authority.ensure_current("reading the registered transient owner")?;
+        let observed_owner = unsafe { GetWindow(hwnd, GW_OWNER) }
             .context("failed to read transient owner before non-activating show")?;
+        authority.ensure_current("validating the registered transient owner")?;
         anyhow::ensure!(
             observed_owner == owner_hwnd,
             "transient owner changed before non-activating show"
         );
+        authority.ensure_current("detaching the registered transient owner")?;
         self.set_window_long_checked(
             GWLP_HWNDPARENT,
             0,
             "failed to detach transient owner for non-activating show",
         )?;
+        authority.ensure_current("validating the detached registered transient owner")?;
 
         let show_result = show();
+        if let Err(authority_error) =
+            authority.ensure_current("finishing the registered non-activating show")
+        {
+            return match show_result {
+                Ok(_) => Err(authority_error),
+                Err(show_error) => Err(show_error).context(format!(
+                    "registered native-window authority also changed: {authority_error:#}"
+                )),
+            };
+        }
         let restore_result = self.set_window_long_checked(
             GWLP_HWNDPARENT,
             owner_hwnd.0 as isize,
@@ -1907,8 +2174,10 @@ impl WindowsWindowInner {
                 )),
             };
         }
-        let restored_owner = unsafe { GetWindow(self.hwnd, GW_OWNER) }
+        authority.ensure_current("validating restoration of the registered transient owner")?;
+        let restored_owner = unsafe { GetWindow(hwnd, GW_OWNER) }
             .context("failed to read back restored transient owner")?;
+        authority.ensure_current("reading back the registered transient owner")?;
         anyhow::ensure!(
             restored_owner == owner_hwnd,
             "restored transient owner did not match the committed creation fact"
@@ -2042,63 +2311,96 @@ impl WindowsWindowInner {
         unsafe { GetWindow(candidate, GW_HWNDNEXT) }.ok()
     }
 
-    fn capture_provisional_placement_rollback(&self) -> Result<ProvisionalPlacementRollback> {
+    fn capture_provisional_placement_rollback(
+        &self,
+        authority: &RegisteredWindowAuthority,
+        placement_generation: Option<u64>,
+    ) -> Result<ProvisionalPlacementRollback> {
+        let hwnd = self.ensure_provisional_native_authority(
+            authority,
+            placement_generation,
+            "capturing provisional placement rollback authority",
+        )?;
         let observation_epoch = self.state.native_placement_epoch();
         let physical_geometry = self.physical_geometry_from_native()?;
-        let rect = Self::native_rect(self.hwnd)?
+        self.ensure_provisional_native_authority(
+            authority,
+            placement_generation,
+            "validating provisional rollback physical geometry",
+        )?;
+        let rect = Self::native_rect(hwnd)?
             .context("provisional native window has no rollback rectangle")?;
-        let previous_above = unsafe { GetWindow(self.hwnd, GW_HWNDPREV) }
+        self.ensure_provisional_native_authority(
+            authority,
+            placement_generation,
+            "validating provisional rollback rectangle",
+        )?;
+        let previous_above = unsafe { GetWindow(hwnd, GW_HWNDPREV) }
             .ok()
             .filter(|hwnd| !crate::platform::native_window_is_shell_desktop(*hwnd))
             .map(|hwnd| self.observe_z_order_identity(hwnd))
             .transpose()?;
+        self.ensure_provisional_native_authority(
+            authority,
+            placement_generation,
+            "validating provisional rollback z-order",
+        )?;
         let style = WINDOW_EX_STYLE(self.get_window_long_checked(
             GWL_EXSTYLE,
             "failed to read provisional native extended style for rollback",
         )? as u32);
+        self.ensure_provisional_native_authority(
+            authority,
+            placement_generation,
+            "validating provisional rollback native style",
+        )?;
         anyhow::ensure!(
             self.state.native_placement_epoch() == observation_epoch,
             "native placement changed while provisional rollback authority was sampled"
         );
+        let visible = unsafe { IsWindowVisible(hwnd).as_bool() };
+        self.ensure_provisional_native_authority(
+            authority,
+            placement_generation,
+            "validating provisional rollback visibility",
+        )?;
         Ok(ProvisionalPlacementRollback {
             rect,
             previous_above,
             was_topmost: style.contains(WS_EX_TOPMOST),
             physical_geometry,
-            visible: unsafe { IsWindowVisible(self.hwnd).as_bool() },
+            visible,
         })
     }
 
     fn restore_provisional_placement_rollback_while_quiesced(
         &self,
         rollback: ProvisionalPlacementRollback,
-    ) -> Result<()> {
+        authority: &RegisteredWindowAuthority,
+        placement_generation: Option<u64>,
+    ) -> Result<ProvisionalPlacementCompensation> {
+        if !self.provisional_native_authority_is_current(authority, placement_generation) {
+            return Ok(ProvisionalPlacementCompensation::authority_changed());
+        }
+        #[cfg(test)]
+        self.lifecycle_test_probe
+            .run_provisional_compensation_before_hide_hook(self.hwnd);
+        if !self.provisional_native_authority_is_current(authority, placement_generation) {
+            return Ok(ProvisionalPlacementCompensation::authority_changed());
+        }
+
         let result = (|| {
-            self.validate_provisional_compensation_authority()?;
-            self.set_provisional_compensation_visibility(false)?;
+            self.set_provisional_compensation_visibility(false, authority, placement_generation)?;
+            self.restore_provisional_rect(rollback.rect, authority, placement_generation)?;
+            self.restore_provisional_z_order(rollback, authority, placement_generation)?;
+            self.restore_provisional_physical_geometry(
+                rollback.physical_geometry,
+                authority,
+                placement_generation,
+            )?;
 
-            let rect = self.restore_provisional_rect(rollback.rect);
-            let z_order = self.restore_provisional_z_order(rollback);
-            let physical_geometry =
-                self.restore_provisional_physical_geometry(rollback.physical_geometry);
-            let failures = [
-                ("outer rectangle", rect),
-                ("z-order", z_order),
-                ("physical client geometry", physical_geometry),
-            ]
-            .into_iter()
-            .filter_map(|(component, result)| {
-                result.err().map(|error| format!("{component}: {error:#}"))
-            })
-            .collect::<Vec<_>>();
-            anyhow::ensure!(
-                failures.is_empty(),
-                "failed to restore provisional native placement: {}",
-                failures.join("; ")
-            );
-
-            self.validate_provisional_compensation_authority()?;
-            let restored_hidden = self.capture_provisional_placement_rollback()?;
+            let restored_hidden =
+                self.capture_provisional_placement_rollback(authority, placement_generation)?;
             anyhow::ensure!(
                 !restored_hidden.visible
                     && restored_hidden.rect == rollback.rect
@@ -2108,44 +2410,56 @@ impl WindowsWindowInner {
                 "provisional native placement did not restore its exact hidden authority"
             );
             if rollback.visible {
-                self.set_provisional_compensation_visibility(true)?;
+                self.set_provisional_compensation_visibility(
+                    true,
+                    authority,
+                    placement_generation,
+                )?;
             }
             anyhow::ensure!(
-                self.capture_provisional_placement_rollback()? == rollback,
+                self.capture_provisional_placement_rollback(authority, placement_generation)?
+                    == rollback,
                 "provisional native placement drifted while its original visibility was restored"
             );
             Ok(())
         })();
 
         if let Err(error) = result {
-            if let Err(hide_error) = self.set_provisional_compensation_visibility(false) {
+            if !self.provisional_native_authority_is_current(authority, placement_generation) {
+                return Ok(ProvisionalPlacementCompensation::authority_changed());
+            }
+            if let Err(hide_error) =
+                self.set_provisional_compensation_visibility(false, authority, placement_generation)
+            {
+                if !self.provisional_native_authority_is_current(authority, placement_generation) {
+                    return Ok(ProvisionalPlacementCompensation::authority_changed());
+                }
                 return Err(error).context(format!(
                     "provisional compensation also failed to remain hidden: {hide_error:#}"
                 ));
             }
             return Err(error);
         }
-        Ok(())
+        Ok(ProvisionalPlacementCompensation::restored())
     }
 
-    fn validate_provisional_compensation_authority(&self) -> Result<()> {
-        anyhow::ensure!(
-            !self.is_native_window_terminal() && unsafe { IsWindow(Some(self.hwnd)).as_bool() },
-            "provisional compensation lost its live native window"
-        );
-        let current = self
-            .registered_window_snapshot(self.hwnd)?
-            .context("provisional compensation lost its registered native window")?;
-        anyhow::ensure!(
-            current.matches(self.registration),
-            "provisional compensation native-window authority changed"
-        );
-        Ok(())
-    }
-
-    fn set_provisional_compensation_visibility(&self, visible: bool) -> Result<()> {
-        self.validate_provisional_compensation_authority()?;
-        if unsafe { IsWindowVisible(self.hwnd).as_bool() } != visible {
+    fn set_provisional_compensation_visibility(
+        &self,
+        visible: bool,
+        authority: &RegisteredWindowAuthority,
+        placement_generation: Option<u64>,
+    ) -> Result<()> {
+        let hwnd = self.ensure_provisional_native_authority(
+            authority,
+            placement_generation,
+            "changing provisional compensation visibility",
+        )?;
+        if unsafe { IsWindowVisible(hwnd).as_bool() } != visible {
+            #[cfg(test)]
+            if !visible {
+                self.lifecycle_test_probe
+                    .record_provisional_compensation_hide();
+            }
             let visibility_flag = if visible {
                 SWP_SHOWWINDOW
             } else {
@@ -2153,7 +2467,7 @@ impl WindowsWindowInner {
             };
             unsafe {
                 SetWindowPos(
-                    self.hwnd,
+                    hwnd,
                     None,
                     0,
                     0,
@@ -2175,8 +2489,13 @@ impl WindowsWindowInner {
                 }
             })?;
         }
+        self.ensure_provisional_native_authority(
+            authority,
+            placement_generation,
+            "validating provisional compensation visibility",
+        )?;
         anyhow::ensure!(
-            unsafe { IsWindowVisible(self.hwnd).as_bool() } == visible,
+            unsafe { IsWindowVisible(hwnd).as_bool() } == visible,
             "provisional compensation did not establish the requested native visibility"
         );
         Ok(())
@@ -2185,6 +2504,8 @@ impl WindowsWindowInner {
     fn restore_provisional_physical_geometry(
         &self,
         expected: PlatformWindowPhysicalGeometry,
+        authority: &RegisteredWindowAuthority,
+        placement_generation: Option<u64>,
     ) -> Result<()> {
         let display_observation = expected
             .display_observation()
@@ -2202,7 +2523,17 @@ impl WindowsWindowInner {
         );
         let request = WindowPhysicalPlacementRequest::try_new(expected.client_bounds())
             .context("provisional rollback client geometry is not representable")?;
-        self.settle_physical_client_bounds_exactly(request)?;
+        self.ensure_provisional_native_authority(
+            authority,
+            placement_generation,
+            "restoring provisional physical client geometry",
+        )?;
+        self.settle_physical_client_bounds_exactly_for(request, authority)?;
+        self.ensure_provisional_native_authority(
+            authority,
+            placement_generation,
+            "validating restored provisional physical client geometry",
+        )?;
         let restored = self
             .physical_geometry_from_native()
             .context("failed to read provisional geometry after rollback")?;
@@ -2219,10 +2550,20 @@ impl WindowsWindowInner {
         Ok(())
     }
 
-    fn restore_provisional_rect(&self, rect: NativeRect) -> Result<()> {
+    fn restore_provisional_rect(
+        &self,
+        rect: NativeRect,
+        authority: &RegisteredWindowAuthority,
+        placement_generation: Option<u64>,
+    ) -> Result<()> {
+        let hwnd = self.ensure_provisional_native_authority(
+            authority,
+            placement_generation,
+            "restoring provisional native geometry",
+        )?;
         unsafe {
             SetWindowPos(
-                self.hwnd,
+                hwnd,
                 Some(HWND_TOP),
                 rect.left,
                 rect.top,
@@ -2232,14 +2573,29 @@ impl WindowsWindowInner {
             )
         }
         .context("failed to restore provisional native geometry after rejection")?;
+        self.ensure_provisional_native_authority(
+            authority,
+            placement_generation,
+            "validating restored provisional native geometry",
+        )?;
         anyhow::ensure!(
-            Self::native_rect(self.hwnd)? == Some(rect),
+            Self::native_rect(hwnd)? == Some(rect),
             "provisional native geometry did not restore exactly"
         );
         Ok(())
     }
 
-    fn restore_provisional_z_order(&self, rollback: ProvisionalPlacementRollback) -> Result<()> {
+    fn restore_provisional_z_order(
+        &self,
+        rollback: ProvisionalPlacementRollback,
+        authority: &RegisteredWindowAuthority,
+        placement_generation: Option<u64>,
+    ) -> Result<()> {
+        let hwnd = self.ensure_provisional_native_authority(
+            authority,
+            placement_generation,
+            "restoring provisional native z-order",
+        )?;
         let insert_after = if let Some(previous) = rollback.previous_above {
             anyhow::ensure!(
                 unsafe { IsWindow(Some(previous.hwnd)).as_bool() },
@@ -2257,7 +2613,7 @@ impl WindowsWindowInner {
         };
         unsafe {
             SetWindowPos(
-                self.hwnd,
+                hwnd,
                 Some(insert_after),
                 0,
                 0,
@@ -2267,7 +2623,13 @@ impl WindowsWindowInner {
             )
         }
         .context("failed to restore provisional native z-order after rejection")?;
-        let restored = self.capture_provisional_placement_rollback()?;
+        self.ensure_provisional_native_authority(
+            authority,
+            placement_generation,
+            "validating restored provisional native z-order",
+        )?;
+        let restored =
+            self.capture_provisional_placement_rollback(authority, placement_generation)?;
         anyhow::ensure!(
             restored.previous_above == rollback.previous_above
                 && restored.was_topmost == rollback.was_topmost,
@@ -2281,30 +2643,59 @@ impl WindowsWindowInner {
         applied: AppliedProvisionalFinalPlacement,
         authority: ProvisionalPlacementCompensationAuthority,
     ) -> Result<ProvisionalPlacementCompensation> {
-        if self.is_native_window_terminal()
-            || !unsafe { IsWindow(Some(self.hwnd)).as_bool() }
-            || self
-                .registered_window_snapshot(self.hwnd)?
-                .is_none_or(|current| !current.matches(self.registration))
-        {
+        if !self.provisional_native_authority_is_current(
+            &applied.native_authority,
+            applied.placement_generation,
+        ) {
             return Ok(ProvisionalPlacementCompensation::authority_changed());
         }
-        let _guard = ProvisionalPlacementCompensationGuard::begin(
-            &self.state.provisional_placement_compensation,
-        )?;
-        let current = match self.capture_provisional_placement_rollback() {
+        if authority == ProvisionalPlacementCompensationAuthority::RegisteredOnly
+            && self.state.native_placement_epoch() != applied.applied_epoch
+        {
+            self.set_provisional_compensation_visibility(
+                false,
+                &applied.native_authority,
+                applied.placement_generation,
+            )?;
+            return Ok(ProvisionalPlacementCompensation::authority_changed());
+        }
+        let current = match self.capture_provisional_placement_rollback(
+            &applied.native_authority,
+            applied.placement_generation,
+        ) {
             Ok(current) => current,
             Err(error) => {
-                self.set_provisional_compensation_visibility(false)?;
+                if !self.provisional_native_authority_is_current(
+                    &applied.native_authority,
+                    applied.placement_generation,
+                ) {
+                    return Ok(ProvisionalPlacementCompensation::authority_changed());
+                }
+                self.set_provisional_compensation_visibility(
+                    false,
+                    &applied.native_authority,
+                    applied.placement_generation,
+                )?;
                 return Err(error)
                     .context("failed to read provisional placement before compensation");
             }
         };
-        if self.state.native_placement_epoch() != applied.applied_epoch
-            || self.state.placement_mutation_generation.get() != applied.placement_generation
-            || current != applied.applied
+        if authority == ProvisionalPlacementCompensationAuthority::RegisteredOnly
+            && self.state.native_placement_epoch() != applied.applied_epoch
         {
-            self.set_provisional_compensation_visibility(false)?;
+            self.set_provisional_compensation_visibility(
+                false,
+                &applied.native_authority,
+                applied.placement_generation,
+            )?;
+            return Ok(ProvisionalPlacementCompensation::authority_changed());
+        }
+        if current != applied.applied {
+            self.set_provisional_compensation_visibility(
+                false,
+                &applied.native_authority,
+                applied.placement_generation,
+            )?;
             return Ok(ProvisionalPlacementCompensation::authority_changed());
         }
         if authority == ProvisionalPlacementCompensationAuthority::RegisteredOnly
@@ -2317,12 +2708,19 @@ impl WindowsWindowInner {
                     .previous_above
                     .is_some_and(|previous| previous.registered.is_none()))
         {
-            self.set_provisional_compensation_visibility(false)?;
+            self.set_provisional_compensation_visibility(
+                false,
+                &applied.native_authority,
+                applied.placement_generation,
+            )?;
             return Ok(ProvisionalPlacementCompensation::unproven());
         }
 
-        self.restore_provisional_placement_rollback_while_quiesced(applied.rollback)?;
-        Ok(ProvisionalPlacementCompensation::restored())
+        self.restore_provisional_placement_rollback_while_quiesced(
+            applied.rollback,
+            &applied.native_authority,
+            applied.placement_generation,
+        )
     }
 
     fn compensate_applied_provisional_final_placement(
@@ -2337,6 +2735,236 @@ impl WindowsWindowInner {
             Ok(outcome) if outcome.fully_restored() => {}
             Ok(outcome) => log::warn!("Windows only partially compensated {reason}: {outcome:?}"),
             Err(error) => log::error!("Windows failed to compensate {reason}: {error:#}"),
+        }
+    }
+
+    fn reveal_provisional_placement_successor(
+        &self,
+        attempt: &ProvisionalPlacementAttempt,
+        authority: &RegisteredWindowAuthority,
+    ) -> Result<()> {
+        anyhow::ensure!(
+            self.provisional_attempt_is_current(attempt),
+            "provisional placement successor lost its exact session generation"
+        );
+        let hwnd = self.ensure_provisional_native_authority(
+            authority,
+            Some(attempt.mutation_generation),
+            "revealing the current provisional placement successor",
+        )?;
+        if unsafe { !IsWindowVisible(hwnd).as_bool() } {
+            unsafe {
+                SetWindowPos(
+                    hwnd,
+                    None,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOACTIVATE
+                        | SWP_NOOWNERZORDER
+                        | SWP_NOMOVE
+                        | SWP_NOSIZE
+                        | SWP_NOZORDER
+                        | SWP_SHOWWINDOW,
+                )
+            }
+            .context("failed to reveal the current provisional placement successor")?;
+        }
+        anyhow::ensure!(
+            self.provisional_attempt_is_current(attempt)
+                && self.provisional_native_authority_is_current(
+                    authority,
+                    Some(attempt.mutation_generation),
+                )
+                && unsafe { IsWindowVisible(hwnd).as_bool() },
+            "provisional placement successor reveal lost its exact authority"
+        );
+        Ok(())
+    }
+
+    fn execute_provisional_placement_attempt(
+        self: &Rc<Self>,
+        attempt: ProvisionalPlacementAttempt,
+        rollback_origin: &mut Option<ProvisionalPlacementRollback>,
+        successor: bool,
+    ) {
+        let generation = attempt.mutation_generation;
+        let request_generation = attempt.request.generation();
+        if !self.provisional_attempt_is_current(&attempt) {
+            let _ = attempt.session.settle_native_final_placement(
+                self.handle.window_id(),
+                request_generation,
+                WindowProvisionalPlacementOutcome::Stale,
+            );
+            return;
+        }
+        let authority = match RegisteredWindowAuthority::capture(self) {
+            Ok(authority) => authority,
+            Err(_) => {
+                let _ = attempt.session.settle_native_final_placement(
+                    self.handle.window_id(),
+                    request_generation,
+                    WindowProvisionalPlacementOutcome::WindowTerminal,
+                );
+                return;
+            }
+        };
+        if successor
+            && let Err(error) = self.reveal_provisional_placement_successor(&attempt, &authority)
+        {
+            log::warn!("Windows provisional successor reveal failed: {error:#}");
+        }
+        if !self.provisional_attempt_is_current(&attempt) {
+            let _ = attempt.session.settle_native_final_placement(
+                self.handle.window_id(),
+                request_generation,
+                WindowProvisionalPlacementOutcome::Stale,
+            );
+            return;
+        }
+        let before_facts = match self.observed_platform_facts_from_native() {
+            Ok(facts) => facts,
+            Err(error) => {
+                log::warn!(
+                    "Windows provisional placement rejected before dispatch because native facts could not be read: {error:#}"
+                );
+                let _ = attempt.session.settle_native_final_placement(
+                    self.handle.window_id(),
+                    request_generation,
+                    WindowProvisionalPlacementOutcome::Rejected,
+                );
+                self.emit_window_mutation_observation(
+                    WindowMutationDomain::Placement,
+                    generation,
+                    PlatformWindowMutationTerminal::Rejected,
+                    self.last_validated_platform_facts(),
+                );
+                return;
+            }
+        };
+        if rollback_origin.is_none() {
+            match self.capture_provisional_placement_rollback(&authority, Some(generation)) {
+                Ok(rollback) => *rollback_origin = Some(rollback),
+                Err(error) => {
+                    log::warn!("Windows provisional rollback capture failed: {error:#}");
+                    let _ = attempt.session.settle_native_final_placement(
+                        self.handle.window_id(),
+                        request_generation,
+                        WindowProvisionalPlacementOutcome::Rejected,
+                    );
+                    self.emit_window_mutation_observation(
+                        WindowMutationDomain::Placement,
+                        generation,
+                        PlatformWindowMutationTerminal::Rejected,
+                        before_facts,
+                    );
+                    return;
+                }
+            }
+        }
+        let native_result = self.apply_provisional_final_placement(
+            &attempt.request,
+            authority,
+            (*rollback_origin).expect("provisional placement lane captured its rollback origin"),
+            Some(generation),
+        );
+        if !self.provisional_attempt_is_current(&attempt) {
+            if let Ok(applied) = native_result {
+                self.compensate_applied_provisional_final_placement(
+                    applied,
+                    "a stale provisional final placement",
+                );
+            }
+            let _ = attempt.session.settle_native_final_placement(
+                self.handle.window_id(),
+                request_generation,
+                WindowProvisionalPlacementOutcome::Stale,
+            );
+            return;
+        }
+        let applied = match native_result {
+            Ok(applied) => applied,
+            Err(error) => {
+                let _ = attempt.session.settle_native_final_placement(
+                    self.handle.window_id(),
+                    request_generation,
+                    WindowProvisionalPlacementOutcome::Rejected,
+                );
+                let (terminal, facts) = self.terminal_facts_after_mutation(
+                    "provisional final placement",
+                    Err(error),
+                    before_facts,
+                );
+                self.emit_window_mutation_observation(
+                    WindowMutationDomain::Placement,
+                    generation,
+                    terminal,
+                    facts,
+                );
+                return;
+            }
+        };
+        let platform_facts = applied.platform_facts();
+        let provisional_facts = applied.facts();
+        if attempt
+            .session
+            .record_native_final_placement(
+                self.handle.window_id(),
+                request_generation,
+                provisional_facts,
+            )
+            .is_err()
+        {
+            self.compensate_applied_provisional_final_placement(
+                applied,
+                "a provisional final placement rejected by its session authority",
+            );
+            let _ = attempt.session.settle_native_final_placement(
+                self.handle.window_id(),
+                request_generation,
+                WindowProvisionalPlacementOutcome::Rejected,
+            );
+            self.emit_window_mutation_observation(
+                WindowMutationDomain::Placement,
+                generation,
+                PlatformWindowMutationTerminal::Rejected,
+                before_facts,
+            );
+            return;
+        }
+        if attempt
+            .session
+            .settle_native_final_placement(
+                self.handle.window_id(),
+                request_generation,
+                WindowProvisionalPlacementOutcome::Settled,
+            )
+            .is_err()
+        {
+            self.compensate_applied_provisional_final_placement(
+                applied,
+                "a provisional final placement superseded before settlement",
+            );
+            return;
+        }
+        applied.commit();
+        self.emit_window_mutation_observation(
+            WindowMutationDomain::Placement,
+            generation,
+            PlatformWindowMutationTerminal::Observed,
+            platform_facts,
+        );
+    }
+
+    fn run_provisional_placement_lane(self: Rc<Self>, first: ProvisionalPlacementAttempt) {
+        let mut attempt = Some(first);
+        let mut rollback_origin = None;
+        let mut successor = false;
+        while let Some(current) = attempt {
+            self.execute_provisional_placement_attempt(current, &mut rollback_origin, successor);
+            attempt = self.state.provisional_placement_lane.finish_current();
+            successor = attempt.is_some();
         }
     }
 
@@ -2551,11 +3179,9 @@ impl WindowsWindowInner {
         session_generation: u64,
         presentation_generation: u64,
     ) -> PlatformWindowCommandOutcome {
-        if self.is_native_window_terminal()
-            || presentation_generation == 0
+        if presentation_generation == 0
             || self.provisional_reveal_generation.get().is_some()
             || self.state.initial_placement_phase.get() == InitialPlacementPhase::Presenting
-            || unsafe { IsWindowVisible(self.hwnd).as_bool() }
         {
             return PlatformWindowCommandOutcome::Rejected;
         }
@@ -2569,6 +3195,17 @@ impl WindowsWindowInner {
         {
             return PlatformWindowCommandOutcome::Rejected;
         }
+        let Ok(mut visibility_guard) = InitialPresentationVisibilityGuard::new(self) else {
+            return PlatformWindowCommandOutcome::Rejected;
+        };
+        let Ok(hwnd) = visibility_guard
+            .ensure_current("admitting the registered deferred initial presentation")
+        else {
+            return PlatformWindowCommandOutcome::Rejected;
+        };
+        if unsafe { IsWindowVisible(hwnd).as_bool() } {
+            return PlatformWindowCommandOutcome::Rejected;
+        }
         let Ok(request) =
             session.claim_native_reveal(self.handle.window_id(), presentation_generation)
         else {
@@ -2578,21 +3215,38 @@ impl WindowsWindowInner {
         let initial_physical_geometry = request.initial_physical_geometry();
         let peer_windows = request.peer_windows();
 
+        if visibility_guard
+            .ensure_current("sampling foreground before the registered provisional reveal")
+            .is_err()
+        {
+            return PlatformWindowCommandOutcome::Rejected;
+        }
         let foreground_before = unsafe { GetForegroundWindow() };
-        let visibility_guard = InitialPresentationVisibilityGuard::new(self.hwnd);
         let show_result = (|| {
             if let Some(expected) = initial_physical_geometry {
+                visibility_guard
+                    .ensure_current("reading registered provisional reveal geometry")?;
                 anyhow::ensure!(
                     self.physical_geometry_from_native()? == expected,
                     "provisional reveal target geometry changed after its accepted frame"
                 );
+                visibility_guard
+                    .ensure_current("validating registered provisional reveal geometry")?;
             }
+            visibility_guard.ensure_current("reading the registered provisional reveal frame")?;
             let requested_rect = Self::native_rect(self.hwnd)?
                 .context("provisional reveal has no live native window frame")?;
+            visibility_guard
+                .ensure_current("validating the registered provisional reveal frame")?;
             let prepared =
                 self.prepare_provisional_z_order_band(reveal_point, requested_rect, &peer_windows)?;
+            visibility_guard
+                .ensure_current("validating the registered provisional z-order band")?;
             let revealed_facts = self
-                .reveal_pending_initial_placement_without_geometry(prepared.insert_after())?
+                .reveal_pending_initial_placement_without_geometry(
+                    prepared.insert_after(),
+                    &mut visibility_guard,
+                )?
                 .context("provisional reveal lost its retained initial placement")?;
             let revealed_geometry = revealed_facts
                 .physical_geometry
@@ -2603,6 +3257,7 @@ impl WindowsWindowInner {
                 physical_client_bounds_exact,
                 "provisional reveal changed the accepted physical geometry"
             );
+            visibility_guard.ensure_current("verifying the registered provisional z-order band")?;
             Ok((
                 self.verify_provisional_z_order_band(&prepared),
                 physical_client_bounds_exact,
@@ -2611,7 +3266,8 @@ impl WindowsWindowInner {
         if let Err(error) = show_result.as_ref() {
             log::error!("failed to reveal deferred provisional presentation: {error:#}");
         }
-        let native_visible = unsafe { IsWindowVisible(self.hwnd).as_bool() };
+        let authority_current = visibility_guard.authority().is_current();
+        let native_visible = authority_current && unsafe { IsWindowVisible(self.hwnd).as_bool() };
         let physical_client_bounds_exact = show_result
             .as_ref()
             .map(|(_, exact)| *exact)
@@ -2622,9 +3278,9 @@ impl WindowsWindowInner {
             .unwrap_or(WindowProvisionalRevealZOrder::Unavailable);
         let facts = WindowProvisionalRevealNativeFacts::new(
             native_visible,
-            unsafe { GetForegroundWindow() } == foreground_before,
-            self.provisional_native_hit_is_transparent(reveal_point),
-            true,
+            authority_current && unsafe { GetForegroundWindow() } == foreground_before,
+            authority_current && self.provisional_native_hit_is_transparent(reveal_point),
+            authority_current,
             physical_client_bounds_exact,
             z_order,
         );
@@ -2638,7 +3294,7 @@ impl WindowsWindowInner {
         {
             self.provisional_reveal_generation
                 .set(Some(presentation_generation));
-            visibility_guard.commit();
+            visibility_guard.disarm();
             PlatformWindowCommandOutcome::Accepted
         } else {
             PlatformWindowCommandOutcome::Rejected
@@ -2924,6 +3580,16 @@ impl WindowsWindowInner {
         })
     }
 
+    fn capture_window_placement_snapshot_for(
+        &self,
+        authority: &RegisteredWindowAuthority,
+    ) -> Result<WindowPlacementRollbackSnapshot> {
+        authority.ensure_current("capturing registered window-placement rollback state")?;
+        let snapshot = self.capture_window_placement_snapshot()?;
+        authority.ensure_current("validating registered window-placement rollback state")?;
+        Ok(snapshot)
+    }
+
     fn restore_window_placement_snapshot(
         &self,
         snapshot: WindowPlacementRollbackSnapshot,
@@ -2972,6 +3638,93 @@ impl WindowsWindowInner {
             .scale_factor
             .set(physical_geometry.scale_factor());
         self.state.border_offset.update_restored(self.hwnd)?;
+        Ok(())
+    }
+
+    fn restore_window_placement_snapshot_for(
+        &self,
+        snapshot: WindowPlacementRollbackSnapshot,
+        authority: &RegisteredWindowAuthority,
+    ) -> Result<()> {
+        let hwnd = authority.ensure_current("starting registered window-placement rollback")?;
+        self.state.border_offset.restore(snapshot.border_offset);
+
+        authority.ensure_current("restoring registered window style")?;
+        self.set_window_long_checked(
+            GWL_STYLE,
+            snapshot.style_and_bounds.style.0 as isize,
+            "failed to restore registered window style",
+        )?;
+        authority.ensure_current("validating restored registered window style")?;
+
+        let style_and_bounds = snapshot.style_and_bounds;
+        unsafe {
+            SetWindowPos(
+                hwnd,
+                None,
+                style_and_bounds.x,
+                style_and_bounds.y,
+                style_and_bounds.cx,
+                style_and_bounds.cy,
+                SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOZORDER,
+            )
+        }
+        .context("failed to restore registered window bounds")?;
+        authority.ensure_current("validating restored registered window bounds")?;
+
+        let mut placement = snapshot.placement;
+        if !snapshot.visible {
+            placement.showCmd = SW_HIDE.0 as u32;
+        }
+        authority.ensure_current("restoring registered native window placement")?;
+        unsafe { SetWindowPlacement(hwnd, &placement) }
+            .context("failed to restore registered native window placement")?;
+        authority.ensure_current("validating restored registered native window placement")?;
+        if !snapshot.visible {
+            unsafe {
+                let _ = ShowWindow(hwnd, SW_HIDE);
+            }
+            authority.ensure_current("validating hidden registered rollback visibility")?;
+        }
+
+        self.state.fullscreen.set(snapshot.fullscreen);
+        self.state
+            .fullscreen_restore_bounds
+            .set(snapshot.fullscreen_restore_bounds);
+        authority.ensure_current("restoring registered fullscreen shell state")?;
+        set_non_rude_hwnd(hwnd, snapshot.non_rude_hwnd)?;
+        authority.ensure_current("validating restored registered fullscreen shell state")?;
+
+        authority.ensure_current("reading registered geometry after placement rollback")?;
+        let physical_geometry = self
+            .physical_geometry_from_native()
+            .context("failed to read registered geometry restored by placement rollback")?;
+        authority.ensure_current("validating registered geometry after placement rollback")?;
+        let display_observation = physical_geometry
+            .display_observation()
+            .context("restored registered geometry did not identify its display")?;
+        let coordinator = self
+            .native_retirement_coordinator
+            .upgrade()
+            .context("Windows platform topology authority is no longer available")?;
+        let display_snapshot = coordinator
+            .exact_display_topology_snapshot()
+            .context("display topology is unavailable")?;
+        anyhow::ensure!(
+            display_snapshot.generation() == display_observation.topology_generation(),
+            "display topology changed while registered placement rollback was committed"
+        );
+        let display = display_snapshot
+            .display(display_observation.display_id())
+            .context("restored registered native display is no longer available")?;
+        self.state
+            .set_display_binding(display, display_snapshot.generation());
+        self.state
+            .scale_factor
+            .set(physical_geometry.scale_factor());
+        authority.ensure_current("reading the restored registered non-client frame")?;
+        self.state.border_offset.update_restored(hwnd)?;
+        authority.ensure_current("validating the restored registered non-client frame")?;
         Ok(())
     }
 
@@ -3232,28 +3985,69 @@ impl WindowsWindowInner {
         Ok(())
     }
 
-    fn apply_provisional_final_placement(
+    fn reject_provisional_apply_with_rollback<T>(
         &self,
+        error: anyhow::Error,
+        rollback_context: &str,
+        rollback: ProvisionalPlacementRollback,
+        authority: &RegisteredWindowAuthority,
+        placement_generation: Option<u64>,
+    ) -> Result<T> {
+        match self.restore_provisional_placement_rollback_while_quiesced(
+            rollback,
+            authority,
+            placement_generation,
+        ) {
+            Ok(outcome) if outcome.fully_restored() => Err(error),
+            Ok(outcome) => Err(error).context(format!(
+                "{rollback_context} did not retain rollback authority: {outcome:?}"
+            )),
+            Err(rollback_error) => Err(error).context(format!(
+                "{rollback_context} also failed: {rollback_error:#}"
+            )),
+        }
+    }
+
+    fn apply_provisional_final_placement(
+        self: &Rc<Self>,
         request: &WindowProvisionalPlacementRequest,
+        native_authority: RegisteredWindowAuthority,
+        rollback: ProvisionalPlacementRollback,
+        placement_generation: Option<u64>,
     ) -> Result<AppliedProvisionalFinalPlacement> {
+        let hwnd = self.ensure_provisional_native_authority(
+            &native_authority,
+            placement_generation,
+            "starting provisional final placement",
+        )?;
+        let visible = unsafe { IsWindowVisible(hwnd).as_bool() };
+        let iconic = unsafe { IsIconic(hwnd).as_bool() };
+        let zoomed = unsafe { IsZoomed(hwnd).as_bool() };
+        self.ensure_provisional_native_authority(
+            &native_authority,
+            placement_generation,
+            "validating provisional final-placement window state",
+        )?;
         anyhow::ensure!(
-            !self.is_native_window_terminal()
-                && unsafe { IsWindowVisible(self.hwnd).as_bool() }
-                && !unsafe { IsIconic(self.hwnd).as_bool() }
-                && !unsafe { IsZoomed(self.hwnd).as_bool() }
-                && !self.state.is_fullscreen(),
+            visible && !iconic && !zoomed && !self.state.is_fullscreen(),
             "final provisional placement requires one visible windowed native window"
         );
         anyhow::ensure!(
             self.provisional_reveal_generation.get().is_some(),
             "final provisional placement requires an accepted native reveal"
         );
-        let _guard = ProvisionalPlacementCompensationGuard::begin(
-            &self.state.provisional_placement_compensation,
+        self.ensure_provisional_native_authority(
+            &native_authority,
+            placement_generation,
+            "projecting provisional final-placement client bounds",
         )?;
-        let rollback = self.capture_provisional_placement_rollback()?;
         let rect =
             self.initial_window_rect_for_physical_client_bounds(request.physical_request())?;
+        self.ensure_provisional_native_authority(
+            &native_authority,
+            placement_generation,
+            "validating provisional final-placement client projection",
+        )?;
         let requested_rect = NativeRect::try_from_rect(rect)
             .context("final provisional placement is empty or inverted")?;
         let prepared = self.prepare_provisional_z_order_band(
@@ -3261,14 +4055,20 @@ impl WindowsWindowInner {
             requested_rect,
             request.peer_windows(),
         )?;
-        let registration_before = self
-            .registered_window_snapshot(self.hwnd)?
-            .filter(|current| current.matches(self.registration))
-            .context("provisional native-window registration is stale")?;
+        self.ensure_provisional_native_authority(
+            &native_authority,
+            placement_generation,
+            "validating provisional final-placement z-order authority",
+        )?;
         let foreground_before = unsafe { GetForegroundWindow() };
+        self.ensure_provisional_native_authority(
+            &native_authority,
+            placement_generation,
+            "applying provisional final placement",
+        )?;
         let set_window_pos = unsafe {
             SetWindowPos(
-                self.hwnd,
+                hwnd,
                 Some(prepared.insert_after()),
                 rect.left,
                 rect.top,
@@ -3279,136 +4079,164 @@ impl WindowsWindowInner {
         }
         .context("failed to atomically place the provisional window in its final z-order band");
         if let Err(error) = set_window_pos {
-            if let Err(rollback_error) =
-                self.restore_provisional_placement_rollback_while_quiesced(rollback)
-            {
-                return Err(error).context(format!(
-                    "provisional placement rollback also failed: {rollback_error:#}"
-                ));
-            }
-            return Err(error);
+            return self.reject_provisional_apply_with_rollback(
+                error,
+                "provisional placement rollback",
+                rollback,
+                &native_authority,
+                placement_generation,
+            );
+        }
+        if !self.provisional_native_authority_is_current(&native_authority, placement_generation) {
+            anyhow::bail!("provisional placement was superseded during its native mutation");
         }
 
-        if let Err(error) = self.settle_physical_client_bounds_exactly(request.physical_request()) {
-            if let Err(rollback_error) =
-                self.restore_provisional_placement_rollback_while_quiesced(rollback)
-            {
-                return Err(error).context(format!(
-                    "provisional DPI convergence rollback also failed: {rollback_error:#}"
-                ));
-            }
-            return Err(error);
+        if let Err(error) = self.settle_physical_client_bounds_exactly_for(
+            request.physical_request(),
+            &native_authority,
+        ) {
+            return self.reject_provisional_apply_with_rollback(
+                error,
+                "provisional DPI convergence rollback",
+                rollback,
+                &native_authority,
+                placement_generation,
+            );
+        }
+        if !self.provisional_native_authority_is_current(&native_authority, placement_generation) {
+            anyhow::bail!("provisional placement was superseded during DPI convergence");
         }
 
         let observation_epoch = self.state.native_placement_epoch();
         let z_order = self.verify_provisional_z_order_band(&prepared);
+        if !self.provisional_native_authority_is_current(&native_authority, placement_generation) {
+            anyhow::bail!("provisional placement was superseded during z-order validation");
+        }
         let platform_facts = match self.observed_platform_facts_from_native() {
             Ok(facts) => facts,
             Err(error) => {
-                if self.state.native_placement_epoch() != observation_epoch {
-                    self.set_provisional_compensation_visibility(false)?;
+                if self.state.native_placement_epoch() != observation_epoch
+                    || !self.provisional_native_authority_is_current(
+                        &native_authority,
+                        placement_generation,
+                    )
+                {
                     return Err(error).context(
-                        "failed to observe the applied provisional placement after native authority changed; the window remains hidden",
+                        "failed to observe the applied provisional placement after native authority changed",
                     );
                 }
-                if let Err(rollback_error) =
-                    self.restore_provisional_placement_rollback_while_quiesced(rollback)
-                {
-                    return Err(error).context(format!(
-                        "failed to observe the applied provisional placement and rollback also failed: {rollback_error:#}"
-                    ));
-                }
-                return Err(error)
-                    .context("failed to observe the applied provisional placement authority");
+                return self.reject_provisional_apply_with_rollback(
+                    error.context("failed to observe the applied provisional placement authority"),
+                    "provisional fact-readback rollback",
+                    rollback,
+                    &native_authority,
+                    placement_generation,
+                );
             }
         };
+        self.ensure_provisional_native_authority(
+            &native_authority,
+            placement_generation,
+            "validating provisional platform facts",
+        )?;
         let physical_geometry_exact = platform_facts
             .physical_geometry
             .is_some_and(|geometry| request.physical_request().matches_geometry(geometry));
-        let stable_native_window_identity = self
-            .registered_window_snapshot(self.hwnd)
-            .ok()
-            .flatten()
-            .is_some_and(|current| {
-                current.matches(registration_before) && current.matches(self.registration)
-            });
+        let native_visible = unsafe { IsWindowVisible(hwnd).as_bool() };
+        let foreground_unchanged = unsafe { GetForegroundWindow() } == foreground_before;
+        let native_hit_transparent =
+            self.provisional_native_hit_is_transparent(request.anchor_point());
+        let stable_native_window_identity =
+            self.provisional_native_authority_is_current(&native_authority, placement_generation);
         let facts = WindowProvisionalPlacementNativeFacts::new(
             physical_geometry_exact,
-            unsafe { IsWindowVisible(self.hwnd).as_bool() },
-            unsafe { GetForegroundWindow() } == foreground_before,
-            self.provisional_native_hit_is_transparent(request.anchor_point()),
+            native_visible,
+            foreground_unchanged,
+            native_hit_transparent,
             stable_native_window_identity,
             z_order,
         );
-        if self.state.native_placement_epoch() != observation_epoch {
-            self.set_provisional_compensation_visibility(false)?;
+        if self.state.native_placement_epoch() != observation_epoch
+            || !self
+                .provisional_native_authority_is_current(&native_authority, placement_generation)
+        {
             return Err(anyhow::anyhow!(
-                "native provisional placement authority changed during fact validation; the window remains hidden"
+                "native provisional placement authority changed during fact validation"
             ));
         }
         if !facts.accepts_placement() {
-            if let Err(rollback_error) =
-                self.restore_provisional_placement_rollback_while_quiesced(rollback)
-            {
-                return Err(anyhow::anyhow!(
-                    "native provisional placement facts were incomplete ({facts:?}) and rollback failed: {rollback_error:#}"
-                ));
-            }
-            return Err(anyhow::anyhow!(
-                "native provisional placement did not establish every mandatory fact: {facts:?}"
-            ));
+            return self.reject_provisional_apply_with_rollback(
+                anyhow::anyhow!(
+                    "native provisional placement did not establish every mandatory fact: {facts:?}"
+                ),
+                "incomplete provisional-facts rollback",
+                rollback,
+                &native_authority,
+                placement_generation,
+            );
         }
-        let applied = match self.capture_provisional_placement_rollback() {
+        let applied = match self
+            .capture_provisional_placement_rollback(&native_authority, placement_generation)
+        {
             Ok(applied) => applied,
             Err(error) => {
-                if self.state.native_placement_epoch() != observation_epoch {
-                    self.set_provisional_compensation_visibility(false)?;
+                if self.state.native_placement_epoch() != observation_epoch
+                    || !self.provisional_native_authority_is_current(
+                        &native_authority,
+                        placement_generation,
+                    )
+                {
                     return Err(error).context(
-                        "failed to capture the applied provisional placement after native authority changed; the window remains hidden",
+                        "failed to capture the applied provisional placement after native authority changed",
                     );
                 }
-                if let Err(rollback_error) =
-                    self.restore_provisional_placement_rollback_while_quiesced(rollback)
-                {
-                    return Err(error).context(format!(
-                        "failed to capture the applied provisional placement and rollback also failed: {rollback_error:#}"
-                    ));
-                }
-                return Err(error)
-                    .context("failed to capture the applied provisional placement authority");
+                return self.reject_provisional_apply_with_rollback(
+                    error.context("failed to capture the applied provisional placement authority"),
+                    "applied provisional-authority rollback",
+                    rollback,
+                    &native_authority,
+                    placement_generation,
+                );
             }
         };
-        if self.state.native_placement_epoch() != observation_epoch {
-            self.set_provisional_compensation_visibility(false)?;
+        if self.state.native_placement_epoch() != observation_epoch
+            || !self
+                .provisional_native_authority_is_current(&native_authority, placement_generation)
+        {
             return Err(anyhow::anyhow!(
-                "native placement changed while its committed rollback authority was captured; the window remains hidden"
+                "native placement changed while its committed rollback authority was captured"
             ));
         }
         Ok(AppliedProvisionalFinalPlacement {
             facts,
             platform_facts,
+            native_authority,
             rollback,
             applied,
             applied_epoch: observation_epoch,
-            placement_generation: self.state.placement_mutation_generation.get(),
+            placement_generation,
         })
     }
 
     #[cfg(test)]
     pub(crate) fn apply_provisional_final_placement_for_test(
-        &self,
+        self: &Rc<Self>,
         request: &WindowProvisionalPlacementRequest,
     ) -> Result<WindowProvisionalPlacementNativeFacts> {
-        self.apply_provisional_final_placement(request)
+        let authority = RegisteredWindowAuthority::capture(self)?;
+        let rollback = self.capture_provisional_placement_rollback(&authority, None)?;
+        self.apply_provisional_final_placement(request, authority, rollback, None)
             .map(AppliedProvisionalFinalPlacement::commit)
     }
 
     #[cfg(test)]
     pub(crate) fn apply_and_rollback_provisional_final_placement_for_test(
-        &self,
+        self: &Rc<Self>,
         request: &WindowProvisionalPlacementRequest,
     ) -> Result<WindowProvisionalPlacementNativeFacts> {
-        let applied = self.apply_provisional_final_placement(request)?;
+        let authority = RegisteredWindowAuthority::capture(self)?;
+        let rollback = self.capture_provisional_placement_rollback(&authority, None)?;
+        let applied = self.apply_provisional_final_placement(request, authority, rollback, None)?;
         let facts = applied.facts();
         let compensation = self.rollback_applied_provisional_final_placement(
             applied,
@@ -3423,14 +4251,19 @@ impl WindowsWindowInner {
 
     #[cfg(test)]
     pub(crate) fn provisional_delayed_rollback_rejects_native_rect_aba_for_test(
-        &self,
+        self: &Rc<Self>,
         request: &WindowProvisionalPlacementRequest,
     ) -> Result<()> {
-        let applied = self.apply_provisional_final_placement(request)?;
+        let authority = RegisteredWindowAuthority::capture(self)?;
+        let rollback = self.capture_provisional_placement_rollback(&authority, None)?;
+        let applied =
+            self.apply_provisional_final_placement(request, authority.clone(), rollback, None)?;
         let applied_rect = applied.applied.rect;
+        let hwnd =
+            authority.ensure_current("applying the newer native placement used by the ABA test")?;
         unsafe {
             SetWindowPos(
-                self.hwnd,
+                hwnd,
                 Some(HWND_TOP),
                 applied_rect.left + 17,
                 applied_rect.top + 13,
@@ -3440,7 +4273,8 @@ impl WindowsWindowInner {
             )
         }
         .context("failed to apply the newer native placement used by the ABA test")?;
-        self.restore_provisional_rect(applied_rect)
+        authority.ensure_current("validating the newer native placement used by the ABA test")?;
+        self.restore_provisional_rect(applied_rect, &authority, None)
             .context("failed to restore the applied value used by the ABA test")?;
 
         let compensation = self.rollback_applied_provisional_final_placement(
@@ -3456,8 +4290,8 @@ impl WindowsWindowInner {
             "a rejected delayed compensation must preserve the newer native authority"
         );
         anyhow::ensure!(
-            !unsafe { IsWindowVisible(self.hwnd).as_bool() },
-            "an authority-changing delayed compensation must remain hidden"
+            unsafe { !IsWindowVisible(self.hwnd).as_bool() },
+            "unknown native placement ABA must leave the current registered window hidden"
         );
         Ok(())
     }
@@ -4499,9 +5333,34 @@ impl WindowsWindowInner {
         &self,
         request: WindowPhysicalPlacementRequest,
     ) -> Result<PlatformWindowPhysicalGeometry> {
+        self.settle_physical_client_bounds_exactly_with_authority(request, None)
+    }
+
+    fn settle_physical_client_bounds_exactly_for(
+        &self,
+        request: WindowPhysicalPlacementRequest,
+        authority: &RegisteredWindowAuthority,
+    ) -> Result<PlatformWindowPhysicalGeometry> {
+        self.settle_physical_client_bounds_exactly_with_authority(request, Some(authority))
+    }
+
+    fn settle_physical_client_bounds_exactly_with_authority(
+        &self,
+        request: WindowPhysicalPlacementRequest,
+        authority: Option<&RegisteredWindowAuthority>,
+    ) -> Result<PlatformWindowPhysicalGeometry> {
+        if let Some(authority) = authority {
+            authority.ensure_current("validating registered physical-placement target")?;
+        }
         self.validate_physical_placement_target(request)?;
         let client_bounds = request.client_bounds();
+        if let Some(authority) = authority {
+            authority.ensure_current("reading registered physical client geometry")?;
+        }
         let observed = self.physical_geometry_from_native()?;
+        if let Some(authority) = authority {
+            authority.ensure_current("validating registered physical client geometry")?;
+        }
         if request.matches_geometry(observed) {
             return Ok(observed);
         }
@@ -4509,7 +5368,13 @@ impl WindowsWindowInner {
         // Crossing a DPI boundary synchronously dispatches WM_DPICHANGED. The handler applies
         // Windows' suggested frame before the outer SetWindowPos returns, so derive one exact
         // correction from the now-current target-DPI frame instead of retrying on a timer.
+        if let Some(authority) = authority {
+            authority.ensure_current("reading the registered physical frame for correction")?;
+        }
         let corrected = self.window_rect_for_current_physical_frame(client_bounds)?;
+        if let Some(authority) = authority {
+            authority.ensure_current("applying the registered physical-frame correction")?;
+        }
         unsafe {
             SetWindowPos(
                 self.hwnd,
@@ -4522,9 +5387,18 @@ impl WindowsWindowInner {
             )
         }
         .context("failed to converge the native client bounds at the target DPI")?;
+        if let Some(authority) = authority {
+            authority.ensure_current("validating the registered physical-frame correction")?;
+        }
 
         self.validate_physical_placement_target(request)?;
+        if let Some(authority) = authority {
+            authority.ensure_current("reading corrected registered physical geometry")?;
+        }
         let observed = self.physical_geometry_from_native()?;
+        if let Some(authority) = authority {
+            authority.ensure_current("validating corrected registered physical geometry")?;
+        }
         anyhow::ensure!(
             request.matches_geometry(observed),
             "native physical client geometry did not converge exactly on the target display"
@@ -4671,6 +5545,57 @@ impl WindowsWindowInner {
 
     fn placement_mutation_is_current(&self, generation: u64) -> bool {
         self.state.placement_mutation_generation.get() == Some(generation)
+    }
+
+    fn provisional_attempt_is_current(&self, attempt: &ProvisionalPlacementAttempt) -> bool {
+        if !self.placement_mutation_is_current(attempt.mutation_generation) {
+            return false;
+        }
+        let Some(owned_session) = self.provisional_session.as_ref() else {
+            return false;
+        };
+        let owned_snapshot = owned_session.snapshot();
+        let attempt_snapshot = attempt.session.snapshot();
+        if owned_snapshot.generation() != attempt_snapshot.generation()
+            || owned_snapshot.window_id() != Some(self.handle.window_id())
+            || attempt_snapshot.window_id() != Some(self.handle.window_id())
+        {
+            return false;
+        }
+        matches!(
+            attempt.session.final_placement_request(
+                self.handle.window_id(),
+                attempt.request.generation(),
+            ),
+            Ok(current) if current == attempt.request
+        )
+    }
+
+    fn provisional_native_authority_is_current(
+        &self,
+        authority: &RegisteredWindowAuthority,
+        placement_generation: Option<u64>,
+    ) -> bool {
+        authority.is_current()
+            && placement_generation.is_none_or(|generation| {
+                self.state.placement_mutation_generation.get() == Some(generation)
+            })
+    }
+
+    fn ensure_provisional_native_authority(
+        &self,
+        authority: &RegisteredWindowAuthority,
+        placement_generation: Option<u64>,
+        operation: &str,
+    ) -> Result<HWND> {
+        let hwnd = authority.ensure_current(operation)?;
+        if let Some(generation) = placement_generation {
+            anyhow::ensure!(
+                self.state.placement_mutation_generation.get() == Some(generation),
+                "{operation} rejected stale provisional placement generation {generation}"
+            );
+        }
+        Ok(hwnd)
     }
 
     fn pointer_input_mutation_is_current(&self, generation: u64) -> bool {
@@ -5146,7 +6071,7 @@ impl WindowsWindow {
         if !self.0.placement_mutation_is_current(generation) {
             return PlatformWindowDispatch::Rejected;
         }
-        if self.0.state.provisional_placement_compensation.get() {
+        if self.0.state.provisional_placement_lane.is_active() {
             return PlatformWindowDispatch::Rejected;
         }
         if self.0.initial_placement_accepts_deferred_mutation() {
@@ -5264,9 +6189,7 @@ impl WindowsWindow {
             return PlatformWindowDispatch::Rejected;
         };
         if !self.0.placement_mutation_is_current(generation)
-            || self.0.state.provisional_placement_compensation.get()
             || self.0.initial_placement_accepts_deferred_mutation()
-            || unsafe { !IsWindowVisible(self.0.hwnd).as_bool() }
             || !matches!(
                 session.final_placement_request(self.handle.window_id(), request.generation()),
                 Ok(current) if current == request
@@ -5279,163 +6202,30 @@ impl WindowsWindow {
             );
             return PlatformWindowDispatch::Rejected;
         }
-
-        let this = self.0.clone();
-        let executor = this.executor.clone();
-        executor
-            .spawn(async move {
-                if !this.placement_mutation_is_current(generation) {
-                    let _ = session.settle_native_final_placement(
-                        this.handle.window_id(),
-                        request.generation(),
-                        WindowProvisionalPlacementOutcome::Stale,
-                    );
-                    return;
-                }
-                if unsafe { !IsWindow(Some(this.hwnd)).as_bool() } {
-                    let _ = session.settle_native_final_placement(
-                        this.handle.window_id(),
-                        request.generation(),
-                        WindowProvisionalPlacementOutcome::WindowTerminal,
-                    );
-                    return;
-                }
-                let before_facts = match this.observed_platform_facts_from_native() {
-                    Ok(facts) => facts,
-                    Err(error) => {
-                        log::warn!(
-                            "Windows provisional placement rejected before dispatch because native facts could not be read: {error:#}"
-                        );
-                        let _ = session.settle_native_final_placement(
-                            this.handle.window_id(),
-                            request.generation(),
-                            WindowProvisionalPlacementOutcome::Rejected,
-                        );
-                        this.emit_window_mutation_observation(
-                            WindowMutationDomain::Placement,
-                            generation,
-                            PlatformWindowMutationTerminal::Rejected,
-                            this.last_validated_platform_facts(),
-                        );
-                        return;
-                    }
-                };
-                let native_result = this.apply_provisional_final_placement(&request);
-                if !this.placement_mutation_is_current(generation) {
-                    if let Ok(applied) = native_result {
-                        this.compensate_applied_provisional_final_placement(
-                            applied,
-                            "a stale provisional final placement",
-                        );
-                    }
-                    let _ = session.settle_native_final_placement(
-                        this.handle.window_id(),
-                        request.generation(),
-                        WindowProvisionalPlacementOutcome::Stale,
-                    );
-                    return;
-                }
-                if unsafe { !IsWindow(Some(this.hwnd)).as_bool() } {
-                    let _ = session.settle_native_final_placement(
-                        this.handle.window_id(),
-                        request.generation(),
-                        WindowProvisionalPlacementOutcome::WindowTerminal,
-                    );
-                    return;
-                }
-                let applied = match native_result {
-                    Ok(applied) => applied,
-                    Err(error) => {
-                        let _ = session.settle_native_final_placement(
-                            this.handle.window_id(),
-                            request.generation(),
-                            WindowProvisionalPlacementOutcome::Rejected,
-                        );
-                        let (terminal, facts) = this.terminal_facts_after_mutation(
-                            "provisional final placement",
-                            Err(error),
-                            before_facts,
-                        );
-                        this.emit_window_mutation_observation(
-                            WindowMutationDomain::Placement,
-                            generation,
-                            terminal,
-                            facts,
-                        );
-                        return;
-                    }
-                };
-
-                let platform_facts = applied.platform_facts();
-
-                if !this.placement_mutation_is_current(generation) {
-                    this.compensate_applied_provisional_final_placement(
-                        applied,
-                        "a provisional final placement superseded during native fact readback",
-                    );
-                    let _ = session.settle_native_final_placement(
-                        this.handle.window_id(),
-                        request.generation(),
-                        WindowProvisionalPlacementOutcome::Stale,
-                    );
-                    return;
-                }
-                if unsafe { !IsWindow(Some(this.hwnd)).as_bool() } {
-                    let _ = session.settle_native_final_placement(
-                        this.handle.window_id(),
-                        request.generation(),
-                        WindowProvisionalPlacementOutcome::WindowTerminal,
-                    );
-                    return;
-                }
-
-                let provisional_facts = applied.facts();
-                let recorded = session
-                    .record_native_final_placement(
-                        this.handle.window_id(),
-                        request.generation(),
-                        provisional_facts,
-                    )
-                    .is_ok();
-                let settled = recorded
-                    && session
-                        .settle_native_final_placement(
-                            this.handle.window_id(),
-                            request.generation(),
-                            WindowProvisionalPlacementOutcome::Settled,
-                        )
-                        .is_ok();
-                if !settled {
-                    this.compensate_applied_provisional_final_placement(
-                        applied,
-                        "a provisional final placement rejected by its session authority",
-                    );
-                    let _ = session.settle_native_final_placement(
-                        this.handle.window_id(),
-                        request.generation(),
+        let attempt = ProvisionalPlacementAttempt {
+            mutation_generation: generation,
+            session,
+            request,
+        };
+        match self.0.state.provisional_placement_lane.admit(attempt) {
+            ProvisionalPlacementLaneAdmission::Queued => return PlatformWindowDispatch::Queued,
+            ProvisionalPlacementLaneAdmission::Start(first) => {
+                if unsafe { !IsWindowVisible(self.0.hwnd).as_bool() } {
+                    let _ = self.0.state.provisional_placement_lane.finish_current();
+                    let _ = first.session.settle_native_final_placement(
+                        self.handle.window_id(),
+                        first.request.generation(),
                         WindowProvisionalPlacementOutcome::Rejected,
                     );
-                    let facts = this
-                        .observed_platform_facts_from_native()
-                        .unwrap_or(before_facts);
-                    this.emit_window_mutation_observation(
-                        WindowMutationDomain::Placement,
-                        generation,
-                        PlatformWindowMutationTerminal::Rejected,
-                        facts,
-                    );
-                    return;
+                    return PlatformWindowDispatch::Rejected;
                 }
-
-                applied.commit();
-                this.emit_window_mutation_observation(
-                    WindowMutationDomain::Placement,
-                    generation,
-                    PlatformWindowMutationTerminal::Observed,
-                    platform_facts,
-                );
-            })
-            .detach();
+                let this = self.0.clone();
+                let executor = this.executor.clone();
+                executor
+                    .spawn(async move { this.run_provisional_placement_lane(first) })
+                    .detach();
+            }
+        }
         PlatformWindowDispatch::Queued
     }
 
@@ -5768,7 +6558,7 @@ impl PlatformWindow for WindowsWindow {
         if !self.0.placement_mutation_is_current(generation) {
             return PlatformWindowDispatch::Rejected;
         }
-        if self.0.state.provisional_placement_compensation.get() {
+        if self.0.state.provisional_placement_lane.is_active() {
             return PlatformWindowDispatch::Rejected;
         }
         if self.0.initial_placement_accepts_deferred_mutation() {

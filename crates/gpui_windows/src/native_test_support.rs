@@ -11,9 +11,10 @@ use open_gpui::{
     WindowMutationDispatch, WindowMutationOutcome, WindowMutationTicket, WindowOptions,
     WindowPhysicalPlacementRequest, WindowProvisionalPlacementOutcome,
     WindowProvisionalPlacementPurpose, WindowProvisionalPlacementRequest,
-    WindowProvisionalRevealOutcome, WindowProvisionalRevealZOrder,
-    WindowProvisionalSemanticsOutcome, WindowProvisionalSemanticsTicket, WindowProvisionalSession,
-    canvas, div, point, px, size, white,
+    WindowProvisionalPlacementTicket, WindowProvisionalRevealOutcome,
+    WindowProvisionalRevealZOrder, WindowProvisionalSemanticsOutcome,
+    WindowProvisionalSemanticsTicket, WindowProvisionalSession, canvas, div, point, px, size,
+    white,
 };
 use std::{
     cell::{Cell, RefCell},
@@ -37,18 +38,19 @@ use windows::Win32::{
         WindowsAndMessaging::{
             CreateWindowExW, DestroyWindow, DispatchMessageW, GW_HWNDFIRST, GW_HWNDNEXT,
             GW_HWNDPREV, GW_OWNER, GWL_EXSTYLE, GWL_STYLE, GetClientRect, GetCursorPos,
-            GetForegroundWindow, GetMessageExtraInfo, GetSystemMetrics, GetWindow, GetWindowRect,
-            HTCLIENT, HTTRANSPARENT, HWND_MESSAGE, HWND_TOPMOST, IsWindow, IsWindowVisible,
-            IsZoomed, MA_NOACTIVATE, MA_NOACTIVATEANDEAT, MSG, PM_REMOVE, PeekMessageW,
-            PostMessageW, SIZE_MINIMIZED, SIZE_RESTORED, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
-            SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SPI_SETWORKAREA, SWP_NOACTIVATE, SWP_NOMOVE,
+            GetForegroundWindow, GetMessageExtraInfo, GetSystemMetrics, GetWindow,
+            GetWindowPlacement, GetWindowRect, HTCLIENT, HTTRANSPARENT, HWND_MESSAGE, HWND_TOPMOST,
+            IsWindow, IsWindowVisible, IsZoomed, MA_NOACTIVATE, MA_NOACTIVATEANDEAT, MSG,
+            PM_REMOVE, PeekMessageW, PostMessageW, SIZE_MINIMIZED, SIZE_RESTORED,
+            SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
+            SPI_SETWORKAREA, SW_SHOWMAXIMIZED, SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_NOMOVE,
             SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, SendMessageW,
             SetCursorPos, SetForegroundWindow, SetWindowPos, TranslateMessage, WA_ACTIVE,
-            WINDOW_EX_STYLE, WINDOW_STYLE, WM_ACTIVATE, WM_CLOSE, WM_GETOBJECT, WM_KEYDOWN,
-            WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_MOVE,
-            WM_NCHITTEST, WM_PAINT, WM_QUIT, WM_SETTINGCHANGE, WM_SIZE, WM_SYSKEYDOWN, WM_SYSKEYUP,
-            WS_CAPTION, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT,
-            WS_POPUP, WS_VISIBLE,
+            WINDOW_EX_STYLE, WINDOW_STYLE, WINDOWPLACEMENT, WM_ACTIVATE, WM_CLOSE, WM_GETOBJECT,
+            WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE,
+            WM_MOVE, WM_NCHITTEST, WM_PAINT, WM_QUIT, WM_SETTINGCHANGE, WM_SIZE, WM_SYSKEYDOWN,
+            WM_SYSKEYUP, WS_CAPTION, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+            WS_EX_TRANSPARENT, WS_POPUP, WS_VISIBLE,
         },
     },
 };
@@ -1615,6 +1617,144 @@ fn real_hwnd_initial_presentation_is_post_commit_idle_and_retries_rejection() {
 }
 
 #[test]
+fn real_hwnd_initial_presentation_does_not_touch_a_same_hwnd_registration_replacement() {
+    discard_stale_quit_messages();
+
+    let platform = Rc::new(
+        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+    );
+    let replacement_observed = Rc::new(Cell::new(false));
+    platform
+        .lifecycle_test_probe
+        .install_initial_presentation_hook({
+            let platform = platform.clone();
+            let replacement_observed = replacement_observed.clone();
+            move |hwnd| {
+                let native_window = platform
+                    .window_from_hwnd(hwnd)
+                    .expect("the original initial-presentation owner should be registered");
+                let original_registration = native_window.registration;
+                let replacement_registration = RegisteredWindow::new(
+                    hwnd,
+                    original_registration
+                        .generation()
+                        .checked_add(1)
+                        .expect("the replacement generation should be representable"),
+                    original_registration.window_id(),
+                );
+                let original_rect = native_window_rect(hwnd);
+                let sentinel_rect = (
+                    original_rect.0 + 31,
+                    original_rect.1 + 23,
+                    original_rect.2 + 31,
+                    original_rect.3 + 23,
+                );
+                {
+                    let mut registrations = platform.raw_window_handles.write();
+                    let index = registrations
+                        .iter()
+                        .position(|registration| registration.matches(original_registration))
+                        .expect("the original registration should remain in the registry");
+                    registrations[index] = replacement_registration;
+                }
+                unsafe {
+                    SetWindowPos(
+                        hwnd,
+                        None,
+                        sentinel_rect.0,
+                        sentinel_rect.1,
+                        sentinel_rect.2 - sentinel_rect.0,
+                        sentinel_rect.3 - sentinel_rect.1,
+                        SWP_NOACTIVATE
+                            | SWP_NOOWNERZORDER
+                            | SWP_NOZORDER
+                            | SWP_SHOWWINDOW,
+                    )
+                }
+                .expect("the replacement authority should establish its sentinel placement");
+
+                let registry = platform.raw_window_handles.clone();
+                native_window
+                    .executor
+                    .spawn(async move {
+                        let remained_visible = unsafe { IsWindowVisible(hwnd).as_bool() };
+                        let retained_rect = native_window_rect(hwnd);
+
+                        unsafe {
+                            SetWindowPos(
+                                hwnd,
+                                None,
+                                original_rect.0,
+                                original_rect.1,
+                                original_rect.2 - original_rect.0,
+                                original_rect.3 - original_rect.1,
+                                SWP_NOACTIVATE
+                                    | SWP_HIDEWINDOW
+                                    | SWP_NOOWNERZORDER
+                                    | SWP_NOZORDER,
+                            )
+                        }
+                        .expect("the replacement authority should restore the retry baseline");
+                        {
+                            let mut registrations = registry.write();
+                            let index = registrations
+                                .iter()
+                                .position(|registration| {
+                                    registration.matches(replacement_registration)
+                                })
+                                .expect("the replacement registration should remain current");
+                            registrations[index] = original_registration;
+                        }
+
+                        replacement_observed.set(true);
+                        assert!(
+                            remained_visible,
+                            "a stale initial-presentation transaction must not hide a replacement HWND"
+                        );
+                        assert_eq!(
+                            retained_rect, sentinel_rect,
+                            "a stale initial-presentation transaction must not restore geometry on a replacement HWND"
+                        );
+                    })
+                    .detach();
+            }
+        });
+    platform
+        .lifecycle_test_probe
+        .fail_next_initial_presentation();
+
+    let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
+    let window = app
+        .update_for_test(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::centered(size(px(320.0), px(220.0)), cx)),
+                    focus_on_appearing: false,
+                    show: true,
+                    ..WindowOptions::default()
+                },
+                |_, cx| cx.new(|_| Empty),
+            )
+        })
+        .expect("the original registration should retry after the replacement releases the HWND");
+    let hwnd = platform
+        .lifecycle_test_probe
+        .last_created_hwnd()
+        .expect("the registration replacement test should retain its HWND");
+
+    platform.inner.run_foreground_task();
+    assert!(replacement_observed.get());
+    assert!(platform.window_from_hwnd(hwnd).is_some());
+
+    let any_window = AnyWindowHandle::from(window);
+    app.update_for_test(|cx| any_window.update(cx, |_, window, cx| window.remove_window(cx)))
+        .expect("registration replacement test window should close");
+    pump_messages_until("registration replacement test teardown", || {
+        !unsafe { IsWindow(Some(hwnd)).as_bool() } && !is_registered(&platform, hwnd)
+    });
+}
+
+#[test]
 fn real_hwnd_presenting_placement_is_generation_bound_before_reveal() {
     discard_stale_quit_messages();
 
@@ -2131,6 +2271,25 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
         target_display,
     )
     .expect("the native final-placement request should be finite and non-empty");
+    let successor_client_bounds = open_gpui::Bounds::new(
+        point(
+            DevicePixels(final_client_bounds.origin.x.0 - 24),
+            DevicePixels(final_client_bounds.origin.y.0 - 16),
+        ),
+        final_client_bounds.size,
+    );
+    let successor_anchor = successor_client_bounds.center();
+    let successor_target_display = topology
+        .physical_observation_at(successor_anchor)
+        .expect("the successor placement should resolve to a target display");
+    let successor_request = WindowProvisionalPlacementRequest::try_new(
+        78,
+        WindowProvisionalPlacementPurpose::FinalRelease,
+        successor_client_bounds,
+        successor_anchor,
+        successor_target_display,
+    )
+    .expect("the successor final-placement request should be finite and non-empty");
 
     {
         let _rejecting_barrier = NativeOpaqueTestBarrier::create_rect(
@@ -2219,7 +2378,7 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
         .expect("a delayed provisional compensation must reject native placement ABA");
     assert!(
         unsafe { !IsWindowVisible(hwnd).as_bool() },
-        "authority-changing compensation must remain hidden instead of restoring stale visibility"
+        "unknown native placement ABA must fail closed instead of preserving unproven visibility"
     );
     unsafe {
         SetWindowPos(
@@ -2237,54 +2396,132 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
                 | SWP_SHOWWINDOW,
         )
     }
-    .expect("the test's newer native authority should explicitly reveal its retained geometry");
+    .expect("the test must explicitly reveal the retained native geometry after fail-closed ABA");
     assert!(unsafe { IsWindowVisible(hwnd).as_bool() });
 
-    let (placement_dispatch, placement_ticket) = app
+    let app = Rc::new(RefCell::new(app));
+    let compensation_barrier = Rc::new(RefCell::new(Some(NativeOpaqueTestBarrier::create_rect(
+        final_client_bounds.origin.x.0 - 64,
+        final_client_bounds.origin.y.0 - 64,
+        final_client_bounds.size.width.0 + 128,
+        final_client_bounds.size.height.0 + 128,
+    ))));
+    let successor_result = Rc::new(RefCell::new(
+        None::<(WindowMutationDispatch, WindowProvisionalPlacementTicket)>,
+    ));
+    let compensation_hides_before = platform
+        .lifecycle_test_probe
+        .provisional_compensation_hide_count();
+    platform
+        .lifecycle_test_probe
+        .install_provisional_compensation_before_hide_hook({
+            let app = app.clone();
+            let compensation_barrier = compensation_barrier.clone();
+            let session = session.clone();
+            let successor_request = successor_request.clone();
+            let successor_result = successor_result.clone();
+            move |hook_hwnd| {
+                assert_eq!(hook_hwnd, hwnd);
+                drop(compensation_barrier.borrow_mut().take());
+                let result = app
+                    .borrow_mut()
+                    .update_for_test(|cx| {
+                        any_window.update(cx, |_, window, _| {
+                            window
+                                .request_provisional_placement(&session, successor_request)
+                                .expect("the current successor should enter the active native lane")
+                        })
+                    })
+                    .expect("the provisional successor window should remain live");
+                successor_result.borrow_mut().replace(result);
+            }
+        });
+
+    let (stale_dispatch, stale_placement_ticket) = app
+        .borrow_mut()
         .update_for_test(|cx| {
             any_window.update(cx, |_, window, _| {
                 window
-                    .request_provisional_placement(&session, final_request)
-                    .expect("the exact revealed provisional should accept final placement")
+                    .request_provisional_placement(&session, final_request.clone())
+                    .expect("the first provisional generation should enter native placement")
             })
         })
-        .expect("native provisional window should remain live during final placement");
-    let mutation_ticket = match placement_dispatch {
+        .expect("native provisional window should remain live during stale placement");
+    let stale_mutation_ticket = match stale_dispatch {
         WindowMutationDispatch::Queued(ticket) => ticket,
-        outcome => panic!("native final placement must queue a platform observation: {outcome:?}"),
+        outcome => panic!("the first provisional generation must queue: {outcome:?}"),
+    };
+    platform.inner.run_foreground_task();
+    let (successor_dispatch, successor_placement_ticket) = successor_result
+        .borrow_mut()
+        .take()
+        .expect("the compensation callback should dispatch one successor");
+    let successor_mutation_ticket = match successor_dispatch {
+        WindowMutationDispatch::Queued(ticket) => ticket,
+        outcome => panic!("the active lane must queue its current successor: {outcome:?}"),
     };
     pump_messages_until_with_delay(
-        "real provisional final placement",
+        "provisional placement successor handoff",
         Duration::from_millis(1),
         || {
-            app.update_for_test(|_| {
-                placement_ticket.snapshot().outcome() != WindowProvisionalPlacementOutcome::Pending
-                    && mutation_ticket.observation().is_some()
+            app.borrow_mut().update_for_test(|_| {
+                successor_placement_ticket.snapshot().outcome()
+                    != WindowProvisionalPlacementOutcome::Pending
+                    && successor_mutation_ticket.observation().is_some()
             })
         },
     );
-    let placement = placement_ticket.snapshot();
+    assert_eq!(
+        stale_placement_ticket.snapshot().outcome(),
+        WindowProvisionalPlacementOutcome::Stale,
+        "the native writer that handed off its lane must settle stale exactly once"
+    );
+    assert_eq!(
+        stale_mutation_ticket
+            .observation()
+            .expect("the newer placement must supersede the first mutation ticket")
+            .outcome,
+        WindowMutationOutcome::Superseded
+    );
+    assert_eq!(
+        platform
+            .lifecycle_test_probe
+            .provisional_compensation_hide_count(),
+        compensation_hides_before,
+        "a stale compensation must not hide the HWND after a current successor arrives"
+    );
+    assert!(unsafe { IsWindowVisible(hwnd).as_bool() });
+
+    let placement = successor_placement_ticket.snapshot();
     assert_eq!(
         placement.outcome(),
         WindowProvisionalPlacementOutcome::Settled
     );
-    assert_eq!(placement.client_bounds(), final_client_bounds);
-    assert_eq!(placement.anchor_point(), final_anchor);
-    assert_eq!(placement.target_display(), target_display);
+    assert_eq!(placement.client_bounds(), successor_client_bounds);
+    assert_eq!(placement.anchor_point(), successor_anchor);
+    assert_eq!(placement.target_display(), successor_target_display);
     assert!(
         placement
             .native_facts()
             .is_some_and(|facts| facts.accepts_placement())
     );
-    let mutation = mutation_ticket
+    let mutation = successor_mutation_ticket
         .observation()
-        .expect("native final placement must settle its GPUI mutation ticket");
+        .expect("the successor must settle its GPUI mutation ticket");
     assert!(matches!(
         mutation.outcome,
         WindowMutationOutcome::Exact | WindowMutationOutcome::Adjusted
     ));
+    assert_eq!(
+        native_window
+            .physical_geometry_from_native()
+            .expect("the successor should leave exact native geometry")
+            .client_bounds(),
+        successor_client_bounds
+    );
 
     let semantics_ticket = app
+        .borrow_mut()
         .update_for_test(|cx| {
             any_window.update(cx, |_, window, cx| {
                 window
@@ -2294,7 +2531,7 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
         })
         .expect("native provisional window should remain live during semantic projection");
     *semantics_authority.borrow_mut() = Some((session.clone(), semantics_ticket.clone()));
-    app.update_for_test(|cx| {
+    app.borrow_mut().update_for_test(|cx| {
         cx.update_window(any_window, |root, _, cx| {
             root.downcast::<ProvisionalSemanticsMarkerRoot>()
                 .expect("the native provisional root should retain its marker type")
@@ -2303,7 +2540,7 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
         .expect("native provisional marker root should remain live");
     });
     pump_messages_until("real provisional destination-semantics submission", || {
-        app.update_for_test(|_| {
+        app.borrow_mut().update_for_test(|_| {
             semantics_ticket.snapshot().outcome() == WindowProvisionalSemanticsOutcome::Submitted
         })
     });
@@ -2333,7 +2570,7 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
         unsafe { SendMessageW(hwnd, WM_NCHITTEST, Some(WPARAM::default()), Some(hit_point)) };
     assert_eq!(submitted_but_gated_hit.0, HTTRANSPARENT as isize);
 
-    app.update_for_test(|cx| {
+    app.borrow_mut().update_for_test(|cx| {
         any_window
             .update(cx, |_, window, cx| {
                 window
@@ -2354,7 +2591,7 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
         unsafe { SendMessageW(hwnd, WM_NCHITTEST, Some(WPARAM::default()), Some(hit_point)) };
     assert_ne!(promoted_hit.0, HTTRANSPARENT as isize);
 
-    let diagnostics = app.update_for_test(|cx| {
+    let diagnostics = app.borrow_mut().update_for_test(|cx| {
         cx.native_boundary_diagnostics(NativeBoundaryDiagnosticCursor::default())
             .terminal
     });
@@ -2380,7 +2617,7 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
         "one exact native reveal command must settle for the bound generations"
     );
 
-    app.update_for_test(|cx| {
+    app.borrow_mut().update_for_test(|cx| {
         any_window
             .update(cx, |_, window, cx| window.remove_window(cx))
             .expect("promoted native provisional window should close")
@@ -2472,6 +2709,29 @@ fn hidden_initial_presentation_keeps_deferred_placement_unpublished_until_forced
         WindowMutationOutcome::Exact | WindowMutationOutcome::Adjusted
     ));
     assert!(placement_observation.facts.is_maximized);
+    assert!(
+        unsafe { IsZoomed(hwnd).as_bool() },
+        "forced presentation must maximize the real HWND"
+    );
+    let mut native_placement = WINDOWPLACEMENT {
+        length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
+        ..Default::default()
+    };
+    unsafe { GetWindowPlacement(hwnd, &mut native_placement) }
+        .expect("forced presentation placement should be readable");
+    assert_eq!(
+        native_placement.showCmd, SW_SHOWMAXIMIZED.0 as u32,
+        "forced presentation must publish maximized User32 placement state"
+    );
+    assert_eq!(
+        physical_client_bounds(hwnd),
+        placement_observation
+            .facts
+            .physical_geometry
+            .expect("forced presentation must publish physical client geometry")
+            .client_bounds(),
+        "framework placement facts must match the visible native client bounds"
+    );
 
     app.update_for_test(|cx| {
         window

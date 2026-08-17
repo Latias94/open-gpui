@@ -417,6 +417,8 @@ pub(crate) struct NativeWindowLifecycleTestProbe {
     last_created_hwnd: Cell<Option<HWND>>,
     hidden_before_map: Cell<Option<bool>>,
     initial_presentation_hook: RefCell<Option<Box<dyn FnOnce(HWND)>>>,
+    provisional_compensation_before_hide_hook: RefCell<Option<Box<dyn FnOnce(HWND)>>>,
+    provisional_compensation_hide_count: Cell<usize>,
     events: RefCell<Vec<NativeWindowLifecycleTestEvent>>,
 }
 
@@ -541,6 +543,40 @@ impl NativeWindowLifecycleTestProbe {
         if let Some(hook) = hook {
             hook(hwnd);
         }
+    }
+
+    pub(crate) fn install_provisional_compensation_before_hide_hook(
+        &self,
+        hook: impl FnOnce(HWND) + 'static,
+    ) {
+        let mut installed = self.provisional_compensation_before_hide_hook.borrow_mut();
+        assert!(
+            installed.is_none(),
+            "provisional-compensation test hook is already installed"
+        );
+        *installed = Some(Box::new(hook));
+    }
+
+    pub(crate) fn run_provisional_compensation_before_hide_hook(&self, hwnd: HWND) {
+        let hook = self
+            .provisional_compensation_before_hide_hook
+            .borrow_mut()
+            .take();
+        if let Some(hook) = hook {
+            hook(hwnd);
+        }
+    }
+
+    pub(crate) fn record_provisional_compensation_hide(&self) {
+        self.provisional_compensation_hide_count.set(
+            self.provisional_compensation_hide_count
+                .get()
+                .saturating_add(1),
+        );
+    }
+
+    pub(crate) fn provisional_compensation_hide_count(&self) -> usize {
+        self.provisional_compensation_hide_count.get()
     }
 
     pub(crate) fn record_created_hwnd(&self, hwnd: HWND) {
