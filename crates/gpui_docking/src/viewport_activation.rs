@@ -96,23 +96,6 @@ impl DockViewportActivationTransaction {
         )
     }
 
-    pub(crate) fn registered_host(
-        registration: DockViewportRegistrationKey,
-        window: impl Into<AnyWindowHandle>,
-        focus_request: DockViewportFocusRequest,
-        target_host: WeakEntity<DockHost>,
-    ) -> Self {
-        Self::with_policy(
-            registration,
-            window.into(),
-            DockViewportWindowActivation::Request,
-            DockViewportFocusCommandSource::ViewportActivation,
-            focus_request,
-            Some(target_host),
-            None,
-        )
-    }
-
     pub(crate) fn close_recovery(
         registration: DockViewportRegistrationKey,
         window: impl Into<AnyWindowHandle>,

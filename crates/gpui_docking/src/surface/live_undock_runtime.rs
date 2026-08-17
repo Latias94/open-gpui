@@ -33,6 +33,7 @@ use super::{
 };
 use crate::{
     DockController, DockGraph, DockHost, DockHostWindowBinding, DockSpaceId,
+    DockSurfaceActivationOutcome, DockSurfaceActivationRequestId,
     DockViewportCommittedWindowEffectsAcceptanceOutcome, DockViewportCommittedWindowEffectsReceipt,
     DockViewportDropPayload, DockViewportLockedDropRoute,
     DockViewportPreflightedLiveUndockHostDrop, DockViewportPreparedLiveUndockHostDrop,
@@ -994,7 +995,26 @@ struct DockLiveUndockPresentationExecution {
     source_restoration_batch: Option<view_presentation_window::LeaseBatch>,
     source_restoration_receipt: Option<DockLiveUndockSourceRestorationReceipt>,
     restore_focus: bool,
-    source_focus_restored: bool,
+    source_focus_restoration: DockLiveUndockSourceFocusRestoration,
+}
+
+enum DockLiveUndockSourceFocusRestoration {
+    NotRequested,
+    Pending {
+        request_id: DockSurfaceActivationRequestId,
+        _subscription: Subscription,
+    },
+    Terminal,
+}
+
+impl DockLiveUndockSourceFocusRestoration {
+    fn is_pending(&self) -> bool {
+        matches!(self, Self::Pending { .. })
+    }
+
+    fn is_not_requested(&self) -> bool {
+        matches!(self, Self::NotRequested)
+    }
 }
 
 enum DockLiveUndockRehostSessionState {
@@ -1944,6 +1964,8 @@ struct DockLiveUndockRuntimeState {
     #[cfg(test)]
     before_destination_interaction_activation_test_hook: Option<Box<dyn FnOnce(&mut App)>>,
     #[cfg(test)]
+    source_focus_terminal_barrier_test_hook: Option<Box<dyn FnOnce(&mut App)>>,
+    #[cfg(test)]
     after_same_window_provider_commit_test_hook: Option<Box<dyn FnOnce(&mut App)>>,
     #[cfg(test)]
     after_same_window_viewport_commit_test_hook: Option<Box<dyn FnOnce(&mut App)>>,
@@ -2392,6 +2414,19 @@ impl DockLiveUndockRuntime {
             "dock live-undock destination-interaction activation test hook is already installed"
         );
         state.before_destination_interaction_activation_test_hook = Some(Box::new(hook));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn install_source_focus_terminal_barrier_hook_for_test(
+        &self,
+        hook: impl FnOnce(&mut App) + 'static,
+    ) {
+        let mut state = self.state.borrow_mut();
+        assert!(
+            state.source_focus_terminal_barrier_test_hook.is_none(),
+            "dock live-undock source-focus terminal-barrier test hook is already installed"
+        );
+        state.source_focus_terminal_barrier_test_hook = Some(Box::new(hook));
     }
 
     #[cfg(test)]
@@ -4809,7 +4844,7 @@ impl DockLiveUndockRuntime {
             source_restoration_batch: None,
             source_restoration_receipt: None,
             restore_focus: false,
-            source_focus_restored: false,
+            source_focus_restoration: DockLiveUndockSourceFocusRestoration::NotRequested,
         })
     }
 
@@ -5360,7 +5395,7 @@ impl DockLiveUndockRuntime {
                 presentation.lease == payload_lease
                     && payload_lease.source() == source
                     && presentation.restore_focus
-                    && !presentation.source_focus_restored
+                    && presentation.source_focus_restoration.is_not_requested()
             }) else {
                 return;
             };
@@ -5385,11 +5420,108 @@ impl DockLiveUndockRuntime {
             )
         };
         let (registration, source_window, source_focus, source_host, exact_lease) = authority;
-        let activation = crate::DockViewportActivationTransaction::registered_host(
+        let Some(owner) = self
+            .state
+            .borrow()
+            .owner
+            .clone()
+            .and_then(|owner| owner.upgrade())
+        else {
+            return;
+        };
+        let owner_weak = owner.downgrade();
+        let callback_owner = owner_weak.clone();
+        let request_id_cell = Rc::new(Cell::new(None));
+        let callback_request_id = request_id_cell.clone();
+        let begin = cx.update_entity(&owner, |owner, _| {
+            owner.activation_mut().begin_request(
+                identity.opening().lease(),
+                owner_weak.clone(),
+                registration.space().clone(),
+                move |outcome, cx| {
+                    let Some(request_id) = callback_request_id.get() else {
+                        return;
+                    };
+                    let Some(owner) = callback_owner.upgrade() else {
+                        return;
+                    };
+                    let runtime = cx.read_entity(&owner, |owner, _| owner.live_undock_runtime());
+                    runtime.settle_source_focus_restoration(
+                        identity,
+                        source,
+                        payload_lease,
+                        request_id,
+                        outcome,
+                        cx,
+                    );
+                },
+            )
+        });
+        let (request_id, subscription, dispatch, settlements) = begin.into_parts();
+        request_id_cell.set(Some(request_id));
+        if !settlements.is_empty() {
+            cx.defer(move |cx| settlements.deliver(cx));
+        }
+
+        let inserted = {
+            let mut state = self.state.borrow_mut();
+            let presentation = state
+                .executions
+                .get_mut(&identity)
+                .and_then(|execution| execution.presentation.as_mut())
+                .filter(|presentation| {
+                    presentation.lease == exact_lease
+                        && presentation.restore_focus
+                        && presentation.source_focus_restoration.is_not_requested()
+                });
+            if let Some(presentation) = presentation {
+                presentation.source_focus_restoration =
+                    DockLiveUndockSourceFocusRestoration::Pending {
+                        request_id,
+                        _subscription: subscription,
+                    };
+                true
+            } else {
+                false
+            }
+        };
+        if !inserted {
+            if let super::activation::DockSurfaceActivationDispatch::Available(target) = dispatch {
+                self.settle_source_focus_activation_binding(
+                    &owner,
+                    target.binding(),
+                    DockSurfaceActivationOutcome::Unavailable,
+                    cx,
+                );
+            }
+            return;
+        }
+
+        let super::activation::DockSurfaceActivationDispatch::Available(target) = dispatch else {
+            return;
+        };
+        let target_is_exact = target.window() == source_window
+            && target.host().entity_id() == source_host.entity_id()
+            && target
+                .host()
+                .upgrade()
+                .is_some_and(|host| host.entity_id() == source_host.entity_id());
+        if !target_is_exact {
+            self.settle_source_focus_activation_binding(
+                &owner,
+                target.binding(),
+                DockSurfaceActivationOutcome::Unavailable,
+                cx,
+            );
+            return;
+        }
+
+        let activation = crate::DockViewportActivationTransaction::surface_activation(
             registration,
-            source_window,
+            target.window(),
             source_focus,
-            source_host,
+            target.binding().clone(),
+            target.host().clone(),
         );
         let outcome =
             crate::viewport_activation::apply_viewport_activation_transaction(Some(activation), cx);
@@ -5397,20 +5529,68 @@ impl DockLiveUndockRuntime {
             outcome,
             crate::viewport_activation::DockViewportActivationApplyOutcome::Applied { .. }
         ) {
-            return;
+            self.settle_source_focus_activation_binding(
+                &owner,
+                target.binding(),
+                DockSurfaceActivationOutcome::Unavailable,
+                cx,
+            );
         }
-        let mut state = self.state.borrow_mut();
-        if let Some(presentation) = state
-            .executions
-            .get_mut(&identity)
-            .and_then(|execution| execution.presentation.as_mut())
-            .filter(|presentation| {
-                presentation.lease == exact_lease
-                    && presentation.restore_focus
-                    && !presentation.source_focus_restored
-            })
-        {
-            presentation.source_focus_restored = true;
+    }
+
+    fn settle_source_focus_activation_binding(
+        &self,
+        owner: &Entity<DockSurfaceOwner>,
+        binding: &crate::surface::DockSurfaceActivationBinding,
+        outcome: DockSurfaceActivationOutcome,
+        cx: &mut App,
+    ) {
+        let settlements = cx.update_entity(owner, |owner, _| {
+            owner.activation_mut().settle(binding, outcome)
+        });
+        if !settlements.is_empty() {
+            cx.defer(move |cx| settlements.deliver(cx));
+        }
+    }
+
+    fn settle_source_focus_restoration(
+        &self,
+        identity: DockLiveUndockIdentity,
+        source: DockLiveUndockSourceSnapshot,
+        payload_lease: DockLiveUndockPayloadLeaseReceipt,
+        request_id: DockSurfaceActivationRequestId,
+        outcome: DockSurfaceActivationOutcome,
+        cx: &mut App,
+    ) {
+        let terminal_requested = {
+            let mut state = self.state.borrow_mut();
+            let Some(execution) = state.executions.get_mut(&identity) else {
+                return;
+            };
+            if execution.seed.source.source_window.window_id() != source.window_id() {
+                return;
+            }
+            let Some(presentation) = execution.presentation.as_mut().filter(|presentation| {
+                presentation.lease == payload_lease && presentation.restore_focus
+            }) else {
+                return;
+            };
+            let exact_request = matches!(
+                presentation.source_focus_restoration,
+                DockLiveUndockSourceFocusRestoration::Pending {
+                    request_id: current,
+                    ..
+                } if current == request_id
+            );
+            if !exact_request {
+                return;
+            }
+            let _ = outcome;
+            presentation.source_focus_restoration = DockLiveUndockSourceFocusRestoration::Terminal;
+            execution.terminal_requested
+        };
+        if terminal_requested {
+            self.finalize_live_payload_drag(identity, cx);
         }
     }
 
@@ -10604,6 +10784,26 @@ impl DockLiveUndockRuntime {
                 true
             });
         if !terminal_is_current {
+            return;
+        }
+        let source_focus_pending = self
+            .state
+            .borrow()
+            .executions
+            .get(&identity)
+            .and_then(|execution| execution.presentation.as_ref())
+            .is_some_and(|presentation| presentation.source_focus_restoration.is_pending());
+        if source_focus_pending {
+            #[cfg(test)]
+            let test_hook = self
+                .state
+                .borrow_mut()
+                .source_focus_terminal_barrier_test_hook
+                .take();
+            #[cfg(test)]
+            if let Some(test_hook) = test_hook {
+                test_hook(cx);
+            }
             return;
         }
         let session_checked_out = self

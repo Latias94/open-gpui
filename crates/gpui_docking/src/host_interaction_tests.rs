@@ -5990,6 +5990,23 @@ fn native_source_restoration_activates_only_after_the_visible_receipt(cx: &mut T
     let activation = cx.window_activation_probe(fixture.source_window);
     let activation_before_cancel = activation.count();
     let observed_before_visible_receipt = Rc::new(Cell::new(false));
+    let source_focus_terminal_barrier_observed = Rc::new(Cell::new(false));
+    let live_runtime = cx.read_entity(fixture.surface.owner(), |owner, _| {
+        owner.live_undock_runtime()
+    });
+    live_runtime.install_source_focus_terminal_barrier_hook_for_test({
+        let source_focus_terminal_barrier_observed =
+            source_focus_terminal_barrier_observed.clone();
+        let live_runtime = live_runtime.clone();
+        move |_| {
+            assert_eq!(
+                live_runtime.execution_count_for_test(),
+                1,
+                "dispatch-only source-focus restoration must retain its exact live-undock execution",
+            );
+            source_focus_terminal_barrier_observed.set(true);
+        }
+    });
     cx.set_platform_focused_window_available(false);
 
     cx.update({
@@ -6048,6 +6065,11 @@ fn native_source_restoration_activates_only_after_the_visible_receipt(cx: &mut T
 
     cx.run_until_parked();
     cx.set_platform_focused_window_available(true);
+
+    assert!(
+        source_focus_terminal_barrier_observed.get(),
+        "activation dispatch must not let terminal cleanup outrun the exact native terminal and GPUI focus completion",
+    );
 
     assert_eq!(
         activation.count(),
