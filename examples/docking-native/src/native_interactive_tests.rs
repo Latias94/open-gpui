@@ -200,11 +200,106 @@ struct NativeScenarioManifest {
     schema: u16,
     suite: String,
     runner: String,
-    scenario: Vec<NativeScenarioRegistration>,
+    scenario: Vec<NativeScenarioManifestRegistration>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct NativeScenarioManifestRegistration {
+    id: String,
+    requirement_owner: String,
+    package: NativeScenarioPackage,
+    ignored: bool,
+    test: String,
+    observation_domains: BTreeSet<String>,
+    behavior: NativeScenarioManifestBehavior,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd)]
+enum NativeScenarioPackage {
+    #[serde(rename = "open-gpui-docking-native")]
+    DockingNative,
+    #[serde(rename = "open-gpui-windows")]
+    Windows,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd)]
+#[serde(rename_all = "kebab-case")]
+enum NativeScenarioManifestBehavior {
+    SourceCapture,
+    OpaqueOcclusion,
+    SurfaceShutdown,
+    ProvisionalSameHwndPromotion,
+    LiveRouteAndReleaseLock,
+    CommittedLossRecovery,
+    ActivationTerminal,
+    ClientGeometryReconciliation,
+    EventDrivenGeometryWake,
+    ProcessConvergence,
+    NoInputPassThrough,
+    MixedDpiPlacement,
+}
+
+impl NativeScenarioManifestBehavior {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::SourceCapture => "source-capture",
+            Self::OpaqueOcclusion => "opaque-occlusion",
+            Self::SurfaceShutdown => "surface-shutdown",
+            Self::ProvisionalSameHwndPromotion => "provisional-same-hwnd-promotion",
+            Self::LiveRouteAndReleaseLock => "live-route-and-release-lock",
+            Self::CommittedLossRecovery => "committed-loss-recovery",
+            Self::ActivationTerminal => "activation-terminal",
+            Self::ClientGeometryReconciliation => "client-geometry-reconciliation",
+            Self::EventDrivenGeometryWake => "event-driven-geometry-wake",
+            Self::ProcessConvergence => "process-convergence",
+            Self::NoInputPassThrough => "no-input-pass-through",
+            Self::MixedDpiPlacement => "mixed-dpi-placement",
+        }
+    }
+
+    const fn package(self) -> NativeScenarioPackage {
+        match self {
+            Self::ActivationTerminal
+            | Self::ClientGeometryReconciliation
+            | Self::EventDrivenGeometryWake => NativeScenarioPackage::Windows,
+            Self::SourceCapture
+            | Self::OpaqueOcclusion
+            | Self::SurfaceShutdown
+            | Self::ProvisionalSameHwndPromotion
+            | Self::LiveRouteAndReleaseLock
+            | Self::CommittedLossRecovery
+            | Self::ProcessConvergence
+            | Self::NoInputPassThrough
+            | Self::MixedDpiPlacement => NativeScenarioPackage::DockingNative,
+        }
+    }
+
+    const fn ignored(self) -> bool {
+        matches!(self.package(), NativeScenarioPackage::DockingNative)
+    }
+
+    const fn dock_behavior(self) -> Option<NativeDockBehavior> {
+        match self {
+            Self::SourceCapture => Some(NativeDockBehavior::SourceCapture),
+            Self::OpaqueOcclusion => Some(NativeDockBehavior::OpaqueOcclusion),
+            Self::SurfaceShutdown => Some(NativeDockBehavior::SurfaceShutdown),
+            Self::ProvisionalSameHwndPromotion => {
+                Some(NativeDockBehavior::ProvisionalSameHwndPromotion)
+            }
+            Self::LiveRouteAndReleaseLock => Some(NativeDockBehavior::LiveRouteAndReleaseLock),
+            Self::CommittedLossRecovery => Some(NativeDockBehavior::CommittedLossRecovery),
+            Self::ActivationTerminal
+            | Self::ClientGeometryReconciliation
+            | Self::EventDrivenGeometryWake => None,
+            Self::ProcessConvergence => Some(NativeDockBehavior::ProcessConvergence),
+            Self::NoInputPassThrough => Some(NativeDockBehavior::NoInputPassThrough),
+            Self::MixedDpiPlacement => Some(NativeDockBehavior::MixedDpiPlacement),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 struct NativeScenarioRegistration {
     id: String,
     requirement_owner: String,
@@ -224,13 +319,35 @@ fn native_scenario_registration_from_environment() -> NativeScenarioRegistration
             "{NATIVE_SCENARIO_ENV} must identify the manifest row when a native interactive worker is run"
         )
     });
-    native_scenario_manifest()
+    let registration = native_scenario_manifest()
         .scenario
         .into_iter()
         .find(|scenario| scenario.id == scenario_id)
         .unwrap_or_else(|| {
             panic!("native interactive scenario `{scenario_id}` is not present in the manifest")
-        })
+        });
+    assert_eq!(
+        registration.package,
+        NativeScenarioPackage::DockingNative,
+        "native interactive Dock worker `{scenario_id}` must select an open-gpui-docking-native manifest row"
+    );
+    assert!(
+        registration.ignored,
+        "native interactive Dock worker `{scenario_id}` must select an ignored manifest row"
+    );
+    let behavior = registration.behavior.dock_behavior().unwrap_or_else(|| {
+        panic!(
+            "native interactive Dock worker `{scenario_id}` cannot execute owning-platform behavior `{}`",
+            registration.behavior.as_str()
+        )
+    });
+    NativeScenarioRegistration {
+        id: registration.id,
+        requirement_owner: registration.requirement_owner,
+        test: registration.test,
+        observation_domains: registration.observation_domains,
+        behavior,
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -449,7 +566,7 @@ impl Drop for SystemPointerGuard {
 #[test]
 fn native_interactive_scenario_registry_matches_cases() {
     let manifest = native_scenario_manifest();
-    assert_eq!(manifest.schema, 3);
+    assert_eq!(manifest.schema, 4);
     assert_eq!(manifest.suite, NATIVE_DOCK_SUITE_ID);
     assert_eq!(
         manifest.runner,
@@ -458,6 +575,18 @@ fn native_interactive_scenario_registry_matches_cases() {
 
     let mut registrations = BTreeMap::new();
     for registration in manifest.scenario {
+        assert_eq!(
+            registration.package,
+            registration.behavior.package(),
+            "native scenario `{}` must execute in the package owned by its behavior",
+            registration.id,
+        );
+        assert_eq!(
+            registration.ignored,
+            registration.behavior.ignored(),
+            "native scenario `{}` must declare the ignored policy owned by its behavior",
+            registration.id,
+        );
         let scenario_id = registration.id.clone();
         assert!(
             registrations

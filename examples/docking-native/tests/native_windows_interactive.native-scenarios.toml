@@ -1,10 +1,12 @@
-schema = 3
+schema = 4
 suite = "docking-native.windows.interactive"
 runner = "open-gpui-windows-native-interactive-ephemeral"
 
 [[scenario]]
 id = "native.u27.source-capture"
 requirement_owner = "U27"
+package = "open-gpui-docking-native"
+ignored = true
 test = "native_interactive_tests::native_interactive_two_hwnd_captured_drag_routes_preview_and_drop"
 observation_domains = ["system-input", "wnd-proc", "capture", "point-stack", "presentation"]
 behavior = "source-capture"
@@ -12,6 +14,8 @@ behavior = "source-capture"
 [[scenario]]
 id = "native.u27.opaque-occlusion"
 requirement_owner = "U27"
+package = "open-gpui-docking-native"
+ignored = true
 test = "native_interactive_tests::native_interactive_opaque_occlusion_blocks_underlay_and_preserves_same_hwnd"
 observation_domains = ["system-input", "wnd-proc", "capture", "point-stack", "presentation"]
 behavior = "opaque-occlusion"
@@ -19,6 +23,8 @@ behavior = "opaque-occlusion"
 [[scenario]]
 id = "native.u27.surface-shutdown"
 requirement_owner = "U27"
+package = "open-gpui-docking-native"
+ignored = true
 test = "native_interactive_tests::native_interactive_anchor_close_releases_capture_and_retires_dependent_hwnds"
 observation_domains = ["system-input", "wnd-proc", "capture", "presentation", "lifetime"]
 behavior = "surface-shutdown"
@@ -26,6 +32,8 @@ behavior = "surface-shutdown"
 [[scenario]]
 id = "native.u29.provisional-same-hwnd-promotion"
 requirement_owner = "U29"
+package = "open-gpui-docking-native"
+ignored = true
 test = "native_interactive_tests::native_interactive_provisional_gate_presents_and_promotes_same_hwnd"
 observation_domains = ["system-input", "wnd-proc", "capture", "point-stack", "presentation"]
 behavior = "provisional-same-hwnd-promotion"
@@ -33,6 +41,8 @@ behavior = "provisional-same-hwnd-promotion"
 [[scenario]]
 id = "native.u29.live-route-and-release-lock"
 requirement_owner = "U29"
+package = "open-gpui-docking-native"
+ignored = true
 test = "native_interactive_tests::native_interactive_live_route_reuses_same_hwnd_and_locks_release"
 observation_domains = ["system-input", "wnd-proc", "capture", "point-stack", "presentation"]
 behavior = "live-route-and-release-lock"
@@ -40,13 +50,44 @@ behavior = "live-route-and-release-lock"
 [[scenario]]
 id = "native.u29.committed-loss-recovery"
 requirement_owner = "U29"
+package = "open-gpui-docking-native"
+ignored = true
 test = "native_interactive_tests::native_interactive_committed_destination_loss_retires_runtime_authority"
 observation_domains = ["system-input", "wnd-proc", "capture", "point-stack", "presentation", "lifetime"]
 behavior = "committed-loss-recovery"
 
 [[scenario]]
+id = "native.u28.activation-terminal"
+requirement_owner = "U28"
+package = "open-gpui-windows"
+ignored = false
+test = "platform::native_test_support::real_hwnd_activation_terminal_is_exact_and_first_terminal_wins"
+observation_domains = ["wnd-proc", "lifetime"]
+behavior = "activation-terminal"
+
+[[scenario]]
+id = "native.u28.client-geometry-reconciliation"
+requirement_owner = "U28"
+package = "open-gpui-windows"
+ignored = false
+test = "platform::native_test_support::real_hwnd_windowed_initial_presentation_rejects_client_drift_before_retry"
+observation_domains = ["wnd-proc", "presentation"]
+behavior = "client-geometry-reconciliation"
+
+[[scenario]]
+id = "native.u28.event-driven-geometry-wake"
+requirement_owner = "U28"
+package = "open-gpui-windows"
+ignored = false
+test = "platform::tests::event_driven_geometry_wake_commits_latest_native_geometry_without_polling"
+observation_domains = ["wnd-proc", "presentation"]
+behavior = "event-driven-geometry-wake"
+
+[[scenario]]
 id = "native.u28.process-convergence"
 requirement_owner = "U28"
+package = "open-gpui-docking-native"
+ignored = true
 test = "native_interactive_tests::native_interactive_process_converges_after_active_surface_shutdown"
 observation_domains = ["system-input", "wnd-proc", "capture", "presentation", "lifetime"]
 behavior = "process-convergence"
@@ -54,6 +95,8 @@ behavior = "process-convergence"
 [[scenario]]
 id = "native.u28.no-input-pass-through"
 requirement_owner = "U28"
+package = "open-gpui-docking-native"
+ignored = true
 test = "native_interactive_tests::native_interactive_no_input_prefix_passes_through_and_fails_closed_on_generation_drift"
 observation_domains = ["system-input", "wnd-proc", "capture", "point-stack", "presentation"]
 behavior = "no-input-pass-through"
@@ -61,6 +104,8 @@ behavior = "no-input-pass-through"
 [[scenario]]
 id = "native.u28.mixed-dpi-client-bounds"
 requirement_owner = "U28"
+package = "open-gpui-docking-native"
+ignored = true
 test = "native_interactive_tests::native_interactive_mixed_dpi_final_client_bounds_are_exact"
 observation_domains = ["system-input", "wnd-proc", "capture", "point-stack", "presentation", "lifetime"]
 behavior = "mixed-dpi-placement"
