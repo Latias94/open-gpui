@@ -6,11 +6,11 @@ use std::{
 
 use open_gpui::{
     App, Bounds, ClickEvent, Context, Entity, InteractiveElement, IntoElement, ParentElement,
-    Pixels, PlatformWindowCapabilities, PlatformWindowCreationCapabilities,
-    PlatformWindowMutationCapabilities, Render, Rgba, Styled, TargetedEvent, Window, WindowBounds,
-    WindowCoordinateSpace, WindowCreationSupport, WindowInitialPresentationOrder,
-    WindowMutationRequest, WindowMutationSupport, WindowOptions, WindowPlatformFacts, div, point,
-    prelude::*, px, rgb, size,
+    Pixels, PlatformWindowActivationSupport, PlatformWindowCapabilities,
+    PlatformWindowCreationCapabilities, PlatformWindowMutationCapabilities, Render, Rgba, Styled,
+    TargetedEvent, Window, WindowBounds, WindowCoordinateSpace, WindowCreationSupport,
+    WindowInitialPresentationOrder, WindowMutationRequest, WindowMutationSupport, WindowOptions,
+    WindowPlatformFacts, div, point, prelude::*, px, rgb, size,
 };
 use open_gpui_devtools::{
     DevtoolsArtifact, DevtoolsArtifactMetadata, DevtoolsArtifactRecord,
@@ -1193,6 +1193,7 @@ pub fn docking_native_headless_status(generation: u64) -> DockViewportRuntimeSta
                     coordinate_space: open_gpui::WindowCoordinateSpace::GlobalScreen,
                     ..Default::default()
                 },
+                activation: PlatformWindowActivationSupport::Observed,
             },
         });
     status.placement_restore = Some(DockViewportRestoreReadinessRecord {
@@ -1243,6 +1244,7 @@ pub fn docking_native_headless_status(generation: u64) -> DockViewportRuntimeSta
                         coordinate_space: open_gpui::WindowCoordinateSpace::WindowLocal,
                         ..Default::default()
                     },
+                    activation: PlatformWindowActivationSupport::Unsupported,
                 },
             });
         status.viewport_lifecycle.push(DockViewportLifecycleRecord {
@@ -1430,13 +1432,14 @@ fn window_profile_summary(viewports: &[DockViewportWindowProfileRecord]) -> Stri
             let creation = viewport.capabilities.creation;
             let mutations = viewport.capabilities.mutations;
             format!(
-                "{}#{}({}): nonactivating-appear={}, transient-owner={}, first-present={}, position={}, size={}, windowed={}, maximized={}, fullscreen={}, minimized={}, restore={}, pointer={}, activation-policy={}, alpha={}, topmost={}, taskbar={}",
+                "{}#{}({}): nonactivating-appear={}, transient-owner={}, first-present={}, native-activation={}, position={}, size={}, windowed={}, maximized={}, fullscreen={}, minimized={}, restore={}, pointer={}, activation-policy={}, alpha={}, topmost={}, taskbar={}",
                 viewport.space,
                 viewport.window_id.as_u64(),
                 viewport.window_kind.as_str(),
                 creation_support(creation.focus_on_appearing),
                 creation_support(creation.transient_for),
                 initial_presentation_order(creation.initial_presentation_order),
+                activation_support(viewport.capabilities.activation),
                 mutation_support(mutations.position),
                 mutation_support(mutations.size),
                 mutation_support(mutations.windowed),
@@ -1469,6 +1472,13 @@ fn initial_presentation_order(order: WindowInitialPresentationOrder) -> &'static
         WindowInitialPresentationOrder::PresentationEstablishesVisibility => {
             "presentation-establishes-visibility"
         }
+    }
+}
+
+fn activation_support(support: PlatformWindowActivationSupport) -> &'static str {
+    match support {
+        PlatformWindowActivationSupport::Unsupported => "unsupported",
+        PlatformWindowActivationSupport::Observed => "observed",
     }
 }
 
@@ -2368,7 +2378,7 @@ mod tests {
     ) {
         configure_native_registered_window_hit(cx, source, target, initial_target_position);
         source.set_platform_hovered_window(Some(source.window_handle()));
-        source.update(|window, _| window.activate_window());
+        let _ = source.update(|window, _| window.activate_window());
         source.run_until_parked();
         source.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
         source.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
@@ -3890,6 +3900,7 @@ mod tests {
                 alpha: WindowMutationSupport::CreationOnly,
                 ..Default::default()
             },
+            activation: PlatformWindowActivationSupport::Observed,
         };
         let window_profiles = [DockViewportWindowProfileRecord {
             space: DockSpaceId::from("primary"),
@@ -3905,7 +3916,7 @@ mod tests {
         assert_eq!(
             window_profile_summary(&window_profiles),
             format!(
-                "primary#{}(floating): nonactivating-appear=supported, transient-owner=unsupported, first-present=before-visibility, position=creation-only, size=live, windowed=unsupported, maximized=unsupported, fullscreen=unsupported, minimized=unsupported, restore=unsupported, pointer=unsupported, activation-policy=live, alpha=creation-only, topmost=unsupported, taskbar=unsupported",
+                "primary#{}(floating): nonactivating-appear=supported, transient-owner=unsupported, first-present=before-visibility, native-activation=observed, position=creation-only, size=live, windowed=unsupported, maximized=unsupported, fullscreen=unsupported, minimized=unsupported, restore=unsupported, pointer=unsupported, activation-policy=live, alpha=creation-only, topmost=unsupported, taskbar=unsupported",
                 open_gpui::WindowId::from(7).as_u64()
             )
         );

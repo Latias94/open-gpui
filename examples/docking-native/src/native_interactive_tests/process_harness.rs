@@ -30,14 +30,15 @@ use windows::Win32::{
     },
     UI::Input::KeyboardAndMouse::GetCapture,
     UI::WindowsAndMessaging::{
-        GetCursorPos, GetForegroundWindow, IsWindow, SetCursorPos, SetForegroundWindow,
+        GetClassNameW, GetCursorPos, GetForegroundWindow, IsWindow, SetCursorPos,
+        SetForegroundWindow,
     },
 };
 
 const WORKER_SCENARIO_ENV: &str = "OPEN_GPUI_NATIVE_DOCK_WORKER";
 const WORKER_SUBCASE_ENV: &str = "OPEN_GPUI_NATIVE_DOCK_WORKER_SUBCASE";
 const WORKER_PROTOCOL_NONCE_ENV: &str = "OPEN_GPUI_NATIVE_DOCK_PROTOCOL_NONCE";
-const WORKER_REPORT_SCHEMA_VERSION: u32 = 5;
+const WORKER_REPORT_SCHEMA_VERSION: u32 = 6;
 const WORKER_PROCESS_TIMEOUT: Duration = Duration::from_secs(60);
 const WORKER_EXIT_AFTER_EOF_TIMEOUT: Duration = Duration::from_secs(2);
 const WORKER_JOB_TERMINATION_TIMEOUT: Duration = Duration::from_secs(1);
@@ -48,6 +49,8 @@ const LOG_TAIL_BYTES: usize = 32 * 1024;
 const WORKER_START_COMMAND: &str = "START";
 const WORKER_RELEASE_COMMAND: &str = "RELEASE";
 const WORKER_REPORT_PREFIX: &str = "OPEN_GPUI_NATIVE_DOCK_REPORT";
+const GPUI_PLATFORM_MESSAGE_WINDOW_CLASS: &str = "OpenGPUI::PlatformWindow";
+const SYSTEM_USER_ADAPTER_WINDOW_CLASS: &str = "SystemUserAdapterWindowClass";
 
 #[derive(Debug, Deserialize, Serialize)]
 pub(super) struct NativeWorkerReport {
@@ -136,6 +139,7 @@ enum WorkerOutputEvent {
 pub(super) struct NativeProcessWindowCensus {
     top_level_hwnds: Vec<isize>,
     message_only_hwnds: Vec<isize>,
+    gpui_message_only_hwnds: Vec<isize>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -481,10 +485,41 @@ fn assert_worker_census(
     artifacts: &WorkerArtifacts,
 ) {
     assert_eq!(
-        census.after_application,
-        census.before_application,
-        "scenario `{}` did not restore the worker's exact pre-application HWND census before process exit\n{}",
+        census.after_application.top_level_hwnds,
+        census.before_application.top_level_hwnds,
+        "scenario `{}` did not restore the worker's exact pre-application top-level HWND census before process exit\n{}",
         scenario_id,
+        artifacts.summary()
+    );
+    assert_eq!(
+        census.after_application.gpui_message_only_hwnds,
+        census.before_application.gpui_message_only_hwnds,
+        "scenario `{}` retained GPUI platform message windows before process exit: {:?}\n{}",
+        scenario_id,
+        describe_message_only_windows(&census.after_application.gpui_message_only_hwnds),
+        artifacts.summary()
+    );
+    let unexpected_message_windows = census
+        .after_application
+        .message_only_hwnds
+        .iter()
+        .copied()
+        .filter(|window| {
+            !census
+                .before_application
+                .message_only_hwnds
+                .contains(window)
+        })
+        .filter(|window| {
+            message_only_window_class(*window)
+                .is_none_or(|class_name| class_name != SYSTEM_USER_ADAPTER_WINDOW_CLASS)
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        unexpected_message_windows.is_empty(),
+        "scenario `{}` retained unexpected process message windows before exit: {:?}\n{}",
+        scenario_id,
+        describe_message_only_windows(&unexpected_message_windows),
         artifacts.summary()
     );
     let parent_observation = process_window_census(worker_pid).unwrap_or_else(|error| {
@@ -558,11 +593,40 @@ fn assert_worker_census(
     );
 }
 
+fn describe_message_only_windows(windows: &[isize]) -> Vec<String> {
+    windows
+        .iter()
+        .map(|raw| {
+            let class_name =
+                message_only_window_class(*raw).unwrap_or_else(|| "<unavailable>".to_owned());
+            format!("{raw:#x}:{class_name}")
+        })
+        .collect()
+}
+
+fn message_only_window_class(raw: isize) -> Option<String> {
+    let window = HWND(raw as *mut core::ffi::c_void);
+    let mut class_name = [0_u16; 256];
+    let length = unsafe { GetClassNameW(window, &mut class_name) };
+    (length > 0).then(|| String::from_utf16_lossy(&class_name[..length as usize]))
+}
+
 fn process_window_census(process_id: u32) -> Result<NativeProcessWindowCensus> {
     let census = open_gpui_windows::native_test_process_window_census(process_id)?;
     Ok(NativeProcessWindowCensus {
         top_level_hwnds: census.top_level_hwnds().to_owned(),
         message_only_hwnds: census.message_only_hwnds().to_owned(),
+        // Windows CoreMessaging may lazily create process-owned adapter windows that live until
+        // thread exit. The owning-platform gate tracks only GPUI's exact message-window class.
+        gpui_message_only_hwnds: census
+            .message_only_hwnds()
+            .iter()
+            .copied()
+            .filter(|window| {
+                message_only_window_class(*window)
+                    .is_some_and(|class_name| class_name == GPUI_PLATFORM_MESSAGE_WINDOW_CLASS)
+            })
+            .collect(),
     })
 }
 

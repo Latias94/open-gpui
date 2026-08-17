@@ -1,11 +1,11 @@
 #![cfg(feature = "docking")]
 
 use open_gpui::{
-    Bounds, PlatformWindowCapabilities, PlatformWindowCreationCapabilities,
-    PlatformWindowMutationCapabilities, QuitMode, WindowActivationPolicy, WindowBounds,
-    WindowCoordinateSpace, WindowCreationSupport, WindowId, WindowInitialPresentationOrder,
-    WindowKind, WindowMutationRequest, WindowMutationSupport, WindowOptions, WindowPlatformFacts,
-    point, px, size,
+    Bounds, PlatformWindowActivationSupport, PlatformWindowCapabilities,
+    PlatformWindowCreationCapabilities, PlatformWindowMutationCapabilities, QuitMode,
+    WindowActivationPolicy, WindowBounds, WindowCoordinateSpace, WindowCreationSupport, WindowId,
+    WindowInitialPresentationOrder, WindowKind, WindowMutationRequest, WindowMutationSupport,
+    WindowOptions, WindowPlatformFacts, point, px, size,
 };
 use open_gpui_devtools::{
     DevtoolsDiffKind, DevtoolsDiffStatus, DevtoolsRegistry, DevtoolsReport, docking,
@@ -642,6 +642,7 @@ fn runtime_status(platform_viewport_windows: bool) -> DockViewportRuntimeStatus 
                     coordinate_space: WindowCoordinateSpace::WindowLocal,
                     ..Default::default()
                 },
+                activation: PlatformWindowActivationSupport::Observed,
             },
         });
     status.placement_restore = Some(DockViewportRestoreReadinessRecord {

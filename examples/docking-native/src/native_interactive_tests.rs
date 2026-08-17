@@ -1342,6 +1342,7 @@ async fn run_captured_host_drop_scenario(
     scenario: &mut NativeDockScenario,
     scenario_id: &str,
 ) -> Result<()> {
+    raise_native_window(scenario.target_hwnd)?;
     let (mut pointer_guard, _) = begin_native_captured_drag(cx, scenario).await?;
     let target_selector_prefix = format!("dock:{SPACE}:tabs:");
     let target_bounds = cx.update(|app| {
@@ -1364,6 +1365,11 @@ async fn run_captured_host_drop_scenario(
         .iter()
         .filter(|kind| **kind == NativeMouseKind::Move)
         .count();
+    ensure!(
+        root_window_from_point(target_point) == scenario.target_hwnd,
+        "the prepared target input point is occluded by a different native HWND: point={target_point:?}, hit={:?}",
+        root_window_from_point(target_point)
+    );
     inject_system_pointer(target_point, MOUSEEVENTF_MOVE)?;
     wait_for_cursor(cx, target_point, "captured move over the target HWND").await?;
     wait_until(cx, "target HWND committed Dock drop preview", |cx| {
@@ -1386,7 +1392,8 @@ async fn run_captured_host_drop_scenario(
             .is_some_and(|bounds| bounds.size.width > px(0.0) && bounds.size.height > px(0.0))
             && source_moves > source_moves_before_crossing)
     })
-    .await?;
+    .await
+    .with_context(|| native_pointer_admission_context(scenario, target_point))?;
     ensure!(
         unsafe { GetCapture() } == scenario.source_hwnd,
         "the real target preview must be routed while the source HWND still owns capture"
@@ -1540,6 +1547,11 @@ async fn run_no_input_pass_through_scenario(
 
     let source_point = cx.update(|app| source_preview_tab_screen_point(app, scenario))?;
     let (mut pointer_guard, _) = begin_native_captured_drag(cx, scenario).await?;
+    ensure!(
+        cx.update(|app| target_drop_preview_bounds(app, scenario))?
+            .is_none(),
+        "the no-input generation-drift probe must start without a stale target preview"
+    );
     let generation_drift = arm_native_no_input_generation_drift(second_overlay.window)?;
     inject_system_pointer(drift_point, MOUSEEVENTF_MOVE)?;
     wait_for_cursor(cx, drift_point, "no-input generation-drift probe").await?;
@@ -1552,12 +1564,12 @@ async fn run_no_input_pass_through_scenario(
     cx.background_executor()
         .timer(Duration::from_millis(20))
         .await;
+    generation_drift.finish()?;
     ensure!(
         cx.update(|app| target_drop_preview_bounds(app, scenario))?
             .is_none(),
         "a no-input observation generation change must fail closed without publishing a Dock target preview"
     );
-    generation_drift.finish()?;
 
     inject_system_pointer(pass_through_point, MOUSEEVENTF_MOVE)?;
     wait_for_cursor(
