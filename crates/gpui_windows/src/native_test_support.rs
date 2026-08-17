@@ -1,5 +1,10 @@
 use super::{RegisteredWindow, WindowsPlatform, translate_accelerator};
-use crate::{NativeWindowLifecycleTestEvent, WindowsWindowInner, get_window_long};
+use crate::{
+    NativeWindowLifecycleTestEvent, WindowsWindowInner, get_window_long,
+    native_test_observation::{
+        NativeWindowTestEventKind, NativeWindowTestMessage, begin_native_window_test_observation,
+    },
+};
 use open_gpui::{
     AnyWindowHandle, AppContext as _, Application, Bounds, Context, DevicePixels, Empty,
     IntoElement, NativeBoundaryDiagnosticCursor, NativeBoundaryDisposition,
@@ -4892,53 +4897,132 @@ fn programmatic_close_while_captured_is_terminal_and_invariant_free() {
 }
 
 #[test]
-fn queued_activate_commands_precede_activation_facts_without_synthetic_keyboard_input() {
+fn real_hwnd_activation_terminal_is_exact_and_first_terminal_wins() {
     discard_stale_quit_messages();
+    let (_native_observation_guard, native_observation) = begin_native_window_test_observation();
 
     let platform = Rc::new(
         WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
     );
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
+    let foreground = app
+        .update_for_test(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::centered(size(px(300.0), px(200.0)), cx)),
+                    focus_on_appearing: false,
+                    show: true,
+                    ..WindowOptions::default()
+                },
+                |_, cx| cx.new(|_| Empty),
+            )
+        })
+        .expect("foreground activation sentinel should open");
+    let foreground_registration = platform
+        .raw_window_handles
+        .read()
+        .last()
+        .copied()
+        .expect("foreground activation sentinel should register an HWND");
+    let foreground_hwnd = foreground_registration.as_raw();
+    assert_eq!(
+        foreground_registration.window_id(),
+        foreground.window_id(),
+        "the foreground sentinel registration must retain its exact WindowId"
+    );
+    platform.inner.run_foreground_task();
+    pump_messages_until(
+        "foreground activation sentinel initial presentation",
+        || unsafe { IsWindowVisible(foreground_hwnd).as_bool() },
+    );
+    crate::native_test_foreground::acquire_foreground_window(foreground_hwnd)
+        .expect("activation sentinel should acquire foreground authority");
+    let _ = unsafe { SetFocus(Some(foreground_hwnd)) };
+    pump_messages_until("foreground activation sentinel focus", || unsafe {
+        GetForegroundWindow() == foreground_hwnd
+            && GetActiveWindow() == foreground_hwnd
+            && GetFocus() == foreground_hwnd
+    });
+    pump_messages_until_idle("foreground activation sentinel follow-up");
+
     let window = app
         .update_for_test(|cx| {
             cx.open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::centered(size(px(320.0), px(220.0)), cx)),
-                    focus_on_appearing: true,
-                    show: false,
+                    focus_on_appearing: false,
+                    show: true,
                     ..WindowOptions::default()
                 },
                 |_, cx| cx.new(|_| Empty),
             )
         })
         .expect("native test window should open");
-    let hwnd = platform
+    let target_registration = platform
         .raw_window_handles
         .read()
         .last()
-        .expect("native test window should register an HWND")
-        .as_raw();
-    pump_messages_until_idle("initial activate-command test messages");
+        .copied()
+        .expect("native test window should register an HWND");
+    let hwnd = target_registration.as_raw();
+    assert_eq!(
+        target_registration.window_id(),
+        window.window_id(),
+        "the activation target registration must retain its exact WindowId"
+    );
+    let native_window = platform
+        .window_from_hwnd(hwnd)
+        .expect("native activation target should remain registered");
+    platform.inner.run_foreground_task();
+    pump_messages_until(
+        "ordinary native activation target presentation",
+        || unsafe { IsWindowVisible(hwnd).as_bool() },
+    );
+    pump_messages_until_idle("ordinary native activation target follow-up");
+    assert_eq!(
+        unsafe { GetForegroundWindow() },
+        foreground_hwnd,
+        "ordinary detached HWND creation must not steal the foreground"
+    );
+    assert_eq!(
+        unsafe { GetActiveWindow() },
+        foreground_hwnd,
+        "ordinary detached HWND creation must not steal thread activation"
+    );
+    assert_eq!(
+        unsafe { GetFocus() },
+        foreground_hwnd,
+        "ordinary detached HWND creation must not steal keyboard focus"
+    );
+
     let diagnostic_cursor = app.update_for_test(|cx| {
         cx.native_boundary_diagnostics(NativeBoundaryDiagnosticCursor::default())
             .cursor
     });
-    let activation_tickets = Rc::new(RefCell::new(Vec::new()));
-
-    app.update_for_test(|cx| {
-        let activation_tickets = activation_tickets.clone();
+    let activation_tickets = app.update_for_test(|cx| {
         window
             .update(cx, |_, window, _| {
-                activation_tickets
-                    .borrow_mut()
-                    .extend([window.activate_window(), window.activate_window()]);
+                [window.activate_window(), window.activate_window()]
             })
             .expect("native test window should remain live")
     });
-    let activation_trace = pump_messages_until("queued native activation", || unsafe {
-        GetActiveWindow() == hwnd
+    let first_snapshot = activation_tickets[0].snapshot();
+    let second_snapshot = activation_tickets[1].snapshot();
+    assert_eq!(first_snapshot.target(), window.window_id());
+    assert_eq!(second_snapshot.target(), window.window_id());
+    assert!(
+        first_snapshot.request_generation() < second_snapshot.request_generation(),
+        "the replacement activation must own a later exact request generation"
+    );
+    assert_eq!(
+        first_snapshot.activation_policy_generation(),
+        second_snapshot.activation_policy_generation(),
+        "both queued requests must bind the same committed activation policy"
+    );
+    pump_messages_until("queued native activation", || {
+        activation_tickets[1].snapshot().status().is_terminal()
     });
-    let followup_trace = pump_messages_until_idle("queued activation follow-up");
+    pump_messages_until_idle("queued activation follow-up");
 
     let diagnostic_delta =
         app.update_for_test(|cx| cx.native_boundary_diagnostics(diagnostic_cursor));
@@ -4969,12 +5053,27 @@ fn queued_activate_commands_precede_activation_facts_without_synthetic_keyboard_
                     == NativeBoundaryKind::Command(NativePlatformCommandKind::Activate)
         })
         .collect::<Vec<_>>();
-    assert!(matches!(
+    assert_eq!(
         activation_commands
             .first()
-            .map(|diagnostic| diagnostic.disposition),
-        Some(NativeBoundaryDisposition::Stale)
-    ));
+            .map(|diagnostic| (diagnostic.domain_generation, diagnostic.disposition,)),
+        Some((
+            Some(NativeBoundaryGeneration::WindowActivation(
+                first_snapshot.request_generation(),
+            )),
+            NativeBoundaryDisposition::Stale,
+        )),
+        "the replaced request must retire only its exact stale native command"
+    );
+    assert_eq!(
+        activation_commands
+            .get(1)
+            .map(|diagnostic| diagnostic.domain_generation),
+        Some(Some(NativeBoundaryGeneration::WindowActivation(
+            second_snapshot.request_generation(),
+        ))),
+        "the winning command must retain the second ticket's exact generation"
+    );
     let expected_second_status = match activation_commands
         .get(1)
         .map(|diagnostic| diagnostic.disposition)
@@ -4991,6 +5090,13 @@ fn queued_activate_commands_precede_activation_facts_without_synthetic_keyboard_
         Some(NativeBoundaryDisposition::Delivered { input_result: None }) => {
             assert_eq!(activation_commands.len(), 3);
             assert_eq!(
+                activation_commands[2].domain_generation,
+                Some(NativeBoundaryGeneration::WindowActivation(
+                    second_snapshot.request_generation(),
+                )),
+                "accepted activation readback must remain bound to the winning generation"
+            );
+            assert_eq!(
                 ordered.iter().map(|(kind, _)| *kind).collect::<Vec<_>>(),
                 ["command", "command", "active", "modifiers", "command"],
                 "an accepted activation command must read back after queued callback facts"
@@ -5000,14 +5106,13 @@ fn queued_activate_commands_precede_activation_facts_without_synthetic_keyboard_
         disposition => panic!("unexpected second activation command disposition: {disposition:?}"),
     };
     assert!(ordered.windows(2).all(|pair| pair[0].1 < pair[1].1));
-    let activation_tickets = activation_tickets.borrow();
-    assert_eq!(activation_tickets.len(), 2);
     assert_eq!(
         activation_tickets[0].snapshot().status(),
         WindowActivationStatus::Terminal(WindowActivationTerminal::Superseded)
     );
+    let second_terminal_snapshot = activation_tickets[1].snapshot();
     assert_eq!(
-        activation_tickets[1].snapshot().status(),
+        second_terminal_snapshot.status(),
         WindowActivationStatus::Terminal(expected_second_status)
     );
     assert!(diagnostic_delta.terminal.iter().any(|diagnostic| {
@@ -5015,18 +5120,397 @@ fn queued_activate_commands_precede_activation_facts_without_synthetic_keyboard_
             && diagnostic.kind == NativeBoundaryKind::Callback(NativeCallbackKind::ActiveChanged)
             && diagnostic.disposition == NativeBoundaryDisposition::Delivered { input_result: None }
     }));
-    for message in [WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP] {
-        assert!(
-            !activation_trace.contains(hwnd, message) && !followup_trace.contains(hwnd, message),
-            "framework activation must not synthesize keyboard input message {message:#x}"
+
+    crate::native_test_foreground::acquire_foreground_window(foreground_hwnd)
+        .expect("activation sentinel should reacquire foreground authority");
+    let _ = unsafe { SetFocus(Some(foreground_hwnd)) };
+    pump_messages_until("activation sentinel reactivation", || unsafe {
+        GetForegroundWindow() == foreground_hwnd
+            && GetActiveWindow() == foreground_hwnd
+            && GetFocus() == foreground_hwnd
+    });
+    pump_messages_until_idle("activation sentinel reactivation follow-up");
+
+    let admitted_activation_facts = app.update_for_test(|cx| {
+        window
+            .update(cx, |_, window, _| window.platform_facts().clone())
+            .expect("native activation target should remain live")
+    });
+    assert!(
+        admitted_activation_facts.accepts_activation,
+        "the backend-rejection phase must retain an admitted activation policy"
+    );
+    native_window.reject_next_activation_command_for_test();
+    let backend_rejected_observations = Rc::new(RefCell::new(Vec::new()));
+    let backend_rejection_cursor = app.update_for_test(|cx| {
+        cx.native_boundary_diagnostics(NativeBoundaryDiagnosticCursor::default())
+            .cursor
+    });
+    let (backend_rejected_ticket, _backend_rejected_subscription) = app.update_for_test(|cx| {
+        let ticket = window
+            .update(cx, |_, window, _| window.activate_window())
+            .expect("native activation target should remain live");
+        let queued_snapshot = ticket.snapshot();
+        assert_eq!(queued_snapshot.target(), window.window_id());
+        assert_eq!(
+            queued_snapshot.activation_policy_generation(),
+            second_terminal_snapshot.activation_policy_generation(),
+            "the injected backend rejection must use the admitted policy generation"
+        );
+        assert_eq!(
+            queued_snapshot.status(),
+            WindowActivationStatus::Queued,
+            "the injected rejection must pass GPUI admission and queue a real backend command"
+        );
+        let subscription = ticket.subscribe({
+            let backend_rejected_observations = backend_rejected_observations.clone();
+            move |snapshot| backend_rejected_observations.borrow_mut().push(snapshot)
+        });
+        (ticket, subscription)
+    });
+    platform.inner.run_foreground_task();
+    pump_messages_until("injected backend activation rejection", || {
+        backend_rejected_ticket.snapshot().status()
+            == WindowActivationStatus::Terminal(WindowActivationTerminal::Rejected)
+            && backend_rejected_observations.borrow().len() == 1
+    });
+    pump_messages_until_idle("injected backend activation rejection follow-up");
+    let backend_rejected_snapshot = backend_rejected_ticket.snapshot();
+    assert_eq!(
+        backend_rejected_snapshot.status(),
+        WindowActivationStatus::Terminal(WindowActivationTerminal::Rejected)
+    );
+    assert_eq!(
+        backend_rejected_observations.borrow().as_slice(),
+        &[backend_rejected_snapshot],
+        "the backend-rejected ticket must publish its exact first terminal once"
+    );
+    let backend_rejection_delta =
+        app.update_for_test(|cx| cx.native_boundary_diagnostics(backend_rejection_cursor));
+    let backend_rejection_commands = backend_rejection_delta
+        .terminal
+        .iter()
+        .filter(|diagnostic| {
+            diagnostic.target == target
+                && diagnostic.kind
+                    == NativeBoundaryKind::Command(NativePlatformCommandKind::Activate)
+                && diagnostic.domain_generation
+                    == Some(NativeBoundaryGeneration::WindowActivation(
+                        backend_rejected_snapshot.request_generation(),
+                    ))
+        })
+        .map(|diagnostic| diagnostic.disposition)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        backend_rejection_commands,
+        [NativeBoundaryDisposition::Rejected],
+        "the admitted exact activation command must reach the Windows backend rejection hook"
+    );
+
+    let backend_positive_cursor = app.update_for_test(|cx| {
+        cx.native_boundary_diagnostics(NativeBoundaryDiagnosticCursor::default())
+            .cursor
+    });
+    crate::native_test_foreground::acquire_foreground_window(hwnd).expect(
+        "the activation target should accept real native foreground after backend rejection",
+    );
+    let _ = unsafe { SetFocus(Some(hwnd)) };
+    pump_messages_until(
+        "positive native activation after backend rejection",
+        || unsafe {
+            GetForegroundWindow() == hwnd && GetActiveWindow() == hwnd && GetFocus() == hwnd
+        },
+    );
+    pump_messages_until_idle("positive native activation after backend rejection follow-up");
+    let backend_positive_delta =
+        app.update_for_test(|cx| cx.native_boundary_diagnostics(backend_positive_cursor));
+    assert!(backend_positive_delta.terminal.iter().any(|diagnostic| {
+        diagnostic.target == target
+            && diagnostic.kind == NativeBoundaryKind::Callback(NativeCallbackKind::ActiveChanged)
+            && diagnostic.disposition == NativeBoundaryDisposition::Delivered { input_result: None }
+    }));
+    assert_eq!(
+        backend_rejected_ticket.snapshot(),
+        backend_rejected_snapshot,
+        "a later exact native focus observation must preserve the backend rejection snapshot, generations, and outcome"
+    );
+    assert_eq!(
+        backend_rejected_observations.borrow().as_slice(),
+        &[backend_rejected_snapshot],
+        "a later exact native focus observation must not redeliver the backend rejection"
+    );
+    if expected_second_status == WindowActivationTerminal::Rejected {
+        assert_eq!(
+            activation_tickets[1].snapshot(),
+            second_terminal_snapshot,
+            "a later exact native focus observation must preserve the normal OS-rejected command's exact first terminal"
         );
     }
 
-    app.update_for_test(|cx| window.update(cx, |_, window, cx| window.remove_window(cx)))
-        .expect("native test window should close");
-    pump_messages_until("activate-command test window teardown", || {
-        !unsafe { IsWindow(Some(hwnd)).as_bool() } && !is_registered(&platform, hwnd)
+    crate::native_test_foreground::acquire_foreground_window(foreground_hwnd)
+        .expect("activation sentinel should own foreground before policy rejection");
+    let _ = unsafe { SetFocus(Some(foreground_hwnd)) };
+    pump_messages_until("pre-policy activation sentinel focus", || unsafe {
+        GetForegroundWindow() == foreground_hwnd
+            && GetActiveWindow() == foreground_hwnd
+            && GetFocus() == foreground_hwnd
     });
+    pump_messages_until_idle("pre-policy activation sentinel focus follow-up");
+
+    let nonprogrammatic_policy_ticket = app.update_for_test(|cx| {
+        window
+            .update(cx, |_, window, _| {
+                match window.request_activation_policy(WindowActivationPolicy {
+                    accepts_activation: false,
+                    focus_on_click: true,
+                }) {
+                    WindowMutationDispatch::Queued(ticket) => ticket,
+                    dispatch => {
+                        panic!("nonprogrammatic activation policy should queue, got {dispatch:?}")
+                    }
+                }
+            })
+            .expect("native activation target should remain live")
+    });
+    platform.inner.run_foreground_task();
+    pump_messages_until("nonprogrammatic activation policy", || {
+        nonprogrammatic_policy_ticket.observation().is_some()
+    });
+    pump_messages_until_idle("nonprogrammatic activation policy follow-up");
+    let nonprogrammatic_policy = nonprogrammatic_policy_ticket
+        .observation()
+        .expect("nonprogrammatic activation policy should publish exact native facts");
+    assert_eq!(nonprogrammatic_policy.outcome, WindowMutationOutcome::Exact);
+    assert!(!nonprogrammatic_policy.facts.accepts_activation);
+    assert!(nonprogrammatic_policy.facts.focus_on_click);
+
+    let policy_rejection_cursor = app.update_for_test(|cx| {
+        cx.native_boundary_diagnostics(NativeBoundaryDiagnosticCursor::default())
+            .cursor
+    });
+    let policy_rejected_ticket = app.update_for_test(|cx| {
+        window
+            .update(cx, |_, window, _| window.activate_window())
+            .expect("native activation target should remain live")
+    });
+    let policy_rejected_snapshot = policy_rejected_ticket.snapshot();
+    assert_eq!(policy_rejected_snapshot.target(), window.window_id());
+    assert_eq!(
+        policy_rejected_snapshot.activation_policy_generation(),
+        nonprogrammatic_policy_ticket.generation(),
+        "the policy-rejected request must bind the exact committed policy generation"
+    );
+    assert_eq!(
+        policy_rejected_snapshot.status(),
+        WindowActivationStatus::Terminal(WindowActivationTerminal::Rejected)
+    );
+    let policy_rejection_delta =
+        app.update_for_test(|cx| cx.native_boundary_diagnostics(policy_rejection_cursor));
+    assert!(
+        !policy_rejection_delta.terminal.iter().any(|diagnostic| {
+            diagnostic.target == target
+                && diagnostic.kind
+                    == NativeBoundaryKind::Command(NativePlatformCommandKind::Activate)
+                && diagnostic.domain_generation
+                    == Some(NativeBoundaryGeneration::WindowActivation(
+                        policy_rejected_snapshot.request_generation(),
+                    ))
+        }),
+        "the policy-rejected request must remain distinct from backend command rejection"
+    );
+    let policy_rejected_observations = Rc::new(RefCell::new(Vec::new()));
+    let _policy_rejected_subscription = policy_rejected_ticket.subscribe({
+        let policy_rejected_observations = policy_rejected_observations.clone();
+        move |snapshot| policy_rejected_observations.borrow_mut().push(snapshot)
+    });
+    let policy_positive_cursor = app.update_for_test(|cx| {
+        cx.native_boundary_diagnostics(NativeBoundaryDiagnosticCursor::default())
+            .cursor
+    });
+    crate::native_test_foreground::acquire_foreground_window(hwnd)
+        .expect("the click-focusable activation target should accept real native foreground");
+    let _ = unsafe { SetFocus(Some(hwnd)) };
+    pump_messages_until(
+        "real positive native activation after policy rejection",
+        || unsafe {
+            GetForegroundWindow() == hwnd && GetActiveWindow() == hwnd && GetFocus() == hwnd
+        },
+    );
+    pump_messages_until_idle("real positive native activation after policy rejection follow-up");
+    let policy_positive_delta =
+        app.update_for_test(|cx| cx.native_boundary_diagnostics(policy_positive_cursor));
+    assert!(policy_positive_delta.terminal.iter().any(|diagnostic| {
+        diagnostic.target == NativeBoundaryTarget::Window(window.window_id())
+            && diagnostic.kind == NativeBoundaryKind::Callback(NativeCallbackKind::ActiveChanged)
+            && diagnostic.disposition == NativeBoundaryDisposition::Delivered { input_result: None }
+    }));
+    assert_eq!(
+        policy_rejected_ticket.snapshot(),
+        policy_rejected_snapshot,
+        "a later exact native focus observation must not revive a policy-rejected ticket"
+    );
+    assert_eq!(
+        policy_rejected_observations.borrow().as_slice(),
+        &[policy_rejected_snapshot],
+        "the policy-rejected ticket must publish its first terminal observation exactly once"
+    );
+    assert_eq!(
+        activation_tickets[0].snapshot().status(),
+        WindowActivationStatus::Terminal(WindowActivationTerminal::Superseded),
+        "a later exact native focus observation must not revive the superseded request"
+    );
+
+    let restored_policy_ticket = app.update_for_test(|cx| {
+        window
+            .update(cx, |_, window, _| {
+                match window.request_activation_policy(WindowActivationPolicy::default()) {
+                    WindowMutationDispatch::Queued(ticket) => ticket,
+                    dispatch => panic!("default activation policy should queue, got {dispatch:?}"),
+                }
+            })
+            .expect("native activation target should remain live")
+    });
+    platform.inner.run_foreground_task();
+    pump_messages_until("restored activation policy", || {
+        restored_policy_ticket.observation().is_some()
+    });
+    pump_messages_until_idle("restored activation policy follow-up");
+    let restored_policy = restored_policy_ticket
+        .observation()
+        .expect("restored activation policy should publish exact native facts");
+    assert_eq!(restored_policy.outcome, WindowMutationOutcome::Exact);
+    assert!(restored_policy.facts.accepts_activation);
+    assert!(restored_policy.facts.focus_on_click);
+
+    crate::native_test_foreground::acquire_foreground_window(foreground_hwnd)
+        .expect("activation sentinel should own foreground before target loss");
+    let _ = unsafe { SetFocus(Some(foreground_hwnd)) };
+    pump_messages_until("pre-close sentinel focus", || unsafe {
+        GetForegroundWindow() == foreground_hwnd
+            && GetActiveWindow() == foreground_hwnd
+            && GetFocus() == foreground_hwnd
+    });
+    pump_messages_until_idle("pre-close sentinel focus follow-up");
+
+    let target_loss_cursor = app.update_for_test(|cx| {
+        cx.native_boundary_diagnostics(NativeBoundaryDiagnosticCursor::default())
+            .cursor
+    });
+    let target_loss_boundary = NativeBoundaryTarget::Window(window.window_id());
+    let closed_observations = Rc::new(RefCell::new(Vec::new()));
+    let (closed_ticket, _closed_subscription) = app.update_for_test(|cx| {
+        let closed_ticket = window
+            .update(cx, |_, window, _| window.activate_window())
+            .expect("native activation target should remain live before native target loss");
+        assert_eq!(closed_ticket.snapshot().target(), window.window_id());
+        assert_eq!(
+            closed_ticket.snapshot().status(),
+            WindowActivationStatus::Queued,
+            "the target-loss phase must begin with an unfinished activation request"
+        );
+        let subscription = closed_ticket.subscribe({
+            let closed_observations = closed_observations.clone();
+            move |snapshot| closed_observations.borrow_mut().push(snapshot)
+        });
+        assert!(
+            native_window.destroy_native_window(),
+            "the real target HWND should enter native terminal before its queued activation dispatches"
+        );
+        assert!(unsafe { !IsWindow(Some(hwnd)).as_bool() });
+        assert_eq!(
+            closed_ticket.snapshot().status(),
+            WindowActivationStatus::Queued,
+            "native target loss is a fact; the exact queued command still owns terminal settlement"
+        );
+        (closed_ticket, subscription)
+    });
+    platform.inner.run_foreground_task();
+    let any_target = AnyWindowHandle::from(window);
+    pump_messages_until("native activation target loss", || {
+        let logical_target_closed =
+            app.update_for_test(|cx| any_target.update(cx, |_, _, _| ()).is_err());
+        !unsafe { IsWindow(Some(hwnd)).as_bool() }
+            && !is_registered(&platform, hwnd)
+            && logical_target_closed
+            && closed_observations.borrow().len() == 1
+    });
+    pump_messages_until_idle("native activation target loss follow-up");
+    let closed_snapshot = closed_ticket.snapshot();
+    let target_loss_delta =
+        app.update_for_test(|cx| cx.native_boundary_diagnostics(target_loss_cursor));
+    let target_loss_commands = target_loss_delta
+        .terminal
+        .iter()
+        .filter(|diagnostic| {
+            diagnostic.target == target_loss_boundary
+                && diagnostic.kind
+                    == NativeBoundaryKind::Command(NativePlatformCommandKind::Activate)
+                && diagnostic.domain_generation
+                    == Some(NativeBoundaryGeneration::WindowActivation(
+                        closed_snapshot.request_generation(),
+                    ))
+        })
+        .map(|diagnostic| diagnostic.disposition)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        target_loss_commands,
+        [NativeBoundaryDisposition::Closed],
+        "the exact queued command must observe real native target loss before logical close cleanup"
+    );
+    assert_eq!(
+        closed_snapshot.status(),
+        WindowActivationStatus::Terminal(WindowActivationTerminal::WindowClosed),
+        "the queued activation must terminate on its exact real HWND loss"
+    );
+    assert_eq!(
+        closed_observations.borrow().as_slice(),
+        &[closed_snapshot],
+        "later stale work must not overwrite or redeliver the WindowClosed terminal"
+    );
+
+    app.update_for_test(|cx| foreground.update(cx, |_, window, cx| window.remove_window(cx)))
+        .expect("foreground activation sentinel should close");
+    pump_messages_until("activation terminal test teardown", || {
+        !unsafe { IsWindow(Some(foreground_hwnd)).as_bool() }
+            && !is_registered(&platform, foreground_hwnd)
+    });
+    pump_messages_until_idle("activation terminal test teardown follow-up");
+
+    let native_events = native_observation.events();
+    let keyboard_messages = [WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP];
+    for (window_name, registration) in [
+        ("target", target_registration),
+        ("foreground sentinel", foreground_registration),
+    ] {
+        let exact_wndproc_events = native_events
+            .iter()
+            .filter(|event| {
+                let identity = event.window();
+                identity.window_id() == registration.window_id()
+                    && identity.native_generation() == registration.generation()
+                    && matches!(
+                        event.kind(),
+                        NativeWindowTestEventKind::WindowMessage { .. }
+                    )
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            !exact_wndproc_events.is_empty(),
+            "the {window_name} must have exact WindowId/native-generation WndProc observations"
+        );
+        assert!(
+            exact_wndproc_events.iter().all(|event| {
+                !matches!(
+                    event.kind(),
+                    NativeWindowTestEventKind::WindowMessage {
+                        message: NativeWindowTestMessage::Other(message),
+                        ..
+                    } if keyboard_messages.contains(&message)
+                )
+            }),
+            "the exact {window_name} WndProc stream must not contain synthesized keyboard input"
+        );
+    }
 }
 
 #[test]

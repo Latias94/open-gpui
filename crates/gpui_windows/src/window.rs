@@ -782,6 +782,8 @@ pub struct WindowsWindowState {
     #[cfg(test)]
     fail_next_mutation_terminal_facts_readback: Cell<bool>,
     #[cfg(test)]
+    reject_next_activation_command: Cell<bool>,
+    #[cfg(test)]
     pub(crate) panic_next_pointer_cancel_reservation: Cell<bool>,
     #[cfg(test)]
     pub(crate) replace_next_pointer_capture_acquisition_with: Cell<Option<HWND>>,
@@ -990,6 +992,8 @@ impl WindowsWindowState {
             fail_next_presented_platform_facts_readback: Cell::new(false),
             #[cfg(test)]
             fail_next_mutation_terminal_facts_readback: Cell::new(false),
+            #[cfg(test)]
+            reject_next_activation_command: Cell::new(false),
             #[cfg(test)]
             panic_next_pointer_cancel_reservation: Cell::new(false),
             #[cfg(test)]
@@ -3313,6 +3317,10 @@ impl WindowsWindowInner {
         if !self.activation_command_is_admitted() {
             return PlatformWindowCommandOutcome::Rejected;
         }
+        #[cfg(test)]
+        if self.state.reject_next_activation_command.replace(false) {
+            return PlatformWindowCommandOutcome::Rejected;
+        }
 
         let hwnd = self.hwnd;
         let had_initial_placement = self.has_pending_initial_placement();
@@ -3398,6 +3406,11 @@ impl WindowsWindowInner {
         } else {
             PlatformWindowCommandOutcome::Rejected
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn reject_next_activation_command_for_test(&self) {
+        self.state.reject_next_activation_command.set(true);
     }
 
     /// Applies a fullscreen transition on the window-owning thread.

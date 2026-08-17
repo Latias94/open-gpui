@@ -3825,17 +3825,33 @@ mod tests {
     };
     use std::{
         rc::Rc,
-        sync::{Arc, mpsc},
+        sync::{Arc, atomic::Ordering, mpsc},
         time::Duration,
     };
     use windows::Win32::{
         Foundation::{HWND, POINT, RECT},
         Graphics::Gdi::ClientToScreen,
         UI::WindowsAndMessaging::{
-            GetClientRect, GetWindowRect, IsWindowVisible, SW_HIDE, SWP_NOACTIVATE, SWP_NOMOVE,
-            SWP_NOZORDER, SetWindowPos, ShowWindow,
+            DispatchMessageW, GetClientRect, GetWindowRect, IsWindowVisible, MSG, PM_REMOVE,
+            PeekMessageW, SW_HIDE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER, SetWindowPos,
+            ShowWindow,
         },
     };
+
+    fn take_foreground_wake(platform: &super::WindowsPlatform) -> Option<MSG> {
+        let mut message = MSG::default();
+        unsafe {
+            PeekMessageW(
+                &mut message,
+                Some(platform.inner.platform_handle.as_raw()),
+                crate::WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD,
+                crate::WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD,
+                PM_REMOVE,
+            )
+            .as_bool()
+        }
+        .then_some(message)
+    }
 
     fn observe_native_mutation(
         platform: &super::WindowsPlatform,
@@ -5499,9 +5515,10 @@ mod tests {
     }
 
     #[test]
-    fn external_native_resize_callback_refreshes_committed_facts() {
+    fn event_driven_geometry_wake_commits_latest_native_geometry_without_polling() {
         let platform = Rc::new(super::WindowsPlatform::new(false).unwrap());
-        let mut app = Application::with_platform(platform.clone());
+        let mut app = Application::with_platform(platform.clone())
+            .with_quit_mode(open_gpui::QuitMode::Explicit);
         let window = app
             .update_for_test(|cx| {
                 cx.open_window(
@@ -5521,10 +5538,23 @@ mod tests {
             .last()
             .expect("native test window handle should be registered")
             .as_raw();
+        let registered_window = platform
+            .window_from_hwnd(native_window)
+            .expect("native test window should retain its registered authority");
+        platform.inner.run_foreground_task();
+        while take_foreground_wake(&platform).is_some() {}
         let initial = committed_window_facts(&mut app, window);
         let mut outer_bounds = RECT::default();
         unsafe { GetWindowRect(native_window, &mut outer_bounds) }
             .expect("native outer bounds should be readable");
+        assert!(
+            !platform
+                .inner
+                .dispatcher
+                .wake_posted
+                .load(Ordering::Acquire),
+            "the settled initial window must not retain a stale foreground wake"
+        );
 
         unsafe {
             SetWindowPos(
@@ -5537,26 +5567,128 @@ mod tests {
                 SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
             )
         }
-        .expect("external native resize should succeed");
-
-        let mut observed = committed_window_facts(&mut app, window);
-        for _ in 0..16 {
-            if observed.bounds.size != initial.bounds.size {
-                break;
-            }
-            platform.inner.run_foreground_task();
-            observed = committed_window_facts(&mut app, window);
+        .expect("the first external native resize should succeed");
+        let first_native_geometry = registered_window
+            .physical_geometry_from_native()
+            .expect("the first external resize should expose physical client geometry");
+        unsafe {
+            SetWindowPos(
+                native_window,
+                None,
+                0,
+                0,
+                outer_bounds.right - outer_bounds.left + 71,
+                outer_bounds.bottom - outer_bounds.top + 53,
+                SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
+            )
         }
-        assert_ne!(
-            observed.bounds.size, initial.bounds.size,
-            "WM_SIZE must refresh the committed GPUI fact cache"
+        .expect("the second external native resize should succeed");
+        let latest_native_geometry = registered_window
+            .physical_geometry_from_native()
+            .expect("the latest external resize should expose physical client geometry");
+        assert_ne!(first_native_geometry, latest_native_geometry);
+        assert!(
+            platform
+                .inner
+                .dispatcher
+                .wake_posted
+                .load(Ordering::Acquire),
+            "native geometry callbacks must enqueue one foreground wake without polling"
         );
+
+        assert_eq!(
+            committed_window_facts(&mut app, window),
+            initial,
+            "queued native geometry observations must not mutate committed facts before the event-driven wake"
+        );
+
+        let wake = take_foreground_wake(&platform)
+            .expect("native geometry callbacks must post a foreground wake");
+        assert_eq!(
+            wake.message,
+            crate::WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD,
+            "the native callback must wake the platform through its typed foreground message"
+        );
+        assert!(
+            take_foreground_wake(&platform).is_none(),
+            "two native geometry callbacks must coalesce behind exactly one foreground wake"
+        );
+        unsafe { DispatchMessageW(&wake) };
+        assert!(
+            !platform
+                .inner
+                .dispatcher
+                .wake_posted
+                .load(Ordering::Acquire),
+            "dispatching the coalesced geometry wake must clear the posted-wake guard"
+        );
+
+        let observed = committed_window_facts(&mut app, window);
+        assert_eq!(
+            observed.physical_geometry,
+            Some(latest_native_geometry),
+            "one event-driven wake must commit the latest coherent native geometry"
+        );
+        assert_ne!(observed.bounds.size, initial.bounds.size);
         let getter_bounds = app.update_for_test(|cx| {
             window
                 .update(cx, |_, window, _| window.bounds())
                 .expect("native test window should remain open")
         });
         assert_eq!(getter_bounds, observed.bounds);
+
+        unsafe {
+            SetWindowPos(
+                native_window,
+                None,
+                0,
+                0,
+                outer_bounds.right - outer_bounds.left + 109,
+                outer_bounds.bottom - outer_bounds.top + 83,
+                SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
+            )
+        }
+        .expect("the third external native resize should succeed");
+        let third_native_geometry = registered_window
+            .physical_geometry_from_native()
+            .expect("the third external resize should expose physical client geometry");
+        assert_ne!(third_native_geometry, latest_native_geometry);
+        assert!(
+            platform
+                .inner
+                .dispatcher
+                .wake_posted
+                .load(Ordering::Acquire),
+            "a later native geometry callback must re-arm the foreground wake"
+        );
+        assert_eq!(
+            committed_window_facts(&mut app, window),
+            observed,
+            "re-armed native geometry must remain pending until its foreground wake is dispatched"
+        );
+
+        let rearmed_wake = take_foreground_wake(&platform)
+            .expect("the later native geometry callback must post a new foreground wake");
+        assert!(
+            take_foreground_wake(&platform).is_none(),
+            "the re-armed geometry callback must enqueue exactly one new foreground wake"
+        );
+        unsafe { DispatchMessageW(&rearmed_wake) };
+        assert!(
+            !platform
+                .inner
+                .dispatcher
+                .wake_posted
+                .load(Ordering::Acquire),
+            "dispatching the re-armed geometry wake must clear the posted-wake guard"
+        );
+
+        let rearmed_observed = committed_window_facts(&mut app, window);
+        assert_eq!(
+            rearmed_observed.physical_geometry,
+            Some(third_native_geometry),
+            "the re-armed wake must commit the third coherent native geometry"
+        );
 
         let window = open_gpui::AnyWindowHandle::from(window);
         app.update_for_test(|cx| {
