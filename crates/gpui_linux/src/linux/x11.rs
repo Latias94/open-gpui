@@ -3,6 +3,7 @@ mod clipboard;
 mod display;
 mod event;
 mod window;
+mod window_observation;
 mod xim_handler;
 
 pub(crate) use client::*;

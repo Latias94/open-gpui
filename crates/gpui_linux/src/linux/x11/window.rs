@@ -47,10 +47,18 @@ use std::{
     ptr::NonNull,
     rc::{Rc, Weak},
     sync::Arc,
+    time::Duration,
 };
 
 use super::{
     X11Display, XINPUT_ALL_DEVICE_GROUPS, XINPUT_ALL_DEVICES, point_from_x11_window_coords,
+    window_observation::{
+        X11PropertyAttempt, X11PropertyDomain, X11PropertyPayload, X11PropertyPayloadError,
+        X11PropertyRetry, X11RestoreSettlement, X11SyncCounterValue, X11SyncRetry,
+        X11WindowObservationCoordinator, X11WindowStateAtoms, X11WindowStateFacts,
+        parse_x11_edge_constraints_property, parse_x11_window_state_property,
+        reconcile_x11_configure_geometry,
+    },
 };
 
 x11rb::atom_manager! {
@@ -85,7 +93,6 @@ x11rb::atom_manager! {
         _NET_WM_STATE_MAXIMIZED_HORZ,
         _NET_WM_STATE_FULLSCREEN,
         _NET_WM_STATE_HIDDEN,
-        _NET_WM_STATE_FOCUSED,
         _NET_ACTIVE_WINDOW,
         _NET_WM_USER_TIME,
         _NET_WM_SYNC_REQUEST,
@@ -130,7 +137,7 @@ fn resize_edge_to_moveresize(edge: ResizeEdge) -> u32 {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct EdgeConstraints {
     top_tiled: bool,
     #[allow(dead_code)]
@@ -421,8 +428,8 @@ pub struct X11WindowState {
     x_root_window: xproto::Window,
     x_screen_index: usize,
     visual_id: u32,
-    pub(crate) counter_id: sync::Counter,
-    pub(crate) last_sync_counter: Option<sync::Int64>,
+    sync_counter: Option<sync::Counter>,
+    observation: X11WindowObservationCoordinator,
     bounds: Bounds<Pixels>,
     restore_bounds: Bounds<Pixels>,
     scale_factor: f32,
@@ -467,6 +474,25 @@ pub(crate) struct X11WindowStatePtr {
     pub(crate) callbacks: Rc<RefCell<Callbacks>>,
     xcb: Rc<XCBConnection>,
     pub(crate) x_window: xproto::Window,
+}
+
+enum X11PropertyReadError {
+    Retryable(anyhow::Error),
+    Malformed(X11PropertyPayloadError),
+}
+
+type X11PropertyRead<T> = Result<T, X11PropertyReadError>;
+
+enum X11PropertyObservation {
+    WindowState(X11WindowStateFacts),
+    EdgeConstraints(Option<EdgeConstraints>),
+}
+
+#[derive(Clone)]
+struct X11ObservationRetryTarget {
+    state: Weak<RefCell<X11WindowState>>,
+    client: X11ClientStatePtr,
+    x_window: xproto::Window,
 }
 
 struct X11WindowCommandTarget {
@@ -900,7 +926,9 @@ impl X11WindowState {
             ),
         )?;
 
-        // Collect errors during setup, so that window can be destroyed on failure.
+        let mut created_sync_counter = None;
+        // Collect errors during setup, so that every created native resource can be retired on
+        // failure.
         let setup_result = maybe!({
             let pid = std::process::id();
             check_reply(
@@ -1062,6 +1090,7 @@ impl X11WindowState {
                 || "X11 sync CreateCounter failed.",
                 sync::create_counter(xcb, sync_request_counter, sync::Int64 { lo: 0, hi: 0 }),
             )?;
+            created_sync_counter = Some(sync_request_counter);
 
             check_reply(
                 || "X11 ChangeProperty32 setting sync request counter failed.",
@@ -1221,16 +1250,24 @@ impl X11WindowState {
                 last_insets: [0, 0, 0, 0],
                 edge_constraints: None,
                 accesskit_adapter: None,
-                counter_id: sync_request_counter,
-                last_sync_counter: None,
+                sync_counter: Some(sync_request_counter),
+                observation: X11WindowObservationCoordinator::default(),
             })
         });
 
         if setup_result.is_err() {
+            if let Some(sync_request_counter) = created_sync_counter {
+                check_reply(
+                    || "X11 DestroyCounter failed while cleaning up window setup.",
+                    sync::destroy_counter(xcb, sync_request_counter),
+                )
+                .log_err();
+            }
             check_reply(
                 || "X11 DestroyWindow failed while cleaning it up after setup failure.",
                 xcb.destroy_window(x_window),
-            )?;
+            )
+            .log_err();
             xcb_flush(xcb);
         }
 
@@ -1262,8 +1299,13 @@ impl Drop for X11Window {
             return;
         }
 
+        let this_ptr = self.0.clone();
+        let client_ptr = self.0.state.borrow().client.clone();
+        client_ptr.drop_window_if_current(&this_ptr);
+
         let mut state = self.0.state.borrow_mut();
         let native_destroy_needed = !state.destroyed;
+        let sync_counter = state.sync_counter;
         state.renderer.destroy();
 
         if native_destroy_needed {
@@ -1278,17 +1320,29 @@ impl Drop for X11Window {
                 std::mem::forget(self.0.clone());
                 return;
             }
-            xcb_flush(&self.0.xcb);
             state.destroyed = true;
         }
+        if let Some(counter_id) = sync_counter {
+            if let Err(error) = check_reply(
+                || "X11 DestroyCounter failed during a safe presentation rollback.",
+                sync::destroy_counter(&self.0.xcb, counter_id),
+            ) {
+                log::error!(
+                    "X11 window rollback could not retire its sync counter; retaining backend owner: {error}"
+                );
+                drop(state);
+                std::mem::forget(self.0.clone());
+                return;
+            }
+            state.sync_counter = None;
+        }
+        xcb_flush(&self.0.xcb);
 
-        let this_ptr = self.0.clone();
-        let client_ptr = state.client.clone();
-        state
-            .executor
+        let executor = state.executor.clone();
+        drop(state);
+        executor
             .spawn(async move {
                 this_ptr.close();
-                client_ptr.drop_window(this_ptr.x_window);
             })
             .detach();
     }
@@ -1343,9 +1397,9 @@ impl X11Window {
             x_window,
         };
 
-        let state = ptr.state.borrow_mut();
-        let _ = ptr.set_wm_properties(state)?;
-        Ok(Self(ptr, Rc::new(())))
+        let window = Self(ptr, Rc::new(()));
+        window.0.initialize_window_state_observation()?;
+        Ok(window)
     }
 
     fn set_wm_hints<C: Display + Send + Sync + 'static, F: FnOnce() -> C>(
@@ -1381,12 +1435,20 @@ impl X11WindowStatePtr {
         self.state.borrow().interaction_gate.is_quiesced()
     }
 
+    pub(crate) fn ptr_eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.state, &other.state)
+    }
+
     fn terminate_callback_slots(&self) {
         let (input_callback, should_close) = {
             let callbacks = self.callbacks.borrow();
             (callbacks.input.clone(), callbacks.should_close.clone())
         };
-        let input_handler = self.state.borrow().input_handler.clone();
+        let input_handler = {
+            let mut state = self.state.borrow_mut();
+            state.observation.close();
+            state.input_handler.clone()
+        };
         input_callback.terminate();
         input_handler.terminate();
         should_close.terminate();
@@ -1397,20 +1459,319 @@ impl X11WindowStatePtr {
         should_close.invoke()
     }
 
-    pub fn property_notify(&self, event: xproto::PropertyNotifyEvent) -> anyhow::Result<()> {
-        let state = self.state.borrow_mut();
-        let state_changed = if event.atom == state.atoms._NET_WM_STATE {
-            self.set_wm_properties(state)?
-        } else if event.atom == state.atoms._GTK_EDGE_CONSTRAINTS {
-            self.set_edge_constraints(state)?;
-            false
-        } else {
-            false
+    fn initialize_window_state_observation(&self) -> anyhow::Result<()> {
+        let attempt = self
+            .state
+            .borrow_mut()
+            .observation
+            .invalidate_property(X11PropertyDomain::WindowState)
+            .context("X11 window closed while initializing its window-state observation")?;
+        match self.sample_window_state_property() {
+            Ok(facts) => {
+                self.commit_property_observation(
+                    attempt,
+                    X11PropertyObservation::WindowState(facts),
+                );
+                Ok(())
+            }
+            Err(X11PropertyReadError::Retryable(error)) => Err(error),
+            Err(X11PropertyReadError::Malformed(error)) => Err(anyhow!(error)),
+        }
+    }
+
+    pub fn property_notify(&self, event: xproto::PropertyNotifyEvent) {
+        let (domain, attempt) = {
+            let mut state = self.state.borrow_mut();
+            let domain = if event.atom == state.atoms._NET_WM_STATE {
+                X11PropertyDomain::WindowState
+            } else if event.atom == state.atoms._GTK_EDGE_CONSTRAINTS {
+                X11PropertyDomain::EdgeConstraints
+            } else {
+                return;
+            };
+            let Some(attempt) = state.observation.invalidate_property(domain) else {
+                return;
+            };
+            (domain, attempt)
         };
-        if state_changed {
+
+        if event.state == xproto::Property::DELETE {
+            let observation = match domain {
+                X11PropertyDomain::WindowState => {
+                    X11PropertyObservation::WindowState(X11WindowStateFacts::default())
+                }
+                X11PropertyDomain::EdgeConstraints => X11PropertyObservation::EdgeConstraints(None),
+            };
+            self.commit_property_observation(attempt, observation);
+        } else {
+            self.observe_property_attempt(attempt);
+        }
+    }
+
+    fn observe_property_attempt(&self, attempt: X11PropertyAttempt) {
+        let observation = match attempt.domain {
+            X11PropertyDomain::WindowState => self
+                .sample_window_state_property()
+                .map(X11PropertyObservation::WindowState),
+            X11PropertyDomain::EdgeConstraints => self
+                .sample_edge_constraints_property()
+                .map(X11PropertyObservation::EdgeConstraints),
+        };
+
+        match observation {
+            Ok(observation) => self.commit_property_observation(attempt, observation),
+            Err(X11PropertyReadError::Retryable(error)) => {
+                log::warn!(
+                    "X11 {:?} observation will retry while retaining the previous coherent facts: {error:#}",
+                    attempt.domain
+                );
+                let retry = self
+                    .state
+                    .borrow_mut()
+                    .observation
+                    .property_retryable_failure(attempt);
+                if let Some(retry) = retry {
+                    self.schedule_property_retry(retry);
+                }
+            }
+            Err(X11PropertyReadError::Malformed(error)) => {
+                log::error!(
+                    "X11 {:?} observation is malformed; retaining the previous coherent facts until a newer PropertyNotify: {error}",
+                    attempt.domain
+                );
+                self.state
+                    .borrow_mut()
+                    .observation
+                    .retain_malformed_property(attempt);
+            }
+        }
+    }
+
+    fn sample_window_state_property(&self) -> X11PropertyRead<X11WindowStateFacts> {
+        let atoms = self.state.borrow().atoms;
+        let reply = match get_reply(
+            || "X11 GetProperty for _NET_WM_STATE failed.",
+            self.xcb.get_property(
+                false,
+                self.x_window,
+                atoms._NET_WM_STATE,
+                xproto::AtomEnum::ATOM,
+                0,
+                u32::MAX,
+            ),
+        ) {
+            Ok(reply) => reply,
+            Err(error) => return Err(X11PropertyReadError::Retryable(error)),
+        };
+        let payload = X11PropertyPayload {
+            type_atom: reply.type_,
+            format: reply.format,
+            value_len: reply.value_len,
+            bytes_after: reply.bytes_after,
+            value: &reply.value,
+        };
+        let state_atoms = X11WindowStateAtoms {
+            fullscreen: atoms._NET_WM_STATE_FULLSCREEN,
+            maximized_vertical: atoms._NET_WM_STATE_MAXIMIZED_VERT,
+            maximized_horizontal: atoms._NET_WM_STATE_MAXIMIZED_HORZ,
+            hidden: atoms._NET_WM_STATE_HIDDEN,
+        };
+        match parse_x11_window_state_property(payload, xproto::AtomEnum::ATOM.into(), state_atoms) {
+            Ok(facts) => Ok(facts),
+            Err(error) => Err(X11PropertyReadError::Malformed(error)),
+        }
+    }
+
+    fn sample_edge_constraints_property(&self) -> X11PropertyRead<Option<EdgeConstraints>> {
+        let atoms = self.state.borrow().atoms;
+        let reply = match get_reply(
+            || "X11 GetProperty for _GTK_EDGE_CONSTRAINTS failed.",
+            self.xcb.get_property(
+                false,
+                self.x_window,
+                atoms._GTK_EDGE_CONSTRAINTS,
+                xproto::AtomEnum::CARDINAL,
+                0,
+                4,
+            ),
+        ) {
+            Ok(reply) => reply,
+            Err(error) => return Err(X11PropertyReadError::Retryable(error)),
+        };
+        let payload = X11PropertyPayload {
+            type_atom: reply.type_,
+            format: reply.format,
+            value_len: reply.value_len,
+            bytes_after: reply.bytes_after,
+            value: &reply.value,
+        };
+        match parse_x11_edge_constraints_property(payload, xproto::AtomEnum::CARDINAL.into()) {
+            Ok(constraints) => Ok(constraints.map(EdgeConstraints::from_atom)),
+            Err(error) => Err(X11PropertyReadError::Malformed(error)),
+        }
+    }
+
+    fn commit_property_observation(
+        &self,
+        attempt: X11PropertyAttempt,
+        observation: X11PropertyObservation,
+    ) {
+        let changed = {
+            let mut state = self.state.borrow_mut();
+            if !state.observation.commit_property(attempt) {
+                return;
+            }
+
+            let mut changed = match observation {
+                X11PropertyObservation::WindowState(facts) => {
+                    let previous = (
+                        state.fullscreen,
+                        state.maximized_vertical,
+                        state.maximized_horizontal,
+                        state.hidden,
+                    );
+                    state.fullscreen = facts.fullscreen;
+                    state.maximized_vertical = facts.maximized_vertical;
+                    state.maximized_horizontal = facts.maximized_horizontal;
+                    state.hidden = facts.hidden;
+                    previous
+                        != (
+                            state.fullscreen,
+                            state.maximized_vertical,
+                            state.maximized_horizontal,
+                            state.hidden,
+                        )
+                }
+                X11PropertyObservation::EdgeConstraints(constraints) => {
+                    let changed = state.edge_constraints != constraints;
+                    state.edge_constraints = constraints;
+                    changed
+                }
+            };
+
+            if attempt.domain == X11PropertyDomain::WindowState {
+                let windowed = !state.fullscreen
+                    && !state.maximized_vertical
+                    && !state.maximized_horizontal
+                    && !state.hidden;
+                if let Some(bounds) = state.observation.settle_restore_candidate(windowed) {
+                    state.restore_bounds = bounds;
+                }
+            }
+            changed
+        };
+
+        if changed {
             self.emit_window_state_change();
         }
-        Ok(())
+    }
+
+    fn schedule_property_retry(&self, retry: X11PropertyRetry) {
+        let target = self.observation_retry_target();
+        self.schedule_observation_retry(retry.delay, move || target.run_property_retry(retry));
+    }
+
+    fn observation_retry_target(&self) -> X11ObservationRetryTarget {
+        X11ObservationRetryTarget {
+            state: Rc::downgrade(&self.state),
+            client: self.state.borrow().client.clone(),
+            x_window: self.x_window,
+        }
+    }
+
+    fn schedule_restore_settlement(&self, settlement: X11RestoreSettlement) {
+        let target = self.observation_retry_target();
+        let executor = self.state.borrow().executor.clone();
+        executor
+            .spawn(async move {
+                target.run_restore_settlement(settlement);
+            })
+            .detach();
+    }
+
+    pub(crate) fn record_sync_request(&self, value: sync::Int64) {
+        self.state
+            .borrow_mut()
+            .observation
+            .enqueue_sync_request(X11SyncCounterValue {
+                lo: value.lo,
+                hi: value.hi,
+            });
+    }
+
+    fn drain_sync_acknowledgements(&self) {
+        loop {
+            let (counter_id, acknowledgement) = {
+                let state = self.state.borrow();
+                (
+                    state.sync_counter,
+                    state.observation.ready_sync_acknowledgement(),
+                )
+            };
+            let (Some(counter_id), Some(acknowledgement)) = (counter_id, acknowledgement) else {
+                return;
+            };
+            let result = check_reply(
+                || "X11 sync SetCounter failed.",
+                sync::set_counter(
+                    &self.xcb,
+                    counter_id,
+                    sync::Int64 {
+                        lo: acknowledgement.lo,
+                        hi: acknowledgement.hi,
+                    },
+                ),
+            );
+
+            match result {
+                Ok(()) => {
+                    self.state
+                        .borrow_mut()
+                        .observation
+                        .sync_acknowledgement_succeeded(acknowledgement);
+                }
+                Err(error) => {
+                    log::warn!(
+                        "X11 sync acknowledgement will retry while retaining its protocol obligation: {error:#}"
+                    );
+                    let retry = self
+                        .state
+                        .borrow_mut()
+                        .observation
+                        .sync_acknowledgement_failed(acknowledgement);
+                    if let Some(retry) = retry {
+                        self.schedule_sync_retry(retry);
+                    }
+                    return;
+                }
+            }
+        }
+    }
+
+    fn schedule_sync_retry(&self, retry: X11SyncRetry) {
+        let target = self.observation_retry_target();
+        self.schedule_observation_retry(retry.delay, move || target.run_sync_retry(retry));
+    }
+
+    fn schedule_observation_retry(&self, delay: Duration, retry: impl FnOnce() + 'static) {
+        let (foreground, timer) = {
+            let state = self.state.borrow();
+            if state.destroyed {
+                return;
+            }
+            let Some(client) = state.client.get_client() else {
+                return;
+            };
+            let foreground = state.executor.clone();
+            let timer = client.0.borrow().common.background_executor.timer(delay);
+            (foreground, timer)
+        };
+        foreground
+            .spawn(async move {
+                timer.await;
+                retry();
+            })
+            .detach();
     }
 
     pub(crate) fn set_mapped(&self, mapped: bool) {
@@ -1435,93 +1796,6 @@ impl X11WindowStatePtr {
         if let Some(callback) = callback {
             callback();
         }
-    }
-
-    fn set_edge_constraints(
-        &self,
-        mut state: std::cell::RefMut<X11WindowState>,
-    ) -> anyhow::Result<()> {
-        let reply = get_reply(
-            || "X11 GetProperty for _GTK_EDGE_CONSTRAINTS failed.",
-            self.xcb.get_property(
-                false,
-                self.x_window,
-                state.atoms._GTK_EDGE_CONSTRAINTS,
-                xproto::AtomEnum::CARDINAL,
-                0,
-                4,
-            ),
-        )?;
-
-        if reply.value_len != 0 {
-            if let Ok(bytes) = reply.value[0..4].try_into() {
-                let atom = u32::from_ne_bytes(bytes);
-                let edge_constraints = EdgeConstraints::from_atom(atom);
-                state.edge_constraints.replace(edge_constraints);
-            } else {
-                log::error!("Failed to parse GTK_EDGE_CONSTRAINTS");
-            }
-        }
-
-        Ok(())
-    }
-
-    fn set_wm_properties(
-        &self,
-        mut state: std::cell::RefMut<X11WindowState>,
-    ) -> anyhow::Result<bool> {
-        let reply = get_reply(
-            || "X11 GetProperty for _NET_WM_STATE failed.",
-            self.xcb.get_property(
-                false,
-                self.x_window,
-                state.atoms._NET_WM_STATE,
-                xproto::AtomEnum::ATOM,
-                0,
-                u32::MAX,
-            ),
-        )?;
-
-        let atoms = reply
-            .value
-            .chunks_exact(4)
-            .map(|chunk| u32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
-
-        let previous = (
-            state.active,
-            state.fullscreen,
-            state.maximized_vertical,
-            state.maximized_horizontal,
-            state.hidden,
-        );
-        state.active = false;
-        state.fullscreen = false;
-        state.maximized_vertical = false;
-        state.maximized_horizontal = false;
-        state.hidden = false;
-
-        for atom in atoms {
-            if atom == state.atoms._NET_WM_STATE_FOCUSED && !state.interaction_gate.is_quiesced() {
-                state.active = true;
-            } else if atom == state.atoms._NET_WM_STATE_FULLSCREEN {
-                state.fullscreen = true;
-            } else if atom == state.atoms._NET_WM_STATE_MAXIMIZED_VERT {
-                state.maximized_vertical = true;
-            } else if atom == state.atoms._NET_WM_STATE_MAXIMIZED_HORZ {
-                state.maximized_horizontal = true;
-            } else if atom == state.atoms._NET_WM_STATE_HIDDEN {
-                state.hidden = true;
-            }
-        }
-
-        Ok(previous
-            != (
-                state.active,
-                state.fullscreen,
-                state.maximized_vertical,
-                state.maximized_horizontal,
-                state.hidden,
-            ))
     }
 
     pub fn close(&self) {
@@ -1630,40 +1904,26 @@ impl X11WindowStatePtr {
         bounds.map(|b| b.scale(scale_factor))
     }
 
-    pub fn set_bounds(&self, bounds: Bounds<i32>) -> anyhow::Result<()> {
-        let (is_resize, content_size, scale_factor) = {
+    pub fn configure_notify(&self, bounds: Bounds<DevicePixels>) {
+        let (is_resize, content_size, scale_factor, restore_settlement) = {
             let mut state = self.state.borrow_mut();
-            let bounds = bounds.map(|f| px(f as f32 / state.scale_factor));
-
-            let is_resize = bounds.size.width != state.bounds.size.width
-                || bounds.size.height != state.bounds.size.height;
-
-            // If it's a resize event (only width/height changed), we ignore `bounds.origin`
-            // because it contains wrong values.
-            if is_resize {
-                state.bounds.size = bounds.size;
-            } else {
-                state.bounds = bounds;
-            }
-            if !state.fullscreen
-                && !state.maximized_vertical
-                && !state.maximized_horizontal
-                && !state.hidden
-            {
-                state.restore_bounds = state.bounds;
-            }
-
-            let gpu_size = query_render_extent(&self.xcb, self.x_window)?;
-            state.renderer.update_drawable_size(gpu_size);
-            let result = (is_resize, state.content_size(), state.scale_factor);
-            if let Some(value) = state.last_sync_counter.take() {
-                check_reply(
-                    || "X11 sync SetCounter failed.",
-                    sync::set_counter(&self.xcb, state.counter_id, value),
-                )?;
-            }
-            result
+            let geometry =
+                reconcile_x11_configure_geometry(state.bounds, bounds, state.scale_factor);
+            state.bounds = geometry.bounds;
+            state.renderer.update_drawable_size(geometry.device_size);
+            let restore_settlement = state.observation.stage_restore_candidate(geometry.bounds);
+            state.observation.configure_committed();
+            (
+                geometry.resized,
+                state.content_size(),
+                state.scale_factor,
+                restore_settlement,
+            )
         };
+
+        if let Some(restore_settlement) = restore_settlement {
+            self.schedule_restore_settlement(restore_settlement);
+        }
 
         let (resize_callback, moved_callback) = {
             let callbacks = self.callbacks.borrow();
@@ -1678,8 +1938,6 @@ impl X11WindowStatePtr {
                 callback();
             }
         }
-
-        Ok(())
     }
 
     pub fn set_active(&self, observation: PlatformWindowActiveStatusObservation) {
@@ -1743,6 +2001,68 @@ impl X11WindowStatePtr {
         if let Some(fun) = callback {
             fun();
         }
+    }
+}
+
+impl X11ObservationRetryTarget {
+    fn live_window(&self) -> Option<X11WindowStatePtr> {
+        let state = self.state.upgrade()?;
+        let client = self.client.get_client()?;
+        let current = client.get_window(self.x_window)?;
+        if !Rc::ptr_eq(&current.state, &state) {
+            return None;
+        }
+        Some(current)
+    }
+
+    fn run_property_retry(&self, retry: X11PropertyRetry) {
+        let Some(window) = self.live_window() else {
+            return;
+        };
+        let Some(attempt) = window
+            .state
+            .borrow_mut()
+            .observation
+            .claim_property_retry(retry)
+        else {
+            return;
+        };
+        window.observe_property_attempt(attempt);
+    }
+
+    fn run_restore_settlement(&self, settlement: X11RestoreSettlement) {
+        let Some(window) = self.live_window() else {
+            return;
+        };
+        let attempt = {
+            let mut state = window.state.borrow_mut();
+            if !state.observation.claim_restore_settlement(settlement) {
+                return;
+            }
+            let Some(attempt) = state
+                .observation
+                .invalidate_property(X11PropertyDomain::WindowState)
+            else {
+                return;
+            };
+            attempt
+        };
+        window.observe_property_attempt(attempt);
+    }
+
+    fn run_sync_retry(&self, retry: X11SyncRetry) {
+        let Some(window) = self.live_window() else {
+            return;
+        };
+        if !window
+            .state
+            .borrow_mut()
+            .observation
+            .claim_sync_retry(retry)
+        {
+            return;
+        }
+        window.drain_sync_acknowledgements();
     }
 }
 
@@ -1816,19 +2136,33 @@ impl PlatformWindow for X11Window {
         {
             return PlatformNativeWindowRetirementOutcome::Rejected;
         }
-        if state.destroyed {
+        if state.destroyed && state.sync_counter.is_none() {
             return PlatformNativeWindowRetirementOutcome::NativeWindowTerminal;
         }
 
-        if let Err(error) = check_reply(
-            || "X11 DestroyWindow failed while retiring a quiesced native window.",
-            self.0.xcb.destroy_window(self.0.x_window),
-        ) {
-            log::warn!("X11 native-window retirement will retry: {error:#}");
-            return PlatformNativeWindowRetirementOutcome::Rejected;
+        if !state.destroyed {
+            if let Err(error) = check_reply(
+                || "X11 DestroyWindow failed while retiring a quiesced native window.",
+                self.0.xcb.destroy_window(self.0.x_window),
+            ) {
+                log::warn!("X11 native-window retirement will retry: {error:#}");
+                return PlatformNativeWindowRetirementOutcome::Rejected;
+            }
+            state.destroyed = true;
+            state.observation.close();
+        }
+        if let Some(counter_id) = state.sync_counter {
+            if let Err(error) = check_reply(
+                || "X11 DestroyCounter failed while retiring a quiesced native window.",
+                sync::destroy_counter(&self.0.xcb, counter_id),
+            ) {
+                log::warn!("X11 sync-counter retirement will retry: {error:#}");
+                xcb_flush(&self.0.xcb);
+                return PlatformNativeWindowRetirementOutcome::Rejected;
+            }
+            state.sync_counter = None;
         }
         xcb_flush(&self.0.xcb);
-        state.destroyed = true;
         PlatformNativeWindowRetirementOutcome::Accepted
     }
 
@@ -2164,27 +2498,40 @@ impl PlatformWindow for X11Window {
     }
 
     fn draw(&self, scene: &Scene) -> PlatformWindowPresentOutcome {
-        let mut inner = self.0.state.borrow_mut();
+        let outcome = {
+            let mut inner = self.0.state.borrow_mut();
 
-        if inner.renderer.device_lost() {
-            let raw_window = RawWindow {
-                connection: as_raw_xcb_connection::AsRawXcbConnection::as_raw_xcb_connection(
-                    &*self.0.xcb,
-                ) as *mut _,
-                screen_id: inner.x_screen_index,
-                window_id: self.0.x_window,
-                visual_id: inner.visual_id,
-            };
-            return match inner.renderer.recover(&raw_window) {
-                Ok(()) => PlatformWindowPresentOutcome::RepaintRequired,
-                Err(err) => {
-                    log::warn!("GPU recovery failed, will retry on next frame: {err}");
-                    PlatformWindowPresentOutcome::Deferred
+            if inner.renderer.device_lost() {
+                let raw_window = RawWindow {
+                    connection: as_raw_xcb_connection::AsRawXcbConnection::as_raw_xcb_connection(
+                        &*self.0.xcb,
+                    ) as *mut _,
+                    screen_id: inner.x_screen_index,
+                    window_id: self.0.x_window,
+                    visual_id: inner.visual_id,
+                };
+                match inner.renderer.recover(&raw_window) {
+                    Ok(()) => PlatformWindowPresentOutcome::RepaintRequired,
+                    Err(err) => {
+                        log::warn!("GPU recovery failed, will retry on next frame: {err}");
+                        PlatformWindowPresentOutcome::Deferred
+                    }
                 }
-            };
+            } else {
+                inner.renderer.draw(scene)
+            }
+        };
+
+        if outcome == PlatformWindowPresentOutcome::Submitted {
+            self.0
+                .state
+                .borrow_mut()
+                .observation
+                .presentation_submitted();
+            self.0.drain_sync_acknowledgements();
         }
 
-        inner.renderer.draw(scene)
+        outcome
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {

@@ -67,10 +67,10 @@ use crate::linux::{
 use crate::linux::{LinuxCommon, LinuxKeyboardLayout, X11Window, modifiers_from_xinput_info};
 
 use open_gpui::{
-    AnyWindowHandle, Bounds, ClipboardItem, CursorStyle, DisplayId, FileDropEvent, Keystroke,
-    Modifiers, ModifiersChangedEvent, MouseButton, Pixels, PlatformDisplay, PlatformInput,
-    PlatformKeyboardLayout, PlatformWindow, Point, RequestFrameOptions, ScrollDelta, Size,
-    TouchPhase, WindowButtonLayout, WindowKind, WindowParams, point, px,
+    AnyWindowHandle, Bounds, ClipboardItem, CursorStyle, DevicePixels, DisplayId, FileDropEvent,
+    Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, Pixels, PlatformDisplay,
+    PlatformInput, PlatformKeyboardLayout, PlatformWindow, Point, RequestFrameOptions, ScrollDelta,
+    Size, TouchPhase, WindowButtonLayout, WindowKind, WindowParams, point, px,
 };
 use open_gpui_wgpu::{CompositorGpuHint, GpuContext};
 
@@ -243,16 +243,23 @@ impl X11ClientStatePtr {
         self.0.upgrade().map(X11Client)
     }
 
-    pub fn drop_window(&self, x_window: u32) {
+    pub fn drop_window_if_current(&self, window: &X11WindowStatePtr) {
         let Some(client) = self.get_client() else {
             return;
         };
         let mut state = client.0.borrow_mut();
-
-        if let Some(window_ref) = state.windows.remove(&x_window)
-            && let Some(RefreshState::PeriodicRefresh {
-                event_loop_token, ..
-            }) = window_ref.refresh_state
+        let x_window = window.x_window;
+        let window_ref = match state.windows.entry(x_window) {
+            std::collections::hash_map::Entry::Occupied(entry)
+                if entry.get().window.ptr_eq(window) =>
+            {
+                entry.remove()
+            }
+            _ => return,
+        };
+        if let Some(RefreshState::PeriodicRefresh {
+            event_loop_token, ..
+        }) = window_ref.refresh_state
         {
             state.loop_handle.remove(event_loop_token);
         }
@@ -932,17 +939,16 @@ impl X11Client {
                 if event.type_ == atoms.WM_PROTOCOLS && atom == atoms.WM_DELETE_WINDOW {
                     if window.should_close() {
                         // Window "x" button clicked by user. The rest of the close logic is
-                        // handled in drop_window().
+                        // handled in drop_window_if_current().
                         window.close();
                     }
                     return Some(());
                 }
                 if event.type_ == atoms.WM_PROTOCOLS && atom == atoms._NET_WM_SYNC_REQUEST {
-                    window.state.borrow_mut().last_sync_counter =
-                        Some(x11rb::protocol::sync::Int64 {
-                            lo: arg2,
-                            hi: arg3 as i32,
-                        });
+                    window.record_sync_request(x11rb::protocol::sync::Int64 {
+                        lo: arg2,
+                        hi: arg3 as i32,
+                    });
                     return Some(());
                 }
 
@@ -1058,26 +1064,20 @@ impl X11Client {
             Event::ConfigureNotify(event) => {
                 let bounds = Bounds {
                     origin: Point {
-                        x: event.x.into(),
-                        y: event.y.into(),
+                        x: DevicePixels(event.x.into()),
+                        y: DevicePixels(event.y.into()),
                     },
                     size: Size {
-                        width: event.width.into(),
-                        height: event.height.into(),
+                        width: DevicePixels(event.width.into()),
+                        height: DevicePixels(event.height.into()),
                     },
                 };
                 let window = self.get_window(event.window)?;
-                window
-                    .set_bounds(bounds)
-                    .context("X11: Failed to set window bounds")
-                    .log_err();
+                window.configure_notify(bounds);
             }
             Event::PropertyNotify(event) => {
                 let window = self.get_window(event.window)?;
-                window
-                    .property_notify(event)
-                    .context("X11: Failed to handle property notify")
-                    .log_err();
+                window.property_notify(event);
             }
             Event::FocusIn(event) => {
                 let window = self.get_window(event.event)?;
