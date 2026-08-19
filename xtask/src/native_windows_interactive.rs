@@ -1,8 +1,10 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     env, fs,
-    path::Path,
-    process::Command,
+    path::{Path, PathBuf},
+    process::{self, Command},
+    sync::atomic::{AtomicU64, Ordering},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use serde::Deserialize;
@@ -19,9 +21,13 @@ pub(crate) const NATIVE_SCENARIO_WORKFLOW_ENTRY: &str =
 const NATIVE_DOCK_PACKAGE: &str = "open-gpui-docking-native";
 const WINDOWS_PACKAGE: &str = "open-gpui-windows";
 const NATIVE_SCENARIO_ENV: &str = "OPEN_GPUI_NATIVE_SCENARIO_ID";
+const NATIVE_SCENARIO_BEHAVIOR_ENV: &str = "OPEN_GPUI_NATIVE_SCENARIO_BEHAVIOR";
+const NATIVE_SCENARIO_RECEIPT_PATH_ENV: &str = "OPEN_GPUI_NATIVE_SCENARIO_RECEIPT_PATH";
+const NATIVE_SCENARIO_RECEIPT_TOKEN_ENV: &str = "OPEN_GPUI_NATIVE_SCENARIO_RECEIPT_TOKEN";
 const NATIVE_RUNNER_SENTINEL_TEST: &str = "platform::native_test_support::native_interactive_runner_sentinel_proves_system_pointer_delivery_and_capture";
 const NATIVE_SCENARIO_REGISTRY_TEST: &str =
     "native_interactive_tests::native_interactive_scenario_registry_matches_cases";
+static NATIVE_SCENARIO_RECEIPT_NONCE: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Default)]
 struct NativeGateReport {
@@ -51,6 +57,85 @@ impl NativeGateReport {
             eprintln!("- {step}");
         }
         Err(())
+    }
+}
+
+struct NativeScenarioRunReceipt {
+    path: PathBuf,
+    token: String,
+    scenario_id: String,
+    behavior: String,
+}
+
+impl NativeScenarioRunReceipt {
+    fn prepare(scenario: &NativeScenarioDeclaration) -> Result<Self, ()> {
+        let counter = NATIVE_SCENARIO_RECEIPT_NONCE.fetch_add(1, Ordering::Relaxed);
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| {
+                eprintln!("native scenario receipt clock is unavailable: {error}");
+            })?
+            .as_nanos();
+        let token = format!("{}-{timestamp}-{counter}", process::id());
+        let path = env::temp_dir().join(format!("open-gpui-native-scenario-{token}.receipt"));
+        if let Err(error) = fs::remove_file(&path)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            eprintln!(
+                "failed to clear stale native scenario receipt `{}`: {error}",
+                path.display()
+            );
+            return Err(());
+        }
+        Ok(Self {
+            path,
+            token,
+            scenario_id: scenario.id.clone(),
+            behavior: scenario.behavior.as_str().to_owned(),
+        })
+    }
+
+    fn apply_environment(&self, command: &mut Command) {
+        command
+            .env(NATIVE_SCENARIO_ENV, &self.scenario_id)
+            .env(NATIVE_SCENARIO_BEHAVIOR_ENV, &self.behavior)
+            .env(NATIVE_SCENARIO_RECEIPT_PATH_ENV, &self.path)
+            .env(NATIVE_SCENARIO_RECEIPT_TOKEN_ENV, &self.token);
+    }
+
+    fn expected_contents(&self) -> String {
+        format!("{}\n{}\n{}\n", self.token, self.scenario_id, self.behavior)
+    }
+
+    fn verify(&self) -> Result<(), ()> {
+        let contents = fs::read_to_string(&self.path).map_err(|error| {
+            eprintln!(
+                "native scenario `{}` did not publish its behavior receipt at `{}`: {error}",
+                self.scenario_id,
+                self.path.display()
+            );
+        })?;
+        if contents == self.expected_contents() {
+            return Ok(());
+        }
+        eprintln!(
+            "native scenario `{}` published a mismatched behavior receipt: expected behavior `{}`, receipt={contents:?}",
+            self.scenario_id, self.behavior
+        );
+        Err(())
+    }
+}
+
+impl Drop for NativeScenarioRunReceipt {
+    fn drop(&mut self) {
+        if let Err(error) = fs::remove_file(&self.path)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            eprintln!(
+                "failed to remove native scenario receipt `{}`: {error}",
+                self.path.display()
+            );
+        }
     }
 }
 
@@ -97,11 +182,13 @@ impl NativeScenarioPackage {
 pub(crate) enum NativeScenarioBehavior {
     SourceCapture,
     OpaqueOcclusion,
+    OpaqueHitTransparentPrefix,
     SurfaceShutdown,
     ProvisionalSameHwndPromotion,
     LiveRouteAndReleaseLock,
     CommittedLossRecovery,
     ActivationTerminal,
+    ProvisionalActivationZOrder,
     ClientGeometryReconciliation,
     EventDrivenGeometryWake,
     ProcessConvergence,
@@ -110,14 +197,16 @@ pub(crate) enum NativeScenarioBehavior {
 }
 
 impl NativeScenarioBehavior {
-    const ALL: [Self; 12] = [
+    const ALL: [Self; 14] = [
         Self::SourceCapture,
         Self::OpaqueOcclusion,
+        Self::OpaqueHitTransparentPrefix,
         Self::SurfaceShutdown,
         Self::ProvisionalSameHwndPromotion,
         Self::LiveRouteAndReleaseLock,
         Self::CommittedLossRecovery,
         Self::ActivationTerminal,
+        Self::ProvisionalActivationZOrder,
         Self::ClientGeometryReconciliation,
         Self::EventDrivenGeometryWake,
         Self::ProcessConvergence,
@@ -129,93 +218,18 @@ impl NativeScenarioBehavior {
         match self {
             Self::SourceCapture => "source-capture",
             Self::OpaqueOcclusion => "opaque-occlusion",
+            Self::OpaqueHitTransparentPrefix => "opaque-hit-transparent-prefix",
             Self::SurfaceShutdown => "surface-shutdown",
             Self::ProvisionalSameHwndPromotion => "provisional-same-hwnd-promotion",
             Self::LiveRouteAndReleaseLock => "live-route-and-release-lock",
             Self::CommittedLossRecovery => "committed-loss-recovery",
             Self::ActivationTerminal => "activation-terminal",
+            Self::ProvisionalActivationZOrder => "provisional-activation-z-order",
             Self::ClientGeometryReconciliation => "client-geometry-reconciliation",
             Self::EventDrivenGeometryWake => "event-driven-geometry-wake",
             Self::ProcessConvergence => "process-convergence",
             Self::NoInputPassThrough => "no-input-pass-through",
             Self::MixedDpiPlacement => "mixed-dpi-placement",
-        }
-    }
-
-    const fn requirement_owner(self) -> &'static str {
-        match self {
-            Self::SourceCapture | Self::OpaqueOcclusion | Self::SurfaceShutdown => "U27",
-            Self::ActivationTerminal
-            | Self::ClientGeometryReconciliation
-            | Self::EventDrivenGeometryWake
-            | Self::ProcessConvergence
-            | Self::NoInputPassThrough
-            | Self::MixedDpiPlacement => "U28",
-            Self::ProvisionalSameHwndPromotion
-            | Self::LiveRouteAndReleaseLock
-            | Self::CommittedLossRecovery => "U29",
-        }
-    }
-
-    const fn package(self) -> NativeScenarioPackage {
-        match self {
-            Self::ActivationTerminal
-            | Self::ClientGeometryReconciliation
-            | Self::EventDrivenGeometryWake => NativeScenarioPackage::Windows,
-            Self::SourceCapture
-            | Self::OpaqueOcclusion
-            | Self::SurfaceShutdown
-            | Self::ProvisionalSameHwndPromotion
-            | Self::LiveRouteAndReleaseLock
-            | Self::CommittedLossRecovery
-            | Self::ProcessConvergence
-            | Self::NoInputPassThrough
-            | Self::MixedDpiPlacement => NativeScenarioPackage::DockingNative,
-        }
-    }
-
-    const fn ignored(self) -> bool {
-        matches!(self.package(), NativeScenarioPackage::DockingNative)
-    }
-
-    const fn test(self) -> &'static str {
-        match self {
-            Self::SourceCapture => {
-                "native_interactive_tests::native_interactive_two_hwnd_captured_drag_routes_preview_and_drop"
-            }
-            Self::OpaqueOcclusion => {
-                "native_interactive_tests::native_interactive_opaque_occlusion_blocks_underlay_and_preserves_same_hwnd"
-            }
-            Self::SurfaceShutdown => {
-                "native_interactive_tests::native_interactive_anchor_close_releases_capture_and_retires_dependent_hwnds"
-            }
-            Self::ProvisionalSameHwndPromotion => {
-                "native_interactive_tests::native_interactive_provisional_gate_presents_and_promotes_same_hwnd"
-            }
-            Self::LiveRouteAndReleaseLock => {
-                "native_interactive_tests::native_interactive_live_route_reuses_same_hwnd_and_locks_release"
-            }
-            Self::CommittedLossRecovery => {
-                "native_interactive_tests::native_interactive_committed_destination_loss_retires_runtime_authority"
-            }
-            Self::ActivationTerminal => {
-                "platform::native_test_support::real_hwnd_activation_terminal_is_exact_and_first_terminal_wins"
-            }
-            Self::ClientGeometryReconciliation => {
-                "platform::native_test_support::real_hwnd_windowed_initial_presentation_rejects_client_drift_before_retry"
-            }
-            Self::EventDrivenGeometryWake => {
-                "platform::tests::event_driven_geometry_wake_commits_latest_native_geometry_without_polling"
-            }
-            Self::ProcessConvergence => {
-                "native_interactive_tests::native_interactive_process_converges_after_active_surface_shutdown"
-            }
-            Self::NoInputPassThrough => {
-                "native_interactive_tests::native_interactive_no_input_prefix_passes_through_and_fails_closed_on_generation_drift"
-            }
-            Self::MixedDpiPlacement => {
-                "native_interactive_tests::native_interactive_mixed_dpi_final_client_bounds_are_exact"
-            }
         }
     }
 }
@@ -323,40 +337,6 @@ pub(crate) fn native_manifest_failures(manifest: &NativeScenarioManifest) -> Vec
                 scenario.id,
                 scenario.package.as_str(),
                 scenario.test
-            ));
-        }
-        if scenario.requirement_owner != scenario.behavior.requirement_owner() {
-            failures.push(format!(
-                "{NATIVE_SCENARIO_MANIFEST_PATH}: native scenario `{}` behavior `{}` belongs to {}, not {}",
-                scenario.id,
-                scenario.behavior.as_str(),
-                scenario.behavior.requirement_owner(),
-                scenario.requirement_owner,
-            ));
-        }
-        if scenario.test != scenario.behavior.test() {
-            failures.push(format!(
-                "{NATIVE_SCENARIO_MANIFEST_PATH}: native scenario `{}` behavior `{}` must use exact test coordinate `{}`",
-                scenario.id,
-                scenario.behavior.as_str(),
-                scenario.behavior.test(),
-            ));
-        }
-        if scenario.package != scenario.behavior.package() {
-            failures.push(format!(
-                "{NATIVE_SCENARIO_MANIFEST_PATH}: native scenario `{}` behavior `{}` must execute in package `{}`, not `{}`",
-                scenario.id,
-                scenario.behavior.as_str(),
-                scenario.behavior.package().as_str(),
-                scenario.package.as_str(),
-            ));
-        }
-        if scenario.ignored != scenario.behavior.ignored() {
-            failures.push(format!(
-                "{NATIVE_SCENARIO_MANIFEST_PATH}: native scenario `{}` behavior `{}` must declare ignored = {}",
-                scenario.id,
-                scenario.behavior.as_str(),
-                scenario.behavior.ignored(),
             ));
         }
         if let Some(previous) = behaviors.insert(scenario.behavior, &scenario.id) {
@@ -470,14 +450,12 @@ pub(crate) fn native_windows_interactive(root: &Path) -> Result<(), ()> {
 }
 
 fn run_manifest_scenario(root: &Path, scenario: &NativeScenarioDeclaration) -> Result<(), ()> {
-    let dock_scenario_id = matches!(scenario.package, NativeScenarioPackage::DockingNative)
-        .then_some(scenario.id.as_str());
     run_exact_test(
         root,
         scenario.package.as_str(),
         &scenario.test,
         scenario.ignored,
-        dock_scenario_id,
+        Some(scenario),
     )
 }
 
@@ -486,7 +464,7 @@ fn run_exact_test(
     package: &str,
     test: &str,
     ignored: bool,
-    dock_scenario_id: Option<&str>,
+    scenario: Option<&NativeScenarioDeclaration>,
 ) -> Result<(), ()> {
     let selector = format!("test(={test})");
     let mut args = vec![
@@ -507,7 +485,7 @@ fn run_exact_test(
         "--no-tests".to_owned(),
         "fail".to_owned(),
     ]);
-    run_cargo_with_scenario(root, args, dock_scenario_id)
+    run_cargo_with_scenario(root, args, scenario)
 }
 
 fn run_cargo(root: &Path, args: impl IntoIterator<Item = impl Into<String>>) -> Result<(), ()> {
@@ -517,26 +495,34 @@ fn run_cargo(root: &Path, args: impl IntoIterator<Item = impl Into<String>>) -> 
 fn run_cargo_with_scenario(
     root: &Path,
     args: impl IntoIterator<Item = impl Into<String>>,
-    dock_scenario_id: Option<&str>,
+    scenario: Option<&NativeScenarioDeclaration>,
 ) -> Result<(), ()> {
     let args = args.into_iter().map(Into::into).collect::<Vec<_>>();
     println!("==> cargo {}", args.join(" "));
     let mut command = Command::new("cargo");
     command.args(&args).current_dir(root);
-    if let Some(scenario_id) = dock_scenario_id {
-        command.env(NATIVE_SCENARIO_ENV, scenario_id);
+    let receipt = if let Some(scenario) = scenario {
+        let receipt = NativeScenarioRunReceipt::prepare(scenario)?;
+        receipt.apply_environment(&mut command);
+        Some(receipt)
     } else {
-        command.env_remove(NATIVE_SCENARIO_ENV);
-    }
+        command
+            .env_remove(NATIVE_SCENARIO_ENV)
+            .env_remove(NATIVE_SCENARIO_BEHAVIOR_ENV)
+            .env_remove(NATIVE_SCENARIO_RECEIPT_PATH_ENV)
+            .env_remove(NATIVE_SCENARIO_RECEIPT_TOKEN_ENV);
+        None
+    };
     let status = command.status().map_err(|error| {
         eprintln!("failed to run `cargo {}`: {error}", args.join(" "));
     })?;
-    if status.success() {
-        Ok(())
-    } else {
+    if !status.success() {
         eprintln!("command failed: cargo {}", args.join(" "));
-        Err(())
+        return Err(());
     }
+    receipt
+        .as_ref()
+        .map_or(Ok(()), NativeScenarioRunReceipt::verify)
 }
 
 fn is_valid_test_coordinate(test: &str) -> bool {
@@ -611,7 +597,7 @@ mod tests {
     }
 
     #[test]
-    fn manifest_rejects_package_and_ignored_policy_drift() {
+    fn manifest_remains_the_only_scenario_metadata_authority() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .expect("xtask must remain a direct workspace child");
@@ -626,16 +612,51 @@ mod tests {
         scenario.package = NativeScenarioPackage::DockingNative;
         scenario.ignored = true;
 
-        let failures = native_manifest_failures(&manifest).join("\n");
+        let failures = native_manifest_failures(&manifest);
         assert!(
-            failures.contains(
-                "must execute in package `open-gpui-windows`, not `open-gpui-docking-native`"
+            failures.is_empty(),
+            "xtask must not duplicate package or ignored metadata outside the manifest: {failures:?}"
+        );
+    }
+
+    #[test]
+    fn behavior_receipt_rejects_redirect_to_another_existing_test() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("xtask must remain a direct workspace child");
+        let manifest = load_native_scenario_manifest(root).expect("manifest should parse");
+        let scenario = manifest
+            .scenario
+            .iter()
+            .find(|scenario| {
+                scenario.behavior == NativeScenarioBehavior::ProvisionalActivationZOrder
+            })
+            .expect("the repository manifest should own the provisional activation behavior");
+        let receipt = NativeScenarioRunReceipt::prepare(scenario)
+            .expect("the behavior receipt should reserve one temporary path");
+
+        assert_eq!(
+            receipt.verify(),
+            Err(()),
+            "an unrelated test that publishes no receipt must not satisfy the scenario"
+        );
+        fs::write(
+            &receipt.path,
+            format!(
+                "{}\n{}\n{}\n",
+                receipt.token,
+                receipt.scenario_id,
+                NativeScenarioBehavior::OpaqueHitTransparentPrefix.as_str()
             ),
-            "missing package-authority diagnostic: {failures}"
+        )
+        .expect("the mismatched behavior receipt should be writable");
+        assert_eq!(
+            receipt.verify(),
+            Err(()),
+            "an existing test for another behavior must not satisfy the selected scenario"
         );
-        assert!(
-            failures.contains("must declare ignored = false"),
-            "missing ignored-policy diagnostic: {failures}"
-        );
+        fs::write(&receipt.path, receipt.expected_contents())
+            .expect("the exact behavior receipt should be writable");
+        assert_eq!(receipt.verify(), Ok(()));
     }
 }
