@@ -97,7 +97,7 @@ impl DockViewportHostSceneDraft {
             && self
                 .host_geometry
                 .has_same_native_routing_geometry(&other.host_geometry)
-            && self.scene == other.scene
+            && self.scene.has_same_retained_routing_content(&other.scene)
     }
 
     pub(crate) fn new(
@@ -222,7 +222,7 @@ impl DockViewportHostSceneSnapshot {
             && self.registration_key == other.registration_key
             && self.current_bounds == other.current_bounds
             && self.host_geometry == other.host_geometry
-            && self.scene == other.scene
+            && self.scene.has_same_retained_routing_content(&other.scene)
     }
 
     fn frame(&self) -> DockViewportHostSceneFrame {
@@ -836,6 +836,56 @@ mod tests {
                 .push_frame_fact(&first, empty_space_fact(space.clone()))
                 .is_some(),
             "the preserved frame should remain current after identical re-render registration"
+        );
+    }
+
+    #[test]
+    fn host_scene_pointer_motion_does_not_advance_routing_generation() {
+        let space = space("main");
+        let window_id = WindowId::from(1);
+        let mut registry = DockViewportHostSceneRegistry::default();
+        let registration_key = DockViewportRegistrationKey::for_test(space.clone(), window_id);
+        let first_draft = DockViewportHostSceneDraft::new(
+            space.clone(),
+            window_id,
+            DockViewportWindowBoundsFrame::GlobalScreen(bounds(0.0, 0.0, 200.0, 120.0)),
+            bounds(0.0, 0.0, 200.0, 120.0),
+            point(px(10.0), px(10.0)),
+            crate::DockDropGuideMetrics::default(),
+        );
+        let second_draft = DockViewportHostSceneDraft::new(
+            space.clone(),
+            window_id,
+            DockViewportWindowBoundsFrame::GlobalScreen(bounds(0.0, 0.0, 200.0, 120.0)),
+            bounds(0.0, 0.0, 200.0, 120.0),
+            point(px(80.0), px(64.0)),
+            crate::DockDropGuideMetrics::default(),
+        );
+
+        assert!(
+            first_draft.has_same_native_routing_content(&second_draft),
+            "native captured-drag publication must ignore diagnostic pointer motion"
+        );
+        let first = registry.register(
+            first_draft
+                .bind(registration_key.clone())
+                .expect("matching registration must bind"),
+        );
+        let second = registry.register(
+            second_draft
+                .bind(registration_key)
+                .expect("matching registration must bind"),
+        );
+
+        assert!(
+            !second.changed,
+            "pointer motion is not retained routing content"
+        );
+        assert_eq!(first.frame, second.frame);
+        assert_eq!(
+            registry.screen_position(&space),
+            Some(point(px(80.0), px(64.0))),
+            "test diagnostics may retain the latest pointer without minting routing authority"
         );
     }
 

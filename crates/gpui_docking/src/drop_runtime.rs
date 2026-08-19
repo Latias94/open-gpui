@@ -70,6 +70,16 @@ impl DockHostDropScene {
         self.drop_guide_metrics
     }
 
+    pub(crate) fn has_same_retained_routing_content(&self, other: &Self) -> bool {
+        self.drop_guide_metrics == other.drop_guide_metrics
+            && self.tab_labels == other.tab_labels
+            && self.tab_bars == other.tab_bars
+            && self.leaves == other.leaves
+            && self.root == other.root
+            && self.floating_title_bars == other.floating_title_bars
+            && self.empty_spaces == other.empty_spaces
+    }
+
     pub(crate) fn push_fact(&mut self, fact: DockHostDropSceneFact) -> bool {
         match fact {
             DockHostDropSceneFact::TabLabel(target) => {
