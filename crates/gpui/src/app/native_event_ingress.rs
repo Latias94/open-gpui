@@ -39,20 +39,16 @@ pub(super) const MAX_NATIVE_WORK_PER_DRAIN: u8 = 64;
 // linearizable without moving App-bound work across threads.
 struct NativeSequenceAuthority {
     next_sequence: u64,
-    #[cfg(not(target_family = "wasm"))]
     terminated: bool,
-    #[cfg(not(target_family = "wasm"))]
-    staged_accessibility: VecDeque<StagedNativeAccessibilityEnvelope>,
+    staged_cross_thread: VecDeque<StagedNativeEnvelope>,
 }
 
 impl NativeSequenceAuthority {
     fn new() -> Self {
         Self {
             next_sequence: 0,
-            #[cfg(not(target_family = "wasm"))]
             terminated: false,
-            #[cfg(not(target_family = "wasm"))]
-            staged_accessibility: VecDeque::new(),
+            staged_cross_thread: VecDeque::new(),
         }
     }
 
@@ -64,44 +60,29 @@ impl NativeSequenceAuthority {
         sequence
     }
 
-    #[cfg(not(target_family = "wasm"))]
-    fn take_staged_before_reserving(
-        &mut self,
-    ) -> (VecDeque<StagedNativeAccessibilityEnvelope>, u64) {
-        let staged = std::mem::take(&mut self.staged_accessibility);
+    fn take_staged_before_reserving(&mut self) -> (VecDeque<StagedNativeEnvelope>, u64) {
+        let staged = std::mem::take(&mut self.staged_cross_thread);
         let sequence = self.reserve_sequence();
         (staged, sequence)
     }
 
-    #[cfg(not(target_family = "wasm"))]
-    fn take_staged(&mut self) -> VecDeque<StagedNativeAccessibilityEnvelope> {
-        std::mem::take(&mut self.staged_accessibility)
+    fn take_staged(&mut self) -> VecDeque<StagedNativeEnvelope> {
+        std::mem::take(&mut self.staged_cross_thread)
     }
 
-    #[cfg(not(target_family = "wasm"))]
-    fn terminate(&mut self) -> VecDeque<StagedNativeAccessibilityEnvelope> {
+    fn terminate(&mut self) -> VecDeque<StagedNativeEnvelope> {
         self.terminated = true;
-        std::mem::take(&mut self.staged_accessibility)
-    }
-
-    #[cfg(target_family = "wasm")]
-    fn terminate(&mut self) {
-        #[cfg(not(target_family = "wasm"))]
-        {
-            unreachable!();
-        }
+        std::mem::take(&mut self.staged_cross_thread)
     }
 }
 
-#[cfg(not(target_family = "wasm"))]
 #[derive(Clone)]
-pub(crate) struct NativeAccessibilityIngress {
+pub(crate) struct NativeCrossThreadIngress {
     sequencer: Arc<Mutex<NativeSequenceAuthority>>,
     wake_sender: async_channel::Sender<()>,
 }
 
-#[cfg(not(target_family = "wasm"))]
-impl NativeAccessibilityIngress {
+impl NativeCrossThreadIngress {
     fn new(
         sequencer: Arc<Mutex<NativeSequenceAuthority>>,
         wake_sender: async_channel::Sender<()>,
@@ -112,6 +93,32 @@ impl NativeAccessibilityIngress {
         }
     }
 
+    pub(crate) fn system_wake(&self) {
+        self.stage_app_event(StagedNativeAppEvent::SystemWake);
+    }
+
+    pub(crate) fn thermal_state_changed(&self) {
+        self.stage_app_event(StagedNativeAppEvent::ThermalStateChanged);
+    }
+
+    fn stage_app_event(&self, event: StagedNativeAppEvent) {
+        {
+            let mut sequencer = self.sequencer.lock();
+            if sequencer.terminated {
+                return;
+            }
+            let sequence = sequencer.reserve_sequence();
+            sequencer
+                .staged_cross_thread
+                .push_back(StagedNativeEnvelope {
+                    sequence,
+                    event: StagedNativeEvent::App(event),
+                });
+        }
+        self.wake_importer();
+    }
+
+    #[cfg(not(target_family = "wasm"))]
     pub(crate) fn activated(
         &self,
         window_id: WindowId,
@@ -120,6 +127,7 @@ impl NativeAccessibilityIngress {
         self.stage_active_state(window_id, active_state, true);
     }
 
+    #[cfg(not(target_family = "wasm"))]
     pub(crate) fn deactivated(
         &self,
         window_id: WindowId,
@@ -128,6 +136,7 @@ impl NativeAccessibilityIngress {
         self.stage_active_state(window_id, active_state, false);
     }
 
+    #[cfg(not(target_family = "wasm"))]
     fn stage_active_state(
         &self,
         window_id: WindowId,
@@ -143,19 +152,22 @@ impl NativeAccessibilityIngress {
             crate::window::a11y::set_requested_active(active_state, active);
             let activation_generation = crate::window::a11y::requested_generation(active_state);
             sequencer
-                .staged_accessibility
-                .push_back(StagedNativeAccessibilityEnvelope {
+                .staged_cross_thread
+                .push_back(StagedNativeEnvelope {
                     sequence,
-                    window_id,
-                    event: StagedNativeAccessibilityEvent::ActiveChanged {
-                        active,
-                        activation_generation,
+                    event: StagedNativeEvent::Accessibility {
+                        window_id,
+                        event: StagedNativeAccessibilityEvent::ActiveChanged {
+                            active,
+                            activation_generation,
+                        },
                     },
                 });
         }
         self.wake_importer();
     }
 
+    #[cfg(not(target_family = "wasm"))]
     pub(crate) fn action(
         &self,
         window_id: WindowId,
@@ -170,13 +182,15 @@ impl NativeAccessibilityIngress {
             let sequence = sequencer.reserve_sequence();
             let activation_generation = crate::window::a11y::requested_generation(active_state);
             sequencer
-                .staged_accessibility
-                .push_back(StagedNativeAccessibilityEnvelope {
+                .staged_cross_thread
+                .push_back(StagedNativeEnvelope {
                     sequence,
-                    window_id,
-                    event: StagedNativeAccessibilityEvent::Action {
-                        activation_generation,
-                        request,
+                    event: StagedNativeEvent::Accessibility {
+                        window_id,
+                        event: StagedNativeAccessibilityEvent::Action {
+                            activation_generation,
+                            request,
+                        },
                     },
                 });
         }
@@ -189,11 +203,23 @@ impl NativeAccessibilityIngress {
     }
 }
 
-#[cfg(not(target_family = "wasm"))]
-struct StagedNativeAccessibilityEnvelope {
+struct StagedNativeEnvelope {
     sequence: u64,
-    window_id: WindowId,
-    event: StagedNativeAccessibilityEvent,
+    event: StagedNativeEvent,
+}
+
+enum StagedNativeEvent {
+    App(StagedNativeAppEvent),
+    #[cfg(not(target_family = "wasm"))]
+    Accessibility {
+        window_id: WindowId,
+        event: StagedNativeAccessibilityEvent,
+    },
+}
+
+enum StagedNativeAppEvent {
+    SystemWake,
+    ThermalStateChanged,
 }
 
 #[cfg(not(target_family = "wasm"))]
@@ -208,63 +234,90 @@ enum StagedNativeAccessibilityEvent {
     },
 }
 
-#[cfg(not(target_family = "wasm"))]
-impl StagedNativeAccessibilityEnvelope {
+impl StagedNativeEnvelope {
     fn into_native_event(self) -> NativeEventEnvelope {
-        let event = match self.event {
-            StagedNativeAccessibilityEvent::ActiveChanged {
-                active,
-                activation_generation,
-            } => NativeWindowEvent::AccessibilityActiveChanged {
-                active,
-                activation_generation,
-            },
-            StagedNativeAccessibilityEvent::Action {
-                activation_generation,
-                request,
-            } => NativeWindowEvent::AccessibilityAction {
-                activation_generation,
-                request,
-            },
+        let target = match self.event {
+            StagedNativeEvent::App(StagedNativeAppEvent::SystemWake) => {
+                NativeEventTarget::App(NativeAppEvent::SystemWake)
+            }
+            StagedNativeEvent::App(StagedNativeAppEvent::ThermalStateChanged) => {
+                NativeEventTarget::App(NativeAppEvent::ThermalStateChanged)
+            }
+            #[cfg(not(target_family = "wasm"))]
+            StagedNativeEvent::Accessibility { window_id, event } => {
+                let event = match event {
+                    StagedNativeAccessibilityEvent::ActiveChanged {
+                        active,
+                        activation_generation,
+                    } => NativeWindowEvent::AccessibilityActiveChanged {
+                        active,
+                        activation_generation,
+                    },
+                    StagedNativeAccessibilityEvent::Action {
+                        activation_generation,
+                        request,
+                    } => NativeWindowEvent::AccessibilityAction {
+                        activation_generation,
+                        request,
+                    },
+                };
+                NativeEventTarget::Window { window_id, event }
+            }
         };
         NativeEventEnvelope {
             sequence: self.sequence,
-            target: NativeEventTarget::Window {
-                window_id: self.window_id,
-                event,
-            },
+            target,
         }
     }
 
     fn pending_diagnostic(&self) -> NativeBoundaryDiagnostic {
-        let (kind, generation) = match &self.event {
-            StagedNativeAccessibilityEvent::ActiveChanged {
-                active,
-                activation_generation,
-            } => (
-                if *active {
-                    NativeCallbackKind::AccessibilityActivated
-                } else {
-                    NativeCallbackKind::AccessibilityDeactivated
-                },
-                *activation_generation,
-            ),
-            StagedNativeAccessibilityEvent::Action {
-                activation_generation,
-                ..
-            } => (
-                NativeCallbackKind::AccessibilityAction,
-                *activation_generation,
-            ),
-        };
-        NativeBoundaryDiagnostic::pending(
-            self.sequence,
-            NativeBoundaryTarget::Window(self.window_id),
-            NativeBoundaryKind::Callback(kind),
-            Some(NativeBoundaryGeneration::AccessibilityActivation(
-                generation,
-            )),
-        )
+        match &self.event {
+            StagedNativeEvent::App(event) => {
+                let kind = match event {
+                    StagedNativeAppEvent::SystemWake => NativeCallbackKind::SystemWake,
+                    StagedNativeAppEvent::ThermalStateChanged => {
+                        NativeCallbackKind::ThermalStateChanged
+                    }
+                };
+                NativeBoundaryDiagnostic::pending(
+                    self.sequence,
+                    NativeBoundaryTarget::Application,
+                    NativeBoundaryKind::Callback(kind),
+                    None,
+                )
+            }
+            #[cfg(not(target_family = "wasm"))]
+            StagedNativeEvent::Accessibility { window_id, event } => {
+                let (kind, generation) = match event {
+                    StagedNativeAccessibilityEvent::ActiveChanged {
+                        active,
+                        activation_generation,
+                    } => (
+                        if *active {
+                            NativeCallbackKind::AccessibilityActivated
+                        } else {
+                            NativeCallbackKind::AccessibilityDeactivated
+                        },
+                        *activation_generation,
+                    ),
+                    StagedNativeAccessibilityEvent::Action {
+                        activation_generation,
+                        ..
+                    } => (
+                        NativeCallbackKind::AccessibilityAction,
+                        *activation_generation,
+                    ),
+                };
+                NativeBoundaryDiagnostic::pending(
+                    self.sequence,
+                    NativeBoundaryTarget::Window(*window_id),
+                    NativeBoundaryKind::Callback(kind),
+                    Some(NativeBoundaryGeneration::AccessibilityActivation(
+                        generation,
+                    )),
+                )
+            }
+        }
     }
 }
 
@@ -280,10 +333,8 @@ pub(super) struct NativeEventIngress {
     terminated: Cell<bool>,
     shutdown_generation: Cell<Option<u64>>,
     delayed_wake_tasks: RefCell<Vec<NativeOwnedLocalTask>>,
-    #[cfg(not(target_family = "wasm"))]
-    accessibility_wake_sender: async_channel::Sender<()>,
-    #[cfg(not(target_family = "wasm"))]
-    accessibility_wake_task: RefCell<Option<NativeOwnedLocalTask>>,
+    cross_thread_wake_sender: async_channel::Sender<()>,
+    cross_thread_wake_task: RefCell<Option<NativeOwnedLocalTask>>,
     owned_local_authority_count: Rc<Cell<usize>>,
     foreground_executor: ForegroundExecutor,
     app: Weak<AppCell>,
@@ -294,22 +345,20 @@ impl NativeEventIngress {
     pub(super) fn new(foreground_executor: ForegroundExecutor, app: Weak<AppCell>) -> Self {
         let sequencer = Arc::new(Mutex::new(NativeSequenceAuthority::new()));
         let owned_local_authority_count = Rc::new(Cell::new(0));
-        #[cfg(not(target_family = "wasm"))]
-        let (accessibility_wake_sender, accessibility_wake_receiver) =
+        let (cross_thread_wake_sender, cross_thread_wake_receiver) =
             async_channel::bounded::<()>(1);
-        #[cfg(not(target_family = "wasm"))]
-        let accessibility_wake_task = {
+        let cross_thread_wake_task = {
             let app = app.clone();
             let (lease, terminal) = NativeOwnedLocalTaskAuthorityLease::acquire(Rc::clone(
                 &owned_local_authority_count,
             ));
             let task = foreground_executor.spawn(async move {
                 let _lease = lease;
-                while accessibility_wake_receiver.recv().await.is_ok() {
+                while cross_thread_wake_receiver.recv().await.is_ok() {
                     let Some(app) = app.upgrade() else {
                         break;
                     };
-                    app.import_native_accessibility_events();
+                    app.import_staged_native_events();
                 }
             });
             NativeOwnedLocalTask::new(task, terminal)
@@ -326,10 +375,8 @@ impl NativeEventIngress {
             terminated: Cell::new(false),
             shutdown_generation: Cell::new(None),
             delayed_wake_tasks: RefCell::new(Vec::new()),
-            #[cfg(not(target_family = "wasm"))]
-            accessibility_wake_sender,
-            #[cfg(not(target_family = "wasm"))]
-            accessibility_wake_task: RefCell::new(Some(accessibility_wake_task)),
+            cross_thread_wake_sender,
+            cross_thread_wake_task: RefCell::new(Some(cross_thread_wake_task)),
             owned_local_authority_count,
             foreground_executor,
             app,
@@ -337,11 +384,10 @@ impl NativeEventIngress {
         }
     }
 
-    #[cfg(not(target_family = "wasm"))]
-    pub(super) fn accessibility_ingress(&self) -> NativeAccessibilityIngress {
-        NativeAccessibilityIngress::new(
+    pub(super) fn cross_thread_ingress(&self) -> NativeCrossThreadIngress {
+        NativeCrossThreadIngress::new(
             self.sequencer.clone(),
-            self.accessibility_wake_sender.clone(),
+            self.cross_thread_wake_sender.clone(),
         )
     }
 
@@ -536,31 +582,22 @@ impl NativeEventIngress {
     }
 
     fn reserve_sequence(&self) -> u64 {
-        #[cfg(not(target_family = "wasm"))]
-        {
-            // Earlier callback entries must enter the foreground queue before this local sequence.
-            let (staged, sequence) = self.sequencer.lock().take_staged_before_reserving();
-            self.enqueue_staged_accessibility(staged);
-            sequence
-        }
-        #[cfg(target_family = "wasm")]
-        {
-            self.sequencer.lock().reserve_sequence()
-        }
+        // Earlier callback entries must enter the foreground queue before this local sequence.
+        let (staged, sequence) = self.sequencer.lock().take_staged_before_reserving();
+        self.enqueue_staged_cross_thread(staged);
+        sequence
     }
 
     pub(super) fn enqueue_envelope(&self, envelope: NativeEventEnvelope) {
         self.enqueue_work(NativeWorkEnvelope::Event(envelope));
     }
 
-    #[cfg(not(target_family = "wasm"))]
-    pub(super) fn import_native_accessibility_events(&self) {
+    pub(super) fn import_staged_native_events(&self) {
         let staged = self.sequencer.lock().take_staged();
-        self.enqueue_staged_accessibility(staged);
+        self.enqueue_staged_cross_thread(staged);
     }
 
-    #[cfg(not(target_family = "wasm"))]
-    fn enqueue_staged_accessibility(&self, staged: VecDeque<StagedNativeAccessibilityEnvelope>) {
+    fn enqueue_staged_cross_thread(&self, staged: VecDeque<StagedNativeEnvelope>) {
         if staged.is_empty() {
             return;
         }
@@ -742,19 +779,12 @@ impl NativeEventIngress {
         cursor: NativeBoundaryDiagnosticCursor,
     ) -> NativeBoundaryDiagnosticsSnapshot {
         let mut pending = {
-            #[cfg(not(target_family = "wasm"))]
-            {
-                self.sequencer
-                    .lock()
-                    .staged_accessibility
-                    .iter()
-                    .map(StagedNativeAccessibilityEnvelope::pending_diagnostic)
-                    .collect::<Vec<_>>()
-            }
-            #[cfg(target_family = "wasm")]
-            {
-                Vec::new()
-            }
+            self.sequencer
+                .lock()
+                .staged_cross_thread
+                .iter()
+                .map(StagedNativeEnvelope::pending_diagnostic)
+                .collect::<Vec<_>>()
         };
         pending.extend(
             self.pending
@@ -935,12 +965,8 @@ impl NativeEventIngress {
         // the platform message loop can return; otherwise a timer thread could become the final
         // owner of a !Send future after the main-thread dispatch destination has gone away.
         self.delayed_wake_tasks.borrow_mut().clear();
-        #[cfg(not(target_family = "wasm"))]
-        self.accessibility_wake_task.borrow_mut().take();
-        #[cfg(not(target_family = "wasm"))]
+        self.cross_thread_wake_task.borrow_mut().take();
         let staged = self.sequencer.lock().terminate();
-        #[cfg(target_family = "wasm")]
-        self.sequencer.lock().terminate();
         let pending = {
             let mut queue = self.pending.borrow_mut();
             std::mem::take(&mut *queue)
@@ -948,7 +974,6 @@ impl NativeEventIngress {
         self.scheduled_wake.set(None);
         self.unwind_recovery_scheduled.set(false);
 
-        #[cfg(not(target_family = "wasm"))]
         for event in &staged {
             self.diagnostics.record_terminal(
                 event.pending_diagnostic(),
@@ -961,7 +986,6 @@ impl NativeEventIngress {
                 NativeBoundaryDisposition::Closed,
             );
         }
-        #[cfg(not(target_family = "wasm"))]
         drop(staged);
         drop(pending);
     }
@@ -2277,15 +2301,64 @@ mod tests {
     }
 
     #[test]
-    fn accessibility_ingress_handle_is_send_and_sync() {
-        assert_send_sync::<NativeAccessibilityIngress>();
+    fn cross_thread_ingress_handle_is_send_and_sync() {
+        assert_send_sync::<NativeCrossThreadIngress>();
+    }
+
+    #[test]
+    fn cross_thread_app_notifications_are_sequenced_before_later_local_event() {
+        let sequencer = Arc::new(Mutex::new(NativeSequenceAuthority::new()));
+        let (wake_sender, _wake_receiver) = async_channel::bounded(1);
+        let ingress = NativeCrossThreadIngress::new(sequencer.clone(), wake_sender);
+
+        std::thread::spawn(move || {
+            ingress.system_wake();
+            ingress.thermal_state_changed();
+        })
+        .join()
+        .expect("native notification worker should complete");
+
+        let (mut staged, local_sequence) = sequencer.lock().take_staged_before_reserving();
+        let system_wake = staged
+            .pop_front()
+            .expect("the raw system-wake notification must stage typed app work");
+        let thermal_state_change = staged
+            .pop_front()
+            .expect("the raw thermal notification must stage typed app work");
+        let later_event = NativeEventEnvelope {
+            sequence: local_sequence,
+            target: NativeEventTarget::App(NativeAppEvent::Reopen),
+        };
+
+        assert!(staged.is_empty());
+        assert_eq!(
+            [
+                system_wake.sequence,
+                thermal_state_change.sequence,
+                later_event.sequence,
+            ],
+            [0, 1, 2]
+        );
+        assert!(matches!(
+            system_wake.event,
+            StagedNativeEvent::App(StagedNativeAppEvent::SystemWake)
+        ));
+        assert!(matches!(
+            thermal_state_change.event,
+            StagedNativeEvent::App(StagedNativeAppEvent::ThermalStateChanged)
+        ));
+        assert!(
+            system_wake.sequence < thermal_state_change.sequence
+                && thermal_state_change.sequence < later_event.sequence,
+            "raw ingress must reserve both notification sequences before a later local event"
+        );
     }
 
     #[test]
     fn accessibility_callbacks_are_sequenced_before_later_local_work_without_coalescing() {
         let sequencer = Arc::new(Mutex::new(NativeSequenceAuthority::new()));
         let (wake_sender, _wake_receiver) = async_channel::bounded(1);
-        let ingress = NativeAccessibilityIngress::new(sequencer.clone(), wake_sender);
+        let ingress = NativeCrossThreadIngress::new(sequencer.clone(), wake_sender);
         let active_state = Arc::new(AtomicU64::new(0));
         let original_window = WindowId::from(1);
         let replacement_window = WindowId::from((7_u64 << 32) | 1);
@@ -2310,32 +2383,35 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![0, 1, 2]
         );
-        assert_eq!(staged[0].window_id, original_window);
-        assert_eq!(staged[1].window_id, original_window);
-        assert_eq!(
-            staged[2].window_id, replacement_window,
-            "the complete generational WindowId must survive cross-thread staging"
-        );
         assert!(matches!(
             &staged[0].event,
-            StagedNativeAccessibilityEvent::ActiveChanged {
-                active: true,
-                activation_generation: 1,
-            }
+            StagedNativeEvent::Accessibility {
+                window_id,
+                event: StagedNativeAccessibilityEvent::ActiveChanged {
+                    active: true,
+                    activation_generation: 1,
+                },
+            } if *window_id == original_window
         ));
         assert!(matches!(
             &staged[1].event,
-            StagedNativeAccessibilityEvent::Action {
-                activation_generation: 1,
-                ..
-            }
+            StagedNativeEvent::Accessibility {
+                window_id,
+                event: StagedNativeAccessibilityEvent::Action {
+                    activation_generation: 1,
+                    ..
+                },
+            } if *window_id == original_window
         ));
         assert!(matches!(
             &staged[2].event,
-            StagedNativeAccessibilityEvent::ActiveChanged {
-                active: false,
-                activation_generation: 2,
-            }
+            StagedNativeEvent::Accessibility {
+                window_id,
+                event: StagedNativeAccessibilityEvent::ActiveChanged {
+                    active: false,
+                    activation_generation: 2,
+                },
+            } if *window_id == replacement_window
         ));
         assert_eq!(
             active_state.load(Ordering::SeqCst),
@@ -2345,21 +2421,23 @@ mod tests {
     }
 
     #[test]
-    fn terminated_accessibility_sequencer_discards_staged_and_future_callbacks() {
+    fn terminated_cross_thread_sequencer_discards_staged_and_future_callbacks() {
         let sequencer = Arc::new(Mutex::new(NativeSequenceAuthority::new()));
         let (wake_sender, _wake_receiver) = async_channel::bounded(1);
-        let ingress = NativeAccessibilityIngress::new(sequencer.clone(), wake_sender);
+        let ingress = NativeCrossThreadIngress::new(sequencer.clone(), wake_sender);
         let active_state = AtomicU64::new(0);
         let window_id = WindowId::from(1);
 
         ingress.activated(window_id, &active_state);
+        ingress.system_wake();
         sequencer.lock().terminate();
         ingress.deactivated(window_id, &active_state);
+        ingress.thermal_state_changed();
 
         let sequencer = sequencer.lock();
-        assert!(sequencer.staged_accessibility.is_empty());
+        assert!(sequencer.staged_cross_thread.is_empty());
         assert_eq!(
-            sequencer.next_sequence, 1,
+            sequencer.next_sequence, 2,
             "callbacks after termination must not reserve or stage native work"
         );
         assert_eq!(

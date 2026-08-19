@@ -48,8 +48,8 @@ use crate::{
     Action, ActionBuildError, ActionRegistry, Any, AnyView, AnyWindowHandle, AppContext, Arena,
     ArenaBox, Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle,
     DispatchPhase, DisplayId, EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global,
-    KeyBinding, KeyContext, Keymap, Keystroke, LayoutId, Menu, MenuItem, MouseButton, OwnedMenu,
-    PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformDisplaySnapshot,
+    HitboxId, KeyBinding, KeyContext, Keymap, Keystroke, LayoutId, Menu, MenuItem, MouseButton,
+    OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformDisplaySnapshot,
     PlatformFocusedWindow, PlatformHoveredWindow, PlatformKeyboardLayout, PlatformKeyboardMapper,
     PlatformViewportCapabilities, PlatformWindowCapabilities, PlatformWindowProfile, Point,
     PointerCaptureHandle, Priority, PromptBuilder, PromptButton, PromptHandle, PromptLevel, Render,
@@ -992,13 +992,10 @@ impl App {
             }
         }));
 
-        platform.on_system_wake(Box::new({
-            let app = Rc::downgrade(&app);
-            move || {
-                if let Some(app) = app.upgrade() {
-                    app.enqueue_native_app_event(native_event_ingress::NativeAppEvent::SystemWake);
-                }
-            }
+        let native_app_ingress = app.native_application_ingress();
+        platform.on_system_wake(Arc::new({
+            let native_app_ingress = native_app_ingress.clone();
+            move || native_app_ingress.system_wake()
         }));
 
         platform.on_keyboard_layout_change(Box::new({
@@ -1012,16 +1009,8 @@ impl App {
             }
         }));
 
-        platform.on_thermal_state_change(Box::new({
-            let app = Rc::downgrade(&app);
-            move || {
-                if let Some(app) = app.upgrade() {
-                    app.enqueue_native_app_event(
-                        native_event_ingress::NativeAppEvent::ThermalStateChanged,
-                    );
-                }
-            }
-        }));
+        platform
+            .on_thermal_state_change(Arc::new(move || native_app_ingress.thermal_state_changed()));
 
         platform.on_quit(Box::new({
             let app = Rc::downgrade(&app);
@@ -1440,6 +1429,23 @@ impl App {
     /// To find all windows of a given type, you could filter on
     pub fn windows(&self) -> Vec<AnyWindowHandle> {
         window_registry::handles(self)
+    }
+
+    /// Returns a committed hitbox's front-to-back rank at a point in a window that is not
+    /// currently checked out by an update transaction.
+    ///
+    /// This is a read-only native-routing seam. It does not dispatch callbacks or advance window
+    /// state, and returns `None` when the window is closed, checked out, or the hitbox is not in the
+    /// committed foreground target set at `point`.
+    #[doc(hidden)]
+    pub fn window_point_target_rank(
+        &self,
+        window: AnyWindowHandle,
+        hitbox: HitboxId,
+        point: Point<Pixels>,
+    ) -> Option<usize> {
+        let window = self.windows.get(window.window_id())?.as_deref()?;
+        hitbox.window_point_target_rank(point, window)
     }
 
     pub(crate) fn set_native_window_control_area(

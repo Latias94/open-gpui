@@ -1,8 +1,8 @@
 use crate::{
     AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DevicePixels,
-    DummyKeyboardMapper, ForegroundExecutor, Keymap, MouseButton, NoopTextSystem,
-    PathPromptOptions, Platform, PlatformDisplay, PlatformDisplaySnapshot, PlatformFocusedWindow,
-    PlatformHeadlessRenderer, PlatformHoveredWindow, PlatformKeyboardLayout,
+    DummyKeyboardMapper, ForegroundExecutor, Keymap, MouseButton, NativeAppNotificationHandler,
+    NoopTextSystem, PathPromptOptions, Platform, PlatformDisplay, PlatformDisplaySnapshot,
+    PlatformFocusedWindow, PlatformHeadlessRenderer, PlatformHoveredWindow, PlatformKeyboardLayout,
     PlatformKeyboardMapper, PlatformNativeDragHysteresis, PlatformTextSystem,
     PlatformWindowActivationSupport, PlatformWindowCapabilities, PlatformWindowCommandOutcome,
     PlatformWindowCreationCapabilities, PlatformWindowHitStack, PlatformWindowMutationCapabilities,
@@ -63,7 +63,7 @@ pub(crate) struct TestPlatform {
     quit_requested: RefCell<bool>,
     open_urls_callback: RefCell<Option<Box<dyn FnMut(Vec<String>)>>>,
     reopen_callback: RefCell<Option<Box<dyn FnMut()>>>,
-    system_wake_callback: RefCell<Option<Box<dyn FnMut()>>>,
+    system_wake_callback: RefCell<Option<NativeAppNotificationHandler>>,
     will_open_app_menu_callback: RefCell<Option<Box<dyn FnMut()>>>,
     app_menu_action_callback: RefCell<Option<Box<dyn FnMut(&dyn crate::Action)>>>,
     validate_app_menu_command_callback: RefCell<Option<Box<dyn FnMut(&dyn crate::Action) -> bool>>>,
@@ -477,12 +477,12 @@ impl TestPlatform {
     }
 
     pub(crate) fn simulate_system_wake(&self) {
-        let mut callback = self
+        let callback = self
             .system_wake_callback
-            .take()
+            .borrow()
+            .clone()
             .expect("system wake callback must be installed during App initialization");
         callback();
-        self.system_wake_callback.replace(Some(callback));
     }
 
     pub(crate) fn simulate_open_urls(&self, urls: Vec<String>) {
@@ -560,9 +560,9 @@ impl Platform for TestPlatform {
 
     fn on_keyboard_layout_change(&self, _: Box<dyn FnMut()>) {}
 
-    fn on_thermal_state_change(&self, _: Box<dyn FnMut()>) {}
+    fn on_thermal_state_change(&self, _: NativeAppNotificationHandler) {}
 
-    fn on_system_wake(&self, callback: Box<dyn FnMut()>) {
+    fn on_system_wake(&self, callback: NativeAppNotificationHandler) {
         assert!(
             self.system_wake_callback.replace(Some(callback)).is_none(),
             "system wake callback must be installed exactly once"

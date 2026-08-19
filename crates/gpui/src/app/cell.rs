@@ -2245,13 +2245,18 @@ impl AppCell {
     #[cfg(not(target_family = "wasm"))]
     pub(crate) fn native_accessibility_ingress(
         &self,
-    ) -> super::native_event_ingress::NativeAccessibilityIngress {
-        self.native_events.accessibility_ingress()
+    ) -> super::native_event_ingress::NativeCrossThreadIngress {
+        self.native_events.cross_thread_ingress()
     }
 
-    #[cfg(not(target_family = "wasm"))]
-    pub(super) fn import_native_accessibility_events(&self) {
-        self.native_events.import_native_accessibility_events();
+    pub(super) fn native_application_ingress(
+        &self,
+    ) -> super::native_event_ingress::NativeCrossThreadIngress {
+        self.native_events.cross_thread_ingress()
+    }
+
+    pub(super) fn import_staged_native_events(&self) {
+        self.native_events.import_staged_native_events();
     }
 
     pub(crate) fn enqueue_will_open_app_menu(&self) {

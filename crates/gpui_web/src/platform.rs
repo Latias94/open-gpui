@@ -6,9 +6,9 @@ use anyhow::Result;
 use futures::channel::oneshot;
 use open_gpui::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, DisplayId, DummyKeyboardMapper,
-    ForegroundExecutor, Keymap, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay,
-    PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow,
-    PlatformWindowActivationSupport, PlatformWindowCapabilities,
+    ForegroundExecutor, Keymap, Menu, MenuItem, NativeAppNotificationHandler, PathPromptOptions,
+    Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
+    PlatformWindow, PlatformWindowActivationSupport, PlatformWindowCapabilities,
     PlatformWindowCreationCapabilities, PlatformWindowMutationCapabilities, Task, ThermalState,
     WindowAppearance, WindowCreationSupport, WindowInitialPresentationOrder, WindowKind,
     WindowMutationSupport, WindowParams,
@@ -56,7 +56,7 @@ struct WebPlatformCallbacks {
     will_open_app_menu: Option<Box<dyn FnMut()>>,
     validate_app_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
     keyboard_layout_change: Option<Box<dyn FnMut()>>,
-    thermal_state_change: Option<Box<dyn FnMut()>>,
+    thermal_state_change: Option<NativeAppNotificationHandler>,
 }
 
 impl WebPlatform {
@@ -297,7 +297,7 @@ impl Platform for WebPlatform {
         self.callbacks.borrow_mut().reopen = Some(callback);
     }
 
-    fn on_system_wake(&self, _callback: Box<dyn FnMut()>) {}
+    fn on_system_wake(&self, _callback: NativeAppNotificationHandler) {}
 
     fn set_menus(&self, _menus: Vec<Menu>, _keymap: &Keymap) {}
 
@@ -319,7 +319,7 @@ impl Platform for WebPlatform {
         ThermalState::Nominal
     }
 
-    fn on_thermal_state_change(&self, callback: Box<dyn FnMut()>) {
+    fn on_thermal_state_change(&self, callback: NativeAppNotificationHandler) {
         self.callbacks.borrow_mut().thermal_state_change = Some(callback);
     }
 

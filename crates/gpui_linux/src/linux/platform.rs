@@ -22,10 +22,11 @@ use xkbcommon::xkb::{self, Keycode, Keysym, State};
 use crate::linux::{LinuxDispatcher, PriorityQueueCalloopReceiver};
 use open_gpui::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, DisplayId, ForegroundExecutor,
-    Keymap, Menu, MenuItem, MouseButton, OwnedMenu, PathPromptOptions, Platform, PlatformDisplay,
-    PlatformFocusedWindow, PlatformHoveredWindow, PlatformKeyboardLayout, PlatformKeyboardMapper,
-    PlatformTextSystem, PlatformViewportCapabilities, PlatformWindow, PlatformWindowCapabilities,
-    Result, RunnableVariant, Task, ThermalState, WindowAppearance, WindowButtonLayout, WindowKind,
+    Keymap, Menu, MenuItem, MouseButton, NativeAppNotificationHandler, OwnedMenu,
+    PathPromptOptions, Platform, PlatformDisplay, PlatformFocusedWindow, PlatformHoveredWindow,
+    PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
+    PlatformViewportCapabilities, PlatformWindow, PlatformWindowCapabilities, Result,
+    RunnableVariant, Task, ThermalState, WindowAppearance, WindowButtonLayout, WindowKind,
     WindowParams,
 };
 #[cfg(any(feature = "wayland", feature = "x11"))]
@@ -128,7 +129,7 @@ pub(crate) struct PlatformHandlers {
     pub(crate) will_open_app_menu: Option<Box<dyn FnMut()>>,
     pub(crate) validate_app_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
     pub(crate) keyboard_layout_change: Option<Box<dyn FnMut()>>,
-    pub(crate) system_wake: Option<Box<dyn FnMut()>>,
+    pub(crate) system_wake: Option<NativeAppNotificationHandler>,
 }
 
 pub(crate) struct LinuxCommon {
@@ -208,11 +209,10 @@ impl LinuxCommon {
     }
 
     pub(crate) fn handle_system_wake(&mut self) {
-        let Some(mut callback) = self.callbacks.system_wake.take() else {
-            return;
-        };
-        callback();
-        self.callbacks.system_wake = Some(callback);
+        let callback = self.callbacks.system_wake.clone();
+        if let Some(callback) = callback {
+            callback();
+        }
     }
 }
 
@@ -272,7 +272,7 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
             .with_common(|common| common.callbacks.keyboard_layout_change = Some(callback));
     }
 
-    fn on_thermal_state_change(&self, _callback: Box<dyn FnMut()>) {}
+    fn on_thermal_state_change(&self, _callback: NativeAppNotificationHandler) {}
 
     fn thermal_state(&self) -> ThermalState {
         ThermalState::Nominal
@@ -594,7 +594,7 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
         });
     }
 
-    fn on_system_wake(&self, callback: Box<dyn FnMut()>) {
+    fn on_system_wake(&self, callback: NativeAppNotificationHandler) {
         self.inner.with_common(|common| {
             common.callbacks.system_wake = Some(callback);
             common.start_wake_listener();

@@ -41,14 +41,14 @@ use objc::{
 };
 use open_gpui::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, DisplayId, ForegroundExecutor,
-    KeyContext, Keymap, Menu, MenuItem, MouseButton, NavigationDirection, OsMenu, OwnedMenu,
-    PathPromptOptions, Platform, PlatformDisplay, PlatformDisplaySnapshot, PlatformFocusedWindow,
-    PlatformHoveredWindow, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PlatformViewportCapabilities, PlatformWindow, PlatformWindowActivationSupport,
-    PlatformWindowCapabilities, PlatformWindowCreationCapabilities,
-    PlatformWindowMutationCapabilities, Result, SystemMenuType, Task, ThermalState,
-    WindowAppearance, WindowCoordinateSpace, WindowCreationSupport, WindowInitialPresentationOrder,
-    WindowKind, WindowMutationSupport, WindowParams,
+    KeyContext, Keymap, Menu, MenuItem, MouseButton, NativeAppNotificationHandler,
+    NavigationDirection, OsMenu, OwnedMenu, PathPromptOptions, Platform, PlatformDisplay,
+    PlatformDisplaySnapshot, PlatformFocusedWindow, PlatformHoveredWindow, PlatformKeyboardLayout,
+    PlatformKeyboardMapper, PlatformTextSystem, PlatformViewportCapabilities, PlatformWindow,
+    PlatformWindowActivationSupport, PlatformWindowCapabilities,
+    PlatformWindowCreationCapabilities, PlatformWindowMutationCapabilities, Result, SystemMenuType,
+    Task, ThermalState, WindowAppearance, WindowCoordinateSpace, WindowCreationSupport,
+    WindowInitialPresentationOrder, WindowKind, WindowMutationSupport, WindowParams,
 };
 use open_gpui_util::{
     ResultExt,
@@ -178,7 +178,13 @@ unsafe fn build_classes() {
     }
 }
 
-pub struct MacPlatform(Mutex<MacPlatformState>);
+pub struct MacPlatform(Mutex<MacPlatformState>, MacNativeNotificationCallbacks);
+
+#[derive(Default)]
+struct MacNativeNotificationCallbacks {
+    thermal_state_change: OnceLock<NativeAppNotificationHandler>,
+    system_wake: OnceLock<NativeAppNotificationHandler>,
+}
 
 pub(crate) struct MacPlatformState {
     background_executor: BackgroundExecutor,
@@ -192,8 +198,6 @@ pub(crate) struct MacPlatformState {
     find_pasteboard: Pasteboard,
     reopen: Option<Box<dyn FnMut()>>,
     on_keyboard_layout_change: Option<Box<dyn FnMut()>>,
-    on_thermal_state_change: Option<Box<dyn FnMut()>>,
-    on_system_wake: Option<Box<dyn FnMut()>>,
     system_wake_observer_registered: bool,
     quit: Option<Box<dyn FnMut()>>,
     menu_command: Option<Box<dyn FnMut(&dyn Action)>>,
@@ -226,33 +230,34 @@ impl MacPlatform {
             log::error!("cannot collect the initial macOS display topology: {error}");
         }
 
-        Self(Mutex::new(MacPlatformState {
-            headless,
-            text_system,
-            background_executor: BackgroundExecutor::new(dispatcher.clone()),
-            foreground_executor: ForegroundExecutor::new(dispatcher),
-            renderer_context: renderer::Context::default(),
-            display_topology,
-            window_registry: MacWindowRegistry::default(),
-            general_pasteboard: Pasteboard::general(),
-            find_pasteboard: Pasteboard::find(),
-            reopen: None,
-            quit: None,
-            menu_command: None,
-            validate_menu_command: None,
-            will_open_menu: None,
-            menu_actions: Default::default(),
-            open_urls: None,
-            finish_launching: None,
-            dock_menu: None,
-            on_keyboard_layout_change: None,
-            on_thermal_state_change: None,
-            on_system_wake: None,
-            system_wake_observer_registered: false,
-            menus: None,
-            keyboard_mapper,
-            cursor_visible: Arc::new(AtomicBool::new(true)),
-        }))
+        Self(
+            Mutex::new(MacPlatformState {
+                headless,
+                text_system,
+                background_executor: BackgroundExecutor::new(dispatcher.clone()),
+                foreground_executor: ForegroundExecutor::new(dispatcher),
+                renderer_context: renderer::Context::default(),
+                display_topology,
+                window_registry: MacWindowRegistry::default(),
+                general_pasteboard: Pasteboard::general(),
+                find_pasteboard: Pasteboard::find(),
+                reopen: None,
+                quit: None,
+                menu_command: None,
+                validate_menu_command: None,
+                will_open_menu: None,
+                menu_actions: Default::default(),
+                open_urls: None,
+                finish_launching: None,
+                dock_menu: None,
+                on_keyboard_layout_change: None,
+                system_wake_observer_registered: false,
+                menus: None,
+                keyboard_mapper,
+                cursor_visible: Arc::new(AtomicBool::new(true)),
+            }),
+            MacNativeNotificationCallbacks::default(),
+        )
     }
 
     fn display_topology(&self) -> MacDisplayTopologyHandle {
@@ -1161,9 +1166,12 @@ impl Platform for MacPlatform {
         self.0.lock().reopen = Some(callback);
     }
 
-    fn on_system_wake(&self, callback: Box<dyn FnMut()>) {
-        let mut state = self.0.lock();
-        state.on_system_wake = Some(callback);
+    fn on_system_wake(&self, callback: NativeAppNotificationHandler) {
+        assert!(
+            self.1.system_wake.set(callback).is_ok(),
+            "system wake callback must be installed exactly once"
+        );
+        let state = self.0.lock();
         if state.system_wake_observer_registered {
             return;
         }
@@ -1196,8 +1204,11 @@ impl Platform for MacPlatform {
         self.0.lock().validate_menu_command = Some(callback);
     }
 
-    fn on_thermal_state_change(&self, callback: Box<dyn FnMut()>) {
-        self.0.lock().on_thermal_state_change = Some(callback);
+    fn on_thermal_state_change(&self, callback: NativeAppNotificationHandler) {
+        assert!(
+            self.1.thermal_state_change.set(callback).is_ok(),
+            "thermal state callback must be installed exactly once"
+        );
     }
 
     fn thermal_state(&self) -> ThermalState {
@@ -1445,6 +1456,17 @@ unsafe fn get_mac_platform(object: &mut Object) -> &MacPlatform {
     }
 }
 
+unsafe fn get_mac_notification_callbacks(object: &mut Object) -> &MacNativeNotificationCallbacks {
+    unsafe {
+        let platform_ptr: *mut c_void = *object.get_ivar(MAC_PLATFORM_IVAR);
+        assert!(!platform_ptr.is_null());
+        // MAC_PLATFORM_IVAR points at the stable Rc allocation for the duration of app.run().
+        // Project only the Send + Sync notification field. The first tuple field contains
+        // main-thread-only Cocoa and Rc state and must not be borrowed on a posting thread.
+        &*std::ptr::addr_of!((*(platform_ptr as *const MacPlatform)).1)
+    }
+}
+
 extern "C" fn will_finish_launching(_this: &mut Object, _: Sel, _: id) {
     unsafe {
         let user_defaults: id = msg_send![class!(NSUserDefaults), standardUserDefaults];
@@ -1495,9 +1517,10 @@ extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
         let observer = this as *mut Object as id;
         let platform = get_mac_platform(this);
         platform.refresh_display_topology_now();
+        let observes_system_wake = platform.1.system_wake.get().is_some();
         let callback = {
             let mut state = platform.0.lock();
-            if state.on_system_wake.is_some() && !state.system_wake_observer_registered {
+            if observes_system_wake && !state.system_wake_observer_registered {
                 register_system_wake_observer(observer);
                 state.system_wake_observer_registered = true;
             }
@@ -1562,46 +1585,26 @@ extern "C" fn on_keyboard_layout_change(this: &mut Object, _: Sel, _: id) {
 }
 
 extern "C" fn on_thermal_state_change(this: &mut Object, _: Sel, _: id) {
-    // Defer to the next run loop iteration to avoid re-entrant borrows of the App RefCell,
-    // as NSNotificationCenter delivers this notification synchronously and it may fire while
-    // the App is already borrowed (same pattern as quit() above).
-    let platform = unsafe { get_mac_platform(this) };
-    let platform_ptr = platform as *const MacPlatform as *mut c_void;
-    unsafe {
-        DispatchQueue::main().exec_async_f(platform_ptr, on_thermal_state_change);
-    }
-
-    extern "C" fn on_thermal_state_change(context: *mut c_void) {
-        let platform = unsafe { &*(context as *const MacPlatform) };
-        let mut lock = platform.0.lock();
-        if let Some(mut callback) = lock.on_thermal_state_change.take() {
-            drop(lock);
-            callback();
-            platform
-                .0
-                .lock()
-                .on_thermal_state_change
-                .get_or_insert(callback);
-        }
+    let callback = unsafe {
+        get_mac_notification_callbacks(this)
+            .thermal_state_change
+            .get()
+            .cloned()
+    };
+    if let Some(callback) = callback {
+        callback();
     }
 }
 
 extern "C" fn on_system_wake(this: &mut Object, _: Sel, _: id) {
-    // Defer to the next run loop iteration to avoid re-entrant borrows of the App RefCell.
-    let platform = unsafe { get_mac_platform(this) };
-    let platform_ptr = platform as *const MacPlatform as *mut c_void;
-    unsafe {
-        DispatchQueue::main().exec_async_f(platform_ptr, on_system_wake);
-    }
-
-    extern "C" fn on_system_wake(context: *mut c_void) {
-        let platform = unsafe { &*(context as *const MacPlatform) };
-        let mut lock = platform.0.lock();
-        if let Some(mut callback) = lock.on_system_wake.take() {
-            drop(lock);
-            callback();
-            platform.0.lock().on_system_wake.get_or_insert(callback);
-        }
+    let callback = unsafe {
+        get_mac_notification_callbacks(this)
+            .system_wake
+            .get()
+            .cloned()
+    };
+    if let Some(callback) = callback {
+        callback();
     }
 }
 

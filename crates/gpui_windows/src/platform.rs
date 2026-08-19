@@ -623,7 +623,7 @@ struct PlatformCallbacks {
     will_open_app_menu: Cell<Option<Box<dyn FnMut()>>>,
     validate_app_menu_command: Cell<Option<Box<dyn FnMut(&dyn Action) -> bool>>>,
     keyboard_layout_change: Cell<Option<Box<dyn FnMut()>>>,
-    system_wake: Cell<Option<Box<dyn FnMut()>>>,
+    system_wake: Cell<Option<NativeAppNotificationHandler>>,
 }
 
 impl WindowsPlatformState {
@@ -2038,7 +2038,7 @@ impl Platform for WindowsPlatform {
             .set(Some(callback));
     }
 
-    fn on_thermal_state_change(&self, _callback: Box<dyn FnMut()>) {}
+    fn on_thermal_state_change(&self, _callback: NativeAppNotificationHandler) {}
 
     fn thermal_state(&self) -> ThermalState {
         ThermalState::Nominal
@@ -2403,7 +2403,7 @@ impl Platform for WindowsPlatform {
         self.inner.state.callbacks.reopen.set(Some(callback));
     }
 
-    fn on_system_wake(&self, callback: Box<dyn FnMut()>) {
+    fn on_system_wake(&self, callback: NativeAppNotificationHandler) {
         self.inner.state.callbacks.system_wake.set(Some(callback));
 
         let mut notification = self.suspend_resume_notification.borrow_mut();
@@ -3308,7 +3308,9 @@ impl WindowsPlatformInner {
 
     fn handle_power_broadcast(&self, wparam: WPARAM) -> Option<isize> {
         if wparam.0 as u32 == PBT_APMRESUMEAUTOMATIC {
-            self.with_callback(|callbacks| &callbacks.system_wake, |callback| callback());
+            let _ = with_windows_shared_callback(&self.state.callbacks.system_wake, |callback| {
+                callback()
+            });
         }
         Some(1)
     }

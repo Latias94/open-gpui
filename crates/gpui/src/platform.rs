@@ -3409,6 +3409,9 @@ pub fn guess_compositor() -> &'static str {
     }
 }
 
+#[doc(hidden)]
+pub type NativeAppNotificationHandler = Arc<dyn Fn() + Send + Sync>;
+
 #[expect(missing_docs)]
 pub trait Platform: 'static {
     fn background_executor(&self) -> BackgroundExecutor;
@@ -3539,7 +3542,7 @@ pub trait Platform: 'static {
 
     fn on_quit(&self, callback: Box<dyn FnMut()>);
     fn on_reopen(&self, callback: Box<dyn FnMut()>);
-    fn on_system_wake(&self, callback: Box<dyn FnMut()>);
+    fn on_system_wake(&self, callback: NativeAppNotificationHandler);
 
     fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap);
     fn get_menus(&self) -> Option<Vec<OwnedMenu>> {
@@ -3561,7 +3564,7 @@ pub trait Platform: 'static {
     fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>);
 
     fn thermal_state(&self) -> ThermalState;
-    fn on_thermal_state_change(&self, callback: Box<dyn FnMut()>);
+    fn on_thermal_state_change(&self, callback: NativeAppNotificationHandler);
 
     fn compositor_name(&self) -> &'static str {
         ""

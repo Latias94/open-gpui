@@ -32,7 +32,7 @@ use std::{
     cell::{Cell, RefCell},
     panic::{AssertUnwindSafe, catch_unwind},
     rc::Rc,
-    sync::Once,
+    sync::{Arc, Once},
     time::{Duration, Instant},
 };
 use windows::Win32::{
@@ -7474,7 +7474,7 @@ fn returning_test_platform_keeps_retry_transport_until_fallible_cleanup_converge
         WindowsPlatform::new_returning_for_test(true)
             .expect("returning Windows test platform should initialize"),
     );
-    platform.on_system_wake(Box::new(|| {}));
+    platform.on_system_wake(Arc::new(|| {}));
     assert!(
         platform.suspend_resume_notification.borrow().is_some(),
         "the test must own a real suspend/resume registration"

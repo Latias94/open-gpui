@@ -8,9 +8,10 @@
 use crate::ScreenCaptureSource;
 use crate::{
     AnyWindowHandle, BackgroundExecutor, ClipboardItem, DevicePixels, ForegroundExecutor, Keymap,
-    Menu, MenuItem, MouseButton, OwnedMenu, PathPromptOptions, Platform, PlatformDisplay,
-    PlatformDisplaySnapshot, PlatformHoveredWindow, PlatformKeyboardLayout, PlatformKeyboardMapper,
-    PlatformTextSystem, PlatformViewportCapabilities, PlatformWindow, PlatformWindowCapabilities,
+    Menu, MenuItem, MouseButton, NativeAppNotificationHandler, OwnedMenu, PathPromptOptions,
+    Platform, PlatformDisplay, PlatformDisplaySnapshot, PlatformHoveredWindow,
+    PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
+    PlatformViewportCapabilities, PlatformWindow, PlatformWindowCapabilities,
     PlatformWindowHitStack, Point, Task, TestDispatcher, WindowAppearance, WindowParams,
 };
 use anyhow::Result;
@@ -225,7 +226,7 @@ impl Platform for VisualTestPlatform {
 
     fn on_reopen(&self, _callback: Box<dyn FnMut()>) {}
 
-    fn on_system_wake(&self, _callback: Box<dyn FnMut()>) {}
+    fn on_system_wake(&self, _callback: NativeAppNotificationHandler) {}
 
     fn set_menus(&self, _menus: Vec<Menu>, _keymap: &Keymap) {}
 
@@ -315,5 +316,5 @@ impl Platform for VisualTestPlatform {
         super::ThermalState::Nominal
     }
 
-    fn on_thermal_state_change(&self, _callback: Box<dyn FnMut()>) {}
+    fn on_thermal_state_change(&self, _callback: NativeAppNotificationHandler) {}
 }
