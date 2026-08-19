@@ -14,7 +14,7 @@ use open_gpui::{
     PlatformWindowActiveStatusObservation, PlatformWindowCommand, PlatformWindowCommandDispatcher,
     PlatformWindowCommandOutcome, PlatformWindowInteractionQuiescence,
     PlatformWindowPresentOutcome, Point, PreparedPlatformPresentationShutdown, PromptButton,
-    PromptLevel, RequestFrameOptions, ResizeEdge, ScaledPixels, Scene, Size, Tiling,
+    PromptLevel, RequestFrameOptions, ResizeEdge, ScaledPixels, Scene, Size, Task, Tiling,
     WindowActivationPolicy, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
     WindowControlArea, WindowCreationFacts, WindowDecorations, WindowKind, WindowParams,
     WindowPresentationShutdownTicket, px,
@@ -28,10 +28,10 @@ use raw_window_handle as rwh;
 use x11rb::{
     connection::Connection,
     cookie::{Cookie, VoidCookie},
-    errors::ConnectionError,
+    errors::{ConnectionError, ReplyError},
     properties::WmSizeHints,
     protocol::{
-        sync,
+        ErrorKind, sync,
         xinput::{self, ConnectionExt as _},
         xproto::{self, ClientMessageEvent, ConnectionExt, TranslateCoordinatesReply},
     },
@@ -44,7 +44,7 @@ use std::{
     ffi::c_void,
     fmt::Display,
     num::NonZeroU32,
-    ptr::NonNull,
+    ptr::{NonNull, null_mut},
     rc::{Rc, Weak},
     sync::Arc,
     time::Duration,
@@ -54,7 +54,8 @@ use super::{
     X11Display, XINPUT_ALL_DEVICE_GROUPS, XINPUT_ALL_DEVICES, point_from_x11_window_coords,
     window_observation::{
         X11PropertyAttempt, X11PropertyDomain, X11PropertyPayload, X11PropertyPayloadError,
-        X11PropertyRetry, X11RestoreSettlement, X11SyncCounterValue, X11SyncRetry,
+        X11PropertyRetry, X11RestoreSettlement, X11SyncAcknowledgementObservation,
+        X11SyncAcknowledgementSubmission, X11SyncCounterValue, X11SyncRetry,
         X11WindowObservationCoordinator, X11WindowStateAtoms, X11WindowStateFacts,
         parse_x11_edge_constraints_property, parse_x11_window_state_property,
         reconcile_x11_configure_geometry,
@@ -111,6 +112,17 @@ x11rb::atom_manager! {
         _GTK_EDGE_CONSTRAINTS,
         _NET_CLIENT_LIST_STACKING,
     }
+}
+
+#[link(name = "xcb")]
+unsafe extern "C" {
+    fn xcb_poll_for_reply64(
+        connection: *mut c_void,
+        sequence: u64,
+        reply: *mut *mut c_void,
+        error: *mut *mut c_void,
+    ) -> libc::c_int;
+    fn xcb_discard_reply64(connection: *mut c_void, sequence: u64);
 }
 
 fn query_render_extent(
@@ -429,6 +441,7 @@ pub struct X11WindowState {
     x_screen_index: usize,
     visual_id: u32,
     sync_counter: Option<sync::Counter>,
+    sync_acknowledgement_task: Option<Task<()>>,
     observation: X11WindowObservationCoordinator,
     bounds: Bounds<Pixels>,
     restore_bounds: Bounds<Pixels>,
@@ -757,6 +770,229 @@ pub(crate) fn xcb_flush(xcb: &XCBConnection) {
         .map_err(handle_connection_error)
         .context("X11 flush failed")
         .log_err();
+}
+
+enum X11SyncTransportFailure {
+    Retryable(anyhow::Error),
+    Permanent {
+        error: anyhow::Error,
+        counter_invalid: bool,
+    },
+}
+
+enum X11SyncTerminalObservation {
+    Pending(X11SyncAcknowledgementSubmission),
+    Succeeded,
+    Failed {
+        submission: X11SyncAcknowledgementSubmission,
+        failure: X11SyncTransportFailure,
+    },
+}
+
+enum X11SyncSequenceObservation {
+    Pending,
+    Succeeded,
+    Failed {
+        failure: X11SyncTransportFailure,
+        terminal: bool,
+    },
+}
+
+fn classify_sync_connection_failure(
+    context: &'static str,
+    error: ConnectionError,
+) -> X11SyncTransportFailure {
+    let retryable = matches!(
+        &error,
+        ConnectionError::IoError(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::WouldBlock
+                    | std::io::ErrorKind::Interrupted
+                    | std::io::ErrorKind::TimedOut
+            )
+    );
+    let error = anyhow!(error).context(context);
+    if retryable {
+        X11SyncTransportFailure::Retryable(error)
+    } else {
+        X11SyncTransportFailure::Permanent {
+            error,
+            counter_invalid: false,
+        }
+    }
+}
+
+fn classify_sync_protocol_failure(
+    context: &'static str,
+    error: x11rb::x11_utils::X11Error,
+) -> X11SyncTransportFailure {
+    let counter_invalid = error.error_kind == ErrorKind::SyncCounter;
+    X11SyncTransportFailure::Permanent {
+        error: anyhow!(ReplyError::X11Error(error)).context(context),
+        counter_invalid,
+    }
+}
+
+fn submit_sync_acknowledgement(
+    xcb: &XCBConnection,
+    counter: sync::Counter,
+    value: X11SyncCounterValue,
+) -> Result<(u64, u64), X11SyncTransportFailure> {
+    let request = sync::set_counter(
+        xcb,
+        counter,
+        sync::Int64 {
+            lo: value.lo,
+            hi: value.hi,
+        },
+    )
+    .map_err(|error| {
+        classify_sync_connection_failure("X11 sync SetCounter submission failed", error)
+    })?;
+    let set_counter_sequence = request.sequence_number();
+
+    // A reply-bearing request behind SetCounter lets libxcb prove the void request terminal
+    // without xcb_request_check's synchronous server round-trip on the draw path.
+    let fence = match xcb.get_input_focus() {
+        Ok(fence) => fence,
+        Err(error) => {
+            request.ignore_error();
+            return Err(classify_sync_connection_failure(
+                "X11 sync acknowledgement fence submission failed",
+                error,
+            ));
+        }
+    };
+    let fence_sequence = fence.sequence_number();
+    if let Err(error) = xcb.flush() {
+        request.ignore_error();
+        fence.discard_reply_and_errors();
+        return Err(classify_sync_connection_failure(
+            "X11 sync acknowledgement flush failed",
+            error,
+        ));
+    }
+
+    // The non-blocking observer below now owns consumption of both request sequences.
+    std::mem::forget(request);
+    std::mem::forget(fence);
+    Ok((set_counter_sequence, fence_sequence))
+}
+
+fn poll_sync_sequence(xcb: &XCBConnection, sequence: u64) -> X11SyncSequenceObservation {
+    let mut reply = null_mut();
+    let mut error = null_mut();
+    // SAFETY: the connection pointer is borrowed from `xcb` for this call. libxcb initializes the
+    // two out-pointers and never blocks in xcb_poll_for_reply64. Any returned allocation is freed
+    // below with libc::free, matching libxcb's ownership contract.
+    let found = unsafe {
+        xcb_poll_for_reply64(
+            xcb.get_raw_xcb_connection(),
+            sequence,
+            &mut reply,
+            &mut error,
+        )
+    };
+
+    if found == 0 {
+        if let Some(error) = xcb.has_error() {
+            return X11SyncSequenceObservation::Failed {
+                failure: classify_sync_connection_failure(
+                    "X11 sync acknowledgement observation failed",
+                    error,
+                ),
+                terminal: false,
+            };
+        }
+        return X11SyncSequenceObservation::Pending;
+    }
+
+    if !reply.is_null() {
+        // Reply-bearing fences return an allocation; checked void requests normally do not.
+        // SAFETY: non-null reply allocations returned by libxcb are released with libc::free.
+        unsafe { libc::free(reply) };
+    }
+    if error.is_null() {
+        return X11SyncSequenceObservation::Succeeded;
+    }
+
+    // SAFETY: X11 error packets are exactly 32 bytes and remain valid until freed below.
+    let parsed = xcb.parse_error(unsafe { std::slice::from_raw_parts(error.cast::<u8>(), 32) });
+    // SAFETY: non-null error allocations returned by libxcb are released with libc::free.
+    unsafe { libc::free(error) };
+    match parsed {
+        Ok(error) => X11SyncSequenceObservation::Failed {
+            failure: classify_sync_protocol_failure(
+                "X11 sync acknowledgement request failed",
+                error,
+            ),
+            terminal: true,
+        },
+        Err(error) => X11SyncSequenceObservation::Failed {
+            failure: X11SyncTransportFailure::Permanent {
+                error: anyhow!(error).context("X11 sync acknowledgement error parsing failed"),
+                counter_invalid: false,
+            },
+            terminal: true,
+        },
+    }
+}
+
+fn observe_sync_acknowledgement_with(
+    submission: X11SyncAcknowledgementSubmission,
+    mut poll: impl FnMut(u64) -> X11SyncSequenceObservation,
+) -> X11SyncTerminalObservation {
+    let mut progress = submission;
+    if !progress.fence_terminal {
+        match poll(progress.fence_sequence) {
+            X11SyncSequenceObservation::Pending => {
+                return X11SyncTerminalObservation::Pending(progress);
+            }
+            X11SyncSequenceObservation::Succeeded => progress.fence_terminal = true,
+            X11SyncSequenceObservation::Failed { failure, terminal } => {
+                progress.fence_terminal = terminal;
+                return X11SyncTerminalObservation::Failed {
+                    submission: progress,
+                    failure,
+                };
+            }
+        }
+    }
+
+    match poll(progress.set_counter_sequence) {
+        X11SyncSequenceObservation::Pending => X11SyncTerminalObservation::Pending(progress),
+        X11SyncSequenceObservation::Succeeded => X11SyncTerminalObservation::Succeeded,
+        X11SyncSequenceObservation::Failed { failure, terminal } => {
+            progress.set_counter_terminal = terminal;
+            X11SyncTerminalObservation::Failed {
+                submission: progress,
+                failure,
+            }
+        }
+    }
+}
+
+fn observe_sync_acknowledgement(
+    xcb: &XCBConnection,
+    submission: X11SyncAcknowledgementSubmission,
+) -> X11SyncTerminalObservation {
+    observe_sync_acknowledgement_with(submission, |sequence| poll_sync_sequence(xcb, sequence))
+}
+
+fn sync_sequences_to_discard(submission: X11SyncAcknowledgementSubmission) -> [Option<u64>; 2] {
+    [
+        (!submission.set_counter_terminal).then_some(submission.set_counter_sequence),
+        (!submission.fence_terminal).then_some(submission.fence_sequence),
+    ]
+}
+
+fn discard_sync_acknowledgement(xcb: &XCBConnection, submission: X11SyncAcknowledgementSubmission) {
+    for sequence in sync_sequences_to_discard(submission).into_iter().flatten() {
+        // SAFETY: each pending sequence belongs to this connection and is discarded at most once
+        // when observation fails or window closure abandons the in-flight obligation.
+        unsafe { xcb_discard_reply64(xcb.get_raw_xcb_connection(), sequence) };
+    }
 }
 
 pub(crate) fn check_reply<E, F, C>(
@@ -1251,6 +1487,7 @@ impl X11WindowState {
                 edge_constraints: None,
                 accesskit_adapter: None,
                 sync_counter: Some(sync_request_counter),
+                sync_acknowledgement_task: None,
                 observation: X11WindowObservationCoordinator::default(),
             })
         });
@@ -1444,11 +1681,19 @@ impl X11WindowStatePtr {
             let callbacks = self.callbacks.borrow();
             (callbacks.input.clone(), callbacks.should_close.clone())
         };
-        let input_handler = {
+        let (input_handler, sync_task, abandoned_sync_submission) = {
             let mut state = self.state.borrow_mut();
-            state.observation.close();
-            state.input_handler.clone()
+            let abandoned_sync_submission = state.observation.close();
+            (
+                state.input_handler.clone(),
+                state.sync_acknowledgement_task.take(),
+                abandoned_sync_submission,
+            )
         };
+        drop(sync_task);
+        if let Some(submission) = abandoned_sync_submission {
+            discard_sync_acknowledgement(&self.xcb, submission);
+        }
         input_callback.terminate();
         input_handler.terminate();
         should_close.terminate();
@@ -1700,49 +1945,68 @@ impl X11WindowStatePtr {
     }
 
     fn drain_sync_acknowledgements(&self) {
-        loop {
-            let (counter_id, acknowledgement) = {
-                let state = self.state.borrow();
-                (
-                    state.sync_counter,
-                    state.observation.ready_sync_acknowledgement(),
-                )
-            };
-            let (Some(counter_id), Some(acknowledgement)) = (counter_id, acknowledgement) else {
-                return;
-            };
-            let result = check_reply(
-                || "X11 sync SetCounter failed.",
-                sync::set_counter(
-                    &self.xcb,
-                    counter_id,
-                    sync::Int64 {
-                        lo: acknowledgement.lo,
-                        hi: acknowledgement.hi,
-                    },
-                ),
-            );
+        let (counter_id, acknowledgement) = {
+            let state = self.state.borrow();
+            (
+                state.sync_counter,
+                state.observation.ready_sync_acknowledgement(),
+            )
+        };
+        let (Some(counter_id), Some(acknowledgement)) = (counter_id, acknowledgement) else {
+            return;
+        };
 
-            match result {
-                Ok(()) => {
-                    self.state
-                        .borrow_mut()
-                        .observation
-                        .sync_acknowledgement_succeeded(acknowledgement);
-                }
-                Err(error) => {
-                    log::warn!(
-                        "X11 sync acknowledgement will retry while retaining its protocol obligation: {error:#}"
+        match submit_sync_acknowledgement(&self.xcb, counter_id, acknowledgement) {
+            Ok((set_counter_sequence, fence_sequence)) => {
+                let observation = self
+                    .state
+                    .borrow_mut()
+                    .observation
+                    .sync_acknowledgement_submitted(
+                        acknowledgement,
+                        set_counter_sequence,
+                        fence_sequence,
                     );
-                    let retry = self
-                        .state
-                        .borrow_mut()
-                        .observation
-                        .sync_acknowledgement_failed(acknowledgement);
-                    if let Some(retry) = retry {
-                        self.schedule_sync_retry(retry);
-                    }
-                    return;
+                if let Some(observation) = observation {
+                    self.schedule_sync_acknowledgement_observation(observation);
+                } else {
+                    discard_sync_acknowledgement(
+                        &self.xcb,
+                        X11SyncAcknowledgementSubmission::pending(
+                            acknowledgement,
+                            set_counter_sequence,
+                            fence_sequence,
+                        ),
+                    );
+                }
+            }
+            Err(X11SyncTransportFailure::Retryable(error)) => {
+                log::warn!(
+                    "X11 sync acknowledgement submission will retry while retaining its protocol obligation: {error:#}"
+                );
+                let retry = self
+                    .state
+                    .borrow_mut()
+                    .observation
+                    .sync_acknowledgement_retryable_submission_failure(acknowledgement);
+                if let Some(retry) = retry {
+                    self.schedule_sync_retry(retry);
+                }
+            }
+            Err(X11SyncTransportFailure::Permanent {
+                error,
+                counter_invalid,
+            }) => {
+                log::error!(
+                    "X11 sync acknowledgement submission failed permanently; abandoning the sync lane: {error:#}"
+                );
+                let mut state = self.state.borrow_mut();
+                if state
+                    .observation
+                    .sync_acknowledgement_submission_permanently_failed(acknowledgement)
+                    && counter_invalid
+                {
+                    state.sync_counter = None;
                 }
             }
         }
@@ -1750,7 +2014,42 @@ impl X11WindowStatePtr {
 
     fn schedule_sync_retry(&self, retry: X11SyncRetry) {
         let target = self.observation_retry_target();
-        self.schedule_observation_retry(retry.delay, move || target.run_sync_retry(retry));
+        self.schedule_sync_wake(retry.delay, move || target.run_sync_retry(retry));
+    }
+
+    fn schedule_sync_acknowledgement_observation(
+        &self,
+        observation: X11SyncAcknowledgementObservation,
+    ) {
+        let target = self.observation_retry_target();
+        self.schedule_sync_wake(observation.delay, move || {
+            target.run_sync_acknowledgement_observation(observation)
+        });
+    }
+
+    fn schedule_sync_wake(&self, delay: Duration, wake: impl FnOnce() + 'static) {
+        let (foreground, timer) = {
+            let state = self.state.borrow();
+            if state.destroyed {
+                return;
+            }
+            let Some(client) = state.client.get_client() else {
+                return;
+            };
+            let foreground = state.executor.clone();
+            let timer = client.0.borrow().common.background_executor.timer(delay);
+            (foreground, timer)
+        };
+        let task = foreground.spawn(async move {
+            timer.await;
+            wake();
+        });
+        let previous = self
+            .state
+            .borrow_mut()
+            .sync_acknowledgement_task
+            .replace(task);
+        drop(previous);
     }
 
     fn schedule_observation_retry(&self, delay: Duration, retry: impl FnOnce() + 'static) {
@@ -2050,6 +2349,81 @@ impl X11ObservationRetryTarget {
         window.observe_property_attempt(attempt);
     }
 
+    fn run_sync_acknowledgement_observation(&self, observation: X11SyncAcknowledgementObservation) {
+        let Some(window) = self.live_window() else {
+            return;
+        };
+        let Some(submission) = window
+            .state
+            .borrow_mut()
+            .observation
+            .claim_sync_acknowledgement_observation(observation)
+        else {
+            return;
+        };
+
+        match observe_sync_acknowledgement(&window.xcb, submission) {
+            X11SyncTerminalObservation::Pending(pending_submission) => {
+                let observation = window
+                    .state
+                    .borrow_mut()
+                    .observation
+                    .sync_acknowledgement_observation_pending(submission, pending_submission);
+                if let Some(observation) = observation {
+                    window.schedule_sync_acknowledgement_observation(observation);
+                }
+            }
+            X11SyncTerminalObservation::Succeeded => {
+                if window
+                    .state
+                    .borrow_mut()
+                    .observation
+                    .sync_acknowledgement_succeeded(submission)
+                {
+                    window.drain_sync_acknowledgements();
+                }
+            }
+            X11SyncTerminalObservation::Failed {
+                submission: transport_submission,
+                failure: X11SyncTransportFailure::Retryable(error),
+            } => {
+                discard_sync_acknowledgement(&window.xcb, transport_submission);
+                log::warn!(
+                    "X11 sync acknowledgement observation will retry while retaining its protocol obligation: {error:#}"
+                );
+                let retry = window
+                    .state
+                    .borrow_mut()
+                    .observation
+                    .sync_acknowledgement_retryable_observation_failure(submission);
+                if let Some(retry) = retry {
+                    window.schedule_sync_retry(retry);
+                }
+            }
+            X11SyncTerminalObservation::Failed {
+                submission: transport_submission,
+                failure:
+                    X11SyncTransportFailure::Permanent {
+                        error,
+                        counter_invalid,
+                    },
+            } => {
+                discard_sync_acknowledgement(&window.xcb, transport_submission);
+                log::error!(
+                    "X11 sync acknowledgement failed permanently; abandoning the sync lane: {error:#}"
+                );
+                let mut state = window.state.borrow_mut();
+                if state
+                    .observation
+                    .sync_acknowledgement_permanently_failed(submission)
+                    && counter_invalid
+                {
+                    state.sync_counter = None;
+                }
+            }
+        }
+    }
+
     fn run_sync_retry(&self, retry: X11SyncRetry) {
         let Some(window) = self.live_window() else {
             return;
@@ -2149,7 +2523,12 @@ impl PlatformWindow for X11Window {
                 return PlatformNativeWindowRetirementOutcome::Rejected;
             }
             state.destroyed = true;
-            state.observation.close();
+        }
+        let abandoned_sync_submission = state.observation.close();
+        let sync_task = state.sync_acknowledgement_task.take();
+        drop(sync_task);
+        if let Some(submission) = abandoned_sync_submission {
+            discard_sync_acknowledgement(&self.0.xcb, submission);
         }
         if let Some(counter_id) = state.sync_counter {
             if let Err(error) = check_reply(
@@ -2739,6 +3118,23 @@ mod creation_projection_tests {
     use super::*;
     use open_gpui::{point, size};
 
+    fn sync_submission() -> X11SyncAcknowledgementSubmission {
+        X11SyncAcknowledgementSubmission::pending(X11SyncCounterValue { lo: 7, hi: 0 }, 41, 42)
+    }
+
+    fn bad_counter_error() -> x11rb::x11_utils::X11Error {
+        x11rb::x11_utils::X11Error {
+            error_kind: x11rb::protocol::ErrorKind::SyncCounter,
+            error_code: 0,
+            sequence: 1,
+            bad_value: 17,
+            minor_opcode: sync::SET_COUNTER_REQUEST.into(),
+            major_opcode: 0,
+            extension_name: Some("SYNC".into()),
+            request_name: Some("SetCounter"),
+        }
+    }
+
     fn restore_bounds() -> Bounds<Pixels> {
         Bounds::new(point(px(10.0), px(20.0)), size(px(640.0), px(480.0)))
     }
@@ -2916,5 +3312,218 @@ mod creation_projection_tests {
             WindowBackgroundAppearance::Opaque
         );
         assert!(!adjusted.renderer_transparent);
+    }
+
+    #[test]
+    fn sync_transport_retries_only_connection_unavailability() {
+        let unavailable = classify_sync_connection_failure(
+            "X11 sync SetCounter submission failed.",
+            ConnectionError::IoError(std::io::Error::new(
+                std::io::ErrorKind::WouldBlock,
+                "transport unavailable",
+            )),
+        );
+        assert!(matches!(unavailable, X11SyncTransportFailure::Retryable(_)));
+
+        let unsupported = classify_sync_connection_failure(
+            "X11 sync SetCounter submission failed.",
+            ConnectionError::UnsupportedExtension,
+        );
+        assert!(matches!(
+            unsupported,
+            X11SyncTransportFailure::Permanent {
+                counter_invalid: false,
+                ..
+            }
+        ));
+
+        let exhausted = classify_sync_connection_failure(
+            "X11 sync SetCounter submission failed.",
+            ConnectionError::InsufficientMemory,
+        );
+        assert!(matches!(
+            exhausted,
+            X11SyncTransportFailure::Permanent {
+                counter_invalid: false,
+                ..
+            }
+        ));
+
+        let disconnected = classify_sync_connection_failure(
+            "X11 sync SetCounter submission failed.",
+            ConnectionError::IoError(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "connection closed",
+            )),
+        );
+        assert!(matches!(
+            disconnected,
+            X11SyncTransportFailure::Permanent {
+                counter_invalid: false,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn bad_counter_is_a_permanent_resource_failure() {
+        let failure =
+            classify_sync_protocol_failure("X11 sync SetCounter failed", bad_counter_error());
+
+        assert!(matches!(
+            failure,
+            X11SyncTransportFailure::Permanent {
+                counter_invalid: true,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn sync_transport_keeps_set_counter_unobserved_while_the_fence_is_pending() {
+        let submission = sync_submission();
+        let mut polled = Vec::new();
+
+        let observation = observe_sync_acknowledgement_with(submission, |sequence| {
+            polled.push(sequence);
+            X11SyncSequenceObservation::Pending
+        });
+
+        let X11SyncTerminalObservation::Pending(progress) = observation else {
+            panic!("pending fence must retain the acknowledgement attempt");
+        };
+        assert_eq!(polled, [submission.fence_sequence]);
+        assert!(!progress.fence_terminal);
+        assert!(!progress.set_counter_terminal);
+    }
+
+    #[test]
+    fn sync_transport_observes_the_fence_before_accepting_set_counter_success() {
+        let submission = sync_submission();
+        let mut polled = Vec::new();
+
+        let observation = observe_sync_acknowledgement_with(submission, |sequence| {
+            polled.push(sequence);
+            X11SyncSequenceObservation::Succeeded
+        });
+
+        assert!(matches!(observation, X11SyncTerminalObservation::Succeeded));
+        assert_eq!(
+            polled,
+            [submission.fence_sequence, submission.set_counter_sequence]
+        );
+    }
+
+    #[test]
+    fn sync_transport_resumes_at_set_counter_after_the_fence_is_terminal() {
+        let submission = sync_submission();
+        let mut first_poll = Vec::new();
+        let first_observation = observe_sync_acknowledgement_with(submission, |sequence| {
+            first_poll.push(sequence);
+            if sequence == submission.fence_sequence {
+                X11SyncSequenceObservation::Succeeded
+            } else {
+                X11SyncSequenceObservation::Pending
+            }
+        });
+        let X11SyncTerminalObservation::Pending(progress) = first_observation else {
+            panic!("SetCounter must remain pending after the fence becomes terminal");
+        };
+        assert!(progress.fence_terminal);
+        assert_eq!(
+            first_poll,
+            [submission.fence_sequence, submission.set_counter_sequence]
+        );
+
+        let mut second_poll = Vec::new();
+        let second_observation = observe_sync_acknowledgement_with(progress, |sequence| {
+            second_poll.push(sequence);
+            X11SyncSequenceObservation::Succeeded
+        });
+
+        assert!(matches!(
+            second_observation,
+            X11SyncTerminalObservation::Succeeded
+        ));
+        assert_eq!(second_poll, [submission.set_counter_sequence]);
+    }
+
+    #[test]
+    fn sync_transport_reports_bad_counter_after_the_fence_reply() {
+        let submission = sync_submission();
+        let mut polled = Vec::new();
+        let mut bad_counter = Some(classify_sync_protocol_failure(
+            "X11 sync SetCounter failed",
+            bad_counter_error(),
+        ));
+
+        let observation = observe_sync_acknowledgement_with(submission, |sequence| {
+            polled.push(sequence);
+            if sequence == submission.fence_sequence {
+                X11SyncSequenceObservation::Succeeded
+            } else {
+                X11SyncSequenceObservation::Failed {
+                    failure: bad_counter.take().unwrap(),
+                    terminal: true,
+                }
+            }
+        });
+
+        let X11SyncTerminalObservation::Failed {
+            submission: progress,
+            failure:
+                X11SyncTransportFailure::Permanent {
+                    counter_invalid, ..
+                },
+        } = observation
+        else {
+            panic!("BadCounter must terminate the acknowledgement attempt");
+        };
+        assert!(counter_invalid);
+        assert!(progress.fence_terminal);
+        assert!(progress.set_counter_terminal);
+        assert_eq!(
+            polled,
+            [submission.fence_sequence, submission.set_counter_sequence]
+        );
+    }
+
+    #[test]
+    fn sync_transport_connection_failure_preserves_both_sequences_for_discard() {
+        let submission = sync_submission();
+
+        let observation =
+            observe_sync_acknowledgement_with(submission, |_| X11SyncSequenceObservation::Failed {
+                failure: X11SyncTransportFailure::Retryable(anyhow!("transport unavailable")),
+                terminal: false,
+            });
+
+        let X11SyncTerminalObservation::Failed {
+            submission: progress,
+            failure: X11SyncTransportFailure::Retryable(_),
+        } = observation
+        else {
+            panic!("connection failure must remain retryable");
+        };
+        assert_eq!(
+            sync_sequences_to_discard(progress),
+            [
+                Some(submission.set_counter_sequence),
+                Some(submission.fence_sequence),
+            ]
+        );
+    }
+
+    #[test]
+    fn closing_an_unobserved_sync_attempt_discards_both_sequences() {
+        let submission = sync_submission();
+
+        assert_eq!(
+            sync_sequences_to_discard(submission),
+            [
+                Some(submission.set_counter_sequence),
+                Some(submission.fence_sequence),
+            ]
+        );
     }
 }

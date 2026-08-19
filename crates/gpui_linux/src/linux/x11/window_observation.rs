@@ -8,6 +8,7 @@ const RETRY_DELAYS: [Duration; 5] = [
     Duration::from_secs(1),
     Duration::from_secs(2),
 ];
+const SYNC_OBSERVATION_DELAY: Duration = Duration::from_millis(16);
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct X11ConfigureGeometry {
@@ -71,6 +72,46 @@ pub(super) struct X11SyncCounterValue {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct X11SyncRetry {
+    epoch: u64,
+    pub(super) delay: Duration,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct X11SyncAcknowledgementSubmission {
+    pub(super) value: X11SyncCounterValue,
+    pub(super) set_counter_sequence: u64,
+    pub(super) fence_sequence: u64,
+    pub(super) set_counter_terminal: bool,
+    pub(super) fence_terminal: bool,
+}
+
+impl X11SyncAcknowledgementSubmission {
+    pub(super) fn pending(
+        value: X11SyncCounterValue,
+        set_counter_sequence: u64,
+        fence_sequence: u64,
+    ) -> Self {
+        Self {
+            value,
+            set_counter_sequence,
+            fence_sequence,
+            set_counter_terminal: false,
+            fence_terminal: false,
+        }
+    }
+
+    fn can_remain_pending_as(self, next: Self) -> bool {
+        self.value == next.value
+            && self.set_counter_sequence == next.set_counter_sequence
+            && self.fence_sequence == next.fence_sequence
+            && !self.set_counter_terminal
+            && !next.set_counter_terminal
+            && (!self.fence_terminal || next.fence_terminal)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct X11SyncAcknowledgementObservation {
     epoch: u64,
     pub(super) delay: Duration,
 }
@@ -156,9 +197,11 @@ pub(super) struct X11WindowObservationCoordinator {
     pending_sync_request: Option<X11SyncCounterValue>,
     configured_sync_acknowledgement: Option<X11SyncCounterValue>,
     ready_sync_acknowledgement: Option<X11SyncCounterValue>,
-    sync_retry_epoch: u64,
-    sync_retry_scheduled: bool,
+    observed_sync_acknowledgement: Option<X11SyncAcknowledgementSubmission>,
+    sync_wake_epoch: u64,
+    sync_wake_scheduled: bool,
     sync_retry_attempt: usize,
+    sync_acknowledgements_disabled: bool,
     closed: bool,
 }
 
@@ -254,13 +297,13 @@ impl X11WindowObservationCoordinator {
     }
 
     pub(super) fn enqueue_sync_request(&mut self, value: X11SyncCounterValue) {
-        if !self.closed {
+        if !self.closed && !self.sync_acknowledgements_disabled {
             self.pending_sync_request = Some(value);
         }
     }
 
     pub(super) fn configure_committed(&mut self) {
-        if self.closed {
+        if self.closed || self.sync_acknowledgements_disabled {
             return;
         }
         if let Some(request) = self.pending_sync_request.take() {
@@ -269,76 +312,233 @@ impl X11WindowObservationCoordinator {
     }
 
     pub(super) fn presentation_submitted(&mut self) {
-        if self.closed {
+        if self.closed || self.sync_acknowledgements_disabled {
             return;
         }
         // A ConfigureNotify starts the WM sync repaint obligation. The counter may only advance
         // after the renderer accepts a frame that includes the configured geometry.
         if let Some(value) = self.configured_sync_acknowledgement.take() {
             self.ready_sync_acknowledgement = Some(value);
-            self.sync_retry_epoch = self.sync_retry_epoch.wrapping_add(1);
-            self.sync_retry_scheduled = false;
+            if self.observed_sync_acknowledgement.is_none() {
+                self.invalidate_sync_wake();
+            }
         }
-    }
-
-    pub(super) fn sync_acknowledgement_succeeded(&mut self, value: X11SyncCounterValue) -> bool {
-        if self.closed || self.ready_sync_acknowledgement != Some(value) {
-            return false;
-        }
-        self.ready_sync_acknowledgement = None;
-        self.sync_retry_attempt = 0;
-        self.sync_retry_epoch = self.sync_retry_epoch.wrapping_add(1);
-        self.sync_retry_scheduled = false;
-        true
     }
 
     pub(super) fn ready_sync_acknowledgement(&self) -> Option<X11SyncCounterValue> {
-        if self.closed || self.sync_retry_scheduled {
+        if self.closed
+            || self.sync_acknowledgements_disabled
+            || self.sync_wake_scheduled
+            || self.observed_sync_acknowledgement.is_some()
+        {
             None
         } else {
             self.ready_sync_acknowledgement
         }
     }
 
-    pub(super) fn sync_acknowledgement_failed(
+    pub(super) fn sync_acknowledgement_submitted(
         &mut self,
         value: X11SyncCounterValue,
-    ) -> Option<X11SyncRetry> {
+        set_counter_sequence: u64,
+        fence_sequence: u64,
+    ) -> Option<X11SyncAcknowledgementObservation> {
         if self.closed
-            || self.sync_retry_scheduled
+            || self.sync_acknowledgements_disabled
+            || self.sync_wake_scheduled
+            || self.observed_sync_acknowledgement.is_some()
             || self.ready_sync_acknowledgement != Some(value)
         {
             return None;
         }
 
+        self.ready_sync_acknowledgement = None;
+        self.observed_sync_acknowledgement = Some(X11SyncAcknowledgementSubmission::pending(
+            value,
+            set_counter_sequence,
+            fence_sequence,
+        ));
+        Some(self.schedule_sync_observation())
+    }
+
+    pub(super) fn claim_sync_acknowledgement_observation(
+        &mut self,
+        observation: X11SyncAcknowledgementObservation,
+    ) -> Option<X11SyncAcknowledgementSubmission> {
+        if self.closed
+            || self.sync_acknowledgements_disabled
+            || !self.sync_wake_scheduled
+            || self.sync_wake_epoch != observation.epoch
+        {
+            return None;
+        }
+
+        self.sync_wake_scheduled = false;
+        self.observed_sync_acknowledgement
+    }
+
+    pub(super) fn sync_acknowledgement_observation_pending(
+        &mut self,
+        claimed_submission: X11SyncAcknowledgementSubmission,
+        pending_submission: X11SyncAcknowledgementSubmission,
+    ) -> Option<X11SyncAcknowledgementObservation> {
+        if self.closed
+            || self.sync_acknowledgements_disabled
+            || self.sync_wake_scheduled
+            || self.observed_sync_acknowledgement != Some(claimed_submission)
+            || !claimed_submission.can_remain_pending_as(pending_submission)
+        {
+            return None;
+        }
+
+        self.observed_sync_acknowledgement = Some(pending_submission);
+        Some(self.schedule_sync_observation())
+    }
+
+    pub(super) fn sync_acknowledgement_succeeded(
+        &mut self,
+        submission: X11SyncAcknowledgementSubmission,
+    ) -> bool {
+        if self.closed
+            || self.sync_acknowledgements_disabled
+            || self.observed_sync_acknowledgement != Some(submission)
+        {
+            return false;
+        }
+
+        self.observed_sync_acknowledgement = None;
+        self.sync_retry_attempt = 0;
+        self.invalidate_sync_wake();
+        true
+    }
+
+    pub(super) fn sync_acknowledgement_retryable_submission_failure(
+        &mut self,
+        value: X11SyncCounterValue,
+    ) -> Option<X11SyncRetry> {
+        if self.closed
+            || self.sync_acknowledgements_disabled
+            || self.sync_wake_scheduled
+            || self.observed_sync_acknowledgement.is_some()
+            || self.ready_sync_acknowledgement != Some(value)
+        {
+            return None;
+        }
+
+        Some(self.schedule_sync_retry())
+    }
+
+    pub(super) fn sync_acknowledgement_retryable_observation_failure(
+        &mut self,
+        submission: X11SyncAcknowledgementSubmission,
+    ) -> Option<X11SyncRetry> {
+        if self.closed
+            || self.sync_acknowledgements_disabled
+            || self.sync_wake_scheduled
+            || self.observed_sync_acknowledgement != Some(submission)
+        {
+            return None;
+        }
+
+        self.observed_sync_acknowledgement = None;
+        if self.ready_sync_acknowledgement.is_none() {
+            self.ready_sync_acknowledgement = Some(submission.value);
+        }
+        Some(self.schedule_sync_retry())
+    }
+
+    pub(super) fn sync_acknowledgement_submission_permanently_failed(
+        &mut self,
+        value: X11SyncCounterValue,
+    ) -> bool {
+        if self.closed
+            || self.sync_acknowledgements_disabled
+            || self.observed_sync_acknowledgement.is_some()
+            || self.ready_sync_acknowledgement != Some(value)
+        {
+            return false;
+        }
+
+        self.disable_sync_acknowledgements();
+        true
+    }
+
+    pub(super) fn sync_acknowledgement_permanently_failed(
+        &mut self,
+        submission: X11SyncAcknowledgementSubmission,
+    ) -> bool {
+        if self.closed
+            || self.sync_acknowledgements_disabled
+            || self.observed_sync_acknowledgement != Some(submission)
+        {
+            return false;
+        }
+
+        self.disable_sync_acknowledgements();
+        true
+    }
+
+    fn schedule_sync_retry(&mut self) -> X11SyncRetry {
         let delay = RETRY_DELAYS[self.sync_retry_attempt.min(RETRY_DELAYS.len() - 1)];
         self.sync_retry_attempt = self.sync_retry_attempt.saturating_add(1);
-        self.sync_retry_epoch = self.sync_retry_epoch.wrapping_add(1);
-        self.sync_retry_scheduled = true;
-        Some(X11SyncRetry {
-            epoch: self.sync_retry_epoch,
+        self.sync_wake_epoch = self.sync_wake_epoch.wrapping_add(1);
+        self.sync_wake_scheduled = true;
+        X11SyncRetry {
+            epoch: self.sync_wake_epoch,
             delay,
-        })
+        }
     }
 
     pub(super) fn claim_sync_retry(&mut self, retry: X11SyncRetry) -> bool {
-        if self.closed || !self.sync_retry_scheduled || self.sync_retry_epoch != retry.epoch {
+        if self.closed
+            || self.sync_acknowledgements_disabled
+            || !self.sync_wake_scheduled
+            || self.sync_wake_epoch != retry.epoch
+            || self.observed_sync_acknowledgement.is_some()
+        {
             return false;
         }
-        self.sync_retry_scheduled = false;
+        self.sync_wake_scheduled = false;
         self.ready_sync_acknowledgement.is_some()
     }
 
-    pub(super) fn close(&mut self) {
+    pub(super) fn close(&mut self) -> Option<X11SyncAcknowledgementSubmission> {
+        if self.closed {
+            return None;
+        }
+
+        let abandoned_submission = self.observed_sync_acknowledgement;
         self.closed = true;
         self.window_state = X11PropertyDomainState::default();
         self.edge_constraints = X11PropertyDomainState::default();
         self.restore_candidate = None;
         self.restore_settlement_scheduled = false;
+        self.disable_sync_acknowledgements();
+        abandoned_submission
+    }
+
+    fn schedule_sync_observation(&mut self) -> X11SyncAcknowledgementObservation {
+        self.sync_wake_epoch = self.sync_wake_epoch.wrapping_add(1);
+        self.sync_wake_scheduled = true;
+        X11SyncAcknowledgementObservation {
+            epoch: self.sync_wake_epoch,
+            delay: SYNC_OBSERVATION_DELAY,
+        }
+    }
+
+    fn invalidate_sync_wake(&mut self) {
+        self.sync_wake_epoch = self.sync_wake_epoch.wrapping_add(1);
+        self.sync_wake_scheduled = false;
+    }
+
+    fn disable_sync_acknowledgements(&mut self) {
+        self.sync_acknowledgements_disabled = true;
         self.pending_sync_request = None;
         self.configured_sync_acknowledgement = None;
         self.ready_sync_acknowledgement = None;
-        self.sync_retry_scheduled = false;
+        self.observed_sync_acknowledgement = None;
+        self.sync_retry_attempt = 0;
+        self.invalidate_sync_wake();
     }
 
     fn property_state(&self, domain: X11PropertyDomain) -> &X11PropertyDomainState {
@@ -696,7 +896,7 @@ mod tests {
     }
 
     #[test]
-    fn sync_acknowledgement_remains_owned_until_a_retry_succeeds() {
+    fn sync_acknowledgement_remains_owned_until_nonblocking_observation_succeeds() {
         let mut coordinator = X11WindowObservationCoordinator::default();
         let value = X11SyncCounterValue { lo: 7, hi: 2 };
         coordinator.enqueue_sync_request(value);
@@ -705,9 +905,78 @@ mod tests {
         assert_eq!(coordinator.ready_sync_acknowledgement(), None);
         coordinator.presentation_submitted();
         assert_eq!(coordinator.ready_sync_acknowledgement(), Some(value));
-        let retry = coordinator.sync_acknowledgement_failed(value).unwrap();
+        let observation = coordinator
+            .sync_acknowledgement_submitted(value, 37, 38)
+            .unwrap();
+        assert_eq!(coordinator.ready_sync_acknowledgement(), None);
+
+        let submission = coordinator
+            .claim_sync_acknowledgement_observation(observation)
+            .unwrap();
+        assert_eq!(submission.value, value);
+        assert_eq!(submission.set_counter_sequence, 37);
+        assert_eq!(submission.fence_sequence, 38);
+        let mut fence_terminal_submission = submission;
+        fence_terminal_submission.fence_terminal = true;
+        let observation = coordinator
+            .sync_acknowledgement_observation_pending(submission, fence_terminal_submission)
+            .unwrap();
+        let submission = coordinator
+            .claim_sync_acknowledgement_observation(observation)
+            .unwrap();
+        assert!(submission.fence_terminal);
+
+        assert!(coordinator.sync_acknowledgement_succeeded(submission));
+        assert_eq!(coordinator.ready_sync_acknowledgement(), None);
+    }
+
+    #[test]
+    fn retryable_sync_observation_failure_restores_the_latest_obligation() {
+        let mut coordinator = X11WindowObservationCoordinator::default();
+        let first = X11SyncCounterValue { lo: 7, hi: 0 };
+        let latest = X11SyncCounterValue { lo: 8, hi: 0 };
+        coordinator.enqueue_sync_request(first);
+        coordinator.configure_committed();
+        coordinator.presentation_submitted();
+        let observation = coordinator
+            .sync_acknowledgement_submitted(first, 41, 42)
+            .unwrap();
+        let submission = coordinator
+            .claim_sync_acknowledgement_observation(observation)
+            .unwrap();
+
+        coordinator.enqueue_sync_request(latest);
+        coordinator.configure_committed();
+        coordinator.presentation_submitted();
+        let retry = coordinator
+            .sync_acknowledgement_retryable_observation_failure(submission)
+            .unwrap();
+
+        assert_eq!(coordinator.ready_sync_acknowledgement(), None);
         assert!(coordinator.claim_sync_retry(retry));
-        assert!(coordinator.sync_acknowledgement_succeeded(value));
+        assert_eq!(coordinator.ready_sync_acknowledgement(), Some(latest));
+    }
+
+    #[test]
+    fn permanent_sync_failure_terminates_the_lane_without_retrying() {
+        let mut coordinator = X11WindowObservationCoordinator::default();
+        let value = X11SyncCounterValue { lo: 7, hi: 0 };
+        coordinator.enqueue_sync_request(value);
+        coordinator.configure_committed();
+        coordinator.presentation_submitted();
+        let observation = coordinator
+            .sync_acknowledgement_submitted(value, 43, 44)
+            .unwrap();
+        let submission = coordinator
+            .claim_sync_acknowledgement_observation(observation)
+            .unwrap();
+
+        assert!(coordinator.sync_acknowledgement_permanently_failed(submission));
+        coordinator.enqueue_sync_request(X11SyncCounterValue { lo: 8, hi: 0 });
+        coordinator.configure_committed();
+        coordinator.presentation_submitted();
+
+        assert_eq!(coordinator.ready_sync_acknowledgement(), None);
     }
 
     #[test]
@@ -723,7 +992,13 @@ mod tests {
         assert_eq!(coordinator.ready_sync_acknowledgement(), None);
         coordinator.presentation_submitted();
         assert_eq!(coordinator.ready_sync_acknowledgement(), Some(second));
-        assert!(coordinator.sync_acknowledgement_succeeded(second));
+        let observation = coordinator
+            .sync_acknowledgement_submitted(second, 47, 48)
+            .unwrap();
+        let submission = coordinator
+            .claim_sync_acknowledgement_observation(observation)
+            .unwrap();
+        assert!(coordinator.sync_acknowledgement_succeeded(submission));
     }
 
     #[test]
@@ -740,7 +1015,9 @@ mod tests {
         coordinator.configure_committed();
         coordinator.presentation_submitted();
         assert_eq!(coordinator.ready_sync_acknowledgement(), Some(sync_value));
-        let sync_retry = coordinator.sync_acknowledgement_failed(sync_value).unwrap();
+        let sync_retry = coordinator
+            .sync_acknowledgement_retryable_submission_failure(sync_value)
+            .unwrap();
 
         assert_eq!(
             coordinator.claim_property_retry(property_retry),
@@ -796,15 +1073,25 @@ mod tests {
         coordinator.enqueue_sync_request(sync_value);
         coordinator.configure_committed();
         coordinator.presentation_submitted();
-        let sync_retry = coordinator.sync_acknowledgement_failed(sync_value).unwrap();
+        let observation = coordinator
+            .sync_acknowledgement_submitted(sync_value, 53, 54)
+            .unwrap();
 
-        coordinator.close();
+        let abandoned_submission = coordinator.close();
 
         assert_eq!(coordinator.claim_property_retry(property_retry), None);
         assert!(!coordinator.claim_restore_settlement(restore));
-        assert!(!coordinator.claim_sync_retry(sync_retry));
+        assert_eq!(
+            coordinator.claim_sync_acknowledgement_observation(observation),
+            None
+        );
         assert!(!coordinator.commit_property(property_attempt));
         assert_eq!(coordinator.ready_sync_acknowledgement(), None);
+        let abandoned_submission = abandoned_submission.unwrap();
+        assert_eq!(abandoned_submission.set_counter_sequence, 53);
+        assert_eq!(abandoned_submission.fence_sequence, 54);
+        assert!(!abandoned_submission.set_counter_terminal);
+        assert!(!abandoned_submission.fence_terminal);
     }
 
     #[test]
