@@ -1,6 +1,13 @@
 use super::{RegisteredWindow, WindowsPlatform, translate_accelerator};
 use crate::{
     NativeWindowLifecycleTestEvent, WindowsWindowInner, get_window_long,
+    native_test_harness::{
+        NativeTestPointerAction, NativeTestSystemPointerGuard, native_test_client_screen_bounds,
+        native_test_non_shell_root_window_at,
+        native_test_release_primary_button_best_effort_with_extra_info,
+        native_test_virtual_screen_bounds, native_test_window_is_above as native_window_is_above,
+        native_test_window_rect as native_test_window_rect_raw,
+    },
     native_test_observation::{
         NativeWindowTestEventKind, NativeWindowTestMessage, begin_native_window_test_observation,
     },
@@ -9,7 +16,7 @@ use open_gpui::{
     AnyWindowHandle, AppContext as _, Application, Bounds, Context, DevicePixels, Empty,
     IntoElement, NativeBoundaryDiagnosticCursor, NativeBoundaryDisposition,
     NativeBoundaryGeneration, NativeBoundaryKind, NativeBoundaryTarget, NativeCallbackKind,
-    NativePlatformCommandKind, ParentElement, Platform, PlatformInput,
+    NativePlatformCommandKind, ParentElement, Platform, PlatformInput, PlatformWindowHitStack,
     PlatformWindowPresentOutcome, PointerCancelEvent, PointerCancelReason, QuitMode, Render,
     Styled, TitlebarOptions, Window, WindowActivationPolicy, WindowActivationStatus,
     WindowActivationTerminal, WindowBounds, WindowId, WindowKind, WindowMouseEvent,
@@ -23,43 +30,47 @@ use open_gpui::{
 };
 use std::{
     cell::{Cell, RefCell},
-    mem::size_of,
     panic::{AssertUnwindSafe, catch_unwind},
     rc::Rc,
+    sync::Once,
     time::{Duration, Instant},
 };
 use windows::Win32::{
-    Foundation::{HWND, LPARAM, POINT, RECT, WPARAM},
-    Graphics::Gdi::{ClientToScreen, RDW_INVALIDATE, RedrawWindow},
-    System::SystemServices::MK_LBUTTON,
+    Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM},
+    Graphics::Gdi::{
+        ClientToScreen, CreateSolidBrush, MONITOR_DEFAULTTONULL, MonitorFromPoint, RDW_INVALIDATE,
+        RedrawWindow,
+    },
+    System::{
+        LibraryLoader::GetModuleHandleW,
+        SystemServices::{MK_LBUTTON, SS_NOTIFY},
+    },
     UI::{
         Controls::WM_MOUSELEAVE,
         Input::KeyboardAndMouse::{
-            GetActiveWindow, GetAsyncKeyState, GetCapture, GetFocus, INPUT, INPUT_0, INPUT_MOUSE,
-            IsWindowEnabled, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
-            MOUSEEVENTF_MOVE, MOUSEEVENTF_MOVE_NOCOALESCE, MOUSEEVENTF_VIRTUALDESK, MOUSEINPUT,
-            ReleaseCapture, SendInput, SetActiveWindow, SetFocus, VK_LBUTTON,
+            GetActiveWindow, GetAsyncKeyState, GetCapture, GetFocus, IsWindowEnabled,
+            ReleaseCapture, SetActiveWindow, SetFocus, VK_LBUTTON,
         },
         WindowsAndMessaging::{
-            CreateWindowExW, DestroyWindow, DispatchMessageW, GW_HWNDFIRST, GW_HWNDNEXT,
-            GW_HWNDPREV, GW_OWNER, GWL_EXSTYLE, GWL_STYLE, GetClientRect, GetCursorPos,
-            GetForegroundWindow, GetMessageExtraInfo, GetSystemMetrics, GetWindow,
-            GetWindowPlacement, GetWindowRect, HTCLIENT, HTTRANSPARENT, HWND_MESSAGE, HWND_TOPMOST,
-            IsWindow, IsWindowVisible, IsZoomed, MA_NOACTIVATE, MA_NOACTIVATEANDEAT, MSG,
-            PM_REMOVE, PeekMessageW, PostMessageW, SIZE_MINIMIZED, SIZE_RESTORED,
-            SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
-            SPI_SETWORKAREA, SW_SHOWMAXIMIZED, SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_NOMOVE,
-            SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, SendMessageW,
-            SetCursorPos, SetForegroundWindow, SetWindowPos, TranslateMessage, WA_ACTIVE,
-            WINDOW_EX_STYLE, WINDOW_STYLE, WINDOWPLACEMENT, WM_ACTIVATE, WM_CLOSE, WM_GETOBJECT,
-            WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE,
-            WM_MOVE, WM_NCHITTEST, WM_PAINT, WM_QUIT, WM_SETTINGCHANGE, WM_SIZE, WM_SYSKEYDOWN,
-            WM_SYSKEYUP, WS_CAPTION, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
-            WS_EX_TRANSPARENT, WS_POPUP, WS_VISIBLE,
+            CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GW_HWNDFIRST,
+            GW_HWNDNEXT, GW_HWNDPREV, GW_OWNER, GWL_EXSTYLE, GWL_STYLE, GetClientRect,
+            GetCursorPos, GetForegroundWindow, GetMessageExtraInfo, GetWindow, GetWindowPlacement,
+            GetWindowRect, HTCLIENT, HTTRANSPARENT, HWND_MESSAGE, HWND_NOTOPMOST, HWND_TOP,
+            HWND_TOPMOST, IsIconic, IsWindow, IsWindowVisible, IsZoomed, MA_NOACTIVATE,
+            MA_NOACTIVATEANDEAT, MSG, PM_REMOVE, PeekMessageW, PostMessageW, RegisterClassW,
+            SIZE_MINIMIZED, SIZE_RESTORED, SPI_SETWORKAREA, SW_MINIMIZE, SW_SHOWMAXIMIZED,
+            SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE,
+            SWP_NOZORDER, SWP_SHOWWINDOW, SendMessageW, SetForegroundWindow, SetWindowPos,
+            ShowWindow, TranslateMessage, WA_ACTIVE, WINDOW_EX_STYLE, WINDOW_STYLE,
+            WINDOWPLACEMENT, WM_ACTIVATE, WM_CLOSE, WM_GETOBJECT, WM_KEYDOWN, WM_KEYUP,
+            WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_MOVE, WM_NCHITTEST,
+            WM_PAINT, WM_QUIT, WM_SETTINGCHANGE, WM_SIZE, WM_SYSKEYDOWN, WM_SYSKEYUP, WNDCLASSW,
+            WS_CAPTION, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT,
+            WS_POPUP, WS_VISIBLE,
         },
     },
 };
-use windows::core::w;
+use windows::core::{PCWSTR, w};
 
 const MAX_MESSAGE_PUMP_ATTEMPTS: usize = 512;
 const MAX_STALE_QUIT_MESSAGES: usize = 16;
@@ -267,6 +278,14 @@ struct NativeOpaqueTestBarrier {
 
 impl NativeOpaqueTestBarrier {
     fn create_around(points: &[POINT]) -> Self {
+        Self::create_around_with_topmost(points, true)
+    }
+
+    fn create_normal_around(points: &[POINT]) -> Self {
+        Self::create_around_with_topmost(points, false)
+    }
+
+    fn create_around_with_topmost(points: &[POINT], topmost: bool) -> Self {
         assert!(!points.is_empty());
         let left = points.iter().map(|point| point.x).min().unwrap() - 120;
         let top = points.iter().map(|point| point.y).min().unwrap() - 100;
@@ -274,16 +293,33 @@ impl NativeOpaqueTestBarrier {
         let bottom = points.iter().map(|point| point.y).max().unwrap() + 100;
         let width = (right - left).max(1);
         let height = (bottom - top).max(1);
-        Self::create_rect(left, top, width, height)
+        Self::create_rect_with_topmost(left, top, width, height, topmost)
     }
 
     fn create_rect(left: i32, top: i32, width: i32, height: i32) -> Self {
+        Self::create_rect_with_topmost(left, top, width, height, true)
+    }
+
+    fn create_rect_with_topmost(
+        left: i32,
+        top: i32,
+        width: i32,
+        height: i32,
+        topmost: bool,
+    ) -> Self {
+        let ex_style = WS_EX_TOOLWINDOW
+            | WS_EX_NOACTIVATE
+            | if topmost {
+                WS_EX_TOPMOST
+            } else {
+                WINDOW_EX_STYLE(0)
+            };
         let hwnd = unsafe {
             CreateWindowExW(
-                WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+                ex_style,
                 w!("STATIC"),
                 None,
-                WS_POPUP | WS_VISIBLE,
+                WS_POPUP | WS_VISIBLE | WINDOW_STYLE(SS_NOTIFY.0),
                 left,
                 top,
                 width,
@@ -298,7 +334,7 @@ impl NativeOpaqueTestBarrier {
         unsafe {
             SetWindowPos(
                 hwnd,
-                Some(HWND_TOPMOST),
+                Some(if topmost { HWND_TOPMOST } else { HWND_TOP }),
                 left,
                 top,
                 width,
@@ -319,6 +355,129 @@ impl Drop for NativeOpaqueTestBarrier {
     }
 }
 
+const NATIVE_OPAQUE_HIT_TRANSPARENT_CLASS_NAME: PCWSTR =
+    w!("OpenGPUI::NativeOpaqueHitTransparentTestWindow");
+
+fn register_native_opaque_hit_transparent_test_class() {
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        let class = WNDCLASSW {
+            lpfnWndProc: Some(native_opaque_hit_transparent_window_procedure),
+            lpszClassName: NATIVE_OPAQUE_HIT_TRANSPARENT_CLASS_NAME,
+            hInstance: unsafe { GetModuleHandleW(None) }
+                .expect("native test module handle should be available")
+                .into(),
+            hbrBackground: unsafe { CreateSolidBrush(COLORREF(0)) },
+            ..Default::default()
+        };
+        assert_ne!(
+            unsafe { RegisterClassW(&class) },
+            0,
+            "native opaque hit-transparent test class should register"
+        );
+    });
+}
+
+unsafe extern "system" fn native_opaque_hit_transparent_window_procedure(
+    hwnd: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    if message == WM_NCHITTEST {
+        LRESULT(HTTRANSPARENT as isize)
+    } else {
+        unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
+    }
+}
+
+struct NativeOpaqueHitTransparentTestWindow {
+    hwnd: HWND,
+}
+
+impl NativeOpaqueHitTransparentTestWindow {
+    fn create_rect(left: i32, top: i32, width: i32, height: i32) -> Self {
+        register_native_opaque_hit_transparent_test_class();
+        let hwnd = unsafe {
+            CreateWindowExW(
+                WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TOPMOST | WS_EX_TRANSPARENT,
+                NATIVE_OPAQUE_HIT_TRANSPARENT_CLASS_NAME,
+                None,
+                WS_POPUP | WS_VISIBLE,
+                left,
+                top,
+                width,
+                height,
+                None,
+                None,
+                None,
+                None,
+            )
+        }
+        .expect("native opaque hit-transparent test window should be created");
+        unsafe {
+            SetWindowPos(
+                hwnd,
+                Some(HWND_TOPMOST),
+                left,
+                top,
+                width,
+                height,
+                SWP_NOACTIVATE | SWP_SHOWWINDOW,
+            )
+        }
+        .expect("native opaque hit-transparent test window should become visible");
+        assert!(
+            unsafe { RedrawWindow(Some(hwnd), None, None, RDW_INVALIDATE).as_bool() },
+            "native opaque hit-transparent test window should accept paint invalidation"
+        );
+        Self { hwnd }
+    }
+}
+
+impl Drop for NativeOpaqueHitTransparentTestWindow {
+    fn drop(&mut self) {
+        if unsafe { IsWindow(Some(self.hwnd)).as_bool() } {
+            let _ = unsafe { DestroyWindow(self.hwnd) };
+        }
+    }
+}
+
+struct NativeForegroundTestWindow {
+    hwnd: HWND,
+}
+
+impl NativeForegroundTestWindow {
+    fn create(left: i32, top: i32) -> Self {
+        let hwnd = unsafe {
+            CreateWindowExW(
+                WS_EX_TOOLWINDOW,
+                w!("STATIC"),
+                None,
+                WS_POPUP | WS_VISIBLE,
+                left,
+                top,
+                48,
+                48,
+                None,
+                None,
+                None,
+                None,
+            )
+        }
+        .expect("native foreground test window should be created");
+        Self { hwnd }
+    }
+}
+
+impl Drop for NativeForegroundTestWindow {
+    fn drop(&mut self) {
+        if unsafe { IsWindow(Some(self.hwnd)).as_bool() } {
+            let _ = unsafe { DestroyWindow(self.hwnd) };
+        }
+    }
+}
+
 fn mouse_position_lparam(x: u16, y: u16) -> LPARAM {
     LPARAM(((u32::from(y) << 16) | u32::from(x)) as isize)
 }
@@ -327,123 +486,73 @@ fn screen_point_lparam(x: i32, y: i32) -> LPARAM {
     LPARAM(((((y as u32) & 0xffff) << 16) | ((x as u32) & 0xffff)) as isize)
 }
 
-struct NativeInteractiveCursorGuard {
-    original_position: POINT,
-    original_foreground: HWND,
-    capture_owner: Option<HWND>,
-    injected_primary_down: bool,
-}
-
-impl NativeInteractiveCursorGuard {
-    fn capture() -> Self {
-        let mut original_position = POINT::default();
-        unsafe { GetCursorPos(&mut original_position) }
-            .expect("interactive native runner must expose the system cursor");
-        Self {
-            original_position,
-            original_foreground: unsafe { GetForegroundWindow() },
-            capture_owner: None,
-            injected_primary_down: false,
-        }
+fn open_desktop_disjoint_client_placement(
+    virtual_screen: Bounds<DevicePixels>,
+    client_width: i32,
+    client_height: i32,
+    excluded: RECT,
+    preferred_origins: &[(i32, i32)],
+) -> Option<(Bounds<DevicePixels>, open_gpui::Point<DevicePixels>)> {
+    let margin = 16;
+    let min_x = virtual_screen.origin.x.0.checked_add(margin)?;
+    let min_y = virtual_screen.origin.y.0.checked_add(margin)?;
+    let max_x = virtual_screen
+        .origin
+        .x
+        .0
+        .checked_add(virtual_screen.size.width.0)?
+        .checked_sub(client_width)?
+        .checked_sub(margin)?;
+    let max_y = virtual_screen
+        .origin
+        .y
+        .0
+        .checked_add(virtual_screen.size.height.0)?
+        .checked_sub(client_height)?
+        .checked_sub(margin)?;
+    if min_x > max_x || min_y > max_y {
+        return None;
     }
 
-    fn track_capture_owner(&mut self, hwnd: HWND) {
-        self.capture_owner = Some(hwnd);
-    }
-
-    fn mark_primary_button_down(&mut self) {
-        self.injected_primary_down = true;
-    }
-
-    fn mark_primary_button_up(&mut self) {
-        self.injected_primary_down = false;
-    }
-}
-
-impl Drop for NativeInteractiveCursorGuard {
-    fn drop(&mut self) {
-        if self.injected_primary_down {
-            let _ = inject_primary_button_up_best_effort();
-        }
-        if self.capture_owner == Some(unsafe { GetCapture() }) {
-            let _ = unsafe { ReleaseCapture() };
-        }
-        let _ = unsafe { SetCursorPos(self.original_position.x, self.original_position.y) };
-        if self.original_foreground != HWND::default()
-            && unsafe { IsWindow(Some(self.original_foreground)).as_bool() }
-        {
-            let _ = unsafe { SetForegroundWindow(self.original_foreground) };
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-struct VirtualScreenBounds {
-    left: i32,
-    top: i32,
-    width: i32,
-    height: i32,
-}
-
-impl VirtualScreenBounds {
-    fn current() -> Self {
-        let bounds = Self {
-            left: unsafe { GetSystemMetrics(SM_XVIRTUALSCREEN) },
-            top: unsafe { GetSystemMetrics(SM_YVIRTUALSCREEN) },
-            width: unsafe { GetSystemMetrics(SM_CXVIRTUALSCREEN) },
-            height: unsafe { GetSystemMetrics(SM_CYVIRTUALSCREEN) },
-        };
-        assert!(
-            bounds.width > 1 && bounds.height > 1,
-            "interactive native runner must expose a non-empty virtual desktop; bounds={bounds:?}"
-        );
-        bounds
-    }
-
-    fn contains(self, point: POINT) -> bool {
-        let right = i64::from(self.left) + i64::from(self.width);
-        let bottom = i64::from(self.top) + i64::from(self.height);
-        i64::from(point.x) >= i64::from(self.left)
-            && i64::from(point.x) < right
-            && i64::from(point.y) >= i64::from(self.top)
-            && i64::from(point.y) < bottom
-    }
-
-    fn absolute_coordinates(self, point: POINT) -> (i32, i32) {
-        assert!(
-            self.contains(point),
-            "interactive native injection point must remain inside the virtual desktop; point={point:?}, bounds={self:?}"
-        );
-        (
-            absolute_input_coordinate(point.x, self.left, self.width),
-            absolute_input_coordinate(point.y, self.top, self.height),
+    preferred_origins
+        .iter()
+        .copied()
+        .chain(
+            (min_y..=max_y)
+                .step_by(64)
+                .flat_map(|y| (min_x..=max_x).step_by(64).map(move |x| (x, y))),
         )
-    }
-}
-
-fn absolute_input_coordinate(value: i32, origin: i32, extent: i32) -> i32 {
-    debug_assert!(extent > 1);
-    let numerator = (i64::from(value) - i64::from(origin)) * 65_535;
-    (numerator / i64::from(extent - 1))
-        .try_into()
-        .expect("virtual-desktop coordinate must fit Win32 absolute input")
-}
-
-fn inject_primary_button_up_best_effort() -> bool {
-    let input = INPUT {
-        r#type: INPUT_MOUSE,
-        Anonymous: INPUT_0 {
-            mi: MOUSEINPUT {
-                dx: 0,
-                dy: 0,
-                mouseData: 0,
-                dwFlags: MOUSEEVENTF_LEFTUP,
-                time: 0,
-                dwExtraInfo: NATIVE_INTERACTIVE_INPUT_CANARY,
-            },
-        },
-    };
-    (unsafe { SendInput(&[input], size_of::<INPUT>() as i32) }) == 1
+        .find_map(|(x, y)| {
+            if x < min_x || x > max_x || y < min_y || y > max_y {
+                return None;
+            }
+            let right = x.checked_add(client_width)?;
+            let bottom = y.checked_add(client_height)?;
+            let intersects_excluded = x < excluded.right
+                && right > excluded.left
+                && y < excluded.bottom
+                && bottom > excluded.top;
+            if intersects_excluded {
+                return None;
+            }
+            let probe = POINT {
+                x: x.checked_add(client_width / 2)?,
+                y: y.checked_add(client_height / 2)?,
+            };
+            if unsafe { MonitorFromPoint(probe, MONITOR_DEFAULTTONULL).is_invalid() } {
+                return None;
+            }
+            if native_test_non_shell_root_window_at(probe).is_some() {
+                return None;
+            }
+            Some((
+                Bounds::new(
+                    point(DevicePixels(x), DevicePixels(y)),
+                    size(DevicePixels(client_width), DevicePixels(client_height)),
+                ),
+                point(DevicePixels(probe.x), DevicePixels(probe.y)),
+            ))
+        })
 }
 
 fn require_native_interactive_runner() {
@@ -455,55 +564,8 @@ fn require_native_interactive_runner() {
     );
 }
 
-fn inject_system_pointer(
-    point: POINT,
-    flags: windows::Win32::UI::Input::KeyboardAndMouse::MOUSE_EVENT_FLAGS,
-) {
-    let (dx, dy) = VirtualScreenBounds::current().absolute_coordinates(point);
-    let flags = if flags.contains(MOUSEEVENTF_MOVE) {
-        flags | MOUSEEVENTF_MOVE_NOCOALESCE
-    } else {
-        flags
-    };
-    let input = INPUT {
-        r#type: INPUT_MOUSE,
-        Anonymous: INPUT_0 {
-            mi: MOUSEINPUT {
-                dx,
-                dy,
-                mouseData: 0,
-                dwFlags: MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK | flags,
-                time: 0,
-                dwExtraInfo: NATIVE_INTERACTIVE_INPUT_CANARY,
-            },
-        },
-    };
-    let sent = unsafe { SendInput(&[input], size_of::<INPUT>() as i32) };
-    assert_eq!(
-        sent, 1,
-        "native interactive runner rejected system pointer injection; this commonly means the desktop, integrity level, or UIPI boundary is incompatible"
-    );
-}
-
 fn physical_client_bounds(hwnd: HWND) -> Bounds<DevicePixels> {
-    let mut client_bounds = RECT::default();
-    unsafe { GetClientRect(hwnd, &mut client_bounds) }
-        .expect("native window must expose its client bounds");
-    let mut origin = POINT {
-        x: client_bounds.left,
-        y: client_bounds.top,
-    };
-    assert!(
-        unsafe { ClientToScreen(hwnd, &mut origin).as_bool() },
-        "native window must convert its client origin to screen coordinates"
-    );
-    Bounds::new(
-        point(DevicePixels(origin.x), DevicePixels(origin.y)),
-        size(
-            DevicePixels(client_bounds.right - client_bounds.left),
-            DevicePixels(client_bounds.bottom - client_bounds.top),
-        ),
-    )
+    native_test_client_screen_bounds(hwnd).expect("native window must expose its client bounds")
 }
 
 fn client_center_in_screen_coordinates(hwnd: HWND) -> POINT {
@@ -537,6 +599,13 @@ impl Render for ProvisionalSemanticsMarkerRoot {
                         let Some((session, ticket)) = authority.borrow().clone() else {
                             return;
                         };
+                        if !matches!(
+                            ticket.snapshot().outcome(),
+                            WindowProvisionalSemanticsOutcome::Pending
+                                | WindowProvisionalSemanticsOutcome::Accepted
+                        ) {
+                            return;
+                        }
                         window
                             .accept_provisional_destination_semantics_frame(
                                 &session, &ticket, frame, app,
@@ -611,8 +680,7 @@ fn application_window_z_order(platform: &WindowsPlatform) -> Vec<HWND> {
 }
 
 fn native_window_rect(hwnd: HWND) -> (i32, i32, i32, i32) {
-    let mut rect = RECT::default();
-    unsafe { GetWindowRect(hwnd, &mut rect) }.expect("native window rect should be readable");
+    let rect = native_test_window_rect_raw(hwnd).expect("native window rect should be readable");
     (rect.left, rect.top, rect.right, rect.bottom)
 }
 
@@ -915,10 +983,14 @@ fn owned_nonactivating_first_show_preserves_z_order_and_later_activation() {
     assert_ne!(mouse_activate_result.0, MA_NOACTIVATE as isize);
     assert_eq!(unsafe { GetActiveWindow() }, child_hwnd);
 
-    unsafe {
-        let _ = SetActiveWindow(foreground_hwnd);
-    }
-    assert_eq!(unsafe { GetActiveWindow() }, foreground_hwnd);
+    crate::native_test_foreground::acquire_foreground_window(foreground_hwnd)
+        .expect("ordinary activation sentinel should acquire foreground authority");
+    let _ = unsafe { SetFocus(Some(foreground_hwnd)) };
+    pump_messages_until("ordinary activation sentinel focus", || unsafe {
+        GetForegroundWindow() == foreground_hwnd
+            && GetActiveWindow() == foreground_hwnd
+            && GetFocus() == foreground_hwnd
+    });
     let _ = app.update_for_test(|cx| {
         child
             .update(cx, |_, window, _| window.activate_window())
@@ -926,7 +998,7 @@ fn owned_nonactivating_first_show_preserves_z_order_and_later_activation() {
     });
     platform.inner.run_foreground_task();
     pump_messages_until("ordinary owned programmatic activation", || unsafe {
-        GetActiveWindow() == child_hwnd
+        GetForegroundWindow() == child_hwnd && GetActiveWindow() == child_hwnd
     });
     pump_messages_until_idle("ordinary owned activation follow-up");
 
@@ -1136,6 +1208,14 @@ fn owned_nonactivating_maximized_first_show_preserves_focus_and_restore_bounds()
     assert!(native_facts.accepts_activation);
     assert!(native_facts.focus_on_click);
 
+    crate::native_test_foreground::acquire_foreground_window(foreground_hwnd)
+        .expect("maximized activation sentinel should acquire foreground authority");
+    let _ = unsafe { SetFocus(Some(foreground_hwnd)) };
+    pump_messages_until("maximized activation sentinel focus", || unsafe {
+        GetForegroundWindow() == foreground_hwnd
+            && GetActiveWindow() == foreground_hwnd
+            && GetFocus() == foreground_hwnd
+    });
     let _ = app.update_for_test(|cx| {
         child
             .update(cx, |_, window, _| window.activate_window())
@@ -1143,7 +1223,7 @@ fn owned_nonactivating_maximized_first_show_preserves_focus_and_restore_bounds()
     });
     platform.inner.run_foreground_task();
     pump_messages_until("maximized owned programmatic activation", || unsafe {
-        GetActiveWindow() == child_hwnd
+        GetForegroundWindow() == child_hwnd && GetActiveWindow() == child_hwnd
     });
     pump_messages_until_idle("maximized owned activation follow-up");
     let activated_ex_style = unsafe { get_window_long(child_hwnd, GWL_EXSTYLE) } as u32;
@@ -1293,6 +1373,262 @@ fn asymmetric_activation_policy_preserves_click_and_programmatic_independence() 
             .expect("owner should close");
     });
     pump_messages_until_idle("asymmetric activation test teardown");
+}
+
+#[test]
+fn rejected_activation_restores_a_non_click_activating_gpui_foreground_window() {
+    discard_stale_quit_messages();
+
+    let platform = Rc::new(
+        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+    );
+    let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
+    let native_sentinel = NativeForegroundTestWindow::create(16, 16);
+    crate::native_test_foreground::acquire_foreground_window(native_sentinel.hwnd)
+        .expect("native activation sentinel should acquire foreground authority");
+    let _ = unsafe { SetFocus(Some(native_sentinel.hwnd)) };
+    pump_messages_until("native activation sentinel focus", || unsafe {
+        GetForegroundWindow() == native_sentinel.hwnd
+            && GetActiveWindow() == native_sentinel.hwnd
+            && GetFocus() == native_sentinel.hwnd
+    });
+
+    let restore_target = app
+        .update_for_test(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::centered(size(px(320.0), px(220.0)), cx)),
+                    focus_on_appearing: false,
+                    activation_policy: WindowActivationPolicy {
+                        accepts_activation: true,
+                        focus_on_click: false,
+                    },
+                    show: true,
+                    ..WindowOptions::default()
+                },
+                |_, cx| cx.new(|_| Empty),
+            )
+        })
+        .expect("non-click activation restore target should open");
+    let restore_hwnd = platform
+        .raw_window_handles
+        .read()
+        .last()
+        .expect("non-click activation restore target should register an HWND")
+        .as_raw();
+    platform.inner.run_foreground_task();
+    pump_messages_until(
+        "non-click activation restore target presentation",
+        || unsafe { IsWindowVisible(restore_hwnd).as_bool() },
+    );
+
+    let restore_ticket = app.update_for_test(|cx| {
+        restore_target
+            .update(cx, |_, window, _| window.activate_window())
+            .expect("non-click activation restore target should remain live")
+    });
+    platform.inner.run_foreground_task();
+    pump_messages_until_with_delay(
+        "non-click activation restore target foreground",
+        Duration::from_millis(1),
+        || {
+            restore_ticket.snapshot().status().is_terminal()
+                && unsafe {
+                    GetForegroundWindow() == restore_hwnd
+                        && GetActiveWindow() == restore_hwnd
+                        && GetFocus() == restore_hwnd
+                }
+        },
+    );
+    assert_eq!(
+        restore_ticket.snapshot().status(),
+        WindowActivationStatus::Terminal(WindowActivationTerminal::Activated),
+    );
+
+    let rejected_target = app
+        .update_for_test(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::centered(size(px(300.0), px(200.0)), cx)),
+                    focus_on_appearing: false,
+                    show: true,
+                    ..WindowOptions::default()
+                },
+                |_, cx| cx.new(|_| Empty),
+            )
+        })
+        .expect("activation rejection target should open");
+    let rejected_hwnd = platform
+        .raw_window_handles
+        .read()
+        .last()
+        .expect("activation rejection target should register an HWND")
+        .as_raw();
+    let rejected_native_window = platform
+        .window_from_hwnd(rejected_hwnd)
+        .expect("activation rejection target should remain registered");
+    platform.inner.run_foreground_task();
+    pump_messages_until("activation rejection target presentation", || unsafe {
+        IsWindowVisible(rejected_hwnd).as_bool()
+    });
+    rejected_native_window.revoke_activation_admission_after_next_active_status_for_test();
+
+    let rejected_ticket = app.update_for_test(|cx| {
+        rejected_target
+            .update(cx, |_, window, _| window.activate_window())
+            .expect("activation rejection target should remain live")
+    });
+    platform.inner.run_foreground_task();
+    pump_messages_until_with_delay(
+        "rejected activation restores non-click foreground target",
+        Duration::from_millis(1),
+        || rejected_ticket.snapshot().status().is_terminal(),
+    );
+    assert_eq!(
+        rejected_ticket.snapshot().status(),
+        WindowActivationStatus::Terminal(WindowActivationTerminal::Rejected),
+    );
+    pump_messages_until_with_delay(
+        "exact non-click foreground restoration",
+        Duration::from_millis(1),
+        || unsafe {
+            GetForegroundWindow() == restore_hwnd
+                && GetActiveWindow() == restore_hwnd
+                && GetFocus() == restore_hwnd
+        },
+    );
+    assert!(
+        rejected_native_window.restore_activation_admission_for_test(),
+        "the rejected activation must consume the exact admission-revocation seam",
+    );
+
+    for handle in [
+        AnyWindowHandle::from(rejected_target),
+        AnyWindowHandle::from(restore_target),
+    ] {
+        app.update_for_test(|cx| {
+            handle
+                .update(cx, |_, window, cx| window.remove_window(cx))
+                .expect("activation restoration test window should close");
+        });
+        pump_messages_until_idle("activation restoration test teardown");
+    }
+}
+
+#[test]
+fn minimized_rejected_activation_cannot_escape_the_native_command_scope() {
+    discard_stale_quit_messages();
+
+    let platform = Rc::new(
+        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+    );
+    let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
+    let foreground = app
+        .update_for_test(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::centered(size(px(320.0), px(220.0)), cx)),
+                    focus_on_appearing: false,
+                    activation_policy: WindowActivationPolicy {
+                        accepts_activation: true,
+                        focus_on_click: false,
+                    },
+                    show: true,
+                    ..WindowOptions::default()
+                },
+                |_, cx| cx.new(|_| Empty),
+            )
+        })
+        .expect("foreground restore target should open");
+    let foreground_hwnd = platform
+        .raw_window_handles
+        .read()
+        .last()
+        .expect("foreground restore target should register an HWND")
+        .as_raw();
+    platform.inner.run_foreground_task();
+    pump_messages_until("foreground restore target presentation", || unsafe {
+        IsWindowVisible(foreground_hwnd).as_bool()
+    });
+    crate::native_test_foreground::acquire_foreground_window(foreground_hwnd)
+        .expect("foreground restore target should acquire foreground authority");
+    let _ = unsafe { SetFocus(Some(foreground_hwnd)) };
+    pump_messages_until("foreground restore target focus", || unsafe {
+        GetForegroundWindow() == foreground_hwnd
+            && GetActiveWindow() == foreground_hwnd
+            && GetFocus() == foreground_hwnd
+    });
+
+    let target = app
+        .update_for_test(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::centered(size(px(300.0), px(200.0)), cx)),
+                    focus_on_appearing: false,
+                    show: true,
+                    ..WindowOptions::default()
+                },
+                |_, cx| cx.new(|_| Empty),
+            )
+        })
+        .expect("minimized activation target should open");
+    let target_hwnd = platform
+        .raw_window_handles
+        .read()
+        .last()
+        .expect("minimized activation target should register an HWND")
+        .as_raw();
+    let native_target = platform
+        .window_from_hwnd(target_hwnd)
+        .expect("minimized activation target should remain registered");
+    platform.inner.run_foreground_task();
+    pump_messages_until("minimized activation target presentation", || unsafe {
+        IsWindowVisible(target_hwnd).as_bool()
+    });
+    crate::native_test_foreground::acquire_foreground_window(foreground_hwnd)
+        .expect("foreground restore target should reacquire foreground authority");
+    let _ = unsafe { SetFocus(Some(foreground_hwnd)) };
+    assert_eq!(unsafe { GetForegroundWindow() }, foreground_hwnd);
+    assert_eq!(unsafe { GetActiveWindow() }, foreground_hwnd);
+    assert_eq!(unsafe { GetFocus() }, foreground_hwnd);
+
+    native_target.minimize_before_next_activation_command_for_test();
+    native_target.revoke_activation_admission_after_next_minimized_restore_for_test();
+    let rejected_ticket = app.update_for_test(|cx| {
+        target
+            .update(cx, |_, window, _| window.activate_window())
+            .expect("minimized activation target should remain live")
+    });
+    platform.inner.run_foreground_task();
+    pump_messages_until_with_delay(
+        "minimized activation rejection terminal",
+        Duration::from_millis(1),
+        || rejected_ticket.snapshot().status().is_terminal(),
+    );
+    assert_eq!(
+        rejected_ticket.snapshot().status(),
+        WindowActivationStatus::Terminal(WindowActivationTerminal::Rejected),
+    );
+    pump_messages_until_idle("minimized activation rejection queued native follow-up");
+    assert_eq!(unsafe { GetForegroundWindow() }, foreground_hwnd);
+    assert_eq!(unsafe { GetActiveWindow() }, foreground_hwnd);
+    assert_eq!(unsafe { GetFocus() }, foreground_hwnd);
+    assert!(
+        native_target.restore_activation_admission_for_test(),
+        "the minimized rejection must consume the exact admission-revocation seam",
+    );
+
+    for handle in [
+        AnyWindowHandle::from(target),
+        AnyWindowHandle::from(foreground),
+    ] {
+        app.update_for_test(|cx| {
+            handle
+                .update(cx, |_, window, cx| window.remove_window(cx))
+                .expect("minimized activation scope test window should close");
+        });
+        pump_messages_until_idle("minimized activation scope test teardown");
+    }
 }
 
 #[test]
@@ -1914,6 +2250,9 @@ fn real_hwnd_presenting_placement_is_generation_bound_before_reveal() {
 
 #[test]
 fn real_hwnd_windowed_initial_presentation_rejects_client_drift_before_retry() {
+    crate::native_test_scenario::native_test_confirm_scenario_behavior(
+        "client-geometry-reconciliation",
+    );
     discard_stale_quit_messages();
 
     let platform = Rc::new(
@@ -2023,8 +2362,15 @@ fn real_hwnd_windowed_initial_presentation_rejects_client_drift_before_retry() {
 }
 
 #[test]
+#[ignore = "requires a clean interactive desktop with foreground and global Z-order authority"]
 fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in_place() {
+    crate::native_test_scenario::native_test_confirm_scenario_behavior(
+        "provisional-activation-z-order",
+    );
     discard_stale_quit_messages();
+    let mut desktop_state_guard =
+        NativeTestSystemPointerGuard::capture_with_extra_info(NATIVE_INTERACTIVE_INPUT_CANARY)
+            .expect("interactive native runner must expose the system pointer state");
 
     let platform = Rc::new(
         WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
@@ -2094,36 +2440,27 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
         },
         "the undecorated policy must make the real HWND client rect authoritative despite WS_CAPTION"
     );
-    let virtual_screen = VirtualScreenBounds::current();
-    let right_candidate = hidden_client_origin
-        .x
-        .checked_add(client_width)
-        .and_then(|x| x.checked_add(96));
-    let left_candidate = hidden_client_origin
-        .x
-        .checked_sub(client_width)
-        .and_then(|x| x.checked_sub(96));
-    let virtual_right = virtual_screen
-        .left
-        .checked_add(virtual_screen.width)
-        .expect("virtual desktop horizontal extent should be representable");
-    let desired_client_x = right_candidate
-        .filter(|x| {
-            x.checked_add(client_width)
-                .is_some_and(|right| right <= virtual_right - 64)
-        })
-        .or_else(|| left_candidate.filter(|x| *x >= virtual_screen.left + 64))
-        .expect("the native test desktop should fit one disjoint provisional placement");
-    let initial_client_bounds = open_gpui::Bounds::new(
-        point(
-            DevicePixels(desired_client_x),
-            DevicePixels(hidden_client_origin.y),
+    let virtual_screen = native_test_virtual_screen_bounds()
+        .expect("interactive native runner must expose a non-empty virtual desktop");
+    let preferred_origins = [
+        (
+            hidden_client_origin.x + client_width + 96,
+            hidden_client_origin.y,
         ),
-        size(DevicePixels(client_width), DevicePixels(client_height)),
-    );
-    let reveal_point = point(
-        DevicePixels(desired_client_x + client_width / 2),
-        DevicePixels(hidden_client_origin.y + client_height / 2),
+        (
+            hidden_client_origin.x - client_width - 96,
+            hidden_client_origin.y,
+        ),
+    ];
+    let (initial_client_bounds, reveal_point) = open_desktop_disjoint_client_placement(
+        virtual_screen,
+        client_width,
+        client_height,
+        reveal_rect,
+        &preferred_origins,
+    )
+    .expect(
+        "the native test desktop must expose one shell-desktop point for a disjoint provisional placement",
     );
     assert!(
         reveal_point.x.0 < reveal_rect.left
@@ -2144,10 +2481,18 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
     // Keep the point-scoped native proof independent of unrelated desktop windows. The barrier
     // covers only a small region around the reveal point, so the provisional still has visible
     // fragments after it is inserted immediately below the barrier.
-    let _barrier = NativeOpaqueTestBarrier::create_around(&[POINT {
+    let reveal_barrier = NativeOpaqueTestBarrier::create_around(&[POINT {
         x: reveal_point.x.0,
         y: reveal_point.y.0,
     }]);
+    assert_eq!(
+        native_test_non_shell_root_window_at(POINT {
+            x: reveal_point.x.0,
+            y: reveal_point.y.0,
+        }),
+        Some(reveal_barrier.hwnd),
+        "the test-owned topmost barrier must own the reveal point before z-order preparation",
+    );
     assert_eq!(unsafe { GetForegroundWindow() }, foreground_before);
 
     let reveal_ticket = app
@@ -2179,6 +2524,9 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
             })
         })
         .expect("native provisional window should remain live");
+    let hidden_geometry_before_reveal = native_window
+        .physical_geometry_from_native()
+        .expect("armed hidden provisional HWND should retain observable physical geometry");
     pump_messages_until("real provisional reveal", || {
         app.update_for_test(|_| {
             reveal_ticket.snapshot().outcome() != WindowProvisionalRevealOutcome::Pending
@@ -2186,7 +2534,11 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
     });
 
     let reveal = reveal_ticket.snapshot();
-    assert_eq!(reveal.outcome(), WindowProvisionalRevealOutcome::Revealed);
+    assert_eq!(
+        reveal.outcome(),
+        WindowProvisionalRevealOutcome::Revealed,
+        "native provisional reveal rejected its exact ticket: snapshot={reveal:?}, hidden_geometry_before_reveal={hidden_geometry_before_reveal:?}"
+    );
     let presentation_generation = reveal
         .presentation_generation()
         .expect("the native reveal must bind one non-empty renderer generation");
@@ -2525,12 +2877,170 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
         successor_client_bounds
     );
 
+    drop(reveal_barrier);
+    unsafe {
+        SetWindowPos(
+            hwnd,
+            Some(HWND_NOTOPMOST),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOMOVE | SWP_NOSIZE,
+        )
+    }
+    .expect("the topmost reveal fixture must release the provisional HWND before promotion");
+    let promotion_barrier = NativeOpaqueTestBarrier::create_normal_around(&[POINT {
+        x: successor_anchor.x.0,
+        y: successor_anchor.y.0,
+    }]);
+    let promotion_request = WindowProvisionalPlacementRequest::try_new(
+        79,
+        WindowProvisionalPlacementPurpose::FinalRelease,
+        successor_client_bounds,
+        successor_anchor,
+        successor_target_display,
+    )
+    .expect("the promotion placement request should remain exact and display-bound");
+    let (promotion_dispatch, promotion_placement_ticket) = app
+        .borrow_mut()
+        .update_for_test(|cx| {
+            any_window.update(cx, |_, window, _| {
+                window
+                    .request_provisional_placement(&session, promotion_request)
+                    .expect("the promotion placement should enter the native lane")
+            })
+        })
+        .expect("native provisional window should remain live during promotion placement");
+    let promotion_mutation_ticket = match promotion_dispatch {
+        WindowMutationDispatch::Queued(ticket) => ticket,
+        outcome => panic!("the promotion placement must queue: {outcome:?}"),
+    };
+    pump_messages_until_with_delay(
+        "point-scoped promotion placement",
+        Duration::from_millis(1),
+        || {
+            app.borrow_mut().update_for_test(|_| {
+                promotion_placement_ticket.snapshot().outcome()
+                    != WindowProvisionalPlacementOutcome::Pending
+                    && promotion_mutation_ticket.observation().is_some()
+            })
+        },
+    );
+    let promotion_placement = promotion_placement_ticket.snapshot();
+    assert_eq!(
+        promotion_placement.outcome(),
+        WindowProvisionalPlacementOutcome::Settled
+    );
+    assert_eq!(
+        promotion_placement
+            .native_facts()
+            .expect("promotion placement must publish native facts")
+            .z_order(),
+        WindowProvisionalRevealZOrder::Adjusted,
+        "the final promotion placement must bind the ordinary opaque barrier"
+    );
+    assert!(
+        native_window.has_provisional_activation_z_order_for_test(),
+        "the settled FinalRelease must retain its exact barrier until promotion activation"
+    );
+
+    let changed_client_bounds = Bounds::new(
+        successor_client_bounds.origin,
+        size(
+            DevicePixels(successor_client_bounds.size.width.0 + 1),
+            successor_client_bounds.size.height,
+        ),
+    );
+    let changed_request = WindowPhysicalPlacementRequest::try_new_for_display(
+        changed_client_bounds,
+        successor_anchor,
+        successor_target_display,
+    )
+    .expect("the changed promoted placement should remain display-bound");
+    let changed_mutation_ticket = match app
+        .borrow_mut()
+        .update_for_test(|cx| {
+            any_window.update(cx, |_, window, _| {
+                window.request_physical_window_placement(changed_request)
+            })
+        })
+        .expect("the provisional window should remain live during changed placement")
+    {
+        WindowMutationDispatch::Queued(ticket) => ticket,
+        outcome => panic!("the changed physical placement must queue: {outcome:?}"),
+    };
+    platform.inner.run_foreground_task();
+    pump_messages_until("changed promoted physical placement", || {
+        changed_mutation_ticket.observation().is_some()
+    });
+    assert!(matches!(
+        changed_mutation_ticket
+            .observation()
+            .expect("the changed placement must publish one terminal observation")
+            .outcome,
+        WindowMutationOutcome::Exact | WindowMutationOutcome::Adjusted
+    ));
+    assert_eq!(
+        native_window
+            .physical_geometry_from_native()
+            .expect("the changed placement should leave coherent native geometry")
+            .client_bounds(),
+        changed_client_bounds,
+    );
+    assert!(
+        !native_window.has_provisional_activation_z_order_for_test(),
+        "a real geometry change must retire the obsolete promotion z-order authority",
+    );
+
+    let restored_promotion_request = WindowProvisionalPlacementRequest::try_new(
+        80,
+        WindowProvisionalPlacementPurpose::FinalRelease,
+        successor_client_bounds,
+        successor_anchor,
+        successor_target_display,
+    )
+    .expect("the replacement promotion placement should remain exact and display-bound");
+    let (restored_promotion_dispatch, restored_promotion_ticket) = app
+        .borrow_mut()
+        .update_for_test(|cx| {
+            any_window.update(cx, |_, window, _| {
+                window
+                    .request_provisional_placement(&session, restored_promotion_request)
+                    .expect("the replacement promotion placement should enter the native lane")
+            })
+        })
+        .expect("the provisional window should remain live during replacement promotion");
+    let restored_promotion_mutation_ticket = match restored_promotion_dispatch {
+        WindowMutationDispatch::Queued(ticket) => ticket,
+        outcome => panic!("the replacement promotion placement must queue: {outcome:?}"),
+    };
+    pump_messages_until_with_delay(
+        "replacement point-scoped promotion placement",
+        Duration::from_millis(1),
+        || {
+            app.borrow_mut().update_for_test(|_| {
+                restored_promotion_ticket.snapshot().outcome()
+                    != WindowProvisionalPlacementOutcome::Pending
+                    && restored_promotion_mutation_ticket.observation().is_some()
+            })
+        },
+    );
+    assert_eq!(
+        restored_promotion_ticket.snapshot().outcome(),
+        WindowProvisionalPlacementOutcome::Settled,
+    );
+    assert!(
+        native_window.has_provisional_activation_z_order_for_test(),
+        "the replacement FinalRelease must install fresh promotion z-order authority",
+    );
+
     let semantics_ticket = app
         .borrow_mut()
         .update_for_test(|cx| {
             any_window.update(cx, |_, window, cx| {
                 window
-                    .begin_provisional_destination_semantics(&session, 79, cx)
+                    .begin_provisional_destination_semantics(&session, 81, cx)
                     .expect("the exact revealed HWND should project its destination in place")
             })
         })
@@ -2559,7 +3069,7 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
         semantics.session_generation(),
         session.snapshot().generation()
     );
-    assert_eq!(semantics.destination_generation(), 79);
+    assert_eq!(semantics.destination_generation(), 81);
     assert!(
         semantics
             .submitted_frame_generation()
@@ -2574,6 +3084,61 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
     let submitted_but_gated_hit =
         unsafe { SendMessageW(hwnd, WM_NCHITTEST, Some(WPARAM::default()), Some(hit_point)) };
     assert_eq!(submitted_but_gated_hit.0, HTTRANSPARENT as isize);
+
+    let foreground_sentinel = NativeForegroundTestWindow::create(reveal_rect.left, reveal_rect.top);
+    crate::native_test_foreground::acquire_foreground_window(foreground_sentinel.hwnd)
+        .expect("the gated activation sentinel should acquire foreground authority");
+    let _ = unsafe { SetFocus(Some(foreground_sentinel.hwnd)) };
+    pump_messages_until("gated activation sentinel focus", || unsafe {
+        GetForegroundWindow() == foreground_sentinel.hwnd
+            && GetActiveWindow() == foreground_sentinel.hwnd
+            && GetFocus() == foreground_sentinel.hwnd
+    });
+    assert!(
+        native_window_is_above(promotion_barrier.hwnd, hwnd),
+        "the ordinary opaque barrier must be above the gated provisional HWND before unsolicited activation",
+    );
+
+    let unadmitted_rejections_before =
+        native_window.unadmitted_activation_rejection_count_for_test();
+    let foreground_request_accepted = unsafe { SetForegroundWindow(hwnd).as_bool() };
+    if native_window.unadmitted_activation_rejection_count_for_test()
+        == unadmitted_rejections_before
+    {
+        unsafe {
+            SetActiveWindow(hwnd).ok();
+        }
+    }
+    pump_messages_until_with_delay(
+        "gated provisional native activation rejection",
+        Duration::from_millis(1),
+        || {
+            (unsafe { GetForegroundWindow() }) == foreground_sentinel.hwnd
+                && (unsafe { GetActiveWindow() }) == foreground_sentinel.hwnd
+                && (unsafe { GetFocus() }) == foreground_sentinel.hwnd
+                && native_window_is_above(promotion_barrier.hwnd, hwnd)
+                && native_window.provisional_activation_z_order_is_armed_for_test()
+                && native_window.unadmitted_activation_rejection_count_for_test()
+                    > unadmitted_rejections_before
+        },
+    );
+    assert!(
+        native_window.unadmitted_activation_rejection_count_for_test()
+            > unadmitted_rejections_before,
+        "a real User32 activation must reach the positive WM_ACTIVATE rejection branch; SetForegroundWindow returned {foreground_request_accepted}",
+    );
+    assert!(!session.snapshot().accepts_interaction());
+    assert!(
+        app.borrow_mut()
+            .update_for_test(|cx| any_window.update(cx, |_, window, _| window.is_window_active()))
+            .expect("gated provisional window should remain registered")
+            == false,
+        "a rejected native activation must not publish framework activation",
+    );
+    assert!(
+        platform.active_window().is_none(),
+        "the platform must not expose an unadmitted provisional foreground window",
+    );
 
     app.borrow_mut().update_for_test(|cx| {
         any_window
@@ -2595,6 +3160,514 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
     let promoted_hit =
         unsafe { SendMessageW(hwnd, WM_NCHITTEST, Some(WPARAM::default()), Some(hit_point)) };
     assert_ne!(promoted_hit.0, HTTRANSPARENT as isize);
+
+    crate::native_test_foreground::acquire_foreground_window(foreground_sentinel.hwnd)
+        .expect("the pre-dispatch repair sentinel should acquire foreground authority");
+    let _ = unsafe { SetFocus(Some(foreground_sentinel.hwnd)) };
+    pump_messages_until("pre-dispatch repair sentinel focus", || unsafe {
+        GetForegroundWindow() == foreground_sentinel.hwnd
+            && GetActiveWindow() == foreground_sentinel.hwnd
+            && GetFocus() == foreground_sentinel.hwnd
+    });
+    unsafe {
+        SetWindowPos(
+            hwnd,
+            Some(HWND_TOP),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOMOVE | SWP_NOSIZE,
+        )
+    }
+    .expect("the test should drift the promoted HWND above its opaque barrier");
+    assert!(
+        native_window_is_above(hwnd, promotion_barrier.hwnd),
+        "the pre-dispatch repair test must begin with the promoted HWND above its barrier",
+    );
+    native_window.fail_next_provisional_activation_z_order_apply_for_test();
+    let pre_dispatch_repair_ticket = app
+        .borrow_mut()
+        .update_for_test(|cx| any_window.update(cx, |_, window, _| window.activate_window()))
+        .expect("the promoted provisional window should remain live during pre-dispatch repair");
+    pump_messages_until_with_delay(
+        "pre-dispatch z-order repair rejection",
+        Duration::from_millis(1),
+        || pre_dispatch_repair_ticket.snapshot().status().is_terminal(),
+    );
+    assert_eq!(
+        pre_dispatch_repair_ticket.snapshot().status(),
+        WindowActivationStatus::Terminal(WindowActivationTerminal::Rejected),
+        "a failed pre-dispatch z-order repair must reject the activation command",
+    );
+    assert!(
+        !native_window.next_provisional_activation_z_order_apply_failure_is_armed_for_test(),
+        "the failed pre-dispatch repair must consume the exact native failure seam",
+    );
+    pump_messages_until_with_delay(
+        "non-consuming pre-dispatch z-order recovery",
+        Duration::from_millis(1),
+        || {
+            native_window_is_above(promotion_barrier.hwnd, hwnd)
+                && native_window.provisional_activation_z_order_is_armed_for_test()
+        },
+    );
+    assert_eq!(unsafe { GetForegroundWindow() }, foreground_sentinel.hwnd);
+
+    crate::native_test_foreground::acquire_foreground_window(foreground_sentinel.hwnd)
+        .expect("the admission-revocation sentinel should acquire foreground authority");
+    let _ = unsafe { SetFocus(Some(foreground_sentinel.hwnd)) };
+    pump_messages_until("admission-revocation sentinel focus", || unsafe {
+        GetForegroundWindow() == foreground_sentinel.hwnd
+            && GetActiveWindow() == foreground_sentinel.hwnd
+            && GetFocus() == foreground_sentinel.hwnd
+    });
+    pump_messages_until_idle("admission-revocation pre-dispatch idle");
+    native_window.fail_next_provisional_activation_z_order_apply_for_test();
+    native_window.revoke_activation_admission_after_next_active_status_for_test();
+    let revoked_activation_ticket = app
+        .borrow_mut()
+        .update_for_test(|cx| any_window.update(cx, |_, window, _| window.activate_window()))
+        .expect("the promoted provisional window should remain live during admission revocation");
+    pump_messages_until_with_delay(
+        "mid-command activation-admission revocation terminal",
+        Duration::from_millis(1),
+        || revoked_activation_ticket.snapshot().status().is_terminal(),
+    );
+    assert_eq!(
+        revoked_activation_ticket.snapshot().status(),
+        WindowActivationStatus::Terminal(WindowActivationTerminal::Rejected),
+        "an activation command that loses admission inside synchronous User32 callbacks must reject",
+    );
+    pump_messages_until_with_delay(
+        "mid-command native activation snapshot restoration",
+        Duration::from_millis(1),
+        || unsafe {
+            GetForegroundWindow() == foreground_sentinel.hwnd
+                && GetActiveWindow() == foreground_sentinel.hwnd
+                && GetFocus() == foreground_sentinel.hwnd
+        },
+    );
+    pump_messages_until_with_delay(
+        "mid-command retained z-order recovery",
+        Duration::from_millis(1),
+        || {
+            native_window_is_above(promotion_barrier.hwnd, hwnd)
+                && native_window.provisional_activation_z_order_is_armed_for_test()
+        },
+    );
+    assert!(
+        native_window.restore_activation_admission_for_test(),
+        "the synchronous native active-status callback must consume the admission-revocation test seam",
+    );
+    assert!(
+        native_window.provisional_activation_z_order_is_armed_for_test(),
+        "rejected activation recovery must retain the point-scoped z-order authority",
+    );
+
+    crate::native_test_foreground::acquire_foreground_window(foreground_sentinel.hwnd)
+        .expect("the minimized activation sentinel should acquire foreground authority");
+    let _ = unsafe { SetFocus(Some(foreground_sentinel.hwnd)) };
+    pump_messages_until("minimized activation sentinel focus", || unsafe {
+        GetForegroundWindow() == foreground_sentinel.hwnd
+            && GetActiveWindow() == foreground_sentinel.hwnd
+            && GetFocus() == foreground_sentinel.hwnd
+    });
+    unsafe {
+        let _ = ShowWindow(hwnd, SW_MINIMIZE);
+    }
+    pump_messages_until(
+        "promoted provisional HWND minimized before activation",
+        || unsafe { IsIconic(hwnd).as_bool() },
+    );
+    assert!(
+        native_window_is_above(promotion_barrier.hwnd, hwnd),
+        "minimizing must not discard the pending point-scoped barrier authority",
+    );
+    // Windows may select a shell foreground window while minimizing a non-foreground HWND.
+    // Establish the exact pre-command activation baseline only after minimization has settled.
+    crate::native_test_foreground::acquire_foreground_window(foreground_sentinel.hwnd)
+        .expect("the minimized activation sentinel should reacquire foreground authority");
+    let _ = unsafe { SetFocus(Some(foreground_sentinel.hwnd)) };
+    pump_messages_until("settled minimized activation sentinel focus", || unsafe {
+        GetForegroundWindow() == foreground_sentinel.hwnd
+            && GetActiveWindow() == foreground_sentinel.hwnd
+            && GetFocus() == foreground_sentinel.hwnd
+    });
+    native_window.reject_next_activation_command_for_test();
+    let minimized_activation_ticket = app
+        .borrow_mut()
+        .update_for_test(|cx| any_window.update(cx, |_, window, _| window.activate_window()))
+        .expect("minimized promoted provisional window should remain registered");
+    pump_messages_until_with_delay(
+        "minimized promoted provisional activation preflight",
+        Duration::from_millis(1),
+        || {
+            minimized_activation_ticket
+                .snapshot()
+                .status()
+                .is_terminal()
+                && (unsafe { !IsIconic(hwnd).as_bool() })
+        },
+    );
+    assert_eq!(
+        minimized_activation_ticket.snapshot().status(),
+        WindowActivationStatus::Terminal(WindowActivationTerminal::Rejected),
+        "the injected backend rejection must occur only after minimized native restoration",
+    );
+    assert!(
+        !native_window.next_activation_command_rejection_is_armed_for_test(),
+        "the minimized path must reach and consume the post-revalidation backend rejection seam",
+    );
+    assert_eq!(unsafe { GetForegroundWindow() }, foreground_sentinel.hwnd);
+    assert!(
+        native_window_is_above(promotion_barrier.hwnd, hwnd),
+        "restoring a minimized provisional HWND without activation must repair its opaque barrier",
+    );
+    assert!(
+        native_window.provisional_activation_z_order_is_armed_for_test(),
+        "a backend rejection after minimized restoration must leave exact z-order authority armed",
+    );
+
+    let unchanged_request = WindowPhysicalPlacementRequest::try_new_for_display(
+        successor_client_bounds,
+        successor_anchor,
+        successor_target_display,
+    )
+    .expect("the promoted window should accept its current exact physical placement");
+    let unchanged_dispatch = app
+        .borrow_mut()
+        .update_for_test(|cx| {
+            any_window.update(cx, |_, window, _| {
+                window.request_physical_window_placement(unchanged_request)
+            })
+        })
+        .expect("the promoted window should remain live for an idempotent placement");
+    assert!(matches!(
+        unchanged_dispatch,
+        WindowMutationDispatch::Unchanged
+    ));
+    assert!(
+        native_window.has_provisional_activation_z_order_for_test(),
+        "an idempotent placement must preserve the pending promotion z-order authority",
+    );
+    assert!(
+        native_window_is_above(promotion_barrier.hwnd, hwnd),
+        "the ordinary opaque barrier must remain above the promoted HWND before activation",
+    );
+
+    let replacement_barrier = NativeOpaqueTestBarrier::create_normal_around(&[POINT {
+        x: successor_anchor.x.0,
+        y: successor_anchor.y.0,
+    }]);
+    assert_ne!(
+        replacement_barrier.hwnd, promotion_barrier.hwnd,
+        "the replacement barrier must be a different native incarnation",
+    );
+    drop(promotion_barrier);
+    let promotion_barrier = replacement_barrier;
+    assert!(
+        native_window_is_above(promotion_barrier.hwnd, hwnd),
+        "the replacement opaque barrier must remain above the promoted HWND",
+    );
+    crate::native_test_foreground::acquire_foreground_window(foreground_sentinel.hwnd)
+        .expect("the promotion activation sentinel should acquire foreground authority");
+    let _ = unsafe { SetFocus(Some(foreground_sentinel.hwnd)) };
+    pump_messages_until("promotion activation sentinel focus", || unsafe {
+        GetForegroundWindow() == foreground_sentinel.hwnd
+            && GetActiveWindow() == foreground_sentinel.hwnd
+            && GetFocus() == foreground_sentinel.hwnd
+    });
+
+    unsafe {
+        SetWindowPos(
+            hwnd,
+            None,
+            0,
+            0,
+            0,
+            0,
+            SWP_HIDEWINDOW
+                | SWP_NOACTIVATE
+                | SWP_NOOWNERZORDER
+                | SWP_NOMOVE
+                | SWP_NOSIZE
+                | SWP_NOZORDER,
+        )
+    }
+    .expect("the promoted HWND should accept a deterministic hidden-state transition");
+    pump_messages_until(
+        "promoted provisional HWND hidden before activation",
+        || unsafe { !IsWindowVisible(hwnd).as_bool() },
+    );
+    let hidden_unchanged_request = WindowPhysicalPlacementRequest::try_new_for_display(
+        successor_client_bounds,
+        successor_anchor,
+        successor_target_display,
+    )
+    .expect("the hidden promoted window should accept its retained physical placement");
+    let hidden_unchanged_dispatch = app
+        .borrow_mut()
+        .update_for_test(|cx| {
+            any_window.update(cx, |_, window, _| {
+                window.request_physical_window_placement(hidden_unchanged_request)
+            })
+        })
+        .expect("the hidden promoted window should remain registered during placement");
+    assert!(matches!(
+        hidden_unchanged_dispatch,
+        WindowMutationDispatch::Unchanged
+    ));
+    assert!(
+        native_window.has_provisional_activation_z_order_for_test(),
+        "a hidden synchronous placement terminal must retain promotion z-order authority",
+    );
+    let hidden_activation_ticket = app
+        .borrow_mut()
+        .update_for_test(|cx| any_window.update(cx, |_, window, _| window.activate_window()))
+        .expect("hidden promoted native provisional window should remain registered");
+    pump_messages_until("hidden promoted provisional activation rejection", || {
+        hidden_activation_ticket.snapshot().status().is_terminal()
+    });
+    assert_eq!(
+        hidden_activation_ticket.snapshot().status(),
+        WindowActivationStatus::Terminal(WindowActivationTerminal::Rejected),
+        "activation must fail closed instead of consuming a hidden window's z-order authority",
+    );
+    assert!(!unsafe { IsWindowVisible(hwnd).as_bool() });
+    assert!(
+        native_window.has_provisional_activation_z_order_for_test(),
+        "a hidden but still registered HWND must retain explicit promotion z-order authority",
+    );
+    unsafe {
+        SetWindowPos(
+            hwnd,
+            None,
+            0,
+            0,
+            0,
+            0,
+            SWP_SHOWWINDOW
+                | SWP_NOACTIVATE
+                | SWP_NOOWNERZORDER
+                | SWP_NOMOVE
+                | SWP_NOSIZE
+                | SWP_NOZORDER,
+        )
+    }
+    .expect("the promoted HWND should restore visibility without activation");
+    pump_messages_until(
+        "promoted provisional HWND visible after rejected activation",
+        || unsafe { IsWindowVisible(hwnd).as_bool() },
+    );
+    assert!(
+        native_window_is_above(promotion_barrier.hwnd, hwnd),
+        "restoring visibility without activation must keep the opaque barrier above the HWND",
+    );
+    crate::native_test_foreground::acquire_foreground_window(foreground_sentinel.hwnd)
+        .expect("the promotion activation sentinel should retain foreground authority");
+    let _ = unsafe { SetFocus(Some(foreground_sentinel.hwnd)) };
+    pump_messages_until(
+        "promotion activation sentinel focus after hidden rejection",
+        || unsafe {
+            GetForegroundWindow() == foreground_sentinel.hwnd
+                && GetActiveWindow() == foreground_sentinel.hwnd
+                && GetFocus() == foreground_sentinel.hwnd
+        },
+    );
+    native_window.drift_provisional_activation_topology_generation_for_test();
+    let topology_rebound_request = WindowPhysicalPlacementRequest::try_new_for_display(
+        successor_client_bounds,
+        successor_anchor,
+        successor_target_display,
+    )
+    .expect("the topology-rebound placement should remain display-bound");
+    let topology_rebound_dispatch = app
+        .borrow_mut()
+        .update_for_test(|cx| {
+            any_window.update(cx, |_, window, _| {
+                window.request_physical_window_placement(topology_rebound_request)
+            })
+        })
+        .expect("the promoted window should remain live during topology reconciliation");
+    assert!(matches!(
+        topology_rebound_dispatch,
+        WindowMutationDispatch::Unchanged
+    ));
+    assert!(
+        native_window.has_provisional_activation_z_order_for_test(),
+        "an unchanged placement must reconcile topology-only drift without discarding promotion z-order authority",
+    );
+    crate::native_test_foreground::acquire_foreground_window(foreground_sentinel.hwnd)
+        .expect("the promotion activation sentinel should reacquire foreground authority");
+    let _ = unsafe { SetFocus(Some(foreground_sentinel.hwnd)) };
+    pump_messages_until("promotion activation sentinel refocus", || unsafe {
+        GetForegroundWindow() == foreground_sentinel.hwnd
+            && GetActiveWindow() == foreground_sentinel.hwnd
+            && GetFocus() == foreground_sentinel.hwnd
+    });
+
+    let activation_candidates = [
+        POINT {
+            x: successor_client_bounds.origin.x.0 + 20,
+            y: successor_anchor.y.0,
+        },
+        POINT {
+            x: successor_client_bounds.origin.x.0 + successor_client_bounds.size.width.0 - 21,
+            y: successor_anchor.y.0,
+        },
+        POINT {
+            x: successor_client_bounds.origin.x.0 + 20,
+            y: successor_client_bounds.origin.y.0 + 9,
+        },
+        POINT {
+            x: successor_client_bounds.origin.x.0 + successor_client_bounds.size.width.0 - 21,
+            y: successor_client_bounds.origin.y.0 + 9,
+        },
+        POINT {
+            x: successor_client_bounds.origin.x.0 + 20,
+            y: successor_client_bounds.origin.y.0 + successor_client_bounds.size.height.0 - 10,
+        },
+        POINT {
+            x: successor_client_bounds.origin.x.0 + successor_client_bounds.size.width.0 - 21,
+            y: successor_client_bounds.origin.y.0 + successor_client_bounds.size.height.0 - 10,
+        },
+    ];
+    let activation_point = activation_candidates
+        .into_iter()
+        .find(|point| {
+            native_test_non_shell_root_window_at(*point) == Some(hwnd)
+                && unsafe {
+                    SendMessageW(
+                        hwnd,
+                        WM_NCHITTEST,
+                        Some(WPARAM::default()),
+                        Some(screen_point_lparam(point.x, point.y)),
+                    )
+                }
+                .0 == HTCLIENT as isize
+        })
+        .expect("the promoted HWND must expose one real client point outside the opaque barrier");
+    native_window.fail_next_provisional_activation_z_order_apply_for_test();
+    desktop_state_guard
+        .inject(activation_point, NativeTestPointerAction::Move)
+        .expect("the native activation pointer move should reach the promoted HWND");
+    pump_system_input_until("native activation pointer move", |_| {
+        let mut observed = POINT::default();
+        (unsafe { GetCursorPos(&mut observed) }).is_ok() && observed == activation_point
+    });
+    desktop_state_guard
+        .inject_sequence(&[
+            (activation_point, NativeTestPointerAction::PrimaryDown),
+            (activation_point, NativeTestPointerAction::PrimaryUp),
+        ])
+        .expect("the native activation click should enter the real User32 input route");
+    let activation_trace = pump_system_input_until(
+        "native click activation with a scheduled z-order retry",
+        |trace| {
+            (unsafe { GetForegroundWindow() }) == hwnd
+                && native_window
+                    .provisional_activation_z_order_recovery_retry_is_scheduled_for_test()
+                && trace.contains(hwnd, WM_LBUTTONDOWN)
+                && trace.contains(hwnd, WM_LBUTTONUP)
+        },
+    );
+    assert!(activation_trace.contains(hwnd, WM_LBUTTONDOWN));
+    assert!(activation_trace.contains(hwnd, WM_LBUTTONUP));
+    assert!(
+        native_window.provisional_activation_z_order_is_invalidated_for_test(),
+        "a failed native-click recovery must retain explicit z-order authority",
+    );
+
+    unsafe {
+        SetWindowPos(
+            hwnd,
+            None,
+            0,
+            0,
+            0,
+            0,
+            SWP_HIDEWINDOW
+                | SWP_NOACTIVATE
+                | SWP_NOOWNERZORDER
+                | SWP_NOMOVE
+                | SWP_NOSIZE
+                | SWP_NOZORDER,
+        )
+    }
+    .expect("the activated promoted HWND should enter the hidden recovery boundary");
+    pump_messages_until_with_delay(
+        "hidden promoted HWND parks exact z-order recovery",
+        Duration::from_millis(1),
+        || {
+            (unsafe { !IsWindowVisible(hwnd).as_bool() })
+                && native_window.provisional_activation_z_order_recovery_is_parked_for_test()
+        },
+    );
+
+    let rebound_unchanged_request = WindowPhysicalPlacementRequest::try_new_for_display(
+        successor_client_bounds,
+        successor_anchor,
+        successor_target_display,
+    )
+    .expect("the recovery-generation placement should remain display-bound");
+    let rebound_unchanged_dispatch = app
+        .borrow_mut()
+        .update_for_test(|cx| {
+            any_window.update(cx, |_, window, _| {
+                window.request_physical_window_placement(rebound_unchanged_request)
+            })
+        })
+        .expect("the promoted window should remain live while recovery is pending");
+    assert!(matches!(
+        rebound_unchanged_dispatch,
+        WindowMutationDispatch::Unchanged
+    ));
+    assert!(
+        native_window.provisional_activation_z_order_is_invalidated_for_test(),
+        "an unchanged placement may rebind but must not discard pending z-order recovery",
+    );
+    pump_messages_until_with_delay(
+        "rebound hidden placement parks exact z-order recovery",
+        Duration::from_millis(1),
+        || native_window.provisional_activation_z_order_recovery_is_parked_for_test(),
+    );
+
+    unsafe {
+        SetWindowPos(
+            hwnd,
+            None,
+            0,
+            0,
+            0,
+            0,
+            SWP_SHOWWINDOW
+                | SWP_NOACTIVATE
+                | SWP_NOOWNERZORDER
+                | SWP_NOMOVE
+                | SWP_NOSIZE
+                | SWP_NOZORDER,
+        )
+    }
+    .expect("the promoted HWND should resume without a second activation or placement request");
+
+    pump_messages_until_with_delay(
+        "visibility-driven promoted provisional z-order recovery",
+        Duration::from_millis(1),
+        || {
+            (unsafe { IsWindowVisible(hwnd).as_bool() })
+                && native_window_is_above(promotion_barrier.hwnd, hwnd)
+                && !native_window.has_provisional_activation_z_order_for_test()
+        },
+    );
+    assert!(
+        native_window_is_above(promotion_barrier.hwnd, hwnd),
+        "visibility recovery must restore the ordinary opaque barrier above the HWND",
+    );
+    assert!(
+        !native_window.has_provisional_activation_z_order_for_test(),
+        "native-click activation may consume its barrier only after visibility-driven z-order verification",
+    );
 
     let diagnostics = app.borrow_mut().update_for_test(|cx| {
         cx.native_boundary_diagnostics(NativeBoundaryDiagnosticCursor::default())
@@ -3248,6 +4321,15 @@ fn partial_deferred_merge_failure_rejects_activation_and_restores_native_placeme
             .cursor
     });
 
+    crate::native_test_foreground::acquire_foreground_window(foreground_hwnd)
+        .expect("deferred-merge activation sentinel should acquire foreground authority");
+    let _ = unsafe { SetFocus(Some(foreground_hwnd)) };
+    pump_messages_until("deferred-merge activation sentinel focus", || unsafe {
+        GetForegroundWindow() == foreground_hwnd
+            && GetActiveWindow() == foreground_hwnd
+            && GetFocus() == foreground_hwnd
+    });
+
     let _ = app.update_for_test(|cx| {
         window
             .update(cx, |_, window, _| window.activate_window())
@@ -3313,6 +4395,15 @@ fn partial_deferred_merge_failure_rejects_activation_and_restores_native_placeme
         "activation must reject immediately after the deferred merge fails"
     );
 
+    crate::native_test_foreground::acquire_foreground_window(foreground_hwnd)
+        .expect("deferred-merge activation sentinel should reacquire foreground authority");
+    let _ = unsafe { SetFocus(Some(foreground_hwnd)) };
+    pump_messages_until("deferred-merge activation sentinel refocus", || unsafe {
+        GetForegroundWindow() == foreground_hwnd
+            && GetActiveWindow() == foreground_hwnd
+            && GetFocus() == foreground_hwnd
+    });
+
     let _ = app.update_for_test(|cx| {
         window
             .update(cx, |_, window, _| window.activate_window())
@@ -3321,7 +4412,11 @@ fn partial_deferred_merge_failure_rejects_activation_and_restores_native_placeme
     platform.inner.run_foreground_task();
     pump_messages_until(
         "retried activation after deferred merge failure",
-        || unsafe { IsWindowVisible(hwnd).as_bool() && GetActiveWindow() == hwnd },
+        || unsafe {
+            IsWindowVisible(hwnd).as_bool()
+                && GetForegroundWindow() == hwnd
+                && GetActiveWindow() == hwnd
+        },
     );
     pump_messages_until_idle("retried activation follow-up");
     let retry_facts = platform
@@ -4066,7 +5161,9 @@ fn native_interactive_runner_sentinel_proves_system_pointer_delivery_and_capture
         "interactive native runner must start without an unrelated capture owner"
     );
     if unsafe { GetAsyncKeyState(i32::from(VK_LBUTTON.0)) } as u16 & 0x8000 != 0 {
-        let _ = inject_primary_button_up_best_effort();
+        let _ = native_test_release_primary_button_best_effort_with_extra_info(
+            NATIVE_INTERACTIVE_INPUT_CANARY,
+        );
         panic!(
             "interactive native runner started with the primary pointer button pressed; a best-effort LEFTUP was injected before failing the contaminated runner"
         );
@@ -4095,8 +5192,9 @@ fn native_interactive_runner_sentinel_proves_system_pointer_delivery_and_capture
         .last()
         .expect("interactive native sentinel must register an HWND")
         .as_raw();
-    let mut cursor_guard = NativeInteractiveCursorGuard::capture();
-    cursor_guard.track_capture_owner(hwnd);
+    let mut cursor_guard =
+        NativeTestSystemPointerGuard::capture_with_extra_info(NATIVE_INTERACTIVE_INPUT_CANARY)
+            .expect("interactive native runner must expose the system pointer state");
 
     let observed = Rc::new(RefCell::new(Vec::new()));
     let _mouse_interceptor = app
@@ -4156,7 +5254,9 @@ fn native_interactive_runner_sentinel_proves_system_pointer_delivery_and_capture
             *label == "move" && *extra_info == NATIVE_INTERACTIVE_INPUT_CANARY as isize
         })
         .count();
-    inject_system_pointer(injection_point, MOUSEEVENTF_MOVE);
+    cursor_guard
+        .inject(injection_point, NativeTestPointerAction::Move)
+        .expect("interactive native runner rejected system pointer movement");
     pump_system_input_until("system-injected pointer move", |trace| {
         trace.contains(hwnd, WM_MOUSEMOVE)
             && observed
@@ -4184,8 +5284,9 @@ fn native_interactive_runner_sentinel_proves_system_pointer_delivery_and_capture
             *label == "down" && *extra_info == NATIVE_INTERACTIVE_INPUT_CANARY as isize
         })
         .count();
-    cursor_guard.mark_primary_button_down();
-    inject_system_pointer(injection_point, MOUSEEVENTF_LEFTDOWN);
+    cursor_guard
+        .inject(injection_point, NativeTestPointerAction::PrimaryDown)
+        .expect("interactive native runner rejected the primary-button press");
     pump_system_input_until("system-injected pointer down and capture", |trace| {
         trace.contains(hwnd, WM_LBUTTONDOWN)
             && observed
@@ -4211,8 +5312,9 @@ fn native_interactive_runner_sentinel_proves_system_pointer_delivery_and_capture
             *label == "up" && *extra_info == NATIVE_INTERACTIVE_INPUT_CANARY as isize
         })
         .count();
-    inject_system_pointer(injection_point, MOUSEEVENTF_LEFTUP);
-    cursor_guard.mark_primary_button_up();
+    cursor_guard
+        .inject(injection_point, NativeTestPointerAction::PrimaryUp)
+        .expect("interactive native runner rejected the primary-button release");
     pump_system_input_until("system-injected pointer up and capture release", |trace| {
         trace.contains(hwnd, WM_LBUTTONUP)
             && observed
@@ -4240,10 +5342,45 @@ fn native_interactive_runner_sentinel_proves_system_pointer_delivery_and_capture
 }
 
 #[test]
-fn absolute_system_input_coordinates_cover_negative_virtual_desktop_endpoints() {
-    assert_eq!(absolute_input_coordinate(-1920, -1920, 3840), 0);
-    assert_eq!(absolute_input_coordinate(1919, -1920, 3840), 65_535);
-    assert_eq!(absolute_input_coordinate(-1, -1920, 3840), 32_758);
+#[ignore = "requires a clean interactive desktop with global Z-order authority"]
+fn opaque_hit_transparent_window_cannot_be_inferred_visually_transparent() {
+    crate::native_test_scenario::native_test_confirm_scenario_behavior(
+        "opaque-hit-transparent-prefix",
+    );
+    discard_stale_quit_messages();
+
+    let platform = WindowsPlatform::new(false).expect("Windows platform should initialize");
+    let virtual_screen = native_test_virtual_screen_bounds()
+        .expect("interactive native runner must expose a non-empty virtual desktop");
+    let left = virtual_screen.origin.x.0 + virtual_screen.size.width.0 / 2 - 80;
+    let top = virtual_screen.origin.y.0 + virtual_screen.size.height.0 / 2 - 60;
+    let native_point = POINT {
+        x: left + 80,
+        y: top + 60,
+    };
+    let target = NativeOpaqueTestBarrier::create_rect(left, top, 160, 120);
+    let target_hwnd = target.hwnd;
+    let opaque_overlay = NativeOpaqueHitTransparentTestWindow::create_rect(left, top, 160, 120);
+    let opaque_overlay_hwnd = opaque_overlay.hwnd;
+    assert!(unsafe { IsWindowVisible(opaque_overlay_hwnd).as_bool() });
+    assert!(native_window_is_above(opaque_overlay_hwnd, target_hwnd));
+
+    assert_eq!(
+        native_test_non_shell_root_window_at(native_point),
+        Some(target.hwnd),
+        "the opaque overlay's native hit result should expose the lower target"
+    );
+    let sampled_point = point(DevicePixels(native_point.x), DevicePixels(native_point.y));
+    assert_eq!(
+        platform.window_hit_stack_at(sampled_point),
+        PlatformWindowHitStack::Unavailable,
+        "a visually opaque prefix must make native target classification fail closed even when its native hit test is transparent"
+    );
+
+    drop(opaque_overlay);
+    drop(target);
+    assert!(unsafe { !IsWindow(Some(opaque_overlay_hwnd)).as_bool() });
+    assert!(unsafe { !IsWindow(Some(target_hwnd)).as_bool() });
 }
 
 #[test]
@@ -4711,17 +5848,15 @@ fn panicking_pointer_cancel_reservation_releases_native_capture_before_abi_recov
     let native_window = platform
         .window_from_hwnd(hwnd)
         .expect("native test window should remain registered");
-    let callback_count = Rc::new(Cell::new(0usize));
+    let panic_on_next_input = Rc::new(Cell::new(false));
     let g2_phase = Rc::new(Cell::new(false));
     let g2_callback_count = Rc::new(Cell::new(0usize));
     native_window.state.callbacks.set_test_input(Box::new({
-        let callback_count = callback_count.clone();
+        let panic_on_next_input = panic_on_next_input.clone();
         let g2_phase = g2_phase.clone();
         let g2_callback_count = g2_callback_count.clone();
         move |_| {
-            let next = callback_count.get().saturating_add(1);
-            callback_count.set(next);
-            if next == 2 {
+            if panic_on_next_input.replace(false) {
                 panic!("injected native input callback panic");
             }
             if g2_phase.get() {
@@ -4752,6 +5887,7 @@ fn panicking_pointer_cancel_reservation_releases_native_capture_before_abi_recov
         .state
         .panic_next_pointer_cancel_reservation
         .set(true);
+    panic_on_next_input.set(true);
     let result = unsafe {
         SendMessageW(
             hwnd,
@@ -4898,6 +6034,7 @@ fn programmatic_close_while_captured_is_terminal_and_invariant_free() {
 
 #[test]
 fn real_hwnd_activation_terminal_is_exact_and_first_terminal_wins() {
+    crate::native_test_scenario::native_test_confirm_scenario_behavior("activation-terminal");
     discard_stale_quit_messages();
     let (_native_observation_guard, native_observation) = begin_native_window_test_observation();
 
@@ -5246,6 +6383,60 @@ fn real_hwnd_activation_terminal_is_exact_and_first_terminal_wins() {
             "a later exact native focus observation must preserve the normal OS-rejected command's exact first terminal"
         );
     }
+
+    crate::native_test_foreground::acquire_foreground_window(foreground_hwnd)
+        .expect("activation sentinel should own foreground before deterministic success");
+    let _ = unsafe { SetFocus(Some(foreground_hwnd)) };
+    pump_messages_until("deterministic activation source focus", || unsafe {
+        GetForegroundWindow() == foreground_hwnd
+            && GetActiveWindow() == foreground_hwnd
+            && GetFocus() == foreground_hwnd
+    });
+    pump_messages_until_idle("deterministic activation source focus follow-up");
+
+    let deterministic_activation_cursor = app.update_for_test(|cx| {
+        cx.native_boundary_diagnostics(NativeBoundaryDiagnosticCursor::default())
+            .cursor
+    });
+    let deterministic_activation_ticket = app.update_for_test(|cx| {
+        window
+            .update(cx, |_, window, _| window.activate_window())
+            .expect("native activation target should remain live")
+    });
+    platform.inner.run_foreground_task();
+    pump_messages_until("deterministic programmatic activation success", || {
+        deterministic_activation_ticket.snapshot().status()
+            == WindowActivationStatus::Terminal(WindowActivationTerminal::Activated)
+            && unsafe {
+                GetForegroundWindow() == hwnd && GetActiveWindow() == hwnd && GetFocus() == hwnd
+            }
+    });
+    pump_messages_until_idle("deterministic programmatic activation success follow-up");
+    let deterministic_activation_snapshot = deterministic_activation_ticket.snapshot();
+    let deterministic_activation_delta =
+        app.update_for_test(|cx| cx.native_boundary_diagnostics(deterministic_activation_cursor));
+    let deterministic_activation_dispositions = deterministic_activation_delta
+        .terminal
+        .iter()
+        .filter(|diagnostic| {
+            diagnostic.target == target
+                && diagnostic.kind
+                    == NativeBoundaryKind::Command(NativePlatformCommandKind::Activate)
+                && diagnostic.domain_generation
+                    == Some(NativeBoundaryGeneration::WindowActivation(
+                        deterministic_activation_snapshot.request_generation(),
+                    ))
+        })
+        .map(|diagnostic| diagnostic.disposition)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        deterministic_activation_dispositions,
+        [
+            NativeBoundaryDisposition::Delivered { input_result: None },
+            NativeBoundaryDisposition::Delivered { input_result: None },
+        ],
+        "an exact-focused admitted target must dispatch and complete readback without relying on the OS-rejection branch",
+    );
 
     crate::native_test_foreground::acquire_foreground_window(foreground_hwnd)
         .expect("activation sentinel should own foreground before policy rejection");

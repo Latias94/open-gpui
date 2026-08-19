@@ -1,3 +1,5 @@
+#![cfg_attr(test, allow(dead_code))]
+
 use crate::{RegisteredWindow, WindowsWindowInner};
 use open_gpui::WindowId;
 use parking_lot::Mutex;

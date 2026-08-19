@@ -1,4 +1,24 @@
+#![cfg_attr(test, allow(dead_code, unused_imports))]
+
+#[cfg(feature = "test-support")]
 use crate::WindowsDisplay;
+pub use crate::native_test_pointer::{
+    NATIVE_TEST_INPUT_CANARY, NativeTestPointerAction, NativeTestSystemPointerGuard,
+    native_test_inject_system_pointer, native_test_inject_system_pointer_sequence,
+    native_test_release_primary_button_best_effort, native_test_virtual_screen_bounds,
+};
+#[allow(unused_imports)]
+pub(crate) use crate::native_test_pointer::{
+    native_test_inject_system_pointer_sequence_with_extra_info,
+    native_test_inject_system_pointer_with_extra_info,
+    native_test_release_primary_button_best_effort_with_extra_info,
+};
+pub use crate::native_test_window::{
+    NativeTestOpaqueWindow, NativeTestWindowProbe, native_test_client_screen_bounds,
+    native_test_logical_client_point_to_screen, native_test_non_shell_root_window_at,
+    native_test_raise_window, native_test_window_is_above, native_test_window_probe,
+    native_test_window_rect,
+};
 use anyhow::{Context as _, Result, ensure};
 use open_gpui::{AnyWindowHandle, Bounds, DevicePixels, DisplayId, Point, WindowId, point};
 use parking_lot::Mutex;
@@ -11,13 +31,10 @@ use windows::{
     Win32::{
         Foundation::{ERROR_INVALID_WINDOW_HANDLE, GetLastError, HWND, LPARAM},
         UI::WindowsAndMessaging::{
-            CreateWindowExW, DestroyWindow, EnumWindows, FindWindowExW, GetWindowThreadProcessId,
-            HWND_MESSAGE, HWND_TOP, IsWindow, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE,
-            SWP_NOSIZE, SWP_SHOWWINDOW, SetWindowPos, ShowWindow, WS_EX_NOACTIVATE,
-            WS_EX_TOOLWINDOW, WS_POPUP,
+            EnumWindows, FindWindowExW, GetWindowThreadProcessId, HWND_MESSAGE, IsWindow,
         },
     },
-    core::{BOOL, w},
+    core::BOOL,
 };
 
 const DRIFT_ARMED: u8 = 0;
@@ -92,6 +109,7 @@ impl NativeTestMixedDpiDisplayPair {
 
 /// Enumerates physical display facts from the owning Windows backend.
 #[doc(hidden)]
+#[cfg(feature = "test-support")]
 pub fn native_test_displays() -> Vec<NativeTestDisplay> {
     WindowsDisplay::available_for_native_test()
         .into_iter()
@@ -106,6 +124,7 @@ pub fn native_test_displays() -> Vec<NativeTestDisplay> {
 
 /// Selects the maximum-scale-delta pair with a visible physical desktop point on a negative axis.
 #[doc(hidden)]
+#[cfg(feature = "test-support")]
 pub fn native_test_mixed_dpi_display_pair() -> Result<NativeTestMixedDpiDisplayPair> {
     let displays = native_test_displays();
     select_native_test_mixed_dpi_display_pair(&displays).with_context(|| {
@@ -423,78 +442,6 @@ unsafe extern "system" fn collect_native_test_window(hwnd: HWND, data: LPARAM) -
         enumeration.windows.push(hwnd.0 as isize);
     }
     BOOL(1)
-}
-
-/// Owns one ordinary opaque HWND used by point-scoped native tests.
-#[doc(hidden)]
-pub struct NativeTestOpaqueWindow {
-    hwnd: HWND,
-}
-
-impl NativeTestOpaqueWindow {
-    /// Creates a hidden opaque non-topmost test window at exact physical bounds.
-    pub fn create_hidden(bounds: Bounds<DevicePixels>) -> Result<Self> {
-        ensure!(
-            bounds.size.width.0 > 0 && bounds.size.height.0 > 0,
-            "native test opaque-window bounds must be non-empty"
-        );
-        let hwnd = unsafe {
-            CreateWindowExW(
-                WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
-                w!("BUTTON"),
-                w!("open-gpui native opaque test window"),
-                WS_POPUP,
-                bounds.origin.x.0,
-                bounds.origin.y.0,
-                bounds.size.width.0,
-                bounds.size.height.0,
-                None,
-                None,
-                None,
-                None,
-            )
-        }
-        .context("failed to create native opaque test HWND")?;
-        Ok(Self { hwnd })
-    }
-
-    /// Creates and presents an opaque non-topmost test window at exact physical bounds.
-    pub fn create(bounds: Bounds<DevicePixels>) -> Result<Self> {
-        let window = Self::create_hidden(bounds)?;
-        window.present()?;
-        Ok(window)
-    }
-
-    /// Presents a prepared opaque test window without activating it or changing its geometry.
-    pub fn present(&self) -> Result<()> {
-        unsafe {
-            SetWindowPos(
-                self.hwnd,
-                Some(HWND_TOP),
-                0,
-                0,
-                0,
-                0,
-                SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW,
-            )
-        }
-        .context("failed to place native opaque test HWND")?;
-        let _ = unsafe { ShowWindow(self.hwnd, SW_SHOWNOACTIVATE) };
-        Ok(())
-    }
-
-    /// Returns the raw HWND value without transferring ownership.
-    pub fn native_handle(&self) -> isize {
-        self.hwnd.0 as isize
-    }
-}
-
-impl Drop for NativeTestOpaqueWindow {
-    fn drop(&mut self) {
-        if unsafe { IsWindow(Some(self.hwnd)).as_bool() } {
-            let _ = unsafe { DestroyWindow(self.hwnd) };
-        }
-    }
 }
 
 #[derive(Clone)]

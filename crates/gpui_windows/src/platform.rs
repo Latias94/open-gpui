@@ -1715,7 +1715,7 @@ fn classification_is_complete_through_first_terminal(
     })
 }
 
-fn window_from_point_root(point: Point<DevicePixels>) -> Option<HWND> {
+pub(crate) fn window_from_point_root(point: Point<DevicePixels>) -> Option<HWND> {
     let hit = unsafe {
         WindowFromPoint(POINT {
             x: point.x.0,
@@ -2189,7 +2189,9 @@ impl Platform for WindowsPlatform {
     fn active_window(&self) -> Option<AnyWindowHandle> {
         let foreground_window_hwnd = unsafe { GetForegroundWindow() };
         self.window_from_hwnd(foreground_window_hwnd)
-            .filter(|inner| !inner.state.interaction_is_quiesced())
+            .filter(|inner| {
+                !inner.state.interaction_is_quiesced() && inner.provisional_accepts_interaction()
+            })
             .map(|inner| inner.handle)
     }
 
@@ -5516,6 +5518,9 @@ mod tests {
 
     #[test]
     fn event_driven_geometry_wake_commits_latest_native_geometry_without_polling() {
+        crate::native_test_scenario::native_test_confirm_scenario_behavior(
+            "event-driven-geometry-wake",
+        );
         let platform = Rc::new(super::WindowsPlatform::new(false).unwrap());
         let mut app = Application::with_platform(platform.clone())
             .with_quit_mode(open_gpui::QuitMode::Explicit);

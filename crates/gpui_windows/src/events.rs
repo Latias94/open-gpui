@@ -1102,7 +1102,7 @@ impl WindowsWindowInner {
                     None
                 }
             }
-            WM_ACTIVATE => self.handle_activate_msg(handle, wparam),
+            WM_ACTIVATE => self.handle_activate_msg(handle, wparam, lparam),
             WM_CREATE => self.handle_create_msg(handle),
             WM_MOVE => self.handle_move_msg(handle, lparam),
             WM_SIZE => self.handle_size_msg(wparam, lparam),
@@ -1110,6 +1110,16 @@ impl WindowsWindowInner {
                 #[cfg(test)]
                 self.record_initial_presentation_window_pos_for_test(lparam);
                 self.state.advance_native_placement_epoch();
+                if lparam.0 != 0 {
+                    let window_pos = unsafe { &*(lparam.0 as *const WINDOWPOS) };
+                    // SetWindowPos(SWP_SHOWWINDOW) is a native visibility commit, but it does
+                    // not reliably produce a separate WM_SHOWWINDOW or WM_SIZE notification.
+                    // Resume parked recovery from the committed WINDOWPOS without waking on
+                    // ordinary z-order changes performed by the recovery itself.
+                    if window_pos.flags.contains(SWP_SHOWWINDOW) {
+                        self.resume_provisional_activation_z_order_recovery_if_ready();
+                    }
+                }
                 None
             }
             WM_GETMINMAXINFO => self.handle_get_min_max_info_msg(lparam),
@@ -1237,7 +1247,7 @@ impl WindowsWindowInner {
         Some(0)
     }
 
-    fn handle_size_msg(&self, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
+    fn handle_size_msg(self: &Rc<Self>, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
         // Don't resize the renderer when the window is minimized, but record that it was minimized so
         // that on restore the swap chain can be recreated via `update_drawable_size_even_if_unchanged`.
         if wparam.0 == SIZE_MINIMIZED as usize {
@@ -1279,6 +1289,7 @@ impl WindowsWindowInner {
                 .update_restored(self.hwnd)
                 .log_err();
         }
+        self.resume_provisional_activation_z_order_recovery_if_ready();
         Some(0)
     }
 
@@ -1816,14 +1827,20 @@ impl WindowsWindowInner {
         }
     }
 
-    fn handle_activate_msg(self: &Rc<Self>, handle: HWND, wparam: WPARAM) -> Option<isize> {
+    fn handle_activate_msg(
+        self: &Rc<Self>,
+        handle: HWND,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> Option<isize> {
         let activated = wparam.loword() > 0;
 
         if activated && self.state.interaction_is_quiesced() {
             self.revoke_native_focus_and_activation().log_err();
             return Some(0);
         }
-        if activated && !self.provisional_accepts_interaction() {
+        if activated && !self.native_activation_callback_is_admitted() {
+            self.reject_unadmitted_provisional_native_activation(HWND(lparam.0 as *mut _));
             return Some(0);
         }
 
@@ -1851,13 +1868,21 @@ impl WindowsWindowInner {
             events.raise();
         }
 
+        let exact_native_positive = activated && unsafe { GetForegroundWindow() } == handle;
         let _ = with_windows_callback(&self.state.callbacks.active_status_change, |callback| {
             callback(PlatformWindowActiveStatusObservation::new(
                 activated,
-                activated && unsafe { GetForegroundWindow() } == handle,
+                exact_native_positive,
             ))
         });
-
+        #[cfg(test)]
+        if activated {
+            self.apply_test_activation_admission_revocation_after_active_status();
+        }
+        if activated && !self.native_activation_callback_is_admitted() {
+            self.reject_unadmitted_provisional_native_activation(HWND(lparam.0 as *mut _));
+            return Some(0);
+        }
         // When the window is activated (gains focus), reset the modifier tracking state.
         // This fixes the issue where Alt-Tab away and back leaves stale modifier state
         // (especially the Alt key) because Windows doesn't always send key-up events to
@@ -1873,6 +1898,9 @@ impl WindowsWindowInner {
             let _ = with_windows_callback(&self.state.callbacks.modifiers_changed, |callback| {
                 callback(event)
             });
+        }
+        if exact_native_positive {
+            self.observe_exact_native_activation_for_provisional_z_order();
         }
 
         None
@@ -2273,9 +2301,14 @@ impl WindowsWindowInner {
         Some(0)
     }
 
-    fn handle_window_visibility_changed(&self, handle: HWND, wparam: WPARAM) -> Option<isize> {
+    fn handle_window_visibility_changed(
+        self: &Rc<Self>,
+        handle: HWND,
+        wparam: WPARAM,
+    ) -> Option<isize> {
         if wparam.0 == 1 {
             self.draw_window(handle, false);
+            self.resume_provisional_activation_z_order_recovery_if_ready();
         }
         None
     }

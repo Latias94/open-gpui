@@ -37,6 +37,19 @@ use crate::direct_manipulation::DirectManipulationHandler;
 use crate::*;
 use open_gpui::*;
 
+mod provisional_z_order;
+
+use provisional_z_order::{
+    NativeZOrderWindowIdentity, PreparedProvisionalZOrderBand,
+    ProvisionalActivationNativeTransition, ProvisionalActivationPlacementFinish,
+    ProvisionalActivationWindowAuthorityStatus, ProvisionalActivationWindowObservation,
+    ProvisionalActivationZOrderAuthority, ProvisionalActivationZOrderMutationTerminal,
+    ProvisionalActivationZOrderRecovery, ProvisionalActivationZOrderRecoveryKey,
+    ProvisionalActivationZOrderRefresh, ProvisionalActivationZOrderSnapshot,
+    ProvisionalActivationZOrderState, classify_activation_window_authority,
+    retain_current_registered_windows,
+};
+
 pub(crate) struct WindowsWindow(pub Rc<WindowsWindowInner>);
 
 static NEXT_EMERGENCY_PRESENTATION_SHUTDOWN_GENERATION: AtomicU64 = AtomicU64::new(1);
@@ -66,6 +79,49 @@ enum InitialPlacementPhase {
     Pending,
     Presenting,
     Presented,
+}
+
+#[derive(Clone, Copy)]
+struct NativeActivationSnapshot {
+    foreground: HWND,
+    active: HWND,
+    focus: HWND,
+}
+
+impl NativeActivationSnapshot {
+    fn capture() -> Self {
+        Self {
+            foreground: unsafe { GetForegroundWindow() },
+            active: unsafe { GetActiveWindow() },
+            focus: unsafe { GetFocus() },
+        }
+    }
+}
+
+struct NativeActivationCommandScope<'a> {
+    active: &'a Cell<bool>,
+}
+
+impl<'a> NativeActivationCommandScope<'a> {
+    fn enter(active: &'a Cell<bool>) -> Option<Self> {
+        (!active.replace(true)).then_some(Self { active })
+    }
+}
+
+impl Drop for NativeActivationCommandScope<'_> {
+    fn drop(&mut self) {
+        self.active.set(false);
+    }
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum ActivationAdmissionTestState {
+    #[default]
+    Admitted,
+    RevokeAfterNextActiveStatus,
+    RevokeAfterNextMinimizedRestore,
+    Revoked,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -125,47 +181,33 @@ impl WindowsNonClientPolicy {
 
 const MAX_PROVISIONAL_Z_ORDER_WINDOWS: usize = 4096;
 
-#[derive(Clone, Copy, Debug)]
-struct NativeZOrderWindowIdentity {
-    hwnd: HWND,
-    thread_id: u32,
-    process_id: u32,
-    registered: Option<RegisteredWindow>,
-}
-
-impl PartialEq for NativeZOrderWindowIdentity {
-    fn eq(&self, other: &Self) -> bool {
-        self.hwnd == other.hwnd
-            && self.thread_id == other.thread_id
-            && self.process_id == other.process_id
-            && match (self.registered, other.registered) {
-                (Some(left), Some(right)) => left.matches(right),
-                (None, None) => true,
-                (Some(_), None) | (None, Some(_)) => false,
-            }
-    }
-}
-
-impl Eq for NativeZOrderWindowIdentity {}
-
-#[derive(Clone, Debug)]
-struct PreparedProvisionalZOrderBand {
-    point: Point<DevicePixels>,
-    current: RegisteredWindow,
-    peers: Arc<[RegisteredWindow]>,
-    barrier: Option<NativeZOrderWindowIdentity>,
-}
-
-impl PreparedProvisionalZOrderBand {
-    fn insert_after(&self) -> HWND {
-        self.barrier.map_or(HWND_TOP, |barrier| barrier.hwnd)
-    }
-
-    fn is_peer(&self, identity: NativeZOrderWindowIdentity) -> bool {
-        identity
-            .registered
-            .is_some_and(|registered| self.peers.iter().any(|peer| peer.matches(registered)))
-    }
+pub(crate) fn native_physical_client_bounds(hwnd: HWND) -> Result<Bounds<DevicePixels>> {
+    let mut client_rect = RECT::default();
+    unsafe { GetClientRect(hwnd, &mut client_rect) }
+        .context("failed to read native client bounds")?;
+    let mut client_origin = POINT {
+        x: client_rect.left,
+        y: client_rect.top,
+    };
+    unsafe { ClientToScreen(hwnd, &mut client_origin) }
+        .ok()
+        .context("failed to read native client origin")?;
+    let width = client_rect
+        .right
+        .checked_sub(client_rect.left)
+        .context("native client width overflowed")?;
+    let height = client_rect
+        .bottom
+        .checked_sub(client_rect.top)
+        .context("native client height overflowed")?;
+    anyhow::ensure!(
+        width >= 0 && height >= 0,
+        "native client bounds were inverted"
+    );
+    Ok(Bounds::new(
+        Point::new(DevicePixels(client_origin.x), DevicePixels(client_origin.y)),
+        size(DevicePixels(width), DevicePixels(height)),
+    ))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -180,6 +222,7 @@ struct ProvisionalPlacementRollback {
 struct AppliedProvisionalFinalPlacement {
     facts: WindowProvisionalPlacementNativeFacts,
     platform_facts: WindowPlatformFacts,
+    prepared_z_order: PreparedProvisionalZOrderBand,
     native_authority: RegisteredWindowAuthority,
     rollback: ProvisionalPlacementRollback,
     applied: ProvisionalPlacementRollback,
@@ -509,6 +552,14 @@ impl RegisteredWindowAuthority {
         self.status() == RegisteredWindowAuthorityStatus::Current
     }
 
+    fn downgrade(&self) -> WeakRegisteredWindowAuthority {
+        WeakRegisteredWindowAuthority {
+            window: Rc::downgrade(&self.window),
+            registration: self.registration,
+            registry: Arc::downgrade(&self.registry),
+        }
+    }
+
     fn ensure_current(&self, operation: &str) -> Result<HWND> {
         let status = self.status();
         anyhow::ensure!(
@@ -516,6 +567,49 @@ impl RegisteredWindowAuthority {
             "{operation} rejected stale registered native-window authority: {status:?}"
         );
         Ok(self.registration.as_raw())
+    }
+}
+
+#[derive(Clone)]
+struct WeakRegisteredWindowAuthority {
+    window: std::rc::Weak<WindowsWindowInner>,
+    registration: RegisteredWindow,
+    registry: std::sync::Weak<RegisteredWindows>,
+}
+
+impl WeakRegisteredWindowAuthority {
+    fn upgrade(&self) -> Option<RegisteredWindowAuthority> {
+        Some(RegisteredWindowAuthority {
+            window: self.window.upgrade()?,
+            registration: self.registration,
+            registry: self.registry.upgrade()?,
+        })
+    }
+
+    fn same_lineage_as(&self, other: &Self) -> bool {
+        self.registration.matches(other.registration)
+            && std::rc::Weak::ptr_eq(&self.window, &other.window)
+            && std::sync::Weak::ptr_eq(&self.registry, &other.registry)
+    }
+}
+
+impl std::fmt::Debug for WeakRegisteredWindowAuthority {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("WeakRegisteredWindowAuthority")
+            .field("window_id", &self.registration.window_id())
+            .field("hwnd", &self.registration.as_raw())
+            .finish_non_exhaustive()
+    }
+}
+
+impl std::fmt::Debug for RegisteredWindowAuthority {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("RegisteredWindowAuthority")
+            .field("window_id", &self.registration.window_id())
+            .field("hwnd", &self.registration.as_raw())
+            .finish_non_exhaustive()
     }
 }
 
@@ -757,6 +851,7 @@ pub struct WindowsWindowState {
     accepts_pointer_input: Cell<bool>,
     pointer_input_observation_generation: Cell<u64>,
     activation_policy: Cell<WindowActivationPolicy>,
+    activation_command_dispatch_active: Cell<bool>,
     taskbar_visible: bool,
 
     pub display: Cell<WindowsDisplay>,
@@ -767,6 +862,8 @@ pub struct WindowsWindowState {
     pub invalidate_devices: Arc<AtomicBool>,
     native_placement_epoch: Cell<u64>,
     provisional_placement_lane: ProvisionalPlacementLane,
+    provisional_activation_z_order: RefCell<ProvisionalActivationZOrderState>,
+    provisional_activation_z_order_recovery: RefCell<ProvisionalActivationZOrderRecovery>,
     placement_mutation_generation: Cell<Option<u64>>,
     pointer_input_mutation_generation: Cell<Option<u64>>,
     activation_policy_mutation_generation: Cell<Option<u64>>,
@@ -783,6 +880,14 @@ pub struct WindowsWindowState {
     fail_next_mutation_terminal_facts_readback: Cell<bool>,
     #[cfg(test)]
     reject_next_activation_command: Cell<bool>,
+    #[cfg(test)]
+    minimize_before_next_activation_command: Cell<bool>,
+    #[cfg(test)]
+    fail_next_provisional_activation_z_order_apply: Cell<bool>,
+    #[cfg(test)]
+    activation_admission_test_state: Cell<ActivationAdmissionTestState>,
+    #[cfg(test)]
+    unadmitted_activation_rejection_count: Cell<u64>,
     #[cfg(test)]
     pub(crate) panic_next_pointer_cancel_reservation: Cell<bool>,
     #[cfg(test)]
@@ -932,6 +1037,10 @@ impl WindowsWindowState {
         let initial_placement = None;
         let native_placement_epoch = Cell::new(0);
         let provisional_placement_lane = ProvisionalPlacementLane::default();
+        let provisional_activation_z_order =
+            RefCell::new(ProvisionalActivationZOrderState::default());
+        let provisional_activation_z_order_recovery =
+            RefCell::new(ProvisionalActivationZOrderRecovery::default());
         let placement_mutation_generation = Cell::new(None);
         let pointer_input_mutation_generation = Cell::new(None);
         let pointer_input_observation_generation = Cell::new(1);
@@ -972,12 +1081,15 @@ impl WindowsWindowState {
             accepts_pointer_input: Cell::new(accepts_pointer_input),
             pointer_input_observation_generation,
             activation_policy: Cell::new(activation_policy),
+            activation_command_dispatch_active: Cell::new(false),
             taskbar_visible,
             display: Cell::new(display),
             display_topology_generation: Cell::new(display_topology_generation),
             last_validated_platform_facts: RefCell::new(None),
             native_placement_epoch,
             provisional_placement_lane,
+            provisional_activation_z_order,
+            provisional_activation_z_order_recovery,
             placement_mutation_generation,
             pointer_input_mutation_generation,
             activation_policy_mutation_generation,
@@ -994,6 +1106,14 @@ impl WindowsWindowState {
             fail_next_mutation_terminal_facts_readback: Cell::new(false),
             #[cfg(test)]
             reject_next_activation_command: Cell::new(false),
+            #[cfg(test)]
+            minimize_before_next_activation_command: Cell::new(false),
+            #[cfg(test)]
+            fail_next_provisional_activation_z_order_apply: Cell::new(false),
+            #[cfg(test)]
+            activation_admission_test_state: Cell::new(ActivationAdmissionTestState::Admitted),
+            #[cfg(test)]
+            unadmitted_activation_rejection_count: Cell::new(0),
             #[cfg(test)]
             panic_next_pointer_cancel_reservation: Cell::new(false),
             #[cfg(test)]
@@ -1951,9 +2071,16 @@ impl WindowsWindowInner {
                                 | SWP_SHOWWINDOW,
                         )
                     }
-                    .context(
-                        "failed to reveal the prepared provisional window without moving it",
-                    )?;
+                    .with_context(|| {
+                        let owner = unsafe { GetWindow(hwnd, GW_OWNER) }.ok();
+                        let target_style = unsafe { get_window_long(hwnd, GWL_STYLE) };
+                        let target_ex_style = unsafe { get_window_long(hwnd, GWL_EXSTYLE) };
+                        let insert_after_ex_style =
+                            unsafe { get_window_long(insert_after, GWL_EXSTYLE) };
+                        format!(
+                            "failed to reveal the prepared provisional window without moving it: hwnd={hwnd:?}, owner={owner:?}, style={target_style:#x}, ex_style={target_ex_style:#x}, insert_after={insert_after:?}, insert_after_ex_style={insert_after_ex_style:#x}"
+                        )
+                    })?;
                     visibility_guard
                         .ensure_current("validating the registered provisional reveal")?;
                     anyhow::ensure!(
@@ -2216,10 +2343,30 @@ impl WindowsWindowInner {
         })
     }
 
-    fn activation_command_is_admitted(&self) -> bool {
+    pub(crate) fn activation_command_is_admitted(&self) -> bool {
+        #[cfg(test)]
+        if self.state.activation_admission_test_state.get() == ActivationAdmissionTestState::Revoked
+        {
+            return false;
+        }
         !self.state.interaction_is_quiesced()
             && self.provisional_accepts_interaction()
             && self.state.activation_policy.get().accepts_activation
+    }
+
+    pub(crate) fn native_activation_callback_is_admitted(&self) -> bool {
+        if self.state.interaction_is_quiesced() || !self.provisional_accepts_interaction() {
+            return false;
+        }
+        if self.state.activation_command_dispatch_active.get() {
+            self.activation_command_is_admitted()
+        } else {
+            // Click-triggered activation is decided at WM_MOUSEACTIVATE. A later WM_ACTIVATE may
+            // instead come from Alt-Tab, an owner transition, or exact rollback of a rejected
+            // programmatic command, so applying focus_on_click here would reject unrelated native
+            // activation paths and can undo the rollback itself.
+            true
+        }
     }
 
     pub(crate) fn provisional_requires_hit_transparency(&self) -> bool {
@@ -2280,6 +2427,18 @@ impl WindowsWindowInner {
         Ok(peers.into())
     }
 
+    fn current_registered_provisional_peers(
+        &self,
+        peers: &[RegisteredWindow],
+    ) -> Result<Arc<[RegisteredWindow]>> {
+        let registry = self
+            .raw_window_handles
+            .upgrade()
+            .context("native window registry is no longer available")?;
+        let registered = registry.read();
+        Ok(retain_current_registered_windows(peers, &registered))
+    }
+
     fn observe_z_order_identity(&self, hwnd: HWND) -> Result<NativeZOrderWindowIdentity> {
         anyhow::ensure!(
             unsafe { IsWindow(Some(hwnd)).as_bool() },
@@ -2291,12 +2450,12 @@ impl WindowsWindowInner {
             thread_id != 0 && process_id != 0,
             "failed to observe z-order window process identity"
         );
-        Ok(NativeZOrderWindowIdentity {
+        Ok(NativeZOrderWindowIdentity::new(
             hwnd,
             thread_id,
             process_id,
-            registered: self.registered_window_snapshot(hwnd)?,
-        })
+            self.registered_window_snapshot(hwnd)?,
+        ))
     }
 
     fn native_rect(hwnd: HWND) -> Result<Option<NativeRect>> {
@@ -2602,14 +2761,14 @@ impl WindowsWindowInner {
         )?;
         let insert_after = if let Some(previous) = rollback.previous_above {
             anyhow::ensure!(
-                unsafe { IsWindow(Some(previous.hwnd)).as_bool() },
+                unsafe { IsWindow(Some(previous.hwnd())).as_bool() },
                 "the provisional rollback predecessor became terminal"
             );
             anyhow::ensure!(
-                self.observe_z_order_identity(previous.hwnd)? == previous,
+                self.observe_z_order_identity(previous.hwnd())? == previous,
                 "the provisional rollback predecessor identity changed"
             );
-            previous.hwnd
+            previous.hwnd()
         } else if rollback.was_topmost {
             HWND_TOPMOST
         } else {
@@ -2706,11 +2865,11 @@ impl WindowsWindowInner {
             && (applied
                 .rollback
                 .previous_above
-                .is_some_and(|previous| previous.registered.is_none())
+                .is_some_and(|previous| previous.registered().is_none())
                 || applied
                     .applied
                     .previous_above
-                    .is_some_and(|previous| previous.registered.is_none()))
+                    .is_some_and(|previous| previous.registered().is_none()))
         {
             self.set_provisional_compensation_visibility(
                 false,
@@ -2911,6 +3070,17 @@ impl WindowsWindowInner {
         };
         let platform_facts = applied.platform_facts();
         let provisional_facts = applied.facts();
+        let activation_z_order =
+            if attempt.request.purpose() == WindowProvisionalPlacementPurpose::FinalRelease {
+                ProvisionalActivationZOrderState::armed(ProvisionalActivationZOrderAuthority::new(
+                    generation,
+                    applied.applied.physical_geometry,
+                    applied.prepared_z_order.clone(),
+                    applied.native_authority.downgrade(),
+                ))
+            } else {
+                ProvisionalActivationZOrderState::default()
+            };
         if attempt
             .session
             .record_native_final_placement(
@@ -2953,6 +3123,9 @@ impl WindowsWindowInner {
             return;
         }
         applied.commit();
+        self.state
+            .provisional_activation_z_order
+            .replace(activation_z_order);
         self.emit_window_mutation_observation(
             WindowMutationDomain::Placement,
             generation,
@@ -2978,6 +3151,16 @@ impl WindowsWindowInner {
         requested_rect: NativeRect,
         peer_windows: &[WindowId],
     ) -> Result<PreparedProvisionalZOrderBand> {
+        let peers = self.registered_provisional_peers(peer_windows)?;
+        self.prepare_provisional_z_order_band_with_registered_peers(point, requested_rect, peers)
+    }
+
+    fn prepare_provisional_z_order_band_with_registered_peers(
+        &self,
+        point: Point<DevicePixels>,
+        requested_rect: NativeRect,
+        peers: Arc<[RegisteredWindow]>,
+    ) -> Result<PreparedProvisionalZOrderBand> {
         anyhow::ensure!(
             requested_rect.contains(point),
             "provisional z-order point is outside the requested window placement"
@@ -2986,16 +3169,20 @@ impl WindowsWindowInner {
             .registered_window_snapshot(self.hwnd)?
             .filter(|current| current.matches(self.registration))
             .context("provisional native-window registration is stale")?;
-        let peers = self.registered_provisional_peers(peer_windows)?;
+        let observed_native_target = self.point_native_target(point)?;
 
         let mut barrier = None;
         let mut candidate = unsafe { GetTopWindow(None) }
             .context("failed to begin provisional z-order preparation")?;
         let mut visited = HashSet::new();
         let mut completed = false;
+        let mut reached_native_target = false;
         for _ in 0..MAX_PROVISIONAL_Z_ORDER_WINDOWS {
             if candidate.is_invalid() || !visited.insert(candidate.0 as usize) {
                 anyhow::bail!("provisional z-order preparation encountered an invalid walk");
+            }
+            if observed_native_target.is_some_and(|target| target.hwnd() == candidate) {
+                reached_native_target = true;
             }
             if candidate != self.hwnd
                 && !crate::platform::native_window_is_shell_desktop(candidate)
@@ -3007,13 +3194,11 @@ impl WindowsWindowInner {
                 match crate::platform::native_window_cloak(candidate) {
                     crate::platform::NativeWindowCloak::Uncloaked => {
                         let identity = self.observe_z_order_identity(candidate)?;
-                        let is_peer = identity.registered.is_some_and(|registered| {
+                        let is_peer = identity.registered().is_some_and(|registered| {
                             peers.iter().any(|peer| peer.matches(registered))
                         });
-                        if !is_peer {
+                        if !is_peer && barrier.is_none() {
                             barrier = Some(identity);
-                            completed = true;
-                            break;
                         }
                     }
                     crate::platform::NativeWindowCloak::Cloaked => {}
@@ -3021,6 +3206,10 @@ impl WindowsWindowInner {
                         anyhow::bail!("provisional z-order barrier cloak is unavailable")
                     }
                 }
+            }
+            if barrier.is_some() && (observed_native_target.is_none() || reached_native_target) {
+                completed = true;
+                break;
             }
             let Some(next) = Self::next_z_order_window(candidate) else {
                 completed = true;
@@ -3032,13 +3221,27 @@ impl WindowsWindowInner {
             completed,
             "provisional z-order preparation exceeded the native-window walk limit"
         );
+        anyhow::ensure!(
+            observed_native_target.is_none() || reached_native_target,
+            "the WindowFromPoint target was absent from provisional z-order preparation"
+        );
+        anyhow::ensure!(
+            self.point_native_target(point)? == observed_native_target,
+            "the WindowFromPoint target changed during provisional z-order preparation"
+        );
 
-        Ok(PreparedProvisionalZOrderBand {
-            point,
-            current,
-            peers,
-            barrier,
-        })
+        Ok(PreparedProvisionalZOrderBand::new(
+            point, current, peers, barrier,
+        ))
+    }
+
+    fn point_native_target(
+        &self,
+        point: Point<DevicePixels>,
+    ) -> Result<Option<NativeZOrderWindowIdentity>> {
+        crate::platform::window_from_point_root(point)
+            .map(|hwnd| self.observe_z_order_identity(hwnd))
+            .transpose()
     }
 
     fn verify_provisional_z_order_band(
@@ -3048,7 +3251,7 @@ impl WindowsWindowInner {
         let verified = (|| -> Result<WindowProvisionalRevealZOrder> {
             let current = self
                 .registered_window_snapshot(self.hwnd)?
-                .filter(|current| current.matches(prepared.current))
+                .filter(|current| current.matches(prepared.current()))
                 .context("provisional native-window registration changed during reveal")?;
             anyhow::ensure!(current.matches(self.registration));
             anyhow::ensure!(unsafe { IsWindowVisible(self.hwnd).as_bool() });
@@ -3059,13 +3262,14 @@ impl WindowsWindowInner {
             );
             let current_rect = Self::native_rect(self.hwnd)?
                 .context("provisional native window has no visible rectangle")?;
-            anyhow::ensure!(current_rect.contains(prepared.point));
-            if let Some(barrier) = prepared.barrier {
+            anyhow::ensure!(current_rect.contains(prepared.point()));
+            if let Some(barrier) = prepared.barrier() {
                 anyhow::ensure!(
-                    self.observe_z_order_identity(barrier.hwnd)? == barrier,
+                    self.observe_z_order_identity(barrier.hwnd())? == barrier,
                     "provisional z-order barrier identity changed during reveal"
                 );
             }
+            let native_target_before = self.point_native_target(prepared.point())?;
 
             let mut visible_fragments = vec![current_rect];
             let mut covering_above = Vec::new();
@@ -3093,7 +3297,7 @@ impl WindowsWindowInner {
                             anyhow::bail!("provisional occluder cloak is unavailable")
                         }
                         crate::platform::NativeWindowCloak::Uncloaked => {
-                            if rect.contains(prepared.point) {
+                            if rect.contains(prepared.point()) {
                                 covering_above.push(self.observe_z_order_identity(candidate)?);
                             }
                             let mut next_fragments = Vec::new();
@@ -3113,11 +3317,16 @@ impl WindowsWindowInner {
                 reached_current,
                 "provisional window is absent from native z-order"
             );
+            let native_target_after = self.point_native_target(prepared.point())?;
+            anyhow::ensure!(
+                native_target_after == native_target_before,
+                "the WindowFromPoint target changed during provisional z-order verification: before={native_target_before:?}, after={native_target_after:?}",
+            );
             anyhow::ensure!(
                 !visible_fragments.is_empty(),
                 "provisional window is fully obscured after reveal"
             );
-            match prepared.barrier {
+            match prepared.barrier() {
                 None => {
                     anyhow::ensure!(
                         covering_above
@@ -3305,6 +3514,793 @@ impl WindowsWindowInner {
         }
     }
 
+    fn provisional_activation_z_order_candidate_is_current(
+        &self,
+        authority: &ProvisionalActivationZOrderAuthority,
+    ) -> bool {
+        self.state
+            .provisional_activation_z_order
+            .borrow()
+            .candidate_is_current(authority)
+    }
+
+    fn invalidate_provisional_activation_z_order(
+        &self,
+        authority: &ProvisionalActivationZOrderAuthority,
+    ) {
+        self.state
+            .provisional_activation_z_order
+            .borrow_mut()
+            .invalidate(authority);
+    }
+
+    fn replace_provisional_activation_z_order(
+        &self,
+        previous: &ProvisionalActivationZOrderAuthority,
+        replacement: ProvisionalActivationZOrderAuthority,
+    ) -> Result<()> {
+        anyhow::ensure!(
+            self.state
+                .provisional_activation_z_order
+                .borrow_mut()
+                .replace_refreshed(previous, replacement),
+            "provisional activation z-order authority was superseded while it was refreshed"
+        );
+        Ok(())
+    }
+
+    fn observe_provisional_activation_window_authority(
+        &self,
+        authority: &ProvisionalActivationZOrderAuthority,
+    ) -> Result<ProvisionalActivationWindowObservation> {
+        let Some(native_authority) = authority.native_authority().upgrade() else {
+            return Ok(ProvisionalActivationWindowObservation::AuthorityEnded);
+        };
+        if !self.provisional_native_authority_is_current(
+            &native_authority,
+            Some(authority.mutation_generation()),
+        ) {
+            return Ok(ProvisionalActivationWindowObservation::AuthorityEnded);
+        }
+        let hwnd = native_authority.registration.as_raw();
+        if hwnd != self.hwnd || self.is_native_window_terminal() {
+            return Ok(ProvisionalActivationWindowObservation::AuthorityEnded);
+        }
+        if unsafe { !IsWindowVisible(hwnd).as_bool() } {
+            return Ok(ProvisionalActivationWindowObservation::Hidden);
+        }
+        if unsafe { IsIconic(hwnd).as_bool() } {
+            return Ok(ProvisionalActivationWindowObservation::Minimized { hwnd });
+        }
+        Ok(ProvisionalActivationWindowObservation::Observed {
+            hwnd,
+            physical_geometry: self.physical_geometry_from_native()?,
+        })
+    }
+
+    fn ensure_provisional_activation_window_authority(
+        &self,
+        authority: &ProvisionalActivationZOrderAuthority,
+        operation: &str,
+    ) -> Result<HWND> {
+        let (hwnd, physical_geometry) =
+            match self.observe_provisional_activation_window_authority(authority)? {
+                ProvisionalActivationWindowObservation::Observed {
+                    hwnd,
+                    physical_geometry,
+                } => (hwnd, physical_geometry),
+                ProvisionalActivationWindowObservation::AuthorityEnded => anyhow::bail!(
+                    "{operation} rejected obsolete provisional activation native-window authority"
+                ),
+                ProvisionalActivationWindowObservation::Hidden => anyhow::bail!(
+                    "{operation} rejected temporarily hidden provisional activation authority"
+                ),
+                ProvisionalActivationWindowObservation::Minimized { .. } => anyhow::bail!(
+                    "{operation} rejected temporarily minimized provisional activation authority"
+                ),
+            };
+        anyhow::ensure!(
+            physical_geometry == authority.physical_geometry(),
+            "{operation} rejected obsolete provisional activation geometry"
+        );
+        Ok(hwnd)
+    }
+
+    fn provisional_activation_window_authority_status(
+        &self,
+        authority: &ProvisionalActivationZOrderAuthority,
+    ) -> Result<ProvisionalActivationWindowAuthorityStatus> {
+        Ok(
+            match self.observe_provisional_activation_window_authority(authority)? {
+                ProvisionalActivationWindowObservation::AuthorityEnded => {
+                    ProvisionalActivationWindowAuthorityStatus::AuthorityEnded
+                }
+                ProvisionalActivationWindowObservation::Hidden
+                | ProvisionalActivationWindowObservation::Minimized { .. } => {
+                    ProvisionalActivationWindowAuthorityStatus::TemporarilyUnavailable
+                }
+                ProvisionalActivationWindowObservation::Observed {
+                    physical_geometry, ..
+                } => classify_activation_window_authority(
+                    authority.physical_geometry(),
+                    Some(physical_geometry),
+                ),
+            },
+        )
+    }
+
+    fn ensure_provisional_activation_z_order_authority(
+        &self,
+        authority: &ProvisionalActivationZOrderAuthority,
+        operation: &str,
+    ) -> Result<HWND> {
+        anyhow::ensure!(
+            self.provisional_activation_z_order_candidate_is_current(authority),
+            "{operation} rejected a superseded provisional activation z-order authority"
+        );
+        self.ensure_provisional_activation_window_authority(authority, operation)
+    }
+
+    fn refresh_provisional_activation_z_order(
+        &self,
+        authority: &ProvisionalActivationZOrderAuthority,
+        operation: &str,
+    ) -> Result<Option<ProvisionalActivationZOrderAuthority>> {
+        anyhow::ensure!(
+            self.provisional_activation_z_order_candidate_is_current(authority),
+            "{operation} rejected a superseded provisional activation z-order authority"
+        );
+        let refreshed = match self.reconcile_provisional_activation_z_order(authority)? {
+            ProvisionalActivationZOrderRefresh::AuthorityEnded => return Ok(None),
+            ProvisionalActivationZOrderRefresh::TemporarilyUnavailable => return Ok(None),
+            ProvisionalActivationZOrderRefresh::GeometryChanged => {
+                anyhow::bail!(
+                    "{operation} rejected provisional activation after client geometry, scale, or display identity changed without a new placement receipt"
+                );
+            }
+            ProvisionalActivationZOrderRefresh::Refreshed(refreshed) => refreshed,
+        };
+        self.replace_provisional_activation_z_order(authority, refreshed.clone())?;
+        Ok(Some(refreshed))
+    }
+
+    fn reconcile_provisional_activation_z_order(
+        &self,
+        authority: &ProvisionalActivationZOrderAuthority,
+    ) -> Result<ProvisionalActivationZOrderRefresh> {
+        let (hwnd, observed_geometry) =
+            match self.observe_provisional_activation_window_authority(authority)? {
+                ProvisionalActivationWindowObservation::AuthorityEnded => {
+                    return Ok(ProvisionalActivationZOrderRefresh::AuthorityEnded);
+                }
+                ProvisionalActivationWindowObservation::Hidden
+                | ProvisionalActivationWindowObservation::Minimized { .. } => {
+                    return Ok(ProvisionalActivationZOrderRefresh::TemporarilyUnavailable);
+                }
+                ProvisionalActivationWindowObservation::Observed {
+                    hwnd,
+                    physical_geometry,
+                } => (hwnd, physical_geometry),
+            };
+        let physical_geometry = match classify_activation_window_authority(
+            authority.physical_geometry(),
+            Some(observed_geometry),
+        ) {
+            ProvisionalActivationWindowAuthorityStatus::AuthorityEnded => {
+                return Ok(ProvisionalActivationZOrderRefresh::AuthorityEnded);
+            }
+            ProvisionalActivationWindowAuthorityStatus::TemporarilyUnavailable => {
+                return Ok(ProvisionalActivationZOrderRefresh::TemporarilyUnavailable);
+            }
+            ProvisionalActivationWindowAuthorityStatus::GeometryChanged => {
+                return Ok(ProvisionalActivationZOrderRefresh::GeometryChanged);
+            }
+            ProvisionalActivationWindowAuthorityStatus::Compatible(current) => current,
+        };
+        let current_rect = Self::native_rect(hwnd)?
+            .context("provisional activation window has no native rectangle")?;
+        let peers = self.current_registered_provisional_peers(authority.prepared().peers())?;
+        let prepared = self.prepare_provisional_z_order_band_with_registered_peers(
+            authority.prepared().point(),
+            current_rect,
+            peers,
+        )?;
+        let refreshed = authority.refreshed(physical_geometry, prepared);
+        Ok(ProvisionalActivationZOrderRefresh::Refreshed(refreshed))
+    }
+
+    fn apply_provisional_activation_z_order(
+        &self,
+        authority: &ProvisionalActivationZOrderAuthority,
+    ) -> Result<()> {
+        let hwnd = self.ensure_provisional_activation_z_order_authority(
+            authority,
+            "applying provisional promotion z-order",
+        )?;
+        #[cfg(test)]
+        if self
+            .state
+            .fail_next_provisional_activation_z_order_apply
+            .replace(false)
+        {
+            anyhow::bail!("injected provisional activation z-order application failure");
+        }
+        unsafe {
+            SetWindowPos(
+                hwnd,
+                Some(authority.prepared().insert_after()),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOMOVE | SWP_NOSIZE,
+            )
+        }
+        .context("failed to place the promoted HWND below its point-scoped opaque barrier")?;
+        self.ensure_provisional_activation_z_order_authority(
+            authority,
+            "validating applied provisional promotion z-order",
+        )?;
+        anyhow::ensure!(
+            self.verify_provisional_z_order_band(authority.prepared())
+                != WindowProvisionalRevealZOrder::Unavailable,
+            "promoted HWND did not establish its current point-scoped z-order proof"
+        );
+        Ok(())
+    }
+
+    fn restore_provisional_activation_z_order(
+        &self,
+        authority: &ProvisionalActivationZOrderAuthority,
+    ) -> Result<ProvisionalActivationZOrderAuthority> {
+        let refreshed = self
+            .refresh_provisional_activation_z_order(
+                authority,
+                "refreshing provisional promotion z-order after native activation",
+            )?
+            .context("provisional promotion z-order authority ended during native activation")?;
+        self.apply_provisional_activation_z_order(&refreshed)?;
+        Ok(refreshed)
+    }
+
+    fn schedule_provisional_activation_z_order_recovery(
+        self: &Rc<Self>,
+        authority: &ProvisionalActivationZOrderAuthority,
+        consume_after_recovery: bool,
+    ) {
+        let key = ProvisionalActivationZOrderRecoveryKey::from_authority(authority);
+        let Some((schedule_epoch, delay)) = self
+            .state
+            .provisional_activation_z_order_recovery
+            .borrow_mut()
+            .schedule(key, consume_after_recovery)
+        else {
+            return;
+        };
+        self.spawn_provisional_activation_z_order_recovery(schedule_epoch, key, delay);
+    }
+
+    fn schedule_rejected_provisional_activation_z_order_recovery(
+        self: &Rc<Self>,
+        authority: &ProvisionalActivationZOrderAuthority,
+    ) {
+        self.invalidate_provisional_activation_z_order(authority);
+        let key = ProvisionalActivationZOrderRecoveryKey::from_authority(authority);
+        if self
+            .state
+            .provisional_activation_z_order
+            .borrow()
+            .matching_invalidated_authority(key)
+            .is_none()
+        {
+            return;
+        }
+        let Some((schedule_epoch, delay)) = self
+            .state
+            .provisional_activation_z_order_recovery
+            .borrow_mut()
+            .schedule(key, false)
+        else {
+            return;
+        };
+        self.spawn_provisional_activation_z_order_recovery(schedule_epoch, key, delay);
+    }
+
+    fn observe_native_activation_for_provisional_z_order(
+        self: &Rc<Self>,
+        consume_after_recovery: bool,
+    ) {
+        let transition = self
+            .state
+            .provisional_activation_z_order
+            .borrow_mut()
+            .observe_native_activation();
+        match transition {
+            ProvisionalActivationNativeTransition::Absent => {}
+            ProvisionalActivationNativeTransition::Park(key) => {
+                self.state
+                    .provisional_activation_z_order_recovery
+                    .borrow_mut()
+                    .park(key, consume_after_recovery);
+            }
+            ProvisionalActivationNativeTransition::Recover(authority) => {
+                self.schedule_provisional_activation_z_order_recovery(
+                    &authority,
+                    consume_after_recovery,
+                );
+            }
+        }
+    }
+
+    fn observe_rejected_native_activation_for_provisional_z_order(self: &Rc<Self>) {
+        let transition = self
+            .state
+            .provisional_activation_z_order
+            .borrow_mut()
+            .observe_native_activation();
+        match transition {
+            ProvisionalActivationNativeTransition::Absent => {}
+            ProvisionalActivationNativeTransition::Park(key) => {
+                self.state
+                    .provisional_activation_z_order_recovery
+                    .borrow_mut()
+                    .park_rejected_activation(key);
+            }
+            ProvisionalActivationNativeTransition::Recover(authority) => {
+                let key = ProvisionalActivationZOrderRecoveryKey::from_authority(&authority);
+                let (schedule_epoch, delay) = self
+                    .state
+                    .provisional_activation_z_order_recovery
+                    .borrow_mut()
+                    .schedule_rejected_activation(key);
+                self.spawn_provisional_activation_z_order_recovery(schedule_epoch, key, delay);
+            }
+        }
+    }
+
+    pub(crate) fn observe_exact_native_activation_for_provisional_z_order(self: &Rc<Self>) {
+        self.observe_native_activation_for_provisional_z_order(true);
+    }
+
+    fn restore_native_activation_snapshot_after_rejection(
+        &self,
+        snapshot: NativeActivationSnapshot,
+    ) -> bool {
+        let is_live = |hwnd: HWND| {
+            hwnd != HWND::default()
+                && hwnd != self.hwnd
+                && unsafe { IsWindow(Some(hwnd)).as_bool() }
+        };
+        let target_owns_focus = |focus: HWND| {
+            focus == self.hwnd
+                || (focus != HWND::default() && unsafe { IsChild(self.hwnd, focus).as_bool() })
+        };
+
+        if unsafe { GetForegroundWindow() } == self.hwnd
+            && snapshot.foreground != self.hwnd
+            && is_live(snapshot.foreground)
+        {
+            unsafe {
+                let _ = SetForegroundWindow(snapshot.foreground);
+            }
+        }
+        if unsafe { GetActiveWindow() } == self.hwnd
+            && snapshot.active != self.hwnd
+            && is_live(snapshot.active)
+        {
+            unsafe {
+                SetActiveWindow(snapshot.active).ok();
+            }
+        }
+        if target_owns_focus(unsafe { GetFocus() }) && snapshot.focus != self.hwnd {
+            unsafe {
+                if snapshot.focus == HWND::default() {
+                    SetFocus(None).ok();
+                } else if is_live(snapshot.focus) {
+                    SetFocus(Some(snapshot.focus)).ok();
+                }
+            }
+        }
+
+        unsafe {
+            GetForegroundWindow() == snapshot.foreground
+                && GetActiveWindow() == snapshot.active
+                && GetFocus() == snapshot.focus
+        }
+    }
+
+    fn restore_rejected_native_activation_snapshot(&self, snapshot: NativeActivationSnapshot) {
+        if !self.restore_native_activation_snapshot_after_rejection(snapshot) {
+            log::error!(
+                "Windows did not restore the exact native activation snapshot after rejecting the command"
+            );
+        }
+    }
+
+    fn compensate_rejected_native_activation(self: &Rc<Self>, snapshot: NativeActivationSnapshot) {
+        self.observe_rejected_native_activation_for_provisional_z_order();
+        self.restore_rejected_native_activation_snapshot(snapshot);
+    }
+
+    pub(crate) fn reject_unadmitted_provisional_native_activation(
+        self: &Rc<Self>,
+        previous_active_window: HWND,
+    ) {
+        #[cfg(test)]
+        self.state.unadmitted_activation_rejection_count.set(
+            self.state
+                .unadmitted_activation_rejection_count
+                .get()
+                .wrapping_add(1),
+        );
+
+        // A programmatic activation command owns an exact foreground/active/focus snapshot for
+        // the entire native transaction. Let that outer owner compensate once the synchronous
+        // User32 call returns instead of racing it with this callback-local partial observation.
+        if self.state.activation_command_dispatch_active.get() {
+            return;
+        }
+
+        self.observe_rejected_native_activation_for_provisional_z_order();
+
+        let previous_is_live = previous_active_window != HWND::default()
+            && previous_active_window != self.hwnd
+            && unsafe { IsWindow(Some(previous_active_window)).as_bool() };
+        if unsafe { GetForegroundWindow() } == self.hwnd && previous_is_live {
+            unsafe {
+                let _ = SetForegroundWindow(previous_active_window);
+            }
+        }
+        if unsafe { GetActiveWindow() } == self.hwnd && previous_is_live {
+            unsafe {
+                SetActiveWindow(previous_active_window).ok();
+            }
+        }
+        if unsafe { GetFocus() } == self.hwnd {
+            unsafe {
+                if previous_is_live {
+                    SetFocus(Some(previous_active_window)).ok();
+                } else {
+                    SetFocus(None).ok();
+                }
+            }
+        }
+        if unsafe {
+            GetForegroundWindow() == self.hwnd
+                || GetActiveWindow() == self.hwnd
+                || GetFocus() == self.hwnd
+        } {
+            log::error!(
+                "Windows rejected restoration of native activation after an unadmitted provisional activation"
+            );
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn apply_test_activation_admission_revocation_after_active_status(&self) {
+        if self.state.activation_admission_test_state.get()
+            == ActivationAdmissionTestState::RevokeAfterNextActiveStatus
+        {
+            self.state
+                .activation_admission_test_state
+                .set(ActivationAdmissionTestState::Revoked);
+        }
+    }
+
+    #[cfg(test)]
+    fn apply_test_activation_admission_revocation_after_minimized_restore(&self) {
+        if self.state.activation_admission_test_state.get()
+            == ActivationAdmissionTestState::RevokeAfterNextMinimizedRestore
+        {
+            self.state
+                .activation_admission_test_state
+                .set(ActivationAdmissionTestState::Revoked);
+        }
+    }
+
+    fn restore_minimized_provisional_activation_window(
+        &self,
+        authority: &ProvisionalActivationZOrderAuthority,
+    ) -> Result<()> {
+        let hwnd = match self.observe_provisional_activation_window_authority(authority)? {
+            ProvisionalActivationWindowObservation::Observed { .. } => return Ok(()),
+            ProvisionalActivationWindowObservation::Minimized { hwnd } => hwnd,
+            ProvisionalActivationWindowObservation::AuthorityEnded => anyhow::bail!(
+                "provisional activation native-window authority ended before minimized restoration"
+            ),
+            ProvisionalActivationWindowObservation::Hidden => {
+                anyhow::bail!("provisional activation rejected a hidden native window")
+            }
+        };
+
+        unsafe {
+            let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        }
+        anyhow::ensure!(
+            self.provisional_activation_z_order_candidate_is_current(authority),
+            "provisional activation z-order authority changed during minimized restoration"
+        );
+        match self.observe_provisional_activation_window_authority(authority)? {
+            ProvisionalActivationWindowObservation::Observed { .. } => Ok(()),
+            ProvisionalActivationWindowObservation::AuthorityEnded => anyhow::bail!(
+                "provisional activation native-window authority ended during minimized restoration"
+            ),
+            ProvisionalActivationWindowObservation::Hidden => {
+                anyhow::bail!("provisional activation became hidden during minimized restoration")
+            }
+            ProvisionalActivationWindowObservation::Minimized { .. } => {
+                anyhow::bail!("Windows did not restore the minimized provisional activation window")
+            }
+        }
+    }
+
+    pub(crate) fn resume_provisional_activation_z_order_recovery_if_ready(self: &Rc<Self>) {
+        let Some(authority) = self
+            .state
+            .provisional_activation_z_order
+            .borrow()
+            .invalidated_authority()
+        else {
+            return;
+        };
+        let key = ProvisionalActivationZOrderRecoveryKey::from_authority(&authority);
+        let Some(consume_after_recovery) = self
+            .state
+            .provisional_activation_z_order_recovery
+            .borrow()
+            .consume_intent_for(key)
+        else {
+            return;
+        };
+        self.schedule_provisional_activation_z_order_recovery(&authority, consume_after_recovery);
+    }
+
+    fn schedule_provisional_activation_z_order_retry(
+        self: &Rc<Self>,
+        key: ProvisionalActivationZOrderRecoveryKey,
+    ) {
+        let Some((schedule_epoch, delay)) = self
+            .state
+            .provisional_activation_z_order_recovery
+            .borrow_mut()
+            .schedule_retry(key)
+        else {
+            log::error!(
+                "Windows parked provisional promotion z-order recovery after exhausting its automatic retry budget"
+            );
+            return;
+        };
+        self.spawn_provisional_activation_z_order_recovery(schedule_epoch, key, delay);
+    }
+
+    fn spawn_provisional_activation_z_order_recovery(
+        self: &Rc<Self>,
+        schedule_epoch: u64,
+        key: ProvisionalActivationZOrderRecoveryKey,
+        delay: Duration,
+    ) {
+        let Some(platform) = self.native_retirement_coordinator.upgrade() else {
+            self.state
+                .provisional_activation_z_order_recovery
+                .borrow_mut()
+                .complete(key);
+            return;
+        };
+        let timer = platform.background_executor.timer(delay);
+        let executor = platform.foreground_executor.clone();
+        let window = Rc::downgrade(self);
+        executor
+            .spawn(async move {
+                timer.await;
+                let Some(window) = window.upgrade() else {
+                    return;
+                };
+                window.run_provisional_activation_z_order_recovery(schedule_epoch, key);
+            })
+            .detach();
+    }
+
+    fn run_provisional_activation_z_order_recovery(
+        self: &Rc<Self>,
+        schedule_epoch: u64,
+        key: ProvisionalActivationZOrderRecoveryKey,
+    ) {
+        let Some(consume_after_recovery) = self
+            .state
+            .provisional_activation_z_order_recovery
+            .borrow_mut()
+            .claim(schedule_epoch, key)
+        else {
+            return;
+        };
+        let Some(authority) = self
+            .state
+            .provisional_activation_z_order
+            .borrow()
+            .matching_invalidated_authority(key)
+        else {
+            self.state
+                .provisional_activation_z_order_recovery
+                .borrow_mut()
+                .complete_claimed(schedule_epoch, key);
+            return;
+        };
+
+        match self.restore_provisional_activation_z_order(&authority) {
+            Ok(restored) => {
+                if consume_after_recovery {
+                    self.consume_provisional_activation_z_order(&restored);
+                }
+                self.state
+                    .provisional_activation_z_order_recovery
+                    .borrow_mut()
+                    .complete_claimed(schedule_epoch, key);
+            }
+            Err(error) => {
+                self.invalidate_provisional_activation_z_order(&authority);
+                let Some(current) = self
+                    .state
+                    .provisional_activation_z_order
+                    .borrow()
+                    .matching_invalidated_authority(key)
+                else {
+                    self.state
+                        .provisional_activation_z_order_recovery
+                        .borrow_mut()
+                        .complete_claimed(schedule_epoch, key);
+                    return;
+                };
+                match self.provisional_activation_window_authority_status(&current) {
+                    Ok(ProvisionalActivationWindowAuthorityStatus::AuthorityEnded)
+                    | Ok(ProvisionalActivationWindowAuthorityStatus::GeometryChanged) => {
+                        self.consume_provisional_activation_z_order(&current);
+                        self.state
+                            .provisional_activation_z_order_recovery
+                            .borrow_mut()
+                            .complete_claimed(schedule_epoch, key);
+                    }
+                    Ok(ProvisionalActivationWindowAuthorityStatus::TemporarilyUnavailable) => {
+                        self.state
+                            .provisional_activation_z_order_recovery
+                            .borrow_mut()
+                            .park(key, consume_after_recovery);
+                    }
+                    Ok(ProvisionalActivationWindowAuthorityStatus::Compatible(_)) | Err(_) => {
+                        log::warn!(
+                            "Windows will retry provisional promotion z-order recovery: {error:#}"
+                        );
+                        self.schedule_provisional_activation_z_order_retry(key);
+                    }
+                }
+            }
+        }
+    }
+
+    fn consume_provisional_activation_z_order(
+        &self,
+        authority: &ProvisionalActivationZOrderAuthority,
+    ) {
+        self.state
+            .provisional_activation_z_order
+            .borrow_mut()
+            .consume(authority);
+    }
+
+    fn prepare_provisional_activation_z_order_mutation(&self, generation: u64) {
+        let recovery_rebind = self
+            .state
+            .provisional_activation_z_order
+            .borrow_mut()
+            .begin_placement(generation);
+        let mut recovery = self
+            .state
+            .provisional_activation_z_order_recovery
+            .borrow_mut();
+        if let Some((current, replacement)) = recovery_rebind {
+            recovery.rebind_for_placement(current, replacement);
+        } else {
+            recovery.cancel();
+        }
+    }
+
+    fn finish_provisional_activation_z_order_mutation(
+        self: &Rc<Self>,
+        generation: u64,
+        terminal: ProvisionalActivationZOrderMutationTerminal,
+    ) {
+        if terminal == ProvisionalActivationZOrderMutationTerminal::WindowClosed {
+            self.state
+                .provisional_activation_z_order
+                .borrow_mut()
+                .clear();
+            self.state
+                .provisional_activation_z_order_recovery
+                .borrow_mut()
+                .cancel();
+            return;
+        }
+
+        let finish = self
+            .state
+            .provisional_activation_z_order
+            .borrow()
+            .placement_finish(generation);
+        let (previous, next) = match finish {
+            ProvisionalActivationPlacementFinish::Superseded => return,
+            ProvisionalActivationPlacementFinish::RetainCurrent => (
+                None,
+                self.state.provisional_activation_z_order.borrow().clone(),
+            ),
+            ProvisionalActivationPlacementFinish::Reconcile { previous, rebound } => {
+                match self.reconcile_provisional_activation_z_order(&rebound) {
+                    Ok(ProvisionalActivationZOrderRefresh::AuthorityEnded)
+                    | Ok(ProvisionalActivationZOrderRefresh::GeometryChanged) => {
+                        (Some(previous), ProvisionalActivationZOrderState::default())
+                    }
+                    Ok(ProvisionalActivationZOrderRefresh::TemporarilyUnavailable) => (
+                        Some(previous),
+                        ProvisionalActivationZOrderState::invalidated(rebound),
+                    ),
+                    Ok(ProvisionalActivationZOrderRefresh::Refreshed(refreshed))
+                        if self.verify_provisional_z_order_band(refreshed.prepared())
+                            != WindowProvisionalRevealZOrder::Unavailable =>
+                    {
+                        (
+                            Some(previous),
+                            ProvisionalActivationZOrderState::armed(refreshed),
+                        )
+                    }
+                    Ok(ProvisionalActivationZOrderRefresh::Refreshed(refreshed)) => (
+                        Some(previous),
+                        ProvisionalActivationZOrderState::invalidated(refreshed),
+                    ),
+                    Err(_) => (
+                        Some(previous),
+                        ProvisionalActivationZOrderState::invalidated(rebound),
+                    ),
+                }
+            }
+        };
+        if let Some(previous) = previous
+            && !self
+                .state
+                .provisional_activation_z_order
+                .borrow_mut()
+                .commit_placement_reconciliation(generation, &previous, next)
+        {
+            return;
+        }
+
+        let recovery_key = self
+            .state
+            .provisional_activation_z_order
+            .borrow()
+            .recovery_key();
+
+        let consume_after_recovery = recovery_key.and_then(|key| {
+            self.state
+                .provisional_activation_z_order_recovery
+                .borrow()
+                .consume_intent_for(key)
+        });
+        let current = {
+            let mut state = self.state.provisional_activation_z_order.borrow_mut();
+            state.consume_armed_after_recovery(consume_after_recovery);
+            state.snapshot()
+        };
+        match (current, consume_after_recovery) {
+            (ProvisionalActivationZOrderSnapshot::Invalidated(authority), Some(consume)) => {
+                self.schedule_provisional_activation_z_order_recovery(&authority, consume);
+            }
+            _ => {
+                self.state
+                    .provisional_activation_z_order_recovery
+                    .borrow_mut()
+                    .complete_generation(generation);
+            }
+        }
+    }
+
     /// Must stay synchronous because activation APIs can pump window messages and command
     /// dispatch runs only after the application has released its mutable borrow.
     fn activate_now(self: &Rc<Self>) -> PlatformWindowCommandOutcome {
@@ -3317,91 +4313,270 @@ impl WindowsWindowInner {
         if !self.activation_command_is_admitted() {
             return PlatformWindowCommandOutcome::Rejected;
         }
+        let Some(_activation_command_scope) =
+            NativeActivationCommandScope::enter(&self.state.activation_command_dispatch_active)
+        else {
+            log::error!("rejected a reentrant native activation command");
+            return PlatformWindowCommandOutcome::Rejected;
+        };
+        let native_activation_snapshot = NativeActivationSnapshot::capture();
+        let activation_z_order_state = self
+            .state
+            .provisional_activation_z_order
+            .borrow()
+            .snapshot();
+        let provisional_activation_z_order = match activation_z_order_state {
+            ProvisionalActivationZOrderSnapshot::Absent => None,
+            ProvisionalActivationZOrderSnapshot::PlacementPending => {
+                log::error!("rejected provisional promotion activation while placement is pending");
+                self.restore_rejected_native_activation_snapshot(native_activation_snapshot);
+                return PlatformWindowCommandOutcome::Rejected;
+            }
+            ProvisionalActivationZOrderSnapshot::Armed(authority)
+            | ProvisionalActivationZOrderSnapshot::Invalidated(authority) => {
+                if let Err(error) = self.restore_minimized_provisional_activation_window(&authority)
+                {
+                    log::error!(
+                        "rejected provisional promotion activation before native restoration: {error:#}"
+                    );
+                    if self.is_native_window_terminal() {
+                        return PlatformWindowCommandOutcome::WindowClosed;
+                    }
+                    self.schedule_rejected_provisional_activation_z_order_recovery(&authority);
+                    self.restore_rejected_native_activation_snapshot(native_activation_snapshot);
+                    return PlatformWindowCommandOutcome::Rejected;
+                }
+                match self.refresh_provisional_activation_z_order(
+                    &authority,
+                    "preparing provisional promotion activation",
+                ) {
+                    Ok(None) => {
+                        log::error!(
+                            "rejected provisional promotion activation after visibility or native-window authority changed"
+                        );
+                        if self.is_native_window_terminal() {
+                            return PlatformWindowCommandOutcome::WindowClosed;
+                        }
+                        self.schedule_rejected_provisional_activation_z_order_recovery(&authority);
+                        self.restore_rejected_native_activation_snapshot(
+                            native_activation_snapshot,
+                        );
+                        return PlatformWindowCommandOutcome::Rejected;
+                    }
+                    Ok(Some(refreshed)) => {
+                        if self.verify_provisional_z_order_band(refreshed.prepared())
+                            == WindowProvisionalRevealZOrder::Unavailable
+                            && let Err(error) =
+                                self.apply_provisional_activation_z_order(&refreshed)
+                        {
+                            log::error!(
+                                "rejected provisional promotion activation while repairing z-order: {error:#}"
+                            );
+                            self.schedule_rejected_provisional_activation_z_order_recovery(
+                                &refreshed,
+                            );
+                            self.restore_rejected_native_activation_snapshot(
+                                native_activation_snapshot,
+                            );
+                            return PlatformWindowCommandOutcome::Rejected;
+                        }
+                        Some(refreshed)
+                    }
+                    Err(error) => {
+                        log::error!(
+                            "rejected provisional promotion activation before native dispatch: {error:#}"
+                        );
+                        self.schedule_rejected_provisional_activation_z_order_recovery(&authority);
+                        self.restore_rejected_native_activation_snapshot(
+                            native_activation_snapshot,
+                        );
+                        return PlatformWindowCommandOutcome::Rejected;
+                    }
+                }
+            }
+        };
+        if !self.activation_command_is_admitted() {
+            if let Some(authority) = provisional_activation_z_order.as_ref() {
+                self.schedule_rejected_provisional_activation_z_order_recovery(authority);
+            }
+            self.restore_rejected_native_activation_snapshot(native_activation_snapshot);
+            return PlatformWindowCommandOutcome::Rejected;
+        }
         #[cfg(test)]
         if self.state.reject_next_activation_command.replace(false) {
+            self.restore_rejected_native_activation_snapshot(native_activation_snapshot);
             return PlatformWindowCommandOutcome::Rejected;
         }
-
         let hwnd = self.hwnd;
         let had_initial_placement = self.has_pending_initial_placement();
-        let placement_result = self
-            .present_pending_initial_placement_with_deferred_mutation(true, true)
-            .map(|_| ());
-        let placement_failed = placement_result.is_err();
-        placement_result.log_err();
-
-        if placement_failed {
-            return PlatformWindowCommandOutcome::Rejected;
-        }
-
-        if self.is_native_window_terminal() {
-            return PlatformWindowCommandOutcome::WindowClosed;
-        }
-        if !self.activation_command_is_admitted() {
-            return PlatformWindowCommandOutcome::Rejected;
-        }
-        if !had_initial_placement && unsafe { !IsWindowVisible(hwnd).as_bool() } {
-            let command = if self.state.is_maximized() {
-                SW_MAXIMIZE
-            } else {
-                SW_SHOWNORMAL
-            };
-            unsafe {
-                let _ = ShowWindow(hwnd, command);
+        let mut window_closed = false;
+        let mut admission_lost = false;
+        let mut foreground_accepted = false;
+        let mut foreground_current = false;
+        'native_activation: {
+            if let Err(error) = self
+                .present_pending_initial_placement_with_deferred_mutation(true, true)
+                .map(|_| ())
+            {
+                log::error!("failed to present the native window before activation: {error:#}");
+                window_closed = self.is_native_window_terminal();
+                break 'native_activation;
             }
-        }
-
-        if self.is_native_window_terminal() {
-            return PlatformWindowCommandOutcome::WindowClosed;
-        }
-        if !self.activation_command_is_admitted() {
-            return PlatformWindowCommandOutcome::Rejected;
-        }
-        // If the window is minimized, restore it.
-        if unsafe { IsIconic(hwnd).as_bool() } {
-            unsafe {
-                ShowWindowAsync(hwnd, SW_RESTORE).ok().log_err();
+            if self.is_native_window_terminal() {
+                window_closed = true;
+                break 'native_activation;
             }
+            if !self.activation_command_is_admitted() {
+                admission_lost = true;
+                break 'native_activation;
+            }
+
+            if !had_initial_placement && unsafe { !IsWindowVisible(hwnd).as_bool() } {
+                let command = if self.state.is_maximized() {
+                    SW_MAXIMIZE
+                } else {
+                    SW_SHOWNORMAL
+                };
+                unsafe {
+                    let _ = ShowWindow(hwnd, command);
+                }
+            }
+            if self.is_native_window_terminal() {
+                window_closed = true;
+                break 'native_activation;
+            }
+            if !self.activation_command_is_admitted() {
+                admission_lost = true;
+                break 'native_activation;
+            }
+
+            #[cfg(test)]
+            if self
+                .state
+                .minimize_before_next_activation_command
+                .replace(false)
+            {
+                unsafe {
+                    let _ = ShowWindow(hwnd, SW_SHOWMINNOACTIVE);
+                }
+                assert!(unsafe { IsIconic(hwnd).as_bool() });
+                assert!(self.restore_native_activation_snapshot_after_rejection(
+                    native_activation_snapshot
+                ));
+            }
+
+            // Restore minimized geometry without activating first. The explicit activation calls
+            // below remain the only activation side effects owned by this checked transaction.
+            if unsafe { IsIconic(hwnd).as_bool() } {
+                unsafe {
+                    let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+                }
+                #[cfg(test)]
+                self.apply_test_activation_admission_revocation_after_minimized_restore();
+            }
+            if self.is_native_window_terminal() {
+                window_closed = true;
+                break 'native_activation;
+            }
+            if !self.activation_command_is_admitted() {
+                admission_lost = true;
+                break 'native_activation;
+            }
+
+            unsafe {
+                SetActiveWindow(hwnd).ok();
+            }
+            if self.is_native_window_terminal() {
+                window_closed = true;
+                break 'native_activation;
+            }
+            if !self.activation_command_is_admitted() {
+                admission_lost = true;
+                break 'native_activation;
+            }
+
+            unsafe {
+                SetFocus(Some(hwnd)).ok();
+            }
+            if self.is_native_window_terminal() {
+                window_closed = true;
+                break 'native_activation;
+            }
+            if !self.activation_command_is_admitted() {
+                admission_lost = true;
+                break 'native_activation;
+            }
+
+            // Foreground activation remains subject to the operating system's focus-stealing
+            // policy. Never synthesize keyboard input to bypass that policy.
+            foreground_accepted = unsafe { SetForegroundWindow(hwnd).as_bool() };
+            if self.is_native_window_terminal() {
+                window_closed = true;
+                break 'native_activation;
+            }
+            if !self.activation_command_is_admitted() {
+                admission_lost = true;
+                break 'native_activation;
+            }
+            // User32 may report FALSE when this exact HWND already owns the foreground after an
+            // earlier synchronous activation side effect. This preserves the ordinary Windows
+            // activation contract; the generation-bound positive observation still settles the
+            // activation ticket.
+            foreground_current = unsafe { GetForegroundWindow() == hwnd };
+        }
+        let mut activation_accepted =
+            !admission_lost && (foreground_accepted || foreground_current);
+        if !window_closed && !activation_accepted {
+            self.compensate_rejected_native_activation(native_activation_snapshot);
+            window_closed = self.is_native_window_terminal();
+            activation_accepted = false;
+        }
+        let restored_authority = if window_closed {
+            if let Some(authority) = provisional_activation_z_order.as_ref() {
+                self.consume_provisional_activation_z_order(authority);
+            }
+            None
+        } else if let Some(authority) = provisional_activation_z_order.as_ref() {
+            match self.restore_provisional_activation_z_order(authority) {
+                Ok(restored) => Some(restored),
+                Err(error) => {
+                    self.invalidate_provisional_activation_z_order(authority);
+                    self.schedule_provisional_activation_z_order_recovery(
+                        authority,
+                        activation_accepted,
+                    );
+                    log::error!(
+                        "provisional promotion activation requires later z-order recovery: {error:#}"
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        if !window_closed && self.is_native_window_terminal() {
+            window_closed = true;
+        }
+        if !window_closed && activation_accepted && !self.activation_command_is_admitted() {
+            self.compensate_rejected_native_activation(native_activation_snapshot);
+            window_closed = self.is_native_window_terminal();
+            activation_accepted = false;
         }
 
-        if self.is_native_window_terminal() {
+        if window_closed {
+            if let Some(authority) = restored_authority.as_ref() {
+                self.consume_provisional_activation_z_order(authority);
+            }
             return PlatformWindowCommandOutcome::WindowClosed;
         }
-        if !self.activation_command_is_admitted() {
+        if !activation_accepted {
             return PlatformWindowCommandOutcome::Rejected;
         }
-        unsafe {
-            SetActiveWindow(hwnd).ok();
-        }
-
-        if self.is_native_window_terminal() {
-            return PlatformWindowCommandOutcome::WindowClosed;
-        }
-        if !self.activation_command_is_admitted() {
-            return PlatformWindowCommandOutcome::Rejected;
-        }
-        unsafe {
-            SetFocus(Some(hwnd)).ok();
-        }
-
-        if self.is_native_window_terminal() {
-            return PlatformWindowCommandOutcome::WindowClosed;
-        }
-        if !self.activation_command_is_admitted() {
-            return PlatformWindowCommandOutcome::Rejected;
-        }
-        // Foreground activation remains subject to the operating system's focus-stealing policy.
-        // Never synthesize keyboard input to bypass that policy: framework commands must not
-        // fabricate user input or feed it back through GPUI's must-immediate input boundary.
-        let foreground_accepted = unsafe { SetForegroundWindow(hwnd).as_bool() };
-        if !self.activation_command_is_admitted() {
-            return PlatformWindowCommandOutcome::Rejected;
-        }
-        // User32 may report FALSE when this exact HWND already owns the foreground after an
-        // earlier synchronous activation side effect. The final exact readback is therefore part
-        // of the adapter's dispatch result; it does not replace GPUI's generation-bound positive
-        // observation, which remains the authority that settles the activation ticket.
-        if foreground_accepted || unsafe { GetForegroundWindow() == hwnd } {
+        if activation_accepted {
+            if let Some(authority) = restored_authority.as_ref() {
+                self.consume_provisional_activation_z_order(authority);
+            }
             PlatformWindowCommandOutcome::Accepted
         } else {
             PlatformWindowCommandOutcome::Rejected
@@ -3411,6 +4586,153 @@ impl WindowsWindowInner {
     #[cfg(test)]
     pub(crate) fn reject_next_activation_command_for_test(&self) {
         self.state.reject_next_activation_command.set(true);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn next_activation_command_rejection_is_armed_for_test(&self) -> bool {
+        self.state.reject_next_activation_command.get()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn minimize_before_next_activation_command_for_test(&self) {
+        assert!(
+            !self
+                .state
+                .minimize_before_next_activation_command
+                .replace(true),
+            "the minimized-activation test seam must be armed only once"
+        );
+    }
+
+    #[cfg(test)]
+    pub(crate) fn revoke_activation_admission_after_next_active_status_for_test(&self) {
+        assert_eq!(
+            self.state
+                .activation_admission_test_state
+                .replace(ActivationAdmissionTestState::RevokeAfterNextActiveStatus),
+            ActivationAdmissionTestState::Admitted,
+            "the activation-admission test seam must be armed from its admitted state"
+        );
+    }
+
+    #[cfg(test)]
+    pub(crate) fn revoke_activation_admission_after_next_minimized_restore_for_test(&self) {
+        assert_eq!(
+            self.state
+                .activation_admission_test_state
+                .replace(ActivationAdmissionTestState::RevokeAfterNextMinimizedRestore),
+            ActivationAdmissionTestState::Admitted,
+            "the minimized-restore admission test seam must be armed from its admitted state"
+        );
+    }
+
+    #[cfg(test)]
+    pub(crate) fn restore_activation_admission_for_test(&self) -> bool {
+        self.state
+            .activation_admission_test_state
+            .replace(ActivationAdmissionTestState::Admitted)
+            == ActivationAdmissionTestState::Revoked
+    }
+
+    #[cfg(test)]
+    pub(crate) fn unadmitted_activation_rejection_count_for_test(&self) -> u64 {
+        self.state.unadmitted_activation_rejection_count.get()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn has_provisional_activation_z_order_for_test(&self) -> bool {
+        self.state
+            .provisional_activation_z_order
+            .borrow()
+            .has_authority()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn provisional_activation_z_order_is_invalidated_for_test(&self) -> bool {
+        self.state
+            .provisional_activation_z_order
+            .borrow()
+            .is_invalidated()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn provisional_activation_z_order_is_armed_for_test(&self) -> bool {
+        self.state
+            .provisional_activation_z_order
+            .borrow()
+            .is_armed()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn provisional_activation_z_order_recovery_retry_is_scheduled_for_test(
+        &self,
+    ) -> bool {
+        self.state
+            .provisional_activation_z_order_recovery
+            .borrow()
+            .retry_is_scheduled()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn provisional_activation_z_order_recovery_is_parked_for_test(&self) -> bool {
+        self.state
+            .provisional_activation_z_order_recovery
+            .borrow()
+            .is_parked()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fail_next_provisional_activation_z_order_apply_for_test(&self) {
+        self.state
+            .fail_next_provisional_activation_z_order_apply
+            .set(true);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn next_provisional_activation_z_order_apply_failure_is_armed_for_test(
+        &self,
+    ) -> bool {
+        self.state
+            .fail_next_provisional_activation_z_order_apply
+            .get()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn drift_provisional_activation_topology_generation_for_test(&self) {
+        let mut state = self.state.provisional_activation_z_order.borrow_mut();
+        let authority = state
+            .settled_authority_mut()
+            .expect("the native topology-drift seam requires settled z-order authority");
+        let geometry = authority.physical_geometry();
+        let display = geometry
+            .display_observation()
+            .expect("Windows provisional z-order authority should be display-bound");
+        let topology_generation =
+            display
+                .topology_generation()
+                .checked_add(1)
+                .unwrap_or_else(|| {
+                    display
+                        .topology_generation()
+                        .checked_sub(1)
+                        .expect("a display topology generation is always nonzero")
+                });
+        let drifted_display = PlatformPhysicalDisplayObservation::try_new(
+            topology_generation,
+            display.display_id(),
+            display.bounds(),
+            display.visible_bounds(),
+            display.scale_factor(),
+        )
+        .expect("the drifted display observation should remain coherent");
+        authority.replace_physical_geometry_for_test(
+            PlatformWindowPhysicalGeometry::try_new(
+                geometry.client_bounds(),
+                geometry.scale_factor(),
+            )
+            .and_then(|geometry| geometry.with_display_observation(drifted_display))
+            .expect("the topology-only drift should preserve coherent client geometry"),
+        );
     }
 
     /// Applies a fullscreen transition on the window-owning thread.
@@ -4223,6 +5545,7 @@ impl WindowsWindowInner {
         Ok(AppliedProvisionalFinalPlacement {
             facts,
             platform_facts,
+            prepared_z_order: prepared,
             native_authority,
             rollback,
             applied,
@@ -5254,32 +6577,7 @@ impl WindowsWindowInner {
     }
 
     fn physical_client_bounds_observation(&self) -> Result<Bounds<DevicePixels>> {
-        let mut client_rect = RECT::default();
-        unsafe { GetClientRect(self.hwnd, &mut client_rect) }
-            .context("failed to read native client bounds")?;
-        let mut client_origin = POINT {
-            x: client_rect.left,
-            y: client_rect.top,
-        };
-        unsafe { ClientToScreen(self.hwnd, &mut client_origin) }
-            .ok()
-            .context("failed to read native client origin")?;
-        let width = client_rect
-            .right
-            .checked_sub(client_rect.left)
-            .context("native client width overflowed")?;
-        let height = client_rect
-            .bottom
-            .checked_sub(client_rect.top)
-            .context("native client height overflowed")?;
-        anyhow::ensure!(
-            width >= 0 && height >= 0,
-            "native client bounds were inverted"
-        );
-        Ok(Bounds::new(
-            Point::new(DevicePixels(client_origin.x), DevicePixels(client_origin.y)),
-            size(DevicePixels(width), DevicePixels(height)),
-        ))
+        native_physical_client_bounds(self.hwnd)
     }
 
     fn validate_physical_placement_target(
@@ -5521,6 +6819,7 @@ impl WindowsWindowInner {
                     .placement_mutation_generation
                     .set(Some(generation));
                 self.state.deferred_placement_mutation.set(None);
+                self.prepare_provisional_activation_z_order_mutation(generation);
             }
             WindowMutationDomain::PointerInput => {
                 self.state
@@ -5541,6 +6840,14 @@ impl WindowsWindowInner {
     fn invalidate_window_mutation(&self, domain: WindowMutationDomain) {
         match domain {
             WindowMutationDomain::Placement => {
+                self.state
+                    .provisional_activation_z_order
+                    .borrow_mut()
+                    .clear();
+                self.state
+                    .provisional_activation_z_order_recovery
+                    .borrow_mut()
+                    .cancel();
                 self.state.placement_mutation_generation.set(None);
                 self.state.deferred_placement_mutation.set(None);
             }
@@ -5655,12 +6962,15 @@ impl WindowsWindowInner {
     }
 
     fn emit_window_mutation_observation(
-        &self,
+        self: &Rc<Self>,
         domain: WindowMutationDomain,
         generation: u64,
         terminal: PlatformWindowMutationTerminal,
         facts: WindowPlatformFacts,
     ) {
+        if domain == WindowMutationDomain::Placement {
+            self.finish_provisional_activation_z_order_mutation(generation, terminal.into());
+        }
         let _ = with_windows_callback(
             &self.state.callbacks.window_mutation_observation,
             |callback| {
@@ -6911,6 +8221,18 @@ impl PlatformWindow for WindowsWindow {
 
     fn prepare_window_mutation(&self, domain: WindowMutationDomain, generation: u64) {
         self.0.prepare_window_mutation(domain, generation);
+    }
+
+    fn finish_window_mutation_without_observation(
+        &self,
+        domain: WindowMutationDomain,
+        generation: u64,
+        terminal: PlatformWindowMutationUnobservedTerminal,
+    ) {
+        if domain == WindowMutationDomain::Placement {
+            self.0
+                .finish_provisional_activation_z_order_mutation(generation, terminal.into());
+        }
     }
 
     fn invalidate_window_mutation(&self, domain: WindowMutationDomain) {
