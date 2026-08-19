@@ -6,9 +6,7 @@ mod edge;
 mod model;
 
 pub(crate) use availability::validate_resolved_drop_target;
-use candidate::{
-    DockDropCandidate, choose_drop_candidate, push_drop_candidate, push_prioritized_drop_candidate,
-};
+use candidate::DockDropCandidateAccumulator;
 use edge::{
     best_leaf_containing, best_leaf_for_root_containing, leaf_bounds_for_tabs, leaf_guide_target,
     resolve_leaf_drop, resolve_root_edge_drop, root_guide_target,
@@ -22,8 +20,7 @@ pub(crate) use model::{
 };
 
 pub(crate) fn resolve_layout_drop(input: DockDropResolverInput<'_>) -> Option<DockDropResolution> {
-    let candidates = collect_drop_candidates(&input);
-    choose_drop_candidate(candidates, input.policy, input.target_validator)
+    collect_drop_candidates(&input).finish()
 }
 
 pub(crate) fn resolve_layout_drop_guide(
@@ -37,18 +34,17 @@ pub(crate) fn resolve_layout_drop_guide(
     target.availability.any().then_some(target)
 }
 
-fn collect_drop_candidates(input: &DockDropResolverInput<'_>) -> Vec<DockDropCandidate> {
-    let mut candidates = Vec::new();
-    let mut order = 0;
+fn collect_drop_candidates<'a>(
+    input: &'a DockDropResolverInput<'a>,
+) -> DockDropCandidateAccumulator<'a> {
+    let mut candidates = DockDropCandidateAccumulator::new(input.policy, input.target_validator);
 
     for target in input
         .empty_spaces
         .iter()
         .filter(|target| target.bounds.contains(&input.position))
     {
-        push_drop_candidate(
-            &mut candidates,
-            &mut order,
+        candidates.push(
             DockResolvedDropTarget {
                 kind: DockResolvedDropTargetKind::EmptyDockSpace {
                     space: target.space.clone(),
@@ -89,7 +85,7 @@ fn collect_drop_candidates(input: &DockDropResolverInput<'_>) -> Vec<DockDropCan
         let hit_bounds = target
             .drop_box
             .map_or(leaf.bounds, |drop_box| drop_box.hit_bounds);
-        push_drop_candidate(&mut candidates, &mut order, target, hit_bounds);
+        candidates.push(target, hit_bounds);
     }
 
     for target in input
@@ -101,9 +97,7 @@ fn collect_drop_candidates(input: &DockDropResolverInput<'_>) -> Vec<DockDropCan
         let target_bounds =
             leaf_bounds_for_tabs(input.leaves, target.target_tabs, input.excluded_nodes)
                 .unwrap_or(target.bounds);
-        push_drop_candidate(
-            &mut candidates,
-            &mut order,
+        candidates.push(
             DockResolvedDropTarget {
                 kind: DockResolvedDropTargetKind::TabBar {
                     target_tabs: target.target_tabs,
@@ -144,9 +138,7 @@ fn collect_drop_candidates(input: &DockDropResolverInput<'_>) -> Vec<DockDropCan
         } else {
             target.bounds.right()
         };
-        push_drop_candidate(
-            &mut candidates,
-            &mut order,
+        candidates.push(
             DockResolvedDropTarget {
                 kind: DockResolvedDropTargetKind::TabBar {
                     target_tabs: target.target_tabs,
@@ -179,9 +171,7 @@ fn collect_drop_candidates(input: &DockDropResolverInput<'_>) -> Vec<DockDropCan
         })
         .filter(|target| target.title_bounds.contains(&input.position))
     {
-        push_drop_candidate(
-            &mut candidates,
-            &mut order,
+        candidates.push(
             DockResolvedDropTarget {
                 kind: DockResolvedDropTargetKind::FloatingTitleBar {
                     floating: target.floating,
@@ -219,7 +209,7 @@ fn collect_drop_candidates(input: &DockDropResolverInput<'_>) -> Vec<DockDropCan
         let hit_bounds = target
             .drop_box
             .map_or(root_bounds, |drop_box| drop_box.hit_bounds);
-        push_prioritized_drop_candidate(&mut candidates, &mut order, target, hit_bounds, 1);
+        candidates.push_with_priority(target, hit_bounds, 1);
     }
 
     candidates

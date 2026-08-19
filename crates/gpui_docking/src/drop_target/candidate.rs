@@ -6,62 +6,47 @@ use super::{
     validate_resolved_drop_target,
 };
 
-#[derive(Debug)]
-pub(super) struct DockDropCandidate {
-    target: DockResolvedDropTarget,
-    hit_bounds: Bounds<Pixels>,
-    priority: u8,
-    order: usize,
+type RankedResolution = (Bounds<Pixels>, u8, usize, DockDropResolution);
+
+pub(super) struct DockDropCandidateAccumulator<'a> {
+    policy: &'a DockPolicy,
+    target_validator: Option<&'a DockDropTargetValidator<'a>>,
+    next_order: usize,
+    best_valid: Option<RankedResolution>,
+    best_rejection: Option<RankedResolution>,
 }
 
-pub(super) fn push_drop_candidate(
-    candidates: &mut Vec<DockDropCandidate>,
-    order: &mut usize,
-    target: DockResolvedDropTarget,
-    hit_bounds: Bounds<Pixels>,
-) {
-    candidates.push(DockDropCandidate {
-        target,
-        hit_bounds,
-        priority: 0,
-        order: *order,
-    });
-    *order += 1;
-}
+impl<'a> DockDropCandidateAccumulator<'a> {
+    pub(super) fn new(
+        policy: &'a DockPolicy,
+        target_validator: Option<&'a DockDropTargetValidator<'a>>,
+    ) -> Self {
+        Self {
+            policy,
+            target_validator,
+            next_order: 0,
+            best_valid: None,
+            best_rejection: None,
+        }
+    }
 
-pub(super) fn push_prioritized_drop_candidate(
-    candidates: &mut Vec<DockDropCandidate>,
-    order: &mut usize,
-    target: DockResolvedDropTarget,
-    hit_bounds: Bounds<Pixels>,
-    priority: u8,
-) {
-    candidates.push(DockDropCandidate {
-        target,
-        hit_bounds,
-        priority,
-        order: *order,
-    });
-    *order += 1;
-}
+    pub(super) fn push(&mut self, target: DockResolvedDropTarget, hit_bounds: Bounds<Pixels>) {
+        self.push_with_priority(target, hit_bounds, 0);
+    }
 
-pub(super) fn choose_drop_candidate(
-    candidates: Vec<DockDropCandidate>,
-    policy: &DockPolicy,
-    target_validator: Option<&DockDropTargetValidator<'_>>,
-) -> Option<DockDropResolution> {
-    let mut best_valid = None;
-    let mut best_rejection = None;
-
-    for candidate in candidates {
-        let hit_bounds = candidate.hit_bounds;
-        let priority = candidate.priority;
-        let order = candidate.order;
-        let resolution = validate_resolved_drop_target(candidate.target, policy, target_validator);
+    pub(super) fn push_with_priority(
+        &mut self,
+        target: DockResolvedDropTarget,
+        hit_bounds: Bounds<Pixels>,
+        priority: u8,
+    ) {
+        let order = self.next_order;
+        self.next_order += 1;
+        let resolution = validate_resolved_drop_target(target, self.policy, self.target_validator);
         let slot = if resolution.is_valid() {
-            &mut best_valid
+            &mut self.best_valid
         } else {
-            &mut best_rejection
+            &mut self.best_rejection
         };
 
         if candidate_beats_current(hit_bounds, priority, order, slot.as_ref()) {
@@ -69,16 +54,18 @@ pub(super) fn choose_drop_candidate(
         }
     }
 
-    best_valid
-        .or(best_rejection)
-        .map(|(_, _, _, resolution)| resolution)
+    pub(super) fn finish(self) -> Option<DockDropResolution> {
+        self.best_valid
+            .or(self.best_rejection)
+            .map(|(_, _, _, resolution)| resolution)
+    }
 }
 
 fn candidate_beats_current(
     hit_bounds: Bounds<Pixels>,
     priority: u8,
     order: usize,
-    current: Option<&(Bounds<Pixels>, u8, usize, DockDropResolution)>,
+    current: Option<&RankedResolution>,
 ) -> bool {
     let Some((current_bounds, current_priority, current_order, _)) = current else {
         return true;
