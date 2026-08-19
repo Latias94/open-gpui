@@ -1017,6 +1017,279 @@ fn owned_nonactivating_first_show_preserves_z_order_and_later_activation() {
 }
 
 #[test]
+fn retiring_owner_detaches_live_transient_child_without_tearing_it_down() {
+    discard_stale_quit_messages();
+
+    let platform = Rc::new(
+        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+    );
+    let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
+    let owner = app
+        .update_for_test(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::centered(size(px(320.0), px(220.0)), cx)),
+                    show: true,
+                    ..WindowOptions::default()
+                },
+                |_, cx| cx.new(|_| Empty),
+            )
+        })
+        .expect("transient owner should open");
+    let owner_id = owner.window_id();
+    let owner_registration = platform
+        .raw_window_handles
+        .read()
+        .iter()
+        .find(|registration| registration.window_id() == owner_id)
+        .copied()
+        .expect("transient owner should register an HWND");
+    let owner_hwnd = owner_registration.as_raw();
+    let expected_owner = AnyWindowHandle::from(owner);
+    let transient_owner = app.update_for_test(|cx| {
+        cx.transient_window_owner(expected_owner)
+            .expect("the live owner should produce a transient-owner token")
+    });
+    let child = app
+        .update_for_test(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    kind: WindowKind::Dialog,
+                    window_bounds: Some(WindowBounds::centered(size(px(260.0), px(180.0)), cx)),
+                    focus_on_appearing: false,
+                    transient_for: Some(transient_owner),
+                    show: true,
+                    ..WindowOptions::default()
+                },
+                |_, cx| cx.new(|_| Empty),
+            )
+        })
+        .expect("live transient child should open");
+    let child_id = child.window_id();
+    let child_registration = platform
+        .raw_window_handles
+        .read()
+        .iter()
+        .find(|registration| registration.window_id() == child_id)
+        .copied()
+        .expect("live transient child should register an HWND");
+    let child_hwnd = child_registration.as_raw();
+    let child_native = platform
+        .window_from_hwnd(child_hwnd)
+        .expect("live transient child should expose native state");
+
+    pump_messages_until_idle("owner-first transient setup");
+    assert_eq!(
+        unsafe { GetWindow(child_hwnd, GW_OWNER) }
+            .expect("the live transient child should retain its native owner"),
+        owner_hwnd
+    );
+    assert!(
+        !unsafe { IsWindowEnabled(owner_hwnd).as_bool() },
+        "a live dialog should own the modal disable claim before owner retirement"
+    );
+    platform.lifecycle_test_probe.clear_events();
+
+    post_message(owner_hwnd, WM_CLOSE, WPARAM::default(), LPARAM::default());
+    let close_trace = pump_messages_until("owner-first transient owner retirement", || {
+        let owner_closed =
+            app.update_for_test(|cx| expected_owner.update(cx, |_, _, _| ()).is_err());
+        !unsafe { IsWindow(Some(owner_hwnd)).as_bool() }
+            && !is_registered(&platform, owner_hwnd)
+            && owner_closed
+    });
+    assert!(close_trace.contains(owner_hwnd, WM_CLOSE));
+    pump_messages_until_idle("owner-first transient owner retirement follow-up");
+
+    assert!(
+        unsafe { IsWindow(Some(child_hwnd)).as_bool() },
+        "retiring the owner must not destroy a live transient child"
+    );
+    assert!(
+        unsafe { IsWindowVisible(child_hwnd).as_bool() },
+        "retiring the owner must not hide a live transient child"
+    );
+    let current_child = platform
+        .window_from_hwnd(child_hwnd)
+        .expect("the live transient child should remain registered");
+    assert!(Rc::ptr_eq(&current_child, &child_native));
+    assert!(current_child.registration.matches(child_registration));
+    assert!(
+        unsafe { GetWindow(child_hwnd, GW_OWNER) }.is_err(),
+        "the surviving transient child must detach from the retiring native owner"
+    );
+    let (creation_facts, child_facts) = app.update_for_test(|cx| {
+        child
+            .update(cx, |_, window, _| {
+                (
+                    window.creation_facts().clone(),
+                    window.platform_facts().clone(),
+                )
+            })
+            .expect("the surviving transient child should remain a live logical window")
+    });
+    assert_eq!(creation_facts.transient_for, Some(expected_owner));
+    assert_eq!(
+        child_facts.window_bounds,
+        current_child
+            .observed_platform_facts_for_test()
+            .expect("surviving transient child native facts should remain observable")
+            .window_bounds
+    );
+    assert!(
+        platform
+            .lifecycle_test_probe
+            .events()
+            .iter()
+            .all(|event| !matches!(
+                event,
+                NativeWindowLifecycleTestEvent::DestroyEntered { window_id, .. }
+                    | NativeWindowLifecycleTestEvent::NativeTerminal { window_id, .. }
+                    if *window_id == child_id
+            )),
+        "owner retirement must not enter the child native teardown lifecycle"
+    );
+
+    app.update_for_test(|cx| child.update(cx, |_, window, cx| window.remove_window(cx)))
+        .expect("surviving transient child should close independently");
+    pump_messages_until("owner-first transient child teardown", || {
+        !unsafe { IsWindow(Some(child_hwnd)).as_bool() } && !is_registered(&platform, child_hwnd)
+    });
+    pump_messages_until_idle("owner-first transient child teardown follow-up");
+}
+
+#[test]
+fn sibling_dialogs_hold_modal_parent_disabled_until_the_last_child_closes() {
+    discard_stale_quit_messages();
+
+    let platform = Rc::new(
+        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+    );
+    let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
+    let owner = app
+        .update_for_test(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::centered(size(px(320.0), px(220.0)), cx)),
+                    show: true,
+                    ..WindowOptions::default()
+                },
+                |_, cx| cx.new(|_| Empty),
+            )
+        })
+        .expect("modal owner should open");
+    let owner_id = owner.window_id();
+    let owner_hwnd = platform
+        .raw_window_handles
+        .read()
+        .iter()
+        .find(|registration| registration.window_id() == owner_id)
+        .copied()
+        .expect("modal owner should register an HWND")
+        .as_raw();
+    let expected_owner = AnyWindowHandle::from(owner);
+
+    let first_owner = app.update_for_test(|cx| {
+        cx.transient_window_owner(expected_owner)
+            .expect("the live owner should produce the first transient-owner token")
+    });
+    let first = app
+        .update_for_test(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    kind: WindowKind::Dialog,
+                    window_bounds: Some(WindowBounds::centered(size(px(260.0), px(180.0)), cx)),
+                    focus_on_appearing: false,
+                    transient_for: Some(first_owner),
+                    show: true,
+                    ..WindowOptions::default()
+                },
+                |_, cx| cx.new(|_| Empty),
+            )
+        })
+        .expect("first sibling dialog should open");
+    let first_id = first.window_id();
+    let first_hwnd = platform
+        .raw_window_handles
+        .read()
+        .iter()
+        .find(|registration| registration.window_id() == first_id)
+        .copied()
+        .expect("first sibling dialog should register an HWND")
+        .as_raw();
+
+    let second_owner = app.update_for_test(|cx| {
+        cx.transient_window_owner(expected_owner)
+            .expect("the live owner should produce the second transient-owner token")
+    });
+    let second = app
+        .update_for_test(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    kind: WindowKind::Dialog,
+                    window_bounds: Some(WindowBounds::centered(size(px(280.0), px(200.0)), cx)),
+                    focus_on_appearing: false,
+                    transient_for: Some(second_owner),
+                    show: true,
+                    ..WindowOptions::default()
+                },
+                |_, cx| cx.new(|_| Empty),
+            )
+        })
+        .expect("second sibling dialog should open");
+    let second_id = second.window_id();
+    let second_hwnd = platform
+        .raw_window_handles
+        .read()
+        .iter()
+        .find(|registration| registration.window_id() == second_id)
+        .copied()
+        .expect("second sibling dialog should register an HWND")
+        .as_raw();
+
+    pump_messages_until_idle("sibling dialog setup");
+    assert_eq!(
+        unsafe { GetWindow(first_hwnd, GW_OWNER) }.expect("first dialog should retain its owner"),
+        owner_hwnd
+    );
+    assert_eq!(
+        unsafe { GetWindow(second_hwnd, GW_OWNER) }.expect("second dialog should retain its owner"),
+        owner_hwnd
+    );
+    assert!(
+        !unsafe { IsWindowEnabled(owner_hwnd).as_bool() },
+        "a live sibling dialog set must disable its modal owner"
+    );
+
+    app.update_for_test(|cx| first.update(cx, |_, window, cx| window.remove_window(cx)))
+        .expect("first sibling dialog should close");
+    pump_messages_until("first sibling dialog teardown", || {
+        !unsafe { IsWindow(Some(first_hwnd)).as_bool() } && !is_registered(&platform, first_hwnd)
+    });
+    assert!(unsafe { IsWindow(Some(second_hwnd)).as_bool() });
+    assert!(
+        !unsafe { IsWindowEnabled(owner_hwnd).as_bool() },
+        "closing one sibling dialog must not re-enable an owner with another live dialog"
+    );
+
+    app.update_for_test(|cx| second.update(cx, |_, window, cx| window.remove_window(cx)))
+        .expect("second sibling dialog should close");
+    pump_messages_until("second sibling dialog teardown", || {
+        !unsafe { IsWindow(Some(second_hwnd)).as_bool() } && !is_registered(&platform, second_hwnd)
+    });
+    assert!(
+        unsafe { IsWindowEnabled(owner_hwnd).as_bool() },
+        "the final sibling dialog release must restore the live modal owner"
+    );
+
+    app.update_for_test(|cx| owner.update(cx, |_, window, cx| window.remove_window(cx)))
+        .expect("modal owner should close independently");
+    pump_messages_until("sibling dialog owner teardown", || {
+        !unsafe { IsWindow(Some(owner_hwnd)).as_bool() } && !is_registered(&platform, owner_hwnd)
+    });
+}
+
+#[test]
 fn owned_nonactivating_maximized_first_show_preserves_focus_and_restore_bounds() {
     discard_stale_quit_messages();
 
@@ -7551,10 +7824,8 @@ fn mismatched_registered_generation_blocks_teardown_without_raw_destroy() {
 
     let native_window = crate::window_from_hwnd(native_hwnd)
         .expect("ambiguous retirement must retain the managed native owner until it terminals");
-    assert!(
-        native_window.destroy_native_window(),
-        "an externally terminal native window should still accept its exact teardown"
-    );
+    unsafe { DestroyWindow(native_hwnd) }
+        .expect("the test-owned HWND should accept an externally initiated native terminal");
     drop(native_window);
     pump_messages_until_with_delay(
         "ambiguous native owner terminal",

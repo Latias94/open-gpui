@@ -213,7 +213,7 @@ impl PendingNativeWindowFinalization {
     fn exact(window: Rc<WindowsWindowInner>, source: PendingNativeWindowSource) -> Self {
         Self {
             registration: window.registration,
-            owner_window_id: window.native_owner_window_id(),
+            owner_window_id: window.retirement_owner_window_id(),
             identity: PendingNativeWindowIdentity::Exact(window),
             source,
         }
@@ -222,7 +222,7 @@ impl PendingNativeWindowFinalization {
     fn from_registered_window(registration: RegisteredWindow) -> Self {
         let (identity, owner_window_id) = match window_from_hwnd(registration.as_raw()) {
             Some(window) if window.registration.matches(registration) => {
-                let owner_window_id = window.native_owner_window_id();
+                let owner_window_id = window.retirement_owner_window_id();
                 (PendingNativeWindowIdentity::Exact(window), owner_window_id)
             }
             Some(window) => (
@@ -253,11 +253,17 @@ impl PendingNativeWindowFinalization {
             return;
         };
         if window.registration.matches(self.registration) {
-            self.owner_window_id = window.native_owner_window_id();
+            self.owner_window_id = window.retirement_owner_window_id();
             self.identity = PendingNativeWindowIdentity::Exact(window);
         } else {
             self.owner_window_id = None;
             self.identity = PendingNativeWindowIdentity::Ambiguous { _window: window };
+        }
+    }
+
+    fn refresh_owner_obligation(&mut self) {
+        if let PendingNativeWindowIdentity::Exact(window) = &self.identity {
+            self.owner_window_id = window.retirement_owner_window_id();
         }
     }
 
@@ -846,7 +852,7 @@ impl WindowsPlatform {
         window.registration.matches(registered).then_some(window)
     }
 
-    fn native_owner_for(&self, owner: AnyWindowHandle) -> Result<HWND> {
+    fn native_owner_for(&self, owner: AnyWindowHandle) -> Result<RegisteredWindow> {
         let registered = {
             let registered_windows = self.raw_window_handles.read();
             registered_windows
@@ -867,7 +873,7 @@ impl WindowsPlatform {
                 && window.handle.window_id() == owner.window_id(),
             "transient owner no longer matches its registered window generation"
         );
-        Ok(hwnd)
+        Ok(registered)
     }
 
     fn generate_creation_info(
@@ -916,17 +922,16 @@ impl WindowsPlatform {
                 "display topology changed after GPUI resolved the window creation placement"
             );
         }
-        let transient_owner_hwnd = options
+        let transient_owner = options
             .transient_for
             .map(|owner| self.native_owner_for(owner))
             .transpose()?;
         let window = WindowsWindow::new(
             handle,
             options,
-            transient_owner_hwnd,
+            transient_owner,
             self.generate_creation_info(display_topology),
         )?;
-        self.raw_window_handles.write().push(window.0.registration);
 
         Ok(Box::new(window))
     }
@@ -2940,6 +2945,10 @@ impl WindowsPlatformInner {
                 coordinator.finalization.take(),
             )
         };
+
+        for pending in &mut pending_windows {
+            pending.refresh_owner_obligation();
+        }
 
         if let Some(finalization) = finalization.as_ref() {
             for pending in &mut pending_windows {

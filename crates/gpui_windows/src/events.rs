@@ -1368,12 +1368,8 @@ impl WindowsWindowInner {
         if !should_close {
             return Some(0);
         }
-        let shutdown = self.presentation_shutdown_ticket();
-        if self.quiesce_presentation(&shutdown) == PlatformPresentationShutdownOutcome::Quiesced {
-            None
-        } else {
-            Some(0)
-        }
+        self.retire_native_window_from_close_request();
+        Some(0)
     }
 
     fn handle_destroy_msg(&self) -> Option<isize> {

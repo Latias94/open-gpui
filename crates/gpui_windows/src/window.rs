@@ -38,6 +38,7 @@ use crate::*;
 use open_gpui::*;
 
 mod provisional_z_order;
+mod transient_owner;
 
 use provisional_z_order::{
     NativeZOrderWindowIdentity, PreparedProvisionalZOrderBand,
@@ -48,6 +49,11 @@ use provisional_z_order::{
     ProvisionalActivationZOrderRefresh, ProvisionalActivationZOrderSnapshot,
     ProvisionalActivationZOrderState, classify_activation_window_authority,
     retain_current_registered_windows,
+};
+use transient_owner::{
+    ModalParentClaim, ModalParentGuard, NativeOwnerRetirementPreparation,
+    NativeTransientChildRetirementPreparation, NativeTransientOwnerBinding,
+    NativeTransientOwnerState,
 };
 
 pub(crate) struct WindowsWindow(pub Rc<WindowsWindowInner>);
@@ -506,9 +512,23 @@ impl RegisteredWindowAuthority {
             .raw_window_handles
             .upgrade()
             .context("native window registry is no longer available")?;
+        let authority = Self::from_registration(window.registration, registry)?;
+        anyhow::ensure!(
+            Rc::ptr_eq(&authority.window, window),
+            "registered native-window authority resolved a replaced window owner"
+        );
+        Ok(authority)
+    }
+
+    fn from_registration(
+        registration: RegisteredWindow,
+        registry: Arc<RegisteredWindows>,
+    ) -> Result<Self> {
+        let window = window_from_hwnd(registration.as_raw())
+            .context("registered native window has no live GPUI window state")?;
         let authority = Self {
-            window: window.clone(),
-            registration: window.registration,
+            window,
+            registration,
             registry,
         };
         authority.ensure_current("capturing registered native-window authority")?;
@@ -766,43 +786,6 @@ impl Drop for ConstructionRetirementGuard {
     }
 }
 
-struct ModalParentGuard {
-    hwnd: Option<HWND>,
-}
-
-impl ModalParentGuard {
-    fn acquire(parent_hwnd: Option<HWND>) -> Self {
-        let hwnd = parent_hwnd.filter(|parent_hwnd| unsafe {
-            if !IsWindowEnabled(*parent_hwnd).as_bool() {
-                return false;
-            }
-            let _ = EnableWindow(*parent_hwnd, false);
-            true
-        });
-        Self { hwnd }
-    }
-
-    fn owns_disable(&self) -> bool {
-        self.hwnd.is_some()
-    }
-
-    fn commit(mut self) {
-        self.hwnd = None;
-    }
-}
-
-impl Drop for ModalParentGuard {
-    fn drop(&mut self) {
-        let Some(hwnd) = self.hwnd.take() else {
-            return;
-        };
-        unsafe {
-            let _ = EnableWindow(hwnd, true);
-            let _ = SetForegroundWindow(hwnd);
-        }
-    }
-}
-
 impl std::ops::Deref for WindowsWindow {
     type Target = WindowsWindowInner;
 
@@ -976,8 +959,8 @@ pub(crate) struct WindowsWindowInner {
     pub(crate) platform_window_handle: HWND,
     raw_window_handles: std::sync::Weak<RegisteredWindows>,
     pub(crate) native_retirement_coordinator: std::rc::Weak<WindowsPlatformInner>,
-    owner_hwnd: Option<HWND>,
-    modal_parent_disabled: Cell<bool>,
+    modal_parent_claim_count: Cell<usize>,
+    native_transient_owner: NativeTransientOwnerBinding,
     #[cfg(test)]
     lifecycle_test_probe: Rc<NativeWindowLifecycleTestProbe>,
 }
@@ -1392,8 +1375,11 @@ impl WindowsWindowInner {
             raw_window_handles: context.raw_window_handles.clone(),
             native_retirement_coordinator: context.native_retirement_coordinator.clone(),
             system_settings: WindowsSystemSettings::new(),
-            owner_hwnd: context.owner_hwnd,
-            modal_parent_disabled: Cell::new(context.modal_parent_disabled),
+            modal_parent_claim_count: Cell::new(0),
+            native_transient_owner: NativeTransientOwnerBinding::new(
+                context.owner_registration,
+                context.modal_parent_claim.take(),
+            ),
             #[cfg(test)]
             lifecycle_test_probe: context.lifecycle_test_probe.clone(),
         }))
@@ -1410,9 +1396,9 @@ impl WindowsWindowInner {
             && self.registration.generation() == generation
     }
 
-    pub(crate) fn native_owner_window_id(&self) -> Option<WindowId> {
-        self.creation_facts
-            .transient_for
+    pub(crate) fn retirement_owner_window_id(&self) -> Option<WindowId> {
+        self.native_transient_owner
+            .owner_registration()
             .map(|owner| owner.window_id())
     }
 
@@ -1442,6 +1428,22 @@ impl WindowsWindowInner {
         {
             raw_window_handles.remove(index);
         }
+    }
+
+    fn register_with_platform(&self) -> Result<()> {
+        let registry = self
+            .raw_window_handles
+            .upgrade()
+            .context("native window registry is no longer available")?;
+        let mut registrations = registry.write();
+        anyhow::ensure!(
+            !registrations
+                .iter()
+                .any(|registered| registered.as_raw() == self.hwnd),
+            "native HWND was already registered before WM_NCCREATE committed its exact owner"
+        );
+        registrations.push(self.registration);
+        Ok(())
     }
 
     pub(crate) fn mark_native_window_destroying(&self) {
@@ -1563,6 +1565,7 @@ impl WindowsWindowInner {
         self.settle_pointer_capture_before_native_teardown();
         self.native_window_lifecycle
             .set(NativeWindowLifecycle::Destroyed);
+        self.unregister_from_platform();
         self.retire_native_callbacks();
         self.drag_drop_registered.set(false);
         self.release_modal_parent();
@@ -1572,16 +1575,128 @@ impl WindowsWindowInner {
     }
 
     pub(crate) fn release_modal_parent(&self) {
-        if !self.modal_parent_disabled.replace(false) {
-            return;
+        if let Err(error) = self.native_transient_owner.release_modal_parent() {
+            log::error!("failed to release exact registered modal parent: {error:#}");
         }
-        let Some(parent_hwnd) = self.owner_hwnd else {
-            return;
+    }
+
+    fn prepare_transient_child_for_native_owner_retirement(
+        &self,
+        child_authority: &RegisteredWindowAuthority,
+        owner_authority: &RegisteredWindowAuthority,
+    ) -> Result<NativeTransientChildRetirementPreparation> {
+        let owner_hwnd = owner_authority
+            .ensure_current("preparing a registered transient owner for retirement")?;
+        let child_hwnd = child_authority
+            .ensure_current("preparing a registered transient child for owner retirement")?;
+        let observed_owner = unsafe { GetWindow(child_hwnd, GW_OWNER) }.ok();
+        let binding_state = self.native_transient_owner.state();
+        let binding_matches = self
+            .native_transient_owner
+            .owner_registration()
+            .is_some_and(|owner| owner.matches(owner_authority.registration));
+        if !binding_matches {
+            anyhow::ensure!(
+                observed_owner != Some(owner_hwnd),
+                "native transient child referenced the retiring owner without matching generation-bound binding"
+            );
+            return Ok(NativeTransientChildRetirementPreparation::Unrelated);
+        }
+        if self.presentation_shutdown_claimed() {
+            return Ok(NativeTransientChildRetirementPreparation::RetirementPending);
+        }
+
+        match binding_state {
+            NativeTransientOwnerState::Attached(_) => anyhow::ensure!(
+                observed_owner == Some(owner_hwnd),
+                "attached native transient binding did not match the retiring owner"
+            ),
+            NativeTransientOwnerState::TemporarilyDetached(_) => anyhow::ensure!(
+                observed_owner.is_none() || observed_owner == Some(owner_hwnd),
+                "temporarily detached native transient child acquired an unrelated owner"
+            ),
+            NativeTransientOwnerState::Ownerless => {
+                unreachable!("an ownerless native transient binding cannot match a retiring owner")
+            }
+        }
+        if observed_owner == Some(owner_hwnd) {
+            self.set_window_long_checked(
+                GWLP_HWNDPARENT,
+                0,
+                "failed to detach a live transient child from its retiring owner",
+            )?;
+            child_authority.ensure_current("validating the detached registered transient child")?;
+            owner_authority
+                .ensure_current("validating the registered transient owner after child detach")?;
+            anyhow::ensure!(
+                unsafe { GetWindow(child_hwnd, GW_OWNER) }.is_err(),
+                "live transient child retained its retiring native owner"
+            );
+        }
+        self.native_transient_owner
+            .retire_for_owner_retirement(owner_authority)?;
+        Ok(NativeTransientChildRetirementPreparation::Detached)
+    }
+
+    fn prepare_native_owner_retirement(&self) -> Result<NativeOwnerRetirementPreparation> {
+        let registry = self
+            .raw_window_handles
+            .upgrade()
+            .context("native window registry is no longer available")?;
+        let owner_authority =
+            RegisteredWindowAuthority::from_registration(self.registration, registry.clone())?;
+        anyhow::ensure!(
+            std::ptr::eq(owner_authority.window.as_ref(), self),
+            "native owner retirement resolved a replaced registered window"
+        );
+
+        owner_authority
+            .ensure_current("scanning registered transient children before owner retirement")?;
+        let registrations = {
+            let registry = registry.read();
+            registry
+                .iter()
+                .copied()
+                .collect::<SmallVec<[RegisteredWindow; 8]>>()
         };
-        unsafe {
-            let _ = EnableWindow(parent_hwnd, true);
-            let _ = SetForegroundWindow(parent_hwnd);
+        let mut detached_child = false;
+        for registration in registrations {
+            if registration.matches(self.registration) {
+                continue;
+            }
+            let observed_owner = unsafe { GetWindow(registration.as_raw(), GW_OWNER) }.ok();
+            let child_authority = match RegisteredWindowAuthority::from_registration(
+                registration,
+                registry.clone(),
+            ) {
+                Ok(authority) => authority,
+                Err(error) if observed_owner == Some(self.hwnd) => {
+                    return Err(error).context(
+                        "registered native child owned by the retiring window has ambiguous authority",
+                    );
+                }
+                Err(_) => continue,
+            };
+            match child_authority
+                .window
+                .prepare_transient_child_for_native_owner_retirement(
+                    &child_authority,
+                    &owner_authority,
+                )? {
+                NativeTransientChildRetirementPreparation::Unrelated => {}
+                NativeTransientChildRetirementPreparation::Detached => detached_child = true,
+                NativeTransientChildRetirementPreparation::RetirementPending => {
+                    return Ok(NativeOwnerRetirementPreparation::WaitingForChild);
+                }
+            }
         }
+        owner_authority
+            .ensure_current("finishing the registered transient-child retirement scan")?;
+        Ok(if detached_child {
+            NativeOwnerRetirementPreparation::Retryable
+        } else {
+            NativeOwnerRetirementPreparation::Ready
+        })
     }
 
     fn bind_presentation_shutdown_ticket(
@@ -1681,6 +1796,45 @@ impl WindowsWindowInner {
         self.destroy_native_window_with_ticket(&shutdown)
     }
 
+    pub(crate) fn retire_native_window_from_close_request(&self) {
+        if self.destroy_native_window() || self.is_native_window_terminal() {
+            return;
+        }
+        let Some(registry) = self.raw_window_handles.upgrade() else {
+            log::error!(
+                "native close request lost its registered-window authority before retirement retry"
+            );
+            return;
+        };
+        let authority = match RegisteredWindowAuthority::from_registration(
+            self.registration,
+            registry,
+        ) {
+            Ok(authority) if std::ptr::eq(authority.window.as_ref(), self) => authority,
+            Ok(_) => {
+                log::error!(
+                    "native close request resolved a replaced window; refusing raw HWND retirement"
+                );
+                return;
+            }
+            Err(error) => {
+                log::error!(
+                    "native close request could not retain exact registered authority for retirement retry: {error:#}"
+                );
+                return;
+            }
+        };
+        let window = authority.window.clone();
+        if let Some(coordinator) = self.native_retirement_coordinator.upgrade() {
+            coordinator.enqueue_app_owned_native_window(window);
+        } else {
+            log::error!(
+                "native close request lost its platform retirement coordinator; retaining the managed native owner fail-closed"
+            );
+            std::mem::forget(window);
+        }
+    }
+
     fn destroy_native_window_with_ticket(
         &self,
         shutdown: &WindowPresentationShutdownTicket,
@@ -1700,6 +1854,19 @@ impl WindowsWindowInner {
                 self.mark_native_window_destroyed();
             }
             return false;
+        }
+        match self.prepare_native_owner_retirement() {
+            Ok(NativeOwnerRetirementPreparation::Ready) => {}
+            Ok(
+                NativeOwnerRetirementPreparation::Retryable
+                | NativeOwnerRetirementPreparation::WaitingForChild,
+            ) => return false,
+            Err(error) => {
+                log::error!(
+                    "failed to prepare registered transient children before native owner retirement: {error:#}"
+                );
+                return false;
+            }
         }
         #[cfg(any(test, feature = "test-support"))]
         {
@@ -2247,6 +2414,94 @@ impl WindowsWindowInner {
         .context("failed to apply non-activating initial maximized placement")
     }
 
+    fn finish_nonactivating_show_owner_detach(
+        &self,
+        owner: RegisteredWindow,
+        owner_authority: &RegisteredWindowAuthority,
+        child_authority: &RegisteredWindowAuthority,
+    ) -> Result<()> {
+        if self.native_transient_owner.state()
+            != NativeTransientOwnerState::TemporarilyDetached(owner)
+        {
+            return Ok(());
+        }
+        if let Err(error) =
+            child_authority.ensure_current("finishing the registered non-activating show")
+        {
+            self.native_transient_owner.retire()?;
+            return Err(error);
+        }
+        if !owner_authority.is_current() {
+            self.native_transient_owner.retire()?;
+            return Ok(());
+        }
+        let owner_hwnd =
+            owner_authority.ensure_current("restoring the exact registered transient owner")?;
+        if let Err(error) = self.set_window_long_checked(
+            GWLP_HWNDPARENT,
+            owner_hwnd.0 as isize,
+            "failed to restore transient owner after non-activating show",
+        ) {
+            self.native_transient_owner.retire()?;
+            return Err(error);
+        }
+        if !self
+            .native_transient_owner
+            .restore_after_temporary_detach(owner)
+        {
+            let detach_result = self.set_window_long_checked(
+                GWLP_HWNDPARENT,
+                0,
+                "failed to detach a transient owner retired during native restoration",
+            );
+            self.native_transient_owner.retire()?;
+            return detach_result;
+        }
+        if let Err(error) = child_authority
+            .ensure_current("validating restoration of the registered transient owner")
+        {
+            self.native_transient_owner.retire()?;
+            return Err(error);
+        }
+        if !owner_authority.is_current() {
+            self.set_window_long_checked(
+                GWLP_HWNDPARENT,
+                0,
+                "failed to detach a transient owner retired after native restoration",
+            )?;
+            self.native_transient_owner.retire()?;
+            return Ok(());
+        }
+        let restored_owner = unsafe { GetWindow(self.hwnd, GW_OWNER) };
+        if let Err(error) = restored_owner {
+            if let Err(detach_error) = self.set_window_long_checked(
+                GWLP_HWNDPARENT,
+                0,
+                "failed to detach an unobservable restored transient owner",
+            ) {
+                return Err(error).context(format!(
+                    "reading back the restored transient owner failed, and detaching it also failed: {detach_error:#}"
+                ));
+            }
+            self.native_transient_owner.retire()?;
+            return Err(error).context("failed to read back restored transient owner");
+        }
+        child_authority.ensure_current("reading back the registered transient owner")?;
+        if restored_owner.expect("restored owner result was checked") != owner_hwnd {
+            if let Err(error) = self.set_window_long_checked(
+                GWLP_HWNDPARENT,
+                0,
+                "failed to detach an incorrectly restored transient owner",
+            ) {
+                return Err(error)
+                    .context("restored transient owner did not match the committed creation fact");
+            }
+            self.native_transient_owner.retire()?;
+            anyhow::bail!("restored transient owner did not match the committed creation fact");
+        }
+        Ok(())
+    }
+
     fn with_owner_detached_for_nonactivating_show<T>(
         &self,
         activate: bool,
@@ -2259,61 +2514,90 @@ impl WindowsWindowInner {
             authority.ensure_current("finishing the registered activating show")?;
             return result;
         }
-        let Some(owner_hwnd) = self.owner_hwnd else {
+        let Some(owner) = self.native_transient_owner.attached_owner_registration() else {
             authority.ensure_current("starting the registered ownerless show")?;
             let result = show();
             authority.ensure_current("finishing the registered ownerless show")?;
             return result;
         };
+        let Some(registry) = self.raw_window_handles.upgrade() else {
+            self.native_transient_owner.retire()?;
+            anyhow::bail!("native window registry is no longer available");
+        };
+        let owner_authority = match RegisteredWindowAuthority::from_registration(owner, registry) {
+            Ok(authority) => authority,
+            Err(error) => {
+                self.native_transient_owner.retire()?;
+                return Err(error);
+            }
+        };
+        let owner_hwnd =
+            owner_authority.ensure_current("reading the exact registered transient owner")?;
         let hwnd = authority.ensure_current("reading the registered transient owner")?;
         let observed_owner = unsafe { GetWindow(hwnd, GW_OWNER) }
             .context("failed to read transient owner before non-activating show")?;
         authority.ensure_current("validating the registered transient owner")?;
-        anyhow::ensure!(
-            observed_owner == owner_hwnd,
-            "transient owner changed before non-activating show"
-        );
-        authority.ensure_current("detaching the registered transient owner")?;
-        self.set_window_long_checked(
+        if observed_owner != owner_hwnd {
+            self.set_window_long_checked(
+                GWLP_HWNDPARENT,
+                0,
+                "failed to detach an unexpected native transient owner",
+            )?;
+            authority.ensure_current("validating unexpected native transient-owner detach")?;
+            anyhow::ensure!(
+                unsafe { GetWindow(hwnd, GW_OWNER) }.is_err(),
+                "unexpected native transient owner remained attached after compensation"
+            );
+            self.native_transient_owner.retire()?;
+            anyhow::bail!("transient owner changed before non-activating show");
+        }
+        if !self.native_transient_owner.begin_temporary_detach(owner) {
+            authority.ensure_current("starting the concurrently detached ownerless show")?;
+            let result = show();
+            authority.ensure_current("finishing the concurrently detached ownerless show")?;
+            return result;
+        }
+        if let Err(error) = authority.ensure_current("detaching the registered transient owner") {
+            self.native_transient_owner.retire()?;
+            return Err(error);
+        }
+        if let Err(error) = self.set_window_long_checked(
             GWLP_HWNDPARENT,
             0,
             "failed to detach transient owner for non-activating show",
-        )?;
-        authority.ensure_current("validating the detached registered transient owner")?;
-
-        let show_result = show();
-        if let Err(authority_error) =
-            authority.ensure_current("finishing the registered non-activating show")
+        ) {
+            self.native_transient_owner
+                .restore_after_temporary_detach(owner);
+            return Err(error);
+        }
+        if let Err(error) =
+            authority.ensure_current("validating the detached registered transient owner")
         {
-            return match show_result {
-                Ok(_) => Err(authority_error),
-                Err(show_error) => Err(show_error).context(format!(
-                    "registered native-window authority also changed: {authority_error:#}"
-                )),
-            };
+            self.native_transient_owner.retire()?;
+            return Err(error);
         }
-        let restore_result = self.set_window_long_checked(
-            GWLP_HWNDPARENT,
-            owner_hwnd.0 as isize,
-            "failed to restore transient owner after non-activating show",
-        );
-        if let Err(error) = restore_result {
-            return match show_result {
-                Ok(_) => Err(error),
-                Err(show_error) => Err(show_error).context(format!(
-                    "restoring the transient owner also failed: {error:#}"
+
+        let show_result = catch_unwind(AssertUnwindSafe(show));
+        let restore_result =
+            self.finish_nonactivating_show_owner_detach(owner, &owner_authority, authority);
+        match show_result {
+            Err(payload) => {
+                if let Err(error) = restore_result {
+                    log::error!(
+                        "failed to restore native transient-owner state after a panicking show callback: {error:#}"
+                    );
+                }
+                std::panic::resume_unwind(payload);
+            }
+            Ok(show_result) => match (show_result, restore_result) {
+                (Ok(value), Ok(())) => Ok(value),
+                (Err(show_error), Ok(())) => Err(show_error),
+                (Ok(_), Err(restore_error)) => Err(restore_error),
+                (Err(show_error), Err(restore_error)) => Err(show_error).context(format!(
+                    "restoring the transient owner also failed: {restore_error:#}"
                 )),
-            };
+            },
         }
-        authority.ensure_current("validating restoration of the registered transient owner")?;
-        let restored_owner = unsafe { GetWindow(hwnd, GW_OWNER) }
-            .context("failed to read back restored transient owner")?;
-        authority.ensure_current("reading back the registered transient owner")?;
-        anyhow::ensure!(
-            restored_owner == owner_hwnd,
-            "restored transient owner did not match the committed creation fact"
-        );
-        show_result
     }
 
     fn complete_initial_presentation(
@@ -7085,8 +7369,8 @@ struct WindowCreateContext {
     disable_direct_composition: bool,
     directx_devices: DirectXDevices,
     invalidate_devices: Arc<AtomicBool>,
-    owner_hwnd: Option<HWND>,
-    modal_parent_disabled: bool,
+    owner_registration: Option<RegisteredWindow>,
+    modal_parent_claim: Option<ModalParentClaim>,
     creation_show: bool,
     show_on_initial_presentation: bool,
     provisional_session: Option<WindowProvisionalSession>,
@@ -7103,7 +7387,7 @@ impl WindowsWindow {
     pub(crate) fn new(
         handle: AnyWindowHandle,
         params: WindowParams,
-        transient_owner_hwnd: Option<HWND>,
+        transient_owner: Option<RegisteredWindow>,
         creation_info: WindowCreationInfo,
     ) -> Result<Self> {
         let WindowCreationInfo {
@@ -7168,13 +7452,28 @@ impl WindowsWindow {
             dwstyle.0 & WS_CHILD.0 == 0,
             "GPUI top-level transient windows must never use WS_CHILD"
         );
-        let owner_hwnd = transient_owner_hwnd;
-        let modal_owner = if params.kind == WindowKind::Dialog {
-            owner_hwnd
-        } else {
-            None
-        };
-        let modal_parent_guard = ModalParentGuard::acquire(modal_owner);
+        let owner_authority = transient_owner
+            .map(|registration| {
+                let registry = raw_window_handles
+                    .upgrade()
+                    .context("native window registry is no longer available")?;
+                RegisteredWindowAuthority::from_registration(registration, registry)
+            })
+            .transpose()?;
+        let owner_registration = owner_authority
+            .as_ref()
+            .map(|authority| authority.registration);
+        let owner_hwnd = owner_authority
+            .as_ref()
+            .map(|authority| {
+                authority.ensure_current("preparing the exact registered transient owner")
+            })
+            .transpose()?;
+        let modal_owner = (params.kind == WindowKind::Dialog)
+            .then_some(owner_authority.as_ref())
+            .flatten();
+        let modal_parent_guard = ModalParentGuard::acquire(modal_owner)?;
+        let modal_parent_claim = modal_parent_guard.commit();
         let mut context = WindowCreateContext {
             inner: None,
             handle,
@@ -7198,8 +7497,8 @@ impl WindowsWindow {
             disable_direct_composition,
             directx_devices,
             invalidate_devices,
-            owner_hwnd,
-            modal_parent_disabled: modal_parent_guard.owns_disable(),
+            owner_registration,
+            modal_parent_claim,
             creation_show: params.show,
             show_on_initial_presentation: params.show && provisional_session.is_none(),
             provisional_session,
@@ -7211,6 +7510,14 @@ impl WindowsWindow {
             #[cfg(test)]
             lifecycle_test_probe,
         };
+        if let Some(owner_authority) = owner_authority.as_ref() {
+            let current_owner = owner_authority
+                .ensure_current("creating a window for the exact registered transient owner")?;
+            anyhow::ensure!(
+                Some(current_owner) == owner_hwnd,
+                "registered transient owner changed before native window creation"
+            );
+        }
         let creation_result = unsafe {
             CreateWindowExW(
                 dwexstyle,
@@ -7247,11 +7554,18 @@ impl WindowsWindow {
         // the parent disabled if managed native retirement must retry after a
         // fallible construction step.
         hwnd_guard.commit();
-        modal_parent_guard.commit();
+        let child_authority = RegisteredWindowAuthority::capture(construction_guard.inner())?;
 
-        if let Some(owner_hwnd) = owner_hwnd {
+        if let Some(owner_authority) = owner_authority.as_ref() {
+            let owner_hwnd = owner_authority
+                .ensure_current("validating the exact registered transient owner after creation")?;
             let observed_owner = unsafe { GetWindow(hwnd, GW_OWNER) }
                 .context("failed to read back transient window owner")?;
+            child_authority
+                .ensure_current("validating the registered transient child after creation")?;
+            owner_authority.ensure_current(
+                "validating the exact registered transient owner after native readback",
+            )?;
             anyhow::ensure!(
                 observed_owner == owner_hwnd,
                 "native transient owner did not match the requested GPUI owner"
@@ -8949,6 +9263,10 @@ unsafe fn window_procedure_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: L
                 unsafe {
                     set_window_long(hwnd, GWLP_USERDATA, Box::into_raw(native_owner) as isize)
                 };
+                if let Err(error) = window_state.register_with_platform() {
+                    window_creation_context.inner = Some(Err(error));
+                    return LRESULT(0);
+                }
                 window_creation_context.inner = Some(Ok(window_state));
                 unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
             }
@@ -8977,6 +9295,7 @@ unsafe fn window_procedure_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: L
 }
 
 unsafe fn release_native_window_owner(hwnd: HWND, ptr: *mut Rc<WindowsWindowInner>) {
+    unsafe { &*ptr }.mark_native_window_destroyed();
     unsafe { set_window_long(hwnd, GWLP_USERDATA, 0) };
     unsafe { drop(Box::from_raw(ptr)) };
 }
