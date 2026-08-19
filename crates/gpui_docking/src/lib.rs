@@ -100,6 +100,9 @@
 mod accessibility_scene;
 mod action;
 pub mod advanced;
+#[cfg(feature = "test-support")]
+#[doc(hidden)]
+pub mod benchmark_support;
 mod builder;
 mod chrome_geometry;
 mod controller;

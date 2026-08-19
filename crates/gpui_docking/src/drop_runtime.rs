@@ -43,6 +43,12 @@ pub(crate) enum DockHostDropSceneFact {
     EmptySpace(DockEmptySpaceDropTarget),
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum DockHostDropResolution {
+    Drop(DockDropResolution),
+    GuideOnly(DockResolvedDropTarget),
+}
+
 impl DockHostDropScene {
     pub(crate) fn new(position: Point<Pixels>) -> Self {
         Self {
@@ -201,6 +207,32 @@ impl DockHostDropScene {
             floating_title_bars: &self.floating_title_bars,
             empty_spaces: &self.empty_spaces,
         })
+    }
+
+    pub(crate) fn resolve_pointer_move(
+        &self,
+        position: Point<Pixels>,
+        payload_size: Option<Size<Pixels>>,
+        excluded_nodes: Vec<DockNodeId>,
+        policy: &DockPolicy,
+        target_validator: Option<&DockDropTargetValidator<'_>>,
+        edge_plan_resolver: Option<&DockEdgePlanResolver<'_>>,
+    ) -> Option<DockHostDropResolution> {
+        let mut scene = self.clone().excluding_nodes(excluded_nodes);
+        scene.position = position;
+        scene = scene.with_payload_size(payload_size);
+        scene
+            .resolve_drop_with_validator(policy, target_validator, edge_plan_resolver)
+            .map(DockHostDropResolution::Drop)
+            .or_else(|| {
+                scene
+                    .resolve_guide_target_with_validator(
+                        policy,
+                        target_validator,
+                        edge_plan_resolver,
+                    )
+                    .map(DockHostDropResolution::GuideOnly)
+            })
     }
 }
 

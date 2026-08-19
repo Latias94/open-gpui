@@ -20,6 +20,11 @@ workspace = true
 path = "src/lib.rs"
 doctest = false
 
+[[bench]]
+name = "tab_drag_latency"
+harness = false
+required-features = ["test-support"]
+
 [features]
 test-support = []
 
