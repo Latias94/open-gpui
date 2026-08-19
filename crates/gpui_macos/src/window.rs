@@ -31,13 +31,14 @@ use open_gpui::{
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas,
     PlatformDisplay, PlatformInput, PlatformInputCallback, PlatformInputCallbackSlot,
     PlatformInputHandler, PlatformInputHandlerSlot, PlatformNativeWindowRetirementOutcome,
-    PlatformPresentationShutdownOutcome, PlatformWindow, PlatformWindowActiveStatusObservation,
-    PlatformWindowCommand, PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome,
-    PlatformWindowInteractionQuiescence, PlatformWindowPresentOutcome, Point,
-    PreparedPlatformPresentationShutdown, PromptButton, PromptLevel, RequestFrameOptions,
-    SharedString, Size, SystemWindowTab, WindowActivationPolicy, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowCreationFacts, WindowId,
-    WindowKind, WindowParams, WindowPresentationShutdownTicket, point, px, size,
+    PlatformPresentationShutdownOutcome, PlatformShouldCloseCallbackSlot, PlatformWindow,
+    PlatformWindowActiveStatusObservation, PlatformWindowCommand, PlatformWindowCommandDispatcher,
+    PlatformWindowCommandOutcome, PlatformWindowInteractionQuiescence,
+    PlatformWindowPresentOutcome, Point, PreparedPlatformPresentationShutdown, PromptButton,
+    PromptLevel, RequestFrameOptions, SharedString, Size, SystemWindowTab, WindowActivationPolicy,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
+    WindowCreationFacts, WindowId, WindowKind, WindowParams, WindowPresentationShutdownTicket,
+    point, px, size,
 };
 
 use core_foundation::base::{CFRelease, CFTypeRef};
@@ -1597,7 +1598,7 @@ struct MacWindowState {
     resize_callback: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     moved_callback: Option<Box<dyn FnMut()>>,
     window_state_change_callback: Option<Box<dyn FnMut()>>,
-    should_close_callback: Option<Box<dyn FnMut() -> bool>>,
+    should_close_callback: PlatformShouldCloseCallbackSlot,
     close_callback: Option<Box<dyn FnOnce()>>,
     appearance_changed_callback: Option<Box<dyn FnMut()>>,
     input_handler: PlatformInputHandlerSlot,
@@ -1656,7 +1657,13 @@ impl MacWindowState {
             && self.creation_facts.transient_for.is_none()
     }
 
-    fn mark_closed(&mut self) -> (PlatformInputCallbackSlot, PlatformInputHandlerSlot) {
+    fn mark_closed(
+        &mut self,
+    ) -> (
+        PlatformInputCallbackSlot,
+        PlatformInputHandlerSlot,
+        PlatformShouldCloseCallbackSlot,
+    ) {
         self.closed.store(true, Ordering::Release);
         self.interaction_quiesced.store(true, Ordering::Release);
         self.stop_display_link();
@@ -1669,10 +1676,13 @@ impl MacWindowState {
         self.resize_callback = None;
         self.moved_callback = None;
         self.window_state_change_callback = None;
-        self.should_close_callback = None;
         self.appearance_changed_callback = None;
         self.display_topology_subscription.take();
-        (self.event_callback.clone(), self.input_handler.clone())
+        (
+            self.event_callback.clone(),
+            self.input_handler.clone(),
+            self.should_close_callback.clone(),
+        )
     }
 
     fn move_traffic_light(&self) {
@@ -2745,9 +2755,9 @@ impl MacWindow {
         self.2 = true;
         self.3.take();
 
-        let (event_callback, input_handler, window, foreground_executor) = {
+        let (event_callback, input_handler, should_close_callback, window, foreground_executor) = {
             let mut state = self.0.lock();
-            let (event_callback, input_handler) = state.mark_closed();
+            let (event_callback, input_handler, should_close_callback) = state.mark_closed();
             state.renderer.destroy();
             let window = state.native_window;
             unsafe {
@@ -2756,12 +2766,14 @@ impl MacWindow {
             (
                 event_callback,
                 input_handler,
+                should_close_callback,
                 window,
                 state.foreground_executor.clone(),
             )
         };
         event_callback.terminate();
         input_handler.terminate();
+        should_close_callback.terminate();
         unsafe {
             detach_native_transient_relationships(window);
         }
@@ -2984,7 +2996,7 @@ impl MacWindow {
                     resize_callback: None,
                     moved_callback: None,
                     window_state_change_callback: None,
-                    should_close_callback: None,
+                    should_close_callback: PlatformShouldCloseCallbackSlot::default(),
                     close_callback: None,
                     appearance_changed_callback: None,
                     input_handler: PlatformInputHandlerSlot::default(),
@@ -4689,10 +4701,14 @@ impl PlatformWindow for MacWindow {
     }
 
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>) {
-        let mut lock = self.0.as_ref().lock();
-        if !lock.is_closed() {
-            lock.should_close_callback = Some(callback);
-        }
+        let should_close_callback = {
+            let lock = self.0.as_ref().lock();
+            if lock.is_closed() {
+                return;
+            }
+            lock.should_close_callback.clone()
+        };
+        should_close_callback.set(callback);
     }
 
     fn on_close(&self, callback: Box<dyn FnOnce()>) {
@@ -5821,26 +5837,19 @@ fn deliver_window_active_event(
 
 extern "C" fn window_should_close(this: &Object, _: Sel, _: id) -> BOOL {
     let window_state = unsafe { get_window_state(this) };
-    let mut lock = window_state.as_ref().lock();
-    if lock.is_closed() {
-        return YES;
-    }
-    if let Some(mut callback) = lock.should_close_callback.take() {
-        drop(lock);
-        let should_close = callback();
-        let mut lock = window_state.lock();
-        if !lock.is_closed() {
-            lock.should_close_callback = Some(callback);
+    let should_close_callback = {
+        let lock = window_state.as_ref().lock();
+        if lock.is_closed() {
+            return YES;
         }
-        should_close as BOOL
-    } else {
-        YES
-    }
+        lock.should_close_callback.clone()
+    };
+    should_close_callback.invoke().to_objc()
 }
 
 extern "C" fn close_window(this: &Object, _: Sel) {
     unsafe {
-        let (event_callback, input_handler, close_callback) = {
+        let (event_callback, input_handler, should_close_callback, close_callback) = {
             let window_state = get_window_state(this);
             let mut lock = window_state.as_ref().lock();
             let shutdown = lock.presentation_shutdown_authority.lock().ticket();
@@ -5852,12 +5861,18 @@ extern "C" fn close_window(this: &Object, _: Sel) {
                     snapshot.generation(),
                 );
             }
-            let (event_callback, input_handler) = lock.mark_closed();
-            (event_callback, input_handler, lock.close_callback.take())
+            let (event_callback, input_handler, should_close_callback) = lock.mark_closed();
+            (
+                event_callback,
+                input_handler,
+                should_close_callback,
+                lock.close_callback.take(),
+            )
         };
 
         event_callback.terminate();
         input_handler.terminate();
+        should_close_callback.terminate();
         detach_native_transient_relationships(this as *const Object as id);
         if let Some(callback) = close_callback {
             callback();
@@ -6255,20 +6270,14 @@ fn send_file_drop_event(
         }
         lock.event_callback.clone()
     };
-    if event_callback
-        .dispatch(PlatformInput::FileDrop(file_drop_event))
-        .is_some()
-    {
-        let mut lock = window_state.lock();
-        if !lock.is_closed() {
-            if let Some(external_files_dragged) = external_files_dragged {
-                lock.external_files_dragged = external_files_dragged;
-            }
+    event_callback.dispatch(PlatformInput::FileDrop(file_drop_event));
+    let mut lock = window_state.lock();
+    if !lock.is_closed() {
+        if let Some(external_files_dragged) = external_files_dragged {
+            lock.external_files_dragged = external_files_dragged;
         }
-        true
-    } else {
-        false
     }
+    true
 }
 
 fn drag_event_position(window_state: &Mutex<MacWindowState>, dragging_info: id) -> Point<Pixels> {

@@ -5,8 +5,6 @@ mod interaction_gate;
 mod keyboard;
 mod platform;
 #[cfg(any(feature = "wayland", feature = "x11"))]
-mod should_close_callback;
-#[cfg(any(feature = "wayland", feature = "x11"))]
 mod text_system;
 #[cfg(feature = "wayland")]
 mod wayland;

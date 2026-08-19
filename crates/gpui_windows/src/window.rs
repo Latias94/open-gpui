@@ -7019,64 +7019,6 @@ impl<T> Drop for WindowsCallbackCheckout<'_, T> {
 }
 
 #[derive(Default)]
-pub(crate) struct WindowsShouldCloseCallbackSlot {
-    callback: Cell<Option<Box<dyn FnMut() -> bool>>>,
-    checked_out: Cell<bool>,
-    terminal: Cell<bool>,
-}
-
-impl WindowsShouldCloseCallbackSlot {
-    fn set(&self, callback: Box<dyn FnMut() -> bool>) {
-        if !self.terminal.get() {
-            self.callback.set(Some(callback));
-        }
-    }
-
-    pub(crate) fn invoke(&self) -> bool {
-        if self.terminal.get() || self.checked_out.replace(true) {
-            return false;
-        }
-        let Some(callback) = self.callback.take() else {
-            self.checked_out.set(false);
-            return false;
-        };
-        let mut checkout = WindowsShouldCloseCallbackCheckout {
-            slot: self,
-            callback: Some(callback),
-        };
-        checkout
-            .callback
-            .as_mut()
-            .expect("checked-out should-close callback must remain available")()
-    }
-
-    fn terminate(&self) {
-        self.terminal.set(true);
-        self.callback.take();
-    }
-}
-
-struct WindowsShouldCloseCallbackCheckout<'a> {
-    slot: &'a WindowsShouldCloseCallbackSlot,
-    callback: Option<Box<dyn FnMut() -> bool>>,
-}
-
-impl Drop for WindowsShouldCloseCallbackCheckout<'_> {
-    fn drop(&mut self) {
-        self.slot.checked_out.set(false);
-        let replacement = self.slot.callback.take();
-        if self.slot.terminal.get() {
-            return;
-        }
-        if let Some(replacement) = replacement {
-            self.slot.callback.set(Some(replacement));
-        } else {
-            self.slot.callback.set(self.callback.take());
-        }
-    }
-}
-
-#[derive(Default)]
 pub(crate) struct Callbacks {
     pub(crate) request_frame: Cell<Option<Box<dyn FnMut(RequestFrameOptions)>>>,
     pub(crate) input: PlatformInputCallbackSlot,
@@ -7089,7 +7031,7 @@ pub(crate) struct Callbacks {
     pub(crate) window_state_change: Cell<Option<Box<dyn FnMut()>>>,
     pub(crate) window_mutation_observation:
         Cell<Option<Box<dyn FnMut(PlatformWindowMutationObservation)>>>,
-    pub(crate) should_close: WindowsShouldCloseCallbackSlot,
+    pub(crate) should_close: PlatformShouldCloseCallbackSlot,
     pub(crate) close: Cell<Option<Box<dyn FnOnce()>>>,
     pub(crate) hit_test_window_control: Cell<Option<Box<dyn FnMut() -> Option<WindowControlArea>>>>,
     pub(crate) appearance_changed: Cell<Option<Box<dyn FnMut()>>>,

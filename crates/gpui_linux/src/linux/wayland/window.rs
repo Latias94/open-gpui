@@ -31,18 +31,18 @@ use crate::linux::wayland::{display::WaylandDisplay, serial::SerialKind};
 use crate::linux::{
     Globals, Output, WaylandClientStatePtr,
     interaction_gate::{WindowInteractionGate, accesskit_adapter},
-    should_close_callback::ShouldCloseCallbackSlot,
 };
 use open_gpui::{
     AnyWindowHandle, Bounds, Capslock, CursorStyle, Decorations, DevicePixels, GpuSpecs, Modifiers,
     NativeInputHandlerOutcome, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformInputCallback, PlatformInputCallbackSlot, PlatformInputHandler,
-    PlatformInputHandlerSlot, PlatformPresentationShutdownOutcome, PlatformWindow,
-    PlatformWindowActiveStatusObservation, PlatformWindowCommand, PlatformWindowCommandDispatcher,
-    PlatformWindowCommandOutcome, PlatformWindowInteractionQuiescence,
-    PlatformWindowPresentOutcome, Point, PreparedPlatformPresentationShutdown, PromptButton,
-    PromptLevel, RequestFrameOptions, ResizeEdge, Scene, Size, Tiling, WindowActivationPolicy,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls,
+    PlatformInputHandlerSlot, PlatformPresentationShutdownOutcome, PlatformShouldCloseCallbackSlot,
+    PlatformWindow, PlatformWindowActiveStatusObservation, PlatformWindowCommand,
+    PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome,
+    PlatformWindowInteractionQuiescence, PlatformWindowPresentOutcome, Point,
+    PreparedPlatformPresentationShutdown, PromptButton, PromptLevel, RequestFrameOptions,
+    ResizeEdge, Scene, Size, Tiling, WindowActivationPolicy, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls,
     WindowCreationFacts, WindowDecorations, WindowKind, WindowParams,
     WindowPresentationShutdownTicket, layer_shell::LayerShellNotSupportedError, px, size,
 };
@@ -59,7 +59,7 @@ pub(crate) struct Callbacks {
     resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     moved: Option<Box<dyn FnMut()>>,
     window_state_change: Option<Box<dyn FnMut()>>,
-    should_close: ShouldCloseCallbackSlot,
+    should_close: PlatformShouldCloseCallbackSlot,
     close: Option<Box<dyn FnOnce()>>,
     appearance_changed: Option<Box<dyn FnMut()>>,
     button_layout_changed: Option<Box<dyn FnMut()>>,
@@ -1417,10 +1417,7 @@ impl WaylandWindowStatePtr {
             return;
         }
         let input_callback = self.callbacks.borrow().input.clone();
-        if input_callback
-            .dispatch(input.clone())
-            .is_some_and(|result| !result.propagate)
-        {
+        if !input_callback.dispatch(input.clone()).propagate {
             return;
         }
         if self.interaction_is_quiesced() {
@@ -2346,70 +2343,5 @@ mod creation_projection_tests {
             assert!(adjusted.renderer_transparent);
             assert!(!adjusted.blur_enabled);
         }
-    }
-}
-
-#[cfg(test)]
-mod should_close_callback_tests {
-    use super::*;
-    use std::cell::Cell;
-
-    #[test]
-    fn replacement_installed_during_wayland_should_close_survives_old_callback_return() {
-        let should_close = Callbacks::default().should_close;
-        let slot_holder = Rc::new(RefCell::new(Some(should_close.clone())));
-        let slot_holder_weak = Rc::downgrade(&slot_holder);
-        let replacement_calls = Rc::new(Cell::new(0));
-
-        should_close.set(Box::new({
-            let replacement_calls = replacement_calls.clone();
-            move || {
-                let replacement_slot = slot_holder_weak
-                    .upgrade()
-                    .expect("test slot holder must remain alive")
-                    .borrow()
-                    .clone()
-                    .expect("test slot must remain installed");
-                let replacement_calls = replacement_calls.clone();
-                replacement_slot.set(Box::new(move || {
-                    replacement_calls.set(replacement_calls.get() + 1);
-                    false
-                }));
-
-                assert!(!replacement_slot.invoke());
-                true
-            }
-        }));
-
-        assert!(should_close.invoke());
-        assert!(!should_close.invoke());
-        assert_eq!(replacement_calls.get(), 2);
-    }
-
-    #[test]
-    fn close_during_wayland_should_close_permanently_retires_checked_out_callback() {
-        let should_close = Callbacks::default().should_close;
-        let slot_holder = Rc::new(RefCell::new(Some(should_close.clone())));
-        let slot_holder_weak = Rc::downgrade(&slot_holder);
-        let calls = Rc::new(Cell::new(0));
-
-        should_close.set(Box::new({
-            let calls = calls.clone();
-            move || {
-                calls.set(calls.get() + 1);
-                slot_holder_weak
-                    .upgrade()
-                    .expect("test slot holder must remain alive")
-                    .borrow()
-                    .as_ref()
-                    .expect("test slot must remain installed")
-                    .terminate();
-                true
-            }
-        }));
-
-        assert!(should_close.invoke());
-        assert!(!should_close.invoke());
-        assert_eq!(calls.get(), 1);
     }
 }

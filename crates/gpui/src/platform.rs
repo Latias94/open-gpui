@@ -4288,6 +4288,98 @@ pub enum NativePointerCancelReservation {
     RetiredSlot,
 }
 
+type PlatformShouldCloseCallback = Box<dyn FnMut() -> bool>;
+
+#[derive(Default)]
+struct PlatformShouldCloseCallbackSlotState {
+    checked_out: bool,
+    callback: Option<PlatformShouldCloseCallback>,
+    terminal: bool,
+}
+
+/// A reentrancy-safe callback slot for synchronous native close queries.
+#[doc(hidden)]
+#[derive(Clone, Default)]
+pub struct PlatformShouldCloseCallbackSlot {
+    state: Rc<RefCell<PlatformShouldCloseCallbackSlotState>>,
+}
+
+impl PlatformShouldCloseCallbackSlot {
+    /// Installs a callback and replaces any callback currently checked out by a native stack.
+    pub fn set(&self, callback: Box<dyn FnMut() -> bool>) {
+        let previous = {
+            let mut state = self.state.borrow_mut();
+            if state.terminal {
+                return;
+            }
+            state.callback.replace(callback)
+        };
+        drop(previous);
+    }
+
+    /// Evaluates the current callback without holding the slot borrow across user code.
+    ///
+    /// Reentry, a missing callback, and a retired slot conservatively deny the native close.
+    pub fn invoke(&self) -> bool {
+        let mut checkout = {
+            let mut state = self.state.borrow_mut();
+            if state.terminal || state.checked_out {
+                return false;
+            }
+            let Some(callback) = state.callback.take() else {
+                return false;
+            };
+            state.checked_out = true;
+            PlatformShouldCloseCallbackCheckout {
+                slot: self.clone(),
+                callback: Some(callback),
+            }
+        };
+
+        (checkout.callback_mut())()
+    }
+
+    /// Permanently retires this window's callback slot.
+    pub fn terminate(&self) {
+        let callback = {
+            let mut state = self.state.borrow_mut();
+            if state.terminal {
+                return;
+            }
+            state.terminal = true;
+            state.callback.take()
+        };
+        drop(callback);
+    }
+}
+
+struct PlatformShouldCloseCallbackCheckout {
+    slot: PlatformShouldCloseCallbackSlot,
+    callback: Option<PlatformShouldCloseCallback>,
+}
+
+impl PlatformShouldCloseCallbackCheckout {
+    fn callback_mut(&mut self) -> &mut PlatformShouldCloseCallback {
+        self.callback
+            .as_mut()
+            .expect("checked-out platform should-close callback must remain available")
+    }
+}
+
+impl Drop for PlatformShouldCloseCallbackCheckout {
+    fn drop(&mut self) {
+        let retired_callback = {
+            let mut state = self.slot.state.borrow_mut();
+            state.checked_out = false;
+            if !state.terminal && state.callback.is_none() {
+                state.callback = self.callback.take();
+            }
+            self.callback.take()
+        };
+        drop(retired_callback);
+    }
+}
+
 #[derive(Clone)]
 struct PlatformInputPanicRecovery {
     generation: u64,
@@ -8446,6 +8538,80 @@ mod provisional_placement_tests {
                 .is_err(),
             "native callbacks after terminal must not record facts"
         );
+    }
+}
+
+#[cfg(test)]
+mod platform_should_close_callback_slot_tests {
+    use super::*;
+
+    #[test]
+    fn absent_callback_conservatively_denies_close() {
+        let slot = PlatformShouldCloseCallbackSlot::default();
+
+        assert!(!slot.invoke());
+        slot.terminate();
+        assert!(!slot.invoke());
+    }
+
+    #[test]
+    fn reentry_is_conservative_and_reentrant_replacement_wins() {
+        let slot = PlatformShouldCloseCallbackSlot::default();
+        let reentrant_slot = slot.clone();
+        let replacement_calls = Rc::new(Cell::new(0));
+        let replacement_calls_from_callback = replacement_calls.clone();
+
+        slot.set(Box::new(move || {
+            assert!(!reentrant_slot.invoke());
+            reentrant_slot.set(Box::new({
+                let replacement_calls = replacement_calls_from_callback.clone();
+                move || {
+                    replacement_calls.set(replacement_calls.get() + 1);
+                    false
+                }
+            }));
+            assert!(!reentrant_slot.invoke());
+            assert_eq!(replacement_calls_from_callback.get(), 0);
+            true
+        }));
+
+        assert!(slot.invoke());
+        assert!(!slot.invoke());
+        assert_eq!(replacement_calls.get(), 1);
+    }
+
+    #[test]
+    fn termination_during_callback_prevents_checked_out_callback_restoration() {
+        let slot = PlatformShouldCloseCallbackSlot::default();
+        let terminating_slot = slot.clone();
+
+        slot.set(Box::new(move || {
+            terminating_slot.terminate();
+            true
+        }));
+
+        assert!(slot.invoke());
+        assert!(!slot.invoke());
+    }
+
+    #[test]
+    fn panic_restores_the_current_callback() {
+        let slot = PlatformShouldCloseCallbackSlot::default();
+        let invocation = Rc::new(Cell::new(0));
+
+        slot.set(Box::new({
+            let invocation = invocation.clone();
+            move || {
+                let current = invocation.get();
+                invocation.set(current + 1);
+                assert_ne!(current, 0, "first invocation panics");
+                false
+            }
+        }));
+
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| slot.invoke())).is_err());
+        assert!(!slot.invoke());
+        assert_eq!(invocation.get(), 2);
     }
 }
 
