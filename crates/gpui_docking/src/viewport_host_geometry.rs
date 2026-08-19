@@ -87,6 +87,12 @@ impl DockViewportHostGeometry {
             committed_hitbox: None,
         }
     }
+
+    #[cfg(test)]
+    pub(crate) fn with_committed_hitbox_for_test(mut self) -> Self {
+        self.committed_hitbox = Some(HitboxId::placeholder());
+        self
+    }
 }
 
 #[cfg(test)]

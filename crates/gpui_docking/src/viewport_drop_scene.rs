@@ -221,7 +221,9 @@ impl DockViewportHostSceneSnapshot {
             && self.window_id == other.window_id
             && self.registration_key == other.registration_key
             && self.current_bounds == other.current_bounds
-            && self.host_geometry == other.host_geometry
+            && self
+                .host_geometry
+                .has_same_native_routing_geometry(&other.host_geometry)
             && self.scene.has_same_retained_routing_content(&other.scene)
     }
 
@@ -837,6 +839,25 @@ mod tests {
                 .is_some(),
             "the preserved frame should remain current after identical re-render registration"
         );
+    }
+
+    #[test]
+    fn host_scene_register_ignores_frame_local_hitbox_identity() {
+        let space = space("main");
+        let window_id = WindowId::from(1);
+        let mut registry = DockViewportHostSceneRegistry::default();
+        let first = snapshot(space.clone(), window_id);
+        let mut second = snapshot(space.clone(), window_id);
+        second.host_geometry = second.host_geometry.with_committed_hitbox_for_test();
+
+        let first = registry.register(first).frame;
+        let second = registry.register(second);
+
+        assert!(
+            !second.changed,
+            "a frame-local hitbox identity is not retained native routing content"
+        );
+        assert_eq!(first, second.frame);
     }
 
     #[test]
