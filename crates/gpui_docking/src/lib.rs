@@ -143,7 +143,9 @@ pub mod model;
 mod native_captured_drag;
 #[cfg(feature = "test-support")]
 #[doc(hidden)]
-pub use native_captured_drag::native_captured_release_placement_for_test;
+pub use native_captured_drag::{
+    NativeCapturedReleaseObservationForTest, native_captured_release_observation_for_test,
+};
 mod op;
 mod panel;
 mod panel_catalog;
@@ -341,8 +343,10 @@ pub use surface::{
 #[cfg(feature = "test-support")]
 #[doc(hidden)]
 pub use surface::{
-    DockSurfaceShutdownCaptureReleaseEvidence, DockSurfaceShutdownTestEvent,
-    DockSurfaceShutdownTestEventKind, DockSurfaceShutdownTestObservation,
+    DockSurfaceLiveUndockTestEvent, DockSurfaceLiveUndockTestEventKind,
+    DockSurfaceLiveUndockTestObservation, DockSurfaceShutdownCaptureReleaseEvidence,
+    DockSurfaceShutdownTestEvent, DockSurfaceShutdownTestEventKind,
+    DockSurfaceShutdownTestObservation,
 };
 pub(crate) use viewport::*;
 #[cfg(test)]
@@ -367,7 +371,8 @@ pub(crate) use viewport_drop_delivery::*;
 pub(crate) use viewport_drop_route::*;
 pub(crate) use viewport_focus::DockViewportFocusRequest;
 pub(crate) use viewport_focus::{
-    DockViewportFocusCommand, DockViewportFocusCommandSource, DockViewportFocusCoordinator,
+    DockViewportExactFocusTarget, DockViewportFocusCommand, DockViewportFocusCommandSource,
+    DockViewportFocusCoordinator,
 };
 pub(crate) use viewport_frame_coordinator::*;
 pub(crate) use viewport_host_geometry::*;

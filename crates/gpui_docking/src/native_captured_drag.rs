@@ -49,20 +49,89 @@ struct DockNativeCapturedDragRouter {
 impl Global for DockNativeCapturedDragRouter {}
 
 #[cfg(feature = "test-support")]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct DockNativeReleasePlacementObservation {
-    source_window: WindowId,
-    bounds: Bounds<DevicePixels>,
-}
-
-#[cfg(feature = "test-support")]
 #[derive(Default)]
-struct DockNativeReleasePlacementObservations {
-    latest: Option<DockNativeReleasePlacementObservation>,
+struct DockNativeReleaseTestObservations {
+    latest: Option<NativeCapturedReleaseObservationForTest>,
 }
 
 #[cfg(feature = "test-support")]
-impl Global for DockNativeReleasePlacementObservations {}
+impl Global for DockNativeReleaseTestObservations {}
+
+#[cfg(feature = "test-support")]
+#[derive(Clone, Debug, PartialEq)]
+#[doc(hidden)]
+pub struct NativeCapturedReleaseObservationForTest {
+    source_window: WindowId,
+    generation: u64,
+    sequence: u64,
+    hit_stack: PlatformWindowHitStack,
+    placement: Option<Bounds<DevicePixels>>,
+}
+
+#[cfg(feature = "test-support")]
+impl NativeCapturedReleaseObservationForTest {
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    pub fn sequence(&self) -> u64 {
+        self.sequence
+    }
+
+    pub fn hit_stack(&self) -> &PlatformWindowHitStack {
+        &self.hit_stack
+    }
+
+    pub fn placement(&self) -> Option<Bounds<DevicePixels>> {
+        self.placement
+    }
+}
+
+#[cfg(feature = "test-support")]
+impl DockNativeReleaseTestObservations {
+    fn begin_release(
+        &mut self,
+        source_window: WindowId,
+        generation: u64,
+        sequence: u64,
+        hit_stack: PlatformWindowHitStack,
+    ) {
+        self.latest = Some(NativeCapturedReleaseObservationForTest {
+            source_window,
+            generation,
+            sequence,
+            hit_stack,
+            placement: None,
+        });
+    }
+
+    fn record_placement(
+        &mut self,
+        source_window: WindowId,
+        generation: u64,
+        sequence: u64,
+        placement: Bounds<DevicePixels>,
+    ) -> bool {
+        let Some(observation) = self.latest.as_mut().filter(|observation| {
+            observation.source_window == source_window
+                && observation.generation == generation
+                && observation.sequence == sequence
+        }) else {
+            return false;
+        };
+        observation.placement = Some(placement);
+        true
+    }
+
+    fn latest_for(
+        &self,
+        source_window: WindowId,
+    ) -> Option<&NativeCapturedReleaseObservationForTest> {
+        self.latest
+            .as_ref()
+            .filter(|observation| observation.source_window == source_window)
+    }
+}
 
 #[derive(Default)]
 struct DockNativeCapturedDragState {
@@ -629,6 +698,8 @@ fn router_state(cx: &App) -> Option<Rc<RefCell<DockNativeCapturedDragState>>> {
 #[cfg(feature = "test-support")]
 fn record_native_release_placement_for_test(
     source_window: WindowId,
+    generation: NativeCapturedDragGeneration,
+    sequence: NativeIngressSequence,
     release: DockLiveUndockReleaseLock,
     cx: &mut App,
 ) {
@@ -639,33 +710,42 @@ fn record_native_release_placement_for_test(
     ) else {
         return;
     };
-    let observation = DockNativeReleasePlacementObservation {
-        source_window,
-        bounds: Bounds::new(
-            point(
-                DevicePixels(desired.origin().x()),
-                DevicePixels(desired.origin().y()),
-            ),
-            size(DevicePixels(width), DevicePixels(height)),
+    let bounds = Bounds::new(
+        point(
+            DevicePixels(desired.origin().x()),
+            DevicePixels(desired.origin().y()),
         ),
-    };
-    if !cx.has_global::<DockNativeReleasePlacementObservations>() {
-        cx.set_global(DockNativeReleasePlacementObservations { latest: None });
-    }
-    cx.global_mut::<DockNativeReleasePlacementObservations>()
-        .latest = Some(observation);
+        size(DevicePixels(width), DevicePixels(height)),
+    );
+    cx.default_global::<DockNativeReleaseTestObservations>()
+        .record_placement(
+            source_window,
+            generation.ordinal(),
+            sequence.ordinal(),
+            bounds,
+        );
 }
 
 #[cfg(feature = "test-support")]
-/// Returns the exact physical client bounds captured from the latest adopted native release.
-pub fn native_captured_release_placement_for_test(
+/// Returns the exact callback-scoped native release receipt for one source window.
+pub fn native_captured_release_observation_for_test(
     source_window: WindowId,
     cx: &App,
-) -> Option<Bounds<DevicePixels>> {
-    cx.try_global::<DockNativeReleasePlacementObservations>()?
-        .latest
-        .filter(|observation| observation.source_window == source_window)
-        .map(|observation| observation.bounds)
+) -> Option<NativeCapturedReleaseObservationForTest> {
+    cx.try_global::<DockNativeReleaseTestObservations>()?
+        .latest_for(source_window)
+        .cloned()
+}
+
+#[cfg(feature = "test-support")]
+fn record_native_release_hit_for_test(event: &NativeCapturedDragEvent, cx: &mut App) {
+    cx.default_global::<DockNativeReleaseTestObservations>()
+        .begin_release(
+            event.source_window(),
+            event.generation().ordinal(),
+            event.sequence().ordinal(),
+            event.window_hit_stack().clone(),
+        );
 }
 
 #[cfg(test)]
@@ -1599,6 +1679,8 @@ fn lock_native_captured_release(
         );
         (route_snapshot, reservation)
     };
+    #[cfg(feature = "test-support")]
+    record_native_release_hit_for_test(event, cx);
     let resolution = catch_unwind(AssertUnwindSafe(|| {
         let target = if route.runtime.admits_work_context(route.work_context)
             && route.runtime.active_payload_drag_session(&route.payload)
@@ -2546,7 +2628,13 @@ fn lock_live_undock_release(
     ) {
         DockLiveUndockReleaseAdoption::Adopted => {
             #[cfg(feature = "test-support")]
-            record_native_release_placement_for_test(route.source_window, release, cx);
+            record_native_release_placement_for_test(
+                route.source_window,
+                route.generation,
+                event.sequence(),
+                release,
+                cx,
+            );
             true
         }
         DockLiveUndockReleaseAdoption::Rejected(host_release) => {
@@ -3491,6 +3579,41 @@ mod tests {
 
     fn source_snapshot(value: u64) -> DockLiveUndockSourceSnapshot {
         DockLiveUndockSourceSnapshot::new(WindowId::from(73), value)
+    }
+
+    #[cfg(feature = "test-support")]
+    #[test]
+    fn native_release_test_receipt_requires_exact_generation_and_sequence_for_placement() {
+        let source_window = WindowId::from(81);
+        let hit_stack =
+            PlatformWindowHitStack::try_available_open_desktop(test_point(), Vec::new())
+                .expect("an empty pass-through prefix may terminate at verified desktop");
+        let expected_bounds = Bounds::new(
+            point(DevicePixels(-320), DevicePixels(48)),
+            size(DevicePixels(640), DevicePixels(480)),
+        );
+        let mut observations = DockNativeReleaseTestObservations::default();
+
+        observations.begin_release(source_window, 7, 11, hit_stack.clone());
+
+        assert!(!observations.record_placement(source_window, 7, 10, expected_bounds));
+        assert!(!observations.record_placement(source_window, 8, 11, expected_bounds));
+        assert_eq!(
+            observations
+                .latest_for(source_window)
+                .expect("the exact release receipt should remain available")
+                .placement(),
+            None
+        );
+
+        assert!(observations.record_placement(source_window, 7, 11, expected_bounds));
+        let receipt = observations
+            .latest_for(source_window)
+            .expect("the exact release receipt should accept its placement");
+        assert_eq!(receipt.generation(), 7);
+        assert_eq!(receipt.sequence(), 11);
+        assert_eq!(receipt.hit_stack(), &hit_stack);
+        assert_eq!(receipt.placement(), Some(expected_bounds));
     }
 
     #[test]

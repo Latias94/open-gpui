@@ -1,4 +1,5 @@
 use crate::{DockItemId, DockSpaceId, surface::DockSurfaceActivationBinding};
+use open_gpui::FocusHandle;
 use std::collections::HashMap;
 
 /// Last dock-panel focus state used to restore focus after platform viewport activation.
@@ -102,11 +103,41 @@ pub(crate) enum DockViewportFocusCommandSource {
     CloseRecovery,
 }
 
+/// Exact rendered focus authority retained across an asynchronous viewport activation.
+///
+/// The logical [`DockViewportFocusRequest`] still identifies the panel whose selection must be
+/// restored. This value additionally preserves the exact focused descendant when the caller has
+/// already captured it, so the render path never has to reconstruct focus from optional panel
+/// metadata.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DockViewportExactFocusTarget {
+    focus_handle: FocusHandle,
+    claim_revision: u64,
+}
+
+impl DockViewportExactFocusTarget {
+    pub(crate) const fn new(focus_handle: FocusHandle, claim_revision: u64) -> Self {
+        Self {
+            focus_handle,
+            claim_revision,
+        }
+    }
+
+    pub(crate) const fn focus_handle(&self) -> &FocusHandle {
+        &self.focus_handle
+    }
+
+    pub(crate) const fn claim_revision(&self) -> u64 {
+        self.claim_revision
+    }
+}
+
 /// Pending viewport focus command consumed by the next host render.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DockViewportFocusCommand {
     source: DockViewportFocusCommandSource,
     request: DockViewportFocusRequest,
+    exact_focus_target: Option<DockViewportExactFocusTarget>,
     surface_activation: Option<DockSurfaceActivationBinding>,
 }
 
@@ -118,6 +149,7 @@ impl DockViewportFocusCommand {
         Self {
             source,
             request,
+            exact_focus_target: None,
             surface_activation: None,
         }
     }
@@ -137,8 +169,18 @@ impl DockViewportFocusCommand {
         Self {
             source: DockViewportFocusCommandSource::ViewportActivation,
             request,
+            exact_focus_target: None,
             surface_activation: Some(binding),
         }
+    }
+
+    pub(crate) fn with_exact_focus_target(mut self, target: DockViewportExactFocusTarget) -> Self {
+        debug_assert!(
+            matches!(self.request, DockViewportFocusRequest::Panel(_)),
+            "an exact focus descendant must belong to a concrete panel request"
+        );
+        self.exact_focus_target = Some(target);
+        self
     }
 
     pub(crate) fn request(&self) -> &DockViewportFocusRequest {
@@ -147,6 +189,10 @@ impl DockViewportFocusCommand {
 
     pub(crate) fn source(&self) -> DockViewportFocusCommandSource {
         self.source
+    }
+
+    pub(crate) fn exact_focus_target(&self) -> Option<&DockViewportExactFocusTarget> {
+        self.exact_focus_target.as_ref()
     }
 
     pub(crate) fn surface_activation_binding(&self) -> Option<&DockSurfaceActivationBinding> {

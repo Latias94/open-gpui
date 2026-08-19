@@ -1955,10 +1955,10 @@ struct DockLiveUndockRuntimeState {
     reject_committed_destination_recovery_records: bool,
     #[cfg(test)]
     retire_next_same_window_graph_commit_before_semantics_ack: bool,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     terminate_next_same_window_destination_before_semantics_ack: bool,
     #[cfg(test)]
-    suppress_same_window_destination_semantics_frames: u32,
+    hold_same_window_destination_semantics: bool,
     #[cfg(test)]
     before_destination_interaction_admission_test_hook: Option<Box<dyn FnOnce(&mut App)>>,
     #[cfg(test)]
@@ -2369,7 +2369,7 @@ impl DockLiveUndockRuntime {
             .replace_source_host_after_finish_once = true;
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn terminate_next_same_window_destination_before_semantics_ack_for_test(&self) {
         self.state
             .borrow_mut()
@@ -2377,13 +2377,10 @@ impl DockLiveUndockRuntime {
     }
 
     #[cfg(test)]
-    pub(crate) fn suppress_same_window_destination_semantics_frames_for_test(
-        &self,
-        frame_count: u32,
-    ) {
+    pub(crate) fn set_same_window_destination_semantics_held_for_test(&self, held: bool) {
         self.state
             .borrow_mut()
-            .suppress_same_window_destination_semantics_frames = frame_count;
+            .hold_same_window_destination_semantics = held;
     }
 
     #[cfg(test)]
@@ -5123,11 +5120,7 @@ impl DockLiveUndockRuntime {
     ) {
         #[cfg(test)]
         {
-            let mut state = self.state.borrow_mut();
-            if state.suppress_same_window_destination_semantics_frames > 0 {
-                state.suppress_same_window_destination_semantics_frames = state
-                    .suppress_same_window_destination_semantics_frames
-                    .saturating_sub(1);
+            if self.state.borrow().hold_same_window_destination_semantics {
                 return;
             }
         }
@@ -5415,11 +5408,19 @@ impl DockLiveUndockRuntime {
                     .cloned()
                     .map(crate::DockViewportFocusRequest::panel)
                     .unwrap_or_else(crate::DockViewportFocusRequest::no_panel_focus),
+                execution.seed.source.source_focus.clone(),
                 execution.seed.source.source_host.clone(),
                 presentation.lease,
             )
         };
-        let (registration, source_window, source_focus, source_host, exact_lease) = authority;
+        let (
+            registration,
+            source_window,
+            source_focus,
+            exact_source_focus,
+            source_host,
+            exact_lease,
+        ) = authority;
         let Some(owner) = self
             .state
             .borrow()
@@ -5516,13 +5517,20 @@ impl DockLiveUndockRuntime {
             return;
         }
 
-        let activation = crate::DockViewportActivationTransaction::surface_activation(
+        let mut activation = crate::DockViewportActivationTransaction::surface_activation(
             registration,
             target.window(),
             source_focus,
             target.binding().clone(),
             target.host().clone(),
         );
+        if let Some(source_focus) = exact_source_focus {
+            activation =
+                activation.with_exact_focus_target(crate::DockViewportExactFocusTarget::new(
+                    source_focus.focus_handle().clone(),
+                    source_focus.claim_revision(),
+                ));
+        }
         let outcome =
             crate::viewport_activation::apply_viewport_activation_transaction(Some(activation), cx);
         if !matches!(
@@ -10115,14 +10123,14 @@ impl DockLiveUndockRuntime {
                         });
                 match authority {
                     Some(Authority::SameWindow(window)) => {
-                        #[cfg(test)]
+                        #[cfg(any(test, feature = "test-support"))]
                         let terminate = std::mem::take(
                             &mut self
                                 .state
                                 .borrow_mut()
                                 .terminate_next_same_window_destination_before_semantics_ack,
                         );
-                        #[cfg(not(test))]
+                        #[cfg(not(any(test, feature = "test-support")))]
                         let terminate = false;
                         if terminate {
                             let _ = window.update(cx, |_, window, cx| window.remove_window(cx));

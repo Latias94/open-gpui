@@ -2,61 +2,62 @@ use super::*;
 
 use anyhow::{Context as _, Result, anyhow, bail, ensure};
 use futures::FutureExt as _;
+use image::{Frame as ImageFrame, ImageBuffer, Rgba as ImageRgba};
 use open_gpui::{
-    AnyWindowHandle, Application, AsyncApp, Bounds, DevicePixels, Empty,
-    NativeCapturedDragReleaseTerminal, NativeInputInvariantViolation, Pixels,
-    PlatformWindowPresentOutcome, Point, QuitMode, Size, Subscription, Window, WindowMouseEvent,
-    WindowMutationDispatch, WindowPlatformFacts,
+    AnyWindowHandle, Application, AsyncApp, AtlasAccessOutcome, Bounds, DevicePixels, Empty,
+    ImageId, ImagePaintDiagnostic, NativeCapturedDragReleaseTerminal,
+    NativeInputInvariantViolation, Pixels, PlatformWindowHit, PlatformWindowHitTerminus,
+    PlatformWindowPresentOutcome, Point, QuitMode, RenderImage, Size, Subscription, Window,
+    WindowId, WindowMouseEvent, WindowMutationDispatch, WindowPlatformFacts, img,
 };
 use open_gpui_docking::{
-    DockSurfaceChangeEvent, DockSurfaceShutdownTestEventKind, DockSurfaceShutdownTestObservation,
-    DockSurfaceTransition, DockSurfaceWindowSessionPhase, DockSurfaceWindowSessionReason,
-    DockSurfaceWindowSessionShutdownReason, model::DockGraph,
-    native_captured_release_placement_for_test,
+    DockSurfaceChangeEvent, DockSurfaceLiveUndockTestEventKind,
+    DockSurfaceLiveUndockTestObservation, DockSurfaceShutdownTestEventKind,
+    DockSurfaceShutdownTestObservation, DockSurfaceTransition, DockSurfaceWindowSessionPhase,
+    DockSurfaceWindowSessionReason, DockSurfaceWindowSessionShutdownReason, model::DockGraph,
+    native_captured_release_observation_for_test,
 };
 use open_gpui_windows::{
-    NativeTestDisplay, NativeTestOpaqueWindow, NativeWindowTestCaptureOwner, NativeWindowTestEvent,
+    NATIVE_TEST_INPUT_CANARY, NativeTestDisplay, NativeTestOpaqueWindow, NativeTestPointerAction,
+    NativeTestSystemPointerGuard, NativeWindowTestCaptureOwner, NativeWindowTestEvent,
     NativeWindowTestEventKind, NativeWindowTestIdentity, NativeWindowTestMessage,
     NativeWindowTestMessageDisposition, NativeWindowTestObservation, NativeWindowTestPoint,
     WindowsPlatform, arm_native_no_input_generation_drift, begin_native_window_test_observation,
-    native_test_acquire_foreground_window, native_test_displays,
-    native_test_mixed_dpi_display_pair,
+    native_test_acquire_foreground_window,
+    native_test_client_screen_bounds as native_client_screen_bounds,
+    native_test_confirm_scenario_behavior, native_test_displays,
+    native_test_inject_system_pointer as inject_system_pointer,
+    native_test_logical_client_point_to_screen as logical_client_point_to_screen,
+    native_test_mixed_dpi_display_pair, native_test_non_shell_root_window_at,
+    native_test_raise_window as raise_native_window,
+    native_test_release_primary_button_best_effort as inject_primary_button_up_best_effort,
+    native_test_virtual_screen_bounds, native_test_window_is_above as native_window_is_above,
+    native_test_window_probe as native_window_probe, native_test_window_rect as window_rect,
 };
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use serde::Deserialize;
 use std::{
     collections::{BTreeMap, BTreeSet},
     ffi::c_void,
-    mem::size_of,
     panic::{AssertUnwindSafe, set_hook, take_hook},
     time::{Duration, Instant},
 };
 use windows::Win32::UI::WindowsAndMessaging::HTTRANSPARENT;
 use windows::Win32::{
     Foundation::{HWND, LPARAM, POINT, RECT, WPARAM},
-    Graphics::Gdi::{ClientToScreen, MONITOR_DEFAULTTONULL, MonitorFromPoint},
+    Graphics::Gdi::{MONITOR_DEFAULTTONULL, MonitorFromPoint},
     UI::{
-        Input::KeyboardAndMouse::{
-            GetAsyncKeyState, GetCapture, INPUT, INPUT_0, INPUT_MOUSE, MOUSE_EVENT_FLAGS,
-            MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MOVE,
-            MOUSEEVENTF_MOVE_NOCOALESCE, MOUSEEVENTF_VIRTUALDESK, MOUSEINPUT, ReleaseCapture,
-            SendInput, VK_LBUTTON,
-        },
+        Input::KeyboardAndMouse::{GetAsyncKeyState, GetCapture, VK_LBUTTON},
         WindowsAndMessaging::{
-            GA_ROOT, GW_HWNDNEXT, GetAncestor, GetClassNameW, GetClientRect, GetCursorPos,
-            GetDesktopWindow, GetForegroundWindow, GetShellWindow, GetSystemMetrics, GetWindow,
-            GetWindowRect, GetWindowThreadProcessId, HWND_TOP, IsWindow, IsWindowVisible,
-            MA_NOACTIVATEANDEAT, PostMessageW, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
-            SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-            SendMessageW, SetCursorPos, SetForegroundWindow, SetWindowPos, WM_CLOSE,
-            WM_MOUSEACTIVATE, WM_NCHITTEST, WindowFromPoint,
+            GetCursorPos, GetForegroundWindow, IsWindow, IsWindowVisible, MA_NOACTIVATEANDEAT,
+            PostMessageW, SendMessageW, WM_CLOSE, WM_MOUSEACTIVATE, WM_NCHITTEST,
         },
     },
 };
 
 const NATIVE_DOCK_SUITE_ID: &str = "docking-native.windows.interactive";
 const NATIVE_SCENARIO_ENV: &str = "OPEN_GPUI_NATIVE_SCENARIO_ID";
-const INPUT_CANARY: usize = 0x4f47_5044;
+const INPUT_CANARY: usize = NATIVE_TEST_INPUT_CANARY;
 const SCENARIO_TIMEOUT: Duration = Duration::from_secs(10);
 const POLL_INTERVAL: Duration = Duration::from_millis(5);
 const PROCESS_CONVERGENCE_CLEANUP_PANIC: &str =
@@ -64,6 +65,73 @@ const PROCESS_CONVERGENCE_CLEANUP_PANIC: &str =
 const NATIVE_SCENARIO_MANIFEST: &str =
     include_str!("../tests/native_windows_interactive.native-scenarios.toml");
 const DOCK_TEAR_OFF_MAX_WORK_AREA_FRACTION: f32 = 0.9;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct NativeRendererPayloadRenderObservation {
+    revision: u64,
+    window_id: WindowId,
+}
+
+struct NativeRendererPayloadProbe {
+    image: Arc<RenderImage>,
+    revision: u64,
+    renders: Vec<NativeRendererPayloadRenderObservation>,
+}
+
+impl NativeRendererPayloadProbe {
+    fn new(image: Arc<RenderImage>) -> Self {
+        Self {
+            image,
+            revision: 0,
+            renders: Vec::new(),
+        }
+    }
+
+    fn advance(&mut self, cx: &mut Context<Self>) -> u64 {
+        self.revision += 1;
+        cx.notify();
+        self.revision
+    }
+}
+
+impl Render for NativeRendererPayloadProbe {
+    fn render(&mut self, window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        self.renders.push(NativeRendererPayloadRenderObservation {
+            revision: self.revision,
+            window_id: Window::window_handle(window).window_id(),
+        });
+        div()
+            .debug_selector(|| format!("native-retained-payload:revision:{}", self.revision))
+            .flex()
+            .flex_col()
+            .size_full()
+            .gap_3()
+            .p_4()
+            .bg(rgb(0xffffff))
+            .text_color(rgb(0x111827))
+            .child(
+                img(self.image.clone())
+                    .id("native-renderer-payload-image")
+                    .w(px(64.0))
+                    .h(px(64.0)),
+            )
+            .child(format!("Retained payload revision {}", self.revision))
+    }
+}
+
+fn native_renderer_payload_image() -> Arc<RenderImage> {
+    Arc::new(RenderImage::new([ImageFrame::new(ImageBuffer::from_fn(
+        16,
+        16,
+        |x, y| {
+            if (x + y) % 2 == 0 {
+                ImageRgba([0x93, 0x33, 0xea, 0xff])
+            } else {
+                ImageRgba([0x25, 0x63, 0xeb, 0xff])
+            }
+        },
+    ))]))
+}
 
 #[derive(Clone, Copy, Debug)]
 struct NativeDockPlacementOracle {
@@ -205,6 +273,20 @@ enum NativeDockBehavior {
 }
 
 impl NativeDockBehavior {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::SourceCapture => "source-capture",
+            Self::OpaqueOcclusion => "opaque-occlusion",
+            Self::SurfaceShutdown => "surface-shutdown",
+            Self::ProvisionalSameHwndPromotion => "provisional-same-hwnd-promotion",
+            Self::LiveRouteAndReleaseLock => "live-route-and-release-lock",
+            Self::CommittedLossRecovery => "committed-loss-recovery",
+            Self::ProcessConvergence => "process-convergence",
+            Self::NoInputPassThrough => "no-input-pass-through",
+            Self::MixedDpiPlacement => "mixed-dpi-placement",
+        }
+    }
+
     async fn run(
         self,
         scenario_id: &str,
@@ -290,11 +372,13 @@ enum NativeScenarioPackage {
 enum NativeScenarioManifestBehavior {
     SourceCapture,
     OpaqueOcclusion,
+    OpaqueHitTransparentPrefix,
     SurfaceShutdown,
     ProvisionalSameHwndPromotion,
     LiveRouteAndReleaseLock,
     CommittedLossRecovery,
     ActivationTerminal,
+    ProvisionalActivationZOrder,
     ClientGeometryReconciliation,
     EventDrivenGeometryWake,
     ProcessConvergence,
@@ -307,38 +391,19 @@ impl NativeScenarioManifestBehavior {
         match self {
             Self::SourceCapture => "source-capture",
             Self::OpaqueOcclusion => "opaque-occlusion",
+            Self::OpaqueHitTransparentPrefix => "opaque-hit-transparent-prefix",
             Self::SurfaceShutdown => "surface-shutdown",
             Self::ProvisionalSameHwndPromotion => "provisional-same-hwnd-promotion",
             Self::LiveRouteAndReleaseLock => "live-route-and-release-lock",
             Self::CommittedLossRecovery => "committed-loss-recovery",
             Self::ActivationTerminal => "activation-terminal",
+            Self::ProvisionalActivationZOrder => "provisional-activation-z-order",
             Self::ClientGeometryReconciliation => "client-geometry-reconciliation",
             Self::EventDrivenGeometryWake => "event-driven-geometry-wake",
             Self::ProcessConvergence => "process-convergence",
             Self::NoInputPassThrough => "no-input-pass-through",
             Self::MixedDpiPlacement => "mixed-dpi-placement",
         }
-    }
-
-    const fn package(self) -> NativeScenarioPackage {
-        match self {
-            Self::ActivationTerminal
-            | Self::ClientGeometryReconciliation
-            | Self::EventDrivenGeometryWake => NativeScenarioPackage::Windows,
-            Self::SourceCapture
-            | Self::OpaqueOcclusion
-            | Self::SurfaceShutdown
-            | Self::ProvisionalSameHwndPromotion
-            | Self::LiveRouteAndReleaseLock
-            | Self::CommittedLossRecovery
-            | Self::ProcessConvergence
-            | Self::NoInputPassThrough
-            | Self::MixedDpiPlacement => NativeScenarioPackage::DockingNative,
-        }
-    }
-
-    const fn ignored(self) -> bool {
-        matches!(self.package(), NativeScenarioPackage::DockingNative)
     }
 
     const fn dock_behavior(self) -> Option<NativeDockBehavior> {
@@ -352,6 +417,8 @@ impl NativeScenarioManifestBehavior {
             Self::LiveRouteAndReleaseLock => Some(NativeDockBehavior::LiveRouteAndReleaseLock),
             Self::CommittedLossRecovery => Some(NativeDockBehavior::CommittedLossRecovery),
             Self::ActivationTerminal
+            | Self::ProvisionalActivationZOrder
+            | Self::OpaqueHitTransparentPrefix
             | Self::ClientGeometryReconciliation
             | Self::EventDrivenGeometryWake => None,
             Self::ProcessConvergence => Some(NativeDockBehavior::ProcessConvergence),
@@ -364,9 +431,7 @@ impl NativeScenarioManifestBehavior {
 #[derive(Clone, Debug)]
 struct NativeScenarioRegistration {
     id: String,
-    requirement_owner: String,
     test: String,
-    observation_domains: BTreeSet<String>,
     pub(super) behavior: NativeDockBehavior,
 }
 
@@ -405,9 +470,7 @@ fn native_scenario_registration_from_environment() -> NativeScenarioRegistration
     });
     NativeScenarioRegistration {
         id: registration.id,
-        requirement_owner: registration.requirement_owner,
         test: registration.test,
-        observation_domains: registration.observation_domains,
         behavior,
     }
 }
@@ -427,7 +490,6 @@ struct NativeMouseTrace {
 
 struct NativeOpaqueBarrier {
     window: NativeTestOpaqueWindow,
-    hwnd: HWND,
 }
 
 impl NativeOpaqueBarrier {
@@ -441,12 +503,11 @@ impl NativeOpaqueBarrier {
             ),
             size(DevicePixels(width), DevicePixels(height)),
         ))?;
-        let hwnd = HWND(window.native_handle() as *mut c_void);
-        ensure!(
-            hwnd != HWND::default(),
-            "the native Dock scenario created an invalid opaque barrier HWND"
-        );
-        Ok(Self { window, hwnd })
+        Ok(Self { window })
+    }
+
+    fn hwnd(&self) -> HWND {
+        self.window.hwnd()
     }
 
     fn present(&self) -> Result<()> {
@@ -454,7 +515,8 @@ impl NativeOpaqueBarrier {
     }
 
     fn assert_point_scoped_band(&self, provisional_hwnd: HWND, reveal_point: POINT) -> Result<()> {
-        let barrier_rect = window_rect(self.hwnd)?;
+        let barrier_hwnd = self.hwnd();
+        let barrier_rect = window_rect(barrier_hwnd)?;
         let provisional_rect = window_rect(provisional_hwnd)?;
         ensure!(
             rect_contains(barrier_rect, reveal_point)
@@ -467,11 +529,16 @@ impl NativeOpaqueBarrier {
             "the normal opaque barrier must cover only part of the provisional HWND: barrier={barrier_rect:?}, provisional={provisional_rect:?}"
         );
         ensure!(
-            native_window_is_above(self.hwnd, provisional_hwnd),
-            "the point-scoped reveal must keep the normal opaque barrier above the provisional HWND"
+            native_window_is_above(barrier_hwnd, provisional_hwnd),
+            "the point-scoped reveal must keep the normal opaque barrier above the provisional HWND: barrier={:?}, provisional={:?}, provisional_above_barrier={}, foreground={:?}, point_hit={:?}",
+            barrier_hwnd,
+            provisional_hwnd,
+            native_window_is_above(provisional_hwnd, barrier_hwnd),
+            unsafe { GetForegroundWindow() },
+            native_test_non_shell_root_window_at(reveal_point),
         );
         ensure!(
-            root_window_from_point(reveal_point) == self.hwnd,
+            native_test_non_shell_root_window_at(reveal_point) == Some(barrier_hwnd),
             "the opaque barrier must remain the exact native hit at the reveal point while the provisional is visible"
         );
         Ok(())
@@ -497,6 +564,7 @@ fn is_native_mouse_message(message: NativeWindowTestMessage) -> bool {
 struct NativeDockScenario {
     surface: DockSurface,
     process_convergence_surface: Option<NativeProcessConvergenceSurface>,
+    renderer_payload_probe: Entity<NativeRendererPayloadProbe>,
     source_window: AnyWindowHandle,
     target_window: AnyWindowHandle,
     source_hwnd: HWND,
@@ -511,10 +579,162 @@ struct NativeDockScenario {
     native_observation: NativeWindowTestObservation,
     native_identities: Rc<RefCell<BTreeMap<open_gpui::WindowId, NativeWindowTestIdentity>>>,
     app_shutdown_probe: Rc<RefCell<NativeAppShutdownProbeState>>,
+    live_undock_observation: DockSurfaceLiveUndockTestObservation,
     shutdown_observation: open_gpui_docking::DockSurfaceShutdownTestObservation,
     _source_interceptor: Subscription,
     _target_interceptor: Subscription,
     _surface_change_subscription: Subscription,
+}
+
+fn renderer_payload_snapshot(
+    scenario: &NativeDockScenario,
+    app: &App,
+) -> (ImageId, u64, Vec<NativeRendererPayloadRenderObservation>) {
+    app.read_entity(&scenario.renderer_payload_probe, |probe, _| {
+        (probe.image.id, probe.revision, probe.renders.clone())
+    })
+}
+
+fn renderer_payload_submitted_diagnostic(
+    app: &mut App,
+    window: AnyWindowHandle,
+    image_id: ImageId,
+    revision: u64,
+) -> Result<Option<ImagePaintDiagnostic>> {
+    app.update_window(window, |_, window, _| -> Result<_> {
+        let matching = window
+            .rendered_frame_image_paint_diagnostics()
+            .iter()
+            .copied()
+            .filter(|diagnostic| diagnostic.image.image_id == image_id)
+            .collect::<Vec<_>>();
+        ensure!(
+            matching.len() <= 1,
+            "one payload frame must not paint the same retained image more than once: {matching:?}"
+        );
+        let selector = format!("native-retained-payload:revision:{revision}");
+        let selector_count = window
+            .committed_debug_bounds_for_test()
+            .iter()
+            .filter(|(candidate, _)| candidate == &selector)
+            .count();
+        ensure!(
+            selector_count <= 1,
+            "one committed payload frame must not contain duplicate revision selectors: selector={selector}, count={selector_count}"
+        );
+        let Some(diagnostic) = matching.into_iter().next() else {
+            return Ok(None);
+        };
+        let facts = window.presentation_facts();
+        let rendered_generation = window.rendered_frame_revision();
+        Ok((selector_count == 1
+            && diagnostic.frame_generation == rendered_generation
+            && facts.non_empty_presented_generation == Some(rendered_generation)
+            && facts.latest_present_attempt.is_some_and(|attempt| {
+                attempt.generation == rendered_generation
+                    && attempt.outcome == PlatformWindowPresentOutcome::Submitted
+                    && attempt.contained_valid_primitives
+            }))
+        .then_some(diagnostic))
+    })?
+}
+
+fn renderer_payload_current_window(
+    scenario: &NativeDockScenario,
+    app: &mut App,
+) -> Option<WindowId> {
+    app.with_window(scenario.renderer_payload_probe.entity_id(), |window, _| {
+        Window::window_handle(window).window_id()
+    })
+}
+
+fn ensure_single_live_undock_payload_handoff(
+    scenario: &NativeDockScenario,
+    destination: WindowId,
+) -> Result<()> {
+    let events = scenario.live_undock_observation.events();
+    let exact = |kind| {
+        events
+            .iter()
+            .filter(|event| event.kind() == kind)
+            .copied()
+            .collect::<Vec<_>>()
+    };
+    let source_proxy = exact(DockSurfaceLiveUndockTestEventKind::SourceProxyCommitted);
+    let mounts = exact(DockSurfaceLiveUndockTestEventKind::PayloadMounted);
+    let presentations = exact(DockSurfaceLiveUndockTestEventKind::PayloadPresented);
+    let semantics = exact(DockSurfaceLiveUndockTestEventKind::DestinationSemanticsSubmitted);
+    let interactions = exact(DockSurfaceLiveUndockTestEventKind::DestinationInteractionAdmitted);
+    ensure!(
+        source_proxy.len() == 1
+            && mounts.len() == 1
+            && presentations.len() == 1
+            && semantics.len() == 1
+            && interactions.len() == 1,
+        "same-HWND live-undock must accept one source proxy, mount, initial presentation, semantic handoff, and interaction admission: {events:?}"
+    );
+    let ordered = [
+        source_proxy[0],
+        mounts[0],
+        presentations[0],
+        semantics[0],
+        interactions[0],
+    ];
+    ensure!(
+        events == ordered,
+        "live-undock authority transitions must remain ordered without duplicate handoffs: {events:?}"
+    );
+    let opening_generation = ordered[0].opening_generation();
+    let drag_generation = ordered[0].drag_generation();
+    let payload_lease_generation = ordered[0]
+        .payload_lease_generation()
+        .context("the source proxy must retain one payload lease generation")?;
+    let provisional_session_generation = ordered[0]
+        .provisional_session_generation()
+        .context("the source proxy must retain one provisional session generation")?;
+    ensure!(
+        opening_generation != 0
+            && drag_generation != 0
+            && payload_lease_generation != 0
+            && provisional_session_generation != 0,
+        "live-undock generations must be non-zero: {events:?}"
+    );
+    ensure!(
+        ordered.iter().all(|event| {
+            event.opening_generation() == opening_generation
+                && event.drag_generation() == drag_generation
+                && event.source_window() == Some(scenario.source_window.window_id())
+                && event.destination_window() == destination
+                && event.payload_lease_generation() == Some(payload_lease_generation)
+                && event.provisional_session_generation() == Some(provisional_session_generation)
+        }),
+        "all accepted handoff transitions must retain one source, destination, lease, and session lineage: {events:?}"
+    );
+    ensure!(
+        mounts[0].root_count() == Some(1) && presentations[0].root_count() == Some(1),
+        "the retained payload must expose exactly one mounted root: {events:?}"
+    );
+    let source_proxy_frame = source_proxy[0]
+        .frame_generation()
+        .context("the source proxy event must bind a submitted source frame")?;
+    let mount_frame = mounts[0]
+        .frame_generation()
+        .context("the payload mount event must bind a destination frame")?;
+    let presentation_frame = presentations[0]
+        .frame_generation()
+        .context("the payload presentation event must bind a destination frame")?;
+    let semantic_frame = semantics[0]
+        .frame_generation()
+        .context("same-HWND semantics must bind a renderer-submitted frame")?;
+    ensure!(
+        source_proxy_frame != 0
+            && mount_frame != 0
+            && presentation_frame != 0
+            && semantic_frame > presentation_frame
+            && interactions[0].frame_generation() == Some(semantic_frame),
+        "renderer and semantic receipts must converge monotonically on one submitted interaction frame: {events:?}"
+    );
+    Ok(())
 }
 
 #[derive(Clone)]
@@ -570,7 +790,7 @@ impl NativeProcessConvergenceProbe {
 struct NativeAppShutdownProbeState {
     visible_provisional: Option<(open_gpui::WindowId, HWND)>,
     pending_provisional: Option<(open_gpui::WindowId, HWND)>,
-    pointer_guard: Option<SystemPointerGuard>,
+    pointer_guard: Option<NativeTestSystemPointerGuard>,
     opening_ownership_observed: bool,
     pending_registry_absence_observed: bool,
     pending_open_rejected: bool,
@@ -588,44 +808,6 @@ struct NativeNoInputOverlay {
     hwnd: HWND,
 }
 
-struct SystemPointerGuard {
-    original_position: POINT,
-    original_foreground: HWND,
-    capture_owner: HWND,
-    primary_button_down: bool,
-}
-
-impl SystemPointerGuard {
-    fn capture(capture_owner: HWND) -> Result<Self> {
-        let mut original_position = POINT::default();
-        unsafe { GetCursorPos(&mut original_position) }
-            .context("the native Dock scenario could not read the system cursor")?;
-        Ok(Self {
-            original_position,
-            original_foreground: unsafe { GetForegroundWindow() },
-            capture_owner,
-            primary_button_down: false,
-        })
-    }
-}
-
-impl Drop for SystemPointerGuard {
-    fn drop(&mut self) {
-        if self.primary_button_down {
-            let _ = inject_primary_button_up_best_effort();
-        }
-        if unsafe { GetCapture() } == self.capture_owner {
-            let _ = unsafe { ReleaseCapture() };
-        }
-        let _ = unsafe { SetCursorPos(self.original_position.x, self.original_position.y) };
-        if self.original_foreground != HWND::default()
-            && unsafe { IsWindow(Some(self.original_foreground)).as_bool() }
-        {
-            let _ = unsafe { SetForegroundWindow(self.original_foreground) };
-        }
-    }
-}
-
 #[test]
 fn native_interactive_scenario_registry_matches_cases() {
     let manifest = native_scenario_manifest();
@@ -638,18 +820,6 @@ fn native_interactive_scenario_registry_matches_cases() {
 
     let mut registrations = BTreeMap::new();
     for registration in manifest.scenario {
-        assert_eq!(
-            registration.package,
-            registration.behavior.package(),
-            "native scenario `{}` must execute in the package owned by its behavior",
-            registration.id,
-        );
-        assert_eq!(
-            registration.ignored,
-            registration.behavior.ignored(),
-            "native scenario `{}` must declare the ignored policy owned by its behavior",
-            registration.id,
-        );
         let scenario_id = registration.id.clone();
         assert!(
             registrations
@@ -730,6 +900,7 @@ fn native_interactive_mixed_dpi_final_client_bounds_are_exact() {
 }
 
 fn run_native_interactive_manifest_scenario(expected_behavior: NativeDockBehavior) {
+    native_test_confirm_scenario_behavior(expected_behavior.as_str());
     let registration = native_scenario_registration_from_environment();
     assert_eq!(
         registration.behavior, expected_behavior,
@@ -1268,10 +1439,9 @@ fn validate_process_convergence_app_shutdown_return(
     );
 
     ensure!(
-        inject_primary_button_up_best_effort(),
+        pointer_guard.release_primary_button_best_effort(),
         "terminal App shutdown returned but the worker could not restore the primary button"
     );
-    pointer_guard.primary_button_down = false;
     drop(pointer_guard);
 
     ensure!(
@@ -1305,6 +1475,7 @@ fn validate_process_convergence_app_shutdown_return(
         &probe.primary_shutdown_observation,
         probe.primary_anchor_window_id,
         &[probe.primary_source_window_id, visible.0],
+        SurfaceShutdownAnchorTerminalAuthority::AppRegistryClear,
     )?;
     assert_native_shutdown_order("App-shutdown primary dependent", &source)?;
     assert_native_shutdown_order("App-shutdown primary anchor", &anchor)?;
@@ -1451,13 +1622,22 @@ fn build_native_scenario(
             viewport.display_id = Some(displays.source.display_id().into());
         }
     }
+    let renderer_payload_probe =
+        cx.new(|_| NativeRendererPayloadProbe::new(native_renderer_payload_image()));
+    let renderer_payload_panel = if behavior == NativeDockBehavior::ProvisionalSameHwndPromotion {
+        DockPanel::new("Preview", renderer_payload_probe.clone())
+            .with_dock_class(SECONDARY_DOCK_CLASS)
+    } else {
+        demo_preview_panel()
+    };
     let surface_slot = Rc::new(RefCell::new(None));
-    let surface = build_managed_surface(
+    let surface = build_managed_surface_with_preview_panel(
         Rc::clone(&surface_slot),
         placement.clone(),
         target_bounds,
         source_bounds,
         central_bounds,
+        renderer_payload_panel,
         cx,
     );
     surface_slot.replace(Some(surface.clone()));
@@ -1541,11 +1721,13 @@ fn build_native_scenario(
             .borrow_mut()
             .push(event.clone());
     });
+    let live_undock_observation = surface.observe_live_undock_for_test(cx);
     let shutdown_observation = surface.observe_shutdown_for_test(cx);
 
     Ok(NativeDockScenario {
         surface,
         process_convergence_surface,
+        renderer_payload_probe,
         source_window,
         target_window,
         source_hwnd,
@@ -1560,6 +1742,7 @@ fn build_native_scenario(
         native_observation,
         native_identities: Rc::new(RefCell::new(BTreeMap::new())),
         app_shutdown_probe: Rc::new(RefCell::new(NativeAppShutdownProbeState::default())),
+        live_undock_observation,
         shutdown_observation,
         _source_interceptor: source_interceptor,
         _target_interceptor: target_interceptor,
@@ -1628,11 +1811,11 @@ async fn run_captured_host_drop_scenario(
         .filter(|kind| **kind == NativeMouseKind::Move)
         .count();
     ensure!(
-        root_window_from_point(target_point) == scenario.target_hwnd,
+        native_test_non_shell_root_window_at(target_point) == Some(scenario.target_hwnd),
         "the prepared target input point is occluded by a different native HWND: point={target_point:?}, hit={:?}",
-        root_window_from_point(target_point)
+        native_test_non_shell_root_window_at(target_point)
     );
-    inject_system_pointer(target_point, MOUSEEVENTF_MOVE)?;
+    inject_system_pointer(target_point, NativeTestPointerAction::Move)?;
     wait_for_cursor(cx, target_point, "captured move over the target HWND").await?;
     wait_until(cx, "target HWND committed Dock drop preview", |cx| {
         let preview = cx.update(|app| {
@@ -1661,8 +1844,7 @@ async fn run_captured_host_drop_scenario(
         "the real target preview must be routed while the source HWND still owns capture"
     );
 
-    inject_system_pointer(target_point, MOUSEEVENTF_LEFTUP)?;
-    pointer_guard.primary_button_down = false;
+    pointer_guard.inject(target_point, NativeTestPointerAction::PrimaryUp)?;
     wait_until(
         cx,
         "captured release and durable cross-HWND Dock drop",
@@ -1803,7 +1985,7 @@ async fn run_no_input_pass_through_scenario(
         );
     }
     ensure!(
-        root_window_from_point(pass_through_point) == scenario.target_hwnd,
+        native_test_non_shell_root_window_at(pass_through_point) == Some(scenario.target_hwnd),
         "two consecutive no-input GPUI HWNDs must expose the lower GPUI target HWND"
     );
 
@@ -1815,7 +1997,7 @@ async fn run_no_input_pass_through_scenario(
         "the no-input generation-drift probe must start without a stale target preview"
     );
     let generation_drift = arm_native_no_input_generation_drift(second_overlay.window)?;
-    inject_system_pointer(drift_point, MOUSEEVENTF_MOVE)?;
+    inject_system_pointer(drift_point, NativeTestPointerAction::Move)?;
     wait_for_cursor(cx, drift_point, "no-input generation-drift probe").await?;
     wait_until(
         cx,
@@ -1833,7 +2015,7 @@ async fn run_no_input_pass_through_scenario(
         "a no-input observation generation change must fail closed without publishing a Dock target preview"
     );
 
-    inject_system_pointer(pass_through_point, MOUSEEVENTF_MOVE)?;
+    inject_system_pointer(pass_through_point, NativeTestPointerAction::Move)?;
     wait_for_cursor(
         cx,
         pass_through_point,
@@ -1847,7 +2029,7 @@ async fn run_no_input_pass_through_scenario(
     })
     .await?;
 
-    inject_system_pointer(source_point, MOUSEEVENTF_MOVE)?;
+    inject_system_pointer(source_point, NativeTestPointerAction::Move)?;
     wait_until(
         cx,
         "Dock preview to clear before opaque-terminal probe",
@@ -1867,15 +2049,15 @@ async fn run_no_input_pass_through_scenario(
     );
     ensure!(
         native_window_is_above(second_overlay.hwnd, first_overlay.hwnd)
-            && native_window_is_above(first_overlay.hwnd, opaque_barrier.hwnd)
-            && native_window_is_above(opaque_barrier.hwnd, scenario.target_hwnd),
+            && native_window_is_above(first_overlay.hwnd, opaque_barrier.hwnd())
+            && native_window_is_above(opaque_barrier.hwnd(), scenario.target_hwnd),
         "the owning-platform stack must be no-input/no-input/opaque/GPUI at the terminal probe"
     );
     ensure!(
-        root_window_from_point(opaque_point) == opaque_barrier.hwnd,
+        native_test_non_shell_root_window_at(opaque_point) == Some(opaque_barrier.hwnd()),
         "two no-input GPUI HWNDs must pass through to the lower external opaque HWND"
     );
-    inject_system_pointer(opaque_point, MOUSEEVENTF_MOVE)?;
+    inject_system_pointer(opaque_point, NativeTestPointerAction::Move)?;
     wait_for_cursor(cx, opaque_point, "opaque terminal below no-input prefix").await?;
     wait_until(
         cx,
@@ -1903,9 +2085,8 @@ async fn run_no_input_pass_through_scenario(
     );
     drop(opaque_barrier);
 
-    inject_system_pointer(source_point, MOUSEEVENTF_MOVE)?;
-    inject_system_pointer(source_point, MOUSEEVENTF_LEFTUP)?;
-    pointer_guard.primary_button_down = false;
+    inject_system_pointer(source_point, NativeTestPointerAction::Move)?;
+    pointer_guard.inject(source_point, NativeTestPointerAction::PrimaryUp)?;
     wait_until(cx, "no-input scenario drag and capture to settle", |cx| {
         Ok(!cx.update(|app| app.has_active_drag()) && unsafe { GetCapture() } == HWND::default())
     })
@@ -1960,21 +2141,6 @@ fn close_no_input_overlay(cx: &mut App, overlay: NativeNoInputOverlay) -> Result
     Ok(())
 }
 
-fn raise_native_window(hwnd: HWND) -> Result<()> {
-    unsafe {
-        SetWindowPos(
-            hwnd,
-            Some(HWND_TOP),
-            0,
-            0,
-            0,
-            0,
-            SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
-        )
-    }
-    .context("failed to raise native test window in the normal Z-order band")
-}
-
 fn target_editor_screen_point(cx: &mut App, scenario: &NativeDockScenario) -> Result<POINT> {
     let bounds = unique_matching_debug_bounds(
         cx,
@@ -2011,7 +2177,7 @@ fn target_drop_preview_bounds(
 async fn begin_native_captured_drag(
     cx: &mut AsyncApp,
     scenario: &mut NativeDockScenario,
-) -> Result<(SystemPointerGuard, POINT)> {
+) -> Result<(NativeTestSystemPointerGuard, POINT)> {
     ensure!(
         unsafe { GetCapture() } == HWND::default(),
         "the native Dock runner started with an unrelated capture owner"
@@ -2020,7 +2186,7 @@ async fn begin_native_captured_drag(
         let _ = inject_primary_button_up_best_effort();
         bail!("the native Dock runner started with the primary pointer button pressed");
     }
-    let mut pointer_guard = SystemPointerGuard::capture(scenario.source_hwnd)?;
+    let mut pointer_guard = NativeTestSystemPointerGuard::capture()?;
 
     wait_until(cx, "both Dock HWNDs to present non-empty frames", |cx| {
         cx.update(|app| {
@@ -2111,17 +2277,17 @@ async fn begin_native_captured_drag(
 
     native_test_acquire_foreground_window(scenario.source_hwnd.0 as isize)?;
     ensure!(
-        root_window_from_point(source_point) == scenario.source_hwnd,
+        native_test_non_shell_root_window_at(source_point) == Some(scenario.source_hwnd),
         "the prepared source input point is occluded by a different native HWND"
     );
     ensure!(
-        root_window_from_point(threshold_point) == scenario.source_hwnd,
+        native_test_non_shell_root_window_at(threshold_point) == Some(scenario.source_hwnd),
         "the prepared source drag-threshold point is occluded by a different native HWND"
     );
     // SendInput does not guarantee a WM_MOUSEMOVE when an absolute move targets the cursor's
     // current pixel. Route the canary through a second point in the same committed tab first, so
     // the exact source WndProc admission proof never depends on ambient cursor placement.
-    inject_system_pointer(threshold_point, MOUSEEVENTF_MOVE)?;
+    inject_system_pointer(threshold_point, NativeTestPointerAction::Move)?;
     let delivered_threshold_point = wait_for_cursor(
         cx,
         threshold_point,
@@ -2138,7 +2304,7 @@ async fn begin_native_captured_drag(
     })
     .await
     .with_context(|| native_pointer_admission_context(scenario, delivered_threshold_point))?;
-    inject_system_pointer(source_point, MOUSEEVENTF_MOVE)?;
+    inject_system_pointer(source_point, NativeTestPointerAction::Move)?;
     let delivered_source_point =
         wait_for_cursor(cx, source_point, "source tab pointer move").await?;
     wait_until(cx, "source WndProc system-pointer move admission", |_| {
@@ -2151,8 +2317,7 @@ async fn begin_native_captured_drag(
     })
     .await
     .with_context(|| native_pointer_admission_context(scenario, delivered_source_point))?;
-    pointer_guard.primary_button_down = true;
-    inject_system_pointer(delivered_source_point, MOUSEEVENTF_LEFTDOWN)?;
+    pointer_guard.inject(delivered_source_point, NativeTestPointerAction::PrimaryDown)?;
     wait_until(cx, "source HWND native pointer-capture transition", |_| {
         let captured = unsafe { GetCapture() } == scenario.source_hwnd;
         let observed_down = scenario
@@ -2184,7 +2349,7 @@ async fn begin_native_captured_drag(
         )
     })?;
 
-    inject_system_pointer(threshold_point, MOUSEEVENTF_MOVE)?;
+    inject_system_pointer(threshold_point, NativeTestPointerAction::Move)?;
     wait_until(cx, "GPUI Dock drag activation from native movement", |cx| {
         Ok(cx.update(|app| app.has_active_drag()))
     })
@@ -2309,42 +2474,59 @@ async fn run_provisional_same_hwnd_promotion_scenario(
         .uses_opaque_underlay()
         .then(|| NativeOpaqueBarrier::prepare_partial_cover(release_point))
         .transpose()?;
+    let prove_renderer_payload = behavior == NativeDockBehavior::ProvisionalSameHwndPromotion;
+    let renderer_payload_entity_id = scenario.renderer_payload_probe.entity_id();
+    let mut provisional_renderer_payload = None;
+    let (renderer_payload_image_id, renderer_payload_initial_revision, _) =
+        cx.update(|app| renderer_payload_snapshot(scenario, app));
+    ensure!(
+        renderer_payload_initial_revision == 0,
+        "the native retained payload must begin from revision zero"
+    );
+    if prove_renderer_payload {
+        wait_until(
+            cx,
+            "the source HWND to present the retained atlas-backed payload",
+            |cx| {
+                let (_, revision, renders) =
+                    cx.update(|app| renderer_payload_snapshot(scenario, app));
+                let current_window =
+                    cx.update(|app| renderer_payload_current_window(scenario, app));
+                let diagnostic = cx.update(|app| {
+                    renderer_payload_submitted_diagnostic(
+                        app,
+                        scenario.source_window,
+                        renderer_payload_image_id,
+                        0,
+                    )
+                })?;
+                Ok(revision == 0
+                    && current_window == Some(scenario.source_window.window_id())
+                    && renders.iter().any(|render| {
+                        render.revision == 0
+                            && render.window_id == scenario.source_window.window_id()
+                    })
+                    && diagnostic.is_some_and(|diagnostic| {
+                        matches!(
+                            diagnostic.atlas_access.outcome,
+                            AtlasAccessOutcome::Inserted | AtlasAccessOutcome::Hit
+                        ) && diagnostic.bounds.size.width.as_f32() > 0.0
+                            && diagnostic.bounds.size.height.as_f32() > 0.0
+                    }))
+            },
+        )
+        .await?;
+    }
     let (mut pointer_guard, delivered_source_point) =
         begin_native_captured_drag(cx, scenario).await?;
     let placement_oracle =
         cx.update(|app| native_dock_placement_oracle(app, scenario, delivered_source_point))?;
-    let exact_release_placement = if mixed_dpi_target.is_some()
+    let requires_exact_release_placement = mixed_dpi_target.is_some()
         || matches!(
             behavior,
             NativeDockBehavior::ProvisionalSameHwndPromotion
                 | NativeDockBehavior::LiveRouteAndReleaseLock
-        ) {
-        let target_display = native_test_display_at(release_point)?;
-        let expected_bounds =
-            placement_oracle.expected_client_bounds(release_point, target_display)?;
-        if let Some(selected) = mixed_dpi_target {
-            ensure!(
-                target_display.display_id() == selected.target.display_id(),
-                "the release point resolved to a different target display than the mixed-DPI scenario selected: selected={:?}, resolved={target_display:?}",
-                selected.target
-            );
-            let source_scaled_size = placement_oracle
-                .logical_size
-                .to_device_pixels(selected.source.scale_factor());
-            ensure!(
-                expected_bounds.size != source_scaled_size,
-                "the mixed-DPI native environment cannot distinguish target-scale placement from the historical source-scale bug: source={:?}, target={target_display:?}, source_scaled={source_scaled_size:?}, expected={expected_bounds:?}",
-                selected.source
-            );
-        }
-        Some((
-            expected_bounds,
-            target_display.display_id(),
-            target_display.scale_factor(),
-        ))
-    } else {
-        None
-    };
+        );
     let pre_tear_off_snapshot = cx.update(|app| scenario.surface.export_snapshot(app));
     let pre_tear_off_revision = pre_tear_off_snapshot.revision();
     let pre_tear_off_runtime = cx.update(|app| scenario.surface.viewports().runtime_status(app));
@@ -2354,18 +2536,31 @@ async fn run_provisional_same_hwnd_promotion_scenario(
     let registered_before_release =
         cx.update(|app| scenario.surface.registered_viewport_spaces(app));
 
-    inject_system_pointer(reveal_point, MOUSEEVENTF_MOVE)?;
-    wait_for_cursor(
+    ensure_open_desktop_point_is_current(
+        reveal_point,
+        "the provisional reveal point before system pointer injection",
+    )?;
+    inject_system_pointer(reveal_point, NativeTestPointerAction::Move)?;
+    let delivered_reveal_point = wait_for_cursor(
         cx,
         reveal_point,
         "captured move onto the open-desktop provisional reveal point",
     )
     .await?;
+    ensure_open_desktop_point_is_current(
+        delivered_reveal_point,
+        "the delivered provisional reveal point",
+    )?;
     if mixed_dpi_target.is_some() {
         wait_until(
             cx,
             "the source WndProc observed the mixed-DPI provisional reveal move",
-            |_| Ok(source_native_captured_move_observed(scenario, reveal_point)),
+            |_| {
+                Ok(source_native_captured_move_observed(
+                    scenario,
+                    delivered_reveal_point,
+                ))
+            },
         )
         .await?;
     }
@@ -2393,7 +2588,7 @@ async fn run_provisional_same_hwnd_promotion_scenario(
                     .map(|trace| format!("{trace:?}"))
                     .unwrap_or_else(|_| "<poisoned>".to_string());
                 *last_observation_for_wait.borrow_mut() = format!(
-                    "no third window; reveal_point={reveal_point:?} release_point={release_point:?} cursor={cursor:?} capture={:?} foreground={:?} trace={trace} runtime={:?}",
+                    "no third window; requested_reveal_point={reveal_point:?} delivered_reveal_point={delivered_reveal_point:?} release_point={release_point:?} cursor={cursor:?} capture={:?} foreground={:?} trace={trace} runtime={:?}",
                     unsafe { GetCapture() },
                     unsafe { GetForegroundWindow() },
                     cx.update(|app| scenario.surface.viewports().runtime_status(app))
@@ -2466,16 +2661,18 @@ async fn run_provisional_same_hwnd_promotion_scenario(
         "the provisional HWND must be natively visible before release"
     );
     ensure!(
-        point_is_open_desktop(reveal_point),
+        point_is_open_desktop(delivered_reveal_point),
         "the initial provisional reveal must be scoped to verified open desktop"
     );
     ensure!(
         unsafe { GetCapture() } == scenario.source_hwnd,
         "the source HWND must retain capture while the provisional is visibly presented"
     );
-    let reveal_display = native_test_display_at(reveal_point)?;
+    let reveal_display = native_test_display_at(delivered_reveal_point)?;
     let expected_reveal_bounds =
-        placement_oracle.expected_client_bounds(reveal_point, reveal_display)?;
+        placement_oracle.expected_client_bounds(delivered_reveal_point, reveal_display)?;
+    let last_reveal_observation = Rc::new(RefCell::new(String::new()));
+    let last_reveal_observation_for_wait = Rc::clone(&last_reveal_observation);
     wait_until(
         cx,
         "the initial provisional HWND to match the independent reveal placement oracle",
@@ -2483,8 +2680,15 @@ async fn run_provisional_same_hwnd_promotion_scenario(
             let same_hwnd = cx.update(|app| raw_hwnd(app, provisional_window))? == provisional_hwnd;
             let facts = cx.update(|app| window_platform_facts(app, provisional_window))?;
             let non_empty = cx.update(|app| window_has_non_empty_frame(app, provisional_window))?;
+            let native_client_bounds = native_client_screen_bounds(provisional_hwnd);
+            *last_reveal_observation_for_wait.borrow_mut() = format!(
+                "same_hwnd={same_hwnd} non_empty={non_empty} oracle={placement_oracle:?} expected={expected_reveal_bounds:?} requested_reveal_point={reveal_point:?} delivered_reveal_point={delivered_reveal_point:?} reveal_display={reveal_display:?} native_client={native_client_bounds:?} facts={facts:?}"
+            );
             Ok(same_hwnd
                 && non_empty
+                && native_client_bounds
+                    .as_ref()
+                    .is_ok_and(|bounds| *bounds == expected_reveal_bounds)
                 && facts.physical_geometry.is_some_and(|geometry| {
                     geometry.client_bounds() == expected_reveal_bounds
                         && (geometry.scale_factor() - reveal_display.scale_factor()).abs() <= 0.001
@@ -2493,7 +2697,13 @@ async fn run_provisional_same_hwnd_promotion_scenario(
                 && !facts.is_active)
         },
     )
-    .await?;
+    .await
+    .with_context(|| {
+        format!(
+            "last reveal observation: {}",
+            last_reveal_observation.borrow()
+        )
+    })?;
     let pre_release_window_count = cx.update(|app| app.windows().len());
     ensure!(
         pre_release_window_count == scenario.initial_window_count + 1,
@@ -2546,6 +2756,109 @@ async fn run_provisional_same_hwnd_promotion_scenario(
         provisional_tab.size.width > px(0.0) && provisional_tab.size.height > px(0.0),
         "the provisional's non-empty presented frame must contain the real payload tab"
     );
+    if prove_renderer_payload {
+        let mut initial_provisional_diagnostic = None;
+        wait_until(
+            cx,
+            "the provisional HWND to own the retained atlas-backed payload before release",
+            |cx| {
+                let (_, revision, renders) =
+                    cx.update(|app| renderer_payload_snapshot(scenario, app));
+                let current_window =
+                    cx.update(|app| renderer_payload_current_window(scenario, app));
+                let diagnostic = cx.update(|app| {
+                    renderer_payload_submitted_diagnostic(
+                        app,
+                        provisional_window,
+                        renderer_payload_image_id,
+                        0,
+                    )
+                })?;
+                let rendered_here = renders.iter().any(|render| {
+                    render.revision == 0 && render.window_id == provisional_window.window_id()
+                });
+                if revision == 0
+                    && current_window == Some(provisional_window.window_id())
+                    && rendered_here
+                    && diagnostic.is_some_and(|diagnostic| {
+                        matches!(
+                            diagnostic.atlas_access.outcome,
+                            AtlasAccessOutcome::Inserted | AtlasAccessOutcome::Hit
+                        ) && diagnostic.bounds.size.width.as_f32() > 0.0
+                            && diagnostic.bounds.size.height.as_f32() > 0.0
+                    })
+                {
+                    initial_provisional_diagnostic = diagnostic;
+                    return Ok(true);
+                }
+                Ok(false)
+            },
+        )
+        .await?;
+        let initial_provisional_diagnostic = initial_provisional_diagnostic
+            .context("the provisional payload rendered without an atlas diagnostic")?;
+
+        cx.background_executor()
+            .timer(Duration::from_millis(16))
+            .await;
+        let asynchronous_revision = cx.update_entity(
+            &scenario.renderer_payload_probe,
+            NativeRendererPayloadProbe::advance,
+        );
+        let mut asynchronous_diagnostic = None;
+        wait_until(
+            cx,
+            "the visible provisional HWND to present an asynchronous retained payload update",
+            |cx| {
+                let (_, revision, renders) =
+                    cx.update(|app| renderer_payload_snapshot(scenario, app));
+                let current_window =
+                    cx.update(|app| renderer_payload_current_window(scenario, app));
+                let matching_renders = renders
+                    .iter()
+                    .filter(|render| render.revision == asynchronous_revision)
+                    .copied()
+                    .collect::<Vec<_>>();
+                let diagnostic = cx.update(|app| {
+                    renderer_payload_submitted_diagnostic(
+                        app,
+                        provisional_window,
+                        renderer_payload_image_id,
+                        asynchronous_revision,
+                    )
+                })?;
+                if revision == asynchronous_revision
+                    && current_window == Some(provisional_window.window_id())
+                    && !matching_renders.is_empty()
+                    && matching_renders
+                        .iter()
+                        .all(|render| render.window_id == provisional_window.window_id())
+                    && diagnostic.is_some_and(|diagnostic| {
+                        diagnostic.frame_generation
+                            > initial_provisional_diagnostic.frame_generation
+                            && matches!(
+                                diagnostic.atlas_access.outcome,
+                                AtlasAccessOutcome::Inserted | AtlasAccessOutcome::Hit
+                            )
+                    })
+                {
+                    asynchronous_diagnostic = diagnostic;
+                    return Ok(true);
+                }
+                Ok(false)
+            },
+        )
+        .await?;
+        ensure!(
+            scenario.renderer_payload_probe.entity_id() == renderer_payload_entity_id,
+            "the asynchronous provisional update must retain the exact payload entity"
+        );
+        provisional_renderer_payload = Some((
+            asynchronous_revision,
+            asynchronous_diagnostic
+                .context("the asynchronous provisional frame lost its atlas diagnostic")?,
+        ));
+    }
 
     let pre_release_snapshot = cx.update(|app| scenario.surface.export_snapshot(app));
     let pre_release_changes = scenario.surface_changes.borrow().clone();
@@ -2582,20 +2895,26 @@ async fn run_provisional_same_hwnd_promotion_scenario(
             .all(|kind| !matches!(kind, NativeMouseKind::Down | NativeMouseKind::Up)),
         "bootstrapping a visible provisional must not synthesize captured button input"
     );
-    if exact_release_placement.is_some() {
+    if requires_exact_release_placement {
         ensure!(
             cx.update(|app| {
-                native_captured_release_placement_for_test(scenario.source_window.window_id(), app)
+                native_captured_release_observation_for_test(
+                    scenario.source_window.window_id(),
+                    app,
+                )
             })
             .is_none(),
-            "final release placement authority must not exist before the primary-button release is adopted"
+            "callback-scoped release authority must not exist before the primary-button release"
         );
     }
 
+    let mut delivered_release_point = delivered_reveal_point;
+    let mut delivered_continuous_route_points = None;
     if let Some(route_points) = continuous_route_points {
+        let mut delivered_route_points = [POINT::default(); 2];
         for (index, route_point) in route_points.into_iter().enumerate() {
-            inject_system_pointer(route_point, MOUSEEVENTF_MOVE)?;
-            wait_for_cursor(
+            inject_system_pointer(route_point, NativeTestPointerAction::Move)?;
+            let delivered_route_point = wait_for_cursor(
                 cx,
                 route_point,
                 &format!(
@@ -2604,19 +2923,26 @@ async fn run_provisional_same_hwnd_promotion_scenario(
                 ),
             )
             .await?;
+            delivered_route_points[index] = delivered_route_point;
+            delivered_release_point = delivered_route_point;
             wait_until(
                 cx,
                 &format!(
                     "the source WndProc observed continuous route move {}",
                     index + 1
                 ),
-                |_| Ok(source_native_captured_move_observed(scenario, route_point)),
+                |_| {
+                    Ok(source_native_captured_move_observed(
+                        scenario,
+                        delivered_route_point,
+                    ))
+                },
             )
             .await?;
 
-            let target_display = native_test_display_at(route_point)?;
+            let target_display = native_test_display_at(delivered_route_point)?;
             let expected_bounds =
-                placement_oracle.expected_client_bounds(route_point, target_display)?;
+                placement_oracle.expected_client_bounds(delivered_route_point, target_display)?;
             wait_until(
                 cx,
                 &format!(
@@ -2629,8 +2955,12 @@ async fn run_provisional_same_hwnd_promotion_scenario(
                     let facts = cx.update(|app| window_platform_facts(app, provisional_window))?;
                     let non_empty =
                         cx.update(|app| window_has_non_empty_frame(app, provisional_window))?;
+                    let native_client_bounds = native_client_screen_bounds(provisional_hwnd);
                     Ok(same_hwnd
                         && non_empty
+                        && native_client_bounds
+                            .as_ref()
+                            .is_ok_and(|bounds| *bounds == expected_bounds)
                         && facts.physical_geometry.is_some_and(|geometry| {
                             geometry.client_bounds() == expected_bounds
                                 && (geometry.scale_factor() - target_display.scale_factor()).abs()
@@ -2644,12 +2974,12 @@ async fn run_provisional_same_hwnd_promotion_scenario(
             ensure!(
                 unsafe { GetCapture() } == scenario.source_hwnd
                     && cx.update(|app| app.has_active_drag()),
-                "continuous provisional route movement must retain source capture and the active drag: index={index}, point={route_point:?}"
+                "continuous provisional route movement must retain source capture and the active drag: index={index}, requested_point={route_point:?}, delivered_point={delivered_route_point:?}"
             );
             ensure!(
                 unsafe { IsWindow(Some(provisional_hwnd)).as_bool() }
                     && unsafe { IsWindowVisible(provisional_hwnd).as_bool() },
-                "continuous provisional route movement must preserve the exact visible HWND: index={index}, point={route_point:?}"
+                "continuous provisional route movement must preserve the exact visible HWND: index={index}, requested_point={route_point:?}, delivered_point={delivered_route_point:?}"
             );
             let route_snapshot = cx.update(|app| scenario.surface.export_snapshot(app));
             ensure!(
@@ -2673,6 +3003,7 @@ async fn run_provisional_same_hwnd_promotion_scenario(
                 .all(|kind| !matches!(kind, NativeMouseKind::Down | NativeMouseKind::Up)),
             "continuous same-HWND placement must not deliver captured button input to the provisional"
         );
+        delivered_continuous_route_points = Some(delivered_route_points);
     }
 
     if behavior.uses_opaque_underlay() {
@@ -2686,30 +3017,34 @@ async fn run_provisional_same_hwnd_promotion_scenario(
             "presenting the opaque underlay must not terminate the captured Dock drag"
         );
         ensure!(
-            root_window_from_point(release_point) == barrier.hwnd,
+            native_test_non_shell_root_window_at(release_point) == Some(barrier.hwnd()),
             "the second captured point must resolve to the exact ordinary opaque barrier before release"
         );
-        inject_system_pointer(release_point, MOUSEEVENTF_MOVE)?;
-        wait_for_cursor(
+        inject_system_pointer(release_point, NativeTestPointerAction::Move)?;
+        delivered_release_point = wait_for_cursor(
             cx,
             release_point,
             "captured move from the reveal point onto the final opaque-barrier release point",
         )
         .await?;
+        ensure!(
+            native_test_non_shell_root_window_at(delivered_release_point) == Some(barrier.hwnd()),
+            "the delivered captured point must resolve to the exact ordinary opaque barrier before release: requested={release_point:?}, delivered={delivered_release_point:?}"
+        );
         wait_until(
             cx,
             "the source WndProc observed the final captured move before release",
             |_| {
                 Ok(source_native_captured_move_observed(
                     scenario,
-                    release_point,
+                    delivered_release_point,
                 ))
             },
         )
         .await?;
     } else if mixed_dpi_target.is_some() {
-        inject_system_pointer(release_point, MOUSEEVENTF_MOVE)?;
-        wait_for_cursor(
+        inject_system_pointer(release_point, NativeTestPointerAction::Move)?;
+        delivered_release_point = wait_for_cursor(
             cx,
             release_point,
             "captured move from the source-DPI reveal point to the target-DPI release point",
@@ -2721,33 +3056,88 @@ async fn run_provisional_same_hwnd_promotion_scenario(
             |_| {
                 Ok(source_native_captured_move_observed(
                     scenario,
-                    release_point,
+                    delivered_release_point,
                 ))
             },
         )
         .await?;
         ensure!(
-            point_is_open_desktop(release_point),
+            point_is_open_desktop(delivered_release_point),
             "the mixed-DPI release point must still resolve to open shell desktop immediately before LEFTUP"
         );
     }
 
-    if let Some(divergence_point) = post_release_divergence_point {
-        inject_system_pointer_sequence(&[
-            (release_point, MOUSEEVENTF_LEFTUP),
-            (divergence_point, MOUSEEVENTF_MOVE),
-        ])?;
-    } else {
-        inject_system_pointer(release_point, MOUSEEVENTF_LEFTUP)?;
+    if let Some(selected) = mixed_dpi_target {
+        let delivered_negative_route_point =
+            if selected.source.display_id() == selected.negative_display.display_id() {
+                delivered_reveal_point
+            } else {
+                delivered_release_point
+            };
+        ensure!(
+            delivered_negative_route_point.x < 0 || delivered_negative_route_point.y < 0,
+            "mixed-DPI routing must deliver an actual negative capture or release point: selected={selected:?}, requested_reveal={reveal_point:?}, delivered_reveal={delivered_reveal_point:?}, requested_release={release_point:?}, delivered_release={delivered_release_point:?}"
+        );
+        ensure!(
+            native_test_display_at(delivered_negative_route_point)?.display_id()
+                == selected.negative_display.display_id(),
+            "the delivered negative routing point must resolve to the selected negative display: selected={selected:?}, point={delivered_negative_route_point:?}"
+        );
     }
-    pointer_guard.primary_button_down = false;
+
+    let exact_release_placement = if requires_exact_release_placement {
+        let target_display = native_test_display_at(delivered_release_point)?;
+        let expected_bounds =
+            placement_oracle.expected_client_bounds(delivered_release_point, target_display)?;
+        if let Some(selected) = mixed_dpi_target {
+            ensure!(
+                target_display.display_id() == selected.target.display_id(),
+                "the delivered release point resolved to a different target display than the mixed-DPI scenario selected: selected={:?}, resolved={target_display:?}",
+                selected.target
+            );
+            let source_scaled_size = placement_oracle
+                .logical_size
+                .to_device_pixels(selected.source.scale_factor());
+            ensure!(
+                expected_bounds.size != source_scaled_size,
+                "the mixed-DPI native environment cannot distinguish target-scale placement from the historical source-scale bug: source={:?}, target={target_display:?}, source_scaled={source_scaled_size:?}, expected={expected_bounds:?}",
+                selected.source
+            );
+        }
+        Some((
+            expected_bounds,
+            target_display.display_id(),
+            target_display.scale_factor(),
+        ))
+    } else {
+        None
+    };
+
+    if behavior.closes_committed_destination() {
+        cx.update(|app| {
+            scenario
+                .surface
+                .terminate_next_live_undock_destination_before_semantics_ack_for_test(app);
+        });
+    }
+    let release_authority = opaque_barrier
+        .as_ref()
+        .map_or(NativeReleasePointAuthority::OpenDesktop, |barrier| {
+            NativeReleasePointAuthority::OpaqueBarrier(barrier.hwnd())
+        });
+    inject_primary_release(
+        &mut pointer_guard,
+        delivered_release_point,
+        post_release_divergence_point,
+        release_authority,
+    )?;
     wait_until(
         cx,
         "captured primary-button release reached the source WndProc",
         |_| {
             Ok(source_native_primary_button_up_observed(
                 scenario,
-                release_point,
+                delivered_release_point,
             ))
         },
     )
@@ -2758,22 +3148,48 @@ async fn run_provisional_same_hwnd_promotion_scenario(
             scenario.native_observation.events()
         )
     })?;
-    if let Some(divergence_point) = post_release_divergence_point {
-        wait_for_cursor(
-            cx,
-            divergence_point,
-            "the immediate post-MouseUp divergence move reached the system cursor",
-        )
-        .await?;
-    }
-    assert_source_only_native_capture_trace(scenario, release_point)?;
-    if let (Some([second, third]), Some(post_up_point)) =
-        (continuous_route_points, post_release_divergence_point)
-    {
+    let release_observation = cx
+        .update(|app| {
+            native_captured_release_observation_for_test(scenario.source_window.window_id(), app)
+        })
+        .context("the exact captured LEFTUP callback did not publish its release receipt")?;
+    let release_hit = release_observation.hit_stack().observation().context(
+        "the exact captured LEFTUP callback did not publish an available native hit stack",
+    )?;
+    ensure!(
+        release_hit.sampled_point()
+            == point(
+                DevicePixels(delivered_release_point.x),
+                DevicePixels(delivered_release_point.y),
+            ),
+        "the captured LEFTUP hit observation was sampled at a different physical point: release={delivered_release_point:?}, observation={release_hit:?}"
+    );
+    ensure!(
+        release_authority.matches_hit_terminus(release_hit.terminus()),
+        "the captured LEFTUP callback reported the wrong typed hit terminus: release={delivered_release_point:?}, observation={release_hit:?}"
+    );
+    let delivered_post_release_divergence_point =
+        if let Some(divergence_point) = post_release_divergence_point {
+            Some(
+                wait_for_cursor(
+                    cx,
+                    divergence_point,
+                    "the immediate post-MouseUp divergence move reached the system cursor",
+                )
+                .await?,
+            )
+        } else {
+            None
+        };
+    assert_source_only_native_capture_trace(scenario, delivered_release_point)?;
+    if let (Some([second, third]), Some(post_up_point)) = (
+        delivered_continuous_route_points,
+        delivered_post_release_divergence_point,
+    ) {
         assert_continuous_release_trace(
             scenario,
-            [reveal_point, second, third],
-            release_point,
+            [delivered_reveal_point, second, third],
+            delivered_release_point,
             post_up_point,
         )?;
     }
@@ -2784,20 +3200,24 @@ async fn run_provisional_same_hwnd_promotion_scenario(
             |cx| {
                 Ok(cx
                     .update(|app| {
-                        native_captured_release_placement_for_test(
+                        native_captured_release_observation_for_test(
                             scenario.source_window.window_id(),
                             app,
                         )
                     })
-                    .is_some())
+                    .is_some_and(|observation| observation.placement().is_some()))
             },
         )
         .await?;
         let published_bounds = cx
             .update(|app| {
-                native_captured_release_placement_for_test(scenario.source_window.window_id(), app)
+                native_captured_release_observation_for_test(
+                    scenario.source_window.window_id(),
+                    app,
+                )
             })
-            .context("the adopted release did not expose its placement intent")?;
+            .and_then(|observation| observation.placement())
+            .context("the adopted release receipt did not expose its placement intent")?;
         ensure!(
             published_bounds == expected_bounds,
             "the production release placement diverged from the independent client-geometry oracle: expected={expected_bounds:?}, published={published_bounds:?}"
@@ -2810,7 +3230,11 @@ async fn run_provisional_same_hwnd_promotion_scenario(
                 let Some(geometry) = facts.physical_geometry else {
                     return Ok(false);
                 };
-                Ok(geometry.client_bounds() == expected_bounds
+                let native_client_bounds = native_client_screen_bounds(provisional_hwnd);
+                Ok(native_client_bounds
+                    .as_ref()
+                    .is_ok_and(|bounds| *bounds == expected_bounds)
+                    && geometry.client_bounds() == expected_bounds
                     && facts.display_id == Some(expected_display)
                     && (geometry.scale_factor() - expected_scale).abs() <= 0.001
                     && geometry.client_bounds().size.width.0 > 0
@@ -2819,12 +3243,31 @@ async fn run_provisional_same_hwnd_promotion_scenario(
         )
         .await?;
     }
+    if behavior.closes_committed_destination() {
+        let (promoted_space, lost_revision) = run_committed_loss_recovery(
+            cx,
+            scenario,
+            provisional_hwnd,
+            pre_tear_off_revision,
+            &mut pointer_guard,
+        )
+        .await?;
+        log::info!(
+            "scenario={} source_hwnd={:?} provisional_hwnd={:?} promoted_space={} revision={} completed",
+            scenario_id,
+            scenario.source_hwnd,
+            provisional_hwnd,
+            promoted_space,
+            lost_revision
+        );
+        return Ok(());
+    }
     let mut promoted_space = None;
     let last_promotion_observation = Rc::new(RefCell::new(String::new()));
     let last_observation_for_wait = Rc::clone(&last_promotion_observation);
     wait_until(
         cx,
-        "same-HWND provisional promotion and interaction-gate release",
+        "durable same-HWND promotion and platform-policy convergence",
         |cx| {
             let (promoted, observation) = cx.update(|app| -> Result<_> {
                 let registered_spaces = scenario.surface.registered_viewport_spaces(app);
@@ -2913,6 +3356,67 @@ async fn run_provisional_same_hwnd_promotion_scenario(
             && unsafe { IsWindowVisible(provisional_hwnd).as_bool() },
         "the exact provisional HWND must remain live and visible after promotion"
     );
+    if prove_renderer_payload {
+        let (pre_promotion_revision, pre_promotion_diagnostic) = provisional_renderer_payload
+            .take()
+            .context("same-HWND promotion lost the provisional renderer payload proof")?;
+        cx.background_executor()
+            .timer(Duration::from_millis(16))
+            .await;
+        let promoted_revision = cx.update_entity(
+            &scenario.renderer_payload_probe,
+            NativeRendererPayloadProbe::advance,
+        );
+        ensure!(
+            promoted_revision > pre_promotion_revision,
+            "the promoted retained payload revision must advance monotonically"
+        );
+        wait_until(
+            cx,
+            "the promoted same HWND to present the retained atlas-backed payload again",
+            |cx| {
+                let (image_id, revision, renders) =
+                    cx.update(|app| renderer_payload_snapshot(scenario, app));
+                let current_window =
+                    cx.update(|app| renderer_payload_current_window(scenario, app));
+                let matching_renders = renders
+                    .iter()
+                    .filter(|render| render.revision == promoted_revision)
+                    .copied()
+                    .collect::<Vec<_>>();
+                let diagnostic = cx.update(|app| {
+                    renderer_payload_submitted_diagnostic(
+                        app,
+                        provisional_window,
+                        renderer_payload_image_id,
+                        promoted_revision,
+                    )
+                })?;
+                Ok(image_id == renderer_payload_image_id
+                    && revision == promoted_revision
+                    && current_window == Some(provisional_window.window_id())
+                    && !matching_renders.is_empty()
+                    && matching_renders
+                        .iter()
+                        .all(|render| render.window_id == provisional_window.window_id())
+                    && diagnostic.is_some_and(|diagnostic| {
+                        diagnostic.frame_generation > pre_promotion_diagnostic.frame_generation
+                            && diagnostic.tile.texture_instance()
+                                == pre_promotion_diagnostic.tile.texture_instance()
+                            && matches!(
+                                diagnostic.atlas_access.outcome,
+                                AtlasAccessOutcome::Hit | AtlasAccessOutcome::Inserted
+                            )
+                    }))
+            },
+        )
+        .await?;
+        ensure!(
+            scenario.renderer_payload_probe.entity_id() == renderer_payload_entity_id,
+            "same-HWND promotion must retain the exact payload entity without a second mount"
+        );
+        ensure_single_live_undock_payload_handoff(scenario, provisional_window.window_id())?;
+    }
     if let Some((expected_bounds, expected_display, expected_scale)) = exact_release_placement {
         let accepted_before_refresh = cx.update(|app| {
             app.update_window(provisional_window, |_, window, _| {
@@ -2940,25 +3444,27 @@ async fn run_provisional_same_hwnd_promotion_scenario(
         let stable_geometry = stable_facts
             .physical_geometry
             .context("same-HWND promotion lost its exact physical geometry")?;
+        let stable_native_client_bounds = native_client_screen_bounds(provisional_hwnd)?;
         ensure!(
-            stable_geometry.client_bounds() == expected_bounds
+            stable_native_client_bounds == expected_bounds
+                && stable_geometry.client_bounds() == expected_bounds
                 && stable_facts.display_id == Some(expected_display)
                 && (stable_geometry.scale_factor() - expected_scale).abs() <= 0.001,
-            "same-HWND promotion changed the exact release placement: expected_bounds={expected_bounds:?}, expected_display={expected_display:?}, expected_scale={expected_scale}, facts={stable_facts:?}"
+            "same-HWND promotion changed the exact release placement: expected_bounds={expected_bounds:?}, native_client_bounds={stable_native_client_bounds:?}, expected_display={expected_display:?}, expected_scale={expected_scale}, facts={stable_facts:?}"
         );
-        if let Some(divergence_point) = post_release_divergence_point {
+        if let Some(divergence_point) = delivered_post_release_divergence_point {
             let divergence_display = native_test_display_at(divergence_point)?;
             let divergence_bounds =
                 placement_oracle.expected_client_bounds(divergence_point, divergence_display)?;
             ensure!(
                 divergence_bounds != expected_bounds
                     && stable_geometry.client_bounds() != divergence_bounds,
-                "the immediate post-MouseUp pointer move must not redirect the locked release placement: release={release_point:?}, release_bounds={expected_bounds:?}, divergence={divergence_point:?}, divergence_bounds={divergence_bounds:?}, facts={stable_facts:?}"
+                "the immediate post-MouseUp pointer move must not redirect the locked release placement: requested_release={release_point:?}, delivered_release={delivered_release_point:?}, release_bounds={expected_bounds:?}, delivered_divergence={divergence_point:?}, divergence_bounds={divergence_bounds:?}, facts={stable_facts:?}"
             );
         }
     }
     if let Some(barrier) = opaque_barrier.as_ref() {
-        barrier.assert_point_scoped_band(provisional_hwnd, release_point)?;
+        barrier.assert_point_scoped_band(provisional_hwnd, delivered_release_point)?;
         ensure!(
             window_rect(provisional_hwnd)? != provisional_rect,
             "the final provisional placement must move away from its earlier reveal geometry"
@@ -3018,10 +3524,10 @@ async fn run_provisional_same_hwnd_promotion_scenario(
     };
     let click_point = visible_client_point_for_window(provisional_hwnd, preferred_click_point)?;
     ensure!(
-        root_window_from_point(click_point) == provisional_hwnd,
+        native_test_non_shell_root_window_at(click_point) == Some(provisional_hwnd),
         "the system click must target a visible client point on the exact promoted HWND: point={click_point:?}, promoted={provisional_hwnd:?}"
     );
-    inject_system_pointer(click_point, MOUSEEVENTF_MOVE)?;
+    inject_system_pointer(click_point, NativeTestPointerAction::Move)?;
     wait_for_cursor(
         cx,
         click_point,
@@ -3032,12 +3538,11 @@ async fn run_provisional_same_hwnd_promotion_scenario(
     unsafe { GetCursorPos(&mut delivered_click_point) }
         .context("the native Dock scenario could not sample the promoted click point")?;
     ensure!(
-        root_window_from_point(delivered_click_point) == provisional_hwnd,
+        native_test_non_shell_root_window_at(delivered_click_point) == Some(provisional_hwnd),
         "the delivered system pointer must resolve to the exact promoted HWND: requested={click_point:?}, delivered={delivered_click_point:?}, promoted={provisional_hwnd:?}"
     );
 
-    pointer_guard.primary_button_down = true;
-    inject_system_pointer(delivered_click_point, MOUSEEVENTF_LEFTDOWN)?;
+    pointer_guard.inject(delivered_click_point, NativeTestPointerAction::PrimaryDown)?;
     wait_until(
         cx,
         "system primary-button down reached the promoted WndProc and GPUI",
@@ -3057,8 +3562,7 @@ async fn run_provisional_same_hwnd_promotion_scenario(
     )
     .await?;
 
-    inject_system_pointer(delivered_click_point, MOUSEEVENTF_LEFTUP)?;
-    pointer_guard.primary_button_down = false;
+    pointer_guard.inject(delivered_click_point, NativeTestPointerAction::PrimaryUp)?;
     wait_until(
         cx,
         "system primary-button up reached the promoted WndProc and GPUI",
@@ -3085,158 +3589,6 @@ async fn run_provisional_same_hwnd_promotion_scenario(
         )
     })?;
 
-    if behavior.closes_committed_destination() {
-        unsafe {
-            PostMessageW(
-                Some(provisional_hwnd),
-                WM_CLOSE,
-                WPARAM::default(),
-                LPARAM::default(),
-            )
-        }
-        .context("the committed-loss scenario could not post WM_CLOSE to the promoted HWND")?;
-        let promoted_space_for_wait = promoted_space.clone();
-        let mut recovery_entry = None;
-        wait_until(
-            cx,
-            "committed destination loss to expose one visible Restore entry after retiring native authority",
-            |cx| {
-                let (registered, runtime, window_count, active_drag) = cx.update(|app| {
-                    (
-                        scenario.surface.registered_viewport_spaces(app),
-                        scenario.surface.viewports().runtime_status(app),
-                        app.windows().len(),
-                        app.has_active_drag(),
-                    )
-                });
-                let entry = cx.update(|app| {
-                    unique_recovery_entry_bounds(
-                        app,
-                        &[scenario.source_window, scenario.target_window],
-                    )
-                })?;
-                let settled = !registered.contains(&promoted_space_for_wait)
-                    && runtime.window_ownership.owned_window_count
-                        == scenario.initial_owned_window_count
-                    && runtime.window_ownership.opening_window_count == 0
-                    && runtime.window_ownership.retiring_window_count == 0
-                    && window_count == scenario.initial_window_count
-                    && !active_drag
-                    && unsafe { GetCapture() } == HWND::default()
-                    && !unsafe { IsWindow(Some(provisional_hwnd)).as_bool() }
-                    && entry.is_some();
-                if settled {
-                    recovery_entry = entry;
-                }
-                Ok(settled)
-            },
-        )
-        .await?;
-        let (recovery_window, recovery_bounds) = recovery_entry
-            .context("committed viewport loss settled without retaining its Restore entry")?;
-        let lost_snapshot = cx.update(|app| scenario.surface.export_snapshot(app));
-        let retained_graph = DockGraph::import_layout(lost_snapshot.layout())?;
-        ensure!(
-            retained_graph
-                .find_item_in_space(&promoted_space, &DockItemId::from("preview"))
-                .is_some(),
-            "RetainLayout committed-loss recovery must preserve the promoted payload topology"
-        );
-        ensure!(
-            lost_snapshot.revision() == promoted_snapshot.revision() + 1,
-            "committed viewport loss must publish exactly one surface revision: promoted={}, lost={}",
-            promoted_snapshot.revision(),
-            lost_snapshot.revision()
-        );
-        ensure!(
-            transition_count(
-                &scenario.surface_changes.borrow(),
-                DockSurfaceTransition::ViewportLostAfterPromotion,
-            ) == 1,
-            "committed viewport loss must publish exactly one named loss transition: {:?}",
-            scenario.surface_changes.borrow()
-        );
-
-        scenario.native_observation.clear();
-        let recovery_hwnd = cx.update(|app| raw_hwnd(app, recovery_window))?;
-        let recovery_scale = cx.update(|app| window_scale_factor(app, recovery_window))?;
-        let recovery_point = logical_client_point_to_screen(
-            recovery_hwnd,
-            recovery_bounds.center(),
-            recovery_scale,
-        )?;
-        ensure!(
-            root_window_from_point(recovery_point) == recovery_hwnd,
-            "the Restore system click must resolve to the surviving anchor HWND"
-        );
-        inject_system_pointer(recovery_point, MOUSEEVENTF_MOVE)?;
-        wait_for_cursor(
-            cx,
-            recovery_point,
-            "system pointer movement onto the committed Restore entry",
-        )
-        .await?;
-        pointer_guard.primary_button_down = true;
-        inject_system_pointer(recovery_point, MOUSEEVENTF_LEFTDOWN)?;
-        wait_until(
-            cx,
-            "Restore primary-button down to reach the anchor WndProc",
-            |_| {
-                Ok(native_system_mouse_message_observed(
-                    &scenario.native_observation,
-                    recovery_window,
-                    NativeWindowTestMessage::PrimaryButtonDown,
-                    recovery_point,
-                ))
-            },
-        )
-        .await?;
-        inject_system_pointer(recovery_point, MOUSEEVENTF_LEFTUP)?;
-        pointer_guard.primary_button_down = false;
-        wait_until(
-            cx,
-            "the native Restore click to re-home the payload and remove its recovery entry",
-            |cx| {
-                let (snapshot, recovery_entry) = cx.update(|app| {
-                    (
-                        scenario.surface.export_snapshot(app),
-                        unique_recovery_entry_bounds(
-                            app,
-                            &[scenario.source_window, scenario.target_window],
-                        ),
-                    )
-                });
-                let graph = DockGraph::import_layout(snapshot.layout())?;
-                Ok(recovery_entry?.is_none()
-                    && graph
-                        .find_item_in_space(&DockSpaceId::from(SPACE), &DockItemId::from("preview"))
-                        .is_some()
-                    && graph
-                        .find_item_in_space(&promoted_space_for_wait, &DockItemId::from("preview"))
-                        .is_none()
-                    && snapshot.revision() == lost_snapshot.revision() + 1)
-            },
-        )
-        .await?;
-        ensure!(
-            native_system_mouse_message_observed(
-                &scenario.native_observation,
-                recovery_window,
-                NativeWindowTestMessage::PrimaryButtonUp,
-                recovery_point,
-            ),
-            "the Restore system click did not deliver primary-button up to the anchor WndProc"
-        );
-        ensure!(
-            transition_count(
-                &scenario.surface_changes.borrow(),
-                DockSurfaceTransition::ViewportRecovered,
-            ) == 1,
-            "Restore must publish exactly one named recovery transition: {:?}",
-            scenario.surface_changes.borrow()
-        );
-    }
-
     log::info!(
         "scenario={} source_hwnd={:?} provisional_hwnd={:?} promoted_space={} revision={} completed",
         scenario_id,
@@ -3246,6 +3598,204 @@ async fn run_provisional_same_hwnd_promotion_scenario(
         promoted_snapshot.revision()
     );
     Ok(())
+}
+
+async fn run_committed_loss_recovery(
+    cx: &mut AsyncApp,
+    scenario: &mut NativeDockScenario,
+    provisional_hwnd: HWND,
+    pre_release_revision: u64,
+    pointer_guard: &mut NativeTestSystemPointerGuard,
+) -> Result<(DockSpaceId, u64)> {
+    let mut promoted_space = None;
+    let mut recovery_entry = None;
+    let recovery_wait = wait_until(
+        cx,
+        "durable promotion loss to expose one visible Restore entry after retiring native authority",
+        |cx| {
+            let (registered, runtime, window_count, active_drag, snapshot) = cx.update(|app| {
+                (
+                    scenario.surface.registered_viewport_spaces(app),
+                    scenario.surface.viewports().runtime_status(app),
+                    app.windows().len(),
+                    app.has_active_drag(),
+                    scenario.surface.export_snapshot(app),
+                )
+            });
+            let graph = DockGraph::import_layout(snapshot.layout())?;
+            let candidate = graph.spaces().into_iter().find(|space| {
+                *space != DockSpaceId::from(SPACE)
+                    && *space != DockSpaceId::from(SECONDARY_SPACE)
+                    && graph
+                        .find_item_in_space(space, &DockItemId::from("preview"))
+                        .is_some()
+            });
+            let Some(candidate) = candidate else {
+                return Ok(false);
+            };
+            promoted_space = Some(candidate.clone());
+            let changes = scenario.surface_changes.borrow();
+            let promotion_and_loss_published = changes.len() >= 2
+                && changes[0].revision() == pre_release_revision + 1
+                && changes[0].transitions().is_empty()
+                && changes[1].revision() == pre_release_revision + 2
+                && changes[1].transitions()
+                    == [DockSurfaceTransition::ViewportLostAfterPromotion];
+            let native_authority_retired = !registered.contains(&candidate)
+                && runtime.window_ownership.owned_window_count
+                    == scenario.initial_owned_window_count
+                && runtime.window_ownership.opening_window_count == 0
+                && runtime.window_ownership.retiring_window_count == 0
+                && window_count == scenario.initial_window_count
+                && !active_drag
+                && unsafe { GetCapture() } == HWND::default()
+                && !unsafe { IsWindow(Some(provisional_hwnd)).as_bool() };
+            if !promotion_and_loss_published || !native_authority_retired {
+                return Ok(false);
+            }
+            let entry = cx.update(|app| {
+                unique_recovery_entry_bounds(
+                    app,
+                    &[scenario.source_window, scenario.target_window],
+                )
+            })?;
+            if entry.is_some() {
+                recovery_entry = entry;
+                return Ok(true);
+            }
+            Ok(false)
+        },
+    )
+    .await;
+    if let Err(error) = recovery_wait {
+        let observation = cx.update(|app| -> Result<_> {
+            let registered = scenario.surface.registered_viewport_spaces(app);
+            let runtime = scenario.surface.viewports().runtime_status(app);
+            let entry = unique_recovery_entry_bounds(
+                app,
+                &[scenario.source_window, scenario.target_window],
+            )?;
+            Ok(format!(
+                "registered={registered:?} promoted_space={promoted_space:?} runtime={runtime:?} window_count={} active_drag={} capture={:?} provisional_exists={} recovery_entry={entry:?} surface_revision={} changes={:?}",
+                app.windows().len(),
+                app.has_active_drag(),
+                unsafe { GetCapture() },
+                unsafe { IsWindow(Some(provisional_hwnd)).as_bool() },
+                scenario.surface.export_snapshot(app).revision(),
+                scenario.surface_changes.borrow(),
+            ))
+        })?;
+        return Err(error).context(format!("last committed-loss observation: {observation}"));
+    }
+    let promoted_space = promoted_space
+        .context("durable promotion loss completed without retaining its destination space")?;
+    let (recovery_window, recovery_bounds) = recovery_entry
+        .context("committed viewport loss settled without retaining its Restore entry")?;
+    let lost_snapshot = cx.update(|app| scenario.surface.export_snapshot(app));
+    let retained_graph = DockGraph::import_layout(lost_snapshot.layout())?;
+    ensure!(
+        retained_graph
+            .find_item_in_space(&promoted_space, &DockItemId::from("preview"))
+            .is_some(),
+        "RetainLayout committed-loss recovery must preserve the promoted payload topology"
+    );
+    ensure!(
+        lost_snapshot.revision() == pre_release_revision + 2,
+        "durable promotion and committed viewport loss must publish exactly two surface revisions: baseline={pre_release_revision}, lost={}",
+        lost_snapshot.revision()
+    );
+    let changes = scenario.surface_changes.borrow().clone();
+    ensure!(
+        changes.len() == 2
+            && changes[0].revision() == pre_release_revision + 1
+            && changes[0].transitions().is_empty()
+            && changes[1].revision() == pre_release_revision + 2
+            && changes[1].transitions() == [DockSurfaceTransition::ViewportLostAfterPromotion],
+        "durable promotion and committed loss must publish two ordered transactions: {changes:?}"
+    );
+    ensure!(
+        transition_count(
+            &scenario.surface_changes.borrow(),
+            DockSurfaceTransition::ViewportLostAfterPromotion,
+        ) == 1,
+        "committed viewport loss must publish exactly one named loss transition: {:?}",
+        scenario.surface_changes.borrow()
+    );
+
+    scenario.native_observation.clear();
+    let recovery_hwnd = cx.update(|app| raw_hwnd(app, recovery_window))?;
+    let recovery_scale = cx.update(|app| window_scale_factor(app, recovery_window))?;
+    let recovery_point =
+        logical_client_point_to_screen(recovery_hwnd, recovery_bounds.center(), recovery_scale)?;
+    ensure!(
+        native_test_non_shell_root_window_at(recovery_point) == Some(recovery_hwnd),
+        "the Restore system click must resolve to the surviving anchor HWND"
+    );
+    inject_system_pointer(recovery_point, NativeTestPointerAction::Move)?;
+    wait_for_cursor(
+        cx,
+        recovery_point,
+        "system pointer movement onto the committed Restore entry",
+    )
+    .await?;
+    pointer_guard.inject(recovery_point, NativeTestPointerAction::PrimaryDown)?;
+    wait_until(
+        cx,
+        "Restore primary-button down to reach the anchor WndProc",
+        |_| {
+            Ok(native_system_mouse_message_observed(
+                &scenario.native_observation,
+                recovery_window,
+                NativeWindowTestMessage::PrimaryButtonDown,
+                recovery_point,
+            ))
+        },
+    )
+    .await?;
+    pointer_guard.inject(recovery_point, NativeTestPointerAction::PrimaryUp)?;
+    wait_until(
+        cx,
+        "the native Restore click to re-home the payload and remove its recovery entry",
+        |cx| {
+            let (snapshot, recovery_entry) = cx.update(|app| {
+                (
+                    scenario.surface.export_snapshot(app),
+                    unique_recovery_entry_bounds(
+                        app,
+                        &[scenario.source_window, scenario.target_window],
+                    ),
+                )
+            });
+            let graph = DockGraph::import_layout(snapshot.layout())?;
+            Ok(recovery_entry?.is_none()
+                && graph
+                    .find_item_in_space(&DockSpaceId::from(SPACE), &DockItemId::from("preview"))
+                    .is_some()
+                && graph
+                    .find_item_in_space(&promoted_space, &DockItemId::from("preview"))
+                    .is_none()
+                && snapshot.revision() == lost_snapshot.revision() + 1)
+        },
+    )
+    .await?;
+    ensure!(
+        native_system_mouse_message_observed(
+            &scenario.native_observation,
+            recovery_window,
+            NativeWindowTestMessage::PrimaryButtonUp,
+            recovery_point,
+        ),
+        "the Restore system click did not deliver primary-button up to the anchor WndProc"
+    );
+    ensure!(
+        transition_count(
+            &scenario.surface_changes.borrow(),
+            DockSurfaceTransition::ViewportRecovered,
+        ) == 1,
+        "Restore must publish exactly one named recovery transition: {:?}",
+        scenario.surface_changes.borrow()
+    );
+    Ok((promoted_space, lost_snapshot.revision()))
 }
 
 async fn run_captured_surface_shutdown_scenario(
@@ -3296,14 +3846,14 @@ async fn run_captured_surface_shutdown_scenario(
         &scenario.shutdown_observation,
         scenario.target_window.window_id(),
         &[scenario.source_window.window_id()],
+        SurfaceShutdownAnchorTerminalAuthority::ExplicitCloseDispatch,
     )?;
     assert_native_shutdown_lifecycle(scenario)?;
 
     ensure!(
-        inject_primary_button_up_best_effort(),
+        pointer_guard.release_primary_button_best_effort(),
         "the native Dock scenario could not restore the primary button after shutdown"
     );
-    pointer_guard.primary_button_down = false;
     log::info!(
         "scenario={} source_hwnd={:?} anchor_hwnd={:?} completed",
         scenario_id,
@@ -3416,6 +3966,7 @@ async fn run_process_convergence_scenario(
         &scenario.shutdown_observation,
         scenario.target_window.window_id(),
         &[scenario.source_window.window_id()],
+        SurfaceShutdownAnchorTerminalAuthority::ExplicitCloseDispatch,
     )?;
     assert_surface_shutdown_fault_recovery(
         &scenario.shutdown_observation,
@@ -3431,10 +3982,9 @@ async fn run_process_convergence_scenario(
         "closing the active surface must not retire the independent surface anchor"
     );
     ensure!(
-        inject_primary_button_up_best_effort(),
+        pointer_guard.release_primary_button_best_effort(),
         "the process-convergence scenario could not restore the primary button"
     );
-    pointer_guard.primary_button_down = false;
     drop(pointer_guard);
 
     unsafe {
@@ -3577,13 +4127,13 @@ async fn establish_visible_provisional_for_app_shutdown(
     cx: &mut AsyncApp,
     scenario: &mut NativeDockScenario,
     survivor: &NativeProcessConvergenceSurface,
-) -> Result<(SystemPointerGuard, NativeVisibleProvisional)> {
+) -> Result<(NativeTestSystemPointerGuard, NativeVisibleProvisional)> {
     let reveal_point = open_desktop_release_point(scenario.source_hwnd, scenario.target_hwnd)?;
     let (pointer_guard, _) = begin_native_captured_drag(cx, scenario).await?;
     let baseline_revision = cx.update(|app| scenario.surface.export_snapshot(app).revision());
     let baseline_spaces = cx.update(|app| scenario.surface.registered_viewport_spaces(app));
 
-    inject_system_pointer(reveal_point, MOUSEEVENTF_MOVE)?;
+    inject_system_pointer(reveal_point, NativeTestPointerAction::Move)?;
     wait_for_cursor(
         cx,
         reveal_point,
@@ -4037,7 +4587,7 @@ fn native_pointer_admission_context(scenario: &NativeDockScenario, point: POINT)
         "expected_point={point:?} cursor={cursor:?} foreground={:?} source={:?} root_at_point={:?} capture={:?} native_events={:?}",
         unsafe { GetForegroundWindow() },
         scenario.source_hwnd,
-        root_window_from_point(point),
+        native_test_non_shell_root_window_at(point),
         unsafe { GetCapture() },
         scenario.native_observation.events(),
     )
@@ -4066,10 +4616,17 @@ fn assert_native_shutdown_lifecycle(scenario: &NativeDockScenario) -> Result<()>
     Ok(())
 }
 
+#[derive(Clone, Copy)]
+enum SurfaceShutdownAnchorTerminalAuthority {
+    ExplicitCloseDispatch,
+    AppRegistryClear,
+}
+
 fn assert_surface_shutdown_capture_cleanup_precedes_close_dispatch(
     observation: &DockSurfaceShutdownTestObservation,
     expected_anchor: open_gpui::WindowId,
     expected_dependents: &[open_gpui::WindowId],
+    anchor_terminal_authority: SurfaceShutdownAnchorTerminalAuthority,
 ) -> Result<()> {
     let events = observation.events();
     let capture_events = events
@@ -4142,14 +4699,25 @@ fn assert_surface_shutdown_capture_cleanup_precedes_close_dispatch(
             "surface shutdown dispatched dependent close before exact capture/route cleanup: capture={capture_event:?}, dependent={dependent:?}, ordinal={ordinal}, events={events:?}"
         );
     }
-    let anchor_ordinal = anchor_dispatch
-        .context("surface shutdown did not dispatch the primary anchor after its dependents")?;
-    ensure!(
-        dependent_dispatches
-            .values()
-            .all(|dependent_ordinal| *dependent_ordinal < anchor_ordinal),
-        "surface shutdown dispatched the primary anchor before all dependents: anchor_ordinal={anchor_ordinal}, dependents={dependent_dispatches:?}, events={events:?}"
-    );
+    match anchor_terminal_authority {
+        SurfaceShutdownAnchorTerminalAuthority::ExplicitCloseDispatch => {
+            let anchor_ordinal = anchor_dispatch.with_context(|| {
+                format!(
+                    "surface shutdown did not dispatch the primary anchor after its dependents: {events:?}"
+                )
+            })?;
+            ensure!(
+                dependent_dispatches
+                    .values()
+                    .all(|dependent_ordinal| *dependent_ordinal < anchor_ordinal),
+                "surface shutdown dispatched the primary anchor before all dependents: anchor_ordinal={anchor_ordinal}, dependents={dependent_dispatches:?}, events={events:?}"
+            );
+        }
+        SurfaceShutdownAnchorTerminalAuthority::AppRegistryClear => ensure!(
+            anchor_dispatch.is_none(),
+            "terminal App shutdown must leave anchor retirement to registry clear instead of ordinary close dispatch: events={events:?}"
+        ),
+    }
     Ok(())
 }
 
@@ -4535,7 +5103,8 @@ fn open_desktop_release_point_with_separation(
 ) -> Result<POINT> {
     let source_rect = window_rect(source)?;
     let target_rect = window_rect(target)?;
-    let virtual_screen = VirtualScreenBounds::current()?;
+    let displays = native_test_displays();
+    let virtual_screen = native_desktop_search_bounds()?;
     let left = source_rect.left.min(target_rect.left);
     let right = source_rect.right.max(target_rect.right);
     let top = source_rect.top.min(target_rect.top);
@@ -4565,33 +5134,26 @@ fn open_desktop_release_point_with_separation(
             y: virtual_screen.top.saturating_add(inset),
         },
         POINT {
-            x: virtual_screen
-                .left
-                .saturating_add(virtual_screen.width)
-                .saturating_sub(inset),
-            y: virtual_screen
-                .top
-                .saturating_add(virtual_screen.height)
-                .saturating_sub(inset),
+            x: virtual_screen.right.saturating_sub(inset),
+            y: virtual_screen.bottom.saturating_sub(inset),
         },
     ];
+    let virtual_width = virtual_screen.right.saturating_sub(virtual_screen.left);
+    let virtual_height = virtual_screen.bottom.saturating_sub(virtual_screen.top);
     for x_fraction in 1..8 {
         for y_fraction in 1..8 {
             candidates.push(POINT {
                 x: virtual_screen.left.saturating_add(
-                    ((i64::from(virtual_screen.width) * i64::from(x_fraction)) / 8) as i32,
+                    ((i64::from(virtual_width) * i64::from(x_fraction)) / 8) as i32,
                 ),
                 y: virtual_screen.top.saturating_add(
-                    ((i64::from(virtual_screen.height) * i64::from(y_fraction)) / 8) as i32,
+                    ((i64::from(virtual_height) * i64::from(y_fraction)) / 8) as i32,
                 ),
             });
         }
     }
-    // Fractional probes can all land on unrelated maximized application windows. Walk each
-    // physical monitor at a fixed stride as the deterministic fallback so the test discovers an
-    // actual shell-owned desktop point instead of assuming one from virtual-screen geometry.
     let scan_stride = 64_i32;
-    for display in native_test_displays() {
+    for display in &displays {
         let bounds = display.physical_bounds();
         let left = bounds.origin.x.0.saturating_add(scan_stride / 2);
         let top = bounds.origin.y.0.saturating_add(scan_stride / 2);
@@ -4623,7 +5185,7 @@ fn open_desktop_release_point_with_separation(
             let dy = i64::from(point.y) - i64::from(previous.y);
             dx.saturating_mul(dx) + dy.saturating_mul(dy) >= 320_i64.pow(2)
         });
-        virtual_screen.contains(*point)
+        rect_contains(virtual_screen, *point)
             && unsafe { !MonitorFromPoint(*point, MONITOR_DEFAULTTONULL).is_invalid() }
             && !rect_contains(source_rect, *point)
             && !rect_contains(target_rect, *point)
@@ -4634,124 +5196,53 @@ fn open_desktop_release_point_with_separation(
         if !eligible(&point) {
             continue;
         }
-        let root = root_window_from_point(point);
-        if root == HWND::default() || native_window_is_shell_desktop(root) {
+        let Some(root) = native_test_non_shell_root_window_at(point) else {
             return Ok(point);
-        }
+        };
         if first_eligible_hits.len() < 16 {
             first_eligible_hits.push(native_window_probe(point, root));
         }
     }
     bail!(
-        "scenario suite `{NATIVE_DOCK_SUITE_ID}` could not find an open-desktop release point outside source={source_rect:?} and target={target_rect:?}, separated from {previous:?}, within {virtual_screen:?}; displays={:?}; first eligible native hits={first_eligible_hits:?}",
-        native_test_displays(),
+        "scenario suite `{NATIVE_DOCK_SUITE_ID}` could not find an open-desktop release point outside source={source_rect:?} and target={target_rect:?}, separated from {previous:?}, within {virtual_screen:?}; displays={displays:?}; first eligible native hits={first_eligible_hits:?}"
     )
+}
+
+fn native_desktop_search_bounds() -> Result<RECT> {
+    let native_bounds = native_test_virtual_screen_bounds()?;
+    let bounds = RECT {
+        left: native_bounds.origin.x.0,
+        top: native_bounds.origin.y.0,
+        right: native_bounds
+            .origin
+            .x
+            .0
+            .saturating_add(native_bounds.size.width.0),
+        bottom: native_bounds
+            .origin
+            .y
+            .0
+            .saturating_add(native_bounds.size.height.0),
+    };
+    ensure!(
+        bounds.right > bounds.left && bounds.bottom > bounds.top,
+        "the native Dock scenario requires a non-empty physical desktop: {bounds:?}"
+    );
+    Ok(bounds)
 }
 
 fn point_is_open_desktop(point: POINT) -> bool {
-    let root = root_window_from_point(point);
-    if root == HWND::default() {
-        return true;
-    }
-    native_window_is_shell_desktop(root)
+    native_test_non_shell_root_window_at(point).is_none()
 }
 
-fn root_window_from_point(point: POINT) -> HWND {
-    let hit = unsafe { WindowFromPoint(point) };
-    if hit == HWND::default() {
-        return HWND::default();
-    }
-    let root = unsafe { GetAncestor(hit, GA_ROOT) };
-    if root == HWND::default() { hit } else { root }
-}
-
-fn native_window_is_above(upper: HWND, lower: HWND) -> bool {
-    if upper == HWND::default() || lower == HWND::default() || upper == lower {
-        return false;
-    }
-    let mut current = upper;
-    for _ in 0..4096 {
-        let Ok(next) = (unsafe { GetWindow(current, GW_HWNDNEXT) }) else {
-            return false;
-        };
-        if next == lower {
-            return true;
-        }
-        current = next;
-    }
-    false
-}
-
-fn native_window_is_shell_desktop(hwnd: HWND) -> bool {
-    if hwnd == HWND::default() || hwnd == unsafe { GetDesktopWindow() } {
-        return true;
-    }
-    let shell = unsafe { GetShellWindow() };
-    if shell == HWND::default() {
-        return false;
-    }
-    let mut shell_process = 0;
-    let mut candidate_process = 0;
-    unsafe {
-        GetWindowThreadProcessId(shell, Some(&mut shell_process));
-        GetWindowThreadProcessId(hwnd, Some(&mut candidate_process));
-    }
-    if shell_process == 0 || candidate_process != shell_process {
-        return false;
-    }
-    let mut class_name = [0_u16; 64];
-    let length = unsafe { GetClassNameW(hwnd, &mut class_name) };
-    if length <= 0 {
-        return false;
-    }
-    matches!(
-        String::from_utf16_lossy(&class_name[..length as usize]).as_str(),
-        "Progman" | "WorkerW"
-    )
-}
-
-struct NativeWindowProbe {
-    point: NativeWindowTestPoint,
-    hwnd: isize,
-    class_name: String,
-    process_id: u32,
-    rect: Option<RECT>,
-}
-
-impl std::fmt::Debug for NativeWindowProbe {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("NativeWindowProbe")
-            .field("point", &self.point)
-            .field("hwnd", &self.hwnd)
-            .field("class_name", &self.class_name)
-            .field("process_id", &self.process_id)
-            .field("rect", &self.rect)
-            .finish()
-    }
-}
-
-fn native_window_probe(point: POINT, hwnd: HWND) -> NativeWindowProbe {
-    let mut class_name = [0_u16; 128];
-    let class_length = unsafe { GetClassNameW(hwnd, &mut class_name) }.max(0) as usize;
-    let mut process_id = 0;
-    unsafe {
-        GetWindowThreadProcessId(hwnd, Some(&mut process_id));
-    }
-    NativeWindowProbe {
-        point: native_point(point),
-        hwnd: hwnd.0 as isize,
-        class_name: String::from_utf16_lossy(&class_name[..class_length]),
-        process_id,
-        rect: window_rect(hwnd).ok(),
-    }
-}
-
-fn window_rect(hwnd: HWND) -> Result<RECT> {
-    let mut rect = RECT::default();
-    unsafe { GetWindowRect(hwnd, &mut rect) }
-        .context("the native Dock scenario could not sample an HWND rectangle")?;
-    Ok(rect)
+fn ensure_open_desktop_point_is_current(point: POINT, description: &str) -> Result<()> {
+    let root = native_test_non_shell_root_window_at(point);
+    ensure!(
+        root.is_none(),
+        "{description} is no longer verified shell-owned desktop space: point={point:?}, root={root:?}, probe={:?}",
+        root.map(|root| native_window_probe(point, root))
+    );
+    Ok(())
 }
 
 fn rects_overlap(left: RECT, right: RECT) -> bool {
@@ -4769,40 +5260,37 @@ fn rect_contains_rect(outer: RECT, inner: RECT) -> bool {
 }
 
 fn visible_client_point_for_window(hwnd: HWND, preferred: POINT) -> Result<POINT> {
-    let mut client_rect = RECT::default();
-    unsafe { GetClientRect(hwnd, &mut client_rect) }
-        .context("the native Dock scenario could not sample the promoted client rectangle")?;
-    let width = client_rect.right.saturating_sub(client_rect.left);
-    let height = client_rect.bottom.saturating_sub(client_rect.top);
+    let client_bounds = native_client_screen_bounds(hwnd)?;
+    let width = client_bounds.size.width.0;
+    let height = client_bounds.size.height.0;
     ensure!(
         width > 2 && height > 2,
-        "the promoted HWND must expose a non-empty client rectangle: {client_rect:?}"
+        "the promoted HWND must expose a non-empty client rectangle: {client_bounds:?}"
     );
 
     let mut candidates = vec![preferred];
     for x_fraction in 1..8 {
         for y_fraction in 1..8 {
-            let mut candidate = POINT {
-                x: client_rect
-                    .left
+            candidates.push(POINT {
+                x: client_bounds
+                    .origin
+                    .x
+                    .0
                     .saturating_add(((i64::from(width) * i64::from(x_fraction)) / 8) as i32),
-                y: client_rect
-                    .top
+                y: client_bounds
+                    .origin
+                    .y
+                    .0
                     .saturating_add(((i64::from(height) * i64::from(y_fraction)) / 8) as i32),
-            };
-            ensure!(
-                unsafe { ClientToScreen(hwnd, &mut candidate) }.as_bool(),
-                "the native Dock scenario could not convert a promoted client probe to screen coordinates"
-            );
-            candidates.push(candidate);
+            });
         }
     }
     candidates
         .into_iter()
-        .find(|point| root_window_from_point(*point) == hwnd)
+        .find(|point| native_test_non_shell_root_window_at(*point) == Some(hwnd))
         .with_context(|| {
             format!(
-                "the promoted HWND has no system-visible client point: hwnd={hwnd:?}, client={client_rect:?}"
+                "the promoted HWND has no system-visible client point: hwnd={hwnd:?}, client={client_bounds:?}"
             )
         })
 }
@@ -5079,133 +5567,57 @@ fn exact_debug_bounds(
     })
 }
 
-fn logical_client_point_to_screen(
-    hwnd: HWND,
-    point: open_gpui::Point<Pixels>,
-    scale_factor: f32,
-) -> Result<POINT> {
-    let mut point = POINT {
-        x: (point.x.as_f32() * scale_factor).round() as i32,
-        y: (point.y.as_f32() * scale_factor).round() as i32,
-    };
-    ensure!(
-        unsafe { ClientToScreen(hwnd, &mut point).as_bool() },
-        "scenario suite `{NATIVE_DOCK_SUITE_ID}` could not convert a committed client point for HWND {hwnd:?}"
-    );
-    Ok(point)
+#[derive(Clone, Copy)]
+enum NativeReleasePointAuthority {
+    OpenDesktop,
+    OpaqueBarrier(HWND),
 }
 
-fn inject_system_pointer(point: POINT, flags: MOUSE_EVENT_FLAGS) -> Result<()> {
-    inject_system_pointer_sequence(&[(point, flags)])
-}
-
-fn inject_system_pointer_sequence(events: &[(POINT, MOUSE_EVENT_FLAGS)]) -> Result<()> {
-    ensure!(
-        !events.is_empty(),
-        "scenario suite `{NATIVE_DOCK_SUITE_ID}` requires at least one system pointer event"
-    );
-    let virtual_screen = VirtualScreenBounds::current()?;
-    let inputs = events
-        .iter()
-        .copied()
-        .map(|(point, flags)| {
-            let (dx, dy) = virtual_screen.absolute_coordinates(point)?;
-            let flags = if flags.contains(MOUSEEVENTF_MOVE) {
-                flags | MOUSEEVENTF_MOVE_NOCOALESCE
-            } else {
-                flags
-            };
-            Ok(INPUT {
-                r#type: INPUT_MOUSE,
-                Anonymous: INPUT_0 {
-                    mi: MOUSEINPUT {
-                        dx,
-                        dy,
-                        mouseData: 0,
-                        dwFlags: MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK | flags,
-                        time: 0,
-                        dwExtraInfo: INPUT_CANARY,
-                    },
-                },
-            })
-        })
-        .collect::<Result<Vec<_>>>()?;
-    ensure!(
-        unsafe { SendInput(&inputs, size_of::<INPUT>() as i32) } == inputs.len() as u32,
-        "scenario suite `{NATIVE_DOCK_SUITE_ID}` system input sequence was rejected by the desktop or UIPI boundary"
-    );
-    Ok(())
-}
-
-fn inject_primary_button_up_best_effort() -> bool {
-    let input = INPUT {
-        r#type: INPUT_MOUSE,
-        Anonymous: INPUT_0 {
-            mi: MOUSEINPUT {
-                dx: 0,
-                dy: 0,
-                mouseData: 0,
-                dwFlags: MOUSEEVENTF_LEFTUP,
-                time: 0,
-                dwExtraInfo: INPUT_CANARY,
-            },
-        },
-    };
-    (unsafe { SendInput(&[input], size_of::<INPUT>() as i32) }) == 1
-}
-
-#[derive(Clone, Copy, Debug)]
-struct VirtualScreenBounds {
-    left: i32,
-    top: i32,
-    width: i32,
-    height: i32,
-}
-
-impl VirtualScreenBounds {
-    fn current() -> Result<Self> {
-        let bounds = Self {
-            left: unsafe { GetSystemMetrics(SM_XVIRTUALSCREEN) },
-            top: unsafe { GetSystemMetrics(SM_YVIRTUALSCREEN) },
-            width: unsafe { GetSystemMetrics(SM_CXVIRTUALSCREEN) },
-            height: unsafe { GetSystemMetrics(SM_CYVIRTUALSCREEN) },
-        };
-        ensure!(
-            bounds.width > 1 && bounds.height > 1,
-            "scenario suite `{NATIVE_DOCK_SUITE_ID}` requires a non-empty virtual desktop: {bounds:?}"
-        );
-        Ok(bounds)
+impl NativeReleasePointAuthority {
+    fn matches_hit_terminus(self, terminus: PlatformWindowHitTerminus) -> bool {
+        match self {
+            Self::OpenDesktop => matches!(terminus, PlatformWindowHitTerminus::OpenDesktop),
+            Self::OpaqueBarrier(_) => matches!(
+                terminus,
+                PlatformWindowHitTerminus::Window(PlatformWindowHit::OpaqueBarrier { .. })
+            ),
+        }
     }
 
-    fn contains(self, point: POINT) -> bool {
-        let right = i64::from(self.left) + i64::from(self.width);
-        let bottom = i64::from(self.top) + i64::from(self.height);
-        i64::from(point.x) >= i64::from(self.left)
-            && i64::from(point.x) < right
-            && i64::from(point.y) >= i64::from(self.top)
-            && i64::from(point.y) < bottom
-    }
-
-    fn absolute_coordinates(self, point: POINT) -> Result<(i32, i32)> {
-        let right = i64::from(self.left) + i64::from(self.width);
-        let bottom = i64::from(self.top) + i64::from(self.height);
-        ensure!(
-            i64::from(point.x) >= i64::from(self.left)
-                && i64::from(point.x) < right
-                && i64::from(point.y) >= i64::from(self.top)
-                && i64::from(point.y) < bottom,
-            "scenario suite `{NATIVE_DOCK_SUITE_ID}` injection point is outside the virtual desktop: point={point:?}, bounds={self:?}"
-        );
-        Ok((
-            absolute_input_coordinate(point.x, self.left, self.width),
-            absolute_input_coordinate(point.y, self.top, self.height),
-        ))
+    fn validate_current(self, release_point: POINT) -> Result<()> {
+        match self {
+            Self::OpenDesktop => ensure_open_desktop_point_is_current(
+                release_point,
+                "the final release point immediately before LEFTUP",
+            ),
+            Self::OpaqueBarrier(expected) => {
+                let observed = native_test_non_shell_root_window_at(release_point);
+                ensure!(
+                    observed == Some(expected),
+                    "the final release point immediately before LEFTUP no longer resolves to the exact opaque barrier: point={release_point:?}, expected={expected:?}, observed={observed:?}, probe={:?}",
+                    observed.map(|observed| native_window_probe(release_point, observed))
+                );
+                Ok(())
+            }
+        }
     }
 }
 
-fn absolute_input_coordinate(value: i32, origin: i32, extent: i32) -> i32 {
-    let numerator = (i64::from(value) - i64::from(origin)) * 65_535;
-    (numerator / i64::from(extent - 1)) as i32
+fn inject_primary_release(
+    pointer_guard: &mut NativeTestSystemPointerGuard,
+    release_point: POINT,
+    divergence_point: Option<POINT>,
+    authority: NativeReleasePointAuthority,
+) -> Result<()> {
+    authority.validate_current(release_point)?;
+    if let Some(divergence_point) = divergence_point {
+        pointer_guard.inject_sequence(&[
+            (release_point, NativeTestPointerAction::PrimaryUp),
+            (divergence_point, NativeTestPointerAction::Move),
+        ])
+    } else {
+        pointer_guard.inject(release_point, NativeTestPointerAction::PrimaryUp)
+    }
 }
 
 fn panic_message(payload: Box<dyn std::any::Any + Send>) -> String {

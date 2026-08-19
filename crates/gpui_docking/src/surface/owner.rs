@@ -370,6 +370,8 @@ pub(crate) struct DockSurfaceOwner {
     #[cfg(any(test, feature = "test-support"))]
     shutdown_test_observation: Option<super::DockSurfaceShutdownTestObservation>,
     #[cfg(any(test, feature = "test-support"))]
+    live_undock_test_observation: Option<super::DockSurfaceLiveUndockTestObservation>,
+    #[cfg(any(test, feature = "test-support"))]
     shutdown_test_faults: Option<DockSurfaceShutdownTestFaults>,
 }
 
@@ -379,6 +381,124 @@ struct DockSurfaceShutdownTestFaults {
     lease: DockSurfaceWindowSessionLease,
     busy_window: Option<WindowId>,
     cleanup_panic: Option<String>,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+#[derive(Clone, Copy, Debug)]
+enum DockSurfaceLiveUndockObservedTransition {
+    SourceProxyCommitted {
+        event: super::DockSurfaceLiveUndockTestEvent,
+        receipt: super::live_undock::DockLiveUndockSourceProxyReceipt,
+    },
+    PayloadMounted {
+        event: super::DockSurfaceLiveUndockTestEvent,
+        receipt: super::live_undock::DockLiveUndockPayloadMountReceipt,
+    },
+    PayloadPresented {
+        event: super::DockSurfaceLiveUndockTestEvent,
+        receipt: super::live_undock::DockLiveUndockPayloadPresentationReceipt,
+    },
+    DestinationSemanticsSubmitted {
+        event: super::DockSurfaceLiveUndockTestEvent,
+        receipt: super::live_undock::DockLiveUndockDestinationSemanticsReceipt,
+    },
+    DestinationInteractionAdmitted {
+        event: super::DockSurfaceLiveUndockTestEvent,
+        receipt: super::live_undock::DockLiveUndockDestinationInteractionReceipt,
+    },
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl DockSurfaceLiveUndockObservedTransition {
+    fn from_fact(fact: &DockLiveUndockFact) -> Option<Self> {
+        match fact {
+            DockLiveUndockFact::SourceProxyCommitted { receipt, .. } => {
+                Some(Self::SourceProxyCommitted {
+                    event: super::DockSurfaceLiveUndockTestEvent::source_proxy(*receipt),
+                    receipt: *receipt,
+                })
+            }
+            DockLiveUndockFact::PayloadMounted { receipt, .. } => Some(Self::PayloadMounted {
+                event: super::DockSurfaceLiveUndockTestEvent::payload_mounted(*receipt),
+                receipt: *receipt,
+            }),
+            DockLiveUndockFact::PayloadPresented { receipt, .. } => Some(Self::PayloadPresented {
+                event: super::DockSurfaceLiveUndockTestEvent::payload_presented(*receipt),
+                receipt: *receipt,
+            }),
+            DockLiveUndockFact::DestinationSemanticsSubmitted { receipt, .. } => {
+                Some(Self::DestinationSemanticsSubmitted {
+                    event: super::DockSurfaceLiveUndockTestEvent::destination_semantics_submitted(
+                        *receipt,
+                    ),
+                    receipt: *receipt,
+                })
+            }
+            DockLiveUndockFact::DestinationInteractionAdmitted { receipt, .. } => {
+                Some(Self::DestinationInteractionAdmitted {
+                    event: super::DockSurfaceLiveUndockTestEvent::destination_interaction_admitted(
+                        *receipt,
+                    ),
+                    receipt: *receipt,
+                })
+            }
+            _ => None,
+        }
+    }
+
+    fn accepted_by(
+        self,
+        effects: &DockLiveUndockEffects,
+    ) -> Option<super::DockSurfaceLiveUndockTestEvent> {
+        let accepted =
+            effects.as_slice().iter().any(|effect| {
+                match (self, effect) {
+            (
+                Self::SourceProxyCommitted { receipt, .. },
+                super::live_undock::DockLiveUndockEffect::MountAndExposePayload {
+                    proxy,
+                    ..
+                },
+            ) => receipt == *proxy,
+            (
+                Self::PayloadMounted { receipt, .. },
+                super::live_undock::DockLiveUndockEffect::ObservePayloadPresentation {
+                    mount,
+                    ..
+                },
+            ) => receipt == *mount,
+            (
+                Self::PayloadPresented { receipt, .. },
+                super::live_undock::DockLiveUndockEffect::ArmExactReveal {
+                    presentation,
+                    ..
+                },
+            ) => receipt == *presentation,
+            (
+                Self::DestinationSemanticsSubmitted { receipt, .. },
+                super::live_undock::DockLiveUndockEffect::DestinationInteractionAdmissionRequired {
+                    semantics,
+                    ..
+                },
+            ) => receipt == *semantics,
+            (
+                Self::DestinationInteractionAdmitted { receipt, .. },
+                super::live_undock::DockLiveUndockEffect::DestinationInteractionReady {
+                    interaction,
+                    ..
+                },
+            ) => receipt == *interaction,
+            _ => false,
+        }
+            });
+        accepted.then_some(match self {
+            Self::SourceProxyCommitted { event, .. }
+            | Self::PayloadMounted { event, .. }
+            | Self::PayloadPresented { event, .. }
+            | Self::DestinationSemanticsSubmitted { event, .. }
+            | Self::DestinationInteractionAdmitted { event, .. } => event,
+        })
+    }
 }
 
 #[derive(Debug)]
@@ -414,6 +534,8 @@ impl DockSurfaceOwner {
             #[cfg(any(test, feature = "test-support"))]
             shutdown_test_observation: None,
             #[cfg(any(test, feature = "test-support"))]
+            live_undock_test_observation: None,
+            #[cfg(any(test, feature = "test-support"))]
             shutdown_test_faults: None,
         }
     }
@@ -431,6 +553,14 @@ impl DockSurfaceOwner {
         &self,
     ) -> Option<&super::DockSurfaceShutdownTestObservation> {
         self.shutdown_test_observation.as_ref()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn install_live_undock_test_observation(
+        &mut self,
+        observation: super::DockSurfaceLiveUndockTestObservation,
+    ) {
+        self.live_undock_test_observation = Some(observation);
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -518,7 +648,17 @@ impl DockSurfaceOwner {
         {
             return None;
         }
-        Some(self.live_undock.apply(fact))
+        #[cfg(any(test, feature = "test-support"))]
+        let observed_fact = DockSurfaceLiveUndockObservedTransition::from_fact(&fact);
+        let effects = self.live_undock.apply(fact);
+        #[cfg(any(test, feature = "test-support"))]
+        if let (Some(observation), Some(observed_fact)) =
+            (&self.live_undock_test_observation, observed_fact)
+            && let Some(event) = observed_fact.accepted_by(&effects)
+        {
+            observation.record(event);
+        }
+        Some(effects)
     }
 
     pub(crate) fn live_undock_runtime(&self) -> DockLiveUndockRuntime {

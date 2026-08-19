@@ -1,6 +1,6 @@
 use crate::{
-    DockHost, DockSpaceId, DockViewportFocusCommand, DockViewportFocusCommandSource,
-    DockViewportFocusRequest,
+    DockHost, DockSpaceId, DockViewportExactFocusTarget, DockViewportFocusCommand,
+    DockViewportFocusCommandSource, DockViewportFocusRequest,
     surface::{DockSurfaceActivationBinding, DockSurfaceActivationOutcome},
     viewport_registry::DockViewportRegistrationKey,
 };
@@ -71,6 +71,8 @@ pub(crate) struct DockViewportActivationTransaction {
     focus_source: DockViewportFocusCommandSource,
     /// Explicit focus request to apply after the window is active.
     focus_request: DockViewportFocusRequest,
+    /// Exact descendant focus authority captured before an asynchronous viewport transition.
+    exact_focus_target: Option<DockViewportExactFocusTarget>,
     /// Optional embedded host target for surface activation.
     ///
     /// A surface host may be nested below an arbitrary window root, so a window-root downcast
@@ -150,6 +152,7 @@ impl DockViewportActivationTransaction {
             window_activation,
             focus_source,
             focus_request,
+            exact_focus_target: None,
             target_host,
             surface_activation,
         }
@@ -199,6 +202,19 @@ impl DockViewportActivationTransaction {
 
     pub(crate) fn focus_source(&self) -> DockViewportFocusCommandSource {
         self.focus_source
+    }
+
+    pub(crate) fn with_exact_focus_target(mut self, target: DockViewportExactFocusTarget) -> Self {
+        debug_assert!(
+            matches!(self.focus_request, DockViewportFocusRequest::Panel(_)),
+            "an exact focus descendant must belong to a concrete panel request"
+        );
+        self.exact_focus_target = Some(target);
+        self
+    }
+
+    pub(crate) fn exact_focus_target(&self) -> Option<&DockViewportExactFocusTarget> {
+        self.exact_focus_target.as_ref()
     }
 
     pub(crate) fn surface_activation_binding(&self) -> Option<&DockSurfaceActivationBinding> {
@@ -411,7 +427,7 @@ fn settle_viewport_activation_execution(
 fn focus_command_for_transaction(
     transaction: &DockViewportActivationTransaction,
 ) -> DockViewportFocusCommand {
-    match transaction.surface_activation_binding() {
+    let command = match transaction.surface_activation_binding() {
         Some(binding) => DockViewportFocusCommand::surface_activation(
             transaction.focus_request().clone(),
             binding.clone(),
@@ -420,6 +436,10 @@ fn focus_command_for_transaction(
             transaction.focus_source(),
             transaction.focus_request().clone(),
         ),
+    };
+    match transaction.exact_focus_target() {
+        Some(target) => command.with_exact_focus_target(target.clone()),
+        None => command,
     }
 }
 

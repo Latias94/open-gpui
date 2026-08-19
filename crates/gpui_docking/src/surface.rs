@@ -228,6 +228,205 @@ impl DockSurfaceShutdownTestObservation {
     }
 }
 
+/// Accepted live-undock authority boundary exposed only to deterministic and native tests.
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DockSurfaceLiveUndockTestEventKind {
+    /// The source committed its stable semantic/focus proxy.
+    SourceProxyCommitted,
+    /// The destination mounted the exact retained payload lease.
+    PayloadMounted,
+    /// The mounted payload produced an accepted visible presentation candidate.
+    PayloadPresented,
+    /// Durable destination semantics received renderer-submitted evidence.
+    DestinationSemanticsSubmitted,
+    /// The destination interaction gate opened for the submitted semantics.
+    DestinationInteractionAdmitted,
+}
+
+/// Immutable evidence for one accepted live-undock authority transition.
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DockSurfaceLiveUndockTestEvent {
+    kind: DockSurfaceLiveUndockTestEventKind,
+    opening_generation: u64,
+    drag_generation: u64,
+    source_window: Option<WindowId>,
+    destination_window: WindowId,
+    payload_lease_generation: Option<u64>,
+    provisional_session_generation: Option<u64>,
+    frame_generation: Option<u64>,
+    root_count: Option<usize>,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl DockSurfaceLiveUndockTestEvent {
+    fn from_payload_lease(
+        kind: DockSurfaceLiveUndockTestEventKind,
+        lease: live_undock::DockLiveUndockPayloadLeaseReceipt,
+        frame_generation: Option<u64>,
+        root_count: Option<usize>,
+    ) -> Self {
+        let identity = lease.identity();
+        Self {
+            kind,
+            opening_generation: identity.opening().generation(),
+            drag_generation: identity.drag_generation().get(),
+            source_window: Some(lease.source().window_id()),
+            destination_window: lease.destination_window(),
+            payload_lease_generation: Some(lease.lease_generation().get()),
+            provisional_session_generation: Some(lease.provisional_session_generation()),
+            frame_generation,
+            root_count,
+        }
+    }
+
+    pub(crate) fn source_proxy(receipt: live_undock::DockLiveUndockSourceProxyReceipt) -> Self {
+        Self::from_payload_lease(
+            DockSurfaceLiveUndockTestEventKind::SourceProxyCommitted,
+            receipt.lease(),
+            Some(receipt.proxy_frame_generation()),
+            None,
+        )
+    }
+
+    pub(crate) fn payload_mounted(receipt: live_undock::DockLiveUndockPayloadMountReceipt) -> Self {
+        debug_assert_eq!(
+            receipt.destination_lease_generation(),
+            receipt.proxy().lease().lease_generation().get(),
+        );
+        Self::from_payload_lease(
+            DockSurfaceLiveUndockTestEventKind::PayloadMounted,
+            receipt.proxy().lease(),
+            Some(receipt.mount_frame_generation()),
+            Some(receipt.root_count()),
+        )
+    }
+
+    pub(crate) fn payload_presented(
+        receipt: live_undock::DockLiveUndockPayloadPresentationReceipt,
+    ) -> Self {
+        Self::from_payload_lease(
+            DockSurfaceLiveUndockTestEventKind::PayloadPresented,
+            receipt.mount().proxy().lease(),
+            Some(receipt.frame_generation()),
+            Some(receipt.mount().root_count()),
+        )
+    }
+
+    pub(crate) fn destination_semantics_submitted(
+        receipt: live_undock::DockLiveUndockDestinationSemanticsReceipt,
+    ) -> Self {
+        let identity = receipt.identity();
+        let lease = receipt.payload_lease();
+        Self {
+            kind: DockSurfaceLiveUndockTestEventKind::DestinationSemanticsSubmitted,
+            opening_generation: identity.opening().generation(),
+            drag_generation: identity.drag_generation().get(),
+            source_window: lease.map(|lease| lease.source().window_id()),
+            destination_window: receipt.destination().window_id(),
+            payload_lease_generation: lease.map(|lease| lease.lease_generation().get()),
+            provisional_session_generation: lease
+                .map(|lease| lease.provisional_session_generation()),
+            frame_generation: receipt.submitted_frame_generation(),
+            root_count: None,
+        }
+    }
+
+    pub(crate) fn destination_interaction_admitted(
+        receipt: live_undock::DockLiveUndockDestinationInteractionReceipt,
+    ) -> Self {
+        let semantics = receipt.semantics();
+        let identity = semantics.identity();
+        let lease = semantics.payload_lease();
+        Self {
+            kind: DockSurfaceLiveUndockTestEventKind::DestinationInteractionAdmitted,
+            opening_generation: identity.opening().generation(),
+            drag_generation: identity.drag_generation().get(),
+            source_window: lease.map(|lease| lease.source().window_id()),
+            destination_window: semantics.destination().window_id(),
+            payload_lease_generation: lease.map(|lease| lease.lease_generation().get()),
+            provisional_session_generation: receipt
+                .admitted_session_generation()
+                .or_else(|| lease.map(|lease| lease.provisional_session_generation())),
+            frame_generation: semantics.submitted_frame_generation(),
+            root_count: None,
+        }
+    }
+
+    /// Returns the accepted transition kind.
+    pub const fn kind(&self) -> DockSurfaceLiveUndockTestEventKind {
+        self.kind
+    }
+
+    /// Returns the provisional-opening generation that owns the transition.
+    pub const fn opening_generation(&self) -> u64 {
+        self.opening_generation
+    }
+
+    /// Returns the captured-drag generation that owns the transition.
+    pub const fn drag_generation(&self) -> u64 {
+        self.drag_generation
+    }
+
+    /// Returns the exact source window when the transition carries a payload lease.
+    pub const fn source_window(&self) -> Option<WindowId> {
+        self.source_window
+    }
+
+    /// Returns the exact destination window.
+    pub const fn destination_window(&self) -> WindowId {
+        self.destination_window
+    }
+
+    /// Returns the retained payload lease generation when present.
+    pub const fn payload_lease_generation(&self) -> Option<u64> {
+        self.payload_lease_generation
+    }
+
+    /// Returns the provisional session generation when present.
+    pub const fn provisional_session_generation(&self) -> Option<u64> {
+        self.provisional_session_generation
+    }
+
+    /// Returns the accepted renderer/presentation frame generation when present.
+    pub const fn frame_generation(&self) -> Option<u64> {
+        self.frame_generation
+    }
+
+    /// Returns the mounted root count when present.
+    pub const fn root_count(&self) -> Option<usize> {
+        self.root_count
+    }
+}
+
+/// Read-only observation of accepted live-undock authority transitions for one DockSurface.
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+#[derive(Clone, Debug, Default)]
+pub struct DockSurfaceLiveUndockTestObservation {
+    events: Rc<RefCell<Vec<DockSurfaceLiveUndockTestEvent>>>,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl DockSurfaceLiveUndockTestObservation {
+    /// Returns accepted transitions in reducer order.
+    pub fn events(&self) -> Vec<DockSurfaceLiveUndockTestEvent> {
+        self.events.borrow().clone()
+    }
+
+    /// Removes events already consumed by the current test scenario.
+    pub fn clear(&self) {
+        self.events.borrow_mut().clear();
+    }
+
+    pub(crate) fn record(&self, event: DockSurfaceLiveUndockTestEvent) {
+        self.events.borrow_mut().push(event);
+    }
+}
+
 pub(crate) struct DockSurfaceCaptureReleaseFailure {
     lease: window_session::DockSurfaceWindowSessionLease,
     prior_panic: Option<DockSurfaceShutdownPanic>,
@@ -2066,6 +2265,20 @@ impl DockSurface {
         observation
     }
 
+    /// Observes reducer-accepted live-undock authority transitions for this exact surface.
+    #[doc(hidden)]
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn observe_live_undock_for_test(
+        &self,
+        cx: &mut App,
+    ) -> DockSurfaceLiveUndockTestObservation {
+        let observation = DockSurfaceLiveUndockTestObservation::default();
+        cx.update_entity(&self.owner, |owner, _| {
+            owner.install_live_undock_test_observation(observation.clone());
+        });
+        observation
+    }
+
     /// Arms one exact shutdown generation to exercise retry and panic-continuation behavior.
     ///
     /// The first close attempt for `busy_window` is routed through the production Busy retry path.
@@ -2097,6 +2310,15 @@ impl DockSurface {
         cx.update_entity(&self.owner, |owner, _| {
             owner.install_shutdown_test_faults(lease, busy_window, panic_message.into())
         })
+    }
+
+    /// Terminates the next same-window live-undock destination after durable promotion and before
+    /// destination semantics acknowledgement.
+    #[doc(hidden)]
+    #[cfg(feature = "test-support")]
+    pub fn terminate_next_live_undock_destination_before_semantics_ack_for_test(&self, cx: &App) {
+        let runtime = cx.read_entity(&self.owner, |owner, _| owner.live_undock_runtime());
+        runtime.terminate_next_same_window_destination_before_semantics_ack_for_test();
     }
 
     /// Opens one provisional live-undock viewport through the production opening protocol.

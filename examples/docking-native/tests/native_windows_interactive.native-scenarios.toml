@@ -21,6 +21,15 @@ observation_domains = ["system-input", "wnd-proc", "capture", "point-stack", "pr
 behavior = "opaque-occlusion"
 
 [[scenario]]
+id = "native.u27.opaque-hit-transparent-prefix"
+requirement_owner = "U27"
+package = "open-gpui-windows"
+ignored = true
+test = "platform::native_test_support::opaque_hit_transparent_window_cannot_be_inferred_visually_transparent"
+observation_domains = ["point-stack", "lifetime"]
+behavior = "opaque-hit-transparent-prefix"
+
+[[scenario]]
 id = "native.u27.surface-shutdown"
 requirement_owner = "U27"
 package = "open-gpui-docking-native"
@@ -64,6 +73,15 @@ ignored = false
 test = "platform::native_test_support::real_hwnd_activation_terminal_is_exact_and_first_terminal_wins"
 observation_domains = ["wnd-proc", "lifetime"]
 behavior = "activation-terminal"
+
+[[scenario]]
+id = "native.u28.provisional-activation-z-order"
+requirement_owner = "U28"
+package = "open-gpui-windows"
+ignored = true
+test = "platform::native_test_support::real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in_place"
+observation_domains = ["wnd-proc", "point-stack", "presentation", "lifetime"]
+behavior = "provisional-activation-z-order"
 
 [[scenario]]
 id = "native.u28.client-geometry-reconciliation"

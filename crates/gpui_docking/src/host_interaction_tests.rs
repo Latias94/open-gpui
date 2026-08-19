@@ -360,6 +360,7 @@ struct NativeCapturedSourceFixture {
     surface: DockSurface,
     controller: Entity<DockController>,
     runtime: DockViewportRuntimeHandle,
+    source_panel: Entity<TestPanel>,
     source_window: AnyWindowHandle,
     source_host: Entity<DockHost>,
     source_visual: VisualTestContext,
@@ -452,14 +453,18 @@ impl NativeCapturedSourceFixture {
 }
 
 fn native_captured_source_fixture(cx: &mut TestAppContext) -> NativeCapturedSourceFixture {
+    let source_panel = Rc::new(RefCell::new(None));
+    let source_panel_for_factory = source_panel.clone();
     let (surface, controller, runtime, source_window, source_tabs) = cx.update(|cx| {
         let surface = DockSurface::builder("main")
             .panel_placements([
                 DockPanelPlacement::center("a").selected(),
                 DockPanelPlacement::stacked_with("b", "a"),
             ])
-            .panel_factory("a", "Panel A", |cx| {
-                cx.new(|cx| TestPanel::new("A", cx)).into()
+            .panel_factory("a", "Panel A", move |cx| {
+                let panel = cx.new(|cx| TestPanel::new("A", cx));
+                source_panel_for_factory.replace(Some(panel.clone()));
+                panel.into()
             })
             .panel_factory("b", "Panel B", |cx| {
                 cx.new(|cx| TestPanel::new("B", cx)).into()
@@ -483,6 +488,10 @@ fn native_captured_source_fixture(cx: &mut TestAppContext) -> NativeCapturedSour
         (surface, controller, runtime, source_window, source_tabs)
     });
     cx.run_until_parked();
+    let source_panel = source_panel
+        .borrow()
+        .clone()
+        .expect("the selected source panel should resolve on the first host frame");
 
     let source_host = source_window
         .downcast::<DockHost>()
@@ -561,6 +570,7 @@ fn native_captured_source_fixture(cx: &mut TestAppContext) -> NativeCapturedSour
         surface,
         controller,
         runtime,
+        source_panel,
         source_window,
         source_host,
         source_visual,
@@ -1124,6 +1134,231 @@ fn reveal_live_undock_provisional_destination(
     }));
 
     (destination_window, destination_host, destination_space)
+}
+
+#[open_gpui::test]
+fn live_source_semantic_focus_proxy_is_unique_stable_and_restores_exact_focus(
+    cx: &mut TestAppContext,
+) {
+    let mut fixture = native_captured_source_fixture(cx);
+    let panel_focus = cx.read_entity(&fixture.source_panel, |panel, cx| panel.focus_handle(cx));
+    activate_window_for_pointer_input(&mut fixture.source_visual);
+    fixture
+        .source_visual
+        .update(|window, cx| panel_focus.focus(window, cx));
+    cx.run_until_parked();
+    assert_eq!(
+        fixture
+            .source_visual
+            .update(|window, cx| window.focused(cx)),
+        Some(panel_focus.clone()),
+        "the live-undock trigger must capture focus from the exact payload descendant",
+    );
+    assert!(
+        fixture
+            .runtime
+            .borrow()
+            .recorded_panel_focus_matches(&DockSpaceId::from("main"), &item("a")),
+        "the source runtime must record the focused payload item before drag activation",
+    );
+
+    begin_native_live_undock_with_released_source(&mut fixture, cx);
+    assert_eq!(
+        fixture
+            .runtime
+            .active_payload_drag_session(&fixture.payload)
+            .and_then(|session| session.focus_item().cloned()),
+        Some(item("a")),
+        "the live-undock session must freeze the exact focused payload item",
+    );
+    fixture.source_visual = VisualTestContext::from_window(fixture.source_window, cx);
+    let (destination_window, _destination_host, _destination_space) =
+        reveal_live_undock_provisional_destination(&fixture, cx);
+    cx.run_until_parked();
+
+    let (proxy_name, proxy_bounds, proxy_focus, proxy_claim_revision) =
+        cx.read_entity(&fixture.source_host, |host, _| {
+            let proxy = host
+                .live_source_semantic_proxy()
+                .expect("a revealed destination must retain one source semantic proxy");
+            let source_focus = proxy
+                .source_focus()
+                .expect("the focused payload must retain exact source-focus evidence");
+            (
+                proxy.accessible_name().to_string(),
+                proxy.carrier().bounds,
+                source_focus.focus_handle().clone(),
+                source_focus.claim_revision(),
+            )
+        });
+    assert_eq!(proxy_name, "Panel A");
+    assert_eq!(proxy_focus, panel_focus);
+    let (source_scale_factor, source_claim_revision) = fixture
+        .source_window
+        .update(cx, |_, window, _| {
+            (window.scale_factor(), window.focus_claim_revision())
+        })
+        .expect("the source window should remain live while its semantic proxy is visible");
+    assert_eq!(
+        proxy_claim_revision, source_claim_revision,
+        "the proxy may own accessibility focus only for the exact captured focus claim",
+    );
+
+    assert!(cx.activate_accessibility(fixture.source_window));
+    assert!(cx.activate_accessibility(destination_window));
+    let source_tree = cx
+        .latest_accessibility_tree_update(fixture.source_window)
+        .expect("the source must publish a complete semantic-proxy tree");
+    let destination_tree = cx
+        .latest_accessibility_tree_update(destination_window)
+        .expect("the provisional destination must publish its mounted payload tree");
+    let source_proxy_nodes = source_tree
+        .nodes
+        .iter()
+        .filter(|(_, node)| {
+            node.role() == open_gpui::accesskit::Role::Group
+                && node.label() == Some(proxy_name.as_str())
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        source_proxy_nodes.len(),
+        1,
+        "the frozen source must expose exactly one semantic owner for the live payload",
+    );
+    let (proxy_node_id, proxy_node) = source_proxy_nodes[0];
+    let expected_proxy_bounds = open_gpui::accesskit::Rect {
+        x0: (proxy_bounds.origin.x.as_f32() * source_scale_factor) as f64,
+        y0: (proxy_bounds.origin.y.as_f32() * source_scale_factor) as f64,
+        x1: ((proxy_bounds.origin.x + proxy_bounds.size.width).as_f32() * source_scale_factor)
+            as f64,
+        y1: ((proxy_bounds.origin.y + proxy_bounds.size.height).as_f32() * source_scale_factor)
+            as f64,
+    };
+    assert_eq!(proxy_node.bounds(), Some(expected_proxy_bounds));
+    assert!(proxy_node.children().is_empty());
+    assert!(proxy_node.value().is_none());
+    assert!(proxy_node.numeric_value().is_none());
+    assert!(proxy_node.text_selection().is_none());
+    let proxy_actions = open_gpui::test::ACCESSKIT_ACTIONS
+        .iter()
+        .copied()
+        .filter(|action| proxy_node.supports_action(*action))
+        .collect::<Vec<_>>();
+    assert!(
+        proxy_actions.is_empty(),
+        "the source semantic proxy is inert and must expose no user action",
+    );
+    assert_eq!(
+        source_tree.focus, *proxy_node_id,
+        "the proxy must inherit accessibility focus only from the captured payload descendant",
+    );
+    assert!(
+        source_tree
+            .nodes
+            .iter()
+            .all(|(_, node)| node.label() != Some("Panel A panel")),
+        "the frozen source tree must remove the real payload subtree",
+    );
+    let destination_panel_nodes = destination_tree
+        .nodes
+        .iter()
+        .filter(|(_, node)| {
+            node.role() == open_gpui::accesskit::Role::TabPanel
+                && node.label() == Some("Panel A panel")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        destination_panel_nodes.len(),
+        0,
+        "the gated destination must not publish a second semantic payload subtree",
+    );
+
+    fixture
+        .source_visual
+        .update(|window, cx| window.draw(cx).clear());
+    cx.run_until_parked();
+    assert!(cx.deactivate_accessibility(fixture.source_window));
+    assert!(cx.activate_accessibility(fixture.source_window));
+    let redrawn_source_tree = cx
+        .latest_accessibility_tree_update(fixture.source_window)
+        .expect("the redrawn source must republish a complete accessibility tree");
+    let redrawn_proxy_ids = redrawn_source_tree
+        .nodes
+        .iter()
+        .filter_map(|(id, node)| {
+            (node.role() == open_gpui::accesskit::Role::Group
+                && node.label() == Some(proxy_name.as_str()))
+            .then_some(*id)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(redrawn_proxy_ids, vec![*proxy_node_id]);
+    assert_eq!(redrawn_source_tree.focus, *proxy_node_id);
+
+    let session = fixture
+        .runtime
+        .active_payload_drag_session(&fixture.payload)
+        .expect("the exact live-undock session must remain cancellable before promotion");
+    cx.update(|app| {
+        crate::native_captured_drag::cancel_native_captured_drag_route(
+            fixture.runtime.identity(),
+            Some(&session),
+            Some(&fixture.payload),
+            &fixture.source_host.downgrade(),
+            None,
+            PointerCancelReason::CaptureRevoked,
+            app,
+        );
+    });
+    cx.run_until_parked();
+
+    assert_eq!(cx.windows(), vec![fixture.source_window]);
+    cx.read_entity(&fixture.source_host, |host, _| {
+        assert!(host.live_presentation_state().is_none());
+        assert!(host.live_source_semantic_proxy().is_none());
+    });
+    let restored_focus = fixture
+        .source_window
+        .update(cx, |_, window, cx| {
+            (
+                window.focused(cx),
+                window.is_focus_handle_rendered(&panel_focus),
+            )
+        })
+        .expect("the restored source window should remain live");
+    assert_eq!(
+        restored_focus,
+        (Some(panel_focus), true),
+        "source cancellation must restore the exact payload subtree and focus before retiring semantic authority",
+    );
+    assert!(cx.deactivate_accessibility(fixture.source_window));
+    assert!(cx.activate_accessibility(fixture.source_window));
+    let restored_tree = cx
+        .latest_accessibility_tree_update(fixture.source_window)
+        .expect("source restoration must publish a replacement accessibility tree");
+    assert!(
+        restored_tree
+            .nodes
+            .iter()
+            .all(|(id, _)| id != proxy_node_id),
+        "the restored payload tree must retire the source proxy identity",
+    );
+    let restored_panel_nodes = restored_tree
+        .nodes
+        .iter()
+        .filter(|(_, node)| {
+            node.role() == open_gpui::accesskit::Role::TabPanel
+                && node.label() == Some("Panel A panel")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        restored_panel_nodes.len(),
+        1,
+        "source restoration must reinstall exactly one payload subtree",
+    );
+    assert_ne!(
+        restored_panel_nodes[0].0, *proxy_node_id,
+        "the stable source proxy identity must remain distinct from the restored payload descendant",
+    );
 }
 
 #[open_gpui::test]
@@ -7513,6 +7748,8 @@ fn same_window_destination_semantics_can_submit_after_more_than_four_watchdog_wa
     cx: &mut TestAppContext,
 ) {
     let mut fixture = native_captured_source_fixture(cx);
+    let live_undock_observation =
+        cx.update(|app| fixture.surface.observe_live_undock_for_test(app));
     begin_native_live_undock_with_released_source(&mut fixture, cx);
     fixture.source_visual = VisualTestContext::from_window(fixture.source_window, cx);
     let (destination_window, _destination_host, destination_space) =
@@ -7520,7 +7757,7 @@ fn same_window_destination_semantics_can_submit_after_more_than_four_watchdog_wa
     let live_runtime = cx.read_entity(fixture.surface.owner(), |owner, _| {
         owner.live_undock_runtime()
     });
-    live_runtime.suppress_same_window_destination_semantics_frames_for_test(u32::MAX);
+    live_runtime.set_same_window_destination_semantics_held_for_test(true);
 
     cx.set_next_window_placement_dispatch(destination_window, PlatformWindowDispatch::Queued);
     cx.set_platform_window_hit_stack(
@@ -7564,7 +7801,7 @@ fn same_window_destination_semantics_can_submit_after_more_than_four_watchdog_wa
         "the destination must remain gated while semantics are pending"
     );
 
-    live_runtime.suppress_same_window_destination_semantics_frames_for_test(0);
+    live_runtime.set_same_window_destination_semantics_held_for_test(false);
     destination_window
         .update(cx, |_, window, _| window.refresh())
         .expect("the exact destination must remain refreshable after delayed semantics");
@@ -7610,6 +7847,62 @@ fn same_window_destination_semantics_can_submit_after_more_than_four_watchdog_wa
             .active_payload_drag_session(&fixture.payload)
             .is_none(),
         "successful delayed semantics must settle the exact payload drag authority"
+    );
+    let events = live_undock_observation.events();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(
+                event.kind(),
+                crate::surface::DockSurfaceLiveUndockTestEventKind::SourceProxyCommitted
+            ))
+            .count(),
+        1,
+        "one exact source proxy must commit before the payload moves"
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(
+                event.kind(),
+                crate::surface::DockSurfaceLiveUndockTestEventKind::PayloadMounted
+            ))
+            .count(),
+        1,
+        "the live payload must mount exactly once across same-window promotion"
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(
+                event.kind(),
+                crate::surface::DockSurfaceLiveUndockTestEventKind::PayloadPresented
+            ))
+            .count(),
+        1,
+        "the payload handoff must publish one initial presentation receipt"
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(
+                event.kind(),
+                crate::surface::DockSurfaceLiveUndockTestEventKind::DestinationSemanticsSubmitted
+            ))
+            .count(),
+        1,
+        "same-window promotion must submit destination semantics exactly once"
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(
+                event.kind(),
+                crate::surface::DockSurfaceLiveUndockTestEventKind::DestinationInteractionAdmitted
+            ))
+            .count(),
+        1,
+        "the destination interaction gate must open exactly once"
     );
 }
 

@@ -3998,15 +3998,46 @@ impl DockHost {
         let command = ticket.command();
         match command.request().clone() {
             DockViewportFocusRequest::Panel(item) => {
-                match session
-                    .visible_panel_registration(&item)
-                    .and_then(|panel| panel.focus_handle(cx))
+                let panel = session.visible_panel_registration(&item);
+                let (focus_target, exact_focus_target) = match (panel, command.exact_focus_target())
                 {
+                    (Some(_), Some(exact))
+                        if window.focus_claim_revision() == exact.claim_revision()
+                            && window.is_focus_handle_rendered(exact.focus_handle()) =>
+                    {
+                        (Some(exact.focus_handle().clone()), true)
+                    }
+                    (Some(_), Some(exact))
+                        if window.focus_claim_revision() != exact.claim_revision() =>
+                    {
+                        self.settle_pending_focus_command_generation(
+                            ticket_generation,
+                            DockSurfaceActivationOutcome::Superseded,
+                            cx,
+                        );
+                        return;
+                    }
+                    (Some(_), Some(_)) => {
+                        self.settle_pending_focus_command_generation(
+                            ticket_generation,
+                            DockSurfaceActivationOutcome::Unavailable,
+                            cx,
+                        );
+                        return;
+                    }
+                    (Some(panel), None) => (panel.focus_handle(cx), false),
+                    (None, _) => (None, false),
+                };
+                match focus_target {
                     Some(focus_handle) => {
-                        let focus_target = window
-                            .committed_focus(cx)
-                            .filter(|focused| focus_handle.contains(focused, window))
-                            .unwrap_or(focus_handle);
+                        let focus_target = if exact_focus_target {
+                            focus_handle
+                        } else {
+                            window
+                                .committed_focus(cx)
+                                .filter(|focused| focus_handle.contains(focused, window))
+                                .unwrap_or(focus_handle)
+                        };
                         self.ensure_pending_panel_focus_completion(
                             &ticket,
                             &item,

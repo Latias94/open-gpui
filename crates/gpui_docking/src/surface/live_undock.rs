@@ -1251,6 +1251,10 @@ impl DockLiveUndockSourceProxyReceipt {
         self.lease
     }
 
+    pub(crate) const fn proxy_frame_generation(self) -> u64 {
+        self.proxy_frame_generation
+    }
+
     #[cfg(test)]
     pub(super) fn for_test(
         lease: DockLiveUndockPayloadLeaseReceipt,
@@ -1308,6 +1312,18 @@ impl DockLiveUndockPayloadMountReceipt {
 
     pub(crate) const fn window_id(self) -> WindowId {
         self.proxy.lease.destination_window
+    }
+
+    pub(crate) const fn mount_frame_generation(self) -> u64 {
+        self.mount_frame_generation
+    }
+
+    pub(crate) const fn destination_lease_generation(self) -> u64 {
+        self.destination_lease_generation
+    }
+
+    pub(crate) const fn root_count(self) -> usize {
+        self.root_count
     }
 
     #[cfg(test)]
@@ -1880,6 +1896,20 @@ impl DockLiveUndockDestinationSemanticsReceipt {
         self.destination
     }
 
+    pub(crate) const fn payload_lease(self) -> Option<DockLiveUndockPayloadLeaseReceipt> {
+        match self.reveal {
+            Some(reveal) => Some(reveal.reveal_frame.mount.proxy.lease),
+            None => None,
+        }
+    }
+
+    pub(crate) const fn submitted_frame_generation(self) -> Option<u64> {
+        match self.provisional {
+            Some(provisional) => provisional.submitted_frame_generation(),
+            None => None,
+        }
+    }
+
     #[cfg(test)]
     pub(super) const fn for_test(
         identity: DockLiveUndockIdentity,
@@ -1967,6 +1997,10 @@ impl DockLiveUndockDestinationInteractionReceipt {
 
     pub(crate) const fn semantics(self) -> DockLiveUndockDestinationSemanticsReceipt {
         self.semantics
+    }
+
+    pub(crate) const fn admitted_session_generation(self) -> Option<u64> {
+        self.admitted_session_generation
     }
 
     #[cfg(test)]

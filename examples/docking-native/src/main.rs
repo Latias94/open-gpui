@@ -1739,8 +1739,30 @@ fn restored_demo_layout() -> DockLayout {
     layout_from_raw_parts(spaces, nodes)
 }
 
+fn demo_preview_panel() -> DockPanel {
+    DockPanel::lazy("Preview", |cx| {
+        cx.new(|_| {
+            DemoPanel::new(
+                "Preview",
+                "Rendered layout notes",
+                0x9333ea,
+                &[
+                    "DockHost observes DockController.",
+                    "Tab selection updates graph state.",
+                    "Layout round-trips through DockLayout.",
+                    "Splitter handles resize panes.",
+                    "Tabs can drag/drop between stacks.",
+                    "Secondary viewport placement lives in the adapter.",
+                ],
+            )
+        })
+        .into()
+    })
+    .with_dock_class(SECONDARY_DOCK_CLASS)
+}
+
 macro_rules! configure_demo_builder {
-    ($builder:expr, $runtime_panel:expr) => {
+    ($builder:expr, $runtime_panel:expr, $preview_panel:expr) => {
         ($builder)
             .try_layout(&restored_demo_layout())
             .expect("demo dock layout should restore")
@@ -1832,28 +1854,7 @@ macro_rules! configure_demo_builder {
                 })
                 .with_dock_class(PRIMARY_DOCK_CLASS),
             )
-            .panel(
-                "preview",
-                DockPanel::lazy("Preview", |cx| {
-                    cx.new(|_| {
-                        DemoPanel::new(
-                            "Preview",
-                            "Rendered layout notes",
-                            0x9333ea,
-                            &[
-                                "DockHost observes DockController.",
-                                "Tab selection updates graph state.",
-                                "Layout round-trips through DockLayout.",
-                                "Splitter handles resize panes.",
-                                "Tabs can drag/drop between stacks.",
-                                "Secondary viewport placement lives in the adapter.",
-                            ],
-                        )
-                    })
-                    .into()
-                })
-                .with_dock_class(SECONDARY_DOCK_CLASS),
-            )
+            .panel("preview", $preview_panel)
             .panel(
                 "diff",
                 DockPanel::lazy("Diff", |cx| {
@@ -1984,7 +1985,8 @@ fn managed_surface_runtime_panel(
 fn build_controller() -> DockController {
     configure_demo_builder!(
         DockController::builder(SPACE),
-        unmanaged_runtime_placeholder_panel()
+        unmanaged_runtime_placeholder_panel(),
+        demo_preview_panel()
     )
     .try_build()
     .expect("demo controller setup should validate")
@@ -1998,6 +2000,26 @@ fn build_managed_surface(
     central_bounds: Bounds<Pixels>,
     cx: &mut App,
 ) -> DockSurface {
+    build_managed_surface_with_preview_panel(
+        surface_slot,
+        placement,
+        primary_bounds,
+        secondary_bounds,
+        central_bounds,
+        demo_preview_panel(),
+        cx,
+    )
+}
+
+fn build_managed_surface_with_preview_panel(
+    surface_slot: Rc<RefCell<Option<DockSurface>>>,
+    placement: DockViewportPlacementLayout,
+    primary_bounds: Bounds<Pixels>,
+    secondary_bounds: Bounds<Pixels>,
+    central_bounds: Bounds<Pixels>,
+    preview_panel: DockPanel,
+    cx: &mut App,
+) -> DockSurface {
     configure_demo_builder!(
         DockSurface::builder(SPACE),
         managed_surface_runtime_panel(
@@ -2006,7 +2028,8 @@ fn build_managed_surface(
             primary_bounds,
             secondary_bounds,
             central_bounds
-        )
+        ),
+        preview_panel
     )
     .visual_style_resolver(dock_visual_style_resolver())
     .build(cx)

@@ -4221,6 +4221,7 @@ dependencies = [
  "anyhow",
  "env_logger",
  "futures",
+ "image",
  "log",
  "open-gpui",
  "open-gpui-devtools",
