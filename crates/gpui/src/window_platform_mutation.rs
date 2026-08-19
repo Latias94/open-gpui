@@ -76,7 +76,8 @@ pub enum WindowMutationOutcome {
     Adjusted,
     /// A newer request in the same conflict domain replaced this request.
     Superseded,
-    /// The backend rejected the request before a matching observation arrived.
+    /// GPUI validation, an interaction or policy gate, or the backend rejected the request before
+    /// a matching observation arrived.
     Rejected,
     /// The backend cannot perform this mutation for an already-open window.
     Unsupported,
@@ -122,7 +123,8 @@ pub enum WindowMutationDispatch {
     Unchanged,
     /// The backend does not support this mutation for an already-open window.
     Unsupported,
-    /// The backend rejected the request before it could be observed.
+    /// GPUI validation, an interaction or policy gate, or the backend rejected the request before
+    /// it could be observed.
     Rejected,
     /// The window closed before the request could be dispatched.
     WindowClosed,

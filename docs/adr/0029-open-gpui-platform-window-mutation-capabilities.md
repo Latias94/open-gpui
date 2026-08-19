@@ -2,7 +2,7 @@
 
 **Status**: Accepted
 **Date**: 2026-07-25
-**Amended**: 2026-07-28 (U25 appearance, activation, ownership, and presentation authority)
+**Amended**: 2026-07-28 (U25 appearance, activation, ownership, and presentation authority); 2026-08-18 (synchronous mutation terminal pairing)
 
 ## Context
 
@@ -104,6 +104,17 @@ commands that can bypass placement generations.
 Moved, resized, and external window-state callbacks refresh the committed facts cache. A generic
 state-change callback never settles a mutation ticket: only the generation-bound terminal
 observation callback can do that.
+
+Every prepared mutation generation has exactly one backend finish path. A queued dispatch retains
+the generation until its exact `on_window_mutation_observation` terminal arrives. An unchanged,
+unsupported, rejected, or synchronously closed dispatch cannot produce that callback, so GPUI calls
+`PlatformWindow::finish_window_mutation_without_observation` exactly once with the same domain,
+generation, and terminal. That hook retires backend preparation state without publishing another
+fact or manufacturing an observation. A backend must not retain native work or emit a later
+terminal for an unobserved finish, and it must not use the hook for a queued request. This pairing
+keeps backend-only preparation, including provisional z-order authority, from leaking across a
+synchronous classification while preserving the rule that committed facts change only through the
+GPUI mutation authority.
 
 The legacy `live_window_move`, `PlatformViewportFlagCapabilities`, and
 `viewport_flag_capabilities` surfaces are deleted. Docking and diagnostics consume the one GPUI

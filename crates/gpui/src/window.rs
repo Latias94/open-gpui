@@ -18,22 +18,22 @@ use crate::{
     PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
     PlatformWindowCapabilities, PlatformWindowCommand, PlatformWindowDispatch,
     PlatformWindowInteractionQuiescence, PlatformWindowMutationObservation,
-    PlatformWindowMutationTerminal, PlatformWindowPresentOutcome, PlatformWindowProfile, Point,
-    PointerCancelEvent, PointerCancelReason, PolychromeSprite,
-    PreparedPlatformPresentationShutdown, Primitive, PrimitiveTransform, Priority, PromptButton,
-    PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams,
-    Replay, RequestFrameOptions, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X,
-    SUBPIXEL_VARIANTS_Y, ScaledPixels, Shadow, SharedString, Size, StrikethroughStyle, Style,
-    SubpixelSprite, SubscriberSet, Subscription, SubtreeClip, SubtreeClipError,
-    SubtreePresentation, SubtreeTransform, SubtreeTransformError, SystemWindowTab,
-    SystemWindowTabController, TaffyLayoutEngine, Task, TextRenderingMode, TextStyle,
-    TextStyleRefinement, Underline, UnderlineStyle, WindowActivationPolicy, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowControls, WindowCreationFacts,
-    WindowDecorations, WindowInitialPresentationOrder, WindowInitialPresentationStatus, WindowKind,
-    WindowMutationDispatch, WindowMutationDomain, WindowMutationOutcome, WindowOptions,
-    WindowParams, WindowPhysicalPlacementRequest, WindowPlacementRequest, WindowPlacementState,
-    WindowPlatformFacts, WindowPresentAttemptFacts, WindowPresentationFacts,
-    WindowProvisionalOpeningClaim, WindowProvisionalPlacementOutcome,
+    PlatformWindowMutationTerminal, PlatformWindowMutationUnobservedTerminal,
+    PlatformWindowPresentOutcome, PlatformWindowProfile, Point, PointerCancelEvent,
+    PointerCancelReason, PolychromeSprite, PreparedPlatformPresentationShutdown, Primitive,
+    PrimitiveTransform, Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams,
+    RenderImage, RenderImageParams, RenderSvgParams, Replay, RequestFrameOptions, ResizeEdge,
+    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Shadow,
+    SharedString, Size, StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription,
+    SubtreeClip, SubtreeClipError, SubtreePresentation, SubtreeTransform, SubtreeTransformError,
+    SystemWindowTab, SystemWindowTabController, TaffyLayoutEngine, Task, TextRenderingMode,
+    TextStyle, TextStyleRefinement, Underline, UnderlineStyle, WindowActivationPolicy,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls,
+    WindowCreationFacts, WindowDecorations, WindowInitialPresentationOrder,
+    WindowInitialPresentationStatus, WindowKind, WindowMutationDispatch, WindowMutationDomain,
+    WindowMutationOutcome, WindowOptions, WindowParams, WindowPhysicalPlacementRequest,
+    WindowPlacementRequest, WindowPlacementState, WindowPlatformFacts, WindowPresentAttemptFacts,
+    WindowPresentationFacts, WindowProvisionalOpeningClaim, WindowProvisionalPlacementOutcome,
     WindowProvisionalPlacementRequest, WindowProvisionalPlacementTicket,
     WindowProvisionalRevealCancellationOutcome, WindowProvisionalRevealOutcome,
     WindowProvisionalRevealTicket, WindowProvisionalSemanticsOutcome,
@@ -6121,6 +6121,30 @@ impl Window {
                 }
             }
         };
+
+        let unobserved_terminal = match &dispatch {
+            WindowMutationDispatch::Queued(_) => None,
+            WindowMutationDispatch::Unchanged => {
+                Some(PlatformWindowMutationUnobservedTerminal::Unchanged)
+            }
+            WindowMutationDispatch::Unsupported => {
+                Some(PlatformWindowMutationUnobservedTerminal::Unsupported)
+            }
+            WindowMutationDispatch::Rejected => {
+                Some(PlatformWindowMutationUnobservedTerminal::Rejected)
+            }
+            WindowMutationDispatch::WindowClosed => {
+                Some(PlatformWindowMutationUnobservedTerminal::WindowClosed)
+            }
+        };
+        if let Some(terminal) = unobserved_terminal {
+            self.platform_window
+                .finish_window_mutation_without_observation(
+                    ticket_domain,
+                    ticket_generation,
+                    terminal,
+                );
+        }
 
         let committed_activation_policy = self
             .window_mutations

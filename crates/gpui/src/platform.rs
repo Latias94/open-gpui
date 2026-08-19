@@ -3276,6 +3276,25 @@ pub enum PlatformWindowMutationTerminal {
     WindowClosed,
 }
 
+/// The synchronous terminal result for a prepared mutation that will not emit a platform
+/// observation.
+///
+/// This type is intentionally distinct from [`PlatformWindowMutationTerminal`]: an unchanged
+/// request did not perform or observe an asynchronous native operation, while an asynchronously
+/// accepted request can terminate only through the platform observation callback.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum PlatformWindowMutationUnobservedTerminal {
+    /// The committed facts already matched the request.
+    Unchanged,
+    /// The open-window backend does not support this mutation.
+    Unsupported,
+    /// GPUI validation, an interaction or policy gate, or the backend rejected the request before
+    /// it was queued for native observation.
+    Rejected,
+    /// The window closed before the request could be queued.
+    WindowClosed,
+}
+
 /// The synchronous result of handing a platform window mutation to a backend.
 ///
 /// `Queued` means only that the backend accepted the request path. It does not mean that the
@@ -5084,6 +5103,19 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     /// to [`Self::request_window_mutation`]. Backends with queued native work must make every
     /// older generation in `domain` unable to mutate the window or emit a terminal observation.
     fn prepare_window_mutation(&self, _domain: WindowMutationDomain, _generation: u64) {}
+    /// Finishes a prepared generation that settled without a queued platform observation.
+    ///
+    /// GPUI calls this exactly once after [`Self::prepare_window_mutation`] when the request was
+    /// unchanged, unsupported, rejected, or closed synchronously. Backends that retain state
+    /// across preparation may revalidate or retire it here; no later observation will arrive for
+    /// this generation.
+    fn finish_window_mutation_without_observation(
+        &self,
+        _domain: WindowMutationDomain,
+        _generation: u64,
+        _terminal: PlatformWindowMutationUnobservedTerminal,
+    ) {
+    }
     /// Requests one typed mutation for an already-open window.
     ///
     /// The default preserves the getter-only contract. It may report an unchanged request from

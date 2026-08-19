@@ -10,14 +10,15 @@ use crate::{
     PlatformWindowActiveStatusObservation, PlatformWindowCommand, PlatformWindowCommandDispatcher,
     PlatformWindowCommandOutcome, PlatformWindowDispatch, PlatformWindowInteractionQuiescence,
     PlatformWindowMutationObservation, PlatformWindowMutationTerminal,
-    PlatformWindowPhysicalGeometry, PlatformWindowPresentOutcome, Point,
-    PreparedPlatformPointerCaptureRelease, PreparedPlatformPresentationShutdown, PromptButton,
-    RequestFrameOptions, Scene, Size, TestPlatform, TileId, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowCreationFacts,
-    WindowMutationDomain, WindowMutationRequest, WindowParams, WindowPlacementState,
-    WindowPlatformFacts, WindowPresentationShutdownTicket, WindowProvisionalPlacementNativeFacts,
-    WindowProvisionalPlacementOutcome, WindowProvisionalPlacementRequest,
-    WindowProvisionalRevealNativeFacts, WindowProvisionalRevealZOrder, WindowProvisionalSession,
+    PlatformWindowMutationUnobservedTerminal, PlatformWindowPhysicalGeometry,
+    PlatformWindowPresentOutcome, Point, PreparedPlatformPointerCaptureRelease,
+    PreparedPlatformPresentationShutdown, PromptButton, RequestFrameOptions, Scene, Size,
+    TestPlatform, TileId, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    WindowControlArea, WindowCreationFacts, WindowMutationDomain, WindowMutationRequest,
+    WindowParams, WindowPlacementState, WindowPlatformFacts, WindowPresentationShutdownTicket,
+    WindowProvisionalPlacementNativeFacts, WindowProvisionalPlacementOutcome,
+    WindowProvisionalPlacementRequest, WindowProvisionalRevealNativeFacts,
+    WindowProvisionalRevealZOrder, WindowProvisionalSession,
 };
 #[cfg(test)]
 use crate::{
@@ -113,6 +114,12 @@ pub(crate) struct TestWindowState {
     window_bounds: WindowBounds,
     pending_mutations: Vec<TestWindowMutationRequest>,
     mutation_generations: HashMap<WindowMutationDomain, u64>,
+    #[cfg(test)]
+    mutation_unobserved_finish_history: Vec<(
+        WindowMutationDomain,
+        u64,
+        PlatformWindowMutationUnobservedTerminal,
+    )>,
     next_mutation_dispatches: HashMap<WindowMutationDomain, PlatformWindowDispatch>,
     platform_command_callback:
         Option<Box<dyn FnMut(PlatformWindowCommand, TestWindow) -> PlatformWindowCommandOutcome>>,
@@ -365,6 +372,8 @@ impl TestWindow {
                 window_bounds: params.window_bounds,
                 pending_mutations: Vec::new(),
                 mutation_generations: HashMap::default(),
+                #[cfg(test)]
+                mutation_unobserved_finish_history: Vec::new(),
                 next_mutation_dispatches: HashMap::default(),
                 platform_command_callback: None,
                 pointer_capture_release_callback: None,
@@ -902,6 +911,17 @@ impl TestWindow {
             .lock()
             .next_mutation_dispatches
             .insert(domain, dispatch);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn window_mutation_unobserved_finish_history(
+        &self,
+    ) -> Vec<(
+        WindowMutationDomain,
+        u64,
+        PlatformWindowMutationUnobservedTerminal,
+    )> {
+        self.0.lock().mutation_unobserved_finish_history.clone()
     }
 
     /// Emits the current backend facts as a coherent terminal observation for one domain.
@@ -1478,6 +1498,23 @@ impl PlatformWindow for TestWindow {
                 WindowProvisionalPlacementOutcome::Stale,
             );
         }
+    }
+
+    fn finish_window_mutation_without_observation(
+        &self,
+        domain: WindowMutationDomain,
+        generation: u64,
+        _terminal: PlatformWindowMutationUnobservedTerminal,
+    ) {
+        let mut lock = self.0.lock();
+        #[cfg(test)]
+        lock.mutation_unobserved_finish_history
+            .push((domain, generation, _terminal));
+        if lock.mutation_generations.get(&domain).copied() == Some(generation) {
+            lock.mutation_generations.remove(&domain);
+        }
+        lock.pending_mutations
+            .retain(|queued| queued.request.domain() != domain || queued.generation != generation);
     }
 
     fn invalidate_window_mutation(&self, domain: WindowMutationDomain) {
@@ -2464,6 +2501,44 @@ mod window_mutation_tests {
                 .expect_err("an owner token from another application must be rejected")
                 .to_string()
                 .contains("different application")
+        );
+    }
+
+    #[crate::test]
+    fn transient_owner_rejects_the_exact_window_before_native_creation(cx: &mut TestAppContext) {
+        let owner: AnyWindowHandle = cx
+            .open_window(size(px(320.0), px(240.0)), |_, _| Empty)
+            .into();
+        let owner_token = cx
+            .read(|app| app.transient_window_owner(owner))
+            .expect("a committed window should produce an owner token");
+        let native_before = cx
+            .last_created_test_window()
+            .expect("the owner should be the latest native test window");
+
+        let result = cx.update(|app| {
+            Window::new(
+                owner,
+                WindowOptions {
+                    transient_for: Some(owner_token),
+                    ..Default::default()
+                },
+                crate::window::WindowInteractionAuthority::new(),
+                app,
+            )
+        });
+        let error = match result {
+            Ok(_) => panic!("a top-level window must reject itself as transient owner"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("cannot be transient for itself"));
+
+        let native_after = cx
+            .last_created_test_window()
+            .expect("self-owner rejection must preserve the previous native window");
+        assert!(
+            Rc::ptr_eq(&native_before.0, &native_after.0),
+            "self-owner validation must fail before opening another native window"
         );
     }
 
@@ -5910,6 +5985,13 @@ mod window_mutation_tests {
             unsupported_predecessor.observation().unwrap().outcome,
             WindowMutationOutcome::Superseded
         );
+        let finishes = platform_window.window_mutation_unobserved_finish_history();
+        assert_eq!(finishes.len(), 1);
+        assert_eq!(finishes[0].0, WindowMutationDomain::Placement);
+        assert_eq!(
+            finishes[0].2,
+            PlatformWindowMutationUnobservedTerminal::Unsupported
+        );
 
         let unchanged_predecessor = queue_placement(
             cx,
@@ -5936,6 +6018,49 @@ mod window_mutation_tests {
             !platform_window.flush_window_mutation(WindowMutationDomain::Placement),
             "an unchanged replacement must invalidate the older backend placement task"
         );
+        let finishes = platform_window.window_mutation_unobserved_finish_history();
+        assert_eq!(finishes.len(), 2);
+        assert!(finishes[0].1 < finishes[1].1);
+        assert_eq!(finishes[1].0, WindowMutationDomain::Placement);
+        assert_eq!(
+            finishes[1].2,
+            PlatformWindowMutationUnobservedTerminal::Unchanged
+        );
+
+        platform_window.set_next_placement_dispatch(PlatformWindowDispatch::Rejected);
+        assert!(matches!(
+            cx.update_window(handle, |_, window, _| {
+                window.request_window_placement_request(WindowPlacementRequest::windowed(bounds(
+                    34.0, 46.0, 470.0, 310.0,
+                )))
+            })
+            .unwrap(),
+            WindowMutationDispatch::Rejected
+        ));
+        platform_window.set_next_placement_dispatch(PlatformWindowDispatch::WindowClosed);
+        assert!(matches!(
+            cx.update_window(handle, |_, window, _| {
+                window.request_window_placement_request(WindowPlacementRequest::windowed(bounds(
+                    36.0, 47.0, 475.0, 315.0,
+                )))
+            })
+            .unwrap(),
+            WindowMutationDispatch::WindowClosed
+        ));
+        let finishes = platform_window.window_mutation_unobserved_finish_history();
+        assert_eq!(
+            finishes
+                .iter()
+                .map(|(_, _, terminal)| *terminal)
+                .collect::<Vec<_>>(),
+            [
+                PlatformWindowMutationUnobservedTerminal::Unsupported,
+                PlatformWindowMutationUnobservedTerminal::Unchanged,
+                PlatformWindowMutationUnobservedTerminal::Rejected,
+                PlatformWindowMutationUnobservedTerminal::WindowClosed,
+            ]
+        );
+        assert!(finishes.windows(2).all(|pair| pair[0].1 < pair[1].1));
 
         let close_ticket = queue_placement(
             cx,
@@ -6306,8 +6431,12 @@ mod window_mutation_tests {
 mod platform_command_tests {
     use super::*;
     use crate::{
-        AppContext, Empty, Modifiers, MouseMoveEvent, TestAppContext, WindowActivationPolicy,
-        WindowMutationDispatch, WindowMutationOutcome, point, px, size,
+        AppContext, Empty, FileDropEvent, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
+        ModifiersChangedEvent, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MousePressureEvent,
+        MouseUpEvent, PinchEvent, PointerCancelEvent, PointerCancelReason, ScrollWheelEvent,
+        TestAppContext, WindowActivationCancellationOutcome, WindowActivationPolicy,
+        WindowActivationStatus, WindowActivationTerminal, WindowMutationDispatch,
+        WindowMutationOutcome, point, px, size,
     };
     use std::{
         cell::{Cell, RefCell},
@@ -6329,6 +6458,61 @@ mod platform_command_tests {
             pressed_button: None,
             modifiers: Modifiers::default(),
         })
+    }
+
+    fn every_platform_input_class() -> Vec<(&'static str, PlatformInput)> {
+        let keystroke = Keystroke::parse("escape").expect("escape should parse");
+        vec![
+            (
+                "key-down",
+                PlatformInput::KeyDown(KeyDownEvent {
+                    keystroke: keystroke.clone(),
+                    is_held: false,
+                    prefer_character_input: false,
+                }),
+            ),
+            (
+                "key-up",
+                PlatformInput::KeyUp(KeyUpEvent {
+                    keystroke: keystroke.clone(),
+                }),
+            ),
+            (
+                "modifiers-changed",
+                PlatformInput::ModifiersChanged(ModifiersChangedEvent::default()),
+            ),
+            (
+                "mouse-down",
+                PlatformInput::MouseDown(MouseDownEvent::default()),
+            ),
+            ("mouse-up", PlatformInput::MouseUp(MouseUpEvent::default())),
+            (
+                "mouse-pressure",
+                PlatformInput::MousePressure(MousePressureEvent::default()),
+            ),
+            ("mouse-move", mouse_move_input(10.0)),
+            (
+                "mouse-exited",
+                PlatformInput::MouseExited(MouseExitEvent::default()),
+            ),
+            (
+                "pointer-cancelled",
+                PlatformInput::PointerCanceled(PointerCancelEvent {
+                    reason: PointerCancelReason::CaptureRevoked,
+                }),
+            ),
+            (
+                "scroll-wheel",
+                PlatformInput::ScrollWheel(ScrollWheelEvent::default()),
+            ),
+            ("pinch", PlatformInput::Pinch(PinchEvent::default())),
+            (
+                "file-drop",
+                PlatformInput::FileDrop(FileDropEvent::Pending {
+                    position: point(px(10.0), px(10.0)),
+                }),
+            ),
+        ]
     }
 
     #[crate::test]
@@ -6413,6 +6597,70 @@ mod platform_command_tests {
             ticket.snapshot().status(),
             crate::WindowActivationStatus::Terminal(crate::WindowActivationTerminal::Rejected)
         );
+    }
+
+    #[crate::test]
+    fn explicit_activation_cancellation_terminals_are_first_and_delivered_once(
+        cx: &mut TestAppContext,
+    ) {
+        cx.set_platform_focused_window_available(false);
+
+        for terminal in [
+            WindowActivationTerminal::Cancelled,
+            WindowActivationTerminal::TargetReplaced,
+        ] {
+            let (handle, platform_window) = open_test_window(cx);
+            platform_window.set_platform_command_callback(|command, _| {
+                assert!(matches!(command, PlatformWindowCommand::Activate { .. }));
+                PlatformWindowCommandOutcome::Accepted
+            });
+            let ticket = cx
+                .update_window(handle, |_, window, _| window.activate_window())
+                .expect("test window should remain live");
+            assert_eq!(
+                ticket.snapshot().status(),
+                WindowActivationStatus::Dispatched
+            );
+
+            let delivered = Rc::new(RefCell::new(Vec::new()));
+            let _subscription = ticket.subscribe({
+                let delivered = delivered.clone();
+                move |snapshot| delivered.borrow_mut().push(snapshot.status())
+            });
+            let cancellation = match terminal {
+                WindowActivationTerminal::Cancelled => ticket.cancel(),
+                WindowActivationTerminal::TargetReplaced => ticket.cancel_for_target_replacement(),
+                _ => unreachable!("the test only covers explicit cancellation terminals"),
+            };
+            assert_eq!(
+                cancellation,
+                WindowActivationCancellationOutcome::Installed(terminal)
+            );
+            cx.run_until_parked();
+            assert_eq!(
+                ticket.snapshot().status(),
+                WindowActivationStatus::Terminal(terminal)
+            );
+            assert_eq!(
+                delivered.borrow().as_slice(),
+                &[WindowActivationStatus::Terminal(terminal)]
+            );
+
+            platform_window.simulate_active_status_observation(
+                PlatformWindowActiveStatusObservation::new(true, true),
+            );
+            cx.run_until_parked();
+            assert_eq!(
+                ticket.snapshot().status(),
+                WindowActivationStatus::Terminal(terminal),
+                "a later exact native positive must not replace explicit cancellation"
+            );
+            assert_eq!(delivered.borrow().len(), 1);
+            assert_eq!(
+                ticket.cancel(),
+                WindowActivationCancellationOutcome::AlreadyTerminal(terminal)
+            );
+        }
     }
 
     #[crate::test]
@@ -6733,6 +6981,68 @@ mod platform_command_tests {
                 }),
             }
         ));
+        assert!(input_diagnostics.iter().all(|diagnostic| matches!(
+            diagnostic.domain_generation,
+            Some(crate::NativeBoundaryGeneration::InputSlot {
+                boundary: crate::NativeInputBoundary::PlatformInput,
+                ..
+            })
+        )));
+    }
+
+    #[crate::test]
+    fn every_platform_input_class_returns_exact_propagated_and_consumed_results(
+        cx: &mut TestAppContext,
+    ) {
+        let diagnostic_cursor = cx
+            .app
+            .native_boundary_diagnostics(crate::NativeBoundaryDiagnosticCursor::default())
+            .cursor;
+
+        for (class, input) in every_platform_input_class() {
+            let (handle, mut platform_window) = open_test_window(cx);
+            assert_eq!(
+                platform_window.simulate_input_result(input.clone()),
+                DispatchEventResult {
+                    propagate: true,
+                    default_prevented: false,
+                },
+                "{class} must return its propagated handler result"
+            );
+
+            assert!(
+                cx.update_window(handle, |_, window, app| window.quiesce_interaction(app))
+                    .expect("test window should remain live"),
+                "{class} should observe the one-way interaction boundary"
+            );
+            assert_eq!(
+                platform_window.simulate_input_result(input),
+                DispatchEventResult {
+                    propagate: false,
+                    default_prevented: true,
+                },
+                "{class} must return its consumed handler result"
+            );
+        }
+
+        let diagnostic_delta = cx.app.native_boundary_diagnostics(diagnostic_cursor);
+        assert_eq!(diagnostic_delta.omitted_before_cursor, 0);
+        assert!(diagnostic_delta.terminal.iter().all(|diagnostic| !matches!(
+            diagnostic.disposition,
+            crate::NativeBoundaryDisposition::InvariantFailure(_)
+        )));
+        let input_diagnostics = diagnostic_delta
+            .terminal
+            .iter()
+            .filter(|diagnostic| {
+                diagnostic.kind
+                    == crate::NativeBoundaryKind::Callback(crate::NativeCallbackKind::PlatformInput)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            input_diagnostics.len(),
+            2 * every_platform_input_class().len()
+        );
         assert!(input_diagnostics.iter().all(|diagnostic| matches!(
             diagnostic.domain_generation,
             Some(crate::NativeBoundaryGeneration::InputSlot {
