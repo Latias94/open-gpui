@@ -15,7 +15,7 @@ use open_gpui_docking::{
     DockSurfaceLiveUndockTestObservation, DockSurfaceShutdownTestEventKind,
     DockSurfaceShutdownTestObservation, DockSurfaceTransition, DockSurfaceWindowSessionPhase,
     DockSurfaceWindowSessionReason, DockSurfaceWindowSessionShutdownReason, model::DockGraph,
-    native_captured_release_observation_for_test,
+    native_captured_drag_router_is_idle_for_test, native_captured_release_observation_for_test,
 };
 use open_gpui_windows::{
     NATIVE_TEST_INPUT_CANARY, NativeTestDisplay, NativeTestOpaqueWindow, NativeTestPointerAction,
@@ -59,6 +59,9 @@ use windows::Win32::{
 const NATIVE_DOCK_SUITE_ID: &str = "docking-native.windows.interactive";
 const NATIVE_SCENARIO_ENV: &str = "OPEN_GPUI_NATIVE_SCENARIO_ID";
 const DRAG_LATENCY_OUTPUT_ENV: &str = "OPEN_GPUI_DOCK_DRAG_LATENCY_OUTPUT";
+const DRAG_LATENCY_BENCHMARK_ID: &str = "benchmark.docking.tab-drag-input-to-submit";
+const DRAG_LATENCY_BENCHMARK_TEST: &str =
+    "native_interactive_tests::native_interactive_tab_drag_input_to_submit_latency_benchmark";
 const INPUT_CANARY: usize = NATIVE_TEST_INPUT_CANARY;
 const SCENARIO_TIMEOUT: Duration = Duration::from_secs(10);
 const POLL_INTERVAL: Duration = Duration::from_millis(5);
@@ -264,6 +267,7 @@ mod process_harness;
 #[serde(rename_all = "kebab-case")]
 enum NativeDockBehavior {
     SourceCapture,
+    TabDragLatencyBenchmark,
     OpaqueOcclusion,
     SurfaceShutdown,
     ProvisionalSameHwndPromotion,
@@ -278,6 +282,7 @@ impl NativeDockBehavior {
     const fn as_str(self) -> &'static str {
         match self {
             Self::SourceCapture => "source-capture",
+            Self::TabDragLatencyBenchmark => "tab-drag-latency-benchmark",
             Self::OpaqueOcclusion => "opaque-occlusion",
             Self::SurfaceShutdown => "surface-shutdown",
             Self::ProvisionalSameHwndPromotion => "provisional-same-hwnd-promotion",
@@ -298,6 +303,9 @@ impl NativeDockBehavior {
     ) -> Result<()> {
         match self {
             Self::SourceCapture => run_captured_host_drop_scenario(cx, scenario, scenario_id).await,
+            Self::TabDragLatencyBenchmark => {
+                run_captured_host_drop_latency_benchmark(cx, scenario).await
+            }
             Self::OpaqueOcclusion
             | Self::ProvisionalSameHwndPromotion
             | Self::LiveRouteAndReleaseLock
@@ -909,6 +917,21 @@ fn native_interactive_scenario_registry_matches_cases() {
 #[ignore = "requires the open-gpui-windows-native-interactive-ephemeral runner"]
 fn native_interactive_two_hwnd_captured_drag_routes_preview_and_drop() {
     run_native_interactive_manifest_scenario(NativeDockBehavior::SourceCapture);
+}
+
+#[test]
+#[ignore = "requires the open-gpui-windows-native-interactive-ephemeral runner"]
+fn native_interactive_tab_drag_input_to_submit_latency_benchmark() {
+    let registration = NativeScenarioRegistration {
+        id: DRAG_LATENCY_BENCHMARK_ID.to_owned(),
+        test: DRAG_LATENCY_BENCHMARK_TEST.to_owned(),
+        behavior: NativeDockBehavior::TabDragLatencyBenchmark,
+    };
+    ensure_native_interactive_runner(&registration.id);
+    if process_harness::is_worker(&registration.id, registration.behavior) {
+        run_native_interactive_worker(registration);
+    }
+    process_harness::run_case_in_worker(&registration);
 }
 
 #[test]
@@ -1848,27 +1871,7 @@ async fn run_captured_host_drop_scenario(
     scenario_id: &str,
 ) -> Result<()> {
     raise_native_window(scenario.target_hwnd)?;
-    let latency_probe_points = std::env::var_os(DRAG_LATENCY_OUTPUT_ENV)
-        .map(|_| {
-            cx.update(|app| {
-                Ok::<_, anyhow::Error>((
-                    source_tab_screen_point(app, scenario, "preview")?,
-                    source_tab_screen_point(app, scenario, "diff")?,
-                ))
-            })
-        })
-        .transpose()?;
     let (mut pointer_guard, _) = begin_native_captured_drag(cx, scenario).await?;
-    if let Some(points) = latency_probe_points {
-        measure_native_tab_drag_latency(cx, scenario, &mut pointer_guard, points).await?;
-        pointer_guard.inject(points.1, NativeTestPointerAction::PrimaryUp)?;
-        wait_until(cx, "native tab-drag latency probe to release", |cx| {
-            Ok(unsafe { GetCapture() } == HWND::default()
-                && !cx.update(|app| app.has_active_drag()))
-        })
-        .await?;
-        return Ok(());
-    }
     let target_selector_prefix = format!("dock:{SPACE}:tabs:");
     let target_bounds = cx.update(|app| {
         unique_matching_debug_bounds(
@@ -1994,6 +1997,50 @@ async fn run_captured_host_drop_scenario(
         snapshot.revision()
     );
     Ok(())
+}
+
+async fn run_captured_host_drop_latency_benchmark(
+    cx: &mut AsyncApp,
+    scenario: &mut NativeDockScenario,
+) -> Result<()> {
+    raise_native_window(scenario.target_hwnd)?;
+    let points = cx.update(|app| {
+        Ok::<_, anyhow::Error>((
+            source_tab_screen_point(app, scenario, "preview")?,
+            source_tab_screen_point(app, scenario, "diff")?,
+        ))
+    })?;
+    let (mut pointer_guard, _) = begin_native_captured_drag_for_benchmark(cx, scenario).await?;
+    measure_native_tab_drag_latency(cx, scenario, &mut pointer_guard, points).await?;
+    pointer_guard.inject(points.1, NativeTestPointerAction::PrimaryUp)?;
+    wait_until(cx, "native tab-drag latency probe to release", |cx| {
+        Ok(unsafe { GetCapture() } == HWND::default()
+            && cx.update(|app| {
+                !app.has_active_drag() && native_captured_drag_router_is_idle_for_test(app)
+            }))
+    })
+    .await?;
+
+    cx.update(|app| {
+        app.update_window(scenario.target_window, |_, window, cx| {
+            window.remove_window(cx)
+        })
+    })?;
+    wait_until(
+        cx,
+        "native tab-drag latency benchmark surface to close",
+        |cx| {
+            Ok(cx.update(|app| {
+                let status = scenario.surface.window_session_status(app);
+                status.phase() == DockSurfaceWindowSessionPhase::Closed
+                    && app.windows().is_empty()
+                    && native_captured_drag_router_is_idle_for_test(app)
+            }) && !unsafe { IsWindow(Some(scenario.source_hwnd)).as_bool() }
+                && !unsafe { IsWindow(Some(scenario.target_hwnd)).as_bool() }
+                && native_observation_is_terminal(&scenario.native_observation))
+        },
+    )
+    .await
 }
 
 async fn run_no_input_pass_through_scenario(
@@ -2437,6 +2484,24 @@ async fn begin_native_captured_drag(
     cx: &mut AsyncApp,
     scenario: &mut NativeDockScenario,
 ) -> Result<(NativeTestSystemPointerGuard, POINT)> {
+    begin_native_captured_drag_with_provenance(cx, scenario, true).await
+}
+
+async fn begin_native_captured_drag_for_benchmark(
+    cx: &mut AsyncApp,
+    scenario: &mut NativeDockScenario,
+) -> Result<(NativeTestSystemPointerGuard, POINT)> {
+    // Remote and virtual display drivers may clear SendInput's dwExtraInfo marker before WndProc.
+    // This non-release benchmark still proves the exact HWND, coordinates, capture transition, and
+    // delivered move count. Manifest release scenarios continue to require the input canary.
+    begin_native_captured_drag_with_provenance(cx, scenario, false).await
+}
+
+async fn begin_native_captured_drag_with_provenance(
+    cx: &mut AsyncApp,
+    scenario: &mut NativeDockScenario,
+    require_input_canary: bool,
+) -> Result<(NativeTestSystemPointerGuard, POINT)> {
     ensure!(
         unsafe { GetCapture() } == HWND::default(),
         "the native Dock runner started with an unrelated capture owner"
@@ -2554,11 +2619,12 @@ async fn begin_native_captured_drag(
     )
     .await?;
     wait_until(cx, "source WndProc pointer admission pre-route", |_| {
-        Ok(native_system_mouse_message_observed(
+        Ok(native_system_mouse_message_observed_for_admission(
             &scenario.native_observation,
             scenario.source_window,
             NativeWindowTestMessage::MouseMove,
             delivered_threshold_point,
+            require_input_canary,
         ))
     })
     .await
@@ -2567,11 +2633,12 @@ async fn begin_native_captured_drag(
     let delivered_source_point =
         wait_for_cursor(cx, source_point, "source tab pointer move").await?;
     wait_until(cx, "source WndProc system-pointer move admission", |_| {
-        Ok(native_system_mouse_message_observed(
+        Ok(native_system_mouse_message_observed_for_admission(
             &scenario.native_observation,
             scenario.source_window,
             NativeWindowTestMessage::MouseMove,
             delivered_source_point,
+            require_input_canary,
         ))
     })
     .await
@@ -2587,9 +2654,10 @@ async fn begin_native_captured_drag(
             .contains(&NativeMouseKind::Down);
         Ok(captured
             && observed_down
-            && source_native_primary_button_down_captured_observed(
+            && source_native_primary_button_down_captured_observed_for_admission(
                 scenario,
                 delivered_source_point,
+                require_input_canary,
             ))
     })
     .await
@@ -4779,9 +4847,10 @@ fn source_native_primary_button_up_observed(
     })
 }
 
-fn source_native_primary_button_down_captured_observed(
+fn source_native_primary_button_down_captured_observed_for_admission(
     scenario: &NativeDockScenario,
     press_point: POINT,
+    require_input_canary: bool,
 ) -> bool {
     let source_window_id = scenario.source_window.window_id();
     scenario.native_observation.events().iter().any(|event| {
@@ -4796,7 +4865,8 @@ fn source_native_primary_button_down_captured_observed(
                     capture_after: NativeWindowTestCaptureOwner::Recipient,
                     disposition: NativeWindowTestMessageDisposition::Returned(_),
                     ..
-                } if extra_info == INPUT_CANARY as isize && point == native_point(press_point)
+                } if input_provenance_matches(extra_info, require_input_canary)
+                    && point == native_point(press_point)
             )
     })
 }
@@ -4826,6 +4896,22 @@ fn native_system_mouse_message_observed(
     expected_message: NativeWindowTestMessage,
     expected_point: POINT,
 ) -> bool {
+    native_system_mouse_message_observed_for_admission(
+        observation,
+        window,
+        expected_message,
+        expected_point,
+        true,
+    )
+}
+
+fn native_system_mouse_message_observed_for_admission(
+    observation: &NativeWindowTestObservation,
+    window: AnyWindowHandle,
+    expected_message: NativeWindowTestMessage,
+    expected_point: POINT,
+    require_input_canary: bool,
+) -> bool {
     observation.events().iter().any(|event| {
         event.window().window_id() == window.window_id()
             && matches!(
@@ -4837,10 +4923,14 @@ fn native_system_mouse_message_observed(
                     disposition: NativeWindowTestMessageDisposition::Returned(_),
                     ..
                 } if message == expected_message
-                    && extra_info == INPUT_CANARY as isize
+                    && input_provenance_matches(extra_info, require_input_canary)
                     && point == native_point(expected_point)
             )
     })
+}
+
+fn input_provenance_matches(extra_info: isize, require_input_canary: bool) -> bool {
+    !require_input_canary || extra_info == INPUT_CANARY as isize
 }
 
 fn native_pointer_admission_context(scenario: &NativeDockScenario, point: POINT) -> String {

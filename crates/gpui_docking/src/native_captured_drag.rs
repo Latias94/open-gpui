@@ -738,6 +738,19 @@ pub fn native_captured_release_observation_for_test(
 }
 
 #[cfg(feature = "test-support")]
+/// Returns whether the Dock native-captured-drag router owns no live or retiring release work.
+#[doc(hidden)]
+pub fn native_captured_drag_router_is_idle_for_test(cx: &App) -> bool {
+    router_state(cx).is_none_or(|state| {
+        let state = state.borrow();
+        state.active.is_none()
+            && state.locked_releases.is_empty()
+            && state.retired_pending.is_empty()
+            && state.failed_releases.is_empty()
+    })
+}
+
+#[cfg(feature = "test-support")]
 fn record_native_release_hit_for_test(event: &NativeCapturedDragEvent, cx: &mut App) {
     cx.default_global::<DockNativeReleaseTestObservations>()
         .begin_release(

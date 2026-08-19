@@ -146,7 +146,8 @@ mod native_captured_drag;
 #[cfg(feature = "test-support")]
 #[doc(hidden)]
 pub use native_captured_drag::{
-    NativeCapturedReleaseObservationForTest, native_captured_release_observation_for_test,
+    NativeCapturedReleaseObservationForTest, native_captured_drag_router_is_idle_for_test,
+    native_captured_release_observation_for_test,
 };
 mod op;
 mod panel;

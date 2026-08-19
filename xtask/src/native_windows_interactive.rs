@@ -24,6 +24,7 @@ const NATIVE_SCENARIO_ENV: &str = "OPEN_GPUI_NATIVE_SCENARIO_ID";
 const NATIVE_SCENARIO_BEHAVIOR_ENV: &str = "OPEN_GPUI_NATIVE_SCENARIO_BEHAVIOR";
 const NATIVE_SCENARIO_RECEIPT_PATH_ENV: &str = "OPEN_GPUI_NATIVE_SCENARIO_RECEIPT_PATH";
 const NATIVE_SCENARIO_RECEIPT_TOKEN_ENV: &str = "OPEN_GPUI_NATIVE_SCENARIO_RECEIPT_TOKEN";
+const DOCK_DRAG_LATENCY_OUTPUT_ENV: &str = "OPEN_GPUI_DOCK_DRAG_LATENCY_OUTPUT";
 const NATIVE_RUNNER_SENTINEL_TEST: &str = "platform::native_test_support::native_interactive_runner_sentinel_proves_system_pointer_delivery_and_capture";
 const NATIVE_SCENARIO_REGISTRY_TEST: &str =
     "native_interactive_tests::native_interactive_scenario_registry_matches_cases";
@@ -100,7 +101,8 @@ impl NativeScenarioRunReceipt {
             .env(NATIVE_SCENARIO_ENV, &self.scenario_id)
             .env(NATIVE_SCENARIO_BEHAVIOR_ENV, &self.behavior)
             .env(NATIVE_SCENARIO_RECEIPT_PATH_ENV, &self.path)
-            .env(NATIVE_SCENARIO_RECEIPT_TOKEN_ENV, &self.token);
+            .env(NATIVE_SCENARIO_RECEIPT_TOKEN_ENV, &self.token)
+            .env_remove(DOCK_DRAG_LATENCY_OUTPUT_ENV);
     }
 
     fn expected_contents(&self) -> String {
@@ -540,7 +542,7 @@ fn is_valid_test_coordinate(test: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::cell::RefCell;
+    use std::{cell::RefCell, ffi::OsStr};
 
     #[test]
     fn native_gate_report_runs_every_step_before_returning_failure() {
@@ -617,6 +619,29 @@ mod tests {
             failures.is_empty(),
             "xtask must not duplicate package or ignored metadata outside the manifest: {failures:?}"
         );
+    }
+
+    #[test]
+    fn release_scenario_environment_removes_drag_latency_benchmark_mode() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("xtask must remain a direct workspace child");
+        let manifest = load_native_scenario_manifest(root).expect("manifest should parse");
+        let scenario = manifest
+            .scenario
+            .iter()
+            .find(|scenario| scenario.behavior == NativeScenarioBehavior::SourceCapture)
+            .expect("the repository manifest should own the source-capture behavior");
+        let receipt = NativeScenarioRunReceipt::prepare(scenario)
+            .expect("the behavior receipt should reserve one temporary path");
+        let mut command = Command::new("cargo");
+        command.env(DOCK_DRAG_LATENCY_OUTPUT_ENV, "drag-latency.json");
+
+        receipt.apply_environment(&mut command);
+
+        assert!(command.get_envs().any(|(key, value)| {
+            key == OsStr::new(DOCK_DRAG_LATENCY_OUTPUT_ENV) && value.is_none()
+        }));
     }
 
     #[test]

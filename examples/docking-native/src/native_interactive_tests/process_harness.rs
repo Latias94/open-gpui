@@ -144,6 +144,7 @@ pub(super) const fn worker_subcases_for(
             NativeWorkerSubcase::MixedDpiHigherToLower,
         ],
         NativeDockBehavior::SourceCapture
+        | NativeDockBehavior::TabDragLatencyBenchmark
         | NativeDockBehavior::OpaqueOcclusion
         | NativeDockBehavior::SurfaceShutdown
         | NativeDockBehavior::ProvisionalSameHwndPromotion
@@ -1465,6 +1466,7 @@ mod tests {
 
         for behavior in [
             NativeDockBehavior::SourceCapture,
+            NativeDockBehavior::TabDragLatencyBenchmark,
             NativeDockBehavior::OpaqueOcclusion,
             NativeDockBehavior::SurfaceShutdown,
             NativeDockBehavior::ProvisionalSameHwndPromotion,
