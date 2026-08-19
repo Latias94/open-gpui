@@ -277,7 +277,7 @@ fn allowed_modal_surface_press_keeps_captured_move_and_up_routed_outside_modal(
     cx: &mut open_gpui::TestAppContext,
 ) {
     let (view, cx) = cx.add_window_view(RuntimeProbe::new);
-    cx.update(|window, _| window.activate_window());
+    let _ = cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
     draw(cx);
     register_layer(
@@ -389,7 +389,7 @@ fn captured_owner_unmount_seals_the_old_allowed_route_until_mouse_up(
     cx: &mut open_gpui::TestAppContext,
 ) {
     let (view, cx) = cx.add_window_view(RuntimeProbe::new);
-    cx.update(|window, _| window.activate_window());
+    let _ = cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
     draw(cx);
     register_layer(
@@ -468,7 +468,7 @@ fn unrelated_hidden_registration_preserves_an_existing_captured_route(
     cx: &mut open_gpui::TestAppContext,
 ) {
     let (view, cx) = cx.add_window_view(RuntimeProbe::new);
-    cx.update(|window, _| window.activate_window());
+    let _ = cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
     draw(cx);
     register_layer(
@@ -534,7 +534,7 @@ fn open_modal_registration_aba_invalidates_an_existing_captured_route(
     cx: &mut open_gpui::TestAppContext,
 ) {
     let (view, cx) = cx.add_window_view(RuntimeProbe::new);
-    cx.update(|window, _| window.activate_window());
+    let _ = cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
     draw(cx);
     register_layer(
@@ -595,7 +595,7 @@ fn superseding_modal_cancels_the_previous_capture_owner_exactly_once(
     cx: &mut open_gpui::TestAppContext,
 ) {
     let (view, cx) = cx.add_window_view(RuntimeProbe::new);
-    cx.update(|window, _| window.activate_window());
+    let _ = cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
     draw(cx);
     register_layer(
@@ -669,7 +669,7 @@ fn superseding_modal_cancels_an_uncaptured_press_before_its_mouse_up(
     cx: &mut open_gpui::TestAppContext,
 ) {
     let (view, cx) = cx.add_window_view(RuntimeProbe::new);
-    cx.update(|window, _| window.activate_window());
+    let _ = cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
     draw(cx);
 
@@ -726,7 +726,7 @@ fn window_deactivation_cancels_allowed_gesture_routes_before_reactivation(
     cx: &mut open_gpui::TestAppContext,
 ) {
     let (view, cx) = cx.add_window_view(RuntimeProbe::new);
-    cx.update(|window, _| window.activate_window());
+    let _ = cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
     draw(cx);
     register_layer(
@@ -746,7 +746,7 @@ fn window_deactivation_cancels_allowed_gesture_routes_before_reactivation(
 
     cx.simulate_mouse_down(surface.center(), MouseButton::Left, Default::default());
     cx.deactivate_window();
-    cx.update(|window, _| window.activate_window());
+    let _ = cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
     cx.update_window_entity(&view, |probe, _, _| {
         probe.underlay_pointer_events.borrow_mut().clear();
@@ -770,7 +770,7 @@ fn modal_blocks_a_captured_pointer_when_the_runtime_was_installed_after_capture(
     cx: &mut open_gpui::TestAppContext,
 ) {
     let (view, cx) = cx.add_window_view(LateInstalledRuntimeProbe::new);
-    cx.update(|window, _| window.activate_window());
+    let _ = cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
     draw(cx);
 

@@ -339,7 +339,7 @@ fn framework_focus_snapshot_reads_the_rendered_window_authority(
     cx.update_window_entity(&view, |probe, window, cx| {
         probe.focus.focus(window, cx);
     });
-    cx.update(|window, _| window.activate_window());
+    let _ = cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
     cx.update(|window, cx| window.draw(cx).clear());
 
@@ -379,7 +379,7 @@ fn framework_focus_snapshot_does_not_claim_keyboard_focus_for_an_inactive_window
     cx.update_window_entity(&view, |probe, window, cx| {
         probe.focus.focus(window, cx);
     });
-    cx.update(|window, _| window.activate_window());
+    let _ = cx.update(|window, _| window.activate_window());
     cx.update(|window, cx| window.draw(cx).clear());
     cx.deactivate_window();
 

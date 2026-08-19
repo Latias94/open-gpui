@@ -657,7 +657,7 @@ fn child_surface_focus_marks_a_passive_parent_as_entered(cx: &mut open_gpui::Tes
 #[open_gpui::test]
 fn unmounted_trigger_restores_live_window_fallback(cx: &mut open_gpui::TestAppContext) {
     let (view, cx) = cx.add_window_view(RuntimeProbe::new);
-    cx.update(|window, _| window.activate_window());
+    let _ = cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
     draw(cx);
     cx.update_window_entity(&view, |probe, window, cx| {

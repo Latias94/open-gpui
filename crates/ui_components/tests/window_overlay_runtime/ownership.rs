@@ -13,7 +13,7 @@ fn window_teardown_cancels_local_capture_and_rejects_stale_runtime_work(
 
     let (owner, stale_runtime, pointer_events) = closing_window
         .update(cx, |probe, window, cx| {
-            window.activate_window();
+            let _ = window.activate_window();
             let owner = cx.new(|_| LayerOwner);
             let binding = probe
                 .runtime
@@ -423,7 +423,7 @@ fn owner_release_uses_focused_descendant_scope_and_restores_its_live_trigger(
     cx: &mut open_gpui::TestAppContext,
 ) {
     let (view, cx) = cx.add_window_view(RuntimeProbe::new);
-    cx.update(|window, _| window.activate_window());
+    let _ = cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
     draw(cx);
     let owner = cx.update_window_entity(&view, |probe, window, cx| {

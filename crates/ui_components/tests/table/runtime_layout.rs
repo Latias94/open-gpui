@@ -27,7 +27,7 @@ fn table_runtime_resize_emits_controlled_sizing_change(cx: &mut open_gpui::TestA
     let (_, cx) = cx.add_window_view(|_, _| TestView {
         changes: changes.clone(),
     });
-    cx.update(|window, _| window.activate_window());
+    let _ = cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
     cx.update(|window, cx| {
         window.draw(cx).clear();
@@ -121,7 +121,7 @@ fn table_runtime_header_drag_emits_controlled_column_order_change(
         changes: changes.clone(),
         state: state.clone(),
     });
-    cx.update(|window, _| window.activate_window());
+    let _ = cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
     cx.update(|window, cx| {
         window.draw(cx).clear();
@@ -1361,7 +1361,7 @@ fn table_runtime_pinned_header_drag_emits_controlled_column_order_change(
         changes: changes.clone(),
         state: state.clone(),
     });
-    cx.update(|window, _| window.activate_window());
+    let _ = cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
     cx.update(|window, cx| {
         window.draw(cx).clear();
@@ -1475,7 +1475,7 @@ fn table_runtime_pinned_resize_handles_emit_changes_for_center_and_pinned_column
     let (_, cx) = cx.add_window_view(|_, _| TestView {
         changes: changes.clone(),
     });
-    cx.update(|window, _| window.activate_window());
+    let _ = cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
     cx.update(|window, cx| {
         window.draw(cx).clear();

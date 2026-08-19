@@ -63,7 +63,7 @@ fn u11_gallery_convergence_smoke_composes_real_authorities_in_one_window(
     const DIALOG_SURFACE: &str = "dialog:overlay-runtime-nested-dialog:surface";
 
     let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Overlay);
-    cx.update(|window, _| window.activate_window());
+    let _ = cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
     settle(cx);
     {
