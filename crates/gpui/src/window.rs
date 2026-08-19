@@ -1494,6 +1494,33 @@ struct WindowPresentationState {
     provisional_reveal_ticket: Option<WindowProvisionalRevealTicket>,
 }
 
+/// Test-only diagnostics captured from the exact frame accepted by the platform renderer.
+#[cfg(any(test, feature = "test-support"))]
+#[derive(Clone, Debug)]
+pub struct WindowSubmittedFrameDiagnostics {
+    generation: u64,
+    image_paint_diagnostics: Vec<ImagePaintDiagnostic>,
+    debug_bounds: Vec<(String, Bounds<Pixels>)>,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl WindowSubmittedFrameDiagnostics {
+    /// Returns the framework generation handed to the platform renderer.
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// Returns image-paint diagnostics from this exact submitted frame.
+    pub fn image_paint_diagnostics(&self) -> &[ImagePaintDiagnostic] {
+        &self.image_paint_diagnostics
+    }
+
+    /// Returns debug selectors and bounds from this exact submitted frame.
+    pub fn debug_bounds(&self) -> &[(String, Bounds<Pixels>)] {
+        &self.debug_bounds
+    }
+}
+
 #[derive(Default)]
 struct InitialPresentationRetryState {
     minimum_generation: Option<u64>,
@@ -1684,6 +1711,8 @@ pub struct Window {
     retained_visual_registry: retained_visual::Registry,
     #[cfg(any(test, feature = "test-support"))]
     capture_generation: Cell<u64>,
+    #[cfg(any(test, feature = "test-support"))]
+    submitted_frame_diagnostics: Option<WindowSubmittedFrameDiagnostics>,
     atlas_remove_diagnostics: Vec<AtlasRemoveDiagnostic>,
     next_hitbox_id: HitboxId,
     next_pointer_capture_id: PointerCaptureId,
@@ -2772,6 +2801,8 @@ impl Window {
             retained_visual_registry: retained_visual::Registry::default(),
             #[cfg(any(test, feature = "test-support"))]
             capture_generation: Cell::new(0),
+            #[cfg(any(test, feature = "test-support"))]
+            submitted_frame_diagnostics: None,
             atlas_remove_diagnostics: Vec::new(),
             next_frame_callbacks,
             next_hitbox_id: HitboxId(0),
@@ -5841,6 +5872,13 @@ impl Window {
         &self.rendered_frame.image_paint_diagnostics
     }
 
+    /// Returns diagnostics from the latest frame actually submitted to the platform renderer.
+    #[doc(hidden)]
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn submitted_frame_diagnostics_for_test(&self) -> Option<&WindowSubmittedFrameDiagnostics> {
+        self.submitted_frame_diagnostics.as_ref()
+    }
+
     /// Returns atlas access facts for the current rendered framework frame.
     pub fn rendered_frame_atlas_access_diagnostics(&self) -> &[AtlasAccessDiagnostic] {
         &self.rendered_frame.atlas_access_diagnostics
@@ -7444,6 +7482,21 @@ impl Window {
             self.presentation_state.renderer_invalidated_generation = None;
         }
         if outcome == PlatformWindowPresentOutcome::Submitted {
+            #[cfg(any(test, feature = "test-support"))]
+            {
+                let mut debug_bounds = self
+                    .rendered_frame
+                    .debug_bounds
+                    .iter()
+                    .map(|(selector, bounds)| (selector.clone(), *bounds))
+                    .collect::<Vec<_>>();
+                debug_bounds.sort_unstable_by(|left, right| left.0.cmp(&right.0));
+                self.submitted_frame_diagnostics = Some(WindowSubmittedFrameDiagnostics {
+                    generation,
+                    image_paint_diagnostics: self.rendered_frame.image_paint_diagnostics.clone(),
+                    debug_bounds,
+                });
+            }
             self.presentation_state.present_submitted_generation = Some(generation);
             if self.record_provisional_destination_semantics_present_outcome(generation, outcome)
                 == WindowProvisionalSemanticsPresentTransition::Invalidated

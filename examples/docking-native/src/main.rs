@@ -1697,10 +1697,17 @@ fn restored_demo_layout() -> DockLayout {
     let diff_item: open_gpui_docking::DockItemId = "diff".into();
     controller
         .open_panel_at_placement(
-            secondary_space,
+            secondary_space.clone(),
             DockPanelPlacement::stacked_with(diff_item, preview_item.clone()).insert_index(1),
         )
         .expect("diff panel should join the secondary demo tab stack");
+    let (secondary_tabs, _) = controller
+        .graph()
+        .find_item_in_space(&secondary_space, &preview_item)
+        .expect("preview panel should remain in the secondary demo tab stack");
+    controller
+        .select_tab(secondary_tabs, preview_item)
+        .expect("preview panel should remain selected in the secondary demo tab stack");
     controller
         .float_item_in_window(
             SPACE,
@@ -2557,13 +2564,14 @@ mod tests {
         assert_eq!(secondary_tabs, diff_tabs);
         assert_eq!(preview_index, 0);
         assert_eq!(diff_index, 1);
-        let DockNode::Tabs { items, .. } = graph
+        let DockNode::Tabs { items, selected } = graph
             .node(secondary_tabs)
             .expect("secondary stack should exist")
         else {
             panic!("secondary dogfood node should be tabs");
         };
         assert_eq!(items.as_slice(), &[preview, diff]);
+        assert_eq!(selected.as_ref(), items.first());
 
         let problems = item("problems");
         let (problem_tabs, _) = graph

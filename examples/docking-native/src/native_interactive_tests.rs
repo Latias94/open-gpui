@@ -602,8 +602,11 @@ fn renderer_payload_submitted_diagnostic(
     revision: u64,
 ) -> Result<Option<ImagePaintDiagnostic>> {
     app.update_window(window, |_, window, _| -> Result<_> {
-        let matching = window
-            .rendered_frame_image_paint_diagnostics()
+        let Some(submitted) = window.submitted_frame_diagnostics_for_test() else {
+            return Ok(None);
+        };
+        let matching = submitted
+            .image_paint_diagnostics()
             .iter()
             .copied()
             .filter(|diagnostic| diagnostic.image.image_id == image_id)
@@ -613,8 +616,8 @@ fn renderer_payload_submitted_diagnostic(
             "one payload frame must not paint the same retained image more than once: {matching:?}"
         );
         let selector = format!("native-retained-payload:revision:{revision}");
-        let selector_count = window
-            .committed_debug_bounds_for_test()
+        let selector_count = submitted
+            .debug_bounds()
             .iter()
             .filter(|(candidate, _)| candidate == &selector)
             .count();
@@ -626,15 +629,11 @@ fn renderer_payload_submitted_diagnostic(
             return Ok(None);
         };
         let facts = window.presentation_facts();
-        let rendered_generation = window.rendered_frame_revision();
+        let submitted_generation = submitted.generation();
         Ok((selector_count == 1
-            && diagnostic.frame_generation == rendered_generation
-            && facts.non_empty_presented_generation == Some(rendered_generation)
-            && facts.latest_present_attempt.is_some_and(|attempt| {
-                attempt.generation == rendered_generation
-                    && attempt.outcome == PlatformWindowPresentOutcome::Submitted
-                    && attempt.contained_valid_primitives
-            }))
+            && diagnostic.frame_generation == submitted_generation
+            && facts.present_submitted_generation == Some(submitted_generation)
+            && facts.non_empty_presented_generation == Some(submitted_generation))
         .then_some(diagnostic))
     })?
 }
@@ -646,6 +645,65 @@ fn renderer_payload_current_window(
     app.with_window(scenario.renderer_payload_probe.entity_id(), |window, _| {
         Window::window_handle(window).window_id()
     })
+}
+
+fn renderer_payload_debug_snapshot(scenario: &NativeDockScenario, app: &mut App) -> Result<String> {
+    let (image_id, revision, renders) = renderer_payload_snapshot(scenario, app);
+    let render_count = renders.len();
+    let first_render = renders.first().copied();
+    let last_render = renders.last().copied();
+    let current_window = renderer_payload_current_window(scenario, app);
+    let window = app.update_window(scenario.source_window, |_, window, _| {
+        let image_diagnostics = window
+            .rendered_frame_image_paint_diagnostics()
+            .iter()
+            .copied()
+            .filter(|diagnostic| diagnostic.image.image_id == image_id)
+            .collect::<Vec<_>>();
+        let payload_selectors = window
+            .committed_debug_bounds_for_test()
+            .iter()
+            .filter(|(selector, _)| selector.starts_with("native-retained-payload:revision:"))
+            .cloned()
+            .collect::<Vec<_>>();
+        let submitted = window
+            .submitted_frame_diagnostics_for_test()
+            .map(|submitted| {
+                (
+                    submitted.generation(),
+                    submitted
+                        .image_paint_diagnostics()
+                        .iter()
+                        .copied()
+                        .filter(|diagnostic| diagnostic.image.image_id == image_id)
+                        .collect::<Vec<_>>(),
+                    submitted
+                        .debug_bounds()
+                        .iter()
+                        .filter(|(selector, _)| {
+                            selector.starts_with("native-retained-payload:revision:")
+                        })
+                        .cloned()
+                        .collect::<Vec<_>>(),
+                )
+            });
+        (
+            window.rendered_frame_revision(),
+            window.presentation_facts(),
+            image_diagnostics,
+            payload_selectors,
+            submitted,
+        )
+    })?;
+    Ok(format!(
+        "revision={revision}, render_count={render_count}, first_render={first_render:?}, last_render={last_render:?}, current_window={current_window:?}, source_window={:?}, rendered_generation={}, presentation={:?}, current_image_diagnostics={:?}, current_payload_selectors={:?}, submitted={:?}",
+        scenario.source_window.window_id(),
+        window.0,
+        window.1,
+        window.2,
+        window.3,
+        window.4,
+    ))
 }
 
 fn ensure_single_live_undock_payload_handoff(
@@ -2379,6 +2437,53 @@ async fn run_provisional_same_hwnd_promotion_scenario(
         ),
         "scenario `{scenario_id}` is not a provisional-promotion behavior"
     );
+    let prove_renderer_payload = behavior == NativeDockBehavior::ProvisionalSameHwndPromotion;
+    let renderer_payload_entity_id = scenario.renderer_payload_probe.entity_id();
+    let mut provisional_renderer_payload = None;
+    let (renderer_payload_image_id, renderer_payload_initial_revision, _) =
+        cx.update(|app| renderer_payload_snapshot(scenario, app));
+    ensure!(
+        renderer_payload_initial_revision == 0,
+        "the native retained payload must begin from revision zero"
+    );
+    if prove_renderer_payload {
+        wait_until(
+            cx,
+            "the source HWND to present the retained atlas-backed payload",
+            |cx| {
+                let (_, revision, renders) =
+                    cx.update(|app| renderer_payload_snapshot(scenario, app));
+                let current_window =
+                    cx.update(|app| renderer_payload_current_window(scenario, app));
+                let diagnostic = cx.update(|app| {
+                    renderer_payload_submitted_diagnostic(
+                        app,
+                        scenario.source_window,
+                        renderer_payload_image_id,
+                        0,
+                    )
+                })?;
+                Ok(revision == 0
+                    && current_window == Some(scenario.source_window.window_id())
+                    && renders.iter().any(|render| {
+                        render.revision == 0
+                            && render.window_id == scenario.source_window.window_id()
+                    })
+                    && diagnostic.is_some_and(|diagnostic| {
+                        matches!(
+                            diagnostic.atlas_access.outcome,
+                            AtlasAccessOutcome::Inserted | AtlasAccessOutcome::Hit
+                        ) && diagnostic.bounds.size.width.as_f32() > 0.0
+                            && diagnostic.bounds.size.height.as_f32() > 0.0
+                    }))
+            },
+        )
+        .await
+        .with_context(|| {
+            cx.update(|app| renderer_payload_debug_snapshot(scenario, app))
+                .unwrap_or_else(|error| format!("payload diagnostic unavailable: {error:#}"))
+        })?;
+    }
     let mixed_dpi_target = if behavior.crosses_dpi_boundary() {
         let selected = scenario
             .mixed_dpi_displays
@@ -2474,49 +2579,6 @@ async fn run_provisional_same_hwnd_promotion_scenario(
         .uses_opaque_underlay()
         .then(|| NativeOpaqueBarrier::prepare_partial_cover(release_point))
         .transpose()?;
-    let prove_renderer_payload = behavior == NativeDockBehavior::ProvisionalSameHwndPromotion;
-    let renderer_payload_entity_id = scenario.renderer_payload_probe.entity_id();
-    let mut provisional_renderer_payload = None;
-    let (renderer_payload_image_id, renderer_payload_initial_revision, _) =
-        cx.update(|app| renderer_payload_snapshot(scenario, app));
-    ensure!(
-        renderer_payload_initial_revision == 0,
-        "the native retained payload must begin from revision zero"
-    );
-    if prove_renderer_payload {
-        wait_until(
-            cx,
-            "the source HWND to present the retained atlas-backed payload",
-            |cx| {
-                let (_, revision, renders) =
-                    cx.update(|app| renderer_payload_snapshot(scenario, app));
-                let current_window =
-                    cx.update(|app| renderer_payload_current_window(scenario, app));
-                let diagnostic = cx.update(|app| {
-                    renderer_payload_submitted_diagnostic(
-                        app,
-                        scenario.source_window,
-                        renderer_payload_image_id,
-                        0,
-                    )
-                })?;
-                Ok(revision == 0
-                    && current_window == Some(scenario.source_window.window_id())
-                    && renders.iter().any(|render| {
-                        render.revision == 0
-                            && render.window_id == scenario.source_window.window_id()
-                    })
-                    && diagnostic.is_some_and(|diagnostic| {
-                        matches!(
-                            diagnostic.atlas_access.outcome,
-                            AtlasAccessOutcome::Inserted | AtlasAccessOutcome::Hit
-                        ) && diagnostic.bounds.size.width.as_f32() > 0.0
-                            && diagnostic.bounds.size.height.as_f32() > 0.0
-                    }))
-            },
-        )
-        .await?;
-    }
     let (mut pointer_guard, delivered_source_point) =
         begin_native_captured_drag(cx, scenario).await?;
     let placement_oracle =
