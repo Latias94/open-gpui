@@ -112,7 +112,7 @@ def main() -> None:
     imgui = last_json_line(run([str(IMGUI_BINARY)]))
 
     result = {**rust, **imgui}
-    result["open_gpui_to_imgui_ratio"] = (
+    result["resolver_to_imgui_setup_ratio"] = (
         result["open_gpui_ns_per_move"] / result["imgui_ns_per_preview"]
     )
     result["benchmark_passed"] = int(result.get("benchmark_passed", 0) == 1)

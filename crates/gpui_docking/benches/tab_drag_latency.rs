@@ -39,19 +39,13 @@ unsafe impl GlobalAlloc for CountingAllocator {
 static GLOBAL_ALLOCATOR: CountingAllocator = CountingAllocator;
 
 fn main() {
-    let mut small = DockDragBenchmark::new(8, 8);
+    let small = DockDragBenchmark::new(8, 8);
     let large = DockDragBenchmark::new(64, 8);
 
     let open_gpui_ns_per_move =
         median_ns_per_operation(100_000, 7, |iteration| small.resolve_full_move(iteration));
     let open_gpui_large_scene_ns_per_move =
         median_ns_per_operation(20_000, 7, |iteration| large.resolve_full_move(iteration));
-    let open_gpui_clone_filter_ns_per_move =
-        median_ns_per_operation(100_000, 7, |_| black_box(small.clone_and_filter() > 0));
-    let open_gpui_resolver_only_ns_per_move = median_ns_per_operation(250_000, 7, |iteration| {
-        small.resolve_prepared_move(iteration)
-    });
-
     let allocation_iterations = 20_000;
     let (allocation_count, allocated_bytes, all_resolved) = track_allocations(|| {
         let mut all_resolved = true;
@@ -65,14 +59,10 @@ fn main() {
         "{}",
         json!({
             "benchmark_passed": i32::from(all_resolved),
-            "route_resolutions_per_move": 1,
             "open_gpui_ns_per_move": open_gpui_ns_per_move,
             "open_gpui_large_scene_ns_per_move": open_gpui_large_scene_ns_per_move,
-            "open_gpui_clone_filter_ns_per_move": open_gpui_clone_filter_ns_per_move,
-            "open_gpui_resolver_only_ns_per_move": open_gpui_resolver_only_ns_per_move,
             "open_gpui_allocations_per_move": allocation_count as f64 / allocation_iterations as f64,
             "open_gpui_bytes_per_move": allocated_bytes as f64 / allocation_iterations as f64,
-            "open_gpui_scene_clone_bytes_per_move": small.scene_clone_bytes_per_move(),
         })
     );
 }
