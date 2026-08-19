@@ -212,6 +212,7 @@ impl DockNativeCapturedDragRetiredKey {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum DockNativeCapturedDragTestPanic {
     BeginRouteAfterInstall,
+    LockRelease,
     ResolveTarget,
 }
 
@@ -373,6 +374,7 @@ pub(crate) struct DockNativeCapturedHostScene {
 
 #[derive(Clone)]
 struct DockNativeCapturedHostTarget {
+    window: AnyWindowHandle,
     scene: DockNativeCapturedHostScene,
     window_position: Point<Pixels>,
     host_position: Point<Pixels>,
@@ -519,6 +521,10 @@ impl DockNativeCapturedReleaseReservation {
 
     fn take_resolution_panic(&self) -> Option<Box<dyn Any + Send>> {
         self.resolution_panic.borrow_mut().take()
+    }
+
+    fn has_resolution_panic(&self) -> bool {
+        self.resolution_panic.borrow().is_some()
     }
 }
 
@@ -1646,7 +1652,7 @@ fn lock_native_captured_release(
     let Some(state) = state.upgrade() else {
         return Arc::new(());
     };
-    let (route, reservation) = {
+    let reservation = {
         let mut state = state.borrow_mut();
         let matches = state.active.as_ref().is_some_and(|active| {
             active.start_consumer.is_active()
@@ -1690,27 +1696,88 @@ fn lock_native_captured_release(
             replaced.is_none(),
             "one Dock route epoch must own at most one locked release"
         );
-        (route_snapshot, reservation)
+        reservation
     };
+    let Some(route) = reservation.route.borrow().as_ref().cloned() else {
+        return reservation;
+    };
+    let locked = catch_unwind(AssertUnwindSafe(|| {
+        #[cfg(test)]
+        panic_native_captured_drag_if_requested(
+            &state,
+            DockNativeCapturedDragTestPanic::LockRelease,
+        );
+        let target = resolve_locked_native_captured_target_snapshot(
+            &state,
+            &route,
+            event,
+            source_window,
+            cx,
+        );
+        let captured_route = match &target {
+            DockNativeCapturedTarget::Host(target) => Some(DockCapturedNativeDropRoute::Host(
+                DockCapturedNativeHostTarget::new(
+                    target.window,
+                    target.scene.space.clone(),
+                    target.host_position,
+                    target.scene.frame.clone(),
+                ),
+            )),
+            DockNativeCapturedTarget::Desktop(_) => Some(DockCapturedNativeDropRoute::Desktop),
+            DockNativeCapturedTarget::ForeignSurfaceTarget(_)
+            | DockNativeCapturedTarget::Unavailable => None,
+        };
+        let locked_drop = captured_route.map(|captured_route| {
+            let request = native_route_request(&route, event, captured_route, cx);
+            route
+                .runtime
+                .lock_captured_native_payload_drop(&request, cx)
+        });
+        (target, locked_drop)
+    }));
+    match locked {
+        Ok((target, locked_drop)) => {
+            reservation.target.replace(target);
+            reservation.locked_drop.replace(locked_drop);
+        }
+        Err(payload) => {
+            reservation.resolution_panic.replace(Some(payload));
+            reservation
+                .target
+                .replace(DockNativeCapturedTarget::Unavailable);
+        }
+    }
+    // MouseUp freezes the target, policy, and payload identity before user listeners. This phase
+    // only builds an immutable lock plan: target Window/Host updates, runtime publication,
+    // tear-off, live-undock, and native effects remain post-borrow FIFO work.
+    reservation
+}
+
+fn prepare_locked_native_captured_release_effects(
+    state: &Rc<RefCell<DockNativeCapturedDragState>>,
+    reservation: &Arc<DockNativeCapturedReleaseReservation>,
+    event: &NativeCapturedDragEvent,
+    cx: &mut App,
+) {
+    let Some(route) = reservation.route.borrow().as_ref().cloned() else {
+        return;
+    };
+    if !reservation.matches_route(&route, event) {
+        return;
+    }
+    if reservation.has_resolution_panic() {
+        return;
+    }
     #[cfg(feature = "test-support")]
     record_native_release_hit_for_test(event, cx);
     let resolution = catch_unwind(AssertUnwindSafe(|| {
-        let target = if route.runtime.admits_work_context(route.work_context)
-            && route.runtime.active_payload_drag_session(&route.payload)
-                == Some(route.session.clone())
-        {
-            resolve_native_captured_target_with_source_window(
-                &state,
-                &route,
-                event,
-                Some(source_window),
-                cx,
-            )
-        } else {
-            DockNativeCapturedTarget::Unavailable
-        };
-        let mut locked_drop =
-            lock_native_captured_drop(&route, event, &target, source_window.window_handle(), cx);
+        #[cfg(test)]
+        panic_native_captured_drag_if_requested(
+            state,
+            DockNativeCapturedDragTestPanic::ResolveTarget,
+        );
+        let target = locked_native_captured_release_target(state, &route, event, cx);
+        let mut locked_drop = reservation.locked_drop.borrow_mut().take();
         let live_undock_release_adopted =
             lock_live_undock_release(&route, event, &target, &mut locked_drop, cx);
         (target, locked_drop, live_undock_release_adopted)
@@ -1729,31 +1796,103 @@ fn lock_native_captured_release(
                 .target
                 .replace(DockNativeCapturedTarget::Unavailable);
         }
-    };
-    reservation
+    }
 }
 
-fn lock_native_captured_drop(
+fn resolve_locked_native_captured_target_snapshot(
+    state: &Rc<RefCell<DockNativeCapturedDragState>>,
     route: &DockNativeCapturedDragRoute,
     event: &NativeCapturedDragEvent,
-    target: &DockNativeCapturedTarget,
-    source_window: AnyWindowHandle,
-    cx: &mut App,
-) -> Option<Result<DockViewportLockedDropRoute, crate::DockActionApplyError>> {
-    let captured_route = match target {
-        DockNativeCapturedTarget::Host(target) => captured_host_target(route, event, target, cx)
-            .map(DockCapturedNativeDropRoute::Host)
-            .unwrap_or(DockCapturedNativeDropRoute::Unavailable),
-        DockNativeCapturedTarget::Desktop(_) => DockCapturedNativeDropRoute::Desktop,
-        DockNativeCapturedTarget::ForeignSurfaceTarget(_)
-        | DockNativeCapturedTarget::Unavailable => return None,
+    source_window: &Window,
+    cx: &App,
+) -> DockNativeCapturedTarget {
+    let Some(physical_frame) = event.physical_frame() else {
+        return DockNativeCapturedTarget::Unavailable;
     };
-    let request = native_route_request(route, event, captured_route, cx);
-    Some(
-        route
-            .runtime
-            .lock_payload_drop_from_screen(&request, source_window, cx),
-    )
+    let hit = classify_native_captured_window_hit(
+        event.window_hit_stack(),
+        physical_frame.global_position(),
+        |window, session_generation| {
+            route_admits_provisional_pass_through(route, window, session_generation)
+        },
+        // The exact no-input generation is revalidated in the post-borrow current-target check.
+        // The lock phase records only immutable hit-stack facts and must not update another
+        // Window while the source Window transaction is still borrowed.
+        |_window, _pointer_input_generation| true,
+    );
+    let (target_window, target_window_position) = match hit {
+        DockNativeCapturedWindowHit::OpenDesktop => {
+            return DockNativeCapturedTarget::Desktop(DockNativeCapturedDesktopRoute::OpenSpace);
+        }
+        DockNativeCapturedWindowHit::OpaqueBarrier => {
+            return DockNativeCapturedTarget::Desktop(
+                DockNativeCapturedDesktopRoute::OpaqueBarrier,
+            );
+        }
+        DockNativeCapturedWindowHit::RegisteredApplication {
+            window,
+            window_position,
+        } => (window, window_position),
+        DockNativeCapturedWindowHit::Unavailable => {
+            return DockNativeCapturedTarget::Unavailable;
+        }
+    };
+    let scenes = state
+        .borrow()
+        .scenes
+        .get(&target_window.window_id())
+        .cloned()
+        .unwrap_or_default();
+    if scenes.is_empty() {
+        return DockNativeCapturedTarget::Desktop(DockNativeCapturedDesktopRoute::OpaqueBarrier);
+    }
+    let target = select_frontmost_locked_host_scene_snapshot(
+        scenes,
+        target_window,
+        target_window_position,
+        source_window,
+        cx,
+    );
+    let Some(target) = target else {
+        return DockNativeCapturedTarget::Desktop(DockNativeCapturedDesktopRoute::OpaqueBarrier);
+    };
+    classify_host_target(route, target)
+}
+
+fn select_frontmost_locked_host_scene_snapshot(
+    scenes: Vec<DockNativeCapturedHostScene>,
+    window: AnyWindowHandle,
+    window_position: Point<Pixels>,
+    source_window: &Window,
+    cx: &App,
+) -> Option<DockNativeCapturedHostTarget> {
+    let source_window_id = source_window.window_handle().window_id();
+    scenes
+        .into_iter()
+        .filter_map(|scene| {
+            if !scene.frame.matches_viewport(&scene.space, scene.window_id) {
+                return None;
+            }
+            let hitbox = scene.geometry.committed_hitbox()?;
+            let rank = if window.window_id() == source_window_id {
+                hitbox.window_point_target_rank(window_position, source_window)
+            } else {
+                cx.window_point_target_rank(window, hitbox, window_position)
+            }?;
+            let host_position = scene.geometry.window_to_host(window_position)?;
+            scene.host.upgrade()?;
+            Some((
+                rank,
+                DockNativeCapturedHostTarget {
+                    window,
+                    scene,
+                    window_position,
+                    host_position,
+                },
+            ))
+        })
+        .min_by_key(|(rank, _)| *rank)
+        .map(|(_, target)| target)
 }
 
 fn consume_native_captured_drag_event(
@@ -1786,6 +1925,7 @@ fn consume_native_captured_drag_event(
             let Some(reservation) = reservation else {
                 return;
             };
+            prepare_locked_native_captured_release_effects(state, &reservation, &event, cx);
             let Some(cleanup) = claim_locked_release_route(state, &reservation) else {
                 return;
             };
@@ -1943,7 +2083,21 @@ fn locked_native_captured_release_target(
                 .map(DockNativeCapturedTarget::ForeignSurfaceTarget)
                 .unwrap_or(DockNativeCapturedTarget::Unavailable)
         }
-        DockNativeCapturedTarget::Desktop(desktop) => DockNativeCapturedTarget::Desktop(desktop),
+        DockNativeCapturedTarget::Desktop(desktop) => {
+            match (desktop, native_captured_window_hit(route, event, cx)) {
+                (
+                    DockNativeCapturedDesktopRoute::OpenSpace,
+                    DockNativeCapturedWindowHit::OpenDesktop,
+                ) => DockNativeCapturedTarget::Desktop(DockNativeCapturedDesktopRoute::OpenSpace),
+                (
+                    DockNativeCapturedDesktopRoute::OpaqueBarrier,
+                    DockNativeCapturedWindowHit::OpaqueBarrier,
+                ) => {
+                    DockNativeCapturedTarget::Desktop(DockNativeCapturedDesktopRoute::OpaqueBarrier)
+                }
+                _ => DockNativeCapturedTarget::Unavailable,
+            }
+        }
         DockNativeCapturedTarget::Unavailable => DockNativeCapturedTarget::Unavailable,
     }
 }
@@ -2324,6 +2478,7 @@ fn select_frontmost_host_scene(
             current.then_some((
                 rank,
                 DockNativeCapturedHostTarget {
+                    window: window.window_handle(),
                     scene,
                     window_position,
                     host_position,

@@ -3346,15 +3346,48 @@ impl DockViewportRuntime {
         request: DockViewportTearOffRequest,
         graph_spaces: &[DockSpaceId],
     ) -> Result<DockViewportPreparedTearOffDropProbe, DockActionApplyError> {
-        self.validate_payload_drag_session(request.drag_session())?;
-        let options = self.tear_off_window_options(&request)?;
         let target_space = self.next_tear_off_space(&request, graph_spaces);
+        self.prepare_tear_off_drop_delivery_for_target(request, target_space)
+    }
+
+    pub(crate) fn prepare_tear_off_drop_delivery_for_target(
+        &self,
+        request: DockViewportTearOffRequest,
+        target_space: DockSpaceId,
+    ) -> Result<DockViewportPreparedTearOffDropProbe, DockActionApplyError> {
+        self.validate_payload_drag_session(request.drag_session())?;
+        if self.adapter.window_for_space(&target_space).is_some() {
+            return Err(DockActionApplyError::DropTargetUnavailable);
+        }
+        let options = self.tear_off_window_options(&request)?;
         Ok(DockViewportPreparedTearOffDropProbe {
             controller: self.controller.clone(),
             request,
             target_space,
             options,
         })
+    }
+
+    pub(crate) fn available_tear_off_space_from_base(
+        &self,
+        base: DockSpaceId,
+        graph_spaces: &[DockSpaceId],
+    ) -> DockSpaceId {
+        let mut suffix = 0_u64;
+        loop {
+            let space = if suffix == 0 {
+                base.clone()
+            } else {
+                DockSpaceId::new(format!("{base}:{suffix}"))
+            };
+            let graph_has_space = graph_spaces.iter().any(|known| known == &space);
+            if !graph_has_space && self.adapter.window_for_space(&space).is_none() {
+                return space;
+            }
+            suffix = suffix
+                .checked_add(1)
+                .expect("dock tear-off space identity suffix exhausted");
+        }
     }
 
     #[cfg(test)]
@@ -4132,6 +4165,11 @@ impl DockViewportRuntime {
         index
     }
 
+    #[cfg(test)]
+    pub(crate) fn next_tear_off_space_index_for_test(&self) -> u64 {
+        self.next_tear_off_space_index
+    }
+
     /// Exports serializable placement snapshots from the adapter.
     pub(crate) fn export_placement(&self) -> DockViewportPlacementLayout {
         self.adapter.export_placement()
@@ -4328,6 +4366,30 @@ mod lineage_drop_tests {
         assert_eq!(closed.outcome.status(), DockViewportCloseStatus::Closed);
         assert_eq!(closed.outcome.space(), Some(&target_space));
         assert_eq!(runtime.adapter().window_for_space(&target_space), None);
+    }
+
+    #[open_gpui::test]
+    fn captured_native_tear_off_space_skips_graph_and_adapter_collisions(cx: &mut TestAppContext) {
+        let fixture = DockViewportRuntimeFixture::builder(DockSpaceId::from("source"))
+            .space(DockSpaceId::from("source"), ["a"])
+            .build_controller(cx);
+        let mut runtime = DockViewportRuntime::new(fixture.controller);
+        let base = DockSpaceId::from("source:tear-off:a:native:7:11");
+        let adapter_collision = DockSpaceId::new(format!("{base}:1"));
+        runtime.replace_adapter_registration_for_test(adapter_collision.clone(), handle(1001));
+
+        let selected =
+            runtime.available_tear_off_space_from_base(base.clone(), &[base, adapter_collision]);
+
+        assert_eq!(
+            selected,
+            DockSpaceId::from("source:tear-off:a:native:7:11:2")
+        );
+        assert_eq!(
+            runtime.next_tear_off_space_index_for_test(),
+            0,
+            "captured-native identity selection must not consume the generic tear-off allocator"
+        );
     }
 
     fn close_surface_generation(

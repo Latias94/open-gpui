@@ -262,69 +262,111 @@ impl DockViewportRuntimeHandle {
             )
     }
 
-    pub(crate) fn lock_payload_drop_from_screen(
+    /// Resolves and freezes one callback-scoped captured-native MouseUp without publishing runtime
+    /// or window effects. Workspace and tear-off policy, payload identity, and the exact target
+    /// space are all frozen before user MouseUp listeners run. Captured tear-off identity is
+    /// derived from native ingress authority, so this phase does not advance runtime allocation.
+    pub(crate) fn lock_captured_native_payload_drop(
         &self,
         request: &DockViewportDropRouteRequest,
-        borrowed_source_window: AnyWindowHandle,
         cx: &mut App,
     ) -> Result<DockViewportLockedDropRoute, DockActionApplyError> {
-        let drag_session = request
+        let captured_native_release = request
+            .captured_native_generation()
+            .zip(request.captured_native_sequence());
+        let sampled = self
+            .runtime
+            .borrow()
+            .prepare_payload_drop_route_resolution(request, false)
+            .sample(cx);
+        let resolution = self
+            .runtime
+            .borrow()
+            .resolve_locked_captured_native_drop_route(sampled);
+        let delivery = DockDropDelivery::from_resolution(resolution)?;
+        self.lock_payload_drop_delivery(delivery, captured_native_release, cx)
+    }
+
+    fn lock_payload_drop_delivery(
+        &self,
+        delivery: DockDropDelivery,
+        captured_native_release: Option<(
+            open_gpui::NativeCapturedDragGeneration,
+            open_gpui::NativeIngressSequence,
+        )>,
+        cx: &mut App,
+    ) -> Result<DockViewportLockedDropRoute, DockActionApplyError> {
+        let drag_session = delivery
             .drag_session()
             .cloned()
             .ok_or(DockActionApplyError::DropDragSessionMissing)?;
-        let resolution = self
-            .resolve_payload_drop_delivery_for_request_outcome_excluding(
-                request,
-                Some(borrowed_source_window.window_id()),
-                cx,
-            )
-            .into_resolution();
-        let delivery = DockDropDelivery::from_resolution(resolution)?;
         let kind = match delivery.into_tear_off_request() {
             Ok(request) => {
+                let (generation, sequence) =
+                    captured_native_release.ok_or(DockActionApplyError::DropTargetUnavailable)?;
+                let target_space_base = DockSpaceId::new(format!(
+                    "{}:tear-off:{}:native:{}:{}",
+                    request.source_space(),
+                    request.payload().label(),
+                    generation.ordinal(),
+                    sequence.ordinal(),
+                ));
                 let controller = self.runtime.borrow().controller_entity();
-                let graph_spaces =
-                    cx.read_entity(&controller, |controller, _| controller.graph().spaces());
+                let graph_spaces = cx.read_entity(&controller, |controller, _| {
+                    controller.workspace().graph().spaces()
+                });
+                let target_space = self
+                    .runtime
+                    .borrow()
+                    .available_tear_off_space_from_base(target_space_base, &graph_spaces);
                 let probe = self
                     .runtime
-                    .borrow_mut()
-                    .prepare_tear_off_drop_delivery(request, &graph_spaces)?;
+                    .borrow()
+                    .prepare_tear_off_drop_delivery_for_target(request, target_space)?;
                 DockViewportLockedDropRouteKind::TearOff(probe.sample(cx)?)
             }
             Err(delivery) => {
-                let controller = self.runtime.borrow().controller_entity();
-                let workspace_facts = cx.read_entity(&controller, |controller, _| {
-                    crate::DockViewportWorkspaceRouteFacts::capture_for_payload(
-                        controller.workspace(),
-                        delivery.payload(),
-                        delivery.source_node(),
-                    )
-                });
-                let commit = self
-                    .runtime
-                    .borrow()
-                    .resolve_locked_workspace_drop_delivery(delivery, &workspace_facts)?;
-                let drag_session = commit
-                    .drag_session
-                    .clone()
-                    .ok_or(DockActionApplyError::DropDragSessionMissing)?;
-                let resolved_target = commit.target.clone();
-                let plan = cx.read_entity(&controller, |controller, _| {
-                    controller.workspace().lock_resolved_payload_drop(
-                        &commit.source_space,
-                        commit.payload.as_workspace_payload(commit.source_node),
-                        resolved_target,
-                    )
-                })?;
-                DockViewportLockedDropRouteKind::Workspace(
-                    crate::viewport_runtime::DockViewportLockedWorkspaceDrop::new(
-                        plan,
-                        drag_session,
-                    ),
-                )
+                return self.lock_workspace_payload_drop_delivery(delivery, cx);
             }
         };
         Ok(DockViewportLockedDropRoute { drag_session, kind })
+    }
+
+    fn lock_workspace_payload_drop_delivery(
+        &self,
+        delivery: DockDropDelivery,
+        cx: &mut App,
+    ) -> Result<DockViewportLockedDropRoute, DockActionApplyError> {
+        let drag_session = delivery
+            .drag_session()
+            .cloned()
+            .ok_or(DockActionApplyError::DropDragSessionMissing)?;
+        let controller = self.runtime.borrow().controller_entity();
+        let workspace_facts = cx.read_entity(&controller, |controller, _| {
+            crate::DockViewportWorkspaceRouteFacts::capture_for_payload(
+                controller.workspace(),
+                delivery.payload(),
+                delivery.source_node(),
+            )
+        });
+        let commit = self
+            .runtime
+            .borrow()
+            .resolve_locked_workspace_drop_delivery(delivery, &workspace_facts)?;
+        let resolved_target = commit.target.clone();
+        let plan = cx.read_entity(&controller, |controller, _| {
+            controller.workspace().lock_resolved_payload_drop(
+                &commit.source_space,
+                commit.payload.as_workspace_payload(commit.source_node),
+                resolved_target,
+            )
+        })?;
+        Ok(DockViewportLockedDropRoute {
+            drag_session: drag_session.clone(),
+            kind: DockViewportLockedDropRouteKind::Workspace(
+                crate::viewport_runtime::DockViewportLockedWorkspaceDrop::new(plan, drag_session),
+            ),
+        })
     }
 
     pub(crate) fn commit_locked_payload_drop_from_screen(

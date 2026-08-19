@@ -5214,9 +5214,10 @@ fn native_captured_release_does_not_retarget_to_a_scene_created_by_mouse_up_list
     );
 }
 
-#[open_gpui::test]
-fn native_captured_release_fails_closed_when_mouse_up_listener_occludes_locked_target(
+fn assert_native_captured_release_respects_mouse_up_occlusion_boundary(
     cx: &mut TestAppContext,
+    occluded_at_mouse_up: bool,
+    occluded_after_listener: bool,
 ) {
     let source_space = space();
     let empty_space = DockSpaceId::from("empty");
@@ -5247,7 +5248,7 @@ fn native_captured_release_fails_closed_when_mouse_up_listener_occludes_locked_t
         let occluded_frame_rendered = occluded_frame_rendered.clone();
         move |_, _| ConditionalOccludedDockHostFixture {
             host: target_host,
-            occluded: false,
+            occluded: occluded_at_mouse_up,
             occluded_frame_rendered,
         }
     });
@@ -5291,9 +5292,10 @@ fn native_captured_release_fails_closed_when_mouse_up_listener_occludes_locked_t
     );
     cx.run_until_parked();
     target_visual = VisualTestContext::from_window(target_window, cx);
-    assert!(
+    assert_eq!(
         selector_for(&target_visual, &target_host, DockDebugRegion::DropPreview).is_some(),
-        "G1 should be the visible release candidate before MouseUp"
+        !occluded_at_mouse_up,
+        "the committed MouseUp frame must decide whether the host is a visible release candidate"
     );
     let locked_window_frame_revision = cx
         .update_window(target_window, |_, window, _| {
@@ -5301,26 +5303,26 @@ fn native_captured_release_fails_closed_when_mouse_up_listener_occludes_locked_t
         })
         .expect("the target window should expose its locked frame revision");
 
-    let listener_occluded_target = Rc::new(Cell::new(false));
-    let deferred_occluded_target = Rc::new(Cell::new(false));
+    let listener_changed_target = Rc::new(Cell::new(false));
+    let deferred_changed_target = Rc::new(Cell::new(false));
     let _interceptor = cx
         .update_window(source_window, {
             let target_root = target_root.clone();
-            let listener_occluded_target = listener_occluded_target.clone();
-            let deferred_occluded_target = deferred_occluded_target.clone();
+            let listener_changed_target = listener_changed_target.clone();
+            let deferred_changed_target = deferred_changed_target.clone();
             move |_, window, _| {
                 window.intercept_window_mouse_events(move |event, _, cx| {
                     if matches!(event, WindowMouseEvent::Up(_))
-                        && !listener_occluded_target.replace(true)
+                        && !listener_changed_target.replace(true)
                     {
                         let target_root = target_root.clone();
-                        let deferred_occluded_target = deferred_occluded_target.clone();
+                        let deferred_changed_target = deferred_changed_target.clone();
                         cx.defer(move |cx| {
                             target_root.update(cx, |root, root_cx| {
-                                root.occluded = true;
+                                root.occluded = occluded_after_listener;
                                 root_cx.notify();
                             });
-                            deferred_occluded_target.set(true);
+                            deferred_changed_target.set(true);
                         });
                     }
                 })
@@ -5335,33 +5337,35 @@ fn native_captured_release_fails_closed_when_mouse_up_listener_occludes_locked_t
     );
     cx.run_until_parked();
 
-    assert!(listener_occluded_target.get());
-    assert!(deferred_occluded_target.get());
-    assert!(
-        occluded_frame_rendered.get(),
-        "the deferred BlockMouse overlay should render before terminal release settles"
-    );
-    let occluded_window_frame_revision = cx
+    assert!(listener_changed_target.get());
+    assert!(deferred_changed_target.get());
+    if occluded_after_listener {
+        assert!(
+            occluded_frame_rendered.get(),
+            "the deferred BlockMouse overlay should render before terminal release settles"
+        );
+    }
+    let changed_window_frame_revision = cx
         .update_window(target_window, |_, window, _| {
             window.rendered_frame_revision()
         })
-        .expect("the target window should expose its occluded frame revision");
+        .expect("the target window should expose its changed frame revision");
     assert!(
-        occluded_window_frame_revision > locked_window_frame_revision,
-        "the foreground BlockMouse overlay should commit a newer target-window frame"
+        changed_window_frame_revision > locked_window_frame_revision,
+        "the listener's visibility change should commit a newer target-window frame"
     );
     cx.read_entity(&controller, |controller, _| {
         assert_eq!(
             controller.graph().collect_items_in_space(&source_space),
             vec![item("a")],
-            "the now-occluded G1 host must not consume the source item"
+            "a host whose MouseUp-time occlusion state changed must not consume the source item"
         );
         assert!(
             controller
                 .graph()
                 .collect_items_in_space(&empty_space)
                 .is_empty(),
-            "the release must not pass through the foreground blocker into the empty host"
+            "the release must not retarget across the MouseUp occlusion boundary"
         );
     });
     assert_eq!(
@@ -5374,6 +5378,20 @@ fn native_captured_release_fails_closed_when_mouse_up_listener_occludes_locked_t
         None,
         "the rejected release must still retire its exact drag session"
     );
+}
+
+#[open_gpui::test]
+fn native_captured_release_fails_closed_when_mouse_up_listener_occludes_locked_target(
+    cx: &mut TestAppContext,
+) {
+    assert_native_captured_release_respects_mouse_up_occlusion_boundary(cx, false, true);
+}
+
+#[open_gpui::test]
+fn native_captured_release_fails_closed_when_mouse_up_listener_reveals_blocked_target(
+    cx: &mut TestAppContext,
+) {
+    assert_native_captured_release_respects_mouse_up_occlusion_boundary(cx, true, false);
 }
 
 fn assert_native_captured_release_uses_locked_policy(
@@ -9229,34 +9247,26 @@ fn runtime_native_captured_drag_start_panic_rolls_back_before_g2(cx: &mut TestAp
     assert_eq!(runtime.active_payload_drag_session(&payload), None);
 }
 
-#[open_gpui::test]
-fn runtime_native_captured_resolver_panic_retires_g1_and_accepts_g2(cx: &mut TestAppContext) {
+fn assert_runtime_native_captured_release_panic_retires_g1_and_accepts_g2(
+    panic_point: crate::native_captured_drag::DockNativeCapturedDragTestPanic,
+    cx: &mut TestAppContext,
+) {
     let mut fixture = native_captured_foreign_preview_fixture(cx);
-    let session = fixture
-        .source_runtime
-        .active_payload_drag_session(&fixture.payload)
-        .expect("G1 should have an active runtime session");
-    let listener_finished_session = Rc::new(Cell::new(false));
+    let mouse_up_listener_ran = Rc::new(Cell::new(false));
     let _interceptor = cx
         .update_window(fixture.source_window, {
-            let runtime = fixture.source_runtime.clone();
-            let listener_finished_session = listener_finished_session.clone();
+            let mouse_up_listener_ran = mouse_up_listener_ran.clone();
             move |_, window, _| {
-                window.intercept_window_mouse_events(move |event, _, cx| {
-                    if matches!(event, WindowMouseEvent::Up(_))
-                        && !listener_finished_session.replace(true)
-                    {
-                        assert!(runtime.finish_payload_drag_with_app(&session, cx));
+                window.intercept_window_mouse_events(move |event, _, _cx| {
+                    if matches!(event, WindowMouseEvent::Up(_)) {
+                        mouse_up_listener_ran.set(true);
                     }
                 })
             }
         })
         .expect("the source window should remain open");
     cx.update(|cx| {
-        crate::native_captured_drag::panic_next_native_captured_drag_for_test(
-            crate::native_captured_drag::DockNativeCapturedDragTestPanic::ResolveTarget,
-            cx,
-        );
+        crate::native_captured_drag::panic_next_native_captured_drag_for_test(panic_point, cx);
     });
 
     let panic = catch_unwind(AssertUnwindSafe(|| {
@@ -9265,11 +9275,14 @@ fn runtime_native_captured_resolver_panic_retires_g1_and_accepts_g2(cx: &mut Tes
             MouseButton::Left,
             Modifiers::none(),
         );
+        // Both lock-time and resolution-time failures are retained until the post-borrow FIFO can
+        // retire the exact route and its native cleanup authority.
+        cx.run_until_parked();
     }));
     assert!(panic.is_err());
     assert!(
-        listener_finished_session.get(),
-        "the MouseUp listener must invalidate G1 after its release reservation is locked"
+        mouse_up_listener_ran.get(),
+        "the MouseUp listener must run before the post-borrow resolver"
     );
     cx.run_until_parked();
 
@@ -9332,6 +9345,22 @@ fn runtime_native_captured_resolver_panic_retires_g1_and_accepts_g2(cx: &mut Tes
 }
 
 #[open_gpui::test]
+fn runtime_native_captured_lock_panic_retires_g1_and_accepts_g2(cx: &mut TestAppContext) {
+    assert_runtime_native_captured_release_panic_retires_g1_and_accepts_g2(
+        crate::native_captured_drag::DockNativeCapturedDragTestPanic::LockRelease,
+        cx,
+    );
+}
+
+#[open_gpui::test]
+fn runtime_native_captured_resolver_panic_retires_g1_and_accepts_g2(cx: &mut TestAppContext) {
+    assert_runtime_native_captured_release_panic_retires_g1_and_accepts_g2(
+        crate::native_captured_drag::DockNativeCapturedDragTestPanic::ResolveTarget,
+        cx,
+    );
+}
+
+#[open_gpui::test]
 fn runtime_native_captured_desktop_release_tears_off_tab(cx: &mut TestAppContext) {
     let source_space = crate::DockSpaceId::from("source");
     let mut graph = DockGraph::new();
@@ -9391,6 +9420,7 @@ fn runtime_native_captured_desktop_release_tears_off_tab(cx: &mut TestAppContext
         .adapter()
         .registration_key(&source_space)
         .expect("source viewport should have an exact registration before release");
+    let tear_off_space_index_before_release = runtime.borrow().next_tear_off_space_index_for_test();
 
     activate_window_for_pointer_input(&mut visual);
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
@@ -9422,6 +9452,11 @@ fn runtime_native_captured_desktop_release_tears_off_tab(cx: &mut TestAppContext
     {
         let runtime = runtime.borrow();
         assert_eq!(
+            runtime.next_tear_off_space_index_for_test(),
+            tear_off_space_index_before_release,
+            "captured MouseUp locking must derive target identity without consuming runtime allocation"
+        );
+        assert_eq!(
             runtime.adapter().registration_key(&source_space),
             Some(source_registration.clone()),
             "source-only release must retain the exact source registration"
@@ -9435,6 +9470,11 @@ fn runtime_native_captured_desktop_release_tears_off_tab(cx: &mut TestAppContext
         );
     }
     cx.run_until_parked();
+    assert_eq!(
+        runtime.borrow().next_tear_off_space_index_for_test(),
+        tear_off_space_index_before_release,
+        "post-borrow captured tear-off must preserve the lock-time target identity"
+    );
 
     let detached_space = cx.read_entity(&controller, |controller, _| {
         assert_eq!(
@@ -9447,6 +9487,10 @@ fn runtime_native_captured_desktop_release_tears_off_tab(cx: &mut TestAppContext
             .into_iter()
             .find(|space| space.as_str().starts_with("source:tear-off:a:"))
             .expect("captured desktop release should create a detached viewport space");
+        assert!(
+            detached_space.as_str().contains(":native:"),
+            "captured tear-off target identity should be derived from native authority"
+        );
         assert_eq!(
             controller.graph().collect_items_in_space(&detached_space),
             vec![item("a")]

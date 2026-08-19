@@ -3,8 +3,9 @@ use super::DockViewportRuntime;
 use crate::DockViewportDropRoute;
 use crate::{
     DockController, DockViewportBackendRouteRequest, DockViewportDropRouteRequest,
-    DockViewportDropRouteSnapshot, DockViewportFocusStampFallbackPermit,
-    DockViewportResolvedDropRoute, DockViewportResolvedDropRouteRefresh, DockViewportRuntimeUpdate,
+    DockViewportDropRouteSnapshot, DockViewportDropRouteUnavailableReason,
+    DockViewportFocusStampFallbackPermit, DockViewportResolvedDropRoute,
+    DockViewportResolvedDropRouteRefresh, DockViewportRuntimeUpdate,
     DockViewportWorkspaceRouteFacts, resolved_drop_route_outcome,
 };
 use open_gpui::{Entity, PlatformFocusedWindow};
@@ -109,9 +110,46 @@ impl DockViewportRuntime {
         let mut update = DockViewportRuntimeUpdate::default();
         let route_request = self.resampled_backend_route_request(request, backend_focus);
         update.mark_changed(frame_changed || route_request.changed);
+        let (request, resolution, unavailable_reason) =
+            self.resolve_drop_route_snapshot(route_request.request, &workspace_facts);
+        self.status
+            .record_route(&request, resolution.route(), unavailable_reason);
+        resolved_drop_route_outcome(resolution, update)
+    }
+
+    /// Resolves the exact frozen source-only request without reconciling frames, publishing
+    /// refresh effects, or updating route diagnostics. This is the MouseUp lock phase used before
+    /// user callbacks; later delivery still revalidates all current identities.
+    pub(crate) fn resolve_locked_captured_native_drop_route(
+        &self,
+        sampled: DockViewportSampledDropRouteResolution,
+    ) -> DockViewportResolvedDropRoute {
+        let DockViewportSampledDropRouteResolution {
+            request,
+            workspace_facts,
+            ..
+        } = sampled;
+        debug_assert_eq!(
+            request.release_origin(),
+            crate::interaction::DockPayloadDropReleaseOrigin::SourceOnly,
+            "captured native MouseUp must use source-only route authority"
+        );
+        self.resolve_drop_route_snapshot(request, &workspace_facts)
+            .1
+    }
+
+    fn resolve_drop_route_snapshot(
+        &self,
+        request: DockViewportDropRouteRequest,
+        workspace_facts: &DockViewportWorkspaceRouteFacts,
+    ) -> (
+        DockViewportDropRouteRequest,
+        DockViewportResolvedDropRoute,
+        Option<DockViewportDropRouteUnavailableReason>,
+    ) {
         let selection = DockViewportDropRouteSnapshot::resolve(
             &self.adapter,
-            route_request.request,
+            request,
             workspace_facts.policy(),
         )
         .into_route_selection();
@@ -126,7 +164,7 @@ impl DockViewportRuntime {
                 self.frame_coordinator.host_scenes(),
                 &route,
                 &selection.request,
-                &workspace_facts,
+                workspace_facts,
                 reorder_hold.as_ref(),
             );
         let resolution = DockViewportResolvedDropRoute::from_workspace_route_target(
@@ -134,9 +172,7 @@ impl DockViewportRuntime {
             route,
             workspace_target,
         );
-        self.status
-            .record_route(&selection.request, resolution.route(), unavailable_reason);
-        resolved_drop_route_outcome(resolution, update)
+        (selection.request, resolution, unavailable_reason)
     }
 
     fn resampled_backend_route_request(
