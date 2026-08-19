@@ -376,6 +376,11 @@ impl ForegroundExecutor {
         &self.dispatcher
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn uses_test_dispatcher(&self) -> bool {
+        self.dispatcher.as_test().is_some()
+    }
+
     #[doc(hidden)]
     pub fn scheduler_executor(&self) -> SchedulerLocalExecutor {
         self.inner.clone()
@@ -476,6 +481,8 @@ mod test {
     fn sanity_test_tasks_run() {
         let (dispatcher, _background_executor, app) = create_test_app();
         let foreground_executor = app.borrow().foreground_executor.clone();
+
+        assert!(foreground_executor.uses_test_dispatcher());
 
         let task_ran = Rc::new(RefCell::new(false));
 

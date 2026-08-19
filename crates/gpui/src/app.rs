@@ -2036,18 +2036,21 @@ impl App {
                 }
             } else {
                 #[cfg(any(test, feature = "test-support"))]
-                for window in self
-                    .windows
-                    .values()
-                    .filter_map(|window| {
-                        let window = window.as_deref()?;
-                        (window.invalidator.is_dirty() && !window.invalidator.is_focus_only_dirty())
+                if self.foreground_executor.uses_test_dispatcher() {
+                    for window in self
+                        .windows
+                        .values()
+                        .filter_map(|window| {
+                            let window = window.as_deref()?;
+                            (window.invalidator.is_dirty()
+                                && !window.invalidator.is_focus_only_dirty())
                             .then_some(window.handle)
-                    })
-                    .collect::<Vec<_>>()
-                {
-                    self.update_window(window, |_, window, cx| window.draw(cx).clear())
-                        .unwrap();
+                        })
+                        .collect::<Vec<_>>()
+                    {
+                        self.update_window(window, |_, window, cx| window.draw(cx).clear())
+                            .unwrap();
+                    }
                 }
 
                 if self.pending_effects.is_empty() {
