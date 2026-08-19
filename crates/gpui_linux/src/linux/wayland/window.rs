@@ -52,17 +52,17 @@ use open_gpui_wgpu::{
 
 #[derive(Default)]
 pub(crate) struct Callbacks {
-    request_frame: Option<Box<dyn FnMut(RequestFrameOptions)>>,
+    request_frame: Option<Rc<dyn Fn(RequestFrameOptions)>>,
     input: PlatformInputCallbackSlot,
-    active_status_change: Option<Box<dyn FnMut(PlatformWindowActiveStatusObservation)>>,
-    hover_status_change: Option<Box<dyn FnMut(bool)>>,
-    resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
-    moved: Option<Box<dyn FnMut()>>,
-    window_state_change: Option<Box<dyn FnMut()>>,
+    active_status_change: Option<Rc<dyn Fn(PlatformWindowActiveStatusObservation)>>,
+    hover_status_change: Option<Rc<dyn Fn(bool)>>,
+    resize: Option<Rc<dyn Fn(Size<Pixels>, f32)>>,
+    moved: Option<Rc<dyn Fn()>>,
+    window_state_change: Option<Rc<dyn Fn()>>,
     should_close: PlatformShouldCloseCallbackSlot,
     close: Option<Box<dyn FnOnce()>>,
-    appearance_changed: Option<Box<dyn FnMut()>>,
-    button_layout_changed: Option<Box<dyn FnMut()>>,
+    appearance_changed: Option<Rc<dyn Fn()>>,
+    button_layout_changed: Option<Rc<dyn Fn()>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -958,18 +958,12 @@ impl WaylandWindowStatePtr {
         state.resize_throttle = false;
         drop(state);
 
-        let callback = self.callbacks.borrow_mut().request_frame.take();
-        if let Some(mut callback) = callback {
-            // Native callbacks may re-enter GPUI, so keep callback-table borrows outside the call.
+        let callback = self.callbacks.borrow().request_frame.clone();
+        if let Some(callback) = callback {
             callback(RequestFrameOptions {
                 force_render: false,
                 ..Default::default()
             });
-            let mut callbacks = self.callbacks.borrow_mut();
-            if callbacks.request_frame.is_none() {
-                callbacks.request_frame = Some(callback);
-            }
-            drop(callbacks);
             self.update_ime_enabled();
         }
     }
@@ -1008,10 +1002,9 @@ impl WaylandWindowStatePtr {
     }
 
     fn emit_window_state_change(&self) {
-        let callback = self.callbacks.borrow_mut().window_state_change.take();
-        if let Some(mut callback) = callback {
+        let callback = self.callbacks.borrow().window_state_change.clone();
+        if let Some(callback) = callback {
             callback();
-            self.callbacks.borrow_mut().window_state_change = Some(callback);
         }
     }
 
@@ -1023,8 +1016,8 @@ impl WaylandWindowStatePtr {
                     state.window_controls = window_controls;
 
                     drop(state);
-                    let mut callbacks = self.callbacks.borrow_mut();
-                    if let Some(appearance_changed) = callbacks.appearance_changed.as_mut() {
+                    let appearance_changed = self.callbacks.borrow().appearance_changed.clone();
+                    if let Some(appearance_changed) = appearance_changed {
                         appearance_changed();
                     }
                 }
@@ -1104,19 +1097,17 @@ impl WaylandWindowStatePtr {
             match mode {
                 WEnum::Value(zxdg_toplevel_decoration_v1::Mode::ServerSide) => {
                     self.state.borrow_mut().decorations = WindowDecorations::Server;
-                    let callback = self.callbacks.borrow_mut().appearance_changed.take();
-                    if let Some(mut fun) = callback {
+                    let callback = self.callbacks.borrow().appearance_changed.clone();
+                    if let Some(fun) = callback {
                         fun();
-                        self.callbacks.borrow_mut().appearance_changed = Some(fun);
                     }
                 }
                 WEnum::Value(zxdg_toplevel_decoration_v1::Mode::ClientSide) => {
                     self.state.borrow_mut().decorations = WindowDecorations::Client;
                     // Update background to be transparent
-                    let callback = self.callbacks.borrow_mut().appearance_changed.take();
-                    if let Some(mut fun) = callback {
+                    let callback = self.callbacks.borrow().appearance_changed.clone();
+                    if let Some(fun) = callback {
                         fun();
-                        self.callbacks.borrow_mut().appearance_changed = Some(fun);
                     }
                 }
                 WEnum::Value(_) => {
@@ -1381,10 +1372,9 @@ impl WaylandWindowStatePtr {
             (state.bounds.size, state.scale)
         };
 
-        let callback = self.callbacks.borrow_mut().resize.take();
-        if let Some(mut fun) = callback {
+        let callback = self.callbacks.borrow().resize.clone();
+        if let Some(fun) = callback {
             fun(size, scale);
-            self.callbacks.borrow_mut().resize = Some(fun);
         }
 
         {
@@ -1446,10 +1436,9 @@ impl WaylandWindowStatePtr {
         }
 
         self.state.borrow_mut().active = focus;
-        let callback = self.callbacks.borrow_mut().active_status_change.take();
-        if let Some(mut fun) = callback {
+        let callback = self.callbacks.borrow().active_status_change.clone();
+        if let Some(fun) = callback {
             fun(observation);
-            self.callbacks.borrow_mut().active_status_change = Some(fun);
         }
 
         let effective_focus = focus && !interaction_gate.is_quiesced();
@@ -1468,10 +1457,9 @@ impl WaylandWindowStatePtr {
         }
 
         self.state.borrow_mut().hovered = focus;
-        let callback = self.callbacks.borrow_mut().hover_status_change.take();
-        if let Some(mut fun) = callback {
+        let callback = self.callbacks.borrow().hover_status_change.clone();
+        if let Some(fun) = callback {
             fun(focus);
-            self.callbacks.borrow_mut().hover_status_change = Some(fun);
         }
         if focus && interaction_gate.is_quiesced() {
             self.state.borrow_mut().hovered = false;
@@ -1481,18 +1469,16 @@ impl WaylandWindowStatePtr {
     pub fn set_appearance(&mut self, appearance: WindowAppearance) {
         self.state.borrow_mut().appearance = appearance;
 
-        let callback = self.callbacks.borrow_mut().appearance_changed.take();
-        if let Some(mut fun) = callback {
+        let callback = self.callbacks.borrow().appearance_changed.clone();
+        if let Some(fun) = callback {
             fun();
-            self.callbacks.borrow_mut().appearance_changed = Some(fun);
         }
     }
 
     pub fn set_button_layout(&self) {
-        let callback = self.callbacks.borrow_mut().button_layout_changed.take();
-        if let Some(mut fun) = callback {
+        let callback = self.callbacks.borrow().button_layout_changed.clone();
+        if let Some(fun) = callback {
             fun();
-            self.callbacks.borrow_mut().button_layout_changed = Some(fun);
         }
     }
 
@@ -1831,8 +1817,8 @@ impl PlatformWindow for WaylandWindow {
         self.borrow().fullscreen
     }
 
-    fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>) {
-        self.0.callbacks.borrow_mut().request_frame = Some(callback);
+    fn on_request_frame(&self, callback: Box<dyn Fn(RequestFrameOptions)>) {
+        self.0.callbacks.borrow_mut().request_frame = Some(Rc::from(callback));
     }
 
     fn on_input(&self, callback: PlatformInputCallback) {
@@ -1842,25 +1828,25 @@ impl PlatformWindow for WaylandWindow {
 
     fn on_active_status_change(
         &self,
-        callback: Box<dyn FnMut(PlatformWindowActiveStatusObservation)>,
+        callback: Box<dyn Fn(PlatformWindowActiveStatusObservation)>,
     ) {
-        self.0.callbacks.borrow_mut().active_status_change = Some(callback);
+        self.0.callbacks.borrow_mut().active_status_change = Some(Rc::from(callback));
     }
 
-    fn on_hover_status_change(&self, callback: Box<dyn FnMut(bool)>) {
-        self.0.callbacks.borrow_mut().hover_status_change = Some(callback);
+    fn on_hover_status_change(&self, callback: Box<dyn Fn(bool)>) {
+        self.0.callbacks.borrow_mut().hover_status_change = Some(Rc::from(callback));
     }
 
-    fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>) {
-        self.0.callbacks.borrow_mut().resize = Some(callback);
+    fn on_resize(&self, callback: Box<dyn Fn(Size<Pixels>, f32)>) {
+        self.0.callbacks.borrow_mut().resize = Some(Rc::from(callback));
     }
 
-    fn on_moved(&self, callback: Box<dyn FnMut()>) {
-        self.0.callbacks.borrow_mut().moved = Some(callback);
+    fn on_moved(&self, callback: Box<dyn Fn()>) {
+        self.0.callbacks.borrow_mut().moved = Some(Rc::from(callback));
     }
 
-    fn on_window_state_change(&self, callback: Box<dyn FnMut()>) {
-        self.0.callbacks.borrow_mut().window_state_change = Some(callback);
+    fn on_window_state_change(&self, callback: Box<dyn Fn()>) {
+        self.0.callbacks.borrow_mut().window_state_change = Some(Rc::from(callback));
     }
 
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>) {
@@ -1875,12 +1861,12 @@ impl PlatformWindow for WaylandWindow {
     fn on_hit_test_window_control(&self, _callback: Box<dyn FnMut() -> Option<WindowControlArea>>) {
     }
 
-    fn on_appearance_changed(&self, callback: Box<dyn FnMut()>) {
-        self.0.callbacks.borrow_mut().appearance_changed = Some(callback);
+    fn on_appearance_changed(&self, callback: Box<dyn Fn()>) {
+        self.0.callbacks.borrow_mut().appearance_changed = Some(Rc::from(callback));
     }
 
-    fn on_button_layout_changed(&self, callback: Box<dyn FnMut()>) {
-        self.0.callbacks.borrow_mut().button_layout_changed = Some(callback);
+    fn on_button_layout_changed(&self, callback: Box<dyn Fn()>) {
+        self.0.callbacks.borrow_mut().button_layout_changed = Some(Rc::from(callback));
     }
 
     fn draw(&self, scene: &Scene) -> PlatformWindowPresentOutcome {

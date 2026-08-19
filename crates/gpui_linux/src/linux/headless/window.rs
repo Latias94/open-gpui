@@ -300,7 +300,7 @@ impl PlatformWindow for HeadlessWindow {
         matches!(self.0.borrow().window_bounds, WindowBounds::Fullscreen(_))
     }
 
-    fn on_request_frame(&self, _callback: Box<dyn FnMut(RequestFrameOptions)>) {}
+    fn on_request_frame(&self, _callback: Box<dyn Fn(RequestFrameOptions)>) {}
 
     fn on_input(&self, callback: PlatformInputCallback) {
         let input = self.0.borrow().input_callback.clone();
@@ -309,15 +309,15 @@ impl PlatformWindow for HeadlessWindow {
 
     fn on_active_status_change(
         &self,
-        _callback: Box<dyn FnMut(PlatformWindowActiveStatusObservation)>,
+        _callback: Box<dyn Fn(PlatformWindowActiveStatusObservation)>,
     ) {
     }
 
-    fn on_hover_status_change(&self, _callback: Box<dyn FnMut(bool)>) {}
+    fn on_hover_status_change(&self, _callback: Box<dyn Fn(bool)>) {}
 
-    fn on_resize(&self, _callback: Box<dyn FnMut(Size<Pixels>, f32)>) {}
+    fn on_resize(&self, _callback: Box<dyn Fn(Size<Pixels>, f32)>) {}
 
-    fn on_moved(&self, _callback: Box<dyn FnMut()>) {}
+    fn on_moved(&self, _callback: Box<dyn Fn()>) {}
 
     fn on_should_close(&self, _callback: Box<dyn FnMut() -> bool>) {}
 
@@ -328,7 +328,7 @@ impl PlatformWindow for HeadlessWindow {
         self.0.borrow_mut().close_callback = Some(callback);
     }
 
-    fn on_appearance_changed(&self, _callback: Box<dyn FnMut()>) {}
+    fn on_appearance_changed(&self, _callback: Box<dyn Fn()>) {}
 
     fn draw(&self, _scene: &Scene) -> PlatformWindowPresentOutcome {
         PlatformWindowPresentOutcome::Submitted

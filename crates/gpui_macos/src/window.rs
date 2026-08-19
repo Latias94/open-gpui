@@ -1592,15 +1592,16 @@ struct MacWindowState {
     display_link: Option<DisplayLink>,
     renderer: renderer::Renderer,
     presentation_shutdown_authority: Arc<Mutex<MacPresentationShutdownAuthority>>,
-    request_frame_callback: Option<Box<dyn FnMut(RequestFrameOptions)>>,
+    display_transaction_frame_depth: MacDisplayTransactionFrameDepth,
+    request_frame_callback: Option<Rc<dyn Fn(RequestFrameOptions)>>,
     event_callback: PlatformInputCallbackSlot,
-    activate_callback: Option<Box<dyn FnMut(PlatformWindowActiveStatusObservation)>>,
-    resize_callback: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
-    moved_callback: Option<Box<dyn FnMut()>>,
-    window_state_change_callback: Option<Box<dyn FnMut()>>,
+    activate_callback: Option<Rc<dyn Fn(PlatformWindowActiveStatusObservation)>>,
+    resize_callback: Option<Rc<dyn Fn(Size<Pixels>, f32)>>,
+    moved_callback: Option<Rc<dyn Fn()>>,
+    window_state_change_callback: Option<Rc<dyn Fn()>>,
     should_close_callback: PlatformShouldCloseCallbackSlot,
     close_callback: Option<Box<dyn FnOnce()>>,
-    appearance_changed_callback: Option<Box<dyn FnMut()>>,
+    appearance_changed_callback: Option<Rc<dyn Fn()>>,
     input_handler: PlatformInputHandlerSlot,
     last_key_equivalent: Option<KeyDownEvent>,
     synthetic_drag_counter: usize,
@@ -1627,11 +1628,11 @@ struct MacWindowState {
     fullscreen_restore_bounds: Bounds<Pixels>,
     pending_fullscreen_restore_bounds: Option<Bounds<Pixels>>,
     fullscreen_transition: Option<MacFullscreenTransition>,
-    move_tab_to_new_window_callback: Option<Box<dyn FnMut()>>,
-    merge_all_windows_callback: Option<Box<dyn FnMut()>>,
-    select_next_tab_callback: Option<Box<dyn FnMut()>>,
-    select_previous_tab_callback: Option<Box<dyn FnMut()>>,
-    toggle_tab_bar_callback: Option<Box<dyn FnMut()>>,
+    move_tab_to_new_window_callback: Option<Rc<dyn Fn()>>,
+    merge_all_windows_callback: Option<Rc<dyn Fn()>>,
+    select_next_tab_callback: Option<Rc<dyn Fn()>>,
+    select_previous_tab_callback: Option<Rc<dyn Fn()>>,
+    toggle_tab_bar_callback: Option<Rc<dyn Fn()>>,
     activated_least_once: bool,
     closed: Arc<AtomicBool>,
     accesskit_adapter: Option<accesskit_macos::SubclassingAdapter>,
@@ -2990,6 +2991,7 @@ impl MacWindow {
                         false,
                     ),
                     presentation_shutdown_authority: presentation_shutdown_authority.clone(),
+                    display_transaction_frame_depth: MacDisplayTransactionFrameDepth::default(),
                     request_frame_callback: None,
                     event_callback: PlatformInputCallbackSlot::default(),
                     activate_callback: None,
@@ -3612,108 +3614,39 @@ fn deliver_window_observation_effect_batch(
     }
 }
 
-struct MacWindowCallbackCheckout<T, Restore>
-where
-    Restore: FnOnce(T),
-{
-    callback: Option<T>,
-    restore: Option<Restore>,
-}
-
-impl<T, Restore> MacWindowCallbackCheckout<T, Restore>
-where
-    Restore: FnOnce(T),
-{
-    fn new(callback: T, restore: Restore) -> Self {
-        Self {
-            callback: Some(callback),
-            restore: Some(restore),
-        }
-    }
-
-    fn callback(&mut self) -> &mut T {
-        self.callback
-            .as_mut()
-            .expect("checked-out macOS window callback must remain available")
-    }
-}
-
-impl<T, Restore> Drop for MacWindowCallbackCheckout<T, Restore>
-where
-    Restore: FnOnce(T),
-{
-    fn drop(&mut self) {
-        if let (Some(callback), Some(restore)) = (self.callback.take(), self.restore.take()) {
-            restore(callback);
-        }
-    }
-}
-
-fn restore_callback_if_vacant<T>(slot: &mut Option<T>, callback: T) {
-    if slot.is_none() {
-        *slot = Some(callback);
-    }
-}
-
-fn checkout_mac_window_callback<T>(
-    window_state: &Arc<Mutex<MacWindowState>>,
-    callback: T,
-    slot: for<'a> fn(&'a mut MacWindowState) -> &'a mut Option<T>,
-) -> MacWindowCallbackCheckout<T, impl FnOnce(T)> {
-    let window_state = window_state.clone();
-    MacWindowCallbackCheckout::new(callback, move |callback| {
-        let mut state = window_state.lock();
-        if state.is_closed() {
-            return;
-        }
-        restore_callback_if_vacant(slot(&mut state), callback);
-    })
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum MacRequestFrameDeliveryMode {
     DisplayTransaction,
     DisplayLinkTick,
 }
 
+#[derive(Default)]
+struct MacDisplayTransactionFrameDepth(usize);
+
+impl MacDisplayTransactionFrameDepth {
+    fn enter(&mut self) -> bool {
+        let is_outermost = self.0 == 0;
+        self.0 = self
+            .0
+            .checked_add(1)
+            .expect("macOS display-transaction frame depth overflowed");
+        is_outermost
+    }
+
+    fn leave(&mut self) -> bool {
+        assert!(
+            self.0 > 0,
+            "macOS display-transaction frame depth underflowed"
+        );
+        self.0 -= 1;
+        self.0 == 0
+    }
+}
+
 impl MacRequestFrameDeliveryMode {
     fn uses_display_transaction(self) -> bool {
         matches!(self, Self::DisplayTransaction)
     }
-}
-
-fn request_frame_callback_slot(
-    state: &mut MacWindowState,
-) -> &mut Option<Box<dyn FnMut(RequestFrameOptions)>> {
-    &mut state.request_frame_callback
-}
-
-fn activate_callback_slot(
-    state: &mut MacWindowState,
-) -> &mut Option<Box<dyn FnMut(PlatformWindowActiveStatusObservation)>> {
-    &mut state.activate_callback
-}
-
-fn checkout_mac_request_frame_callback(
-    window_state: &Arc<Mutex<MacWindowState>>,
-    callback: Box<dyn FnMut(RequestFrameOptions)>,
-    mode: MacRequestFrameDeliveryMode,
-) -> MacWindowCallbackCheckout<
-    Box<dyn FnMut(RequestFrameOptions)>,
-    impl FnOnce(Box<dyn FnMut(RequestFrameOptions)>),
-> {
-    let window_state = window_state.clone();
-    MacWindowCallbackCheckout::new(callback, move |callback| {
-        let mut state = window_state.lock();
-        if state.is_closed() {
-            return;
-        }
-        if mode.uses_display_transaction() {
-            state.renderer.set_presents_with_transaction(false);
-            state.start_display_link();
-        }
-        restore_callback_if_vacant(request_frame_callback_slot(&mut state), callback);
-    })
 }
 
 fn deliver_window_request_frame(
@@ -3726,79 +3659,73 @@ fn deliver_window_request_frame(
         if state.is_closed() {
             return;
         }
-        let Some(callback) = state.request_frame_callback.take() else {
+        let Some(callback) = state.request_frame_callback.clone() else {
             return;
         };
-        if mode.uses_display_transaction() {
+        if mode.uses_display_transaction() && state.display_transaction_frame_depth.enter() {
             state.renderer.set_presents_with_transaction(true);
             state.stop_display_link();
         }
         callback
     };
 
-    let mut callback = checkout_mac_request_frame_callback(window_state, callback, mode);
-    panic_boundary.deliver(|| (callback.callback())(Default::default()));
+    panic_boundary.deliver(|| callback(Default::default()));
+    if mode.uses_display_transaction() {
+        panic_boundary.deliver(|| {
+            let mut state = window_state.lock();
+            let completed_outermost_frame = state.display_transaction_frame_depth.leave();
+            if state.is_closed() {
+                return;
+            }
+            if completed_outermost_frame {
+                state.renderer.set_presents_with_transaction(false);
+                state.start_display_link();
+            }
+        });
+    }
     panic_boundary.deliver(|| drop(callback));
-}
-
-fn resize_callback_slot(
-    state: &mut MacWindowState,
-) -> &mut Option<Box<dyn FnMut(Size<Pixels>, f32)>> {
-    &mut state.resize_callback
-}
-
-fn moved_callback_slot(state: &mut MacWindowState) -> &mut Option<Box<dyn FnMut()>> {
-    &mut state.moved_callback
-}
-
-fn window_state_change_callback_slot(state: &mut MacWindowState) -> &mut Option<Box<dyn FnMut()>> {
-    &mut state.window_state_change_callback
 }
 
 fn notify_window_resize(window_state: &Arc<Mutex<MacWindowState>>) {
     let (callback, content_size, scale_factor) = {
-        let mut state = window_state.lock();
+        let state = window_state.lock();
         if state.is_closed() {
             return;
         }
-        let Some(callback) = state.resize_callback.take() else {
+        let Some(callback) = state.resize_callback.clone() else {
             return;
         };
         (callback, state.content_size(), state.scale_factor())
     };
-    let mut callback = checkout_mac_window_callback(window_state, callback, resize_callback_slot);
-    (callback.callback())(content_size, scale_factor);
+    callback(content_size, scale_factor);
 }
 
 fn notify_window_moved(window_state: &Arc<Mutex<MacWindowState>>) {
     let callback = {
-        let mut state = window_state.lock();
+        let state = window_state.lock();
         if state.is_closed() {
             return;
         }
-        let Some(callback) = state.moved_callback.take() else {
+        let Some(callback) = state.moved_callback.clone() else {
             return;
         };
         callback
     };
-    let mut callback = checkout_mac_window_callback(window_state, callback, moved_callback_slot);
-    (callback.callback())();
+    callback();
 }
 
 fn notify_window_state_changed(window_state: &Arc<Mutex<MacWindowState>>) {
     let callback = {
-        let mut state = window_state.lock();
+        let state = window_state.lock();
         if state.is_closed() {
             return;
         }
-        let Some(callback) = state.window_state_change_callback.take() else {
+        let Some(callback) = state.window_state_change_callback.clone() else {
             return;
         };
         callback
     };
-    let mut callback =
-        checkout_mac_window_callback(window_state, callback, window_state_change_callback_slot);
-    (callback.callback())();
+    callback();
 }
 
 impl Drop for MacWindow {
@@ -4649,10 +4576,10 @@ impl PlatformWindow for MacWindow {
         self.0.lock().is_fullscreen()
     }
 
-    fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>) {
+    fn on_request_frame(&self, callback: Box<dyn Fn(RequestFrameOptions)>) {
         let mut lock = self.0.as_ref().lock();
         if !lock.is_closed() {
-            lock.request_frame_callback = Some(callback);
+            lock.request_frame_callback = Some(Rc::from(callback));
         }
     }
 
@@ -4669,34 +4596,34 @@ impl PlatformWindow for MacWindow {
 
     fn on_active_status_change(
         &self,
-        callback: Box<dyn FnMut(PlatformWindowActiveStatusObservation)>,
+        callback: Box<dyn Fn(PlatformWindowActiveStatusObservation)>,
     ) {
         let mut lock = self.0.as_ref().lock();
         if !lock.is_closed() {
-            lock.activate_callback = Some(callback);
+            lock.activate_callback = Some(Rc::from(callback));
         }
     }
 
-    fn on_hover_status_change(&self, _: Box<dyn FnMut(bool)>) {}
+    fn on_hover_status_change(&self, _: Box<dyn Fn(bool)>) {}
 
-    fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>) {
+    fn on_resize(&self, callback: Box<dyn Fn(Size<Pixels>, f32)>) {
         let mut lock = self.0.as_ref().lock();
         if !lock.is_closed() {
-            lock.resize_callback = Some(callback);
+            lock.resize_callback = Some(Rc::from(callback));
         }
     }
 
-    fn on_moved(&self, callback: Box<dyn FnMut()>) {
+    fn on_moved(&self, callback: Box<dyn Fn()>) {
         let mut lock = self.0.as_ref().lock();
         if !lock.is_closed() {
-            lock.moved_callback = Some(callback);
+            lock.moved_callback = Some(Rc::from(callback));
         }
     }
 
-    fn on_window_state_change(&self, callback: Box<dyn FnMut()>) {
+    fn on_window_state_change(&self, callback: Box<dyn Fn()>) {
         let mut lock = self.0.as_ref().lock();
         if !lock.is_closed() {
-            lock.window_state_change_callback = Some(callback);
+            lock.window_state_change_callback = Some(Rc::from(callback));
         }
     }
 
@@ -4718,10 +4645,10 @@ impl PlatformWindow for MacWindow {
     fn on_hit_test_window_control(&self, _callback: Box<dyn FnMut() -> Option<WindowControlArea>>) {
     }
 
-    fn on_appearance_changed(&self, callback: Box<dyn FnMut()>) {
+    fn on_appearance_changed(&self, callback: Box<dyn Fn()>) {
         let mut lock = self.0.lock();
         if !lock.is_closed() {
-            lock.appearance_changed_callback = Some(callback);
+            lock.appearance_changed_callback = Some(Rc::from(callback));
         }
     }
 
@@ -4761,38 +4688,38 @@ impl PlatformWindow for MacWindow {
         }
     }
 
-    fn on_move_tab_to_new_window(&self, callback: Box<dyn FnMut()>) {
+    fn on_move_tab_to_new_window(&self, callback: Box<dyn Fn()>) {
         let mut lock = self.0.as_ref().lock();
         if !lock.is_closed() {
-            lock.move_tab_to_new_window_callback = Some(callback);
+            lock.move_tab_to_new_window_callback = Some(Rc::from(callback));
         }
     }
 
-    fn on_merge_all_windows(&self, callback: Box<dyn FnMut()>) {
+    fn on_merge_all_windows(&self, callback: Box<dyn Fn()>) {
         let mut lock = self.0.as_ref().lock();
         if !lock.is_closed() {
-            lock.merge_all_windows_callback = Some(callback);
+            lock.merge_all_windows_callback = Some(Rc::from(callback));
         }
     }
 
-    fn on_select_next_tab(&self, callback: Box<dyn FnMut()>) {
+    fn on_select_next_tab(&self, callback: Box<dyn Fn()>) {
         let mut lock = self.0.as_ref().lock();
         if !lock.is_closed() {
-            lock.select_next_tab_callback = Some(callback);
+            lock.select_next_tab_callback = Some(Rc::from(callback));
         }
     }
 
-    fn on_select_previous_tab(&self, callback: Box<dyn FnMut()>) {
+    fn on_select_previous_tab(&self, callback: Box<dyn Fn()>) {
         let mut lock = self.0.as_ref().lock();
         if !lock.is_closed() {
-            lock.select_previous_tab_callback = Some(callback);
+            lock.select_previous_tab_callback = Some(Rc::from(callback));
         }
     }
 
-    fn on_toggle_tab_bar(&self, callback: Box<dyn FnMut()>) {
+    fn on_toggle_tab_bar(&self, callback: Box<dyn Fn()>) {
         let mut lock = self.0.as_ref().lock();
         if !lock.is_closed() {
-            lock.toggle_tab_bar_callback = Some(callback);
+            lock.toggle_tab_bar_callback = Some(Rc::from(callback));
         }
     }
 
@@ -5805,14 +5732,14 @@ fn deliver_window_active_event(
     }
 
     let (callback, native_window) = {
-        let mut lock = window_state.lock();
+        let lock = window_state.lock();
         if lock.is_closed() || lock.interaction_is_quiesced() {
             return;
         }
         if is_active {
             lock.move_traffic_light();
         }
-        let Some(callback) = lock.activate_callback.take() else {
+        let Some(callback) = lock.activate_callback.clone() else {
             return;
         };
         (callback, lock.native_window)
@@ -5825,9 +5752,8 @@ fn deliver_window_active_event(
             let key_window: id = msg_send![app, keyWindow];
             key_window == native_window
         };
-    let mut callback = checkout_mac_window_callback(window_state, callback, activate_callback_slot);
     panic_boundary.deliver(|| {
-        (callback.callback())(PlatformWindowActiveStatusObservation::new(
+        callback(PlatformWindowActiveStatusObservation::new(
             is_active,
             exact_native_positive,
         ));
@@ -6128,17 +6054,15 @@ extern "C" fn do_command_by_selector(this: &Object, _: Sel, _: Sel) {
 extern "C" fn view_did_change_effective_appearance(this: &Object, _: Sel) {
     unsafe {
         let state = get_window_state(this);
-        let mut lock = state.as_ref().lock();
-        if lock.is_closed() {
-            return;
-        }
-        if let Some(mut callback) = lock.appearance_changed_callback.take() {
-            drop(lock);
-            callback();
-            let mut lock = state.lock();
-            if !lock.is_closed() {
-                lock.appearance_changed_callback = Some(callback);
+        let callback = {
+            let lock = state.as_ref().lock();
+            if lock.is_closed() {
+                return;
             }
+            lock.appearance_changed_callback.clone()
+        };
+        if let Some(callback) = callback {
+            callback();
         }
     }
 }
@@ -6411,17 +6335,15 @@ extern "C" fn move_tab_to_new_window(this: &Object, _: Sel, _: id) {
         let superclass = window_callback_superclass(this);
         let _: () = msg_send![super(this, superclass), moveTabToNewWindow:nil];
 
-        let mut lock = window_state.as_ref().lock();
-        if !lock.admits_native_tabbing() {
-            return;
-        }
-        if let Some(mut callback) = lock.move_tab_to_new_window_callback.take() {
-            drop(lock);
-            callback();
-            let mut lock = window_state.lock();
-            if lock.admits_native_tabbing() {
-                lock.move_tab_to_new_window_callback = Some(callback);
+        let callback = {
+            let lock = window_state.as_ref().lock();
+            if !lock.admits_native_tabbing() {
+                return;
             }
+            lock.move_tab_to_new_window_callback.clone()
+        };
+        if let Some(callback) = callback {
+            callback();
         }
     }
 }
@@ -6435,50 +6357,44 @@ extern "C" fn merge_all_windows(this: &Object, _: Sel, _: id) {
         let superclass = window_callback_superclass(this);
         let _: () = msg_send![super(this, superclass), mergeAllWindows:nil];
 
-        let mut lock = window_state.as_ref().lock();
-        if !lock.admits_native_tabbing() {
-            return;
-        }
-        if let Some(mut callback) = lock.merge_all_windows_callback.take() {
-            drop(lock);
-            callback();
-            let mut lock = window_state.lock();
-            if lock.admits_native_tabbing() {
-                lock.merge_all_windows_callback = Some(callback);
+        let callback = {
+            let lock = window_state.as_ref().lock();
+            if !lock.admits_native_tabbing() {
+                return;
             }
+            lock.merge_all_windows_callback.clone()
+        };
+        if let Some(callback) = callback {
+            callback();
         }
     }
 }
 
 extern "C" fn select_next_tab(this: &Object, _sel: Sel, _id: id) {
     let window_state = unsafe { get_window_state(this) };
-    let mut lock = window_state.as_ref().lock();
-    if !lock.admits_native_tabbing() {
-        return;
-    }
-    if let Some(mut callback) = lock.select_next_tab_callback.take() {
-        drop(lock);
-        callback();
-        let mut lock = window_state.lock();
-        if lock.admits_native_tabbing() {
-            lock.select_next_tab_callback = Some(callback);
+    let callback = {
+        let lock = window_state.as_ref().lock();
+        if !lock.admits_native_tabbing() {
+            return;
         }
+        lock.select_next_tab_callback.clone()
+    };
+    if let Some(callback) = callback {
+        callback();
     }
 }
 
 extern "C" fn select_previous_tab(this: &Object, _sel: Sel, _id: id) {
     let window_state = unsafe { get_window_state(this) };
-    let mut lock = window_state.as_ref().lock();
-    if !lock.admits_native_tabbing() {
-        return;
-    }
-    if let Some(mut callback) = lock.select_previous_tab_callback.take() {
-        drop(lock);
-        callback();
-        let mut lock = window_state.lock();
-        if lock.admits_native_tabbing() {
-            lock.select_previous_tab_callback = Some(callback);
+    let callback = {
+        let lock = window_state.as_ref().lock();
+        if !lock.admits_native_tabbing() {
+            return;
         }
+        lock.select_previous_tab_callback.clone()
+    };
+    if let Some(callback) = callback {
+        callback();
     }
 }
 
@@ -6491,19 +6407,16 @@ extern "C" fn toggle_tab_bar(this: &Object, _sel: Sel, _id: id) {
         let superclass = window_callback_superclass(this);
         let _: () = msg_send![super(this, superclass), toggleTabBar:nil];
 
-        let mut lock = window_state.as_ref().lock();
-        if !lock.admits_native_tabbing() {
-            return;
-        }
-        lock.move_traffic_light();
-
-        if let Some(mut callback) = lock.toggle_tab_bar_callback.take() {
-            drop(lock);
-            callback();
-            let mut lock = window_state.lock();
-            if lock.admits_native_tabbing() {
-                lock.toggle_tab_bar_callback = Some(callback);
+        let callback = {
+            let lock = window_state.as_ref().lock();
+            if !lock.admits_native_tabbing() {
+                return;
             }
+            lock.move_traffic_light();
+            lock.toggle_tab_bar_callback.clone()
+        };
+        if let Some(callback) = callback {
+            callback();
         }
     }
 }
@@ -6514,6 +6427,16 @@ mod creation_projection_tests {
 
     fn restore_bounds() -> Bounds<Pixels> {
         Bounds::new(point(px(120.0), px(80.0)), size(px(1024.0), px(768.0)))
+    }
+
+    #[test]
+    fn nested_display_transaction_frames_only_restore_after_the_outermost_frame() {
+        let mut depth = MacDisplayTransactionFrameDepth::default();
+
+        assert!(depth.enter());
+        assert!(!depth.enter());
+        assert!(!depth.leave());
+        assert!(depth.leave());
     }
 
     fn assert_client_geometry_round_trip(
@@ -6773,196 +6696,6 @@ mod creation_projection_tests {
 
         panic_boundary.isolate_at_native_boundary("a test callback");
         assert_eq!(drops.load(Ordering::Relaxed), 0);
-    }
-
-    #[test]
-    fn request_frame_checkout_restores_callback_rendering_and_display_link_after_panic() {
-        let calls = Rc::new(Cell::new(0));
-        let callback_calls = Rc::clone(&calls);
-        let presents_with_transaction = Rc::new(Cell::new(true));
-        let display_link_running = Rc::new(Cell::new(false));
-        let slot: Rc<std::cell::RefCell<Option<Box<dyn FnMut()>>>> =
-            Rc::new(std::cell::RefCell::new(Some(Box::new(move || {
-                let next = callback_calls.get() + 1;
-                callback_calls.set(next);
-                if next == 1 {
-                    panic!("injected macOS window callback panic");
-                }
-            }))));
-
-        let callback = slot
-            .borrow_mut()
-            .take()
-            .expect("the callback must be installed before checkout");
-        let restore_slot = Rc::clone(&slot);
-        let restore_transaction = Rc::clone(&presents_with_transaction);
-        let restore_display_link = Rc::clone(&display_link_running);
-        let mut checkout = MacWindowCallbackCheckout::new(callback, move |callback| {
-            restore_transaction.set(false);
-            restore_display_link.set(true);
-            let mut slot = restore_slot.borrow_mut();
-            restore_callback_if_vacant(&mut slot, callback);
-        });
-        let mut panic_boundary = MacWindowCallbackPanicBoundary::default();
-        panic_boundary.deliver(|| (checkout.callback())());
-        panic_boundary.deliver(|| drop(checkout));
-
-        let panic = panic_boundary.into_first_panic().unwrap();
-        assert_eq!(
-            panic.downcast_ref::<&'static str>(),
-            Some(&"injected macOS window callback panic")
-        );
-        mem::forget(panic);
-        let mut callback = slot
-            .borrow_mut()
-            .take()
-            .expect("the panicking callback must be restored");
-        callback();
-        assert_eq!(calls.get(), 2);
-        assert!(!presents_with_transaction.get());
-        assert!(display_link_running.get());
-    }
-
-    #[test]
-    fn request_frame_checkout_preserves_reentrant_replacement_and_restores_rendering() {
-        struct CallbackDropPanic;
-
-        impl Drop for CallbackDropPanic {
-            fn drop(&mut self) {
-                panic!("superseded request-frame callback destructor panic");
-            }
-        }
-
-        let replacement_calls = Rc::new(Cell::new(0));
-        let presents_with_transaction = Rc::new(Cell::new(true));
-        let display_link_running = Rc::new(Cell::new(false));
-        let slot: Rc<std::cell::RefCell<Option<Box<dyn FnMut()>>>> =
-            Rc::new(std::cell::RefCell::new(None));
-        let slot_from_callback = Rc::clone(&slot);
-        let replacement_calls_from_callback = Rc::clone(&replacement_calls);
-        let callback_drop_panic = CallbackDropPanic;
-        *slot.borrow_mut() = Some(Box::new(move || {
-            let _keep_drop_guard_captured = &callback_drop_panic;
-            let replacement_calls = Rc::clone(&replacement_calls_from_callback);
-            *slot_from_callback.borrow_mut() = Some(Box::new(move || {
-                replacement_calls.set(replacement_calls.get() + 1);
-            }));
-            panic!("injected request-frame panic after reentrant replacement");
-        }));
-
-        let callback = slot
-            .borrow_mut()
-            .take()
-            .expect("the callback must be installed before checkout");
-        let restore_slot = Rc::clone(&slot);
-        let restore_transaction = Rc::clone(&presents_with_transaction);
-        let restore_display_link = Rc::clone(&display_link_running);
-        let mut checkout = MacWindowCallbackCheckout::new(callback, move |callback| {
-            restore_transaction.set(false);
-            restore_display_link.set(true);
-            let mut slot = restore_slot.borrow_mut();
-            restore_callback_if_vacant(&mut slot, callback);
-        });
-        let mut panic_boundary = MacWindowCallbackPanicBoundary::default();
-        panic_boundary.deliver(|| (checkout.callback())());
-        panic_boundary.deliver(|| drop(checkout));
-
-        let panic = panic_boundary.into_first_panic().unwrap();
-        assert_eq!(
-            panic.downcast_ref::<&'static str>(),
-            Some(&"injected request-frame panic after reentrant replacement")
-        );
-        mem::forget(panic);
-        let mut replacement = slot
-            .borrow_mut()
-            .take()
-            .expect("the reentrant replacement must remain authoritative");
-        replacement();
-        assert_eq!(replacement_calls.get(), 1);
-        assert!(!presents_with_transaction.get());
-        assert!(display_link_running.get());
-    }
-
-    #[test]
-    fn activate_callback_checkout_restores_the_callback_after_panic() {
-        let calls = Rc::new(Cell::new(0));
-        let callback_calls = Rc::clone(&calls);
-        let slot: Rc<std::cell::RefCell<Option<Box<dyn FnMut()>>>> =
-            Rc::new(std::cell::RefCell::new(Some(Box::new(move || {
-                let next = callback_calls.get() + 1;
-                callback_calls.set(next);
-                if next == 1 {
-                    panic!("injected activate callback panic");
-                }
-            }))));
-
-        let callback = slot
-            .borrow_mut()
-            .take()
-            .expect("the callback must be installed before checkout");
-        let restore_slot = Rc::clone(&slot);
-        let mut checkout = MacWindowCallbackCheckout::new(callback, move |callback| {
-            let mut slot = restore_slot.borrow_mut();
-            restore_callback_if_vacant(&mut slot, callback);
-        });
-        let mut panic_boundary = MacWindowCallbackPanicBoundary::default();
-        panic_boundary.deliver(|| (checkout.callback())());
-        panic_boundary.deliver(|| drop(checkout));
-
-        let panic = panic_boundary.into_first_panic().unwrap();
-        assert_eq!(
-            panic.downcast_ref::<&'static str>(),
-            Some(&"injected activate callback panic")
-        );
-        mem::forget(panic);
-        let mut callback = slot
-            .borrow_mut()
-            .take()
-            .expect("the panicking activate callback must be restored");
-        callback();
-        assert_eq!(calls.get(), 2);
-    }
-
-    #[test]
-    fn activate_callback_checkout_preserves_a_reentrant_replacement_during_unwind() {
-        let replacement_calls = Rc::new(Cell::new(0));
-        let slot: Rc<std::cell::RefCell<Option<Box<dyn FnMut()>>>> =
-            Rc::new(std::cell::RefCell::new(None));
-        let slot_from_callback = Rc::clone(&slot);
-        let replacement_calls_from_callback = Rc::clone(&replacement_calls);
-        *slot.borrow_mut() = Some(Box::new(move || {
-            let replacement_calls = Rc::clone(&replacement_calls_from_callback);
-            *slot_from_callback.borrow_mut() = Some(Box::new(move || {
-                replacement_calls.set(replacement_calls.get() + 1);
-            }));
-            panic!("injected callback panic after reentrant replacement");
-        }));
-
-        let callback = slot
-            .borrow_mut()
-            .take()
-            .expect("the callback must be installed before checkout");
-        let restore_slot = Rc::clone(&slot);
-        let mut checkout = MacWindowCallbackCheckout::new(callback, move |callback| {
-            let mut slot = restore_slot.borrow_mut();
-            restore_callback_if_vacant(&mut slot, callback);
-        });
-        let mut panic_boundary = MacWindowCallbackPanicBoundary::default();
-        panic_boundary.deliver(|| (checkout.callback())());
-        panic_boundary.deliver(|| drop(checkout));
-
-        let panic = panic_boundary.into_first_panic().unwrap();
-        assert_eq!(
-            panic.downcast_ref::<&'static str>(),
-            Some(&"injected callback panic after reentrant replacement")
-        );
-        mem::forget(panic);
-        let mut replacement = slot
-            .borrow_mut()
-            .take()
-            .expect("the reentrant replacement must remain authoritative");
-        replacement();
-        assert_eq!(replacement_calls.get(), 1);
     }
 
     #[test]

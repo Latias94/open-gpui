@@ -36,6 +36,17 @@ pub(crate) const WM_GPUI_DISPLAY_TOPOLOGY_PUBLISHED: u32 = WM_USER + 10;
 
 const SIZE_MOVE_LOOP_TIMER_ID: usize = 1;
 
+fn restore_saved_callback_if_current_missing<T>(
+    current: &Cell<Option<T>>,
+    saved: &Cell<Option<T>>,
+) -> bool {
+    let saved_callback = saved.take();
+    let had_saved_callback = saved_callback.is_some();
+    let current_callback = current.take();
+    current.set(current_callback.or(saved_callback));
+    had_saved_callback
+}
+
 fn mouse_button_mask(button: MouseButton) -> u8 {
     match button {
         MouseButton::Left => 1 << 0,
@@ -1228,7 +1239,7 @@ impl WindowsWindowInner {
                     .set_display_binding(display, snapshot.generation());
             }
         }
-        let _ = with_windows_callback(&self.state.callbacks.moved, |callback| callback());
+        let _ = with_windows_shared_callback(&self.state.callbacks.moved, |callback| callback());
         Some(0)
     }
 
@@ -1261,9 +1272,10 @@ impl WindowsWindowInner {
                     .restore_from_minimized
                     .set(self.state.callbacks.request_frame.take());
             }
-            let _ = with_windows_callback(&self.state.callbacks.window_state_change, |callback| {
-                callback()
-            });
+            let _ = with_windows_shared_callback(
+                &self.state.callbacks.window_state_change,
+                |callback| callback(),
+            );
             return Some(0);
         }
 
@@ -1272,15 +1284,10 @@ impl WindowsWindowInner {
         let new_size = size(DevicePixels(width), DevicePixels(height));
 
         let scale_factor = self.state.scale_factor.get();
-        let mut should_resize_renderer = false;
-        if let Some(restore_from_minimized) = self.state.restore_from_minimized.take() {
-            self.state
-                .callbacks
-                .request_frame
-                .set(Some(restore_from_minimized));
-        } else {
-            should_resize_renderer = true;
-        }
+        let should_resize_renderer = !restore_saved_callback_if_current_missing(
+            &self.state.callbacks.request_frame,
+            &self.state.restore_from_minimized,
+        );
 
         self.handle_size_change(new_size, scale_factor, should_resize_renderer);
         if wparam.0 == SIZE_RESTORED as usize && !self.state.is_fullscreen() {
@@ -1310,7 +1317,7 @@ impl WindowsWindowInner {
                 .invalidate_devices
                 .store(true, std::sync::atomic::Ordering::Release);
         }
-        let _ = with_windows_callback(&self.state.callbacks.resize, |callback| {
+        let _ = with_windows_shared_callback(&self.state.callbacks.resize, |callback| {
             callback(new_logical_size, scale_factor)
         });
     }
@@ -1449,9 +1456,10 @@ impl WindowsWindowInner {
         // The next window's `WM_SETCURSOR` picks its own cursor, so we just clear
         // the flag for tight `is_cursor_visible()` semantics.
         self.state.cursor_visible.store(true, Ordering::Relaxed);
-        let _ = with_windows_callback(&self.state.callbacks.hovered_status_change, |callback| {
-            callback(false)
-        });
+        let _ =
+            with_windows_shared_callback(&self.state.callbacks.hovered_status_change, |callback| {
+                callback(false)
+            });
 
         if input_result.propagate {
             Some(1)
@@ -1869,12 +1877,13 @@ impl WindowsWindowInner {
         }
 
         let exact_native_positive = activated && unsafe { GetForegroundWindow() } == handle;
-        let _ = with_windows_callback(&self.state.callbacks.active_status_change, |callback| {
-            callback(PlatformWindowActiveStatusObservation::new(
-                activated,
-                exact_native_positive,
-            ))
-        });
+        let _ =
+            with_windows_shared_callback(&self.state.callbacks.active_status_change, |callback| {
+                callback(PlatformWindowActiveStatusObservation::new(
+                    activated,
+                    exact_native_positive,
+                ))
+            });
         #[cfg(test)]
         if activated {
             self.apply_test_activation_admission_revocation_after_active_status();
@@ -1895,9 +1904,10 @@ impl WindowsWindowInner {
                 modifiers: current_modifiers(),
                 capslock: current_capslock(),
             };
-            let _ = with_windows_callback(&self.state.callbacks.modifiers_changed, |callback| {
-                callback(event)
-            });
+            let _ =
+                with_windows_shared_callback(&self.state.callbacks.modifiers_changed, |callback| {
+                    callback(event)
+                });
         }
         if exact_native_positive {
             self.observe_exact_native_activation_for_provisional_z_order();
@@ -2052,7 +2062,7 @@ impl WindowsWindowInner {
         };
         self.state
             .set_display_binding(new_display, snapshot.generation());
-        let _ = with_windows_callback(&self.state.callbacks.moved, |callback| callback());
+        let _ = with_windows_shared_callback(&self.state.callbacks.moved, |callback| callback());
         Some(0)
     }
 
@@ -2278,9 +2288,10 @@ impl WindowsWindowInner {
 
                 if new_appearance != self.state.appearance.get() {
                     self.state.appearance.set(new_appearance);
-                    with_windows_callback(&self.state.callbacks.appearance_changed, |callback| {
-                        callback()
-                    })?;
+                    with_windows_shared_callback(
+                        &self.state.callbacks.appearance_changed,
+                        |callback| callback(),
+                    )?;
                     configure_dwm_dark_mode(handle, new_appearance);
                 }
             }
@@ -2338,7 +2349,7 @@ impl WindowsWindowInner {
 
     #[inline]
     fn draw_window(&self, handle: HWND, force_render: bool) -> Option<isize> {
-        with_windows_callback(&self.state.callbacks.request_frame, |request_frame| {
+        with_windows_shared_callback(&self.state.callbacks.request_frame, |request_frame| {
             self.state.direct_manipulation.update();
 
             let events = self.state.direct_manipulation.drain_events();
@@ -2418,9 +2429,10 @@ impl WindowsWindowInner {
     }
 
     fn publish_hovered_status_change(&self, hovered: bool) {
-        let _ = with_windows_callback(&self.state.callbacks.hovered_status_change, |callback| {
-            callback(hovered)
-        });
+        let _ =
+            with_windows_shared_callback(&self.state.callbacks.hovered_status_change, |callback| {
+                callback(hovered)
+            });
     }
 
     fn with_input_handler<F, R>(&self, f: F) -> Option<R>
@@ -2871,7 +2883,8 @@ mod tests {
         WindowsNativePointerCaptureReleaseState, WindowsNonClientPointerBoundary,
         WindowsPointerCaptureEffect, WindowsPointerCaptureInput, WindowsPointerCaptureState,
         decode_client_mouse_button_message, hit_test_window_control_area, may_own_pointer_session,
-        non_client_resize_hit_test, should_reserve_pointer_cancel_after_callback_panic,
+        non_client_resize_hit_test, restore_saved_callback_if_current_missing,
+        should_reserve_pointer_cancel_after_callback_panic,
         system_setting_changes_display_topology,
     };
     use crate::Callbacks;
@@ -2885,6 +2898,17 @@ mod tests {
         assert!(!system_setting_changes_display_topology(
             SYSTEM_PARAMETERS_INFO_ACTION(29)
         ));
+    }
+
+    #[test]
+    fn minimized_callback_restore_preserves_a_reentrant_replacement() {
+        let current = Cell::new(Some("replacement"));
+        let saved = Cell::new(Some("original"));
+
+        assert!(restore_saved_callback_if_current_missing(&current, &saved));
+
+        assert_eq!(current.take(), Some("replacement"));
+        assert_eq!(saved.take(), None);
     }
 
     #[test]

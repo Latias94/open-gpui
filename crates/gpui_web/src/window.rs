@@ -27,15 +27,15 @@ use wasm_bindgen::prelude::*;
 
 #[derive(Default)]
 pub(crate) struct WebWindowCallbacks {
-    pub(crate) request_frame: Option<Box<dyn FnMut(RequestFrameOptions)>>,
+    pub(crate) request_frame: Option<Rc<dyn Fn(RequestFrameOptions)>>,
     pub(crate) input: PlatformInputCallbackSlot,
-    pub(crate) active_status_change: Option<Box<dyn FnMut(PlatformWindowActiveStatusObservation)>>,
-    pub(crate) hover_status_change: Option<Box<dyn FnMut(bool)>>,
-    pub(crate) resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
-    pub(crate) moved: Option<Box<dyn FnMut()>>,
+    pub(crate) active_status_change: Option<Rc<dyn Fn(PlatformWindowActiveStatusObservation)>>,
+    pub(crate) hover_status_change: Option<Rc<dyn Fn(bool)>>,
+    pub(crate) resize: Option<Rc<dyn Fn(Size<Pixels>, f32)>>,
+    pub(crate) moved: Option<Rc<dyn Fn()>>,
     pub(crate) should_close: Option<Box<dyn FnMut() -> bool>>,
     pub(crate) close: Option<Box<dyn FnOnce()>>,
-    pub(crate) appearance_changed: Option<Box<dyn FnMut()>>,
+    pub(crate) appearance_changed: Option<Rc<dyn Fn()>>,
     pub(crate) hit_test_window_control: Option<Box<dyn FnMut() -> Option<WindowControlArea>>>,
 }
 
@@ -386,32 +386,16 @@ impl WebWindowInner {
     }
 
     pub(crate) fn dispatch_resize(&self, size: Size<Pixels>, scale_factor: f32) {
-        let mut callback = {
-            let mut callbacks = self.callbacks.borrow_mut();
-            callbacks.resize.take()
-        };
-
-        if let Some(ref mut callback) = callback {
-            callback(size, scale_factor);
-        }
-
+        let callback = self.callbacks.borrow().resize.clone();
         if let Some(callback) = callback {
-            self.callbacks.borrow_mut().resize = Some(callback);
+            callback(size, scale_factor);
         }
     }
 
     pub(crate) fn dispatch_request_frame(&self, options: RequestFrameOptions) {
-        let mut callback = {
-            let mut callbacks = self.callbacks.borrow_mut();
-            callbacks.request_frame.take()
-        };
-
-        if let Some(ref mut callback) = callback {
-            callback(options);
-        }
-
+        let callback = self.callbacks.borrow().request_frame.clone();
         if let Some(callback) = callback {
-            self.callbacks.borrow_mut().request_frame = Some(callback);
+            callback(options);
         }
     }
 
@@ -419,17 +403,9 @@ impl WebWindowInner {
         if self.interaction_gate.is_quiesced() && observation.active() {
             return;
         }
-        let mut callback = {
-            let mut callbacks = self.callbacks.borrow_mut();
-            callbacks.active_status_change.take()
-        };
-
-        if let Some(ref mut callback) = callback {
-            callback(observation);
-        }
-
+        let callback = self.callbacks.borrow().active_status_change.clone();
         if let Some(callback) = callback {
-            self.callbacks.borrow_mut().active_status_change = Some(callback);
+            callback(observation);
         }
     }
 
@@ -520,32 +496,16 @@ impl WebWindowInner {
         if self.interaction_gate.is_quiesced() {
             return;
         }
-        let mut callback = {
-            let mut callbacks = self.callbacks.borrow_mut();
-            callbacks.hover_status_change.take()
-        };
-
-        if let Some(ref mut callback) = callback {
-            callback(is_hovered);
-        }
-
+        let callback = self.callbacks.borrow().hover_status_change.clone();
         if let Some(callback) = callback {
-            self.callbacks.borrow_mut().hover_status_change = Some(callback);
+            callback(is_hovered);
         }
     }
 
     pub(crate) fn dispatch_appearance_changed(&self) {
-        let mut callback = {
-            let mut callbacks = self.callbacks.borrow_mut();
-            callbacks.appearance_changed.take()
-        };
-
-        if let Some(ref mut callback) = callback {
-            callback();
-        }
-
+        let callback = self.callbacks.borrow().appearance_changed.clone();
         if let Some(callback) = callback {
-            self.callbacks.borrow_mut().appearance_changed = Some(callback);
+            callback();
         }
     }
 
@@ -1123,8 +1083,8 @@ impl PlatformWindow for WebWindow {
         self.inner.state.borrow().is_fullscreen
     }
 
-    fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>) {
-        self.inner.callbacks.borrow_mut().request_frame = Some(callback);
+    fn on_request_frame(&self, callback: Box<dyn Fn(RequestFrameOptions)>) {
+        self.inner.callbacks.borrow_mut().request_frame = Some(Rc::from(callback));
     }
 
     fn on_input(&self, callback: PlatformInputCallback) {
@@ -1134,21 +1094,21 @@ impl PlatformWindow for WebWindow {
 
     fn on_active_status_change(
         &self,
-        callback: Box<dyn FnMut(PlatformWindowActiveStatusObservation)>,
+        callback: Box<dyn Fn(PlatformWindowActiveStatusObservation)>,
     ) {
-        self.inner.callbacks.borrow_mut().active_status_change = Some(callback);
+        self.inner.callbacks.borrow_mut().active_status_change = Some(Rc::from(callback));
     }
 
-    fn on_hover_status_change(&self, callback: Box<dyn FnMut(bool)>) {
-        self.inner.callbacks.borrow_mut().hover_status_change = Some(callback);
+    fn on_hover_status_change(&self, callback: Box<dyn Fn(bool)>) {
+        self.inner.callbacks.borrow_mut().hover_status_change = Some(Rc::from(callback));
     }
 
-    fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>) {
-        self.inner.callbacks.borrow_mut().resize = Some(callback);
+    fn on_resize(&self, callback: Box<dyn Fn(Size<Pixels>, f32)>) {
+        self.inner.callbacks.borrow_mut().resize = Some(Rc::from(callback));
     }
 
-    fn on_moved(&self, callback: Box<dyn FnMut()>) {
-        self.inner.callbacks.borrow_mut().moved = Some(callback);
+    fn on_moved(&self, callback: Box<dyn Fn()>) {
+        self.inner.callbacks.borrow_mut().moved = Some(Rc::from(callback));
     }
 
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>) {
@@ -1163,8 +1123,8 @@ impl PlatformWindow for WebWindow {
         self.inner.callbacks.borrow_mut().hit_test_window_control = Some(callback);
     }
 
-    fn on_appearance_changed(&self, callback: Box<dyn FnMut()>) {
-        self.inner.callbacks.borrow_mut().appearance_changed = Some(callback);
+    fn on_appearance_changed(&self, callback: Box<dyn Fn()>) {
+        self.inner.callbacks.borrow_mut().appearance_changed = Some(Rc::from(callback));
     }
 
     fn draw(&self, scene: &Scene) -> PlatformWindowPresentOutcome {

@@ -16,17 +16,17 @@ use open_gpui::{
     AnyWindowHandle, AppContext as _, Application, Bounds, Context, DevicePixels, Empty,
     IntoElement, NativeBoundaryDiagnosticCursor, NativeBoundaryDisposition,
     NativeBoundaryGeneration, NativeBoundaryKind, NativeBoundaryTarget, NativeCallbackKind,
-    NativePlatformCommandKind, ParentElement, Platform, PlatformInput, PlatformWindowHitStack,
-    PlatformWindowPresentOutcome, PointerCancelEvent, PointerCancelReason, QuitMode, Render,
-    Styled, TitlebarOptions, Window, WindowActivationPolicy, WindowActivationStatus,
-    WindowActivationTerminal, WindowBounds, WindowId, WindowKind, WindowMouseEvent,
-    WindowMutationDispatch, WindowMutationOutcome, WindowMutationTicket, WindowOptions,
-    WindowPhysicalPlacementRequest, WindowProvisionalPlacementOutcome,
-    WindowProvisionalPlacementPurpose, WindowProvisionalPlacementRequest,
-    WindowProvisionalPlacementTicket, WindowProvisionalRevealOutcome,
-    WindowProvisionalRevealZOrder, WindowProvisionalSemanticsOutcome,
-    WindowProvisionalSemanticsTicket, WindowProvisionalSession, canvas, div, point, px, size,
-    white,
+    NativePlatformCommandKind, ParentElement, Platform, PlatformInput,
+    PlatformWindowActiveStatusObservation, PlatformWindowHitStack, PlatformWindowPresentOutcome,
+    PointerCancelEvent, PointerCancelReason, QuitMode, Render, Styled, TitlebarOptions, Window,
+    WindowActivationPolicy, WindowActivationStatus, WindowActivationTerminal, WindowBounds,
+    WindowId, WindowKind, WindowMouseEvent, WindowMutationDispatch, WindowMutationOutcome,
+    WindowMutationTicket, WindowOptions, WindowPhysicalPlacementRequest,
+    WindowProvisionalPlacementOutcome, WindowProvisionalPlacementPurpose,
+    WindowProvisionalPlacementRequest, WindowProvisionalPlacementTicket,
+    WindowProvisionalRevealOutcome, WindowProvisionalRevealZOrder,
+    WindowProvisionalSemanticsOutcome, WindowProvisionalSemanticsTicket, WindowProvisionalSession,
+    canvas, div, point, px, size, white,
 };
 use std::{
     cell::{Cell, RefCell},
@@ -623,13 +623,13 @@ impl Render for ProvisionalSemanticsMarkerRoot {
 
 fn observe_frame_requests(window: &Rc<WindowsWindowInner>) -> Rc<Cell<usize>> {
     let frame_requests = Rc::new(Cell::new(0usize));
-    let mut callback = window
+    let callback = window
         .state
         .callbacks
         .request_frame
         .take()
         .expect("native test window should have a frame callback");
-    window.state.callbacks.request_frame.set(Some(Box::new({
+    window.state.callbacks.request_frame.set(Some(Rc::new({
         let frame_requests = frame_requests.clone();
         move |options| {
             callback(options);
@@ -5680,7 +5680,7 @@ fn deactivation_releases_child_capture_and_cancels_pointer_once() {
         .expect("source native test window should remain registered");
     let active_callback_calls = Rc::new(Cell::new(0usize));
     let active_callback_panicked = Rc::new(Cell::new(false));
-    let mut active_callback = source_native
+    let active_callback = source_native
         .state
         .callbacks
         .active_status_change
@@ -5690,7 +5690,7 @@ fn deactivation_releases_child_capture_and_cancels_pointer_once() {
         .state
         .callbacks
         .active_status_change
-        .set(Some(Box::new({
+        .set(Some(Rc::new({
             let active_callback_calls = active_callback_calls.clone();
             let active_callback_panicked = active_callback_panicked.clone();
             move |observation| {
@@ -6737,7 +6737,7 @@ fn quiesced_real_hwnd_retries_native_revocation_and_cannot_reactivate() {
     pump_messages_until_idle("initial native quiescence messages");
 
     let active_observations = Rc::new(RefCell::new(Vec::new()));
-    let mut active_callback = native_window
+    let active_callback = native_window
         .state
         .callbacks
         .active_status_change
@@ -6747,9 +6747,9 @@ fn quiesced_real_hwnd_retries_native_revocation_and_cannot_reactivate() {
         .state
         .callbacks
         .active_status_change
-        .set(Some(Box::new({
+        .set(Some(Rc::new({
             let active_observations = active_observations.clone();
-            move |observation| {
+            move |observation: PlatformWindowActiveStatusObservation| {
                 active_observations.borrow_mut().push(observation.active());
                 active_callback(observation);
             }

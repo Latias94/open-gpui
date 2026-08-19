@@ -820,7 +820,7 @@ pub struct WindowsWindowState {
     pub appearance: Cell<WindowAppearance>,
     pub background_appearance: Cell<WindowBackgroundAppearance>,
     pub scale_factor: Cell<f32>,
-    pub restore_from_minimized: Cell<Option<Box<dyn FnMut(RequestFrameOptions)>>>,
+    pub restore_from_minimized: Cell<Option<Rc<dyn Fn(RequestFrameOptions)>>>,
 
     pub callbacks: Callbacks,
     pub input_handler: PlatformInputHandlerSlot,
@@ -6971,7 +6971,7 @@ impl WindowsWindowInner {
         if domain == WindowMutationDomain::Placement {
             self.finish_provisional_activation_z_order_mutation(generation, terminal.into());
         }
-        let _ = with_windows_callback(
+        let _ = with_windows_shared_callback(
             &self.state.callbacks.window_mutation_observation,
             |callback| {
                 callback(PlatformWindowMutationObservation::terminal(
@@ -7002,6 +7002,17 @@ pub(crate) fn with_windows_callback<T, R>(
     )))
 }
 
+/// Clones one immutable native callback before invoking it so nested callbacks cannot observe an
+/// empty slot or overwrite a newer replacement when the outer invocation returns.
+pub(crate) fn with_windows_shared_callback<T: Clone, R>(
+    slot: &Cell<Option<T>>,
+    invoke: impl FnOnce(&T) -> R,
+) -> Option<R> {
+    let callback = slot.take()?;
+    slot.set(Some(callback.clone()));
+    Some(invoke(&callback))
+}
+
 struct WindowsCallbackCheckout<'a, T> {
     slot: &'a Cell<Option<T>>,
     callback: Option<T>,
@@ -7020,21 +7031,21 @@ impl<T> Drop for WindowsCallbackCheckout<'_, T> {
 
 #[derive(Default)]
 pub(crate) struct Callbacks {
-    pub(crate) request_frame: Cell<Option<Box<dyn FnMut(RequestFrameOptions)>>>,
+    pub(crate) request_frame: Cell<Option<Rc<dyn Fn(RequestFrameOptions)>>>,
     pub(crate) input: PlatformInputCallbackSlot,
-    pub(crate) modifiers_changed: Cell<Option<Box<dyn FnMut(ModifiersChangedEvent)>>>,
+    pub(crate) modifiers_changed: Cell<Option<Rc<dyn Fn(ModifiersChangedEvent)>>>,
     pub(crate) active_status_change:
-        Cell<Option<Box<dyn FnMut(PlatformWindowActiveStatusObservation)>>>,
-    pub(crate) hovered_status_change: Cell<Option<Box<dyn FnMut(bool)>>>,
-    pub(crate) resize: Cell<Option<Box<dyn FnMut(Size<Pixels>, f32)>>>,
-    pub(crate) moved: Cell<Option<Box<dyn FnMut()>>>,
-    pub(crate) window_state_change: Cell<Option<Box<dyn FnMut()>>>,
+        Cell<Option<Rc<dyn Fn(PlatformWindowActiveStatusObservation)>>>,
+    pub(crate) hovered_status_change: Cell<Option<Rc<dyn Fn(bool)>>>,
+    pub(crate) resize: Cell<Option<Rc<dyn Fn(Size<Pixels>, f32)>>>,
+    pub(crate) moved: Cell<Option<Rc<dyn Fn()>>>,
+    pub(crate) window_state_change: Cell<Option<Rc<dyn Fn()>>>,
     pub(crate) window_mutation_observation:
-        Cell<Option<Box<dyn FnMut(PlatformWindowMutationObservation)>>>,
+        Cell<Option<Rc<dyn Fn(PlatformWindowMutationObservation)>>>,
     pub(crate) should_close: PlatformShouldCloseCallbackSlot,
     pub(crate) close: Cell<Option<Box<dyn FnOnce()>>>,
     pub(crate) hit_test_window_control: Cell<Option<Box<dyn FnMut() -> Option<WindowControlArea>>>>,
-    pub(crate) appearance_changed: Cell<Option<Box<dyn FnMut()>>>,
+    pub(crate) appearance_changed: Cell<Option<Rc<dyn Fn()>>>,
 }
 
 impl Callbacks {
@@ -8103,62 +8114,71 @@ impl PlatformWindow for WindowsWindow {
         if self.0.is_native_window_terminal() {
             return;
         }
-        let _ = with_windows_callback(&self.state.callbacks.request_frame, |callback| {
+        let _ = with_windows_shared_callback(&self.state.callbacks.request_frame, |callback| {
             callback(options)
         });
     }
 
-    fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>) {
-        self.state.callbacks.request_frame.set(Some(callback));
+    fn on_request_frame(&self, callback: Box<dyn Fn(RequestFrameOptions)>) {
+        self.state
+            .callbacks
+            .request_frame
+            .set(Some(Rc::from(callback)));
     }
 
     fn on_input(&self, callback: PlatformInputCallback) {
         self.state.callbacks.set_input(callback);
     }
 
-    fn on_modifiers_changed(&self, callback: Box<dyn FnMut(ModifiersChangedEvent)>) {
-        self.state.callbacks.modifiers_changed.set(Some(callback));
+    fn on_modifiers_changed(&self, callback: Box<dyn Fn(ModifiersChangedEvent)>) {
+        self.state
+            .callbacks
+            .modifiers_changed
+            .set(Some(Rc::from(callback)));
     }
 
     fn on_active_status_change(
         &self,
-        callback: Box<dyn FnMut(PlatformWindowActiveStatusObservation)>,
+        callback: Box<dyn Fn(PlatformWindowActiveStatusObservation)>,
     ) {
         self.0
             .state
             .callbacks
             .active_status_change
-            .set(Some(callback));
+            .set(Some(Rc::from(callback)));
     }
 
-    fn on_hover_status_change(&self, callback: Box<dyn FnMut(bool)>) {
+    fn on_hover_status_change(&self, callback: Box<dyn Fn(bool)>) {
         self.0
             .state
             .callbacks
             .hovered_status_change
-            .set(Some(callback));
+            .set(Some(Rc::from(callback)));
     }
 
-    fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>) {
-        self.state.callbacks.resize.set(Some(callback));
+    fn on_resize(&self, callback: Box<dyn Fn(Size<Pixels>, f32)>) {
+        self.state.callbacks.resize.set(Some(Rc::from(callback)));
     }
 
-    fn on_moved(&self, callback: Box<dyn FnMut()>) {
-        self.state.callbacks.moved.set(Some(callback));
+    fn on_moved(&self, callback: Box<dyn Fn()>) {
+        self.state.callbacks.moved.set(Some(Rc::from(callback)));
     }
 
-    fn on_window_state_change(&self, callback: Box<dyn FnMut()>) {
-        self.state.callbacks.window_state_change.set(Some(callback));
+    fn on_window_state_change(&self, callback: Box<dyn Fn()>) {
+        self.state
+            .callbacks
+            .window_state_change
+            .set(Some(Rc::from(callback)));
     }
 
     fn on_window_mutation_observation(
         &self,
-        callback: Box<dyn FnMut(PlatformWindowMutationObservation)>,
+        callback: Box<dyn Fn(PlatformWindowMutationObservation)>,
     ) {
         self.state
             .callbacks
             .window_mutation_observation
-            .set(Some(callback));
+            .set(Some(Rc::from(callback)));
     }
 
     fn prepare_window_mutation(&self, domain: WindowMutationDomain, generation: u64) {
@@ -8197,12 +8217,12 @@ impl PlatformWindow for WindowsWindow {
             .set(Some(callback));
     }
 
-    fn on_appearance_changed(&self, callback: Box<dyn FnMut()>) {
+    fn on_appearance_changed(&self, callback: Box<dyn Fn()>) {
         self.0
             .state
             .callbacks
             .appearance_changed
-            .set(Some(callback));
+            .set(Some(Rc::from(callback)));
     }
 
     fn draw(&self, scene: &Scene) -> PlatformWindowPresentOutcome {
@@ -9242,6 +9262,7 @@ mod tests {
         WindowsNativePointerPhysicalFrameScope, WindowsNativePointerPhysicalFrameState,
         WindowsNonClientPolicy, adjusted_window_rect_for_dpi, non_rude_hwnd_for_fullscreen,
         physical_geometry_sample_is_stable, window_rect_from_observed_frame, with_windows_callback,
+        with_windows_shared_callback,
     };
     use open_gpui::{
         Bounds, DevicePixels, MouseButton, PlatformNativePointerPhysicalFrame,
@@ -9753,5 +9774,46 @@ mod tests {
 
         assert!(panic.is_err());
         assert_eq!(callback.take(), Some(2));
+    }
+
+    #[test]
+    fn shared_callback_remains_available_during_reentry() {
+        let call_count = Rc::new(Cell::new(0usize));
+        let callback: Rc<dyn Fn()> = Rc::new({
+            let call_count = call_count.clone();
+            move || call_count.set(call_count.get() + 1)
+        });
+        let slot = Cell::new(Some(callback));
+
+        let _ = with_windows_shared_callback(&slot, |outer| {
+            outer();
+            assert!(with_windows_shared_callback(&slot, |nested| nested()).is_some());
+        });
+
+        assert_eq!(call_count.get(), 2);
+    }
+
+    #[test]
+    fn shared_callback_keeps_a_reentrant_replacement() {
+        let original_calls = Rc::new(Cell::new(0usize));
+        let replacement_calls = Rc::new(Cell::new(0usize));
+        let original: Rc<dyn Fn()> = Rc::new({
+            let original_calls = original_calls.clone();
+            move || original_calls.set(original_calls.get() + 1)
+        });
+        let replacement: Rc<dyn Fn()> = Rc::new({
+            let replacement_calls = replacement_calls.clone();
+            move || replacement_calls.set(replacement_calls.get() + 1)
+        });
+        let slot = Cell::new(Some(original));
+
+        let _ = with_windows_shared_callback(&slot, |callback| {
+            callback();
+            slot.set(Some(replacement.clone()));
+        });
+        let _ = with_windows_shared_callback(&slot, |callback| callback());
+
+        assert_eq!(original_calls.get(), 1);
+        assert_eq!(replacement_calls.get(), 1);
     }
 }

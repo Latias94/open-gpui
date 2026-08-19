@@ -5251,22 +5251,19 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     /// Requests one backend frame callback without requiring native visibility.
     #[doc(hidden)]
     fn request_frame(&self, _options: RequestFrameOptions) {}
-    fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>);
+    fn on_request_frame(&self, callback: Box<dyn Fn(RequestFrameOptions)>);
     fn on_input(&self, callback: PlatformInputCallback);
-    fn on_modifiers_changed(&self, _callback: Box<dyn FnMut(ModifiersChangedEvent)>) {}
-    fn on_active_status_change(
-        &self,
-        callback: Box<dyn FnMut(PlatformWindowActiveStatusObservation)>,
-    );
-    fn on_hover_status_change(&self, callback: Box<dyn FnMut(bool)>);
-    fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>);
-    fn on_moved(&self, callback: Box<dyn FnMut()>);
+    fn on_modifiers_changed(&self, _callback: Box<dyn Fn(ModifiersChangedEvent)>) {}
+    fn on_active_status_change(&self, callback: Box<dyn Fn(PlatformWindowActiveStatusObservation)>);
+    fn on_hover_status_change(&self, callback: Box<dyn Fn(bool)>);
+    fn on_resize(&self, callback: Box<dyn Fn(Size<Pixels>, f32)>);
+    fn on_moved(&self, callback: Box<dyn Fn()>);
     /// Registers a callback for externally observed window-state changes that need not resize or
     /// move the window, such as minimization.
     ///
     /// This callback refreshes committed platform facts. It does not settle a mutation ticket;
     /// queued mutations settle only through [`Self::on_window_mutation_observation`].
-    fn on_window_state_change(&self, _callback: Box<dyn FnMut()>) {}
+    fn on_window_state_change(&self, _callback: Box<dyn Fn()>) {}
     /// Registers a callback for a coherent terminal window-mutation observation.
     ///
     /// This callback must not be used for intermediate move or resize notifications. Backends
@@ -5278,7 +5275,7 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     /// OS-adjusted success.
     fn on_window_mutation_observation(
         &self,
-        _callback: Box<dyn FnMut(PlatformWindowMutationObservation)>,
+        _callback: Box<dyn Fn(PlatformWindowMutationObservation)>,
     ) {
     }
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>);
@@ -5289,8 +5286,8 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     /// authority can no longer produce events. Backends without an external window server invoke
     /// it while dropping their platform-window owner.
     fn on_close(&self, callback: Box<dyn FnOnce()>);
-    fn on_appearance_changed(&self, callback: Box<dyn FnMut()>);
-    fn on_button_layout_changed(&self, _callback: Box<dyn FnMut()>) {}
+    fn on_appearance_changed(&self, callback: Box<dyn Fn()>);
+    fn on_button_layout_changed(&self, _callback: Box<dyn Fn()>) {}
     /// Submits one frame to the platform renderer.
     ///
     /// Any non-[`PlatformWindowPresentOutcome::Submitted`] outcome must not be reported as
@@ -5316,11 +5313,11 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn set_traffic_light_position(&self, _position: Point<Pixels>) {}
     fn show_character_palette(&self) {}
     fn titlebar_double_click(&self) {}
-    fn on_move_tab_to_new_window(&self, _callback: Box<dyn FnMut()>) {}
-    fn on_merge_all_windows(&self, _callback: Box<dyn FnMut()>) {}
-    fn on_select_previous_tab(&self, _callback: Box<dyn FnMut()>) {}
-    fn on_select_next_tab(&self, _callback: Box<dyn FnMut()>) {}
-    fn on_toggle_tab_bar(&self, _callback: Box<dyn FnMut()>) {}
+    fn on_move_tab_to_new_window(&self, _callback: Box<dyn Fn()>) {}
+    fn on_merge_all_windows(&self, _callback: Box<dyn Fn()>) {}
+    fn on_select_previous_tab(&self, _callback: Box<dyn Fn()>) {}
+    fn on_select_next_tab(&self, _callback: Box<dyn Fn()>) {}
+    fn on_toggle_tab_bar(&self, _callback: Box<dyn Fn()>) {}
     fn merge_all_windows(&self) {}
     fn move_tab_to_new_window(&self) {}
     fn toggle_window_tab_overview(&self) {}

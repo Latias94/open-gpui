@@ -87,15 +87,15 @@ pub(crate) struct TestWindowState {
     native_drop_callback: Option<Box<dyn FnMut()>>,
     hit_test_window_control_callback: Option<Box<dyn FnMut() -> Option<WindowControlArea>>>,
     input_callback: PlatformInputCallbackSlot,
-    active_status_change_callback: Option<Box<dyn FnMut(PlatformWindowActiveStatusObservation)>>,
-    hover_status_change_callback: Option<Box<dyn FnMut(bool)>>,
-    request_frame_callback: Option<Box<dyn FnMut(RequestFrameOptions)>>,
+    active_status_change_callback: Option<Rc<dyn Fn(PlatformWindowActiveStatusObservation)>>,
+    hover_status_change_callback: Option<Rc<dyn Fn(bool)>>,
+    request_frame_callback: Option<Rc<dyn Fn(RequestFrameOptions)>>,
     defer_frame_requests: bool,
     deferred_frame_request: Option<RequestFrameOptions>,
-    resize_callback: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
-    moved_callback: Option<Box<dyn FnMut()>>,
-    window_state_change_callback: Option<Box<dyn FnMut()>>,
-    mutation_observation_callback: Option<Box<dyn FnMut(PlatformWindowMutationObservation)>>,
+    resize_callback: Option<Rc<dyn Fn(Size<Pixels>, f32)>>,
+    moved_callback: Option<Rc<dyn Fn()>>,
+    window_state_change_callback: Option<Rc<dyn Fn()>>,
+    mutation_observation_callback: Option<Rc<dyn Fn(PlatformWindowMutationObservation)>>,
     input_handler: PlatformInputHandlerSlot,
     ime_position_history: Vec<Bounds<Pixels>>,
     is_minimized: bool,
@@ -788,15 +788,11 @@ impl TestWindow {
         if !lock.is_minimized && !lock.is_maximized && !lock.is_fullscreen {
             lock.window_bounds = WindowBounds::Windowed(lock.bounds);
         }
-        let Some(mut callback) = lock.resize_callback.take() else {
+        let Some(callback) = lock.resize_callback.clone() else {
             return;
         };
         drop(lock);
         callback(size, scale_factor);
-        let mut lock = self.0.lock();
-        if !lock.closed {
-            lock.resize_callback = Some(callback);
-        }
     }
 
     pub(crate) fn set_physical_client_geometry(
@@ -827,15 +823,11 @@ impl TestWindow {
     pub fn simulate_minimize(&mut self) {
         let mut lock = self.0.lock();
         lock.is_minimized = true;
-        let Some(mut callback) = lock.window_state_change_callback.take() else {
+        let Some(callback) = lock.window_state_change_callback.clone() else {
             return;
         };
         drop(lock);
         callback();
-        let mut lock = self.0.lock();
-        if !lock.closed {
-            lock.window_state_change_callback = Some(callback);
-        }
     }
 
     pub(crate) fn simulate_active_status_change(&self, active: bool) {
@@ -850,15 +842,11 @@ impl TestWindow {
     ) {
         let mut lock = self.0.lock();
         lock.is_active = observation.active();
-        let Some(mut callback) = lock.active_status_change_callback.take() else {
+        let Some(callback) = lock.active_status_change_callback.clone() else {
             return;
         };
         drop(lock);
         callback(observation);
-        let mut lock = self.0.lock();
-        if !lock.closed {
-            lock.active_status_change_callback = Some(callback);
-        }
     }
 
     #[cfg(test)]
@@ -943,7 +931,7 @@ impl TestWindow {
         lock.pending_mutations
             .retain(|queued| queued.request.domain() != domain);
         let facts = window_platform_facts(&lock);
-        let mut callback = lock.mutation_observation_callback.take();
+        let callback = lock.mutation_observation_callback.clone();
         drop(lock);
         if let Some((session, window_id, request, native_facts)) = provisional_placement {
             settle_test_provisional_placement(
@@ -954,16 +942,12 @@ impl TestWindow {
                 WindowProvisionalPlacementOutcome::Settled,
             );
         }
-        let Some(mut callback) = callback else {
+        let Some(callback) = callback else {
             return false;
         };
         callback(PlatformWindowMutationObservation::observed(
             domain, generation, facts,
         ));
-        let mut lock = self.0.lock();
-        if !lock.closed {
-            lock.mutation_observation_callback = Some(callback);
-        }
         true
     }
 
@@ -988,7 +972,7 @@ impl TestWindow {
             Some((session, lock.handle.window_id(), request, facts))
         });
         let facts = window_platform_facts(&lock);
-        let mut callback = lock.mutation_observation_callback.take();
+        let callback = lock.mutation_observation_callback.clone();
         drop(lock);
         if let Some((session, window_id, request, native_facts)) = provisional_placement {
             settle_test_provisional_placement(
@@ -999,16 +983,12 @@ impl TestWindow {
                 WindowProvisionalPlacementOutcome::Settled,
             );
         }
-        let Some(mut callback) = callback else {
+        let Some(callback) = callback else {
             return false;
         };
         callback(PlatformWindowMutationObservation::observed(
             domain, generation, facts,
         ));
-        let mut lock = self.0.lock();
-        if !lock.closed {
-            lock.mutation_observation_callback = Some(callback);
-        }
         true
     }
 
@@ -1080,35 +1060,27 @@ impl TestWindow {
             };
             (session, window_id, request, native_facts, outcome)
         });
-        let mut callback = lock.mutation_observation_callback.take();
+        let callback = lock.mutation_observation_callback.clone();
         drop(lock);
         if let Some((session, window_id, request, native_facts, outcome)) = provisional_placement {
             settle_test_provisional_placement(session, window_id, request, native_facts, outcome);
         }
-        let Some(mut callback) = callback else {
+        let Some(callback) = callback else {
             return false;
         };
         callback(PlatformWindowMutationObservation::terminal(
             domain, generation, terminal, facts,
         ));
-        let mut lock = self.0.lock();
-        if !lock.closed {
-            lock.mutation_observation_callback = Some(callback);
-        }
         true
     }
 
     pub(crate) fn simulate_hover_status_change(&self, hovered: bool) {
-        let mut lock = self.0.lock();
-        let Some(mut callback) = lock.hover_status_change_callback.take() else {
+        let lock = self.0.lock();
+        let Some(callback) = lock.hover_status_change_callback.clone() else {
             return;
         };
         drop(lock);
         callback(hovered);
-        let mut lock = self.0.lock();
-        if !lock.closed {
-            lock.hover_status_change_callback = Some(callback);
-        }
     }
 
     fn close(&self) -> bool {
@@ -1300,16 +1272,12 @@ impl TestWindow {
 
     /// Simulates the platform delivering a frame request.
     pub fn simulate_frame(&self, options: RequestFrameOptions) -> bool {
-        let mut lock = self.0.lock();
-        let Some(mut callback) = lock.request_frame_callback.take() else {
+        let lock = self.0.lock();
+        let Some(callback) = lock.request_frame_callback.clone() else {
             return false;
         };
         drop(lock);
         callback(options);
-        let mut lock = self.0.lock();
-        if !lock.closed {
-            lock.request_frame_callback = Some(callback);
-        }
         true
     }
 }
@@ -1764,10 +1732,10 @@ impl PlatformWindow for TestWindow {
         let _ = self.simulate_frame(options);
     }
 
-    fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>) {
+    fn on_request_frame(&self, callback: Box<dyn Fn(RequestFrameOptions)>) {
         let mut state = self.0.lock();
         if !state.closed {
-            state.request_frame_callback = Some(callback);
+            state.request_frame_callback = Some(Rc::from(callback));
         }
     }
 
@@ -1778,49 +1746,49 @@ impl PlatformWindow for TestWindow {
 
     fn on_active_status_change(
         &self,
-        callback: Box<dyn FnMut(PlatformWindowActiveStatusObservation)>,
+        callback: Box<dyn Fn(PlatformWindowActiveStatusObservation)>,
     ) {
         let mut state = self.0.lock();
         if !state.closed {
-            state.active_status_change_callback = Some(callback);
+            state.active_status_change_callback = Some(Rc::from(callback));
         }
     }
 
-    fn on_hover_status_change(&self, callback: Box<dyn FnMut(bool)>) {
+    fn on_hover_status_change(&self, callback: Box<dyn Fn(bool)>) {
         let mut state = self.0.lock();
         if !state.closed {
-            state.hover_status_change_callback = Some(callback);
+            state.hover_status_change_callback = Some(Rc::from(callback));
         }
     }
 
-    fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>) {
+    fn on_resize(&self, callback: Box<dyn Fn(Size<Pixels>, f32)>) {
         let mut state = self.0.lock();
         if !state.closed {
-            state.resize_callback = Some(callback);
+            state.resize_callback = Some(Rc::from(callback));
         }
     }
 
-    fn on_moved(&self, callback: Box<dyn FnMut()>) {
+    fn on_moved(&self, callback: Box<dyn Fn()>) {
         let mut state = self.0.lock();
         if !state.closed {
-            state.moved_callback = Some(callback);
+            state.moved_callback = Some(Rc::from(callback));
         }
     }
 
-    fn on_window_state_change(&self, callback: Box<dyn FnMut()>) {
+    fn on_window_state_change(&self, callback: Box<dyn Fn()>) {
         let mut state = self.0.lock();
         if !state.closed {
-            state.window_state_change_callback = Some(callback);
+            state.window_state_change_callback = Some(Rc::from(callback));
         }
     }
 
     fn on_window_mutation_observation(
         &self,
-        callback: Box<dyn FnMut(PlatformWindowMutationObservation)>,
+        callback: Box<dyn Fn(PlatformWindowMutationObservation)>,
     ) {
         let mut state = self.0.lock();
         if !state.closed {
-            state.mutation_observation_callback = Some(callback);
+            state.mutation_observation_callback = Some(Rc::from(callback));
         }
     }
 
@@ -1845,7 +1813,7 @@ impl PlatformWindow for TestWindow {
         }
     }
 
-    fn on_appearance_changed(&self, _callback: Box<dyn FnMut()>) {}
+    fn on_appearance_changed(&self, _callback: Box<dyn Fn()>) {}
 
     fn draw(&self, _scene: &Scene) -> PlatformWindowPresentOutcome {
         let mut state = self.0.lock();
