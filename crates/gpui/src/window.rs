@@ -2201,6 +2201,40 @@ pub struct InputLatencySnapshot {
     /// Count of input events that arrived mid-draw and were excluded from
     /// latency recording.
     pub mid_draw_events_dropped: u64,
+    /// Count of recorded input events still waiting for a submitted frame.
+    pub pending_input_count: u64,
+    /// Count of framework frames built during this measurement window.
+    pub drawn_frame_count: u64,
+    /// Count of frames handed to the platform presentation path.
+    pub present_attempt_count: u64,
+    /// Count of presentation attempts submitted to the platform renderer.
+    pub submitted_present_count: u64,
+    /// Count of presentation attempts deferred by the native surface.
+    pub deferred_present_count: u64,
+    /// Count of presentation attempts requiring a newer rendered frame.
+    pub repaint_required_present_count: u64,
+    /// Count of presentation attempts rejected by the renderer or native surface.
+    pub rejected_present_count: u64,
+    /// Count of redraw requests admitted by the window invalidator.
+    pub refresh_request_count: u64,
+    /// Count of admitted redraw requests that found the window already dirty.
+    pub coalesced_refresh_request_count: u64,
+    /// Redraw requests grouped by their direct caller.
+    pub refresh_callsites: Vec<InputLatencyRefreshCallsite>,
+}
+
+/// Input-latency diagnostic for one direct [`Window::refresh`] caller.
+#[cfg(feature = "input-latency-histogram")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InputLatencyRefreshCallsite {
+    /// Source file containing the redraw request.
+    pub file: &'static str,
+    /// Source line containing the redraw request.
+    pub line: u32,
+    /// Number of admitted redraw requests from this caller.
+    pub request_count: u64,
+    /// Number of those requests that found the window already dirty.
+    pub coalesced_request_count: u64,
 }
 
 /// Records the time between when the first input event in a frame is dispatched
@@ -2220,6 +2254,15 @@ struct InputLatencyTracker {
     /// Count of input events that arrived mid-draw and were excluded from
     /// latency recording because their effects won't appear until the next frame.
     mid_draw_events_dropped: u64,
+    drawn_frame_count: u64,
+    present_attempt_count: u64,
+    submitted_present_count: u64,
+    deferred_present_count: u64,
+    repaint_required_present_count: u64,
+    rejected_present_count: u64,
+    refresh_request_count: u64,
+    coalesced_refresh_request_count: u64,
+    refresh_callsites: Vec<InputLatencyRefreshCallsite>,
 }
 
 #[cfg(feature = "input-latency-histogram")]
@@ -2233,6 +2276,15 @@ impl InputLatencyTracker {
             events_per_frame_histogram: Histogram::new(3)
                 .map_err(|e| anyhow!("Failed to create events per frame histogram: {e}"))?,
             mid_draw_events_dropped: 0,
+            drawn_frame_count: 0,
+            present_attempt_count: 0,
+            submitted_present_count: 0,
+            deferred_present_count: 0,
+            repaint_required_present_count: 0,
+            rejected_present_count: 0,
+            refresh_request_count: 0,
+            coalesced_refresh_request_count: 0,
+            refresh_callsites: Vec::new(),
         })
     }
 
@@ -2249,17 +2301,59 @@ impl InputLatencyTracker {
         self.mid_draw_events_dropped += 1;
     }
 
-    /// Record that a frame was presented, flushing pending latency and coalescing samples.
-    fn record_frame_presented(&mut self) {
-        if let Some(first_input_at) = self.first_input_at.take() {
-            let latency_nanos = first_input_at.elapsed().as_nanos() as u64;
-            self.latency_histogram.record(latency_nanos).ok();
+    fn record_frame_drawn(&mut self) {
+        self.drawn_frame_count += 1;
+    }
+
+    fn record_refresh_request(
+        &mut self,
+        already_dirty: bool,
+        caller: &'static std::panic::Location<'static>,
+    ) {
+        self.refresh_request_count += 1;
+        if already_dirty {
+            self.coalesced_refresh_request_count += 1;
         }
-        if self.pending_input_count > 0 {
-            self.events_per_frame_histogram
-                .record(self.pending_input_count)
-                .ok();
-            self.pending_input_count = 0;
+        if let Some(callsite) = self
+            .refresh_callsites
+            .iter_mut()
+            .find(|callsite| callsite.file == caller.file() && callsite.line == caller.line())
+        {
+            callsite.request_count += 1;
+            callsite.coalesced_request_count += u64::from(already_dirty);
+        } else {
+            self.refresh_callsites.push(InputLatencyRefreshCallsite {
+                file: caller.file(),
+                line: caller.line(),
+                request_count: 1,
+                coalesced_request_count: u64::from(already_dirty),
+            });
+        }
+    }
+
+    /// Record one platform presentation outcome, flushing input latency only
+    /// after the renderer accepted the frame.
+    fn record_present_outcome(&mut self, outcome: PlatformWindowPresentOutcome) {
+        self.present_attempt_count += 1;
+        match outcome {
+            PlatformWindowPresentOutcome::Submitted => {
+                self.submitted_present_count += 1;
+                if let Some(first_input_at) = self.first_input_at.take() {
+                    let latency_nanos = first_input_at.elapsed().as_nanos() as u64;
+                    self.latency_histogram.record(latency_nanos).ok();
+                }
+                if self.pending_input_count > 0 {
+                    self.events_per_frame_histogram
+                        .record(self.pending_input_count)
+                        .ok();
+                    self.pending_input_count = 0;
+                }
+            }
+            PlatformWindowPresentOutcome::Deferred => self.deferred_present_count += 1,
+            PlatformWindowPresentOutcome::RepaintRequired => {
+                self.repaint_required_present_count += 1;
+            }
+            PlatformWindowPresentOutcome::Rejected => self.rejected_present_count += 1,
         }
     }
 
@@ -2268,7 +2362,73 @@ impl InputLatencyTracker {
             latency_histogram: self.latency_histogram.clone(),
             events_per_frame_histogram: self.events_per_frame_histogram.clone(),
             mid_draw_events_dropped: self.mid_draw_events_dropped,
+            pending_input_count: self.pending_input_count,
+            drawn_frame_count: self.drawn_frame_count,
+            present_attempt_count: self.present_attempt_count,
+            submitted_present_count: self.submitted_present_count,
+            deferred_present_count: self.deferred_present_count,
+            repaint_required_present_count: self.repaint_required_present_count,
+            rejected_present_count: self.rejected_present_count,
+            refresh_request_count: self.refresh_request_count,
+            coalesced_refresh_request_count: self.coalesced_refresh_request_count,
+            refresh_callsites: self.refresh_callsites.clone(),
         }
+    }
+
+    fn reset(&mut self) {
+        self.first_input_at = None;
+        self.pending_input_count = 0;
+        self.latency_histogram.reset();
+        self.events_per_frame_histogram.reset();
+        self.mid_draw_events_dropped = 0;
+        self.drawn_frame_count = 0;
+        self.present_attempt_count = 0;
+        self.submitted_present_count = 0;
+        self.deferred_present_count = 0;
+        self.repaint_required_present_count = 0;
+        self.rejected_present_count = 0;
+        self.refresh_request_count = 0;
+        self.coalesced_refresh_request_count = 0;
+        self.refresh_callsites.clear();
+    }
+}
+
+#[cfg(all(test, feature = "input-latency-histogram"))]
+mod input_latency_tracker_tests {
+    use super::InputLatencyTracker;
+
+    #[test]
+    fn reset_clears_recorded_and_pending_input_latency() {
+        let mut tracker = InputLatencyTracker::new().expect("latency tracker should initialize");
+        tracker.latency_histogram.record(42).unwrap();
+        tracker.events_per_frame_histogram.record(3).unwrap();
+        tracker.pending_input_count = 2;
+        tracker.mid_draw_events_dropped = 1;
+
+        tracker.drawn_frame_count = 5;
+        tracker.present_attempt_count = 4;
+        tracker.submitted_present_count = 1;
+        tracker.deferred_present_count = 1;
+        tracker.repaint_required_present_count = 1;
+        tracker.rejected_present_count = 1;
+        tracker.record_refresh_request(true, std::panic::Location::caller());
+
+        tracker.reset();
+
+        let snapshot = tracker.snapshot();
+        assert_eq!(snapshot.latency_histogram.len(), 0);
+        assert_eq!(snapshot.events_per_frame_histogram.len(), 0);
+        assert_eq!(snapshot.pending_input_count, 0);
+        assert_eq!(snapshot.mid_draw_events_dropped, 0);
+        assert_eq!(snapshot.drawn_frame_count, 0);
+        assert_eq!(snapshot.present_attempt_count, 0);
+        assert_eq!(snapshot.submitted_present_count, 0);
+        assert_eq!(snapshot.deferred_present_count, 0);
+        assert_eq!(snapshot.repaint_required_present_count, 0);
+        assert_eq!(snapshot.rejected_present_count, 0);
+        assert_eq!(snapshot.refresh_request_count, 0);
+        assert_eq!(snapshot.coalesced_refresh_request_count, 0);
+        assert!(snapshot.refresh_callsites.is_empty());
     }
 }
 
@@ -3881,8 +4041,14 @@ impl Window {
     }
 
     /// Mark the window as dirty, scheduling it to be redrawn on the next frame.
+    #[track_caller]
     pub fn refresh(&mut self) {
         if self.invalidator.can_schedule_refresh() {
+            #[cfg(feature = "input-latency-histogram")]
+            self.input_latency_tracker.record_refresh_request(
+                self.invalidator.is_dirty(),
+                std::panic::Location::caller(),
+            );
             self.refreshing = true;
             self.invalidator.set_dirty(true);
         }
@@ -6992,6 +7158,8 @@ impl Window {
         if !self.begin_fresh_initial_presentation_attempt(cx) {
             return ArenaClearNeeded::new(&cx.element_arena);
         }
+        #[cfg(feature = "input-latency-histogram")]
+        self.input_latency_tracker.record_frame_drawn();
 
         self.invalidate_entities();
         cx.entities.clear_accessed();
@@ -7451,6 +7619,9 @@ impl Window {
                 self.refresh();
             }
             self.needs_present.set(false);
+            #[cfg(feature = "input-latency-histogram")]
+            self.input_latency_tracker
+                .record_present_outcome(PlatformWindowPresentOutcome::RepaintRequired);
             profiling::finish_frame!();
             return PlatformWindowPresentOutcome::RepaintRequired;
         }
@@ -7550,9 +7721,7 @@ impl Window {
             self.needs_present.set(true);
         }
         #[cfg(feature = "input-latency-histogram")]
-        if outcome == PlatformWindowPresentOutcome::Submitted {
-            self.input_latency_tracker.record_frame_presented();
-        }
+        self.input_latency_tracker.record_present_outcome(outcome);
         profiling::finish_frame!();
         outcome
     }
@@ -7581,6 +7750,12 @@ impl Window {
     #[cfg(feature = "input-latency-histogram")]
     pub fn input_latency_snapshot(&self) -> InputLatencySnapshot {
         self.input_latency_tracker.snapshot()
+    }
+
+    /// Clears all input-to-submitted-frame latency samples for this window.
+    #[cfg(feature = "input-latency-histogram")]
+    pub fn reset_input_latency_measurements(&mut self) {
+        self.input_latency_tracker.reset();
     }
 
     fn draw_roots(

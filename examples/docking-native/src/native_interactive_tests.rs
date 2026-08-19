@@ -5,7 +5,7 @@ use futures::FutureExt as _;
 use image::{Frame as ImageFrame, ImageBuffer, Rgba as ImageRgba};
 use open_gpui::{
     AnyWindowHandle, Application, AsyncApp, AtlasAccessOutcome, Bounds, DevicePixels, Empty,
-    ImageId, ImagePaintDiagnostic, NativeCapturedDragReleaseTerminal,
+    ImageId, ImagePaintDiagnostic, InputLatencySnapshot, NativeCapturedDragReleaseTerminal,
     NativeInputInvariantViolation, Pixels, PlatformWindowHit, PlatformWindowHitTerminus,
     PlatformWindowPresentOutcome, Point, QuitMode, RenderImage, Size, Subscription, Window,
     WindowId, WindowMouseEvent, WindowMutationDispatch, WindowPlatformFacts, img,
@@ -39,6 +39,7 @@ use serde::Deserialize;
 use std::{
     collections::{BTreeMap, BTreeSet},
     ffi::c_void,
+    fs,
     panic::{AssertUnwindSafe, set_hook, take_hook},
     time::{Duration, Instant},
 };
@@ -57,6 +58,7 @@ use windows::Win32::{
 
 const NATIVE_DOCK_SUITE_ID: &str = "docking-native.windows.interactive";
 const NATIVE_SCENARIO_ENV: &str = "OPEN_GPUI_NATIVE_SCENARIO_ID";
+const DRAG_LATENCY_OUTPUT_ENV: &str = "OPEN_GPUI_DOCK_DRAG_LATENCY_OUTPUT";
 const INPUT_CANARY: usize = NATIVE_TEST_INPUT_CANARY;
 const SCENARIO_TIMEOUT: Duration = Duration::from_secs(10);
 const POLL_INTERVAL: Duration = Duration::from_millis(5);
@@ -1846,7 +1848,27 @@ async fn run_captured_host_drop_scenario(
     scenario_id: &str,
 ) -> Result<()> {
     raise_native_window(scenario.target_hwnd)?;
+    let latency_probe_points = std::env::var_os(DRAG_LATENCY_OUTPUT_ENV)
+        .map(|_| {
+            cx.update(|app| {
+                Ok::<_, anyhow::Error>((
+                    source_tab_screen_point(app, scenario, "preview")?,
+                    source_tab_screen_point(app, scenario, "diff")?,
+                ))
+            })
+        })
+        .transpose()?;
     let (mut pointer_guard, _) = begin_native_captured_drag(cx, scenario).await?;
+    if let Some(points) = latency_probe_points {
+        measure_native_tab_drag_latency(cx, scenario, &mut pointer_guard, points).await?;
+        pointer_guard.inject(points.1, NativeTestPointerAction::PrimaryUp)?;
+        wait_until(cx, "native tab-drag latency probe to release", |cx| {
+            Ok(unsafe { GetCapture() } == HWND::default()
+                && !cx.update(|app| app.has_active_drag()))
+        })
+        .await?;
+        return Ok(());
+    }
     let target_selector_prefix = format!("dock:{SPACE}:tabs:");
     let target_bounds = cx.update(|app| {
         unique_matching_debug_bounds(
@@ -2210,15 +2232,194 @@ fn target_editor_screen_point(cx: &mut App, scenario: &NativeDockScenario) -> Re
     logical_client_point_to_screen(scenario.target_hwnd, bounds.center(), scale)
 }
 
-fn source_preview_tab_screen_point(cx: &mut App, scenario: &NativeDockScenario) -> Result<POINT> {
+fn source_tab_screen_point(
+    cx: &mut App,
+    scenario: &NativeDockScenario,
+    item: &str,
+) -> Result<POINT> {
     let bounds = unique_matching_debug_bounds(
         cx,
         scenario.source_window,
         &format!("dock:{SECONDARY_SPACE}:tabs:"),
-        ":tab:preview",
+        &format!(":tab:{item}"),
     )?;
     let scale = window_scale_factor(cx, scenario.source_window)?;
     logical_client_point_to_screen(scenario.source_hwnd, bounds.center(), scale)
+}
+
+fn source_preview_tab_screen_point(cx: &mut App, scenario: &NativeDockScenario) -> Result<POINT> {
+    source_tab_screen_point(cx, scenario, "preview")
+}
+
+async fn measure_native_tab_drag_latency(
+    cx: &mut AsyncApp,
+    scenario: &NativeDockScenario,
+    pointer_guard: &mut NativeTestSystemPointerGuard,
+    points: (POINT, POINT),
+) -> Result<()> {
+    const MOVE_COUNT: usize = 180;
+    const MOVE_INTERVAL: Duration = Duration::from_millis(4);
+
+    ensure!(
+        points.0 != points.1,
+        "the native drag latency probe requires two distinct tab positions"
+    );
+    for point in [points.0, points.1] {
+        ensure!(
+            native_test_non_shell_root_window_at(point) == Some(scenario.source_hwnd),
+            "the native drag latency probe point is occluded: point={point:?}, hit={:?}",
+            native_test_non_shell_root_window_at(point)
+        );
+    }
+
+    cx.update(|app| {
+        app.update_window(scenario.source_window, |_, window, _| {
+            window.reset_input_latency_measurements();
+        })?;
+        app.update_window(scenario.target_window, |_, window, _| {
+            window.reset_input_latency_measurements();
+        })?;
+        Ok::<_, anyhow::Error>(())
+    })?;
+    let source_moves_before = source_mouse_move_count(scenario)?;
+    let measurement_started = Instant::now();
+
+    for index in 0..MOVE_COUNT {
+        pointer_guard.inject(
+            if index % 2 == 0 { points.0 } else { points.1 },
+            NativeTestPointerAction::Move,
+        )?;
+        cx.background_executor().timer(MOVE_INTERVAL).await;
+    }
+
+    let wait_result = wait_until(cx, "native tab-drag latency samples to submit", |cx| {
+        let snapshot = cx.update(|app| input_latency_snapshot(app, scenario.source_window))?;
+        Ok(snapshot.pending_input_count == 0 && !snapshot.latency_histogram.is_empty())
+    })
+    .await;
+
+    let (source_snapshot, source_presentation, target_snapshot, target_presentation) =
+        cx.update(|app| {
+            let source = app.update_window(scenario.source_window, |_, window, _| {
+                (window.input_latency_snapshot(), window.presentation_facts())
+            })?;
+            let target = app.update_window(scenario.target_window, |_, window, _| {
+                (window.input_latency_snapshot(), window.presentation_facts())
+            })?;
+            Ok::<_, anyhow::Error>((source.0, source.1, target.0, target.1))
+        })?;
+    let source_moves = source_mouse_move_count(scenario)?.saturating_sub(source_moves_before);
+    let measurement_elapsed = measurement_started.elapsed();
+    let report = input_latency_report(
+        &source_snapshot,
+        source_presentation,
+        &target_snapshot,
+        target_presentation,
+        MOVE_COUNT,
+        source_moves,
+        measurement_elapsed,
+    );
+    let output = std::env::var(DRAG_LATENCY_OUTPUT_ENV)
+        .context("the native drag latency output path disappeared during measurement")?;
+    fs::write(&output, serde_json::to_vec_pretty(&report)?)
+        .with_context(|| format!("failed to write native drag latency report `{output}`"))?;
+    println!("OPEN_GPUI_DOCK_DRAG_LATENCY_REPORT {report}");
+    if let Err(error) = wait_result {
+        bail!("{error}; diagnostics={report}");
+    }
+    Ok(())
+}
+
+fn input_latency_snapshot(app: &mut App, window: AnyWindowHandle) -> Result<InputLatencySnapshot> {
+    app.update_window(window, |_, window, _| window.input_latency_snapshot())
+}
+
+fn source_mouse_move_count(scenario: &NativeDockScenario) -> Result<usize> {
+    Ok(scenario
+        .trace
+        .lock()
+        .map_err(|_| anyhow!("native mouse trace lock was poisoned"))?
+        .source
+        .iter()
+        .filter(|kind| **kind == NativeMouseKind::Move)
+        .count())
+}
+
+fn input_latency_report(
+    source_snapshot: &InputLatencySnapshot,
+    source_presentation: open_gpui::WindowPresentationFacts,
+    target_snapshot: &InputLatencySnapshot,
+    target_presentation: open_gpui::WindowPresentationFacts,
+    injected_moves: usize,
+    observed_moves: usize,
+    measurement_elapsed: Duration,
+) -> serde_json::Value {
+    let source = window_input_latency_report(source_snapshot, source_presentation);
+    let target = window_input_latency_report(target_snapshot, target_presentation);
+    let elapsed_seconds = measurement_elapsed.as_secs_f64();
+
+    serde_json::json!({
+        "injected_moves": injected_moves,
+        "observed_wndproc_moves": observed_moves,
+        "measurement_elapsed_ms": measurement_elapsed.as_secs_f64() * 1_000.0,
+        "observed_input_hz": observed_moves as f64 / elapsed_seconds,
+        "source_submitted_fps": source_snapshot.submitted_present_count as f64 / elapsed_seconds,
+        "target_submitted_fps": target_snapshot.submitted_present_count as f64 / elapsed_seconds,
+        "source": source,
+        "target": target,
+    })
+}
+
+fn window_input_latency_report(
+    snapshot: &InputLatencySnapshot,
+    presentation_facts: open_gpui::WindowPresentationFacts,
+) -> serde_json::Value {
+    let latency = &snapshot.latency_histogram;
+    let events = &snapshot.events_per_frame_histogram;
+    let recorded_invalidating_events = events
+        .iter_recorded()
+        .map(|value| value.value_iterated_to() * value.count_at_value())
+        .sum::<u64>();
+    let nanos_to_millis = |value: u64| value as f64 / 1_000_000.0;
+
+    serde_json::json!({
+        "recorded_invalidating_events": recorded_invalidating_events,
+        "submitted_frame_samples": latency.len(),
+        "drawn_frames": snapshot.drawn_frame_count,
+        "present_attempts": snapshot.present_attempt_count,
+        "present_outcomes": {
+            "submitted": snapshot.submitted_present_count,
+            "deferred": snapshot.deferred_present_count,
+            "repaint_required": snapshot.repaint_required_present_count,
+            "rejected": snapshot.rejected_present_count,
+        },
+        "refresh_requests": snapshot.refresh_request_count,
+        "coalesced_refresh_requests": snapshot.coalesced_refresh_request_count,
+        "refresh_callsites": snapshot.refresh_callsites.iter().map(|callsite| serde_json::json!({
+            "file": callsite.file,
+            "line": callsite.line,
+            "requests": callsite.request_count,
+            "coalesced": callsite.coalesced_request_count,
+        })).collect::<Vec<_>>(),
+        "input_to_submit_ms": {
+            "p50": nanos_to_millis(latency.value_at_quantile(0.50)),
+            "p95": nanos_to_millis(latency.value_at_quantile(0.95)),
+            "p99": nanos_to_millis(latency.value_at_quantile(0.99)),
+            "max": nanos_to_millis(latency.max()),
+            "mean": latency.mean() / 1_000_000.0,
+        },
+        "invalidating_events_per_submitted_frame": {
+            "p50": events.value_at_quantile(0.50),
+            "p95": events.value_at_quantile(0.95),
+            "p99": events.value_at_quantile(0.99),
+            "max": events.max(),
+            "mean": events.mean(),
+        },
+        "mid_draw_events_dropped": snapshot.mid_draw_events_dropped,
+        "pending_input_count": snapshot.pending_input_count,
+        "present_submitted_generation": presentation_facts.present_submitted_generation,
+        "non_empty_presented_generation": presentation_facts.non_empty_presented_generation,
+    })
 }
 
 fn target_drop_preview_bounds(
