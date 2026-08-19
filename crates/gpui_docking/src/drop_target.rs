@@ -72,6 +72,9 @@ fn collect_drop_candidates(input: &DockDropResolverInput<'_>) -> Vec<DockDropCan
     for leaf in input
         .leaves
         .iter()
+        .filter(|leaf| {
+            !input.is_node_excluded(leaf.root) && !input.is_node_excluded(leaf.target_tabs)
+        })
         .filter(|leaf| leaf.bounds.contains(&input.position))
     {
         let Some(target) = resolve_leaf_drop(
@@ -92,10 +95,12 @@ fn collect_drop_candidates(input: &DockDropResolverInput<'_>) -> Vec<DockDropCan
     for target in input
         .tab_bars
         .iter()
+        .filter(|target| !input.is_node_excluded(target.target_tabs))
         .filter(|target| target.bounds.contains(&input.position))
     {
         let target_bounds =
-            leaf_bounds_for_tabs(input.leaves, target.target_tabs).unwrap_or(target.bounds);
+            leaf_bounds_for_tabs(input.leaves, target.target_tabs, input.excluded_nodes)
+                .unwrap_or(target.bounds);
         push_drop_candidate(
             &mut candidates,
             &mut order,
@@ -123,10 +128,12 @@ fn collect_drop_candidates(input: &DockDropResolverInput<'_>) -> Vec<DockDropCan
     for target in input
         .tab_labels
         .iter()
+        .filter(|target| !input.is_node_excluded(target.target_tabs))
         .filter(|target| target.bounds.contains(&input.position))
     {
         let target_bounds =
-            leaf_bounds_for_tabs(input.leaves, target.target_tabs).unwrap_or(target.bounds);
+            leaf_bounds_for_tabs(input.leaves, target.target_tabs, input.excluded_nodes)
+                .unwrap_or(target.bounds);
         let insert_index = if input.position.x < target.bounds.center().x {
             target.target_index
         } else {
@@ -167,6 +174,9 @@ fn collect_drop_candidates(input: &DockDropResolverInput<'_>) -> Vec<DockDropCan
     for target in input
         .floating_title_bars
         .iter()
+        .filter(|target| {
+            !input.is_node_excluded(target.floating) && !input.is_node_excluded(target.target_tabs)
+        })
         .filter(|target| target.title_bounds.contains(&input.position))
     {
         push_drop_candidate(
@@ -195,7 +205,15 @@ fn collect_drop_candidates(input: &DockDropResolverInput<'_>) -> Vec<DockDropCan
 
     let leaf = input
         .root
-        .and_then(|root| best_leaf_for_root_containing(input.leaves, input.position, root.root));
+        .filter(|root| !input.is_node_excluded(root.root))
+        .and_then(|root| {
+            best_leaf_for_root_containing(
+                input.leaves,
+                input.position,
+                root.root,
+                input.excluded_nodes,
+            )
+        });
     if let Some(target) = resolve_root_edge_drop(input, leaf) {
         let root_bounds = input.root.expect("root edge target requires root").bounds;
         let hit_bounds = target
@@ -218,8 +236,8 @@ fn tab_insertion_slot_bounds(insertion_x: Pixels, target_bounds: Bounds<Pixels>)
 fn resolve_layout_drop_guide_target(
     input: &DockDropResolverInput<'_>,
 ) -> Option<DockResolvedDropTarget> {
-    let leaf = best_leaf_containing(input.leaves, input.position);
-    if let Some(root) = input.root
+    let leaf = best_leaf_containing(input.leaves, input.position, input.excluded_nodes);
+    if let Some(root) = input.root.filter(|root| !input.is_node_excluded(root.root))
         && root.bounds.contains(&input.position)
     {
         let leaf_for_root = leaf.filter(|leaf| leaf.root == root.root);

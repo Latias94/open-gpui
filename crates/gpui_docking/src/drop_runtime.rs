@@ -184,6 +184,7 @@ impl DockHostDropScene {
             root: self.root,
             floating_title_bars: &self.floating_title_bars,
             empty_spaces: &self.empty_spaces,
+            excluded_nodes: &self.excluded_nodes,
         })
     }
 
@@ -206,6 +207,7 @@ impl DockHostDropScene {
             root: self.root,
             floating_title_bars: &self.floating_title_bars,
             empty_spaces: &self.empty_spaces,
+            excluded_nodes: &self.excluded_nodes,
         })
     }
 
@@ -218,19 +220,25 @@ impl DockHostDropScene {
         target_validator: Option<&DockDropTargetValidator<'_>>,
         edge_plan_resolver: Option<&DockEdgePlanResolver<'_>>,
     ) -> Option<DockHostDropResolution> {
-        let mut scene = self.clone().excluding_nodes(excluded_nodes);
-        scene.position = position;
-        scene = scene.with_payload_size(payload_size);
-        scene
-            .resolve_drop_with_validator(policy, target_validator, edge_plan_resolver)
+        let input = || DockDropResolverInput {
+            position,
+            payload_size,
+            drop_guide_metrics: self.drop_guide_metrics,
+            policy,
+            target_validator,
+            edge_plan_resolver,
+            tab_labels: &self.tab_labels,
+            tab_bars: &self.tab_bars,
+            leaves: &self.leaves,
+            root: self.root,
+            floating_title_bars: &self.floating_title_bars,
+            empty_spaces: &self.empty_spaces,
+            excluded_nodes: &excluded_nodes,
+        };
+        drop_target::resolve_layout_drop(input())
             .map(DockHostDropResolution::Drop)
             .or_else(|| {
-                scene
-                    .resolve_guide_target_with_validator(
-                        policy,
-                        target_validator,
-                        edge_plan_resolver,
-                    )
+                drop_target::resolve_layout_drop_guide(input())
                     .map(DockHostDropResolution::GuideOnly)
             })
     }
@@ -332,8 +340,11 @@ fn tab_reorder_hold_dead_zone_contains(bounds: Bounds<Pixels>, position: Point<P
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::drop_target::{
-        DockDropResolveSource, DockResolvedDropTargetAvailability, DockResolvedDropTargetKind,
+    use crate::{
+        DockGraph, DockItemId, DockNode,
+        drop_target::{
+            DockDropResolveSource, DockResolvedDropTargetAvailability, DockResolvedDropTargetKind,
+        },
     };
     use open_gpui::{point, px, size};
     use slotmap::Key;
@@ -398,5 +409,123 @@ mod tests {
         let mut scene = scene.excluding_nodes(vec![tabs]);
         assert!(scene.leaves.is_empty());
         assert!(!scene.push_fact(leaf));
+    }
+
+    #[test]
+    fn borrowed_exclusion_view_matches_owned_filtered_scene() {
+        let mut graph = DockGraph::new();
+        let root = graph.insert_node(DockNode::Tabs {
+            items: vec![DockItemId::from("root")],
+            selected: Some(DockItemId::from("root")),
+        });
+        let excluded_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![DockItemId::from("excluded")],
+            selected: Some(DockItemId::from("excluded")),
+        });
+        let allowed_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![DockItemId::from("allowed")],
+            selected: Some(DockItemId::from("allowed")),
+        });
+        let floating = graph.insert_node(DockNode::Tabs {
+            items: vec![DockItemId::from("floating")],
+            selected: Some(DockItemId::from("floating")),
+        });
+        let root_bounds = bounds(0.0, 0.0, 640.0, 420.0);
+        let excluded_bounds = bounds(20.0, 48.0, 280.0, 320.0);
+        let allowed_bounds = bounds(320.0, 48.0, 300.0, 320.0);
+        let floating_title_bounds = bounds(180.0, 380.0, 240.0, 28.0);
+        let mut scene = DockHostDropScene::new(point(px(0.0), px(0.0)));
+        for fact in [
+            DockHostDropSceneFact::Root(DockRootDropTarget {
+                root,
+                bounds: root_bounds,
+            }),
+            DockHostDropSceneFact::Leaf(DockLeafDropTarget {
+                root,
+                target_tabs: excluded_tabs,
+                bounds: excluded_bounds,
+                is_central: false,
+            }),
+            DockHostDropSceneFact::TabBar(DockTabBarDropTarget {
+                target_tabs: excluded_tabs,
+                insert_index: 1,
+                bounds: bounds(20.0, 48.0, 280.0, 28.0),
+                is_central: false,
+            }),
+            DockHostDropSceneFact::TabLabel(DockTabLabelDropTarget {
+                target_tabs: excluded_tabs,
+                target_index: 0,
+                bounds: bounds(20.0, 48.0, 100.0, 28.0),
+                is_central: false,
+            }),
+            DockHostDropSceneFact::Leaf(DockLeafDropTarget {
+                root,
+                target_tabs: allowed_tabs,
+                bounds: allowed_bounds,
+                is_central: false,
+            }),
+            DockHostDropSceneFact::TabBar(DockTabBarDropTarget {
+                target_tabs: allowed_tabs,
+                insert_index: 1,
+                bounds: bounds(320.0, 48.0, 300.0, 28.0),
+                is_central: false,
+            }),
+            DockHostDropSceneFact::TabLabel(DockTabLabelDropTarget {
+                target_tabs: allowed_tabs,
+                target_index: 0,
+                bounds: bounds(320.0, 48.0, 100.0, 28.0),
+                is_central: false,
+            }),
+            DockHostDropSceneFact::FloatingTitleBar(DockFloatingTitleBarDropTarget {
+                floating,
+                target_tabs: allowed_tabs,
+                title_bounds: floating_title_bounds,
+                preview_bounds: bounds(180.0, 180.0, 240.0, 220.0),
+            }),
+        ] {
+            assert!(scene.push_fact(fact));
+        }
+
+        let policy = DockPolicy::default();
+        let payload_size = Some(size(px(220.0), px(160.0)));
+        for excluded_nodes in [
+            vec![],
+            vec![excluded_tabs],
+            vec![allowed_tabs],
+            vec![root],
+            vec![floating],
+        ] {
+            for position in [
+                point(px(70.0), px(62.0)),
+                point(px(370.0), px(62.0)),
+                point(px(300.0), px(394.0)),
+                point(px(8.0), px(210.0)),
+            ] {
+                let mut owned = scene.clone().excluding_nodes(excluded_nodes.clone());
+                owned.position = position;
+                owned = owned.with_payload_size(payload_size);
+                let expected = owned
+                    .resolve_drop_with_validator(&policy, None, None)
+                    .map(DockHostDropResolution::Drop)
+                    .or_else(|| {
+                        owned
+                            .resolve_guide_target_with_validator(&policy, None, None)
+                            .map(DockHostDropResolution::GuideOnly)
+                    });
+
+                assert_eq!(
+                    scene.resolve_pointer_move(
+                        position,
+                        payload_size,
+                        excluded_nodes.clone(),
+                        &policy,
+                        None,
+                        None,
+                    ),
+                    expected,
+                    "borrowed exclusion must match the legacy owned filtering for {excluded_nodes:?} at {position:?}"
+                );
+            }
+        }
     }
 }

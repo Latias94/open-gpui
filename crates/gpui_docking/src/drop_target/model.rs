@@ -196,6 +196,7 @@ pub(crate) struct DockDropResolverInput<'a> {
     pub(crate) root: Option<DockRootDropTarget>,
     pub(crate) floating_title_bars: &'a [DockFloatingTitleBarDropTarget],
     pub(crate) empty_spaces: &'a [DockEmptySpaceDropTarget],
+    pub(crate) excluded_nodes: &'a [DockNodeId],
 }
 
 impl<'a> DockDropResolverInput<'a> {
@@ -214,7 +215,13 @@ impl<'a> DockDropResolverInput<'a> {
             root: None,
             floating_title_bars: &[],
             empty_spaces: &[],
+            excluded_nodes: &[],
         }
+    }
+
+    #[inline]
+    pub(crate) fn is_node_excluded(&self, node: DockNodeId) -> bool {
+        self.excluded_nodes.contains(&node)
     }
 }
 

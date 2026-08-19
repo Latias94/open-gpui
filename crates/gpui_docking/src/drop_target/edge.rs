@@ -22,6 +22,9 @@ pub(super) fn resolve_root_edge_drop(
     leaf: Option<&DockLeafDropTarget>,
 ) -> Option<DockResolvedDropTarget> {
     let root = input.root?;
+    if input.is_node_excluded(root.root) {
+        return None;
+    }
     let leaf_tabs = match leaf {
         Some(leaf) if leaf.root == root.root => Some(leaf.target_tabs),
         Some(_) => return None,
@@ -279,14 +282,19 @@ fn split_size_extent(axis: SplitAxis, size: Size<Pixels>) -> Pixels {
     }
 }
 
-pub(super) fn best_leaf_for_root_containing(
-    leaves: &[DockLeafDropTarget],
+pub(super) fn best_leaf_for_root_containing<'a>(
+    leaves: &'a [DockLeafDropTarget],
     position: Point<Pixels>,
     root: DockNodeId,
-) -> Option<&DockLeafDropTarget> {
+    excluded_nodes: &[DockNodeId],
+) -> Option<&'a DockLeafDropTarget> {
     let mut best: Option<(&DockLeafDropTarget, f32, usize)> = None;
     for (index, leaf) in leaves.iter().enumerate() {
-        if leaf.root != root || !leaf.bounds.contains(&position) {
+        if leaf.root != root
+            || excluded_nodes.contains(&leaf.root)
+            || excluded_nodes.contains(&leaf.target_tabs)
+            || !leaf.bounds.contains(&position)
+        {
             continue;
         }
         let area = bounds_area(leaf.bounds);
@@ -303,13 +311,17 @@ pub(super) fn best_leaf_for_root_containing(
     best.map(|(leaf, _, _)| leaf)
 }
 
-pub(super) fn best_leaf_containing(
-    leaves: &[DockLeafDropTarget],
+pub(super) fn best_leaf_containing<'a>(
+    leaves: &'a [DockLeafDropTarget],
     position: Point<Pixels>,
-) -> Option<&DockLeafDropTarget> {
+    excluded_nodes: &[DockNodeId],
+) -> Option<&'a DockLeafDropTarget> {
     let mut best: Option<(&DockLeafDropTarget, f32, usize)> = None;
     for (index, leaf) in leaves.iter().enumerate() {
-        if !leaf.bounds.contains(&position) {
+        if excluded_nodes.contains(&leaf.root)
+            || excluded_nodes.contains(&leaf.target_tabs)
+            || !leaf.bounds.contains(&position)
+        {
             continue;
         }
         let area = bounds_area(leaf.bounds);
@@ -329,9 +341,17 @@ pub(super) fn best_leaf_containing(
 pub(super) fn leaf_bounds_for_tabs(
     leaves: &[DockLeafDropTarget],
     target_tabs: DockNodeId,
+    excluded_nodes: &[DockNodeId],
 ) -> Option<Bounds<Pixels>> {
+    if excluded_nodes.contains(&target_tabs) {
+        return None;
+    }
     leaves
         .iter()
-        .find(|leaf| leaf.target_tabs == target_tabs)
+        .find(|leaf| {
+            leaf.target_tabs == target_tabs
+                && !excluded_nodes.contains(&leaf.root)
+                && !excluded_nodes.contains(&leaf.target_tabs)
+        })
         .map(|leaf| leaf.bounds)
 }
