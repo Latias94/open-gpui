@@ -129,7 +129,6 @@ mod graph_test_support;
 mod graph_validation_tests;
 mod host;
 mod host_debug;
-mod host_drop_scene;
 mod host_interaction_outcome;
 mod host_interactions;
 mod host_render_actions;

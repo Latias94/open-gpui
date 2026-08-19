@@ -31,11 +31,6 @@ impl DockWorkspaceResolvedDropTarget {
         &self.target_space
     }
 
-    #[cfg(test)]
-    pub(crate) fn target(&self) -> &DockResolvedDropTarget {
-        &self.target
-    }
-
     pub(crate) fn into_parts(self) -> DockWorkspaceResolvedDropTargetParts {
         DockWorkspaceResolvedDropTargetParts {
             target_space: self.target_space,

@@ -2272,30 +2272,34 @@ mod handle_suite {
             .expect("target viewport should render DockHost");
         let host_bounds = floating_bounds(0.0, 0.0, 360.0, 220.0);
 
-        target_window
-            .update(cx, |host, window, cx| {
-                host.publish_viewport_host_scene_interaction(
-                    host_bounds,
-                    target_center_host_position(),
-                    window,
-                    cx,
-                );
+        let live_facts = target_window
+            .update(cx, |_, window, cx| {
+                DockViewportWindowFacts::from_window(window, cx)
             })
-            .expect("target host should publish a live scene");
+            .expect("target host should expose live window facts");
+        runtime.begin_viewport_host_scene(
+            target_space.clone(),
+            opened.window().window_id(),
+            live_facts,
+            host_bounds,
+            target_center_host_position(),
+        );
         assert!(runtime.viewport_route_ready(&target_space));
 
         cx.simulate_window_minimize(opened.window());
-        target_window
-            .update(cx, |host, window, cx| {
+        let minimized_facts = target_window
+            .update(cx, |_, window, cx| {
                 assert!(window.is_minimized());
-                host.publish_viewport_host_scene_interaction(
-                    host_bounds,
-                    target_center_host_position(),
-                    window,
-                    cx,
-                );
+                DockViewportWindowFacts::from_window(window, cx)
             })
-            .expect("target host should publish minimized window facts");
+            .expect("target host should expose minimized window facts");
+        runtime.begin_viewport_host_scene(
+            target_space.clone(),
+            opened.window().window_id(),
+            minimized_facts,
+            host_bounds,
+            target_center_host_position(),
+        );
 
         assert!(!runtime.viewport_route_ready(&target_space));
         assert_eq!(
@@ -2356,16 +2360,18 @@ mod handle_suite {
             .expect("target window should be live");
         let target_window_bounds = WindowBounds::Windowed(target_window_bounds.get_bounds());
         let host_bounds = floating_bounds(0.0, 0.0, 360.0, 220.0);
-        target_window
-            .update(cx, |host, window, cx| {
-                host.publish_viewport_host_scene_interaction(
-                    host_bounds,
-                    target_center_host_position(),
-                    window,
-                    cx,
-                );
+        let live_facts = target_window
+            .update(cx, |_, window, cx| {
+                DockViewportWindowFacts::from_window(window, cx)
             })
-            .expect("target host should publish live route facts");
+            .expect("target host should expose live window facts");
+        runtime.begin_viewport_host_scene(
+            target_space.clone(),
+            opened.window().window_id(),
+            live_facts,
+            host_bounds,
+            target_center_host_position(),
+        );
         assert!(runtime.push_viewport_host_scene_fact(
             &target_space,
             opened.window().window_id(),

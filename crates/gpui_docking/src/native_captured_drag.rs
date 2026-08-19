@@ -2712,7 +2712,6 @@ fn update_native_captured_preview(
     target: DockNativeCapturedTarget,
     cx: &mut App,
 ) {
-    clear_native_source_local_preview(route, cx);
     match target {
         DockNativeCapturedTarget::Host(target) => {
             clear_foreign_preview(route, cx);
@@ -2794,19 +2793,6 @@ fn update_native_captured_preview(
                 .resolve_and_update_routed_drop_preview(&request, &route.payload, cx);
         }
     }
-}
-
-fn clear_native_source_local_preview(route: &DockNativeCapturedDragRoute, cx: &mut App) {
-    let Some(source_host) = route.source_host.upgrade() else {
-        return;
-    };
-    source_host.update(cx, |host, host_cx| {
-        if host.accepts_bound_window(Some(route.source_binding))
-            && host.clear_drop_preview_interaction()
-        {
-            host_cx.notify();
-        }
-    });
 }
 
 fn commit_native_captured_release(
@@ -3113,11 +3099,6 @@ fn retire_route_cleanup(
     let foreign_preview_cleared =
         run_idempotent_cleanup_stage(&mut first_panic, || clear_foreign_preview(&route, cx));
 
-    let mut route_was_active = false;
-    let active_state_observed = run_idempotent_cleanup_stage(&mut first_panic, || {
-        route_was_active = route.runtime.active_payload_drag_session(&route.payload)
-            == Some(route.session.clone());
-    });
     let source_feedback_cleared = run_idempotent_cleanup_stage(&mut first_panic, || {
         if let Some(host) = route.source_host.upgrade() {
             host.update(cx, |host, cx| {
@@ -3126,8 +3107,7 @@ fn retire_route_cleanup(
                 }
                 let changed = host
                     .interaction_mut()
-                    .clear_payload_drag_anchor_for_session(&route.session)
-                    | (route_was_active && host.clear_drop_preview_interaction());
+                    .clear_payload_drag_anchor_for_session(&route.session);
                 if changed {
                     cx.notify();
                 }
@@ -3146,7 +3126,6 @@ fn retire_route_cleanup(
     DockNativeCapturedRouteCleanupResult {
         completed: transport_retired
             && foreign_preview_cleared
-            && active_state_observed
             && source_feedback_cleared
             && payload_finalizer_settled,
         first_panic,

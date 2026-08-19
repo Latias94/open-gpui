@@ -5,7 +5,9 @@ use crate::{
     DockViewportDropPayload, DockViewportDropRoute, DockViewportDropRouteRejectionReason,
     DockViewportDropRouteRequest, DockViewportPointerCoordinateSpace, DockViewportRouteProof,
     DockViewportTearOffRequest,
-    drop_target::{DockDropTargetKey, DockResolvedDropTarget},
+    drop_target::{
+        DockDropRejection, DockDropResolution, DockDropTargetKey, DockResolvedDropTarget,
+    },
     interaction::DockRuntimeDragSession,
     viewport_drop_scene::{DockViewportHostSceneFrame, DockViewportHostSceneRegistry},
     workspace_drop_target::DockWorkspaceResolvedDropTarget,
@@ -35,6 +37,13 @@ pub(crate) struct DockViewportResolvedDropRoute {
     delivery: Option<DockDropDelivery>,
     preview_target: Option<DockViewportResolvedDropTargetSnapshot>,
     drag_session: Option<DockRuntimeDragSession>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DockViewportTabReorderHold {
+    route_proof: DockViewportRouteProof,
+    frame: DockViewportHostSceneFrame,
+    resolution: DockDropResolution,
 }
 
 impl DockViewportResolvedDropRoute {
@@ -136,6 +145,37 @@ impl DockViewportResolvedDropRoute {
             self.delivery
                 .as_ref()
                 .and_then(DockDropDelivery::workspace_target)
+        })
+    }
+
+    pub(crate) fn tab_reorder_hold(&self) -> Option<DockViewportTabReorderHold> {
+        let target = self.routed_preview_target_snapshot()?;
+        let resolution = match (&self.route, self.delivery.as_ref()) {
+            (
+                DockViewportDropRoute::Local { .. } | DockViewportDropRoute::KnownViewport { .. },
+                Some(_),
+            ) => DockDropResolution::Valid(target.target().clone()),
+            (
+                DockViewportDropRoute::Rejected(DockViewportDropRouteRejectionReason::Policy(
+                    reason,
+                )),
+                _,
+            ) => DockDropResolution::Rejected(DockDropRejection {
+                target: target.target().clone(),
+                reason: reason.clone(),
+            }),
+            _ => return None,
+        };
+        if !matches!(
+            target.target().kind,
+            crate::drop_target::DockResolvedDropTargetKind::TabBar { .. }
+        ) {
+            return None;
+        }
+        Some(DockViewportTabReorderHold {
+            route_proof: target.route_proof().clone(),
+            frame: target.frame().clone(),
+            resolution,
         })
     }
 
@@ -352,6 +392,20 @@ impl DockViewportResolvedDropTargetSnapshot {
 
     pub(crate) fn is_preview_only(&self) -> bool {
         self.preview_only
+    }
+}
+
+impl DockViewportTabReorderHold {
+    pub(crate) fn matches_route_proof(&self, route_proof: &DockViewportRouteProof) -> bool {
+        self.route_proof.registration_key() == route_proof.registration_key()
+    }
+
+    pub(crate) fn frame(&self) -> &DockViewportHostSceneFrame {
+        &self.frame
+    }
+
+    pub(crate) fn resolution(&self) -> &DockDropResolution {
+        &self.resolution
     }
 }
 

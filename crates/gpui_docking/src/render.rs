@@ -695,9 +695,8 @@ impl Render for DockHost {
                     let Ok(layout_position) = event.target_layout_position() else {
                         return;
                     };
-                    this.begin_host_drop_scene_from_render(
+                    this.update_host_drop_route_from_render(
                         &payload,
-                        DockViewportHostGeometry::from_hitbox(event.hitbox()),
                         DockRenderedPointerPosition::new(layout_position, event.window_position()),
                         window,
                         cx,
@@ -3067,35 +3066,7 @@ impl DockHost {
             window,
             cx,
         );
-        let window_binding = self.current_window_binding();
-        let mut root_container = div()
-            .relative()
-            .flex()
-            .size_full()
-            .overflow_hidden()
-            .on_drag_move(cx.listener(
-                move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
-                    if !this.accepts_render_callback(
-                        window_binding,
-                        window.window_handle().window_id(),
-                        cx,
-                    ) {
-                        return;
-                    }
-                    let payload = event.drag().clone();
-                    let Ok(layout_position) = event.target_layout_position() else {
-                        return;
-                    };
-                    this.update_local_root_drop_scene_from_render(
-                        &payload,
-                        root,
-                        event.layout_bounds(),
-                        DockRenderedPointerPosition::new(layout_position, event.window_position()),
-                        window,
-                        cx,
-                    );
-                },
-            ));
+        let mut root_container = div().relative().flex().size_full().overflow_hidden();
         root_container = root_container.child(root_child);
         root_container.into_any_element()
     }
@@ -3470,13 +3441,12 @@ impl DockHost {
         session: &DockHostRenderSession,
         _viewport_host_scene_frame: &DockViewportHostSceneCandidateSlot,
         _window: &mut Window,
-        cx: &mut Context<Self>,
+        _cx: &mut Context<Self>,
     ) -> AnyElement {
         let selector = self.record_debug_selector(
             DockDebugRegion::EmptySpace,
             format!("{}:empty", session.selector_prefix()),
         );
-        let window_binding = self.current_window_binding();
         let mut empty = div()
             .id(selector.clone())
             .debug_selector(move || selector)
@@ -3487,30 +3457,7 @@ impl DockHost {
             .justify_center()
             .border_1()
             .border_color(session.visual_style().host.empty_border)
-            .text_color(session.visual_style().host.empty_text)
-            .on_drag_move(cx.listener(
-                move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
-                    if !this.accepts_render_callback(
-                        window_binding,
-                        window.window_handle().window_id(),
-                        cx,
-                    ) {
-                        return;
-                    }
-                    let payload = event.drag().clone();
-                    let Ok(layout_position) = event.target_layout_position() else {
-                        return;
-                    };
-                    this.update_local_empty_space_drop_scene_from_render(
-                        &payload,
-                        DockRenderedPointerPosition::new(layout_position, event.window_position()),
-                        event.layout_bounds(),
-                        false,
-                        window,
-                        cx,
-                    );
-                },
-            ));
+            .text_color(session.visual_style().host.empty_text);
         empty = empty.child(session.empty_message().to_string());
         empty.into_any_element()
     }
@@ -3520,43 +3467,19 @@ impl DockHost {
         session: &DockHostRenderSession,
         _viewport_host_scene_frame: &DockViewportHostSceneCandidateSlot,
         _window: &mut Window,
-        cx: &mut Context<Self>,
+        _cx: &mut Context<Self>,
     ) -> AnyElement {
         let selector = self.record_debug_selector(
             DockDebugRegion::EmptySpace,
             format!("{}:empty-central", session.selector_prefix()),
         );
-        let window_binding = self.current_window_binding();
         let empty = div()
             .id(selector.clone())
             .debug_selector(move || selector)
             .relative()
             .flex()
             .size_full()
-            .bg(rgba(0x00000000))
-            .on_drag_move(cx.listener(
-                move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
-                    if !this.accepts_render_callback(
-                        window_binding,
-                        window.window_handle().window_id(),
-                        cx,
-                    ) {
-                        return;
-                    }
-                    let payload = event.drag().clone();
-                    let Ok(layout_position) = event.target_layout_position() else {
-                        return;
-                    };
-                    this.update_local_empty_space_drop_scene_from_render(
-                        &payload,
-                        DockRenderedPointerPosition::new(layout_position, event.window_position()),
-                        event.layout_bounds(),
-                        true,
-                        window,
-                        cx,
-                    );
-                },
-            ));
+            .bg(rgba(0x00000000));
         empty.into_any_element()
     }
 
@@ -3591,23 +3514,14 @@ impl DockHost {
         &mut self,
         session: &DockHostRenderSession,
         window: &mut Window,
-        cx: &Context<Self>,
+        _cx: &Context<Self>,
     ) -> Option<AnyElement> {
-        let active_payload = cx.active_drag_value::<DockDragPayload>().cloned();
         let routed_preview = self
             .viewport_runtime()
             .routed_drop_preview_for(self.space(), window.window_handle().window_id());
-        let local_preview = self.interaction().drop_preview();
         let route_preview = self
             .viewport_runtime()
             .routed_drop_route_preview_for(self.space(), window.window_handle().window_id());
-        if let Some(mut preview) = local_preview {
-            if let Some(payload) = active_payload.as_ref() {
-                preview.populate_payload_tabs(payload);
-            }
-            return Some(self.render_target_drop_preview(session, preview, window));
-        }
-
         if let Some(routed_preview) = routed_preview {
             return Some(self.render_target_drop_preview(session, routed_preview.preview, window));
         }

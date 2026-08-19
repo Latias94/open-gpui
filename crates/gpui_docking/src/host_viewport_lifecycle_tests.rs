@@ -2685,16 +2685,18 @@ mod handle_suite {
             .window()
             .downcast::<crate::DockHost>()
             .expect("source viewport should render DockHost");
-        source_window
-            .update(cx, |host, window, cx| {
-                host.publish_viewport_host_scene_interaction(
-                    floating_bounds(0.0, 0.0, 360.0, 220.0),
-                    target_center_host_position(),
-                    window,
-                    cx,
-                );
+        let source_facts = source_window
+            .update(cx, |_, window, cx| {
+                DockViewportWindowFacts::from_window(window, cx)
             })
-            .expect("source host should publish live route facts");
+            .expect("source host should expose live window facts");
+        runtime.begin_viewport_host_scene(
+            source_space.clone(),
+            source_opened.window().window_id(),
+            source_facts,
+            floating_bounds(0.0, 0.0, 360.0, 220.0),
+            target_center_host_position(),
+        );
         assert!(runtime.push_viewport_host_scene_fact(
             &source_space,
             source_opened.window().window_id(),
@@ -2711,16 +2713,18 @@ mod handle_suite {
             .update(cx, |_, window, _| window.window_bounds())
             .expect("target window should be live");
         let target_bounds = WindowBounds::Windowed(target_bounds.get_bounds());
-        target_window
-            .update(cx, |host, window, cx| {
-                host.publish_viewport_host_scene_interaction(
-                    floating_bounds(0.0, 0.0, 360.0, 220.0),
-                    target_center_host_position(),
-                    window,
-                    cx,
-                );
+        let target_facts = target_window
+            .update(cx, |_, window, cx| {
+                DockViewportWindowFacts::from_window(window, cx)
             })
-            .expect("target host should publish live route facts");
+            .expect("target host should expose live window facts");
+        runtime.begin_viewport_host_scene(
+            target_space.clone(),
+            target_opened.window().window_id(),
+            target_facts,
+            floating_bounds(0.0, 0.0, 360.0, 220.0),
+            target_center_host_position(),
+        );
         assert!(runtime.push_viewport_host_scene_fact(
             &target_space,
             target_opened.window().window_id(),

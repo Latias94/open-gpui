@@ -1,14 +1,8 @@
 use crate::{
-    DockItemId, DockNodeId, DockPolicy, DockSpaceId, DockSplitResize, DockViewportFocusCommand,
+    DockItemId, DockNodeId, DockSpaceId, DockSplitResize, DockViewportFocusCommand,
     DockViewportFocusCommandSource, DockViewportRuntimeLineage, SplitAxis,
     drag::{DockDragPayload, DockDragPayloadIdentity, DockDragTearOffGeometry},
-    drop_preview::DockDropPreview,
-    drop_runtime::{DockDropRuntime, DockHostDropScene, DockHostDropSceneFact},
-    drop_target::{DockDropTargetValidator, DockEdgePlanResolver, DockResolvedDropTarget},
-    geometry::DockDropGuideMetrics,
     viewport_drop_scene::DockViewportHostSceneFrame,
-    workspace_drop_target::DockWorkspaceResolvedDropTarget,
-    workspace_drop_transaction::DockWorkspacePayloadDropRequest,
 };
 use open_gpui::{Bounds, Pixels, Point, point};
 use open_gpui_ui_core::{resize_split_fractions_by_pixels, ui_px};
@@ -18,7 +12,6 @@ pub(crate) struct DockInteractionRuntime {
     splitter_drag: Option<SplitterDrag>,
     floating_drag: Option<FloatingDrag>,
     payload_drag_anchor: Option<DockPayloadDragAnchor>,
-    drop: DockDropRuntime,
     viewport_host_scene_frame: Option<DockViewportHostSceneFrame>,
     next_focus_command_generation: u64,
     pending_focus_command: Option<DockPendingFocusCommand>,
@@ -127,20 +120,6 @@ impl DockRuntimeDragSession {
         Self::with_lineage_and_focus_item(id, DockViewportRuntimeLineage::Unmanaged, payload, None)
     }
 
-    #[cfg(test)]
-    pub(crate) fn with_focus_item(
-        id: u64,
-        payload: &DockDragPayload,
-        focus_item: Option<DockItemId>,
-    ) -> Self {
-        Self::with_lineage_and_focus_item(
-            id,
-            DockViewportRuntimeLineage::Unmanaged,
-            payload,
-            focus_item,
-        )
-    }
-
     pub(crate) fn with_lineage_and_focus_item(
         id: u64,
         lineage: DockViewportRuntimeLineage,
@@ -185,17 +164,7 @@ pub(crate) struct DockPayloadDropRelease {
     event_receiver_local_scene_proof: Option<DockViewportHostSceneFrame>,
     /// Host space that observed the release; runtime routing may choose a different target.
     host_space: DockSpaceId,
-    local_layout_position: Option<Point<Pixels>>,
     window_position: Point<Pixels>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct DockLocalDropDelivery {
-    source_space: DockSpaceId,
-    payload: DockDragPayload,
-    target_space: DockSpaceId,
-    target: DockResolvedDropTarget,
-    frozen_focus_item: Option<DockItemId>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -223,19 +192,12 @@ impl DockPayloadDropRelease {
         release_position: Point<Pixels>,
         drag_session: Option<DockRuntimeDragSession>,
     ) -> Self {
-        Self::hovered_host_with_positions(
-            payload,
-            host_space,
-            release_position,
-            release_position,
-            drag_session,
-        )
+        Self::hovered_host_with_positions(payload, host_space, release_position, drag_session)
     }
 
     pub(crate) fn hovered_host_with_positions(
         payload: DockDragPayload,
         host_space: DockSpaceId,
-        local_layout_position: Point<Pixels>,
         window_position: Point<Pixels>,
         drag_session: Option<DockRuntimeDragSession>,
     ) -> Self {
@@ -246,7 +208,6 @@ impl DockPayloadDropRelease {
             origin: DockPayloadDropReleaseOrigin::HoveredHost,
             event_receiver_local_scene_proof: None,
             host_space,
-            local_layout_position: Some(local_layout_position),
             window_position,
         }
     }
@@ -274,7 +235,6 @@ impl DockPayloadDropRelease {
             origin: DockPayloadDropReleaseOrigin::SourceOnly,
             event_receiver_local_scene_proof: None,
             host_space,
-            local_layout_position: None,
             window_position: release_position,
         }
     }
@@ -308,10 +268,6 @@ impl DockPayloadDropRelease {
         self.window_position
     }
 
-    pub(crate) fn local_layout_position(&self) -> Option<Point<Pixels>> {
-        self.local_layout_position
-    }
-
     pub(crate) fn with_event_receiver_local_scene_proof(
         mut self,
         proof: Option<DockViewportHostSceneFrame>,
@@ -323,34 +279,6 @@ impl DockPayloadDropRelease {
                 None
             };
         self
-    }
-}
-
-impl DockLocalDropDelivery {
-    fn from_release(release: &DockPayloadDropRelease, target: DockResolvedDropTarget) -> Self {
-        let frozen_focus_item = release
-            .drag_session()
-            .and_then(|session| session.focus_item())
-            .cloned();
-        Self {
-            source_space: release.payload.source_space.clone(),
-            payload: release.payload.clone(),
-            target_space: release.host_space.clone(),
-            target,
-            frozen_focus_item,
-        }
-    }
-
-    pub(crate) fn workspace_request(&self) -> DockWorkspacePayloadDropRequest<'_> {
-        DockWorkspacePayloadDropRequest {
-            source_space: &self.source_space,
-            payload: self.payload.as_workspace_payload(),
-            target: DockWorkspaceResolvedDropTarget::new(
-                self.target_space.clone(),
-                self.target.clone(),
-            ),
-            frozen_focus_item: self.frozen_focus_item.as_ref(),
-        }
     }
 }
 
@@ -425,7 +353,6 @@ impl DockInteractionRuntime {
         self.splitter_drag = None;
         self.floating_drag = None;
         self.payload_drag_anchor = None;
-        self.drop.clear();
         self.viewport_host_scene_frame = None;
     }
 }
@@ -624,61 +551,6 @@ impl DockInteractionRuntime {
         self.floating_drag.take().is_some()
     }
 
-    #[cfg(test)]
-    pub(crate) fn begin_drop_scene(
-        &mut self,
-        scene: DockHostDropScene,
-        policy: &DockPolicy,
-    ) -> bool {
-        self.drop.begin_scene(scene, policy)
-    }
-
-    pub(crate) fn begin_drop_scene_with_validator(
-        &mut self,
-        scene: DockHostDropScene,
-        policy: &DockPolicy,
-        target_validator: Option<&DockDropTargetValidator<'_>>,
-        edge_plan_resolver: Option<&DockEdgePlanResolver<'_>>,
-    ) -> bool {
-        self.drop
-            .begin_scene_with_validator(scene, policy, target_validator, edge_plan_resolver)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn push_drop_scene_fact(
-        &mut self,
-        position: Point<Pixels>,
-        excluded_nodes: Vec<DockNodeId>,
-        fact: DockHostDropSceneFact,
-        policy: &DockPolicy,
-    ) -> bool {
-        self.drop
-            .push_scene_fact(position, excluded_nodes, fact, policy)
-    }
-
-    pub(crate) fn push_drop_scene_fact_with_validator(
-        &mut self,
-        position: Point<Pixels>,
-        payload_size: Option<open_gpui::Size<Pixels>>,
-        drop_guide_metrics: DockDropGuideMetrics,
-        excluded_nodes: Vec<DockNodeId>,
-        fact: DockHostDropSceneFact,
-        policy: &DockPolicy,
-        target_validator: Option<&DockDropTargetValidator<'_>>,
-        edge_plan_resolver: Option<&DockEdgePlanResolver<'_>>,
-    ) -> bool {
-        self.drop.push_scene_fact_with_validator(
-            position,
-            payload_size,
-            drop_guide_metrics,
-            excluded_nodes,
-            fact,
-            policy,
-            target_validator,
-            edge_plan_resolver,
-        )
-    }
-
     pub(crate) fn set_viewport_host_scene_frame(
         &mut self,
         frame: Option<DockViewportHostSceneFrame>,
@@ -694,47 +566,6 @@ impl DockInteractionRuntime {
         self.viewport_host_scene_frame.as_ref()
     }
 
-    pub(crate) fn take_local_drop_delivery(
-        &mut self,
-        release: &DockPayloadDropRelease,
-        policy: &DockPolicy,
-        target_validator: Option<&DockDropTargetValidator<'_>>,
-        edge_plan_resolver: Option<&DockEdgePlanResolver<'_>>,
-    ) -> Option<DockLocalDropDelivery> {
-        if release.origin() == DockPayloadDropReleaseOrigin::SourceOnly {
-            return None;
-        }
-        let target = self.drop.take_release_target_at(
-            release.local_layout_position()?,
-            policy,
-            target_validator,
-            edge_plan_resolver,
-        )?;
-        Some(DockLocalDropDelivery::from_release(release, target))
-    }
-
-    pub(crate) fn clear_drop_resolution(&mut self) -> bool {
-        self.drop.clear()
-    }
-
-    pub(crate) fn drop_preview(&self) -> Option<DockDropPreview> {
-        self.drop
-            .drop_resolution()
-            .and_then(|resolution| {
-                DockDropPreview::from_resolution(resolution, self.drop.drop_guide_metrics())
-            })
-            .or_else(|| {
-                self.drop.guide_target().and_then(|target| {
-                    DockDropPreview::from_guide_target(target, self.drop.drop_guide_metrics())
-                })
-            })
-    }
-
-    #[cfg(test)]
-    pub(crate) fn drop_scene_position(&self) -> Option<Point<Pixels>> {
-        self.drop.scene_position()
-    }
-
     #[cfg(test)]
     pub(crate) fn splitter_drag(&self) -> Option<&SplitterDrag> {
         self.splitter_drag.as_ref()
@@ -744,21 +575,12 @@ impl DockInteractionRuntime {
     pub(crate) fn floating_drag(&self) -> Option<&FloatingDrag> {
         self.floating_drag.as_ref()
     }
-
-    #[cfg(test)]
-    pub(crate) fn resolved_drop_target(&self) -> Option<&DockResolvedDropTarget> {
-        self.drop.resolved_target()
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        DockItemId, DockNodeId,
-        drop_target::{DockLeafDropTarget, DockResolvedDropTargetKind},
-        workspace_drop_transaction::DockWorkspaceDropPayload,
-    };
+    use crate::{DockItemId, DockNodeId};
     use open_gpui::{point, px, size};
     use slotmap::Key;
 
@@ -903,124 +725,6 @@ mod tests {
             Some(drag_session.clone()),
         );
         assert_eq!(session_release.drag_session(), Some(&drag_session));
-    }
-
-    #[test]
-    fn local_drop_delivery_packages_current_resolved_target_for_workspace_commit() {
-        let tabs = DockNodeId::null();
-        let position = point(px(120.0), px(90.0));
-        let mut runtime = DockInteractionRuntime::default();
-        runtime.begin_drop_scene(DockHostDropScene::new(position), &DockPolicy::default());
-        runtime.push_drop_scene_fact(
-            position,
-            Vec::new(),
-            DockHostDropSceneFact::Leaf(DockLeafDropTarget {
-                root: tabs,
-                target_tabs: tabs,
-                bounds: bounds(0.0, 0.0, 240.0, 180.0),
-                is_central: false,
-            }),
-            &DockPolicy::default(),
-        );
-
-        let release = DockPayloadDropRelease::hovered_host(
-            item_payload("a", "Panel A"),
-            DockSpaceId::from("main"),
-            position,
-        );
-        let delivery = runtime
-            .take_local_drop_delivery(&release, &DockPolicy::default(), None, None)
-            .expect("current resolved target should produce a local delivery");
-        let request = delivery.workspace_request();
-
-        assert_eq!(request.source_space, &DockSpaceId::from("main"));
-        assert_eq!(request.target.target_space(), &DockSpaceId::from("main"));
-        assert!(matches!(
-            &request.payload,
-            DockWorkspaceDropPayload::Item { item, .. } if *item == &DockItemId::from("a")
-        ));
-        assert_eq!(
-            request.target.target().kind,
-            DockResolvedDropTargetKind::LeafCenter {
-                root: tabs,
-                target_tabs: tabs,
-            }
-        );
-    }
-
-    #[test]
-    fn local_drop_delivery_preserves_frozen_focus_item_for_tabs_payload() {
-        let tabs = DockNodeId::null();
-        let position = point(px(120.0), px(90.0));
-        let mut runtime = DockInteractionRuntime::default();
-        runtime.begin_drop_scene(DockHostDropScene::new(position), &DockPolicy::default());
-        runtime.push_drop_scene_fact(
-            position,
-            Vec::new(),
-            DockHostDropSceneFact::Leaf(DockLeafDropTarget {
-                root: tabs,
-                target_tabs: tabs,
-                bounds: bounds(0.0, 0.0, 240.0, 180.0),
-                is_central: false,
-            }),
-            &DockPolicy::default(),
-        );
-
-        let payload =
-            DockDragPayload::new_tabs(DockSpaceId::from("main"), tabs, "Tabs".to_string());
-        let focus_item = DockItemId::from("a");
-        let release = DockPayloadDropRelease::hovered_host_with_session(
-            payload.clone(),
-            DockSpaceId::from("main"),
-            position,
-            Some(DockRuntimeDragSession::with_focus_item(
-                42,
-                &payload,
-                Some(focus_item.clone()),
-            )),
-        );
-        let delivery = runtime
-            .take_local_drop_delivery(&release, &DockPolicy::default(), None, None)
-            .expect("current resolved target should produce a local delivery");
-        let request = delivery.workspace_request();
-
-        assert_eq!(request.frozen_focus_item, Some(&focus_item));
-        assert!(matches!(
-            &request.payload,
-            DockWorkspaceDropPayload::Tabs { source_tabs } if *source_tabs == tabs
-        ));
-    }
-
-    #[test]
-    fn source_only_release_cannot_consume_cached_local_drop_delivery() {
-        let tabs = DockNodeId::null();
-        let position = point(px(120.0), px(90.0));
-        let mut runtime = DockInteractionRuntime::default();
-        runtime.begin_drop_scene(DockHostDropScene::new(position), &DockPolicy::default());
-        runtime.push_drop_scene_fact(
-            position,
-            Vec::new(),
-            DockHostDropSceneFact::Leaf(DockLeafDropTarget {
-                root: tabs,
-                target_tabs: tabs,
-                bounds: bounds(0.0, 0.0, 240.0, 180.0),
-                is_central: false,
-            }),
-            &DockPolicy::default(),
-        );
-
-        let release = DockPayloadDropRelease::source_only(
-            item_payload("a", "Panel A"),
-            DockSpaceId::from("main"),
-            position,
-        );
-
-        assert!(
-            runtime
-                .take_local_drop_delivery(&release, &DockPolicy::default(), None, None)
-                .is_none(),
-            "source-only releases must route through current viewport route selection instead of cached local delivery"
-        );
     }
 
     #[test]
@@ -1171,30 +875,5 @@ mod tests {
         );
         assert!(runtime.finish_floating_drag());
         assert!(!runtime.finish_floating_drag());
-    }
-
-    #[test]
-    fn drop_preview_uses_local_resolution() {
-        let tabs = DockNodeId::null();
-        let mut runtime = DockInteractionRuntime::default();
-        let position = point(px(80.0), px(60.0));
-
-        runtime.begin_drop_scene(DockHostDropScene::new(position), &DockPolicy::default());
-        runtime.push_drop_scene_fact(
-            position,
-            Vec::new(),
-            DockHostDropSceneFact::Leaf(crate::drop_target::DockLeafDropTarget {
-                root: tabs,
-                target_tabs: tabs,
-                bounds: bounds(0.0, 0.0, 200.0, 160.0),
-                is_central: false,
-            }),
-            &DockPolicy::default(),
-        );
-
-        assert!(
-            runtime.drop_preview().is_some(),
-            "local target preview should be visible"
-        );
     }
 }

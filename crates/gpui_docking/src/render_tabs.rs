@@ -4,24 +4,16 @@ use crate::{
     debug::DockDebugRegion,
     drag::{DockDragPayload, DockDragTearOffGeometry},
     drag_visual::DockDragVisual,
-    drop_scene_fact,
-    host_render_actions::DockRenderedPointerPosition,
     host_render_session::{DockHostPanelRenderResolution, DockHostRenderSession},
     render::{DockViewportHostSceneCandidateSlot, defer_rejected_payload_drag_cleanup},
     surface::live_payload_carrier::tabs_retained_source_id,
 };
 use open_gpui::{
-    AnyElement, AppContext as _, Bounds, Context, DragMoveEvent, InteractiveElement, IntoElement,
-    MouseButton, ParentElement, Pixels, StatefulInteractiveElement, Styled, Window, div, px,
+    AnyElement, AppContext as _, Context, DragMoveEvent, InteractiveElement, IntoElement,
+    MouseButton, ParentElement, StatefulInteractiveElement, Styled, Window, div, px,
     retained_visual,
 };
 use open_gpui_ui_core::AccessibleAction;
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct RenderedTabHitTarget {
-    index: usize,
-    bounds: Bounds<Pixels>,
-}
 
 impl DockHost {
     pub(crate) fn render_tabs(
@@ -46,7 +38,6 @@ impl DockHost {
         let selected = selected.min(items.len().saturating_sub(1));
         let selected_item = items[selected].clone();
         let is_central = session.is_central_tabs(node);
-        let drop_root = session.drop_root_for_tabs(node);
         let source_space = session.space().clone();
         let entity = cx.entity();
         let window_binding = self.current_window_binding();
@@ -127,41 +118,9 @@ impl DockHost {
                         }
                         this.update_payload_drag_tear_off_geometry_from_render(&payload, geometry);
                     }
-                    if let Ok(layout_position) = event.target_layout_position()
-                        && let Some(drop_root) = drop_root
-                    {
-                        let fact = drop_scene_fact::leaf(
-                            drop_root,
-                            node,
-                            event.layout_bounds(),
-                            is_central,
-                        );
-                        this.update_local_drop_scene_fact_from_render(
-                            &payload,
-                            fact,
-                            DockRenderedPointerPosition::new(
-                                layout_position,
-                                event.window_position(),
-                            ),
-                            window,
-                            cx,
-                        );
-                    }
                 },
             ));
         let stack_drag_entity = entity.clone();
-        let mut tab_hit_targets = Vec::with_capacity(items.len());
-        for index in 0..items.len() {
-            if let Some(bounds) = self.viewport_runtime().rendered_tab_label_bounds_for_tabs(
-                self.space(),
-                Some(window.window_handle().window_id()),
-                node,
-                index,
-            ) {
-                tab_hit_targets.push(RenderedTabHitTarget { index, bounds });
-            }
-        }
-        let tab_hit_targets_for_bar = tab_hit_targets.clone();
         let tab_bar_selector = self.record_debug_selector(
             DockDebugRegion::TabBar { node },
             format!("{}:tabs:{}:bar", session.selector_prefix(), node.as_u64()),
@@ -174,60 +133,7 @@ impl DockHost {
             .flex_row()
             .flex_none()
             .overflow_hidden()
-            .bg(tabs_style.strip_background)
-            .on_drag_move(cx.listener(
-                move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
-                    if !this.accepts_render_callback(
-                        window_binding,
-                        window.window_handle().window_id(),
-                        cx,
-                    ) {
-                        return;
-                    }
-                    let Ok(position) = event.target_layout_position() else {
-                        return;
-                    };
-                    let payload = event.drag().clone();
-                    let window_id = window.window_handle().window_id();
-                    let fact = tab_hit_targets_for_bar
-                        .iter()
-                        .copied()
-                        .chain((0..tab_count).filter_map(|index| {
-                            this.viewport_runtime()
-                                .rendered_tab_label_bounds_for_tabs(
-                                    this.space(),
-                                    Some(window_id),
-                                    node,
-                                    index,
-                                )
-                                .map(|bounds| RenderedTabHitTarget { index, bounds })
-                        }))
-                        .find(|target| target.bounds.contains(&position))
-                        .map(|target| {
-                            drop_scene_fact::tab_label(
-                                node,
-                                target.index,
-                                target.bounds,
-                                is_central,
-                            )
-                        })
-                        .unwrap_or_else(|| {
-                            drop_scene_fact::tab_bar(
-                                node,
-                                tab_count,
-                                event.layout_bounds(),
-                                is_central,
-                            )
-                        });
-                    this.update_local_drop_scene_fact_from_render(
-                        &payload,
-                        fact,
-                        DockRenderedPointerPosition::new(position, event.window_position()),
-                        window,
-                        cx,
-                    );
-                },
-            ));
+            .bg(tabs_style.strip_background);
         if !suppress_stack_drag_source {
             tab_bar = tab_bar.on_drag(stack_payload, move |payload, geometry, window, cx| {
                 let source_drag_visual_style = stack_drag_visual_style.clone();
@@ -368,39 +274,7 @@ impl DockHost {
                             host.select_tab_from_render(node, focus_item.clone(), cx);
                         });
                     }
-                })
-                .on_drag_move(cx.listener(
-                    move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
-                        if !this.accepts_render_callback(
-                            window_binding,
-                            window.window_handle().window_id(),
-                            cx,
-                        ) {
-                            return;
-                        }
-                        let Ok(layout_position) = event.target_layout_position() else {
-                            return;
-                        };
-                        let payload = event.drag().clone();
-                        // The tabs leaf owns tear-off sizing; the tab label is only a drop target.
-                        let fact = drop_scene_fact::tab_label(
-                            node,
-                            target_index,
-                            event.layout_bounds(),
-                            is_central,
-                        );
-                        this.update_local_drop_scene_fact_from_render(
-                            &payload,
-                            fact,
-                            DockRenderedPointerPosition::new(
-                                layout_position,
-                                event.window_position(),
-                            ),
-                            window,
-                            cx,
-                        );
-                    },
-                ));
+                });
             if !suppress_drag_source {
                 tab = tab.on_drag(payload, move |payload, geometry, window, cx| {
                     let frozen_drag_visual_style = drag_entity.update(cx, |host, cx| {

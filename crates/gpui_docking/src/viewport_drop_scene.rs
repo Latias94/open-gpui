@@ -1,7 +1,7 @@
 use crate::drop_target::DockResolvedDropTarget;
 use crate::{
     DockNodeId, DockPolicy, DockSpaceId, DockViewportHostGeometry, DockViewportIdentity,
-    drop_runtime::{DockHostDropScene, DockHostDropSceneFact},
+    drop_runtime::{DockHostDropScene, DockHostDropSceneFact, held_tab_reorder_resolution},
     drop_target::{DockDropResolution, DockDropTargetValidator, DockEdgePlanResolver},
     geometry::DockDropGuideMetrics,
     viewport_registry::{DockViewportRegistrationKey, DockViewportWindowBoundsFrame},
@@ -512,6 +512,31 @@ impl DockViewportHostSceneRegistry {
         target_validator: Option<&DockDropTargetValidator<'_>>,
         edge_plan_resolver: Option<&DockEdgePlanResolver<'_>>,
     ) -> Option<DockViewportResolvedFrame> {
+        self.resolve_frame_for_window_with_reorder_hold(
+            space,
+            window_id,
+            host_position,
+            payload_size,
+            excluded_nodes,
+            policy,
+            target_validator,
+            edge_plan_resolver,
+            None,
+        )
+    }
+
+    pub(crate) fn resolve_frame_for_window_with_reorder_hold(
+        &self,
+        space: &DockSpaceId,
+        window_id: Option<WindowId>,
+        host_position: Point<Pixels>,
+        payload_size: Option<Size<Pixels>>,
+        excluded_nodes: Vec<DockNodeId>,
+        policy: &DockPolicy,
+        target_validator: Option<&DockDropTargetValidator<'_>>,
+        edge_plan_resolver: Option<&DockEdgePlanResolver<'_>>,
+        reorder_hold: Option<&crate::DockViewportTabReorderHold>,
+    ) -> Option<DockViewportResolvedFrame> {
         let Some(snapshot) = self.scenes.get(space) else {
             return None;
         };
@@ -523,7 +548,7 @@ impl DockViewportHostSceneRegistry {
         let mut scene = snapshot.scene.clone().excluding_nodes(excluded_nodes);
         scene.position = snapshot.host_geometry.host_to_layout(host_position)?;
         scene = scene.with_payload_size(payload_size);
-        let resolution = scene
+        let mut resolution = scene
             .resolve_drop_with_validator(policy, target_validator, edge_plan_resolver)
             .map(DockViewportFrameResolution::Drop)
             .or_else(|| {
@@ -535,6 +560,23 @@ impl DockViewportHostSceneRegistry {
                     )
                     .map(DockViewportFrameResolution::GuideOnly)
             });
+        if let Some(hold) =
+            reorder_hold.filter(|hold| hold.frame().registration_key() == frame.registration_key())
+        {
+            let current_target = resolution.as_ref().map(|resolution| match resolution {
+                DockViewportFrameResolution::Drop(resolution) => {
+                    crate::drop_runtime::resolution_target(resolution)
+                }
+                DockViewportFrameResolution::GuideOnly(target) => Some(target),
+            });
+            if let Some(held) = held_tab_reorder_resolution(
+                hold.resolution(),
+                current_target.flatten(),
+                scene.position,
+            ) {
+                resolution = Some(DockViewportFrameResolution::Drop(held));
+            }
+        }
         let Some(resolution) = resolution else {
             return None;
         };

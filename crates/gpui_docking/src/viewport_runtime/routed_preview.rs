@@ -8,6 +8,20 @@ use crate::{
 use open_gpui::{AnyWindowHandle, Pixels, Point, WindowId};
 
 impl DockViewportRuntime {
+    #[cfg(test)]
+    pub(crate) fn routed_drop_target_for(
+        &self,
+        space: &DockSpaceId,
+        window_id: WindowId,
+    ) -> Option<crate::drop_target::DockResolvedDropTarget> {
+        let registration = self
+            .adapter
+            .registration_key(space)
+            .filter(|registration| registration.window_id() == window_id)?;
+        self.routed_drop_preview
+            .resolved_target_for_registration(&registration)
+    }
+
     pub(crate) fn routed_drop_preview_for(
         &self,
         space: &DockSpaceId,

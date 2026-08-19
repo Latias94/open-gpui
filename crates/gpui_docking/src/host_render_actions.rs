@@ -1,8 +1,7 @@
 use crate::{
-    DockHost, DockItemId, DockNodeId, DockSpaceId, DockViewportHostGeometry, SplitAxis,
+    DockHost, DockItemId, DockNodeId, DockSpaceId, SplitAxis,
     divider_hit_map::{DockDividerHandleHitTarget, DockDividerHitTarget, DockDividerSurface},
     drag::{DockDragPayload, DockDragTearOffGeometry},
-    drop_runtime::DockHostDropSceneFact,
     interaction::{DockPayloadDropRelease, DockRuntimeDragSession, SplitterDragAxis},
     presentation_scene::DockPresentationScene,
     viewport_drop_scene::DockViewportHostSceneFrame,
@@ -80,28 +79,6 @@ impl DockHost {
             window,
             cx,
         )
-    }
-
-    #[cfg(test)]
-    pub(crate) fn begin_tab_item_drag_from_render(
-        &mut self,
-        tabs: DockNodeId,
-        item: DockItemId,
-        payload: &DockDragPayload,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> DockRuntimeDragSession {
-        let begin = self.begin_tab_item_drag_interaction(
-            tabs,
-            item,
-            payload,
-            crate::DockVisualStyle::built_in().drag,
-            None,
-            window,
-            cx,
-        );
-        begin.outcome.finish(cx);
-        begin.drag_session
     }
 
     pub(crate) fn begin_tab_item_drag_from_render_with_drag_visual_style(
@@ -212,11 +189,10 @@ impl DockHost {
             .as_ref()
             .is_some_and(|session| self.finish_payload_drag_session(session, window, cx));
         let anchor_cleared = self.interaction_mut().clear_any_payload_drag_anchor();
-        let local_preview_cleared = self.clear_drop_preview_interaction();
         let routed_preview_cleared = self
             .viewport_runtime()
             .clear_routed_drop_preview_from_window(window, cx);
-        session_changed || anchor_cleared || local_preview_cleared || routed_preview_cleared
+        session_changed || anchor_cleared || routed_preview_cleared
     }
 
     pub(crate) fn select_tab_from_render(
@@ -272,7 +248,6 @@ impl DockHost {
             DockPayloadDropRelease::hovered_host_with_positions(
                 payload.clone(),
                 target_space,
-                position.layout,
                 position.window,
                 drag_session,
             )
@@ -314,67 +289,16 @@ impl DockHost {
         changed || session_changed
     }
 
-    pub(crate) fn update_local_drop_scene_fact_from_render(
+    pub(crate) fn update_host_drop_route_from_render(
         &mut self,
         payload: &DockDragPayload,
-        fact: DockHostDropSceneFact,
-        position: impl Into<DockRenderedPointerPosition>,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        self.update_drop_scene_fact_interaction(payload, fact, position, window, cx)
-            .finish(cx)
-    }
-
-    pub(crate) fn begin_host_drop_scene_from_render(
-        &mut self,
-        payload: &DockDragPayload,
-        host_geometry: impl Into<DockViewportHostGeometry>,
         position: impl Into<DockRenderedPointerPosition>,
         window: &Window,
         cx: &mut Context<Self>,
     ) -> bool {
         let position = position.into();
-        if !self.publish_viewport_host_scene_interaction(host_geometry, position.window, window, cx)
-        {
-            let local_preview_cleared = self.clear_drop_preview_interaction();
-            let routed_preview_cleared = self
-                .viewport_runtime()
-                .clear_routed_drop_preview_from_window(window, cx);
-            return crate::host_interaction_outcome::DockHostInteractionOutcome::from_session_changed(
-                local_preview_cleared || routed_preview_cleared,
-            )
-            .finish(cx);
-        }
         self.update_payload_drag_hover_state_from_render(payload, position, window, cx)
-            .merge(self.ensure_host_drop_scene_interaction(payload, position.layout, cx))
             .finish(cx)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn update_payload_drag_hover_from_rendered_host_scene(
-        &mut self,
-        payload: &DockDragPayload,
-        position: impl Into<DockRenderedPointerPosition>,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        let position = position.into();
-        let local_preview_cleared =
-            if self.interaction().drop_scene_position() == Some(position.layout) {
-                false
-            } else {
-                self.clear_drop_preview_interaction()
-            };
-        let changed = self
-            .update_payload_drag_hover_state_from_render(payload, position, window, cx)
-            .merge(
-                crate::host_interaction_outcome::DockHostInteractionOutcome::from_session_changed(
-                    local_preview_cleared,
-                ),
-            )
-            .finish(cx);
-        changed
     }
 
     pub(crate) fn publish_rendered_viewport_host_scene_frame_from_render(
@@ -385,34 +309,6 @@ impl DockHost {
         let window_id = window.window_handle().window_id();
         let frame = frame.filter(|frame| frame.matches_viewport(self.space(), window_id));
         self.interaction_mut().set_viewport_host_scene_frame(frame)
-    }
-
-    pub(crate) fn update_local_root_drop_scene_from_render(
-        &mut self,
-        payload: &DockDragPayload,
-        root: DockNodeId,
-        bounds: Bounds<Pixels>,
-        position: impl Into<DockRenderedPointerPosition>,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        self.update_root_drop_scene_interaction(payload, root, bounds, position, window, cx)
-            .finish(cx)
-    }
-
-    pub(crate) fn update_local_empty_space_drop_scene_from_render(
-        &mut self,
-        payload: &DockDragPayload,
-        position: impl Into<DockRenderedPointerPosition>,
-        bounds: Bounds<Pixels>,
-        is_central: bool,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        self.update_empty_space_drop_scene_interaction(
-            payload, position, bounds, is_central, window, cx,
-        )
-        .finish(cx)
     }
 
     pub(crate) fn begin_floating_drag_from_render(
@@ -481,11 +377,10 @@ impl DockHost {
                 .viewport_runtime()
                 .finish_payload_drag_for_source_space_from_window(&source_space, window, cx);
             let anchor_cleared = self.interaction_mut().clear_any_payload_drag_anchor();
-            let local_preview_cleared = self.clear_drop_preview_interaction();
             let routed_preview_cleared = self
                 .viewport_runtime()
                 .clear_routed_drop_preview_from_window(window, cx);
-            session_cleared || anchor_cleared || local_preview_cleared || routed_preview_cleared
+            session_cleared || anchor_cleared || routed_preview_cleared
         };
         raw_drag_changed || payload_changed
     }

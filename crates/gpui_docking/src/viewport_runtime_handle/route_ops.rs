@@ -81,6 +81,13 @@ impl DockViewportLockedDropRoute {
 }
 
 impl DockViewportRuntimeHandle {
+    #[cfg(test)]
+    pub(crate) fn payload_drop_route_resolution_count_for_test(&self) -> usize {
+        self.runtime
+            .borrow()
+            .payload_drop_route_resolution_count_for_test()
+    }
+
     pub(crate) fn prepare_live_undock_host_drop(
         &self,
         locked: DockViewportLockedDropRoute,
@@ -878,35 +885,6 @@ impl DockViewportRuntimeHandle {
         )
     }
 
-    pub(crate) fn finalize_empty_payload_drop_source_vacate_from_window(
-        &self,
-        applied: crate::viewport_runtime::DockViewportAppliedSourceVacate,
-        window: &Window,
-        cx: &mut App,
-    ) -> bool {
-        self.finalize_empty_payload_drop_source_vacate_with_transaction_excluding(
-            applied,
-            self.active_surface_transaction.get(),
-            Some(window.window_handle().window_id()),
-            cx,
-        )
-    }
-
-    pub(crate) fn finalize_empty_payload_drop_source_vacate_with_transaction_from_window(
-        &self,
-        applied: crate::viewport_runtime::DockViewportAppliedSourceVacate,
-        surface_transaction: Option<DockSurfaceTransactionId>,
-        window: &Window,
-        cx: &mut App,
-    ) -> bool {
-        self.finalize_empty_payload_drop_source_vacate_with_transaction_excluding(
-            applied,
-            surface_transaction,
-            Some(window.window_handle().window_id()),
-            cx,
-        )
-    }
-
     fn finalize_empty_payload_drop_source_vacate_with_transaction_excluding(
         &self,
         applied: crate::viewport_runtime::DockViewportAppliedSourceVacate,
@@ -939,6 +917,17 @@ impl DockViewportRuntimeHandle {
         self.runtime
             .borrow()
             .routed_drop_preview_for(space, window_id)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn routed_drop_target_for(
+        &self,
+        space: &DockSpaceId,
+        window_id: WindowId,
+    ) -> Option<crate::drop_target::DockResolvedDropTarget> {
+        self.runtime
+            .borrow()
+            .routed_drop_target_for(space, window_id)
     }
 
     pub(crate) fn routed_drop_route_preview_for(

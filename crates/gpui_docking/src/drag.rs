@@ -1,6 +1,5 @@
 use crate::{
-    DockGraph, DockItemId, DockNodeId, DockSpaceId,
-    workspace_drop_transaction::DockWorkspaceDropPayload,
+    DockItemId, DockNodeId, DockSpaceId, workspace_drop_transaction::DockWorkspaceDropPayload,
 };
 use open_gpui::{Bounds, Pixels, Point, Size};
 
@@ -150,20 +149,6 @@ impl DockDragPayload {
             DockDragPayloadKind::Floating { floating } => DockWorkspaceDropPayload::Floating {
                 floating: *floating,
             },
-        }
-    }
-
-    pub(crate) fn excluded_nodes_for_drop_scene(&self, graph: &DockGraph) -> Vec<DockNodeId> {
-        let source_node = match self.kind {
-            DockDragPayloadKind::Item { .. } => return Vec::new(),
-            DockDragPayloadKind::Tabs => self.source_node,
-            DockDragPayloadKind::Floating { floating } => floating,
-        };
-        let nodes = graph.nodes_in_subtree(source_node);
-        if nodes.is_empty() {
-            vec![source_node]
-        } else {
-            nodes
         }
     }
 }

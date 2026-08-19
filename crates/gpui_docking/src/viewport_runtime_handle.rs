@@ -432,36 +432,6 @@ impl Drop for DockViewportRuntimeTransactionScope {
     }
 }
 
-fn clear_dockhost_drop_preview_for_window(window: AnyWindowHandle, cx: &mut App) -> bool {
-    window
-        .update(cx, |view, _window, cx| {
-            let Ok(host) = view.downcast::<DockHost>() else {
-                return false;
-            };
-            host.update(cx, |host, _cx| host.clear_drop_preview_interaction())
-        })
-        .unwrap_or(false)
-}
-
-fn clear_dockhost_drop_previews(
-    windows: impl IntoIterator<Item = AnyWindowHandle>,
-    cx: &mut App,
-) -> bool {
-    let mut changed = false;
-    let mut cleared_window_ids = Vec::new();
-    for window in windows {
-        if cleared_window_ids
-            .iter()
-            .any(|window_id| *window_id == window.window_id())
-        {
-            continue;
-        }
-        cleared_window_ids.push(window.window_id());
-        changed |= clear_dockhost_drop_preview_for_window(window, cx);
-    }
-    changed
-}
-
 fn refresh_runtime_update_with_commit(
     runtime: &DockViewportRuntimeHandle,
     update: DockViewportRuntimeUpdate,
@@ -552,7 +522,6 @@ fn apply_close_recovery_activation_for_runtime(
         .borrow_mut()
         .finalize_close_recovery_activation(outcome, applied);
     let recovery_effects = recovery.window_effects();
-    let _ = clear_dockhost_drop_previews(recovery_effects.refresh().iter().cloned(), cx);
     apply_viewport_window_effects(runtime, recovery_effects.clone(), cx);
     apply_viewport_activation_transaction(recovery.activation, cx)
 }

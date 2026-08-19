@@ -11,7 +11,10 @@ use crate::{
 };
 use open_gpui::{Pixels, Point, Size};
 
-use super::model::{DockViewportResolvedDropTargetSnapshot, DockViewportWorkspaceRouteTarget};
+use super::model::{
+    DockViewportResolvedDropTargetSnapshot, DockViewportTabReorderHold,
+    DockViewportWorkspaceRouteTarget,
+};
 
 /// Immutable controller facts needed to resolve one viewport route.
 ///
@@ -108,6 +111,24 @@ pub(crate) fn resolve_workspace_target_for_route_with_facts(
     request: &DockViewportDropRouteRequest,
     facts: &DockViewportWorkspaceRouteFacts,
 ) -> DockViewportWorkspaceRouteTarget {
+    resolve_workspace_target_for_route_with_facts_and_reorder_hold(
+        adapter,
+        host_scenes,
+        route,
+        request,
+        facts,
+        None,
+    )
+}
+
+pub(crate) fn resolve_workspace_target_for_route_with_facts_and_reorder_hold(
+    adapter: &DockViewportAdapter,
+    host_scenes: &DockViewportHostSceneRegistry,
+    route: &DockViewportDropRoute,
+    request: &DockViewportDropRouteRequest,
+    facts: &DockViewportWorkspaceRouteFacts,
+    reorder_hold: Option<&DockViewportTabReorderHold>,
+) -> DockViewportWorkspaceRouteTarget {
     match route {
         DockViewportDropRoute::Local {
             host_position,
@@ -123,6 +144,7 @@ pub(crate) fn resolve_workspace_target_for_route_with_facts(
                 host_scenes,
                 request,
                 facts,
+                reorder_hold,
                 DockExistingViewportRouteTarget {
                     route_proof,
                     host_position: *host_position,
@@ -155,6 +177,7 @@ pub(crate) fn resolve_workspace_target_for_route_with_facts(
                 host_scenes,
                 request,
                 facts,
+                reorder_hold,
                 DockExistingViewportRouteTarget {
                     route_proof: target.route_proof(),
                     host_position: target.host_position(),
@@ -186,6 +209,7 @@ fn resolve_existing_viewport_workspace_target(
     host_scenes: &DockViewportHostSceneRegistry,
     request: &DockViewportDropRouteRequest,
     facts: &DockViewportWorkspaceRouteFacts,
+    reorder_hold: Option<&DockViewportTabReorderHold>,
     target: DockExistingViewportRouteTarget<'_>,
 ) -> DockViewportWorkspaceRouteTarget {
     if !adapter.is_current_registration(target.route_proof.registration_key()) {
@@ -216,7 +240,8 @@ fn resolve_existing_viewport_workspace_target(
     let excluded_nodes = request
         .payload()
         .excluded_nodes_for_drop_scene(&facts.graph, request.source_node());
-    let Some(resolved_frame) = host_scenes.resolve_frame_for_window(
+    let reorder_hold = reorder_hold.filter(|hold| hold.matches_route_proof(target.route_proof));
+    let Some(resolved_frame) = host_scenes.resolve_frame_for_window_with_reorder_hold(
         target_space,
         Some(target_window_id),
         target.host_position,
@@ -225,6 +250,7 @@ fn resolve_existing_viewport_workspace_target(
         policy,
         Some(&target_validator),
         Some(&edge_plan_resolver),
+        reorder_hold,
     ) else {
         return target.missing_host_target.into_route_target();
     };

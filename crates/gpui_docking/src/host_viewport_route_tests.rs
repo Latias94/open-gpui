@@ -7,10 +7,10 @@ mod runtime_suite {
         DockActionApplyError, DockActionOutcome, DockClassId, DockController, DockDropDelivery,
         DockFloatingContainer, DockGraph, DockHost, DockItemId, DockNode, DockPanel,
         DockPolicyError, DockSpaceId, DockViewportAdapter, DockViewportClosePolicy,
-        DockViewportCloseStatus, DockViewportDropPayload, DockViewportDropRoute,
-        DockViewportDropRouteOutcome, DockViewportDropRouteRequest, DockViewportFocusCommand,
-        DockViewportFocusRequest, DockViewportInputStatus, DockViewportOpenStatus,
-        DockViewportPlatformSyncAction, DockViewportPlatformSyncRequest,
+        DockViewportCloseStatus, DockViewportDropOutcomeKind, DockViewportDropPayload,
+        DockViewportDropRoute, DockViewportDropRouteOutcome, DockViewportDropRouteRequest,
+        DockViewportFocusCommand, DockViewportFocusRequest, DockViewportInputStatus,
+        DockViewportOpenStatus, DockViewportPlatformSyncAction, DockViewportPlatformSyncRequest,
         DockViewportReleaseUnavailableRecord, DockViewportResolvedDropRoute,
         DockViewportRouteStatus, DockViewportRouteTarget, DockViewportRuntime,
         DockViewportRuntimeHandle, DockViewportShouldCloseStatus, DockViewportTargetContext,
@@ -2004,25 +2004,6 @@ mod handle_suite {
         cx.set_platform_hovered_window(Some(target_opened.window()));
         target_window
             .update(cx, |host, window, cx| {
-                host.begin_host_drop_scene_from_render(
-                    &payload,
-                    floating_bounds(0.0, 0.0, 360.0, 220.0),
-                    target_center_host_position(),
-                    window,
-                    cx,
-                );
-                host.update_local_drop_scene_fact_from_render(
-                    &payload,
-                    crate::drop_scene_fact::leaf(
-                        target_tabs,
-                        target_tabs,
-                        floating_bounds(0.0, 0.0, 360.0, 220.0),
-                        false,
-                    ),
-                    target_center_host_position(),
-                    window,
-                    cx,
-                );
                 host.drop_payload_release_from_render(
                     DockPayloadDropRelease::hovered_host_with_session(
                         payload.clone(),
@@ -2056,7 +2037,7 @@ mod handle_suite {
     }
 
     #[open_gpui::test]
-    fn hovered_host_release_uses_accepted_local_target_instead_of_stale_cached_delivery(
+    fn hovered_host_release_revalidates_cached_route_through_the_current_host_scene(
         cx: &mut TestAppContext,
     ) {
         let source_space = DockSpaceId::from("source");
@@ -2133,25 +2114,6 @@ mod handle_suite {
         cx.set_platform_hovered_window(Some(target_opened.window()));
         target_window
             .update(cx, |host, window, cx| {
-                host.begin_host_drop_scene_from_render(
-                    &payload,
-                    floating_bounds(0.0, 0.0, 360.0, 220.0),
-                    target_center_host_position(),
-                    window,
-                    cx,
-                );
-                host.update_local_drop_scene_fact_from_render(
-                    &payload,
-                    crate::drop_scene_fact::leaf(
-                        target_tabs,
-                        target_tabs,
-                        floating_bounds(0.0, 0.0, 360.0, 220.0),
-                        false,
-                    ),
-                    target_center_host_position(),
-                    window,
-                    cx,
-                );
                 host.drop_payload_release_from_render(
                     DockPayloadDropRelease::hovered_host_with_session(
                         payload.clone(),
@@ -2185,8 +2147,8 @@ mod handle_suite {
         let status = runtime.runtime_status();
         assert_eq!(
             status.last_drop_outcome.as_ref().map(|record| record.kind),
-            None,
-            "accepted same-window delivery should commit locally instead of consuming the routed runtime preview"
+            Some(DockViewportDropOutcomeKind::Action),
+            "the single routed authority should record the committed workspace action"
         );
         assert!(
             runtime.active_payload_drag_session(&payload).is_none(),

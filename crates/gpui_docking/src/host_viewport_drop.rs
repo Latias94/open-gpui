@@ -1,7 +1,7 @@
 use crate::viewport_registry::DockViewportWindowBoundsFrame;
 use crate::{
     DockHost, DockViewportDropPayload, DockViewportDropReleasePoint, DockViewportDropRouteRequest,
-    DockViewportHostGeometry, DockViewportPlatformSignals, DockViewportWindowFacts,
+    DockViewportPlatformSignals,
     drag::{DockDragPayload, DockDragTearOffGeometry},
     host_interaction_outcome::DockHostInteractionOutcome,
     interaction::{DockPayloadDropRelease, DockPayloadDropReleaseOrigin, DockRuntimeDragSession},
@@ -9,45 +9,6 @@ use crate::{
 use open_gpui::{Context, Pixels, Point, Window};
 
 impl DockHost {
-    pub(crate) fn publish_viewport_host_scene_interaction(
-        &mut self,
-        host_geometry: impl Into<DockViewportHostGeometry>,
-        window_position: Point<Pixels>,
-        window: &Window,
-        cx: &Context<Self>,
-    ) -> bool {
-        let runtime = self.viewport_runtime().clone();
-        let space = self.space().clone();
-        let drop_guide_metrics =
-            self.with_workspace(cx, |workspace| workspace.options().drop_guide_metrics);
-        let window_id = window.window_handle().window_id();
-        if runtime.window_id_for_space(&space) != Some(window_id) {
-            self.interaction_mut().set_viewport_host_scene_frame(None);
-            return false;
-        }
-
-        let host_geometry = host_geometry.into();
-        let Some(host_position) = host_geometry.window_to_host(window_position) else {
-            self.interaction_mut().set_viewport_host_scene_frame(None);
-            return false;
-        };
-        let registration = runtime.begin_viewport_host_scene_frame(
-            space,
-            window_id,
-            DockViewportWindowFacts::from_window(window, cx),
-            host_geometry,
-            host_position,
-            drop_guide_metrics,
-        );
-        let Some(registration) = registration else {
-            self.interaction_mut().set_viewport_host_scene_frame(None);
-            return false;
-        };
-        self.interaction_mut()
-            .set_viewport_host_scene_frame(Some(registration.frame));
-        true
-    }
-
     pub(crate) fn update_viewport_drop_route_preview_interaction(
         &mut self,
         payload: &DockDragPayload,

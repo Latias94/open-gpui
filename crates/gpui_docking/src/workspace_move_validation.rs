@@ -1,7 +1,6 @@
 use crate::{
     DockActionApplyError, DockClassId, DockGraphMutationError, DockItemId, DockNode, DockNodeId,
     DockPolicy, DockPolicyError, DockSpaceId, DockViewportDropPayload, DockWorkspace,
-    drag::{DockDragPayload, DockDragPayloadKind},
     drop_target::{DockResolvedDropTarget, DockResolvedDropTargetKind},
     workspace_drop_transaction::DockWorkspaceDropPayload,
 };
@@ -153,19 +152,6 @@ impl DockWorkspace {
                 .map(|item| payload_dock_class_item(self, &item)),
             visible_split_floating,
         )
-    }
-
-    pub(crate) fn payload_dock_classes_for_drag_payload(
-        &self,
-        payload: &DockDragPayload,
-    ) -> DockPayloadDockClasses {
-        match &payload.kind {
-            DockDragPayloadKind::Item { item } => self.payload_dock_classes_for_item(item),
-            DockDragPayloadKind::Tabs => self.payload_dock_classes_for_tabs(payload.source_node),
-            DockDragPayloadKind::Floating { floating } => {
-                self.payload_dock_classes_for_floating(*floating)
-            }
-        }
     }
 
     pub(crate) fn payload_dock_classes_for_workspace_payload(

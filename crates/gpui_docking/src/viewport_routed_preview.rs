@@ -173,6 +173,30 @@ impl DockViewportRoutedDropPreviewReplacement {
 }
 
 impl DockViewportRoutedDropPreviewState {
+    #[cfg(test)]
+    pub(crate) fn resolved_target_for_registration(
+        &self,
+        registration: &DockViewportRegistrationKey,
+    ) -> Option<crate::drop_target::DockResolvedDropTarget> {
+        self.resolution
+            .as_ref()?
+            .routed_preview_target_snapshot()
+            .filter(|target| target.route_proof().registration_key() == registration)
+            .map(|target| target.target().clone())
+    }
+
+    pub(crate) fn tab_reorder_hold_for_session(
+        &self,
+        session: Option<&DockRuntimeDragSession>,
+    ) -> Option<crate::DockViewportTabReorderHold> {
+        let session = session?;
+        let resolution = self.resolution.as_ref()?;
+        if resolution.drag_session() != Some(session) {
+            return None;
+        }
+        resolution.tab_reorder_hold()
+    }
+
     pub(crate) fn preview_for_registration(
         &self,
         registration: &DockViewportRegistrationKey,

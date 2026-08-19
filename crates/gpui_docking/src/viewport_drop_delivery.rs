@@ -9,11 +9,11 @@ pub(crate) use current_facts::validate_delivery_workspace_target;
 use current_facts::validate_delivery_workspace_target_inner;
 pub(crate) use current_facts::{
     DockViewportWorkspaceRouteFacts, resolve_delivery_workspace_target_with_facts,
-    resolve_workspace_target_for_route_with_facts,
+    resolve_workspace_target_for_route_with_facts_and_reorder_hold,
 };
 pub(crate) use model::{
     DockDropDelivery, DockDropWorkspaceCommit, DockViewportResolvedDropRoute,
-    DockViewportResolvedDropTargetSnapshot,
+    DockViewportResolvedDropTargetSnapshot, DockViewportTabReorderHold,
 };
 #[cfg(test)]
 pub(crate) use model::{DockDropDeliveryKind, DockViewportWorkspaceRouteTarget};

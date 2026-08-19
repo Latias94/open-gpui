@@ -96,6 +96,10 @@ impl DockViewportRuntime {
         &mut self,
         sampled: DockViewportSampledDropRouteResolution,
     ) -> DockViewportResolvedDropRouteRefresh {
+        #[cfg(test)]
+        {
+            self.payload_drop_route_resolution_count += 1;
+        }
         let DockViewportSampledDropRouteResolution {
             request,
             backend_focus,
@@ -113,13 +117,18 @@ impl DockViewportRuntime {
         .into_route_selection();
         let unavailable_reason = selection.route_resolution.unavailable_reason();
         let route = selection.route_resolution.into_route();
-        let workspace_target = crate::resolve_workspace_target_for_route_with_facts(
-            &self.adapter,
-            self.frame_coordinator.host_scenes(),
-            &route,
-            &selection.request,
-            &workspace_facts,
-        );
+        let reorder_hold = self
+            .routed_drop_preview
+            .tab_reorder_hold_for_session(selection.request.drag_session());
+        let workspace_target =
+            crate::resolve_workspace_target_for_route_with_facts_and_reorder_hold(
+                &self.adapter,
+                self.frame_coordinator.host_scenes(),
+                &route,
+                &selection.request,
+                &workspace_facts,
+                reorder_hold.as_ref(),
+            );
         let resolution = DockViewportResolvedDropRoute::from_workspace_route_target(
             &selection.request,
             route,

@@ -4,7 +4,6 @@ use crate::{
     debug::DockDebugRegion,
     drag::{DockDragPayload, DockDragPayloadKind, DockDragTearOffGeometry},
     drag_visual::DockDragVisual,
-    drop_scene_fact,
     host_render_actions::DockRenderedPointerPosition,
     host_render_session::{DockFloatingChromeTarget, DockHostRenderSession},
     render::{DockViewportHostSceneCandidateSlot, defer_rejected_payload_drag_cleanup},
@@ -191,7 +190,7 @@ impl DockHost {
                 },
             ));
 
-        if let Some(DockFloatingChromeTarget::SingleTabs(target_tabs)) = chrome_target {
+        if let Some(DockFloatingChromeTarget::SingleTabs(_)) = chrome_target {
             let mut payload = DockDragPayload::new_floating(space.clone(), floating, title.clone());
             if let Some(preview_titles) = session.multi_preview_tab_titles_for_node(floating) {
                 payload = payload.with_preview_tabs(preview_titles);
@@ -228,7 +227,6 @@ impl DockHost {
                         let Ok(layout_position) = event.target_layout_position() else {
                             return;
                         };
-                        let mut floating_layout_bounds = bounds;
                         if payload.source_space == space
                             && matches!(
                                 payload.kind,
@@ -241,10 +239,8 @@ impl DockHost {
                             else {
                                 return;
                             };
-                            floating_layout_bounds = updated_bounds;
-                            let Ok(floating_window_bounds) = event
-                                .geometry()
-                                .layout_to_window_bounds(floating_layout_bounds)
+                            let Ok(floating_window_bounds) =
+                                event.geometry().layout_to_window_bounds(updated_bounds)
                             else {
                                 return;
                             };
@@ -253,7 +249,7 @@ impl DockHost {
                                     floating_window_bounds,
                                     event.window_position(),
                                 )
-                                .with_preferred_size(floating_layout_bounds.size);
+                                .with_preferred_size(updated_bounds.size);
                             if let Some(display) = window.display(cx) {
                                 tear_off_geometry = tear_off_geometry
                                     .with_display_work_area(display.visible_bounds());
@@ -263,25 +259,6 @@ impl DockHost {
                                 tear_off_geometry,
                             );
                         }
-                        if !event.displayed_bounds().contains(&event.window_position()) {
-                            return;
-                        }
-                        let fact = drop_scene_fact::floating_title_bar(
-                            floating,
-                            target_tabs,
-                            event.layout_bounds(),
-                            floating_layout_bounds,
-                        );
-                        this.update_local_drop_scene_fact_from_render(
-                            &payload,
-                            fact,
-                            DockRenderedPointerPosition::new(
-                                layout_position,
-                                event.window_position(),
-                            ),
-                            window,
-                            cx,
-                        );
                     },
                 ));
 

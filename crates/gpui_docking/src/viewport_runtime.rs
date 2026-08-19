@@ -108,6 +108,8 @@ pub(crate) struct DockViewportRuntime {
     reject_next_provisional_registration: bool,
     #[cfg(test)]
     rejected_live_undock_promotion_commits: Cell<u8>,
+    #[cfg(test)]
+    payload_drop_route_resolution_count: usize,
 }
 
 #[derive(Debug)]
@@ -996,6 +998,8 @@ impl DockViewportRuntime {
             reject_next_provisional_registration: false,
             #[cfg(test)]
             rejected_live_undock_promotion_commits: Cell::new(0),
+            #[cfg(test)]
+            payload_drop_route_resolution_count: 0,
         }
     }
 
@@ -1027,6 +1031,7 @@ impl DockViewportRuntime {
             live_undock_promotion_commits: HashMap::new(),
             reject_next_provisional_registration: false,
             rejected_live_undock_promotion_commits: Cell::new(0),
+            payload_drop_route_resolution_count: 0,
         }
     }
 
@@ -1288,6 +1293,11 @@ impl DockViewportRuntime {
         status
             .with_window_ownership(self.window_ownership.status())
             .with_viewport_lifecycle(self.adapter.viewport_lifecycle_records())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn payload_drop_route_resolution_count_for_test(&self) -> usize {
+        self.payload_drop_route_resolution_count
     }
 
     #[cfg(test)]

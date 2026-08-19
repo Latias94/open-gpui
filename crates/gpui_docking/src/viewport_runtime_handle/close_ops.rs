@@ -48,7 +48,6 @@ impl DockViewportRuntimeHandle {
             if let Some(closed) = closed {
                 self.clear_platform_mutation_observation_subscriptions(window_id);
                 let closed_effects = closed.window_effects();
-                let _ = clear_dockhost_drop_previews(closed_effects.refresh().iter().cloned(), cx);
                 apply_viewport_window_effects(&self.runtime, closed_effects, cx);
                 return closed.outcome;
             }
@@ -80,7 +79,6 @@ impl DockViewportRuntimeHandle {
             self.publish_surface_commit(&update, cx);
             if is_current {
                 let closed_effects = closed.window_effects();
-                let _ = clear_dockhost_drop_previews(closed_effects.refresh().iter().cloned(), cx);
                 apply_viewport_window_effects(&self.runtime, closed_effects.clone(), cx);
                 let _ = self.apply_close_recovery_activation(&closed.outcome, cx);
             }
