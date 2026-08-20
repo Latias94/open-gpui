@@ -330,7 +330,7 @@ impl DockSurfaceLiveUndockTestEvent {
             payload_lease_generation: lease.map(|lease| lease.lease_generation().get()),
             provisional_session_generation: lease
                 .map(|lease| lease.provisional_session_generation()),
-            frame_generation: receipt.submitted_frame_generation(),
+            frame_generation: Some(receipt.submitted_frame_generation()),
             root_count: None,
         }
     }
@@ -351,7 +351,7 @@ impl DockSurfaceLiveUndockTestEvent {
             provisional_session_generation: receipt
                 .admitted_session_generation()
                 .or_else(|| lease.map(|lease| lease.provisional_session_generation())),
-            frame_generation: semantics.submitted_frame_generation(),
+            frame_generation: Some(semantics.submitted_frame_generation()),
             root_count: None,
         }
     }

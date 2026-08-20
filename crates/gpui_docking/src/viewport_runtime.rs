@@ -846,6 +846,35 @@ pub(crate) struct DockViewportPreparedTearOffDrop {
     move_plan: crate::viewport_tear_off_move::DockViewportTearOffMovePlan,
 }
 
+#[derive(Debug)]
+pub(crate) struct DockViewportLockedTearOffDrop {
+    request: DockViewportTearOffRequest,
+    target_space_base: DockSpaceId,
+    focus_item: Option<DockItemId>,
+    options: WindowOptions,
+    move_lock: crate::DockViewportLockedTearOffMove,
+}
+
+impl DockViewportLockedTearOffDrop {
+    pub(crate) fn target_space_base(&self) -> &DockSpaceId {
+        &self.target_space_base
+    }
+
+    pub(crate) fn bind_target(
+        self,
+        target_space: DockSpaceId,
+    ) -> Result<DockViewportPreparedTearOffDrop, DockActionApplyError> {
+        let move_plan = self.move_lock.bind_target(&target_space)?;
+        Ok(DockViewportPreparedTearOffDrop::new(
+            self.request,
+            target_space,
+            self.focus_item,
+            self.options,
+            move_plan,
+        ))
+    }
+}
+
 pub(crate) struct DockViewportPreparedTearOffDropProbe {
     controller: Entity<DockController>,
     request: DockViewportTearOffRequest,
@@ -3365,6 +3394,36 @@ impl DockViewportRuntime {
             request,
             target_space,
             options,
+        })
+    }
+
+    pub(crate) fn lock_tear_off_drop_delivery(
+        &self,
+        request: DockViewportTearOffRequest,
+        target_space_base: DockSpaceId,
+        cx: &App,
+    ) -> Result<DockViewportLockedTearOffDrop, DockActionApplyError> {
+        self.validate_payload_drag_session(request.drag_session())?;
+        let options = self.tear_off_window_options(&request)?;
+        let (focus_item, move_lock) = {
+            let controller = self.controller.read(cx);
+            let workspace = controller.workspace();
+            let focus_item = workspace.activation_focus_item_for_viewport_payload(
+                request.payload(),
+                request.source_node(),
+                request
+                    .drag_session()
+                    .and_then(DockRuntimeDragSession::focus_item),
+            );
+            let move_lock = crate::DockViewportLockedTearOffMove::new(workspace, &request)?;
+            (focus_item, move_lock)
+        };
+        Ok(DockViewportLockedTearOffDrop {
+            request,
+            target_space_base,
+            focus_item,
+            options,
+            move_lock,
         })
     }
 

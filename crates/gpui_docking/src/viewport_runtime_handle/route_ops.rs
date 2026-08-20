@@ -67,7 +67,7 @@ impl DockViewportCommittedLiveUndockHostDrop {
 
 enum DockViewportLockedDropRouteKind {
     Workspace(crate::viewport_runtime::DockViewportLockedWorkspaceDrop),
-    TearOff(DockViewportPreparedTearOffDrop),
+    TearOff(crate::viewport_runtime::DockViewportLockedTearOffDrop),
 }
 
 impl DockViewportLockedDropRoute {
@@ -77,6 +77,14 @@ impl DockViewportLockedDropRoute {
 
     pub(crate) const fn is_workspace(&self) -> bool {
         matches!(self.kind, DockViewportLockedDropRouteKind::Workspace(_))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn tear_off_target_space_base_for_test(&self) -> Option<&DockSpaceId> {
+        match &self.kind {
+            DockViewportLockedDropRouteKind::Workspace(_) => None,
+            DockViewportLockedDropRouteKind::TearOff(locked) => Some(locked.target_space_base()),
+        }
     }
 }
 
@@ -264,8 +272,10 @@ impl DockViewportRuntimeHandle {
 
     /// Resolves and freezes one callback-scoped captured-native MouseUp without publishing runtime
     /// or window effects. Workspace and tear-off policy, payload identity, and the exact target
-    /// space are all frozen before user MouseUp listeners run. Captured tear-off identity is
-    /// derived from native ingress authority, so this phase does not advance runtime allocation.
+    /// space base are all frozen before user MouseUp listeners run. The concrete unique target is
+    /// bound post-borrow against current graph/adapter occupancy, while policy and payload classes
+    /// remain the MouseUp snapshot. Captured tear-off identity is derived from native ingress
+    /// authority, so this phase does not advance runtime allocation.
     pub(crate) fn lock_captured_native_payload_drop(
         &self,
         request: &DockViewportDropRouteRequest,
@@ -311,19 +321,12 @@ impl DockViewportRuntimeHandle {
                     generation.ordinal(),
                     sequence.ordinal(),
                 ));
-                let controller = self.runtime.borrow().controller_entity();
-                let graph_spaces = cx.read_entity(&controller, |controller, _| {
-                    controller.workspace().graph().spaces()
-                });
-                let target_space = self
-                    .runtime
-                    .borrow()
-                    .available_tear_off_space_from_base(target_space_base, &graph_spaces);
-                let probe = self
-                    .runtime
-                    .borrow()
-                    .prepare_tear_off_drop_delivery_for_target(request, target_space)?;
-                DockViewportLockedDropRouteKind::TearOff(probe.sample(cx)?)
+                let locked = self.runtime.borrow().lock_tear_off_drop_delivery(
+                    request,
+                    target_space_base,
+                    cx,
+                )?;
+                DockViewportLockedDropRouteKind::TearOff(locked)
             }
             Err(delivery) => {
                 return self.lock_workspace_payload_drop_delivery(delivery, cx);
@@ -399,9 +402,21 @@ impl DockViewportRuntimeHandle {
                     }
                     result.map(|(outcome, _)| outcome)
                 }
-                DockViewportLockedDropRouteKind::TearOff(prepared) => {
+                DockViewportLockedDropRouteKind::TearOff(locked) => {
+                    let controller = self.runtime.borrow().controller_entity();
+                    let graph_spaces = cx.read_entity(&controller, |controller, _| {
+                        controller.workspace().graph().spaces()
+                    });
+                    let target_space = self.runtime.borrow().available_tear_off_space_from_base(
+                        locked.target_space_base().clone(),
+                        &graph_spaces,
+                    );
                     let result = self
-                        .open_prepared_tear_off_viewport(prepared, None, cx)
+                        .open_prepared_tear_off_viewport(
+                            locked.bind_target(target_space)?,
+                            None,
+                            cx,
+                        )
                         .map(DockViewportDropRouteOutcome::tear_off)
                         .map_err(|error| DockActionApplyError::TearOffViewportOpenFailed {
                             message: error.to_string(),

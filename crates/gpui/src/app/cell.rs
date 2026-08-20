@@ -40,11 +40,11 @@ use super::{
     native_window_activation::{NativeWindowActivationAuthority, WindowActivationTicketDelivery},
 };
 use crate::{
-    Action, BackgroundExecutor, DispatchEventResult, NativeInputInvariantViolation, Platform,
-    PlatformFocusedWindow, PlatformInput, PlatformPointerCaptureReleaseOutcome,
-    PlatformPresentationShutdownOutcome, PlatformWindow, PlatformWindowCommand,
-    PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome, PointerCancelReason,
-    PreparedPlatformPresentationShutdown, WindowActivationCancellationOutcome,
+    Action, BackgroundExecutor, CommittedWindowHitTestSnapshot, DispatchEventResult, HitboxId,
+    NativeInputInvariantViolation, Pixels, Platform, PlatformFocusedWindow, PlatformInput,
+    PlatformPointerCaptureReleaseOutcome, PlatformPresentationShutdownOutcome, PlatformWindow,
+    PlatformWindowCommand, PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome, Point,
+    PointerCancelReason, PreparedPlatformPresentationShutdown, WindowActivationCancellationOutcome,
     WindowActivationTerminal, WindowActivationTicket, WindowControlArea, WindowId,
     window::WindowInteractionAuthority,
 };
@@ -2218,6 +2218,25 @@ impl AppCell {
         area: Option<WindowControlArea>,
     ) {
         self.native_queries.set_window_control_area(window_id, area);
+    }
+
+    pub(super) fn set_native_window_hit_test_snapshot(
+        &self,
+        window_id: WindowId,
+        snapshot: std::sync::Arc<CommittedWindowHitTestSnapshot>,
+    ) {
+        self.native_queries
+            .set_window_hit_test_snapshot(window_id, snapshot);
+    }
+
+    pub(super) fn native_window_point_target_rank(
+        &self,
+        window_id: WindowId,
+        hitbox: HitboxId,
+        point: Point<Pixels>,
+    ) -> Option<usize> {
+        self.native_queries
+            .window_point_target_rank(window_id, hitbox, point)
     }
 
     pub(super) fn native_window_control_area(

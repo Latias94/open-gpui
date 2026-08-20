@@ -5,10 +5,10 @@ use crate::{
     native_captured_drag::DockNativeCapturedDragTransportRetirementReceipt,
 };
 use open_gpui::{
-    AnyWindowHandle, FocusHandle, PlatformPhysicalDisplayObservation, WindowId,
-    WindowProvisionalPlacementOutcome, WindowProvisionalPlacementPurpose,
-    WindowProvisionalPlacementSnapshot, WindowProvisionalRevealOutcome,
-    WindowProvisionalRevealSnapshot, WindowProvisionalRevealZOrder,
+    AnyWindowHandle, FocusHandle, PlatformPhysicalDisplayObservation, WindowFrameSubmissionOutcome,
+    WindowFrameSubmissionSnapshot, WindowId, WindowProvisionalPlacementOutcome,
+    WindowProvisionalPlacementPurpose, WindowProvisionalPlacementSnapshot,
+    WindowProvisionalRevealOutcome, WindowProvisionalRevealSnapshot, WindowProvisionalRevealZOrder,
     WindowProvisionalSemanticsOutcome, WindowProvisionalSemanticsSnapshot,
     WindowProvisionalSession, WindowProvisionalSessionPhase,
     retained_visual::TicketIdentity,
@@ -1782,8 +1782,8 @@ impl DockLiveUndockPromotionCommitDisposition {
 
 /// Exact destination-semantics proof for one durable promotion.
 ///
-/// Same-window receipts retain the renderer-submitted provisional frame. Host receipts retain the
-/// exact already-published host scene selected by the locked drop route.
+/// Every receipt retains the exact accepted frame whose renderer submission completed. Same-window
+/// receipts additionally retain the provisional-session projection that owns the interaction gate.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct DockLiveUndockDestinationSemanticsReceipt {
     identity: DockLiveUndockIdentity,
@@ -1791,6 +1791,7 @@ pub(crate) struct DockLiveUndockDestinationSemanticsReceipt {
     destination: DockLiveUndockPromotionDestination,
     reveal: Option<DockLiveUndockRevealReceipt>,
     provisional: Option<WindowProvisionalSemanticsSnapshot>,
+    submitted: WindowFrameSubmissionSnapshot,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1803,17 +1804,25 @@ pub(crate) struct DockLiveUndockPreparedDestinationSemanticsReceipt {
 }
 
 impl DockLiveUndockDestinationSemanticsReceipt {
-    pub(crate) fn new_host(
+    pub(crate) fn new_host_submitted(
         identity: DockLiveUndockIdentity,
         token: DockLiveUndockPromotionToken,
         target: DockLiveUndockHostTarget,
+        submitted: WindowFrameSubmissionSnapshot,
     ) -> Option<Self> {
-        (target.host_scene_generation() != 0).then_some(Self {
+        let submitted_frame_generation = submitted.submitted_frame_generation()?;
+        (target.host_scene_generation() != 0
+            && submitted.window_id() == target.window_id()
+            && submitted.outcome() == WindowFrameSubmissionOutcome::Submitted
+            && submitted.accepted_frame_generation() == Some(submitted_frame_generation)
+            && submitted_frame_generation >= submitted.minimum_frame_generation())
+        .then_some(Self {
             identity,
             token,
             destination: DockLiveUndockPromotionDestination::Host(target),
             reveal: None,
             provisional: None,
+            submitted,
         })
     }
 
@@ -1881,6 +1890,7 @@ impl DockLiveUndockDestinationSemanticsReceipt {
             },
             reveal: Some(reveal),
             provisional: Some(submitted),
+            submitted: submitted.frame_submission(),
         })
     }
 
@@ -1903,10 +1913,10 @@ impl DockLiveUndockDestinationSemanticsReceipt {
         }
     }
 
-    pub(crate) const fn submitted_frame_generation(self) -> Option<u64> {
-        match self.provisional {
-            Some(provisional) => provisional.submitted_frame_generation(),
-            None => None,
+    pub(crate) fn submitted_frame_generation(self) -> u64 {
+        match self.submitted.submitted_frame_generation() {
+            Some(generation) => generation,
+            None => unreachable!("destination semantics receipt must carry a submitted frame"),
         }
     }
 
@@ -1922,6 +1932,10 @@ impl DockLiveUndockDestinationSemanticsReceipt {
             destination,
             reveal: None,
             provisional: None,
+            submitted: WindowFrameSubmissionSnapshot::submitted_for_test(
+                destination.window_id(),
+                1,
+            ),
         }
     }
 }

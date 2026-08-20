@@ -32,6 +32,7 @@ use crate::{
     WindowCreationFacts, WindowDecorations, WindowInitialPresentationOrder,
     WindowInitialPresentationStatus, WindowKind, WindowMutationDispatch, WindowMutationDomain,
     WindowMutationOutcome, WindowOptions, WindowParams, WindowPhysicalPlacementRequest,
+    WindowFrameSubmissionOutcome, WindowFrameSubmissionSnapshot, WindowFrameSubmissionTicket,
     WindowPlacementRequest, WindowPlacementState, WindowPlatformFacts, WindowPresentAttemptFacts,
     WindowPresentationFacts, WindowProvisionalOpeningClaim, WindowProvisionalPlacementOutcome,
     WindowProvisionalPlacementRequest, WindowProvisionalPlacementTicket,
@@ -799,6 +800,78 @@ impl HitboxId {
     }
 }
 
+#[derive(Clone, Debug)]
+struct CommittedWindowHitTestEntry {
+    id: HitboxId,
+    geometry: ElementGeometry,
+    clip_stack: ClipStackSnapshot,
+    behavior: HitboxBehavior,
+    active: bool,
+}
+
+impl CommittedWindowHitTestEntry {
+    fn from_hitbox(hitbox: &Hitbox) -> Self {
+        Self {
+            id: hitbox.id,
+            geometry: hitbox.geometry,
+            clip_stack: hitbox.clip_stack.clone(),
+            behavior: hitbox.behavior,
+            active: hitbox.is_active(),
+        }
+    }
+
+    fn is_window_point_target(&self, point: Point<Pixels>) -> bool {
+        self.active
+            && self.geometry.displayed_bounds().contains(&point)
+            && self.clip_stack.contains(point)
+    }
+}
+
+/// Immutable hit-test authority published from one accepted rendered frame.
+///
+/// Native routing reads this detached value while a source window update is checked out. It must
+/// not retain candidate-frame validity cells or require borrowing the live target [`Window`].
+#[derive(Clone, Debug)]
+pub(crate) struct CommittedWindowHitTestSnapshot {
+    hitboxes: Arc<[CommittedWindowHitTestEntry]>,
+}
+
+impl CommittedWindowHitTestSnapshot {
+    fn from_frame(frame: &Frame) -> Self {
+        Self {
+            hitboxes: frame
+                .hitboxes
+                .iter()
+                .map(CommittedWindowHitTestEntry::from_hitbox)
+                .collect(),
+        }
+    }
+
+    pub(crate) fn window_point_target_rank(
+        &self,
+        hitbox: HitboxId,
+        point: Point<Pixels>,
+    ) -> Option<usize> {
+        let mut rank = 0;
+        for candidate in self.hitboxes.iter().rev() {
+            if !candidate.is_window_point_target(point) {
+                continue;
+            }
+            if candidate.id == hitbox {
+                return Some(rank);
+            }
+            rank += 1;
+            if matches!(
+                candidate.behavior,
+                HitboxBehavior::BlockMouse | HitboxBehavior::BlockMouseExceptScroll
+            ) {
+                return None;
+            }
+        }
+        None
+    }
+}
+
 /// An immutable committed geometry capability for exact initial hit testing.
 #[derive(Clone, Debug)]
 pub struct HitTestSnapshot {
@@ -1492,6 +1565,7 @@ struct WindowPresentationState {
     renderer_invalidated_generation: Option<u64>,
     initial_presentation: WindowInitialPresentationStatus,
     provisional_reveal_ticket: Option<WindowProvisionalRevealTicket>,
+    frame_submission_ticket: Option<WindowFrameSubmissionTicket>,
 }
 
 /// Test-only diagnostics captured from the exact frame accepted by the platform renderer.
@@ -3322,6 +3396,165 @@ impl Window {
         Ok(outcome)
     }
 
+    fn install_frame_submission_ticket(
+        &mut self,
+        ticket: &WindowFrameSubmissionTicket,
+    ) -> Result<()> {
+        if self
+            .presentation_state
+            .frame_submission_ticket
+            .as_ref()
+            .is_some_and(|current| {
+                matches!(
+                    current.snapshot().outcome(),
+                    WindowFrameSubmissionOutcome::Submitted
+                        | WindowFrameSubmissionOutcome::Rejected
+                        | WindowFrameSubmissionOutcome::WindowTerminal
+                )
+            })
+        {
+            self.presentation_state.frame_submission_ticket = None;
+        }
+        if let Some(current) = self.presentation_state.frame_submission_ticket.as_ref() {
+            anyhow::ensure!(
+                current.same_authority(ticket),
+                "window already owns another active exact-frame submission"
+            );
+            return Ok(());
+        }
+        anyhow::ensure!(
+            ticket.snapshot().window_id() == self.handle.window_id(),
+            "exact-frame submission belongs to a different full window id"
+        );
+        self.presentation_state.frame_submission_ticket = Some(ticket.clone());
+        Ok(())
+    }
+
+    /// Begins one exact window-owned frame submission.
+    #[doc(hidden)]
+    pub fn begin_exact_frame_submission(
+        &mut self,
+        _cx: &mut App,
+    ) -> Result<WindowFrameSubmissionTicket> {
+        anyhow::ensure!(
+            self.creation_can_commit() && self.presentation_shutdown.is_none(),
+            "a terminal window cannot begin an exact-frame submission"
+        );
+        let minimum_frame_generation = self
+            .rendered_frame
+            .generation
+            .checked_add(1)
+            .ok_or_else(|| anyhow!("exact-frame submission generation overflow"))?;
+        let ticket = WindowFrameSubmissionTicket::new(
+            self.handle.window_id(),
+            minimum_frame_generation,
+        );
+        self.install_frame_submission_ticket(&ticket)?;
+        self.refresh();
+        self.platform_window.request_frame(RequestFrameOptions {
+            force_render: false,
+            require_presentation: true,
+        });
+        Ok(ticket)
+    }
+
+    /// Accepts the exact focus-stable frame named by a window-owned submission ticket.
+    #[doc(hidden)]
+    pub fn accept_exact_frame_submission_frame(
+        &mut self,
+        ticket: &WindowFrameSubmissionTicket,
+        frame_generation: u64,
+        _cx: &mut App,
+    ) -> Result<WindowFrameSubmissionSnapshot> {
+        anyhow::ensure!(
+            self.prepaint_commit_phase.get() == Some(PrepaintCommitPhase::FocusStable),
+            "exact-frame submission can only be accepted from a focus-stable prepaint commit"
+        );
+        anyhow::ensure!(
+            frame_generation == self.sealed_focus_authority_frame().generation,
+            "exact-frame submission must name the exact candidate frame"
+        );
+        let current = self
+            .presentation_state
+            .frame_submission_ticket
+            .as_ref()
+            .ok_or_else(|| anyhow!("window has no active exact-frame submission"))?;
+        anyhow::ensure!(
+            current.same_authority(ticket),
+            "exact-frame submission authority does not match the window"
+        );
+        let snapshot = ticket.snapshot();
+        anyhow::ensure!(
+            snapshot.window_id() == self.handle.window_id()
+                && snapshot.submitted_frame_generation().is_none()
+                && frame_generation >= snapshot.minimum_frame_generation()
+                && snapshot
+                    .accepted_frame_generation()
+                    .is_none_or(|accepted| frame_generation >= accepted)
+                && matches!(
+                    snapshot.outcome(),
+                    WindowFrameSubmissionOutcome::Pending
+                        | WindowFrameSubmissionOutcome::Accepted
+                ),
+            "exact-frame submission ticket does not admit the candidate frame"
+        );
+        anyhow::ensure!(
+            ticket.accept_frame(frame_generation),
+            "exact-frame submission ticket rejected the candidate frame"
+        );
+        Ok(ticket.snapshot())
+    }
+
+    /// Requests another renderer attempt for the exact accepted frame.
+    #[doc(hidden)]
+    pub fn request_exact_frame_submission_presentation(
+        &mut self,
+        ticket: &WindowFrameSubmissionTicket,
+    ) -> Result<()> {
+        let current = self
+            .presentation_state
+            .frame_submission_ticket
+            .as_ref()
+            .ok_or_else(|| anyhow!("window has no active exact-frame submission"))?;
+        anyhow::ensure!(
+            current.same_authority(ticket),
+            "exact-frame submission authority does not match the window"
+        );
+        let snapshot = ticket.snapshot();
+        anyhow::ensure!(
+            snapshot.window_id() == self.handle.window_id()
+                && snapshot.outcome() == WindowFrameSubmissionOutcome::Accepted
+                && snapshot.accepted_frame_generation().is_some()
+                && snapshot.submitted_frame_generation().is_none(),
+            "exact-frame submission has no accepted frame awaiting submission"
+        );
+        anyhow::ensure!(
+            self.creation_can_commit() && self.presentation_shutdown.is_none(),
+            "a terminal window cannot continue exact-frame submission"
+        );
+        self.platform_window.request_frame(RequestFrameOptions {
+            force_render: false,
+            require_presentation: true,
+        });
+        Ok(())
+    }
+
+    /// Releases one exact window-owned submission authority without fabricating an outcome.
+    #[doc(hidden)]
+    pub fn retire_exact_frame_submission(
+        &mut self,
+        ticket: &WindowFrameSubmissionTicket,
+    ) -> bool {
+        let Some(current) = self.presentation_state.frame_submission_ticket.as_ref() else {
+            return true;
+        };
+        if !current.same_authority(ticket) {
+            return false;
+        }
+        self.presentation_state.frame_submission_ticket = None;
+        true
+    }
+
     /// Begins projecting the destination tree while native and framework interaction remain gated.
     #[doc(hidden)]
     pub fn begin_provisional_destination_semantics(
@@ -3372,12 +3605,32 @@ impl Window {
             .max(reveal_generation)
             .checked_add(1)
             .ok_or_else(|| anyhow!("provisional semantics frame generation overflow"))?;
+        if self
+            .presentation_state
+            .frame_submission_ticket
+            .as_ref()
+            .is_some_and(|current| {
+                matches!(
+                    current.snapshot().outcome(),
+                    WindowFrameSubmissionOutcome::Submitted
+                        | WindowFrameSubmissionOutcome::Rejected
+                        | WindowFrameSubmissionOutcome::WindowTerminal
+                )
+            })
+        {
+            self.presentation_state.frame_submission_ticket = None;
+        }
+        anyhow::ensure!(
+            self.presentation_state.frame_submission_ticket.is_none(),
+            "window already owns another active exact-frame submission"
+        );
         let ticket = session.begin_destination_semantics(
             self.handle.window_id(),
             destination_generation,
             minimum_frame_generation,
             current_mutation_generation,
         )?;
+        self.install_frame_submission_ticket(ticket.frame_submission())?;
         self.refresh();
         self.platform_window.request_frame(RequestFrameOptions {
             force_render: false,
@@ -3413,6 +3666,13 @@ impl Window {
         );
         let session_snapshot = session.snapshot();
         let ticket_snapshot = ticket.snapshot();
+        anyhow::ensure!(
+            self.presentation_state
+                .frame_submission_ticket
+                .as_ref()
+                .is_some_and(|current| current.same_authority(ticket.frame_submission())),
+            "window no longer owns the exact destination-semantics frame submission"
+        );
         let phase_admits_frame = matches!(
             (session_snapshot.phase(), ticket_snapshot.outcome()),
             (
@@ -3475,6 +3735,13 @@ impl Window {
         );
         let session_snapshot = session.snapshot();
         let ticket_snapshot = ticket.snapshot();
+        anyhow::ensure!(
+            self.presentation_state
+                .frame_submission_ticket
+                .as_ref()
+                .is_some_and(|current| current.same_authority(ticket.frame_submission())),
+            "window no longer owns the exact destination-semantics frame submission"
+        );
         anyhow::ensure!(
             session_snapshot.window_id() == Some(self.handle.window_id())
                 && session_snapshot.phase()
@@ -4467,6 +4734,9 @@ impl Window {
     }
 
     fn terminate_provisional_presentation_for_window_close(&mut self) {
+        if let Some(ticket) = self.presentation_state.frame_submission_ticket.take() {
+            ticket.settle_window_terminal();
+        }
         if let Some(session) = self.provisional_session.as_ref() {
             let snapshot = session.snapshot();
             if snapshot.window_id() == Some(self.handle.window_id())
@@ -7401,6 +7671,12 @@ impl Window {
             .as_mut()
             .expect("the swapped candidate must retain its frame transaction")
             .mark_accepted();
+        cx.set_native_window_hit_test_snapshot(
+            self.handle.window_id(),
+            Arc::new(CommittedWindowHitTestSnapshot::from_frame(
+                &self.rendered_frame,
+            )),
+        );
 
         // Cross-frame publications now observe the frame that is actually visible. Focus-stable
         // commits remain ordered after every normal commit, including accepted publications.
@@ -7611,7 +7887,7 @@ impl Window {
     fn present(&mut self) -> PlatformWindowPresentOutcome {
         let generation = self.rendered_frame.generation;
         if self.renderer_repaint_is_pending() {
-            if self.record_provisional_destination_semantics_present_outcome(
+            if self.record_exact_frame_submission_present_outcome(
                 generation,
                 PlatformWindowPresentOutcome::RepaintRequired,
             ) == WindowProvisionalSemanticsPresentTransition::Invalidated
@@ -7642,7 +7918,7 @@ impl Window {
                 .renderer_invalidated_generation
                 .get_or_insert(generation);
             *invalidated_generation = (*invalidated_generation).max(generation);
-            self.record_provisional_destination_semantics_present_outcome(generation, outcome);
+            self.record_exact_frame_submission_present_outcome(generation, outcome);
             self.needs_present.set(false);
             self.refresh();
         } else if self
@@ -7669,7 +7945,7 @@ impl Window {
                 });
             }
             self.presentation_state.present_submitted_generation = Some(generation);
-            if self.record_provisional_destination_semantics_present_outcome(generation, outcome)
+            if self.record_exact_frame_submission_present_outcome(generation, outcome)
                 == WindowProvisionalSemanticsPresentTransition::Invalidated
             {
                 self.refresh();
@@ -7713,7 +7989,7 @@ impl Window {
             }
             self.needs_present.set(false);
         } else if outcome != PlatformWindowPresentOutcome::RepaintRequired {
-            if self.record_provisional_destination_semantics_present_outcome(generation, outcome)
+            if self.record_exact_frame_submission_present_outcome(generation, outcome)
                 == WindowProvisionalSemanticsPresentTransition::Invalidated
             {
                 self.refresh();
@@ -7726,24 +8002,56 @@ impl Window {
         outcome
     }
 
-    fn record_provisional_destination_semantics_present_outcome(
-        &self,
+    fn record_exact_frame_submission_present_outcome(
+        &mut self,
         generation: u64,
         outcome: PlatformWindowPresentOutcome,
     ) -> WindowProvisionalSemanticsPresentTransition {
         if !self.creation_can_commit() || self.presentation_shutdown.is_some() {
             return WindowProvisionalSemanticsPresentTransition::Unchanged;
         }
-        let Some(session) = self.provisional_session.as_ref() else {
+        let Some(ticket) = self
+            .presentation_state
+            .frame_submission_ticket
+            .as_ref()
+            .cloned()
+        else {
             return WindowProvisionalSemanticsPresentTransition::Unchanged;
         };
-        session.record_destination_semantics_present_outcome(
-            self.handle.window_id(),
-            generation,
-            self.window_mutations
-                .last_generation(WindowMutationDomain::Placement),
-            outcome,
-        )
+        let transition = self
+            .provisional_session
+            .as_ref()
+            .filter(|session| {
+                session.owns_destination_semantics_submission(
+                    self.handle.window_id(),
+                    &ticket,
+                )
+            })
+            .map_or_else(
+                || ticket.record_present_outcome(generation, outcome),
+                |session| {
+                    session.record_destination_semantics_present_outcome(
+                        self.handle.window_id(),
+                        generation,
+                        self.window_mutations
+                            .last_generation(WindowMutationDomain::Placement),
+                        outcome,
+                    )
+                },
+            );
+        if matches!(
+            transition,
+            WindowProvisionalSemanticsPresentTransition::Submitted
+                | WindowProvisionalSemanticsPresentTransition::Rejected
+        ) && self
+            .presentation_state
+            .frame_submission_ticket
+            .as_ref()
+            .is_some_and(|current| current.same_authority(&ticket))
+        {
+            self.presentation_state.frame_submission_ticket = None;
+        }
+        transition
     }
 
     /// Returns a snapshot of the current input-latency histograms.

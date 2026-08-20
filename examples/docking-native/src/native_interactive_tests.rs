@@ -26,6 +26,7 @@ use open_gpui_windows::{
     native_test_acquire_foreground_window,
     native_test_client_screen_bounds as native_client_screen_bounds,
     native_test_confirm_scenario_behavior, native_test_displays,
+    native_test_highest_refresh_display,
     native_test_inject_system_pointer as inject_system_pointer,
     native_test_logical_client_point_to_screen as logical_client_point_to_screen,
     native_test_mixed_dpi_display_pair, native_test_non_shell_root_window_at,
@@ -1665,14 +1666,16 @@ fn build_native_scenario(
             select_native_mixed_dpi_display_pair(worker_subcase, plan)
         })
         .transpose()?;
-    let display = if let Some(displays) = mixed_dpi_displays {
-        cx.find_display(displays.source.display_id())
-            .with_context(|| {
-                format!(
-                    "the native Dock scenario could not resolve selected source display {:?}",
-                    displays.source
-                )
-            })?
+    let benchmark_display = (behavior == NativeDockBehavior::TabDragLatencyBenchmark)
+        .then(native_test_highest_refresh_display)
+        .transpose()?;
+    let selected_native_display = mixed_dpi_displays
+        .map(|displays| displays.source)
+        .or(benchmark_display);
+    let display = if let Some(display) = selected_native_display {
+        cx.find_display(display.display_id()).with_context(|| {
+            format!("the native Dock scenario could not resolve selected display {display:?}")
+        })?
     } else {
         cx.primary_display()
             .context("the native Dock scenario requires a primary display")?
@@ -1700,9 +1703,9 @@ fn build_native_scenario(
         .then(|| build_process_convergence_surface(target_bounds, cx))
         .transpose()?;
     let mut placement = saved_viewport_placement(target_bounds, source_bounds, central_bounds);
-    if let Some(displays) = mixed_dpi_displays {
+    if let Some(display) = selected_native_display {
         for viewport in &mut placement.viewports {
-            viewport.display_id = Some(displays.source.display_id().into());
+            viewport.display_id = Some(display.display_id().into());
         }
     }
     let renderer_payload_probe =
@@ -1745,15 +1748,14 @@ fn build_native_scenario(
         source_hwnd != target_hwnd,
         "the native Dock scenario must own two distinct HWNDs"
     );
-    if let Some(displays) = mixed_dpi_displays {
-        let expected_display_id = Some(displays.source.display_id());
+    if let Some(display) = selected_native_display {
+        let expected_display_id = Some(display.display_id());
         let source_facts = window_platform_facts(cx, source_window)?;
         let target_facts = window_platform_facts(cx, target_window)?;
         ensure!(
             source_facts.display_id == expected_display_id
                 && target_facts.display_id == expected_display_id,
-            "the mixed-DPI base HWNDs must both be created on the selected source display: selected={:?}, source={source_facts:?}, target={target_facts:?}",
-            displays.source
+            "the native Dock base HWNDs must both be created on the selected display: selected={display:?}, source={source_facts:?}, target={target_facts:?}"
         );
     }
 
@@ -2345,23 +2347,39 @@ async fn measure_native_tab_drag_latency(
     })
     .await;
 
-    let (source_snapshot, source_presentation, target_snapshot, target_presentation) =
-        cx.update(|app| {
-            let source = app.update_window(scenario.source_window, |_, window, _| {
-                (window.input_latency_snapshot(), window.presentation_facts())
-            })?;
-            let target = app.update_window(scenario.target_window, |_, window, _| {
-                (window.input_latency_snapshot(), window.presentation_facts())
-            })?;
-            Ok::<_, anyhow::Error>((source.0, source.1, target.0, target.1))
+    let (
+        source_snapshot,
+        source_presentation,
+        source_platform,
+        target_snapshot,
+        target_presentation,
+        target_platform,
+    ) = cx.update(|app| {
+        let source = app.update_window(scenario.source_window, |_, window, _| {
+            (
+                window.input_latency_snapshot(),
+                window.presentation_facts(),
+                window.platform_facts().clone(),
+            )
         })?;
+        let target = app.update_window(scenario.target_window, |_, window, _| {
+            (
+                window.input_latency_snapshot(),
+                window.presentation_facts(),
+                window.platform_facts().clone(),
+            )
+        })?;
+        Ok::<_, anyhow::Error>((source.0, source.1, source.2, target.0, target.1, target.2))
+    })?;
     let source_moves = source_mouse_move_count(scenario)?.saturating_sub(source_moves_before);
     let measurement_elapsed = measurement_started.elapsed();
     let report = input_latency_report(
         &source_snapshot,
         source_presentation,
+        &source_platform,
         &target_snapshot,
         target_presentation,
+        &target_platform,
         MOVE_COUNT,
         source_moves,
         measurement_elapsed,
@@ -2395,14 +2413,16 @@ fn source_mouse_move_count(scenario: &NativeDockScenario) -> Result<usize> {
 fn input_latency_report(
     source_snapshot: &InputLatencySnapshot,
     source_presentation: open_gpui::WindowPresentationFacts,
+    source_platform: &WindowPlatformFacts,
     target_snapshot: &InputLatencySnapshot,
     target_presentation: open_gpui::WindowPresentationFacts,
+    target_platform: &WindowPlatformFacts,
     injected_moves: usize,
     observed_moves: usize,
     measurement_elapsed: Duration,
 ) -> serde_json::Value {
-    let source = window_input_latency_report(source_snapshot, source_presentation);
-    let target = window_input_latency_report(target_snapshot, target_presentation);
+    let source = window_input_latency_report(source_snapshot, source_presentation, source_platform);
+    let target = window_input_latency_report(target_snapshot, target_presentation, target_platform);
     let elapsed_seconds = measurement_elapsed.as_secs_f64();
 
     serde_json::json!({
@@ -2420,6 +2440,7 @@ fn input_latency_report(
 fn window_input_latency_report(
     snapshot: &InputLatencySnapshot,
     presentation_facts: open_gpui::WindowPresentationFacts,
+    platform_facts: &WindowPlatformFacts,
 ) -> serde_json::Value {
     let latency = &snapshot.latency_histogram;
     let events = &snapshot.events_per_frame_histogram;
@@ -2428,8 +2449,18 @@ fn window_input_latency_report(
         .map(|value| value.value_iterated_to() * value.count_at_value())
         .sum::<u64>();
     let nanos_to_millis = |value: u64| value as f64 / 1_000_000.0;
+    let display = platform_facts.display_id.map(|display_id| {
+        let native = native_test_displays()
+            .into_iter()
+            .find(|display| display.display_id() == display_id);
+        serde_json::json!({
+            "display_id": u64::from(display_id),
+            "refresh_rate_hz": native.and_then(NativeTestDisplay::refresh_rate_hz),
+        })
+    });
 
     serde_json::json!({
+        "display": display,
         "recorded_invalidating_events": recorded_invalidating_events,
         "submitted_frame_samples": latency.len(),
         "drawn_frames": snapshot.drawn_frame_count,
@@ -2600,13 +2631,21 @@ async fn begin_native_captured_drag_with_provenance(
     scenario.native_observation.clear();
 
     native_test_acquire_foreground_window(scenario.source_hwnd.0 as isize)?;
+    let source_hit = native_test_non_shell_root_window_at(source_point);
     ensure!(
-        native_test_non_shell_root_window_at(source_point) == Some(scenario.source_hwnd),
-        "the prepared source input point is occluded by a different native HWND"
+        source_hit == Some(scenario.source_hwnd),
+        "the prepared source input point is occluded by a different native HWND: point={source_point:?}, source={:?}, target={:?}, hit={source_hit:?}, probe={:?}",
+        scenario.source_hwnd,
+        scenario.target_hwnd,
+        source_hit.map(|hit| native_window_probe(source_point, hit)),
     );
+    let threshold_hit = native_test_non_shell_root_window_at(threshold_point);
     ensure!(
-        native_test_non_shell_root_window_at(threshold_point) == Some(scenario.source_hwnd),
-        "the prepared source drag-threshold point is occluded by a different native HWND"
+        threshold_hit == Some(scenario.source_hwnd),
+        "the prepared source drag-threshold point is occluded by a different native HWND: point={threshold_point:?}, source={:?}, target={:?}, hit={threshold_hit:?}, probe={:?}",
+        scenario.source_hwnd,
+        scenario.target_hwnd,
+        threshold_hit.map(|hit| native_window_probe(threshold_point, hit)),
     );
     // SendInput does not guarantee a WM_MOUSEMOVE when an absolute move targets the cursor's
     // current pixel. Route the canary through a second point in the same committed tab first, so

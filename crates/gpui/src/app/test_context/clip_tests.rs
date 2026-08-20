@@ -664,7 +664,8 @@ fn committed_point_target_rank_respects_order_occlusion_and_exact_clips(cx: &mut
         .copied()
         .expect("the committed frame should publish all test hitboxes");
 
-    visual.update(|window, _| {
+    visual.update(|window, cx| {
+        let window_handle = window.window_handle();
         let overlap_point = point(px(20.0), px(20.0));
         assert_eq!(
             overlap_front.window_point_target_rank(overlap_point, window),
@@ -672,6 +673,14 @@ fn committed_point_target_rank_respects_order_occlusion_and_exact_clips(cx: &mut
         );
         assert_eq!(
             overlap_back.window_point_target_rank(overlap_point, window),
+            Some(1)
+        );
+        assert_eq!(
+            cx.window_point_target_rank(window_handle, overlap_front, overlap_point),
+            Some(0)
+        );
+        assert_eq!(
+            cx.window_point_target_rank(window_handle, overlap_back, overlap_point),
             Some(1)
         );
 
@@ -684,6 +693,10 @@ fn committed_point_target_rank_respects_order_occlusion_and_exact_clips(cx: &mut
             blocked_back.window_point_target_rank(blocked_point, window),
             None
         );
+        assert_eq!(
+            cx.window_point_target_rank(window_handle, blocked_back, blocked_point),
+            None
+        );
 
         let scroll_blocked_point = point(px(120.0), px(20.0));
         assert_eq!(
@@ -694,6 +707,10 @@ fn committed_point_target_rank_respects_order_occlusion_and_exact_clips(cx: &mut
             scroll_blocked_back.window_point_target_rank(scroll_blocked_point, window),
             None
         );
+        assert_eq!(
+            cx.window_point_target_rank(window_handle, scroll_blocked_back, scroll_blocked_point,),
+            None
+        );
 
         assert_eq!(
             clipped.window_point_target_rank(point(px(220.0), px(60.0)), window),
@@ -702,6 +719,10 @@ fn committed_point_target_rank_respects_order_occlusion_and_exact_clips(cx: &mut
         assert_eq!(
             clipped.window_point_target_rank(point(px(171.0), px(11.0)), window),
             None
+        );
+        assert_eq!(
+            cx.window_point_target_rank(window_handle, clipped, point(px(220.0), px(60.0)),),
+            Some(0)
         );
     });
 }

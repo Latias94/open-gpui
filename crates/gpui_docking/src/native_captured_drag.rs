@@ -701,6 +701,21 @@ fn router_state(cx: &App) -> Option<Rc<RefCell<DockNativeCapturedDragState>>> {
         .map(|router| router.state.clone())
 }
 
+#[cfg(test)]
+pub(crate) fn locked_native_captured_tear_off_space_base_for_test(cx: &App) -> Option<DockSpaceId> {
+    let state = router_state(cx)?;
+    let state = state.borrow();
+    state.locked_releases.values().find_map(|reservation| {
+        let locked_drop = reservation.locked_drop.borrow();
+        locked_drop
+            .as_ref()?
+            .as_ref()
+            .ok()?
+            .tear_off_target_space_base_for_test()
+            .cloned()
+    })
+}
+
 #[cfg(feature = "test-support")]
 fn record_native_release_placement_for_test(
     source_window: WindowId,
@@ -1643,7 +1658,7 @@ pub(crate) fn native_captured_host_scene(
 fn lock_native_captured_release(
     state: &std::rc::Weak<RefCell<DockNativeCapturedDragState>>,
     event: &NativeCapturedDragEvent,
-    source_window: &mut Window,
+    _source_window: &mut Window,
     cx: &mut App,
 ) -> Arc<dyn Any> {
     if event.phase() != NativeCapturedDragPhase::Released {
@@ -1707,13 +1722,7 @@ fn lock_native_captured_release(
             &state,
             DockNativeCapturedDragTestPanic::LockRelease,
         );
-        let target = resolve_locked_native_captured_target_snapshot(
-            &state,
-            &route,
-            event,
-            source_window,
-            cx,
-        );
+        let target = resolve_locked_native_captured_target_snapshot(&state, &route, event, cx);
         let captured_route = match &target {
             DockNativeCapturedTarget::Host(target) => Some(DockCapturedNativeDropRoute::Host(
                 DockCapturedNativeHostTarget::new(
@@ -1803,7 +1812,6 @@ fn resolve_locked_native_captured_target_snapshot(
     state: &Rc<RefCell<DockNativeCapturedDragState>>,
     route: &DockNativeCapturedDragRoute,
     event: &NativeCapturedDragEvent,
-    source_window: &Window,
     cx: &App,
 ) -> DockNativeCapturedTarget {
     let Some(physical_frame) = event.physical_frame() else {
@@ -1850,7 +1858,6 @@ fn resolve_locked_native_captured_target_snapshot(
         scenes,
         target_window,
         target_window_position,
-        source_window,
         cx,
     );
     let Some(target) = target else {
@@ -1863,10 +1870,8 @@ fn select_frontmost_locked_host_scene_snapshot(
     scenes: Vec<DockNativeCapturedHostScene>,
     window: AnyWindowHandle,
     window_position: Point<Pixels>,
-    source_window: &Window,
     cx: &App,
 ) -> Option<DockNativeCapturedHostTarget> {
-    let source_window_id = source_window.window_handle().window_id();
     scenes
         .into_iter()
         .filter_map(|scene| {
@@ -1874,11 +1879,7 @@ fn select_frontmost_locked_host_scene_snapshot(
                 return None;
             }
             let hitbox = scene.geometry.committed_hitbox()?;
-            let rank = if window.window_id() == source_window_id {
-                hitbox.window_point_target_rank(window_position, source_window)
-            } else {
-                cx.window_point_target_rank(window, hitbox, window_position)
-            }?;
+            let rank = cx.window_point_target_rank(window, hitbox, window_position)?;
             let host_position = scene.geometry.window_to_host(window_position)?;
             scene.host.upgrade()?;
             Some((

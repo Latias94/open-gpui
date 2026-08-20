@@ -1,8 +1,8 @@
-use std::{any::TypeId, cell::RefCell};
+use std::{any::TypeId, cell::RefCell, sync::Arc};
 
 use open_gpui_collections::FxHashMap;
 
-use crate::{WindowControlArea, WindowId};
+use crate::{CommittedWindowHitTestSnapshot, HitboxId, Pixels, Point, WindowControlArea, WindowId};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum NativeWindowLifecycle {
@@ -13,6 +13,7 @@ pub(super) enum NativeWindowLifecycle {
 #[derive(Default)]
 pub(super) struct NativeQuerySnapshots {
     windows: RefCell<FxHashMap<WindowId, NativeWindowQuerySnapshot>>,
+    window_hit_tests: RefCell<FxHashMap<WindowId, Arc<CommittedWindowHitTestSnapshot>>>,
     app_menu_actions: RefCell<FxHashMap<TypeId, bool>>,
 }
 
@@ -43,10 +44,12 @@ impl NativeQuerySnapshots {
 
     pub(super) fn remove_window(&self, window_id: WindowId) {
         self.windows.borrow_mut().remove(&window_id);
+        self.window_hit_tests.borrow_mut().remove(&window_id);
     }
 
     pub(super) fn clear(&self) {
         self.windows.borrow_mut().clear();
+        self.window_hit_tests.borrow_mut().clear();
     }
 
     pub(super) fn lookup(&self, window_id: WindowId) -> Option<NativeWindowQuerySnapshot> {
@@ -71,6 +74,31 @@ impl NativeQuerySnapshots {
     pub(super) fn window_control_area(&self, window_id: WindowId) -> Option<WindowControlArea> {
         self.committed(window_id)
             .and_then(NativeWindowQuerySnapshot::window_control_area)
+    }
+
+    pub(super) fn set_window_hit_test_snapshot(
+        &self,
+        window_id: WindowId,
+        snapshot: Arc<CommittedWindowHitTestSnapshot>,
+    ) {
+        if self.committed(window_id).is_some() {
+            self.window_hit_tests
+                .borrow_mut()
+                .insert(window_id, snapshot);
+        }
+    }
+
+    pub(super) fn window_point_target_rank(
+        &self,
+        window_id: WindowId,
+        hitbox: HitboxId,
+        point: Point<Pixels>,
+    ) -> Option<usize> {
+        self.committed(window_id)?;
+        self.window_hit_tests
+            .borrow()
+            .get(&window_id)?
+            .window_point_target_rank(hitbox, point)
     }
 
     pub(super) fn commit_app_menu_action_availability(&self, action_type: TypeId, available: bool) {

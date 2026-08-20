@@ -85,14 +85,15 @@ pointer delivery to the target HWND.
 For release, GPUI invokes the prepared route's generation-frozen locker before any source-window
 mouse interceptor or listener. Dock resolves the candidate and stores an immutable opaque
 reservation containing the exact route generation and host-scene frame. Post-borrow delivery may
-only confirm that reservation; it never performs a second hit test. A redraw may replace the
-renderer-owned frame token only when the registration, host binding, runtime context, bounds,
-interactive geometry, and complete routing scene remain semantically identical. The frozen
-candidate and position do not change. A listener, close, registration replacement, or semantic
-scene change fails closed instead of adopting a candidate that did not exist when `MouseUp` was
-observed. Resolver panic is captured by the reservation and rethrown only after post-borrow
-terminal claim has detached the exact route, so normal cleanup still retires its session and
-feedback.
+only confirm that reservation. It may revalidate the same semantic candidate at the locked point
+against current accepted-frame facts, but it cannot choose a different candidate. A redraw may
+replace the renderer-owned frame token only when the registration, host binding, runtime context,
+bounds, interactive geometry, and complete routing scene remain semantically identical. The
+frozen candidate and position do not change. A listener, close, registration replacement, or
+semantic scene change fails closed instead of adopting a candidate that did not exist when
+`MouseUp` was observed. Resolver panic is captured by the reservation and rethrown only after
+post-borrow terminal claim has detached the exact route, so normal cleanup still retires its
+session and feedback.
 
 `MouseUp`, capture loss, pointer cancellation, source close, and session shutdown are terminal
 facts for that exact route. A terminal claim detaches the route before runtime effects execute, and

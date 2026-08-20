@@ -9421,6 +9421,36 @@ fn runtime_native_captured_desktop_release_tears_off_tab(cx: &mut TestAppContext
         .registration_key(&source_space)
         .expect("source viewport should have an exact registration before release");
     let tear_off_space_index_before_release = runtime.borrow().next_tear_off_space_index_for_test();
+    let listener_occupied_base = Rc::new(Cell::new(false));
+    let occupied_base = Rc::new(RefCell::new(None));
+    let _interceptor = cx
+        .update_window(opened.window(), {
+            let controller = controller.clone();
+            let listener_occupied_base = listener_occupied_base.clone();
+            let occupied_base = occupied_base.clone();
+            move |_, window, _| {
+                window.intercept_window_mouse_events(move |event, _, cx| {
+                    if matches!(event, WindowMouseEvent::Up(_))
+                        && !listener_occupied_base.replace(true)
+                    {
+                        let base = crate::native_captured_drag::locked_native_captured_tear_off_space_base_for_test(cx)
+                            .expect("MouseUp lock should freeze the deterministic tear-off base before listeners");
+                        controller.update(cx, |controller, controller_cx| {
+                            let mut graph = controller.graph().clone();
+                            let occupied_tabs = graph.insert_node(DockNode::Tabs {
+                                items: vec![item("listener-occupied")],
+                                selected: Some(item("listener-occupied")),
+                            });
+                            graph.set_root(base.clone(), occupied_tabs);
+                            controller.workspace_mut().set_graph(graph);
+                            controller_cx.notify();
+                        });
+                        occupied_base.replace(Some(base));
+                    }
+                })
+            }
+        })
+        .expect("the source should install its MouseUp target-space interceptor");
 
     activate_window_for_pointer_input(&mut visual);
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
@@ -9470,10 +9500,11 @@ fn runtime_native_captured_desktop_release_tears_off_tab(cx: &mut TestAppContext
         );
     }
     cx.run_until_parked();
+    assert!(listener_occupied_base.get());
     assert_eq!(
         runtime.borrow().next_tear_off_space_index_for_test(),
         tear_off_space_index_before_release,
-        "post-borrow captured tear-off must preserve the lock-time target identity"
+        "post-borrow captured tear-off must not consume the generic allocator"
     );
 
     let detached_space = cx.read_entity(&controller, |controller, _| {
@@ -9485,8 +9516,24 @@ fn runtime_native_captured_desktop_release_tears_off_tab(cx: &mut TestAppContext
             .graph()
             .spaces()
             .into_iter()
-            .find(|space| space.as_str().starts_with("source:tear-off:a:"))
+            .find(|space| {
+                space.as_str().starts_with("source:tear-off:a:")
+                    && controller.graph().collect_items_in_space(space) == vec![item("a")]
+            })
             .expect("captured desktop release should create a detached viewport space");
+        let occupied_base = occupied_base
+            .borrow()
+            .clone()
+            .expect("the MouseUp listener should record the occupied base");
+        assert_ne!(
+            detached_space, occupied_base,
+            "post-borrow binding must choose a suffix when the listener occupies the frozen base"
+        );
+        assert_eq!(
+            controller.graph().collect_items_in_space(&occupied_base),
+            vec![item("listener-occupied")],
+            "the listener-owned base must remain untouched"
+        );
         assert!(
             detached_space.as_str().contains(":native:"),
             "captured tear-off target identity should be derived from native authority"
@@ -9647,6 +9694,7 @@ fn runtime_native_captured_live_undock_host_transfer_replays_window_effects_afte
             panic!("injected committed host window-effect panic");
         }
     });
+    cx.set_window_present_outcome(target_window, PlatformWindowPresentOutcome::Deferred);
     let panic = catch_unwind(AssertUnwindSafe(|| {
         source_visual.simulate_mouse_up(target_global, MouseButton::Left, Modifiers::none());
         cx.run_until_parked();
@@ -9654,6 +9702,35 @@ fn runtime_native_captured_live_undock_host_transfer_replays_window_effects_afte
     assert!(panic.is_err());
     assert_eq!(window_effect_attempts.get(), 1);
     cx.executor().advance_clock(Duration::from_millis(16));
+    cx.run_until_parked();
+
+    cx.read_entity(surface.owner(), |owner, _| {
+        assert_eq!(
+            owner.live_undock_phase(),
+            crate::surface::live_undock::DockLiveUndockPhase::Bound,
+            "a durable Host destination must remain gated while its exact renderer submission is deferred",
+        );
+        assert_eq!(
+            owner.live_undock_runtime().execution_count_for_test(),
+            1,
+            "deferred destination semantics must retain the exact durable execution",
+        );
+    });
+    cx.read_entity(&target_host, |host, _| {
+        assert!(
+            host.live_destination_semantics().is_some(),
+            "the Host marker must remain live until its accepted frame is actually submitted",
+        );
+    });
+
+    cx.set_window_present_outcome(target_window, PlatformWindowPresentOutcome::Submitted);
+    target_window
+        .update(cx, |_, window, _| window.refresh())
+        .expect("the deferred Host destination must remain refreshable");
+    cx.run_until_parked();
+    cx.executor().advance_clock(
+        crate::surface::live_undock_runtime::LIVE_UNDOCK_DESTINATION_SEMANTICS_WATCHDOG_INTERVAL,
+    );
     cx.run_until_parked();
 
     cx.read_entity(&controller, |controller, _| {

@@ -1,6 +1,6 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use slotmap::Key;
-use std::{borrow::Borrow, fmt};
+use std::{borrow::Borrow, fmt, sync::Arc};
 
 slotmap::new_key_type! {
     /// Runtime identifier for a node in a [`model::DockGraph`](crate::model::DockGraph).
@@ -18,18 +18,36 @@ impl DockNodeId {
 ///
 /// A dock space is not necessarily an OS window. It is the root container managed by one
 /// `DockHost` or equivalent application-level owner.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub struct DockSpaceId(String);
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct DockSpaceId(Arc<str>);
 
 impl DockSpaceId {
     /// Creates a dock space id from a stable application-provided string.
     pub fn new(id: impl Into<String>) -> Self {
-        Self(id.into())
+        Self(Arc::from(id.into()))
     }
 
     /// Returns the underlying string id.
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl Serialize for DockSpaceId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for DockSpaceId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        String::deserialize(deserializer).map(Self::new)
     }
 }
 

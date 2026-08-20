@@ -2011,40 +2011,90 @@ pub struct WindowProvisionalPlacementTicket {
     state: Arc<ParkingMutex<WindowProvisionalPlacementState>>,
 }
 
-/// State of one exact destination-semantics projection.
+/// State of one exact window-owned frame submission.
 #[doc(hidden)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum WindowProvisionalSemanticsOutcome {
-    /// The interactive destination tree has not reached an accepted frame yet.
+pub enum WindowFrameSubmissionOutcome {
+    /// The projected content has not reached an accepted frame yet.
     Pending,
-    /// GPUI accepted the exact destination tree, but the renderer has not submitted it yet.
+    /// GPUI accepted the exact frame, but the renderer has not submitted it yet.
     Accepted,
-    /// The renderer submitted the exact accepted destination frame.
+    /// The renderer submitted the exact accepted frame.
     Submitted,
-    /// The renderer terminally rejected the exact accepted destination frame.
+    /// The renderer terminally rejected the exact accepted frame.
     Rejected,
-    /// The window became terminal before the destination frame was submitted.
+    /// The window became terminal before the accepted frame was submitted.
     WindowTerminal,
+}
+
+/// Provisional destination-semantics outcome retained for API compatibility.
+#[doc(hidden)]
+pub type WindowProvisionalSemanticsOutcome = WindowFrameSubmissionOutcome;
+
+/// Immutable evidence for one exact window-owned frame submission.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct WindowFrameSubmissionSnapshot {
+    window_id: WindowId,
+    minimum_frame_generation: u64,
+    accepted_frame_generation: Option<u64>,
+    submitted_frame_generation: Option<u64>,
+    outcome: WindowFrameSubmissionOutcome,
+}
+
+impl WindowFrameSubmissionSnapshot {
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub const fn submitted_for_test(window_id: WindowId, frame_generation: u64) -> Self {
+        Self {
+            window_id,
+            minimum_frame_generation: frame_generation,
+            accepted_frame_generation: Some(frame_generation),
+            submitted_frame_generation: Some(frame_generation),
+            outcome: WindowFrameSubmissionOutcome::Submitted,
+        }
+    }
+
+    /// Returns the exact committed full window id.
+    pub const fn window_id(self) -> WindowId {
+        self.window_id
+    }
+
+    /// Returns the first frame eligible to carry the projected content.
+    pub const fn minimum_frame_generation(self) -> u64 {
+        self.minimum_frame_generation
+    }
+
+    /// Returns the exact frame GPUI accepted for submission.
+    pub const fn accepted_frame_generation(self) -> Option<u64> {
+        self.accepted_frame_generation
+    }
+
+    /// Returns the exact accepted frame whose renderer submission completed.
+    pub const fn submitted_frame_generation(self) -> Option<u64> {
+        self.submitted_frame_generation
+    }
+
+    /// Returns the current exact-frame submission outcome.
+    pub const fn outcome(self) -> WindowFrameSubmissionOutcome {
+        self.outcome
+    }
 }
 
 /// Immutable evidence for one exact destination-semantics projection.
 #[doc(hidden)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct WindowProvisionalSemanticsSnapshot {
-    window_id: WindowId,
     session_generation: u64,
     destination_generation: u64,
-    minimum_frame_generation: u64,
     placement_mutation_generation: u64,
-    accepted_frame_generation: Option<u64>,
-    submitted_frame_generation: Option<u64>,
-    outcome: WindowProvisionalSemanticsOutcome,
+    submission: WindowFrameSubmissionSnapshot,
 }
 
 impl WindowProvisionalSemanticsSnapshot {
     /// Returns the exact committed full window id.
     pub const fn window_id(self) -> WindowId {
-        self.window_id
+        self.submission.window_id()
     }
 
     /// Returns the owning provisional-session generation.
@@ -2059,7 +2109,7 @@ impl WindowProvisionalSemanticsSnapshot {
 
     /// Returns the first frame eligible to carry the destination tree.
     pub const fn minimum_frame_generation(self) -> u64 {
-        self.minimum_frame_generation
+        self.submission.minimum_frame_generation()
     }
 
     /// Returns the exact framework placement authority frozen by this projection.
@@ -2069,22 +2119,27 @@ impl WindowProvisionalSemanticsSnapshot {
 
     /// Returns the exact frame GPUI accepted for the destination tree.
     pub const fn accepted_frame_generation(self) -> Option<u64> {
-        self.accepted_frame_generation
+        self.submission.accepted_frame_generation()
     }
 
     /// Returns the exact accepted frame whose renderer submission completed.
     pub const fn submitted_frame_generation(self) -> Option<u64> {
-        self.submitted_frame_generation
+        self.submission.submitted_frame_generation()
     }
 
     /// Returns the current projection outcome.
     pub const fn outcome(self) -> WindowProvisionalSemanticsOutcome {
-        self.outcome
+        self.submission.outcome()
+    }
+
+    /// Returns the underlying exact window-owned frame submission evidence.
+    pub const fn frame_submission(self) -> WindowFrameSubmissionSnapshot {
+        self.submission
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum WindowProvisionalSemanticsState {
+enum WindowFrameSubmissionState {
     Pending {
         minimum_frame_generation: u64,
     },
@@ -2107,22 +2162,221 @@ enum WindowProvisionalSemanticsState {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum WindowProvisionalSemanticsPresentTransition {
+pub(crate) enum WindowFrameSubmissionPresentTransition {
     Unchanged,
     Submitted,
     Rejected,
     Invalidated,
 }
 
+pub(crate) type WindowProvisionalSemanticsPresentTransition =
+    WindowFrameSubmissionPresentTransition;
+
+/// A cloneable, window-owned authority for one exact accepted renderer submission.
+#[doc(hidden)]
+#[derive(Clone, Debug)]
+pub struct WindowFrameSubmissionTicket {
+    window_id: WindowId,
+    state: Arc<ParkingMutex<WindowFrameSubmissionState>>,
+}
+
+impl WindowFrameSubmissionTicket {
+    pub(crate) fn new(window_id: WindowId, minimum_frame_generation: u64) -> Self {
+        Self {
+            window_id,
+            state: Arc::new(ParkingMutex::new(WindowFrameSubmissionState::Pending {
+                minimum_frame_generation,
+            })),
+        }
+    }
+
+    /// Returns immutable evidence that survives the target window.
+    pub fn snapshot(&self) -> WindowFrameSubmissionSnapshot {
+        let state = *self.state.lock();
+        let (
+            minimum_frame_generation,
+            accepted_frame_generation,
+            submitted_frame_generation,
+            outcome,
+        ) = match state {
+            WindowFrameSubmissionState::Pending {
+                minimum_frame_generation,
+            } => (
+                minimum_frame_generation,
+                None,
+                None,
+                WindowFrameSubmissionOutcome::Pending,
+            ),
+            WindowFrameSubmissionState::Accepted {
+                minimum_frame_generation,
+                frame_generation,
+            } => (
+                minimum_frame_generation,
+                Some(frame_generation),
+                None,
+                WindowFrameSubmissionOutcome::Accepted,
+            ),
+            WindowFrameSubmissionState::Submitted {
+                minimum_frame_generation,
+                frame_generation,
+            } => (
+                minimum_frame_generation,
+                Some(frame_generation),
+                Some(frame_generation),
+                WindowFrameSubmissionOutcome::Submitted,
+            ),
+            WindowFrameSubmissionState::Rejected {
+                minimum_frame_generation,
+                frame_generation,
+            } => (
+                minimum_frame_generation,
+                Some(frame_generation),
+                None,
+                WindowFrameSubmissionOutcome::Rejected,
+            ),
+            WindowFrameSubmissionState::WindowTerminal {
+                minimum_frame_generation,
+                accepted_frame_generation,
+            } => (
+                minimum_frame_generation,
+                accepted_frame_generation,
+                None,
+                WindowFrameSubmissionOutcome::WindowTerminal,
+            ),
+        };
+        WindowFrameSubmissionSnapshot {
+            window_id: self.window_id,
+            minimum_frame_generation,
+            accepted_frame_generation,
+            submitted_frame_generation,
+            outcome,
+        }
+    }
+
+    pub(crate) fn accept_frame(&self, frame_generation: u64) -> bool {
+        let mut state = self.state.lock();
+        match *state {
+            WindowFrameSubmissionState::Pending {
+                minimum_frame_generation,
+            } => {
+                if frame_generation < minimum_frame_generation {
+                    return false;
+                }
+                *state = WindowFrameSubmissionState::Accepted {
+                    minimum_frame_generation,
+                    frame_generation,
+                };
+                true
+            }
+            WindowFrameSubmissionState::Accepted {
+                minimum_frame_generation,
+                frame_generation: accepted_frame_generation,
+            } => {
+                if frame_generation < accepted_frame_generation {
+                    return false;
+                }
+                *state = WindowFrameSubmissionState::Accepted {
+                    minimum_frame_generation,
+                    frame_generation,
+                };
+                true
+            }
+            WindowFrameSubmissionState::Submitted { .. }
+            | WindowFrameSubmissionState::Rejected { .. }
+            | WindowFrameSubmissionState::WindowTerminal { .. } => false,
+        }
+    }
+
+    pub(crate) fn record_present_outcome(
+        &self,
+        frame_generation: u64,
+        outcome: PlatformWindowPresentOutcome,
+    ) -> WindowFrameSubmissionPresentTransition {
+        let mut state = self.state.lock();
+        let WindowFrameSubmissionState::Accepted {
+            minimum_frame_generation,
+            frame_generation: accepted_frame_generation,
+        } = *state
+        else {
+            return WindowFrameSubmissionPresentTransition::Unchanged;
+        };
+        if frame_generation < accepted_frame_generation {
+            return WindowFrameSubmissionPresentTransition::Unchanged;
+        }
+        if frame_generation > accepted_frame_generation {
+            let Some(next_frame_generation) = frame_generation.checked_add(1) else {
+                return WindowFrameSubmissionPresentTransition::Unchanged;
+            };
+            *state = WindowFrameSubmissionState::Pending {
+                minimum_frame_generation: minimum_frame_generation.max(next_frame_generation),
+            };
+            return WindowFrameSubmissionPresentTransition::Invalidated;
+        }
+        match outcome {
+            PlatformWindowPresentOutcome::Submitted => {
+                *state = WindowFrameSubmissionState::Submitted {
+                    minimum_frame_generation,
+                    frame_generation,
+                };
+                WindowFrameSubmissionPresentTransition::Submitted
+            }
+            PlatformWindowPresentOutcome::RepaintRequired => {
+                let Some(next_frame_generation) = frame_generation.checked_add(1) else {
+                    return WindowFrameSubmissionPresentTransition::Unchanged;
+                };
+                *state = WindowFrameSubmissionState::Pending {
+                    minimum_frame_generation: minimum_frame_generation.max(next_frame_generation),
+                };
+                WindowFrameSubmissionPresentTransition::Invalidated
+            }
+            PlatformWindowPresentOutcome::Rejected => {
+                *state = WindowFrameSubmissionState::Rejected {
+                    minimum_frame_generation,
+                    frame_generation,
+                };
+                WindowFrameSubmissionPresentTransition::Rejected
+            }
+            PlatformWindowPresentOutcome::Deferred => {
+                WindowFrameSubmissionPresentTransition::Unchanged
+            }
+        }
+    }
+
+    pub(crate) fn settle_window_terminal(&self) {
+        let mut state = self.state.lock();
+        *state = match *state {
+            WindowFrameSubmissionState::Pending {
+                minimum_frame_generation,
+            } => WindowFrameSubmissionState::WindowTerminal {
+                minimum_frame_generation,
+                accepted_frame_generation: None,
+            },
+            WindowFrameSubmissionState::Accepted {
+                minimum_frame_generation,
+                frame_generation,
+            } => WindowFrameSubmissionState::WindowTerminal {
+                minimum_frame_generation,
+                accepted_frame_generation: Some(frame_generation),
+            },
+            settled @ (WindowFrameSubmissionState::Submitted { .. }
+            | WindowFrameSubmissionState::Rejected { .. }
+            | WindowFrameSubmissionState::WindowTerminal { .. }) => settled,
+        };
+    }
+
+    pub(crate) fn same_authority(&self, other: &Self) -> bool {
+        self.window_id == other.window_id && Arc::ptr_eq(&self.state, &other.state)
+    }
+}
+
 /// A cloneable exact-generation destination-semantics receipt.
 #[doc(hidden)]
 #[derive(Clone, Debug)]
 pub struct WindowProvisionalSemanticsTicket {
-    window_id: WindowId,
     session_generation: u64,
     destination_generation: u64,
     placement_mutation_generation: u64,
-    state: Arc<ParkingMutex<WindowProvisionalSemanticsState>>,
+    submission: WindowFrameSubmissionTicket,
 }
 
 impl WindowProvisionalSemanticsTicket {
@@ -2134,116 +2388,25 @@ impl WindowProvisionalSemanticsTicket {
         placement_mutation_generation: u64,
     ) -> Self {
         Self {
-            window_id,
             session_generation,
             destination_generation,
             placement_mutation_generation,
-            state: Arc::new(ParkingMutex::new(
-                WindowProvisionalSemanticsState::Pending {
-                    minimum_frame_generation,
-                },
-            )),
+            submission: WindowFrameSubmissionTicket::new(window_id, minimum_frame_generation),
         }
     }
 
     /// Returns immutable evidence that survives the target window.
     pub fn snapshot(&self) -> WindowProvisionalSemanticsSnapshot {
-        let state = *self.state.lock();
-        let (
-            minimum_frame_generation,
-            accepted_frame_generation,
-            submitted_frame_generation,
-            outcome,
-        ) = match state {
-            WindowProvisionalSemanticsState::Pending {
-                minimum_frame_generation,
-            } => (
-                minimum_frame_generation,
-                None,
-                None,
-                WindowProvisionalSemanticsOutcome::Pending,
-            ),
-            WindowProvisionalSemanticsState::Accepted {
-                minimum_frame_generation,
-                frame_generation,
-            } => (
-                minimum_frame_generation,
-                Some(frame_generation),
-                None,
-                WindowProvisionalSemanticsOutcome::Accepted,
-            ),
-            WindowProvisionalSemanticsState::Submitted {
-                minimum_frame_generation,
-                frame_generation,
-            } => (
-                minimum_frame_generation,
-                Some(frame_generation),
-                Some(frame_generation),
-                WindowProvisionalSemanticsOutcome::Submitted,
-            ),
-            WindowProvisionalSemanticsState::Rejected {
-                minimum_frame_generation,
-                frame_generation,
-            } => (
-                minimum_frame_generation,
-                Some(frame_generation),
-                None,
-                WindowProvisionalSemanticsOutcome::Rejected,
-            ),
-            WindowProvisionalSemanticsState::WindowTerminal {
-                minimum_frame_generation,
-                accepted_frame_generation,
-            } => (
-                minimum_frame_generation,
-                accepted_frame_generation,
-                None,
-                WindowProvisionalSemanticsOutcome::WindowTerminal,
-            ),
-        };
         WindowProvisionalSemanticsSnapshot {
-            window_id: self.window_id,
             session_generation: self.session_generation,
             destination_generation: self.destination_generation,
-            minimum_frame_generation,
             placement_mutation_generation: self.placement_mutation_generation,
-            accepted_frame_generation,
-            submitted_frame_generation,
-            outcome,
+            submission: self.submission.snapshot(),
         }
     }
 
     fn accept_frame(&self, frame_generation: u64) -> bool {
-        let mut state = self.state.lock();
-        match *state {
-            WindowProvisionalSemanticsState::Pending {
-                minimum_frame_generation,
-            } => {
-                if frame_generation < minimum_frame_generation {
-                    return false;
-                }
-                *state = WindowProvisionalSemanticsState::Accepted {
-                    minimum_frame_generation,
-                    frame_generation,
-                };
-                true
-            }
-            WindowProvisionalSemanticsState::Accepted {
-                minimum_frame_generation,
-                frame_generation: accepted_frame_generation,
-            } => {
-                if frame_generation < accepted_frame_generation {
-                    return false;
-                }
-                *state = WindowProvisionalSemanticsState::Accepted {
-                    minimum_frame_generation,
-                    frame_generation,
-                };
-                true
-            }
-            WindowProvisionalSemanticsState::Submitted { .. }
-            | WindowProvisionalSemanticsState::Rejected { .. }
-            | WindowProvisionalSemanticsState::WindowTerminal { .. } => false,
-        }
+        self.submission.accept_frame(frame_generation)
     }
 
     fn record_present_outcome(
@@ -2251,88 +2414,28 @@ impl WindowProvisionalSemanticsTicket {
         frame_generation: u64,
         outcome: PlatformWindowPresentOutcome,
     ) -> WindowProvisionalSemanticsPresentTransition {
-        let mut state = self.state.lock();
-        let WindowProvisionalSemanticsState::Accepted {
-            minimum_frame_generation,
-            frame_generation: accepted_frame_generation,
-        } = *state
-        else {
-            return WindowProvisionalSemanticsPresentTransition::Unchanged;
-        };
-        if frame_generation < accepted_frame_generation {
-            return WindowProvisionalSemanticsPresentTransition::Unchanged;
-        }
-        if frame_generation > accepted_frame_generation {
-            let Some(next_frame_generation) = frame_generation.checked_add(1) else {
-                return WindowProvisionalSemanticsPresentTransition::Unchanged;
-            };
-            *state = WindowProvisionalSemanticsState::Pending {
-                minimum_frame_generation: minimum_frame_generation.max(next_frame_generation),
-            };
-            return WindowProvisionalSemanticsPresentTransition::Invalidated;
-        }
-        match outcome {
-            PlatformWindowPresentOutcome::Submitted => {
-                *state = WindowProvisionalSemanticsState::Submitted {
-                    minimum_frame_generation,
-                    frame_generation,
-                };
-                WindowProvisionalSemanticsPresentTransition::Submitted
-            }
-            PlatformWindowPresentOutcome::RepaintRequired => {
-                let Some(next_frame_generation) = frame_generation.checked_add(1) else {
-                    return WindowProvisionalSemanticsPresentTransition::Unchanged;
-                };
-                *state = WindowProvisionalSemanticsState::Pending {
-                    minimum_frame_generation: minimum_frame_generation.max(next_frame_generation),
-                };
-                WindowProvisionalSemanticsPresentTransition::Invalidated
-            }
-            PlatformWindowPresentOutcome::Rejected => {
-                *state = WindowProvisionalSemanticsState::Rejected {
-                    minimum_frame_generation,
-                    frame_generation,
-                };
-                WindowProvisionalSemanticsPresentTransition::Rejected
-            }
-            PlatformWindowPresentOutcome::Deferred => {
-                WindowProvisionalSemanticsPresentTransition::Unchanged
-            }
-        }
+        self.submission
+            .record_present_outcome(frame_generation, outcome)
     }
 
     fn settle_window_terminal(&self) {
-        let mut state = self.state.lock();
-        *state = match *state {
-            WindowProvisionalSemanticsState::Pending {
-                minimum_frame_generation,
-            } => WindowProvisionalSemanticsState::WindowTerminal {
-                minimum_frame_generation,
-                accepted_frame_generation: None,
-            },
-            WindowProvisionalSemanticsState::Accepted {
-                minimum_frame_generation,
-                frame_generation,
-            } => WindowProvisionalSemanticsState::WindowTerminal {
-                minimum_frame_generation,
-                accepted_frame_generation: Some(frame_generation),
-            },
-            settled @ (WindowProvisionalSemanticsState::Submitted { .. }
-            | WindowProvisionalSemanticsState::Rejected { .. }
-            | WindowProvisionalSemanticsState::WindowTerminal { .. }) => settled,
-        };
+        self.submission.settle_window_terminal();
     }
 
     fn same_authority(&self, other: &Self) -> bool {
-        self.window_id == other.window_id
-            && self.session_generation == other.session_generation
+        self.session_generation == other.session_generation
             && self.destination_generation == other.destination_generation
             && self.placement_mutation_generation == other.placement_mutation_generation
-            && Arc::ptr_eq(&self.state, &other.state)
+            && self.submission.same_authority(&other.submission)
     }
 
     fn matches_placement_mutation_generation(&self, generation: u64) -> bool {
         self.placement_mutation_generation == generation
+    }
+
+    #[doc(hidden)]
+    pub fn frame_submission(&self) -> &WindowFrameSubmissionTicket {
+        &self.submission
     }
 }
 
@@ -3090,6 +3193,19 @@ impl WindowProvisionalSession {
             WindowProvisionalSemanticsPresentTransition::Unchanged => {}
         }
         transition
+    }
+
+    pub(crate) fn owns_destination_semantics_submission(
+        &self,
+        window_id: WindowId,
+        submission: &WindowFrameSubmissionTicket,
+    ) -> bool {
+        let state = self.state.lock();
+        state.window_id == Some(window_id)
+            && state
+                .destination_semantics_ticket
+                .as_ref()
+                .is_some_and(|ticket| ticket.frame_submission().same_authority(submission))
     }
 
     pub(crate) fn admit_interaction(

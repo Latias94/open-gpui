@@ -124,7 +124,7 @@ impl DockDragBenchmark {
                 .resolve_pointer_move(
                     black_box(self.position(iteration)),
                     Some(self.payload_size),
-                    black_box(self.excluded_nodes.clone()),
+                    black_box(self.excluded_nodes.as_slice()),
                     &self.policy,
                     None,
                     None,

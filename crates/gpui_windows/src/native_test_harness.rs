@@ -29,12 +29,16 @@ use std::sync::{
 };
 use windows::{
     Win32::{
-        Foundation::{ERROR_INVALID_WINDOW_HANDLE, GetLastError, HWND, LPARAM},
+        Foundation::{ERROR_INVALID_WINDOW_HANDLE, GetLastError, HWND, LPARAM, POINT},
+        Graphics::Gdi::{
+            DEVMODEW, ENUM_CURRENT_SETTINGS, EnumDisplaySettingsW, GetMonitorInfoW,
+            MONITOR_DEFAULTTONULL, MONITORINFO, MONITORINFOEXW, MonitorFromPoint,
+        },
         UI::WindowsAndMessaging::{
             EnumWindows, FindWindowExW, GetWindowThreadProcessId, HWND_MESSAGE, IsWindow,
         },
     },
-    core::BOOL,
+    core::{BOOL, PCWSTR},
 };
 
 const DRIFT_ARMED: u8 = 0;
@@ -51,6 +55,7 @@ pub struct NativeTestDisplay {
     physical_bounds: Bounds<DevicePixels>,
     physical_visible_bounds: Bounds<DevicePixels>,
     scale_factor: f32,
+    refresh_rate_hz: Option<u32>,
 }
 
 impl NativeTestDisplay {
@@ -72,6 +77,11 @@ impl NativeTestDisplay {
     /// Returns the effective DPI scale sampled with the monitor rectangle.
     pub const fn scale_factor(self) -> f32 {
         self.scale_factor
+    }
+
+    /// Returns the current native refresh rate when Windows provided one coherent sample.
+    pub const fn refresh_rate_hz(self) -> Option<u32> {
+        self.refresh_rate_hz
     }
 }
 
@@ -118,8 +128,86 @@ pub fn native_test_displays() -> Vec<NativeTestDisplay> {
             physical_bounds: display.physical_bounds(),
             physical_visible_bounds: display.physical_visible_bounds(),
             scale_factor: display.scale_factor(),
+            refresh_rate_hz: native_test_display_refresh_rate_hz(display),
         })
         .collect()
+}
+
+/// Selects the exact display with the highest observed native refresh rate.
+#[doc(hidden)]
+#[cfg(feature = "test-support")]
+pub fn native_test_highest_refresh_display() -> Result<NativeTestDisplay> {
+    let displays = native_test_displays();
+    select_native_test_highest_refresh_display(&displays).with_context(|| {
+        format!("highest-refresh display capability selection failed for snapshot {displays:?}")
+    })
+}
+
+fn select_native_test_highest_refresh_display(
+    displays: &[NativeTestDisplay],
+) -> Result<NativeTestDisplay> {
+    let mut selected = None::<NativeTestDisplay>;
+    for display in displays.iter().copied() {
+        let Some(refresh_rate_hz) = display.refresh_rate_hz() else {
+            continue;
+        };
+        if selected.is_none_or(|current| {
+            let current_rate = current
+                .refresh_rate_hz()
+                .expect("selected displays always have a refresh-rate sample");
+            refresh_rate_hz > current_rate
+                || refresh_rate_hz == current_rate
+                    && u64::from(display.display_id()) < u64::from(current.display_id())
+        }) {
+            selected = Some(display);
+        }
+    }
+    selected.context("Windows did not expose a refresh-rate sample for any display")
+}
+
+#[cfg(feature = "test-support")]
+fn native_test_display_refresh_rate_hz(display: WindowsDisplay) -> Option<u32> {
+    let center = display.physical_bounds().center();
+    let monitor = unsafe {
+        MonitorFromPoint(
+            POINT {
+                x: center.x.0,
+                y: center.y.0,
+            },
+            MONITOR_DEFAULTTONULL,
+        )
+    };
+    if monitor.is_invalid() {
+        return None;
+    }
+
+    let mut monitor_info = MONITORINFOEXW::default();
+    monitor_info.monitorInfo.cbSize = std::mem::size_of::<MONITORINFOEXW>() as u32;
+    if !unsafe {
+        GetMonitorInfoW(
+            monitor,
+            (&mut monitor_info as *mut MONITORINFOEXW).cast::<MONITORINFO>(),
+        )
+    }
+    .as_bool()
+    {
+        return None;
+    }
+
+    let mut mode = DEVMODEW::default();
+    mode.dmSize = std::mem::size_of::<DEVMODEW>() as u16;
+    if !unsafe {
+        EnumDisplaySettingsW(
+            PCWSTR(monitor_info.szDevice.as_ptr()),
+            ENUM_CURRENT_SETTINGS,
+            &mut mode,
+        )
+    }
+    .as_bool()
+    {
+        return None;
+    }
+    (mode.dmDisplayFrequency > 1).then_some(mode.dmDisplayFrequency)
 }
 
 /// Selects the maximum-scale-delta pair with a visible physical desktop point on a negative axis.
@@ -569,6 +657,7 @@ mod tests {
             physical_bounds: bounds,
             physical_visible_bounds: bounds,
             scale_factor,
+            refresh_rate_hz: Some(60),
         }
     }
 
@@ -589,7 +678,39 @@ mod tests {
                 size(DevicePixels(1_280), DevicePixels(1_024)),
             ),
             scale_factor,
+            refresh_rate_hz: Some(60),
         }
+    }
+
+    fn display_with_refresh(id: u64, refresh_rate_hz: Option<u32>) -> NativeTestDisplay {
+        let mut display = display(id, 1.0, 0, 0);
+        display.refresh_rate_hz = refresh_rate_hz;
+        display
+    }
+
+    #[test]
+    fn highest_refresh_display_selection_is_fastest_and_deterministic() {
+        let selected = select_native_test_highest_refresh_display(&[
+            display_with_refresh(30, Some(60)),
+            display_with_refresh(20, Some(144)),
+            display_with_refresh(10, Some(144)),
+            display_with_refresh(40, None),
+        ])
+        .expect("one display should provide the highest refresh-rate capability");
+
+        assert_eq!(selected.display_id(), DisplayId::from(10));
+        assert_eq!(selected.refresh_rate_hz(), Some(144));
+    }
+
+    #[test]
+    fn highest_refresh_display_requires_a_native_refresh_sample() {
+        let error = select_native_test_highest_refresh_display(&[
+            display_with_refresh(10, None),
+            display_with_refresh(20, None),
+        ])
+        .expect_err("missing refresh-rate observations must fail closed");
+
+        assert!(error.to_string().contains("refresh-rate sample"));
     }
 
     #[test]

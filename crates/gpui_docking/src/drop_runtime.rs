@@ -142,7 +142,7 @@ impl DockHostDropScene {
         &self,
         position: Point<Pixels>,
         payload_size: Option<Size<Pixels>>,
-        excluded_nodes: Vec<DockNodeId>,
+        excluded_nodes: &[DockNodeId],
         policy: &DockPolicy,
         target_validator: Option<&DockDropTargetValidator<'_>>,
         edge_plan_resolver: Option<&DockEdgePlanResolver<'_>>,
@@ -160,7 +160,7 @@ impl DockHostDropScene {
             root: self.root,
             floating_title_bars: &self.floating_title_bars,
             empty_spaces: &self.empty_spaces,
-            excluded_nodes: &excluded_nodes,
+            excluded_nodes,
         };
         drop_target::resolve_layout_drop(input())
             .map(DockHostDropResolution::Drop)

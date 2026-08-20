@@ -1431,12 +1431,12 @@ impl App {
         window_registry::handles(self)
     }
 
-    /// Returns a committed hitbox's front-to-back rank at a point in a window that is not
-    /// currently checked out by an update transaction.
+    /// Returns a committed hitbox's front-to-back rank from the window's last accepted frame.
     ///
-    /// This is a read-only native-routing seam. It does not dispatch callbacks or advance window
-    /// state, and returns `None` when the window is closed, checked out, or the hitbox is not in the
-    /// committed foreground target set at `point`.
+    /// This is a read-only native-routing seam backed by an immutable accepted-frame snapshot. It
+    /// does not borrow the live window, dispatch callbacks, or advance window state, and returns
+    /// `None` when the window is closed or the hitbox is not in the committed foreground target
+    /// set at `point`.
     #[doc(hidden)]
     pub fn window_point_target_rank(
         &self,
@@ -1444,8 +1444,9 @@ impl App {
         hitbox: HitboxId,
         point: Point<Pixels>,
     ) -> Option<usize> {
-        let window = self.windows.get(window.window_id())?.as_deref()?;
-        hitbox.window_point_target_rank(point, window)
+        self.this
+            .upgrade()?
+            .native_window_point_target_rank(window.window_id(), hitbox, point)
     }
 
     pub(crate) fn set_native_window_control_area(
@@ -1455,6 +1456,16 @@ impl App {
     ) {
         if let Some(app) = self.this.upgrade() {
             app.set_native_window_control_area(window_id, area);
+        }
+    }
+
+    pub(crate) fn set_native_window_hit_test_snapshot(
+        &self,
+        window_id: WindowId,
+        snapshot: Arc<crate::CommittedWindowHitTestSnapshot>,
+    ) {
+        if let Some(app) = self.this.upgrade() {
+            app.set_native_window_hit_test_snapshot(window_id, snapshot);
         }
     }
 

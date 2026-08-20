@@ -69,12 +69,13 @@ pub use native_test_harness::{
     NativeTestMixedDpiDisplayPair, NativeTestOpaqueWindow, NativeTestPointerAction,
     NativeTestProcessWindowCensus, NativeTestSystemPointerGuard, NativeTestWindowProbe,
     arm_native_no_input_generation_drift, native_test_acquire_foreground_window,
-    native_test_client_screen_bounds, native_test_displays, native_test_inject_system_pointer,
-    native_test_inject_system_pointer_sequence, native_test_logical_client_point_to_screen,
-    native_test_mixed_dpi_display_pair, native_test_non_shell_root_window_at,
-    native_test_process_window_census, native_test_raise_window,
-    native_test_release_primary_button_best_effort, native_test_virtual_screen_bounds,
-    native_test_window_is_above, native_test_window_probe, native_test_window_rect,
+    native_test_client_screen_bounds, native_test_displays, native_test_highest_refresh_display,
+    native_test_inject_system_pointer, native_test_inject_system_pointer_sequence,
+    native_test_logical_client_point_to_screen, native_test_mixed_dpi_display_pair,
+    native_test_non_shell_root_window_at, native_test_process_window_census,
+    native_test_raise_window, native_test_release_primary_button_best_effort,
+    native_test_virtual_screen_bounds, native_test_window_is_above, native_test_window_probe,
+    native_test_window_rect,
 };
 
 pub(crate) use windows::Win32::Foundation::HWND;

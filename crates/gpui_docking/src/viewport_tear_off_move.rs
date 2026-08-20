@@ -1,6 +1,8 @@
+use crate::workspace_move_validation::DockPayloadDockClasses;
 use crate::{
-    DockActionApplyError, DockActionOutcome, DockGraph, DockGraphDropTarget, DockNode, DockSpaceId,
-    DockViewportDropPayload, DockViewportTearOffPending, DockViewportTearOffRequest, DockWorkspace,
+    DockActionApplyError, DockActionOutcome, DockGraph, DockGraphDropTarget, DockNode, DockPolicy,
+    DockSpaceId, DockViewportDropPayload, DockViewportTearOffPending, DockViewportTearOffRequest,
+    DockWorkspace,
     locked_drop_identity::{DockLockedPayloadForwardProjectionError, DockLockedPayloadIdentity},
     workspace_drop_transaction::DockWorkspaceDropPayload,
 };
@@ -106,9 +108,46 @@ pub(crate) fn lock_tear_off_move(
     request: &DockViewportTearOffRequest,
     target_space: &DockSpaceId,
 ) -> Result<DockViewportTearOffMovePlan, DockActionApplyError> {
-    let plan = DockViewportTearOffMovePlan::new(workspace, request, target_space)?;
+    let plan = DockViewportLockedTearOffMove::new(workspace, request)?.bind_target(target_space)?;
     plan.preflight(workspace)?;
     Ok(plan)
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DockViewportLockedTearOffMove {
+    source: DockLockedPayloadIdentity,
+    policy: DockPolicy,
+    payload_classes: DockPayloadDockClasses,
+}
+
+impl DockViewportLockedTearOffMove {
+    pub(crate) fn new(
+        workspace: &DockWorkspace,
+        request: &DockViewportTearOffRequest,
+    ) -> Result<Self, DockActionApplyError> {
+        let source = capture_tear_off_payload_identity(workspace.graph(), request)?;
+        let policy = workspace.policy().clone();
+        policy.validate_platform_viewports()?;
+        let payload_classes = workspace
+            .payload_dock_classes_for_viewport_payload(request.payload(), request.source_node());
+        Ok(Self {
+            source,
+            policy,
+            payload_classes,
+        })
+    }
+
+    pub(crate) fn bind_target(
+        self,
+        target_space: &DockSpaceId,
+    ) -> Result<DockViewportTearOffMovePlan, DockActionApplyError> {
+        self.payload_classes
+            .validate_target_space(target_space, &self.policy)?;
+        Ok(DockViewportTearOffMovePlan {
+            source: self.source,
+            target_space: target_space.clone(),
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -123,12 +162,7 @@ impl DockViewportTearOffMovePlan {
         request: &DockViewportTearOffRequest,
         target_space: &DockSpaceId,
     ) -> Result<Self, DockActionApplyError> {
-        let source = capture_tear_off_payload_identity(workspace.graph(), request)?;
-        validate_tear_off_move(workspace, request, target_space)?;
-        Ok(Self {
-            source,
-            target_space: target_space.clone(),
-        })
+        DockViewportLockedTearOffMove::new(workspace, request)?.bind_target(target_space)
     }
 
     fn preflight(
@@ -206,33 +240,6 @@ pub(crate) fn commit_tear_off_move(
         }
     };
     plan.commit(workspace)
-}
-
-fn validate_tear_off_move(
-    workspace: &DockWorkspace,
-    request: &DockViewportTearOffRequest,
-    target_space: &DockSpaceId,
-) -> Result<(), DockActionApplyError> {
-    workspace.policy().validate_platform_viewports()?;
-
-    match request.payload() {
-        DockViewportDropPayload::Item(item) => {
-            workspace
-                .move_validation()
-                .validate_item_target_space(target_space, item)?;
-        }
-        DockViewportDropPayload::Tabs => {
-            workspace
-                .move_validation()
-                .validate_tabs_target_space(target_space, request.source_node())?;
-        }
-        DockViewportDropPayload::Floating(floating) => {
-            workspace
-                .move_validation()
-                .validate_floating_target_space(target_space, *floating)?;
-        }
-    }
-    Ok(())
 }
 
 fn tear_off_payload_mismatch(
