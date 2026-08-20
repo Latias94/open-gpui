@@ -18,7 +18,9 @@ pub(crate) const NATIVE_SCENARIO_RUNNER: &str = "open-gpui-windows-native-intera
 pub(crate) const NATIVE_SCENARIO_WORKFLOW_ENTRY: &str =
     "cargo run --locked -p xtask -- native-windows-interactive";
 
-const NATIVE_SCENARIO_SCHEMA: u16 = 5;
+const NATIVE_SCENARIO_SCHEMA: u16 = 6;
+const DOCKSPACE_SCENARIO_FIXTURES: &str =
+    include_str!("../../crates/gpui_docking/src/fixtures/dockspace_scenarios_v1.json");
 const NATIVE_DOCK_PACKAGE: &str = "open-gpui-docking-native";
 const WINDOWS_PACKAGE: &str = "open-gpui-windows";
 const NATIVE_SCENARIO_ENV: &str = "OPEN_GPUI_NATIVE_SCENARIO_ID";
@@ -190,6 +192,7 @@ impl NativeScenarioPackage {
 #[serde(rename_all = "kebab-case")]
 pub(crate) enum NativeScenarioBehavior {
     SourceCapture,
+    ComplexDockspaceWorkflow,
     OpaqueOcclusion,
     OpaqueHitTransparentPrefix,
     SurfaceShutdown,
@@ -206,8 +209,9 @@ pub(crate) enum NativeScenarioBehavior {
 }
 
 impl NativeScenarioBehavior {
-    const ALL: [Self; 14] = [
+    const ALL: [Self; 15] = [
         Self::SourceCapture,
+        Self::ComplexDockspaceWorkflow,
         Self::OpaqueOcclusion,
         Self::OpaqueHitTransparentPrefix,
         Self::SurfaceShutdown,
@@ -226,6 +230,7 @@ impl NativeScenarioBehavior {
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::SourceCapture => "source-capture",
+            Self::ComplexDockspaceWorkflow => "complex-dockspace-workflow",
             Self::OpaqueOcclusion => "opaque-occlusion",
             Self::OpaqueHitTransparentPrefix => "opaque-hit-transparent-prefix",
             Self::SurfaceShutdown => "surface-shutdown",
@@ -267,6 +272,44 @@ pub(crate) enum NativeDockspaceOracle {
     Performance,
 }
 
+const COMPLEX_DOCKSPACE_WORKFLOW_ORACLES: [NativeDockspaceOracle; 6] = [
+    NativeDockspaceOracle::Graph,
+    NativeDockspaceOracle::Layout,
+    NativeDockspaceOracle::Presentation,
+    NativeDockspaceOracle::FocusSelection,
+    NativeDockspaceOracle::ViewportRoute,
+    NativeDockspaceOracle::NativeLifetime,
+];
+
+impl NativeDockspaceOracle {
+    const fn fixture_name(self) -> &'static str {
+        match self {
+            Self::Graph => "graph",
+            Self::Layout => "layout",
+            Self::Presentation => "presentation",
+            Self::FocusSelection => "focus_selection",
+            Self::ViewportRoute => "viewport_route",
+            Self::NativeLifetime => "native_lifetime",
+            Self::Performance => "performance",
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct DockspaceFixtureSuite {
+    schema_version: u16,
+    scenarios: Vec<DockspaceFixtureScenario>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DockspaceFixtureScenario {
+    id: String,
+    #[serde(default)]
+    adapters: Vec<String>,
+    #[serde(default)]
+    oracles: Vec<String>,
+}
+
 impl NativeObservationDomain {
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
@@ -292,6 +335,13 @@ pub(crate) fn load_native_scenario_manifest(root: &Path) -> Result<NativeScenari
 
 pub(crate) fn native_manifest_failures(manifest: &NativeScenarioManifest) -> Vec<String> {
     let mut failures = Vec::new();
+    let fixture_catalog = match load_dockspace_fixture_catalog() {
+        Ok(catalog) => Some(catalog),
+        Err(error) => {
+            failures.push(error);
+            None
+        }
+    };
     if manifest.schema != NATIVE_SCENARIO_SCHEMA {
         failures.push(format!(
             "{NATIVE_SCENARIO_MANIFEST_PATH}: unsupported native scenario schema {}; expected {NATIVE_SCENARIO_SCHEMA}",
@@ -373,6 +423,12 @@ pub(crate) fn native_manifest_failures(manifest: &NativeScenarioManifest) -> Vec
                 scenario.id
             ));
         }
+        if scenario.package == NativeScenarioPackage::DockingNative && !scenario.ignored {
+            failures.push(format!(
+                "{NATIVE_SCENARIO_MANIFEST_PATH}: owning-platform Dock scenario `{}` must remain ignored and run only through the serialized native gate",
+                scenario.id
+            ));
+        }
         if scenario
             .observation_domains
             .contains(&NativeObservationDomain::VisualTest)
@@ -382,7 +438,7 @@ pub(crate) fn native_manifest_failures(manifest: &NativeScenarioManifest) -> Vec
                 scenario.id
             ));
         }
-        validate_dockspace_binding(scenario, &mut failures);
+        validate_dockspace_binding(scenario, fixture_catalog.as_ref(), &mut failures);
     }
     for required in NativeScenarioBehavior::ALL {
         if !behaviors.contains_key(&required) {
@@ -395,11 +451,16 @@ pub(crate) fn native_manifest_failures(manifest: &NativeScenarioManifest) -> Vec
     failures
 }
 
-fn validate_dockspace_binding(scenario: &NativeScenarioDeclaration, failures: &mut Vec<String>) {
+fn validate_dockspace_binding(
+    scenario: &NativeScenarioDeclaration,
+    fixture_catalog: Option<&BTreeMap<String, DockspaceFixtureScenario>>,
+    failures: &mut Vec<String>,
+) {
+    let is_workflow = scenario.behavior == NativeScenarioBehavior::ComplexDockspaceWorkflow;
     let has_binding = scenario.dockspace_scenario.is_some()
         || scenario.dockspace_step.is_some()
         || !scenario.dockspace_oracles.is_empty();
-    if !has_binding {
+    if !has_binding && !is_workflow {
         return;
     }
     if scenario.package != NativeScenarioPackage::DockingNative {
@@ -415,17 +476,64 @@ fn validate_dockspace_binding(scenario: &NativeScenarioDeclaration, failures: &m
             scenario.id
         ));
     }
-    if option_text(&scenario.dockspace_step).is_none() {
-        failures.push(format!(
-            "{NATIVE_SCENARIO_MANIFEST_PATH}: native scenario `{}` dockspace_step cannot be empty when dockspace metadata is present",
-            scenario.id
-        ));
-    }
     if scenario.dockspace_oracles.is_empty() {
         failures.push(format!(
             "{NATIVE_SCENARIO_MANIFEST_PATH}: native scenario `{}` dockspace_oracles cannot be empty when dockspace metadata is present",
             scenario.id
         ));
+    }
+
+    if is_workflow && scenario.dockspace_step.is_some() {
+        failures.push(format!(
+            "{NATIVE_SCENARIO_MANIFEST_PATH}: native scenario `{}` complex workflow cannot declare dockspace_step; it executes the complete fixture",
+            scenario.id
+        ));
+    } else if !is_workflow && option_text(&scenario.dockspace_step).is_none() {
+        failures.push(format!(
+            "{NATIVE_SCENARIO_MANIFEST_PATH}: native scenario `{}` dockspace_step cannot be empty when dockspace metadata is present",
+            scenario.id
+        ));
+    }
+    if is_workflow {
+        let expected_oracles = COMPLEX_DOCKSPACE_WORKFLOW_ORACLES
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        if scenario.dockspace_oracles != expected_oracles {
+            failures.push(format!(
+                "{NATIVE_SCENARIO_MANIFEST_PATH}: native scenario `{}` complex workflow must declare exactly {expected_oracles:?} dockspace oracles; observed {:?}",
+                scenario.id, scenario.dockspace_oracles
+            ));
+        }
+    }
+
+    let fixture = option_text(&scenario.dockspace_scenario)
+        .and_then(|scenario_id| fixture_catalog.and_then(|catalog| catalog.get(scenario_id)));
+    if option_text(&scenario.dockspace_scenario).is_some() && fixture.is_none() {
+        failures.push(format!(
+            "{NATIVE_SCENARIO_MANIFEST_PATH}: native scenario `{}` references unknown dockspace fixture `{}`",
+            scenario.id,
+            option_text(&scenario.dockspace_scenario).unwrap_or_default()
+        ));
+    }
+    if let Some(fixture) = fixture {
+        if !fixture.adapters.iter().any(|adapter| adapter == "native") {
+            failures.push(format!(
+                "{NATIVE_SCENARIO_MANIFEST_PATH}: native scenario `{}` references dockspace fixture `{}` without the native adapter",
+                scenario.id, fixture.id
+            ));
+        }
+        for oracle in &scenario.dockspace_oracles {
+            if !fixture
+                .oracles
+                .iter()
+                .any(|fixture_oracle| fixture_oracle == oracle.fixture_name())
+            {
+                failures.push(format!(
+                    "{NATIVE_SCENARIO_MANIFEST_PATH}: native scenario `{}` requests oracle `{:?}` absent from dockspace fixture `{}`",
+                    scenario.id, oracle, fixture.id
+                ));
+            }
+        }
     }
 
     for oracle in &scenario.dockspace_oracles {
@@ -440,6 +548,32 @@ fn validate_dockspace_binding(scenario: &NativeScenarioDeclaration, failures: &m
             }
         }
     }
+}
+
+fn load_dockspace_fixture_catalog() -> Result<BTreeMap<String, DockspaceFixtureScenario>, String> {
+    let suite: DockspaceFixtureSuite = serde_json::from_str(DOCKSPACE_SCENARIO_FIXTURES).map_err(
+        |error| {
+            format!(
+                "crates/gpui_docking/src/fixtures/dockspace_scenarios_v1.json: invalid fixture corpus: {error}"
+            )
+        },
+    )?;
+    if suite.schema_version != 1 {
+        return Err(format!(
+            "crates/gpui_docking/src/fixtures/dockspace_scenarios_v1.json: unsupported schema {}; expected 1",
+            suite.schema_version
+        ));
+    }
+    let mut catalog = BTreeMap::new();
+    for scenario in suite.scenarios {
+        let id = scenario.id.clone();
+        if catalog.insert(id.clone(), scenario).is_some() {
+            return Err(format!(
+                "crates/gpui_docking/src/fixtures/dockspace_scenarios_v1.json: duplicate scenario `{id}`"
+            ));
+        }
+    }
+    Ok(catalog)
 }
 
 fn option_text(value: &Option<String>) -> Option<&str> {
@@ -718,6 +852,94 @@ mod tests {
         assert!(
             failures.contains("requires `lifetime` observation evidence"),
             "missing lifetime evidence diagnostic: {failures}"
+        );
+    }
+
+    #[test]
+    fn manifest_rejects_a_singular_step_on_a_complete_dockspace_workflow() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("xtask must remain a direct workspace child");
+        let mut manifest = load_native_scenario_manifest(root).expect("manifest should parse");
+        let scenario = manifest
+            .scenario
+            .iter_mut()
+            .find(|scenario| scenario.behavior == NativeScenarioBehavior::ComplexDockspaceWorkflow)
+            .expect("the repository manifest should own the complex dockspace workflow");
+        scenario.dockspace_step = Some("full_complex_workflow".to_owned());
+
+        let failures = native_manifest_failures(&manifest).join("\n");
+        assert!(
+            failures.contains("cannot declare dockspace_step"),
+            "missing complete-workflow diagnostic: {failures}"
+        );
+    }
+
+    #[test]
+    fn manifest_rejects_missing_complex_workflow_binding_and_oracles() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("xtask must remain a direct workspace child");
+        let mut manifest = load_native_scenario_manifest(root).expect("manifest should parse");
+        let scenario = manifest
+            .scenario
+            .iter_mut()
+            .find(|scenario| scenario.behavior == NativeScenarioBehavior::ComplexDockspaceWorkflow)
+            .expect("the repository manifest should own the complex dockspace workflow");
+        scenario.dockspace_scenario = None;
+        scenario.dockspace_step = None;
+        scenario.dockspace_oracles.clear();
+
+        let failures = native_manifest_failures(&manifest).join("\n");
+        assert!(
+            failures.contains("dockspace_scenario cannot be empty"),
+            "missing fail-closed workflow binding diagnostic: {failures}"
+        );
+        assert!(
+            failures.contains("complex workflow must declare exactly"),
+            "missing exact workflow oracle diagnostic: {failures}"
+        );
+    }
+
+    #[test]
+    fn manifest_rejects_incomplete_complex_workflow_oracles() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("xtask must remain a direct workspace child");
+        let mut manifest = load_native_scenario_manifest(root).expect("manifest should parse");
+        let scenario = manifest
+            .scenario
+            .iter_mut()
+            .find(|scenario| scenario.behavior == NativeScenarioBehavior::ComplexDockspaceWorkflow)
+            .expect("the repository manifest should own the complex dockspace workflow");
+        scenario
+            .dockspace_oracles
+            .remove(&NativeDockspaceOracle::Layout);
+
+        let failures = native_manifest_failures(&manifest).join("\n");
+        assert!(
+            failures.contains("complex workflow must declare exactly"),
+            "missing exact workflow oracle diagnostic: {failures}"
+        );
+    }
+
+    #[test]
+    fn manifest_rejects_non_ignored_owning_platform_dock_scenarios() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("xtask must remain a direct workspace child");
+        let mut manifest = load_native_scenario_manifest(root).expect("manifest should parse");
+        let scenario = manifest
+            .scenario
+            .iter_mut()
+            .find(|scenario| scenario.behavior == NativeScenarioBehavior::ComplexDockspaceWorkflow)
+            .expect("the repository manifest should own the complex dockspace workflow");
+        scenario.ignored = false;
+
+        let failures = native_manifest_failures(&manifest).join("\n");
+        assert!(
+            failures.contains("must remain ignored"),
+            "missing owning-platform opt-in diagnostic: {failures}"
         );
     }
 

@@ -74,6 +74,17 @@ pub(crate) enum DockspaceStepResolveError {
 }
 
 impl DockspaceScenarioStep {
+    pub(crate) fn with_id(mut self, id: impl Into<String>) -> Self {
+        let id = Some(id.into());
+        match &mut self {
+            Self::MoveItemToItem { id: target, .. }
+            | Self::MoveItemToEmptySpace { id: target, .. }
+            | Self::FloatItemInWindow { id: target, .. }
+            | Self::MergeFirstFloating { id: target, .. } => *target = id,
+        }
+        self
+    }
+
     pub(crate) fn move_item_to_item(
         source_space: impl Into<DockSpaceId>,
         item: impl Into<DockItemId>,
@@ -88,19 +99,6 @@ impl DockspaceScenarioStep {
             target_space: target_space.into(),
             target_item: target_item.into(),
             zone,
-        }
-    }
-
-    pub(crate) fn move_item_to_empty_space(
-        source_space: impl Into<DockSpaceId>,
-        item: impl Into<DockItemId>,
-        target_space: impl Into<DockSpaceId>,
-    ) -> Self {
-        Self::MoveItemToEmptySpace {
-            id: None,
-            source_space: source_space.into(),
-            item: item.into(),
-            target_space: target_space.into(),
         }
     }
 

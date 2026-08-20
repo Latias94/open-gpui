@@ -54,8 +54,8 @@ pub use platform::WindowsPlatform;
 pub use native_test_observation::{
     NativeWindowTestCaptureOwner, NativeWindowTestEvent, NativeWindowTestEventKind,
     NativeWindowTestIdentity, NativeWindowTestMessage, NativeWindowTestMessageDisposition,
-    NativeWindowTestObservation, NativeWindowTestObservationGuard, NativeWindowTestPoint,
-    begin_native_window_test_observation,
+    NativeWindowTestObservation, NativeWindowTestObservationCursor,
+    NativeWindowTestObservationGuard, NativeWindowTestPoint, begin_native_window_test_observation,
 };
 
 #[cfg(feature = "test-support")]

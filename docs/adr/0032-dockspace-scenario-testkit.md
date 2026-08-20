@@ -24,8 +24,12 @@ interface before a real non-GPUI consumer exists.
 
 ## Decision
 
-`open-gpui-docking` owns an internal dockspace scenario testkit. The testkit is crate-private and
-available only to tests or the existing `test-support` benchmark path. It is a scenario vocabulary
+`open-gpui-docking` owns an internal dockspace scenario testkit. Its topology builders, operation
+resolver, and headless runner remain crate-private and are available only to tests or the existing
+`test-support` path. A doc-hidden `native_scenario_support` module may expose a feature-gated,
+data-only projection to workspace-owned native tests. This projection contains fixture ids, layouts,
+semantic targets, production drop-guide points, oracle labels, and headless checkpoints; it cannot
+mutate docking state or expose controller/runtime internals. The testkit is a scenario vocabulary
 and adapter harness, not a second docking engine.
 
 The testkit may define:
@@ -40,9 +44,11 @@ The testkit may define:
 
 The testkit must execute production authorities. Pure model cases run through `DockGraph`,
 `DockWorkspace`, and workspace transaction paths. Rendered cases run through GPUI host and viewport
-runtime adapters. Native cases project scenario metadata into the checked-in native manifest and
-must keep exact observation domains such as capture, wnd-proc, point-stack, presentation,
-activation, geometry, and lifetime. Benchmarks measure named scenario operations and emit
+runtime adapters. Native cases project scenario metadata into the checked-in native manifest,
+execute the complete fixture step sequence in order, and must keep exact observation domains such
+as capture, wnd-proc, point-stack, presentation, activation, geometry, and lifetime. Native target
+points come from the same production drop-guide geometry used by the renderer; fixture checkpoints
+come from production headless transactions. Benchmarks measure named scenario operations and emit
 Open-GPUI/ImGui metrics only when the rows share the same declared operation family and measurement
 layer.
 
@@ -63,8 +69,8 @@ headless docking crate is deferred until a production adapter outside GPUI needs
   common root or prelude.
 - Scenario fixtures must reject duplicate panel labels, unknown operations, and adapter/oracle
   combinations that cannot produce typed evidence.
-- Native multiview correctness remains opt-in owning-platform evidence; screenshot or screen
-  position heuristics are not sufficient correctness proof.
+- Native multiview correctness remains opt-in owning-platform evidence; screenshot or ad hoc edge
+  percentages are not sufficient correctness proof.
 
 ## Rejected Alternatives
 
@@ -98,6 +104,6 @@ measure costs after those semantics are already proven.
 | Complex topology scenario vocabulary exists without public leakage | `dockspace_testkit` tests and `public_surface_tests` |
 | Headless execution uses production workspace/transaction paths | `workspace_move`, `workspace_drop`, `workspace_action`, and `dockspace_testkit` gates |
 | Fixture corpus maps Open GPUI rows to ImGui categories | `dockspace_scenario_fixture_tests` and benchmark JSON labels |
-| GPUI/native layers prove typed scenario oracles | host viewport tests and native manifest validation |
+| GPUI/native layers prove typed scenario oracles | host viewport tests, schema-6 native manifest validation, and the three-HWND fixture runner |
 | Scenario benchmarks emit stable comparable rows | `tab_drag_latency` bench and `tools/benchmark_docking_drag.py --json` |
 | Public headless extraction remains deferred | no root/prelude testkit exports and README boundary note |

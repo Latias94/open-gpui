@@ -3111,9 +3111,32 @@ fn dragging_tab_to_other_stack_center_moves_panel(cx: &mut TestAppContext) {
         DockDebugRegion::DropPayloadTabPreview { index: 0 },
     )
     .expect("center hover should render a payload tab preview");
+    let active_guide = selector_for(
+        &drag_visual,
+        &host,
+        DockDebugRegion::ActiveDropGuide {
+            node: Some(right_tabs),
+            zone: DropZone::Center,
+        },
+    )
+    .expect("center hover should identify the exact active submitted guide");
+    let center_guide = selector_for(
+        &drag_visual,
+        &host,
+        DockDebugRegion::DropGuide {
+            node: Some(right_tabs),
+            zone: DropZone::Center,
+        },
+    )
+    .expect("center hover should render its center guide");
     let preview_bounds = debug_bounds(&mut drag_visual, &preview);
     let preview_body_bounds = debug_bounds(&mut drag_visual, &preview_body);
     let preview_tab_bounds = debug_bounds(&mut drag_visual, &preview_tab);
+    assert_eq!(
+        debug_bounds(&mut drag_visual, &active_guide),
+        debug_bounds(&mut drag_visual, &center_guide),
+        "the active submitted-guide marker must use the exact production guide geometry"
+    );
     let visual_affordance_sample = cx
         .update_entity(&host, |host, _| {
             host.sample_visual_affordance_transition_for_test(Duration::from_millis(0))

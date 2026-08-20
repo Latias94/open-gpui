@@ -1,4 +1,4 @@
-schema = 5
+schema = 6
 suite = "docking-native.windows.interactive"
 runner = "open-gpui-windows-native-interactive-ephemeral"
 
@@ -13,6 +13,17 @@ behavior = "source-capture"
 dockspace_scenario = "three_viewport_rehome"
 dockspace_step = "cross_viewport_known_target_preview"
 dockspace_oracles = ["viewport-route", "presentation"]
+
+[[scenario]]
+id = "native.u29.complex-dockspace-workflow"
+requirement_owner = "U29"
+package = "open-gpui-docking-native"
+ignored = true
+test = "native_interactive_tests::native_interactive_complex_dockspace_workflow_runs_four_cross_window_steps"
+observation_domains = ["system-input", "wnd-proc", "capture", "point-stack", "presentation", "lifetime"]
+behavior = "complex-dockspace-workflow"
+dockspace_scenario = "three_viewport_rehome"
+dockspace_oracles = ["graph", "layout", "presentation", "focus-selection", "viewport-route", "native-lifetime"]
 
 [[scenario]]
 id = "native.u27.opaque-occlusion"

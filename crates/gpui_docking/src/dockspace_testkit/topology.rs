@@ -82,6 +82,8 @@ pub(crate) struct DockspaceTopologySpace {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct DockspaceScenario {
     pub(crate) id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) primary_space: Option<DockSpaceId>,
     pub(crate) spaces: Vec<DockspaceTopologySpace>,
     #[serde(default)]
     pub(crate) steps: Vec<crate::dockspace_testkit::ops::DockspaceScenarioStep>,
@@ -103,6 +105,11 @@ pub(crate) struct DockspaceScenarioGraph {
 pub(crate) enum DockspaceScenarioBuildError {
     #[error("dockspace scenario {scenario} has duplicate space {space}")]
     DuplicateSpace {
+        scenario: String,
+        space: DockSpaceId,
+    },
+    #[error("dockspace scenario {scenario} names unknown primary space {space}")]
+    UnknownPrimarySpace {
         scenario: String,
         space: DockSpaceId,
     },
@@ -203,12 +210,18 @@ impl DockspaceScenario {
     pub(crate) fn new(id: impl Into<String>) -> Self {
         Self {
             id: id.into(),
+            primary_space: None,
             spaces: Vec::new(),
             steps: Vec::new(),
             adapters: Vec::new(),
             oracles: Vec::new(),
             imgui_categories: Vec::new(),
         }
+    }
+
+    pub(crate) fn primary_space(mut self, space: impl Into<DockSpaceId>) -> Self {
+        self.primary_space = Some(space.into());
+        self
     }
 
     pub(crate) fn space(mut self, space: DockspaceTopologySpace) -> Self {
@@ -266,6 +279,14 @@ impl DockspaceScenario {
             for floating in &space.floatings {
                 self.validate_node_items(&floating.root, &mut seen_items)?;
             }
+        }
+        if let Some(primary_space) = &self.primary_space
+            && !seen_spaces.contains(primary_space)
+        {
+            return Err(DockspaceScenarioBuildError::UnknownPrimarySpace {
+                scenario: self.id.clone(),
+                space: primary_space.clone(),
+            });
         }
 
         let mut graph = DockGraph::new();
@@ -458,8 +479,13 @@ pub(crate) fn three_viewport_rehome_scenario() -> DockspaceScenario {
     use crate::dockspace_testkit::ops::{DockspaceScenarioStep, DockspaceScenarioZone};
 
     DockspaceScenario::new("three_viewport_rehome")
-        .space(DockspaceTopologySpace::new("source").root(DockspaceTopologyNode::tabs(["AAA"])))
-        .space(DockspaceTopologySpace::new("middle").root(DockspaceTopologyNode::tabs(["BBB"])))
+        .primary_space("target")
+        .space(
+            DockspaceTopologySpace::new("source").root(DockspaceTopologyNode::tabs(["AAA", "EEE"])),
+        )
+        .space(
+            DockspaceTopologySpace::new("middle").root(DockspaceTopologyNode::tabs(["BBB", "FFF"])),
+        )
         .space(
             DockspaceTopologySpace::new("target").root(DockspaceTopologyNode::split(
                 SplitAxis::Vertical,
@@ -469,16 +495,46 @@ pub(crate) fn three_viewport_rehome_scenario() -> DockspaceScenario {
                 ],
             )),
         )
-        .step(DockspaceScenarioStep::move_item_to_item(
-            "source",
-            "AAA",
-            "target",
-            "CCC",
-            DockspaceScenarioZone::Right,
-        ))
-        .step(DockspaceScenarioStep::move_item_to_empty_space(
-            "target", "AAA", "source",
-        ))
+        .step(
+            DockspaceScenarioStep::move_item_to_item(
+                "source",
+                "AAA",
+                "target",
+                "CCC",
+                DockspaceScenarioZone::Right,
+            )
+            .with_id("cross_viewport_known_target_preview"),
+        )
+        .step(
+            DockspaceScenarioStep::move_item_to_item(
+                "middle",
+                "BBB",
+                "target",
+                "DDD",
+                DockspaceScenarioZone::Center,
+            )
+            .with_id("middle_viewport_known_target_dock"),
+        )
+        .step(
+            DockspaceScenarioStep::move_item_to_item(
+                "target",
+                "AAA",
+                "middle",
+                "FFF",
+                DockspaceScenarioZone::Center,
+            )
+            .with_id("cross_viewport_rehome_to_middle"),
+        )
+        .step(
+            DockspaceScenarioStep::move_item_to_item(
+                "target",
+                "BBB",
+                "source",
+                "EEE",
+                DockspaceScenarioZone::Center,
+            )
+            .with_id("cross_viewport_return_to_source"),
+        )
         .adapters([
             DockspaceAdapterTag::Headless,
             DockspaceAdapterTag::GpuiHost,

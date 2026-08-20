@@ -21,8 +21,9 @@ use open_gpui_windows::{
     NATIVE_TEST_INPUT_CANARY, NativeTestDisplay, NativeTestOpaqueWindow, NativeTestPointerAction,
     NativeTestSystemPointerGuard, NativeWindowTestCaptureOwner, NativeWindowTestEvent,
     NativeWindowTestEventKind, NativeWindowTestIdentity, NativeWindowTestMessage,
-    NativeWindowTestMessageDisposition, NativeWindowTestObservation, NativeWindowTestPoint,
-    WindowsPlatform, arm_native_no_input_generation_drift, begin_native_window_test_observation,
+    NativeWindowTestMessageDisposition, NativeWindowTestObservation,
+    NativeWindowTestObservationCursor, NativeWindowTestPoint, WindowsPlatform,
+    arm_native_no_input_generation_drift, begin_native_window_test_observation,
     native_test_acquire_foreground_window,
     native_test_client_screen_bounds as native_client_screen_bounds,
     native_test_confirm_scenario_behavior, native_test_displays,
@@ -263,11 +264,17 @@ fn select_native_mixed_dpi_display_pair(
 }
 
 mod process_harness;
+mod scenario_runner;
+
+use scenario_runner::{
+    NativeDockspaceRunBinding, NativeDockspaceWorkflow, build_native_dockspace_workflow_scenario,
+};
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd)]
 #[serde(rename_all = "kebab-case")]
 enum NativeDockBehavior {
     SourceCapture,
+    ComplexDockspaceWorkflow,
     TabDragLatencyBenchmark,
     OpaqueOcclusion,
     SurfaceShutdown,
@@ -283,6 +290,7 @@ impl NativeDockBehavior {
     const fn as_str(self) -> &'static str {
         match self {
             Self::SourceCapture => "source-capture",
+            Self::ComplexDockspaceWorkflow => "complex-dockspace-workflow",
             Self::TabDragLatencyBenchmark => "tab-drag-latency-benchmark",
             Self::OpaqueOcclusion => "opaque-occlusion",
             Self::SurfaceShutdown => "surface-shutdown",
@@ -304,6 +312,16 @@ impl NativeDockBehavior {
     ) -> Result<()> {
         match self {
             Self::SourceCapture => run_captured_host_drop_scenario(cx, scenario, scenario_id).await,
+            Self::ComplexDockspaceWorkflow => {
+                let mut workflow = scenario
+                    .dockspace_workflow
+                    .take()
+                    .context("complex native dockspace behavior is missing its fixture runner")?;
+                let milestones = workflow.run(cx, scenario_id).await?;
+                scenario.workflow_milestones.extend(milestones);
+                scenario.dockspace_workflow = Some(workflow);
+                Ok(())
+            }
             Self::TabDragLatencyBenchmark => {
                 run_captured_host_drop_latency_benchmark(cx, scenario).await
             }
@@ -373,7 +391,7 @@ struct NativeScenarioManifestRegistration {
     #[serde(default)]
     dockspace_step: Option<String>,
     #[serde(default)]
-    dockspace_oracles: BTreeSet<String>,
+    dockspace_oracles: BTreeSet<NativeDockspaceManifestOracle>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd)]
@@ -386,8 +404,21 @@ enum NativeScenarioPackage {
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd)]
 #[serde(rename_all = "kebab-case")]
+enum NativeDockspaceManifestOracle {
+    Graph,
+    Layout,
+    Presentation,
+    FocusSelection,
+    ViewportRoute,
+    NativeLifetime,
+    Performance,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd)]
+#[serde(rename_all = "kebab-case")]
 enum NativeScenarioManifestBehavior {
     SourceCapture,
+    ComplexDockspaceWorkflow,
     OpaqueOcclusion,
     OpaqueHitTransparentPrefix,
     SurfaceShutdown,
@@ -407,6 +438,7 @@ impl NativeScenarioManifestBehavior {
     const fn as_str(self) -> &'static str {
         match self {
             Self::SourceCapture => "source-capture",
+            Self::ComplexDockspaceWorkflow => "complex-dockspace-workflow",
             Self::OpaqueOcclusion => "opaque-occlusion",
             Self::OpaqueHitTransparentPrefix => "opaque-hit-transparent-prefix",
             Self::SurfaceShutdown => "surface-shutdown",
@@ -426,6 +458,7 @@ impl NativeScenarioManifestBehavior {
     const fn dock_behavior(self) -> Option<NativeDockBehavior> {
         match self {
             Self::SourceCapture => Some(NativeDockBehavior::SourceCapture),
+            Self::ComplexDockspaceWorkflow => Some(NativeDockBehavior::ComplexDockspaceWorkflow),
             Self::OpaqueOcclusion => Some(NativeDockBehavior::OpaqueOcclusion),
             Self::SurfaceShutdown => Some(NativeDockBehavior::SurfaceShutdown),
             Self::ProvisionalSameHwndPromotion => {
@@ -450,6 +483,8 @@ struct NativeScenarioRegistration {
     id: String,
     test: String,
     pub(super) behavior: NativeDockBehavior,
+    dockspace_scenario: Option<String>,
+    dockspace_oracles: BTreeSet<NativeDockspaceManifestOracle>,
 }
 
 fn native_scenario_manifest() -> NativeScenarioManifest {
@@ -489,6 +524,8 @@ fn native_scenario_registration_from_environment() -> NativeScenarioRegistration
         id: registration.id,
         test: registration.test,
         behavior,
+        dockspace_scenario: registration.dockspace_scenario,
+        dockspace_oracles: registration.dockspace_oracles,
     }
 }
 
@@ -598,8 +635,9 @@ struct NativeDockScenario {
     app_shutdown_probe: Rc<RefCell<NativeAppShutdownProbeState>>,
     live_undock_observation: DockSurfaceLiveUndockTestObservation,
     shutdown_observation: open_gpui_docking::DockSurfaceShutdownTestObservation,
-    _source_interceptor: Subscription,
-    _target_interceptor: Subscription,
+    dockspace_workflow: Option<NativeDockspaceWorkflow>,
+    workflow_milestones: Vec<String>,
+    _mouse_interceptors: Vec<Subscription>,
     _surface_change_subscription: Subscription,
 }
 
@@ -886,7 +924,7 @@ struct NativeNoInputOverlay {
 #[test]
 fn native_interactive_scenario_registry_matches_cases() {
     let manifest = native_scenario_manifest();
-    assert_eq!(manifest.schema, 5);
+    assert_eq!(manifest.schema, 6);
     assert_eq!(manifest.suite, NATIVE_DOCK_SUITE_ID);
     assert_eq!(
         manifest.runner,
@@ -918,16 +956,19 @@ fn native_interactive_scenario_registry_matches_cases() {
     assert!(
         registrations
             .values()
-            .all(|(_, test, domains, scenario, step, oracles, _)| {
-                !test.is_empty()
-                    && !domains.is_empty()
-                    && (oracles.is_empty()
-                        || (scenario
-                            .as_deref()
-                            .is_some_and(|value| !value.trim().is_empty())
-                            && step
-                                .as_deref()
-                                .is_some_and(|value| !value.trim().is_empty())))
+            .all(|(_, test, domains, scenario, step, oracles, behavior)| {
+                let valid_dockspace_binding = oracles.is_empty()
+                    || (scenario
+                        .as_deref()
+                        .is_some_and(|value| !value.trim().is_empty())
+                        && if *behavior == NativeScenarioManifestBehavior::ComplexDockspaceWorkflow
+                        {
+                            step.is_none()
+                        } else {
+                            step.as_deref()
+                                .is_some_and(|value| !value.trim().is_empty())
+                        });
+                !test.is_empty() && !domains.is_empty() && valid_dockspace_binding
             }),
         "every manifest row must carry one exact test coordinate and typed observation evidence"
     );
@@ -941,11 +982,19 @@ fn native_interactive_two_hwnd_captured_drag_routes_preview_and_drop() {
 
 #[test]
 #[ignore = "requires the open-gpui-windows-native-interactive-ephemeral runner"]
+fn native_interactive_complex_dockspace_workflow_runs_four_cross_window_steps() {
+    run_native_interactive_manifest_scenario(NativeDockBehavior::ComplexDockspaceWorkflow);
+}
+
+#[test]
+#[ignore = "requires the open-gpui-windows-native-interactive-ephemeral runner"]
 fn native_interactive_tab_drag_input_to_submit_latency_benchmark() {
     let registration = NativeScenarioRegistration {
         id: DRAG_LATENCY_BENCHMARK_ID.to_owned(),
         test: DRAG_LATENCY_BENCHMARK_TEST.to_owned(),
         behavior: NativeDockBehavior::TabDragLatencyBenchmark,
+        dockspace_scenario: None,
+        dockspace_oracles: BTreeSet::new(),
     };
     ensure_native_interactive_runner(&registration.id);
     if process_harness::is_worker(&registration.id, registration.behavior) {
@@ -1020,6 +1069,14 @@ fn run_native_interactive_worker(registration: NativeScenarioRegistration) -> ! 
     process_harness::await_worker_start();
     let scenario_id = registration.id.clone();
     let behavior = registration.behavior;
+    let dockspace_binding = (behavior == NativeDockBehavior::ComplexDockspaceWorkflow).then(|| {
+        NativeDockspaceRunBinding {
+            scenario_id: registration.dockspace_scenario.clone().unwrap_or_else(|| {
+                panic!("complex native dockspace behavior requires dockspace_scenario metadata")
+            }),
+            oracles: registration.dockspace_oracles.clone(),
+        }
+    });
     let worker_subcase = process_harness::worker_subcase(&scenario_id, behavior);
     let mixed_dpi_pair_plan = process_harness::worker_mixed_dpi_pair_plan(behavior);
     let reported_mixed_dpi_pair = mixed_dpi_pair_plan.as_ref().ok().copied().flatten();
@@ -1090,6 +1147,7 @@ fn run_native_interactive_worker(registration: NativeScenarioRegistration) -> ! 
                     cx,
                     native_observation,
                     behavior,
+                    dockspace_binding.clone(),
                     worker_subcase,
                     *mixed_dpi_pair_plan,
                 ) {
@@ -1180,12 +1238,14 @@ fn run_native_interactive_worker(registration: NativeScenarioRegistration) -> ! 
                         } else {
                             process_harness::NativeWorkerOutcome::Failed(failures.join("; "))
                         };
+                        let mut milestones = scenario.workflow_milestones.clone();
+                        milestones.push("scenario.completed".to_owned());
                         *completion
                             .lock()
                             .expect("native worker completion lock must not be poisoned") =
                             Some(NativeWorkerCompletion {
                                 outcome,
-                                milestones: vec!["scenario.completed".to_owned()],
+                                milestones,
                                 exit_path:
                                     process_harness::NativeWorkerExitPath::ExplicitCleanup,
                                 app_census,
@@ -1674,9 +1734,22 @@ fn build_native_scenario(
     cx: &mut App,
     native_observation: NativeWindowTestObservation,
     behavior: NativeDockBehavior,
+    dockspace_binding: Option<NativeDockspaceRunBinding>,
     worker_subcase: process_harness::NativeWorkerSubcase,
     mixed_dpi_pair_plan: Option<process_harness::NativeMixedDpiPairPlan>,
 ) -> Result<NativeDockScenario> {
+    if behavior == NativeDockBehavior::ComplexDockspaceWorkflow {
+        return build_native_dockspace_workflow_scenario(
+            cx,
+            native_observation,
+            dockspace_binding
+                .context("complex native dockspace behavior requires a fixture workflow binding")?,
+        );
+    }
+    ensure!(
+        dockspace_binding.is_none(),
+        "only the complex native dockspace behavior may receive a fixture workflow binding"
+    );
     let mixed_dpi_displays = behavior
         .crosses_dpi_boundary()
         .then(|| {
@@ -1848,8 +1921,9 @@ fn build_native_scenario(
         app_shutdown_probe: Rc::new(RefCell::new(NativeAppShutdownProbeState::default())),
         live_undock_observation,
         shutdown_observation,
-        _source_interceptor: source_interceptor,
-        _target_interceptor: target_interceptor,
+        dockspace_workflow: None,
+        workflow_milestones: Vec::new(),
+        _mouse_interceptors: vec![source_interceptor, target_interceptor],
         _surface_change_subscription: surface_change_subscription,
     })
 }

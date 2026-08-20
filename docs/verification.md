@@ -1854,6 +1854,8 @@ For dockspace scenario-testkit, multiview parity, or benchmark-shape work, run:
 cargo nextest run -p open-gpui-docking dockspace_testkit --no-fail-fast
 cargo nextest run -p open-gpui-docking dockspace_scenario_fixture_tests dock_op_fixture_tests --no-fail-fast
 cargo nextest run -p open-gpui-docking workspace_move workspace_drop workspace_action host_multiview_scenario_tests host_viewport_model_tests host_viewport_matrix_tests host_interaction_tests public_surface_tests --no-fail-fast
+cargo nextest run -p open-gpui-docking --features test-support native_dockspace_projection --no-fail-fast
+cargo nextest run -p open-gpui-docking-native native_interactive_scenario_registry_matches_cases worker_subcase_matrix_is_behavior_specific --no-fail-fast
 cargo nextest run --locked -p xtask --lib manifest native_gate --no-fail-fast
 cargo bench -p open-gpui-docking --bench tab_drag_latency --features test-support
 python -m py_compile tools/benchmark_docking_drag.py
@@ -1861,8 +1863,11 @@ python tools/benchmark_docking_drag.py --json
 ```
 
 The dockspace scenario testkit is internal verification infrastructure, not a public headless
-docking crate. Scenario rows should identify typed oracle domains and ImGui reference categories
-without copying ImGui internals or replacing `DockSurface` as the application facade.
+docking crate. The doc-hidden `native_scenario_support` module is compiled only for tests or the
+`test-support` feature and projects immutable fixture data into the workspace native adapter; graph
+mutation still runs through production `DockSurface` and workspace transactions. Scenario rows
+should identify typed oracle domains and ImGui reference categories without copying ImGui internals
+or replacing `DockSurface` as the application facade.
 
 For docking presentation/preview/motion work, the focused semantic gates are:
 
@@ -1992,7 +1997,7 @@ cargo nextest run -p open-gpui-windows --locked --run-ignored only -E 'test(=pla
 ```
 
 The sentinel is the phase-zero runner proof. The native Dock manifest
-`examples/docking-native/tests/native_windows_interactive.native-scenarios.toml` binds fourteen stable
+`examples/docking-native/tests/native_windows_interactive.native-scenarios.toml` binds fifteen stable
 scenario ids to one exact package/test coordinate, one U27-U29 requirement owner, one behavior
 dispatch, an explicit ignored policy, and the typed native observation domains that worker must
 cross:
@@ -2000,6 +2005,7 @@ cross:
 | Scenario id | Owner | Required observation domains | Exact native worker responsibility |
 | --- | --- | --- | --- |
 | `native.u27.source-capture` | U27 | `system-input`, `wnd-proc`, `capture`, `point-stack`, `presentation` | source-owned `GetCapture`, OS-routed move/up, target preview, and committed host drop |
+| `native.u29.complex-dockspace-workflow` | U29 | `system-input`, `wnd-proc`, `capture`, `point-stack`, `presentation`, `lifetime` | three distinct HWNDs execute the complete `three_viewport_rehome` fixture in order, with renderer-submitted preview, exact headless layout checkpoint, target focus/selection, captured route lineage, and live-window checks after every step |
 | `native.u27.opaque-occlusion` | U27 | `system-input`, `wnd-proc`, `capture`, `point-stack`, `presentation` | ordinary opaque HWND barrier, point-scoped Z-order, and no hidden-host targeting |
 | `native.u27.opaque-hit-transparent-prefix` | U27 | `point-stack`, `lifetime` | clean-desktop Windows proof that an unregistered visually opaque HWND remains an opaque routing barrier even when its native hit test passes through to a lower HWND |
 | `native.u27.surface-shutdown` | U27 | `system-input`, `wnd-proc`, `capture`, `presentation`, `lifetime` | capture cancellation plus dependent-window and ticket convergence after anchor close |
@@ -2014,9 +2020,13 @@ cross:
 | `native.u28.no-input-pass-through` | U28 | `system-input`, `wnd-proc`, `capture`, `point-stack`, `presentation` | two consecutive no-input GPUI HWNDs pass through to a lower GPUI HWND, stop at a lower external opaque HWND, and reject a generation-changing sample |
 | `native.u28.mixed-dpi-client-bounds` | U28 | `system-input`, `wnd-proc`, `capture`, `point-stack`, `presentation`, `lifetime` | captured desktop tear-off across the same real distinct-DPI display pair in both lower-to-higher and higher-to-lower directions, with at least one negative physical display origin, same-HWND provisional promotion, and exact target-side physical client bounds; missing dual-DPI or negative-origin capacity is a gate failure |
 
-The schema 4 manifest is the native-scenario execution inventory and selector-metadata authority: its
+The schema 6 manifest is the native-scenario execution inventory and selector-metadata authority: its
 rows supply the scenario id, requirement owner, package/test coordinate, ignored policy, typed
-observation domains, and behavior used to construct each exact `nextest` invocation. `xtask`
+observation domains, behavior, and optional dockspace fixture id used to construct each exact
+`nextest` invocation. A complex-workflow row does not duplicate fixture steps or declare a synthetic
+single step: the worker loads and executes the complete checked-in fixture in order. `xtask` rejects
+an unknown scenario, a missing native adapter/oracle, or a singular step on a complete workflow.
+`xtask`
 maintains only the closed `NativeScenarioBehavior` vocabulary needed to dispatch typed receipts; it
 does not duplicate package, exact-test, or ignored metadata. `native_manifest_failures` requires one
 row for every supported behavior and rejects duplicate ids, behaviors, or package/test coordinates
@@ -2081,6 +2091,18 @@ completion and unwinding.
 This two-HWND scenario proves captured routing, preview, and committed-host drop. It does not by
 itself claim desktop live-undock, provisional-content reveal, or same-HWND promotion completion;
 those remain separate manifest rows rather than being inferred from this gate.
+
+`native.u29.complex-dockspace-workflow` is the multi-operation Dockspace gate. It opens the fixture's
+primary space plus two dependent viewport spaces as three non-overlapping native windows, keeps a
+resident tab in each dependent space so normal viewport-empty closure never invalidates the next
+operation, and performs four real captured drags across changing source/target ownership. Each step
+derives its source and target from committed debug bounds, resolves the target point through
+production drop-guide geometry, and waits for a newer renderer-submitted frame whose active guide
+matches that exact zone and its production device-pixel-snapped bounds. It then releases through the
+source-owned WndProc capture route and accepts completion only when a strictly newer submitted frame
+has cleared the active guide and the exported layout matches the corresponding production headless
+checkpoint. The worker then requires all three HWNDs to remain live until normal application
+shutdown, whose process census and native terminal events remain the lifetime authority.
 
 `native_interactive_provisional_gate_presents_and_promotes_same_hwnd` moves a captured payload to a
 runner-selected point outside both test HWND rectangles and keeps the

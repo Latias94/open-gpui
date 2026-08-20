@@ -63,12 +63,13 @@
     },
     {
       "id": "three_viewport_rehome",
+      "primary_space": "target",
       "spaces": [
         {
           "id": "source",
           "root": {
             "kind": "tabs",
-            "items": ["AAA"],
+            "items": ["AAA", "EEE"],
             "selected": "AAA"
           }
         },
@@ -76,7 +77,7 @@
           "id": "middle",
           "root": {
             "kind": "tabs",
-            "items": ["BBB"],
+            "items": ["BBB", "FFF"],
             "selected": "BBB"
           }
         },
@@ -111,11 +112,31 @@
           "zone": "right"
         },
         {
-          "id": "cross_viewport_return_to_source",
-          "type": "move_item_to_empty_space",
+          "id": "middle_viewport_known_target_dock",
+          "type": "move_item_to_item",
+          "source_space": "middle",
+          "item": "BBB",
+          "target_space": "target",
+          "target_item": "DDD",
+          "zone": "center"
+        },
+        {
+          "id": "cross_viewport_rehome_to_middle",
+          "type": "move_item_to_item",
           "source_space": "target",
           "item": "AAA",
-          "target_space": "source"
+          "target_space": "middle",
+          "target_item": "FFF",
+          "zone": "center"
+        },
+        {
+          "id": "cross_viewport_return_to_source",
+          "type": "move_item_to_item",
+          "source_space": "target",
+          "item": "BBB",
+          "target_space": "source",
+          "target_item": "EEE",
+          "zone": "center"
         }
       ],
       "adapters": ["headless", "gpui_host", "native", "benchmark"],

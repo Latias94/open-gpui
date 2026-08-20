@@ -149,6 +149,9 @@ mod layout;
 mod locked_drop_identity;
 pub mod model;
 mod native_captured_drag;
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+pub mod native_scenario_support;
 #[cfg(feature = "test-support")]
 #[doc(hidden)]
 pub use native_captured_drag::{

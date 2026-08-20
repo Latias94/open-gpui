@@ -28,9 +28,13 @@ impl DockspaceHeadlessRunner {
         primary_space: impl Into<DockSpaceId>,
     ) -> Result<Self, DockspaceScenarioRunError> {
         let scenario_graph = scenario.build_graph()?;
-        Ok(Self {
-            workspace: DockWorkspace::new(primary_space, scenario_graph.graph),
-        })
+        Ok(Self::from_graph(primary_space, scenario_graph.graph))
+    }
+
+    pub(crate) fn from_graph(primary_space: impl Into<DockSpaceId>, graph: DockGraph) -> Self {
+        Self {
+            workspace: DockWorkspace::new(primary_space, graph),
+        }
     }
 
     pub(crate) fn graph(&self) -> &DockGraph {

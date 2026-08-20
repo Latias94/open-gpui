@@ -3699,6 +3699,33 @@ impl DockHost {
             );
         }
 
+        if let Some(active_drop_box) = affordance_scene
+            .guide_drop_boxes()
+            .find(|drop_box| drop_box.active)
+        {
+            let node = active_drop_box.debug_node;
+            let zone = active_drop_box.zone;
+            let selector_suffix = drop_box_selector_suffix(active_drop_box);
+            let selector = self.record_debug_selector(
+                DockDebugRegion::ActiveDropGuide { node, zone },
+                format!(
+                    "{}:drop-guide-active:{selector_suffix}",
+                    session.selector_prefix()
+                ),
+            );
+            let active_bounds = localize_bounds(active_drop_box.draw_bounds, bounds.origin);
+            element = element.child(
+                div()
+                    .id(selector.clone())
+                    .debug_selector(move || selector)
+                    .absolute()
+                    .left(active_bounds.origin.x)
+                    .top(active_bounds.origin.y)
+                    .w(active_bounds.size.width)
+                    .h(active_bounds.size.height),
+            );
+        }
+
         for drop_box in affordance_scene.guide_drop_boxes() {
             element = element.child(self.render_scene_drop_guide(session, bounds, drop_box));
         }

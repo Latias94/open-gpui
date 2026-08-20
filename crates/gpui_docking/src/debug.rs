@@ -47,6 +47,13 @@ pub(crate) enum DockDebugRegion {
     },
     /// The active drag/drop preview overlay for the host.
     DropPreview,
+    /// The exact guide rectangle selected by the current drop target.
+    ActiveDropGuide {
+        /// Runtime node id that owns the guide, or None for host-level empty/root guides.
+        node: Option<DockNodeId>,
+        /// Zone selected by the production drop resolver.
+        zone: DropZone,
+    },
     /// Visible guide for one local dock drop zone during a drag.
     DropGuide {
         /// Runtime node id that owns the guide, or None for host-level empty/root guides.

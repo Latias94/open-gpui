@@ -116,13 +116,24 @@ fn dockspace_scenario_fixtures_drive_cross_space_rehome_without_native_windows()
         .expect("cross-space scenario should commit headlessly");
     assert_eq!(
         outcomes,
-        vec![DockActionOutcome::Changed, DockActionOutcome::Changed]
+        vec![
+            DockActionOutcome::Changed,
+            DockActionOutcome::Changed,
+            DockActionOutcome::Changed,
+            DockActionOutcome::Changed,
+        ]
     );
     assert_unique_items(runner.graph());
     assert_eq!(
         runner
             .graph()
             .collect_items_in_space(&DockSpaceId::from("source")),
-        vec![crate::DockItemId::new("AAA")]
+        vec![crate::DockItemId::new("EEE"), crate::DockItemId::new("BBB")]
+    );
+    assert_eq!(
+        runner
+            .graph()
+            .collect_items_in_space(&DockSpaceId::from("middle")),
+        vec![crate::DockItemId::new("FFF"), crate::DockItemId::new("AAA")]
     );
 }

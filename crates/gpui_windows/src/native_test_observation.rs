@@ -27,7 +27,13 @@ static ACTIVE_OBSERVATION: OnceLock<Mutex<Option<ActiveObservation>>> = OnceLock
 #[derive(Clone)]
 struct ActiveObservation {
     token: u64,
-    events: Weak<Mutex<Vec<NativeWindowTestEvent>>>,
+    state: Weak<Mutex<NativeWindowTestObservationState>>,
+}
+
+#[derive(Default)]
+struct NativeWindowTestObservationState {
+    clear_generation: u64,
+    events: Vec<NativeWindowTestEvent>,
 }
 
 /// Exact identity of one native window generation observed by the Windows test harness.
@@ -168,20 +174,89 @@ impl NativeWindowTestEvent {
 /// Read-only handle for the currently installed native observation session.
 #[derive(Clone)]
 pub struct NativeWindowTestObservation {
-    events: Arc<Mutex<Vec<NativeWindowTestEvent>>>,
+    state: Arc<Mutex<NativeWindowTestObservationState>>,
+}
+
+/// Stable suffix cursor for one native observation session.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NativeWindowTestObservationCursor {
+    clear_generation: u64,
+    index: usize,
+    ordinal: u64,
 }
 
 impl NativeWindowTestObservation {
     /// Returns all observations ordered by their callback/lifecycle ordinal.
     pub fn events(&self) -> Vec<NativeWindowTestEvent> {
-        let mut events = self.events.lock().clone();
+        let mut events = self.state.lock().events.clone();
         events.sort_unstable_by_key(|event| event.ordinal);
         events
     }
 
+    /// Captures a stable cursor immediately after the observations currently recorded.
+    pub fn cursor(&self) -> NativeWindowTestObservationCursor {
+        let state = self.state.lock();
+        NativeWindowTestObservationCursor {
+            clear_generation: state.clear_generation,
+            index: state.events.len(),
+            ordinal: state
+                .events
+                .iter()
+                .map(|event| event.ordinal)
+                .max()
+                .unwrap_or(0),
+        }
+    }
+
+    /// Returns observations appended after `cursor`, ordered by callback/lifecycle ordinal.
+    pub fn events_after(
+        &self,
+        cursor: NativeWindowTestObservationCursor,
+    ) -> Vec<NativeWindowTestEvent> {
+        let state = self.state.lock();
+        let start = cursor_start(&state, cursor);
+        let mut events = state.events[start..]
+            .iter()
+            .copied()
+            .filter(|event| event.ordinal > cursor.ordinal)
+            .collect::<Vec<_>>();
+        events.sort_unstable_by_key(|event| event.ordinal);
+        events
+    }
+
+    /// Returns whether any observation appended after `cursor` matches `predicate`.
+    pub fn any_after(
+        &self,
+        cursor: NativeWindowTestObservationCursor,
+        mut predicate: impl FnMut(NativeWindowTestEvent) -> bool,
+    ) -> bool {
+        let state = self.state.lock();
+        let start = cursor_start(&state, cursor);
+        state.events[start..]
+            .iter()
+            .copied()
+            .any(|event| event.ordinal > cursor.ordinal && predicate(event))
+    }
+
     /// Removes observations already consumed by the current scenario.
     pub fn clear(&self) {
-        self.events.lock().clear();
+        let mut state = self.state.lock();
+        state.clear_generation = state
+            .clear_generation
+            .checked_add(1)
+            .expect("native test observation clear generation space exhausted");
+        state.events.clear();
+    }
+}
+
+fn cursor_start(
+    state: &NativeWindowTestObservationState,
+    cursor: NativeWindowTestObservationCursor,
+) -> usize {
+    if state.clear_generation == cursor.clear_generation {
+        cursor.index.min(state.events.len())
+    } else {
+        0
     }
 }
 
@@ -212,23 +287,23 @@ pub fn begin_native_window_test_observation() -> (
 ) {
     let token = NEXT_OBSERVATION_TOKEN.fetch_add(1, Ordering::Relaxed);
     assert_ne!(token, 0, "native test observation token space exhausted");
-    let events = Arc::new(Mutex::new(Vec::new()));
+    let state = Arc::new(Mutex::new(NativeWindowTestObservationState::default()));
     let mut active = active_observation().lock();
     if active
         .as_ref()
-        .and_then(|active| active.events.upgrade())
+        .and_then(|active| active.state.upgrade())
         .is_some()
     {
         panic!("a native window test observation session is already active");
     }
     *active = Some(ActiveObservation {
         token,
-        events: Arc::downgrade(&events),
+        state: Arc::downgrade(&state),
     });
     drop(active);
     (
         NativeWindowTestObservationGuard { token },
-        NativeWindowTestObservation { events },
+        NativeWindowTestObservation { state },
     )
 }
 
@@ -320,12 +395,12 @@ fn record_lifecycle(window: &WindowsWindowInner, kind: NativeWindowTestEventKind
 }
 
 fn record_event(event: NativeWindowTestEvent) {
-    let events = active_observation()
+    let state = active_observation()
         .lock()
         .as_ref()
-        .and_then(|active| active.events.upgrade());
-    if let Some(events) = events {
-        events.lock().push(event);
+        .and_then(|active| active.state.upgrade());
+    if let Some(state) = state {
+        state.lock().events.push(event);
     }
 }
 
@@ -333,7 +408,7 @@ fn observation_is_active() -> bool {
     active_observation()
         .lock()
         .as_ref()
-        .is_some_and(|active| active.events.strong_count() > 0)
+        .is_some_and(|active| active.state.strong_count() > 0)
 }
 
 fn active_observation() -> &'static Mutex<Option<ActiveObservation>> {
@@ -378,4 +453,59 @@ fn callback_points(
             y: screen.y,
         });
     (Some(client), screen)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::Cell;
+
+    #[test]
+    fn observation_cursor_scans_only_the_appended_suffix_and_survives_clear() {
+        let observation = NativeWindowTestObservation {
+            state: Arc::new(Mutex::new(NativeWindowTestObservationState::default())),
+        };
+        observation.state.lock().events.extend([event(1), event(2)]);
+        let cursor = observation.cursor();
+        observation.state.lock().events.push(event(3));
+
+        let visited = Cell::new(0);
+        assert!(observation.any_after(cursor, |event| {
+            visited.set(visited.get() + 1);
+            event.ordinal() == 3
+        }));
+        assert_eq!(visited.get(), 1);
+        assert_eq!(
+            observation
+                .events_after(cursor)
+                .into_iter()
+                .map(NativeWindowTestEvent::ordinal)
+                .collect::<Vec<_>>(),
+            [3]
+        );
+
+        observation.clear();
+        observation.state.lock().events.push(event(4));
+        assert_eq!(
+            observation
+                .events_after(cursor)
+                .into_iter()
+                .map(NativeWindowTestEvent::ordinal)
+                .collect::<Vec<_>>(),
+            [4]
+        );
+    }
+
+    fn event(ordinal: u64) -> NativeWindowTestEvent {
+        NativeWindowTestEvent {
+            ordinal,
+            window: NativeWindowTestIdentity {
+                window_id: WindowId::from(1),
+                native_generation: 1,
+            },
+            kind: NativeWindowTestEventKind::PresentationQuiesced {
+                ticket_generation: ordinal,
+            },
+        }
+    }
 }

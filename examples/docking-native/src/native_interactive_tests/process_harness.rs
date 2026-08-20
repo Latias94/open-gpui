@@ -1,8 +1,9 @@
 use super::{
-    NATIVE_SCENARIO_ENV, NativeDockBehavior, NativeScenarioRegistration,
+    NATIVE_SCENARIO_ENV, NativeDockBehavior, NativeScenarioRegistration, SCENARIO_TIMEOUT,
     inject_primary_button_up_best_effort,
 };
 use anyhow::{Context as _, Result, ensure};
+use open_gpui_docking::native_scenario_support::load_native_dockspace_scenario;
 use open_gpui_windows::{
     NativeTestDisplay, NativeTestMixedDpiDisplayPair, native_test_mixed_dpi_display_pair,
 };
@@ -44,6 +45,7 @@ const WORKER_PROTOCOL_NONCE_ENV: &str = "OPEN_GPUI_NATIVE_DOCK_PROTOCOL_NONCE";
 const WORKER_MIXED_DPI_PAIR_PLAN_ENV: &str = "OPEN_GPUI_NATIVE_DOCK_MIXED_DPI_PAIR_PLAN";
 const WORKER_REPORT_SCHEMA_VERSION: u32 = 7;
 const WORKER_PROCESS_TIMEOUT: Duration = Duration::from_secs(60);
+const COMPLEX_DOCKSPACE_WAIT_PHASES_PER_STEP: u32 = 8;
 const WORKER_EXIT_AFTER_EOF_TIMEOUT: Duration = Duration::from_secs(2);
 const WORKER_JOB_TERMINATION_TIMEOUT: Duration = Duration::from_secs(1);
 const WORKER_CHILD_KILL_TIMEOUT: Duration = Duration::from_secs(2);
@@ -144,6 +146,7 @@ pub(super) const fn worker_subcases_for(
             NativeWorkerSubcase::MixedDpiHigherToLower,
         ],
         NativeDockBehavior::SourceCapture
+        | NativeDockBehavior::ComplexDockspaceWorkflow
         | NativeDockBehavior::TabDragLatencyBenchmark
         | NativeDockBehavior::OpaqueOcclusion
         | NativeDockBehavior::SurfaceShutdown
@@ -152,6 +155,24 @@ pub(super) const fn worker_subcases_for(
         | NativeDockBehavior::CommittedLossRecovery
         | NativeDockBehavior::NoInputPassThrough => &[NativeWorkerSubcase::Primary],
     }
+}
+
+fn worker_report_timeout(registration: &NativeScenarioRegistration) -> Result<Duration> {
+    if registration.behavior != NativeDockBehavior::ComplexDockspaceWorkflow {
+        return Ok(WORKER_PROCESS_TIMEOUT);
+    }
+    let fixture_id = registration
+        .dockspace_scenario
+        .as_deref()
+        .context("complex dockspace workflow is missing its fixture id")?;
+    let fixture = load_native_dockspace_scenario(fixture_id)
+        .with_context(|| format!("failed to load complex dockspace fixture {fixture_id}"))?;
+    let step_count = u32::try_from(fixture.steps().len())
+        .context("complex dockspace fixture step count exceeds the timeout model")?;
+    let wait_phases = step_count
+        .checked_mul(COMPLEX_DOCKSPACE_WAIT_PHASES_PER_STEP)
+        .context("complex dockspace workflow wait-phase count overflowed")?;
+    Ok(WORKER_PROCESS_TIMEOUT + SCENARIO_TIMEOUT * wait_phases)
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -559,6 +580,9 @@ fn run_worker_subcase(
     mixed_dpi_pair: Option<NativeMixedDpiPairPlan>,
 ) {
     let scenario_id = registration.id.as_str();
+    let report_timeout = worker_report_timeout(registration).unwrap_or_else(|error| {
+        panic!("scenario `{scenario_id}` could not derive its worker deadline: {error:#}")
+    });
     let _desktop = ParentDesktopState::capture();
     let artifacts = WorkerArtifacts::new(scenario_id, subcase);
     let stderr = File::create(&artifacts.stderr_path).unwrap_or_else(|error| {
@@ -607,7 +631,7 @@ fn run_worker_subcase(
     });
     let mut child = WorkerChild::new(child, job, &artifacts);
     child.send_command(WORKER_START_COMMAND, &artifacts);
-    let report = child.wait_for_report(scenario_id, &artifacts);
+    let report = child.wait_for_report(scenario_id, report_timeout, &artifacts);
     assert_eq!(
         report.schema_version,
         WORKER_REPORT_SCHEMA_VERSION,
@@ -1052,9 +1076,10 @@ impl WorkerChild {
     fn wait_for_report(
         &mut self,
         scenario_id: &str,
+        timeout: Duration,
         artifacts: &WorkerArtifacts,
     ) -> NativeWorkerReport {
-        let deadline = Instant::now() + WORKER_PROCESS_TIMEOUT;
+        let deadline = Instant::now() + timeout;
         loop {
             match self.report.recv_timeout(WORKER_POLL_INTERVAL) {
                 Ok(WorkerOutputEvent::Report(Ok(report))) => return report,
@@ -1124,7 +1149,7 @@ impl WorkerChild {
             }
             assert!(
                 Instant::now() < deadline,
-                "scenario `{scenario_id}` worker did not publish its pre-exit census within {WORKER_PROCESS_TIMEOUT:?}\n{}",
+                "scenario `{scenario_id}` worker did not publish its pre-exit census within {timeout:?}\n{}",
                 artifacts.summary()
             );
         }
@@ -1466,6 +1491,7 @@ mod tests {
 
         for behavior in [
             NativeDockBehavior::SourceCapture,
+            NativeDockBehavior::ComplexDockspaceWorkflow,
             NativeDockBehavior::TabDragLatencyBenchmark,
             NativeDockBehavior::OpaqueOcclusion,
             NativeDockBehavior::SurfaceShutdown,
@@ -1480,6 +1506,22 @@ mod tests {
                 "unexpected worker matrix for {behavior:?}"
             );
         }
+    }
+
+    #[test]
+    fn complex_workflow_report_timeout_covers_each_fixture_wait_phase() {
+        let registration = NativeScenarioRegistration {
+            id: "native.u29.complex-dockspace-workflow".to_owned(),
+            test: "native_interactive_tests::complex".to_owned(),
+            behavior: NativeDockBehavior::ComplexDockspaceWorkflow,
+            dockspace_scenario: Some("three_viewport_rehome".to_owned()),
+            dockspace_oracles: Default::default(),
+        };
+
+        assert_eq!(
+            worker_report_timeout(&registration).expect("workflow timeout should derive"),
+            WORKER_PROCESS_TIMEOUT + SCENARIO_TIMEOUT * 32
+        );
     }
 
     #[test]
