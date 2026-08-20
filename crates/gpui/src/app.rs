@@ -1687,7 +1687,9 @@ impl App {
                     // A resource-invalid first candidate keeps the native window hidden and
                     // retains its completion command. The committed window will actively retry a
                     // fresh frame instead of turning the recoverable draw into an open failure.
-                    let initial_presentation = rollback.window_mut().prepare_initial_presentation();
+                    let initial_presentation = rollback
+                        .window_mut()
+                        .prepare_initial_presentation(reservation.app_mut());
                     clear.clear();
                     reservation
                         .validate()

@@ -1,0 +1,163 @@
+{
+  "schema_version": 1,
+  "scenarios": [
+    {
+      "id": "tabs_split_float_merge",
+      "spaces": [
+        {
+          "id": "main",
+          "root": {
+            "kind": "split",
+            "axis": "Horizontal",
+            "children": [
+              {
+                "kind": "tabs",
+                "items": ["AAA", "BBB"],
+                "selected": "AAA"
+              },
+              {
+                "kind": "tabs",
+                "items": ["CCC"],
+                "selected": "CCC"
+              }
+            ]
+          },
+          "floatings": [
+            {
+              "root": {
+                "kind": "tabs",
+                "items": ["DDD"],
+                "selected": "DDD"
+              },
+              "bounds": {
+                "x": 24.0,
+                "y": 32.0,
+                "width": 320.0,
+                "height": 220.0
+              }
+            }
+          ]
+        }
+      ],
+      "steps": [
+        {
+          "id": "tab_to_nested_edge_preview",
+          "type": "move_item_to_item",
+          "source_space": "main",
+          "item": "AAA",
+          "target_space": "main",
+          "target_item": "CCC",
+          "zone": "right"
+        },
+        {
+          "id": "merge_first_floating_into_target",
+          "type": "merge_first_floating",
+          "source_space": "main",
+          "target_space": "main",
+          "target_item": "CCC"
+        }
+      ],
+      "adapters": ["headless", "gpui_host", "benchmark"],
+      "oracles": ["graph", "layout", "presentation", "performance"],
+      "imgui_categories": ["dock_into_parent", "split_payload", "undock"]
+    },
+    {
+      "id": "three_viewport_rehome",
+      "spaces": [
+        {
+          "id": "source",
+          "root": {
+            "kind": "tabs",
+            "items": ["AAA"],
+            "selected": "AAA"
+          }
+        },
+        {
+          "id": "middle",
+          "root": {
+            "kind": "tabs",
+            "items": ["BBB"],
+            "selected": "BBB"
+          }
+        },
+        {
+          "id": "target",
+          "root": {
+            "kind": "split",
+            "axis": "Vertical",
+            "children": [
+              {
+                "kind": "tabs",
+                "items": ["CCC"],
+                "selected": "CCC"
+              },
+              {
+                "kind": "tabs",
+                "items": ["DDD"],
+                "selected": "DDD"
+              }
+            ]
+          }
+        }
+      ],
+      "steps": [
+        {
+          "id": "cross_viewport_known_target_preview",
+          "type": "move_item_to_item",
+          "source_space": "source",
+          "item": "AAA",
+          "target_space": "target",
+          "target_item": "CCC",
+          "zone": "right"
+        },
+        {
+          "id": "cross_viewport_return_to_source",
+          "type": "move_item_to_empty_space",
+          "source_space": "target",
+          "item": "AAA",
+          "target_space": "source"
+        }
+      ],
+      "adapters": ["headless", "gpui_host", "native", "benchmark"],
+      "oracles": [
+        "graph",
+        "layout",
+        "presentation",
+        "focus_selection",
+        "viewport_route",
+        "native_lifetime",
+        "performance"
+      ],
+      "imgui_categories": ["viewport_focus", "viewport_owner_change", "dock_over_dockspace"]
+    },
+    {
+      "id": "empty_central_with_floating",
+      "spaces": [
+        {
+          "id": "main",
+          "floatings": [
+            {
+              "root": {
+                "kind": "tabs",
+                "items": ["floating"],
+                "selected": "floating"
+              },
+              "bounds": {
+                "x": 12.0,
+                "y": 18.0,
+                "width": 260.0,
+                "height": 160.0
+              }
+            }
+          ],
+          "keep_central_when_empty": true,
+          "passthrough_when_empty": false
+        }
+      ],
+      "steps": [],
+      "adapters": ["headless"],
+      "oracles": ["graph", "layout"],
+      "imgui_categories": ["dock_over_dockspace"]
+    }
+  ]
+}

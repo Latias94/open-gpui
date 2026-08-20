@@ -19,6 +19,7 @@ pub(crate) struct DockViewportHostSceneFrame {
     identity: DockViewportIdentity,
     registration_key: DockViewportRegistrationKey,
     generation: u64,
+    publication_generation: u64,
 }
 
 impl DockViewportHostSceneFrame {
@@ -35,6 +36,7 @@ impl DockViewportHostSceneFrame {
             identity,
             registration_key,
             generation,
+            publication_generation: generation,
         }
     }
 
@@ -51,6 +53,13 @@ impl DockViewportHostSceneFrame {
         self.identity == snapshot.identity()
             && self.registration_key == snapshot.registration_key
             && self.generation == snapshot.generation
+            && self.publication_generation == snapshot.publication_generation
+    }
+
+    fn matches_routing_snapshot(&self, snapshot: &DockViewportHostSceneSnapshot) -> bool {
+        self.identity == snapshot.identity()
+            && self.registration_key == snapshot.registration_key
+            && self.generation == snapshot.generation
     }
 
     pub(crate) fn registration_key(&self) -> &DockViewportRegistrationKey {
@@ -59,6 +68,11 @@ impl DockViewportHostSceneFrame {
 
     pub(crate) const fn generation(&self) -> u64 {
         self.generation
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn publication_generation(&self) -> u64 {
+        self.publication_generation
     }
 }
 
@@ -77,6 +91,7 @@ pub(crate) struct DockViewportHostSceneSnapshot {
     pub(crate) host_geometry: DockViewportHostGeometry,
     registration_key: DockViewportRegistrationKey,
     generation: u64,
+    publication_generation: u64,
     scene: DockHostDropScene,
 }
 
@@ -160,6 +175,7 @@ impl DockViewportHostSceneDraft {
             host_geometry: self.host_geometry,
             registration_key,
             generation: 0,
+            publication_generation: 0,
             scene: self.scene,
         })
     }
@@ -232,6 +248,7 @@ impl DockViewportHostSceneSnapshot {
             identity: self.identity(),
             registration_key: self.registration_key.clone(),
             generation: self.generation,
+            publication_generation: self.publication_generation,
         }
     }
 
@@ -296,6 +313,7 @@ impl DockViewportHostSceneSnapshot {
 pub(crate) struct DockViewportHostSceneRegistry {
     scenes: BTreeMap<DockSpaceId, DockViewportHostSceneSnapshot>,
     next_generation: u64,
+    next_publication_generation: u64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -348,6 +366,11 @@ impl DockViewportHostSceneRegistry {
         } else if let Some(existing) = self.scenes.get(&snapshot.space) {
             snapshot.generation = existing.generation;
         }
+        self.next_publication_generation = self
+            .next_publication_generation
+            .checked_add(1)
+            .expect("dock viewport host-scene publication generation exhausted");
+        snapshot.publication_generation = self.next_publication_generation;
         let frame = snapshot.frame();
         self.scenes.insert(snapshot.space.clone(), snapshot);
         DockViewportHostSceneRegistration {
@@ -386,13 +409,15 @@ impl DockViewportHostSceneRegistry {
         }
         self.next_generation = self.next_generation.wrapping_add(1);
         scene.generation = self.next_generation;
+        self.next_publication_generation = self.next_publication_generation.wrapping_add(1);
+        scene.publication_generation = self.next_publication_generation;
         Some(scene.frame())
     }
 
     pub(crate) fn is_current_frame(&self, frame: &DockViewportHostSceneFrame) -> bool {
         self.scenes
             .get(frame.space())
-            .is_some_and(|snapshot| frame.matches_snapshot(snapshot))
+            .is_some_and(|snapshot| frame.matches_routing_snapshot(snapshot))
     }
 
     pub(crate) fn leaf_bounds_for_tabs(
@@ -830,14 +855,26 @@ mod tests {
         let second = registry.register(snapshot(space.clone(), window_id)).frame;
 
         assert_eq!(
-            first, second,
-            "identical scene content should keep the same frame"
+            first.generation(),
+            second.generation(),
+            "identical scene content should keep the same routing frame"
+        );
+        assert_ne!(
+            first.publication_generation(),
+            second.publication_generation(),
+            "each render publication must still have a distinct cleanup authority"
         );
         assert!(
             registry
                 .push_frame_fact(&first, empty_space_fact(space.clone()))
+                .is_none(),
+            "the previous render publication should no longer accept new frame-local facts"
+        );
+        assert!(
+            registry
+                .push_frame_fact(&second, empty_space_fact(space.clone()))
                 .is_some(),
-            "the preserved frame should remain current after identical re-render registration"
+            "the latest render publication should accept new frame-local facts"
         );
     }
 
@@ -857,7 +894,11 @@ mod tests {
             !second.changed,
             "a frame-local hitbox identity is not retained native routing content"
         );
-        assert_eq!(first, second.frame);
+        assert_eq!(first.generation(), second.frame.generation());
+        assert_ne!(
+            first.publication_generation(),
+            second.frame.publication_generation()
+        );
     }
 
     #[test]
@@ -902,7 +943,11 @@ mod tests {
             !second.changed,
             "pointer motion is not retained routing content"
         );
-        assert_eq!(first.frame, second.frame);
+        assert_eq!(first.frame.generation(), second.frame.generation());
+        assert_ne!(
+            first.frame.publication_generation(),
+            second.frame.publication_generation()
+        );
         assert_eq!(
             registry.screen_position(&space),
             Some(point(px(80.0), px(64.0))),
@@ -954,8 +999,14 @@ mod tests {
             ))
             .frame;
         assert_eq!(
-            rerender, measured,
-            "base-scene re-registration should preserve current measured labels"
+            rerender.generation(),
+            measured.generation(),
+            "base-scene re-registration should preserve the current measured-label route generation"
+        );
+        assert_ne!(
+            rerender.publication_generation(),
+            measured.publication_generation(),
+            "base-scene re-registration should still publish a fresh cleanup authority"
         );
         assert_eq!(
             registry.tab_label_bounds_for_tabs(&space, Some(window_id), tabs, 0),

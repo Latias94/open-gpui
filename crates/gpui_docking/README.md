@@ -232,6 +232,13 @@ activation generations, typed focus completion, and application-owned persistenc
 copy ImGui's default colors, immediate Dock context, pointer identities, binary node tree, builder
 API, frame-liveness inference, or settings format.
 
+Docking tests keep an internal scenario vocabulary for complex topologies such as
+`AAA, BBB | CCC + DDD` and three-viewport rehome flows. That vocabulary is test support, not a
+public headless crate: it seeds `DockGraph`, drives existing workspace transactions, records
+adapter/oracle labels, and gives benchmarks stable scenario ids. Applications should still use
+`DockSurface` for common work, `model` for explicit graph/controller integration, and `runtime` for
+low-level host or viewport integration.
+
 ## Minimal Shape
 
 ```rust

@@ -23,6 +23,12 @@ NATIVE_LATENCY_TEST = (
     "native_interactive_tests::native_interactive_tab_drag_input_to_submit_latency_benchmark"
 )
 NATIVE_LATENCY_OUTPUT_ENV = "OPEN_GPUI_DOCK_DRAG_LATENCY_OUTPUT"
+SMALL_RESOLVER_SCENARIO = "retained_tab_grid_small"
+THREE_VIEWPORT_REHOME_SCENARIO = "three_viewport_rehome"
+TABS_SPLIT_FLOAT_MERGE_SCENARIO = "tabs_split_float_merge"
+LAYER_RESOLVER = "resolver"
+LAYER_MULTIVIEW_ROUTE = "multiview_route"
+LAYER_DOCKABLE_TARGET = "dockable_target"
 
 
 def run(
@@ -150,6 +156,67 @@ def summarize_native_latency(report: dict[str, Any]) -> dict[str, float]:
     }
 
 
+def imgui_scenario_rows(result: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        {
+            "scenario_id": SMALL_RESOLVER_SCENARIO,
+            "measurement_layer": LAYER_RESOLVER,
+            "operation": "DockNodePreviewDockSetup",
+            "imgui_ns_per_operation": result["imgui_ns_per_preview"],
+        },
+        {
+            "scenario_id": THREE_VIEWPORT_REHOME_SCENARIO,
+            "measurement_layer": LAYER_MULTIVIEW_ROUTE,
+            "operation": "known_host_preview_setup",
+            "imgui_ns_per_operation": result["imgui_multiview_known_host_ns_per_preview"],
+        },
+        {
+            "scenario_id": TABS_SPLIT_FLOAT_MERGE_SCENARIO,
+            "measurement_layer": LAYER_DOCKABLE_TARGET,
+            "operation": "BeginDockableDragDropTarget",
+            "imgui_ns_per_operation": result["imgui_dockable_target_ns_per_preview"],
+        },
+        {
+            "scenario_id": THREE_VIEWPORT_REHOME_SCENARIO,
+            "measurement_layer": LAYER_DOCKABLE_TARGET,
+            "operation": "known_host_dockable_target",
+            "imgui_ns_per_operation": result[
+                "imgui_multiview_dockable_target_known_host_ns_per_preview"
+            ],
+        },
+    ]
+
+
+def scenario_comparison_rows(result: dict[str, Any]) -> list[dict[str, Any]]:
+    open_gpui_rows = {
+        (row.get("scenario_id"), row.get("measurement_layer")): row
+        for row in result.get("open_gpui_scenario_rows", [])
+        if isinstance(row, dict)
+    }
+    rows = []
+    for imgui_row in result.get("imgui_scenario_rows", []):
+        key = (imgui_row.get("scenario_id"), imgui_row.get("measurement_layer"))
+        open_gpui_row = open_gpui_rows.get(key)
+        if open_gpui_row is None:
+            continue
+        open_gpui_ns = open_gpui_row.get("open_gpui_ns_per_operation")
+        imgui_ns = imgui_row.get("imgui_ns_per_operation")
+        if not isinstance(open_gpui_ns, (int, float)) or not isinstance(imgui_ns, (int, float)):
+            continue
+        rows.append(
+            {
+                "scenario_id": key[0],
+                "measurement_layer": key[1],
+                "open_gpui_operation": open_gpui_row.get("operation"),
+                "imgui_operation": imgui_row.get("operation"),
+                "open_gpui_ns_per_operation": open_gpui_ns,
+                "imgui_ns_per_operation": imgui_ns,
+                "open_gpui_to_imgui_ratio": open_gpui_ns / imgui_ns,
+            }
+        )
+    return rows
+
+
 def run_native_latency_benchmark() -> dict[str, float]:
     if platform.system() != "Windows":
         raise RuntimeError("native input-to-submit latency benchmark requires Windows")
@@ -211,6 +278,8 @@ def main() -> None:
     imgui = last_json_line(run([str(IMGUI_BINARY)]))
 
     result = {**rust, **imgui}
+    result["imgui_scenario_rows"] = imgui_scenario_rows(result)
+    result["scenario_comparison_rows"] = scenario_comparison_rows(result)
     result["resolver_to_imgui_setup_ratio"] = (
         result["open_gpui_ns_per_move"] / result["imgui_ns_per_preview"]
     )

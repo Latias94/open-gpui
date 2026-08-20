@@ -368,6 +368,12 @@ struct NativeScenarioManifestRegistration {
     test: String,
     observation_domains: BTreeSet<String>,
     behavior: NativeScenarioManifestBehavior,
+    #[serde(default)]
+    dockspace_scenario: Option<String>,
+    #[serde(default)]
+    dockspace_step: Option<String>,
+    #[serde(default)]
+    dockspace_oracles: BTreeSet<String>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd)]
@@ -880,7 +886,7 @@ struct NativeNoInputOverlay {
 #[test]
 fn native_interactive_scenario_registry_matches_cases() {
     let manifest = native_scenario_manifest();
-    assert_eq!(manifest.schema, 4);
+    assert_eq!(manifest.schema, 5);
     assert_eq!(manifest.suite, NATIVE_DOCK_SUITE_ID);
     assert_eq!(
         manifest.runner,
@@ -898,6 +904,9 @@ fn native_interactive_scenario_registry_matches_cases() {
                         registration.requirement_owner,
                         registration.test,
                         registration.observation_domains,
+                        registration.dockspace_scenario,
+                        registration.dockspace_step,
+                        registration.dockspace_oracles,
                         registration.behavior,
                     ),
                 )
@@ -909,7 +918,17 @@ fn native_interactive_scenario_registry_matches_cases() {
     assert!(
         registrations
             .values()
-            .all(|(_, test, domains, _)| !test.is_empty() && !domains.is_empty()),
+            .all(|(_, test, domains, scenario, step, oracles, _)| {
+                !test.is_empty()
+                    && !domains.is_empty()
+                    && (oracles.is_empty()
+                        || (scenario
+                            .as_deref()
+                            .is_some_and(|value| !value.trim().is_empty())
+                            && step
+                                .as_deref()
+                                .is_some_and(|value| !value.trim().is_empty())))
+            }),
         "every manifest row must carry one exact test coordinate and typed observation evidence"
     );
 }

@@ -18,6 +18,7 @@ pub(crate) const NATIVE_SCENARIO_RUNNER: &str = "open-gpui-windows-native-intera
 pub(crate) const NATIVE_SCENARIO_WORKFLOW_ENTRY: &str =
     "cargo run --locked -p xtask -- native-windows-interactive";
 
+const NATIVE_SCENARIO_SCHEMA: u16 = 5;
 const NATIVE_DOCK_PACKAGE: &str = "open-gpui-docking-native";
 const WINDOWS_PACKAGE: &str = "open-gpui-windows";
 const NATIVE_SCENARIO_ENV: &str = "OPEN_GPUI_NATIVE_SCENARIO_ID";
@@ -160,6 +161,12 @@ pub(crate) struct NativeScenarioDeclaration {
     pub(crate) test: String,
     pub(crate) observation_domains: BTreeSet<NativeObservationDomain>,
     pub(crate) behavior: NativeScenarioBehavior,
+    #[serde(default)]
+    pub(crate) dockspace_scenario: Option<String>,
+    #[serde(default)]
+    pub(crate) dockspace_step: Option<String>,
+    #[serde(default)]
+    pub(crate) dockspace_oracles: BTreeSet<NativeDockspaceOracle>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
@@ -248,6 +255,18 @@ pub(crate) enum NativeObservationDomain {
     Lifetime,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum NativeDockspaceOracle {
+    Graph,
+    Layout,
+    Presentation,
+    FocusSelection,
+    ViewportRoute,
+    NativeLifetime,
+    Performance,
+}
+
 impl NativeObservationDomain {
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
@@ -273,10 +292,10 @@ pub(crate) fn load_native_scenario_manifest(root: &Path) -> Result<NativeScenari
 
 pub(crate) fn native_manifest_failures(manifest: &NativeScenarioManifest) -> Vec<String> {
     let mut failures = Vec::new();
-    if manifest.schema != 4 {
+    if manifest.schema != NATIVE_SCENARIO_SCHEMA {
         failures.push(format!(
-            "{NATIVE_SCENARIO_MANIFEST_PATH}: unsupported native scenario schema {}; expected 4",
-            manifest.schema
+            "{NATIVE_SCENARIO_MANIFEST_PATH}: unsupported native scenario schema {}; expected {NATIVE_SCENARIO_SCHEMA}",
+            manifest.schema,
         ));
     }
     if manifest.suite != NATIVE_SCENARIO_SUITE {
@@ -363,6 +382,7 @@ pub(crate) fn native_manifest_failures(manifest: &NativeScenarioManifest) -> Vec
                 scenario.id
             ));
         }
+        validate_dockspace_binding(scenario, &mut failures);
     }
     for required in NativeScenarioBehavior::ALL {
         if !behaviors.contains_key(&required) {
@@ -373,6 +393,82 @@ pub(crate) fn native_manifest_failures(manifest: &NativeScenarioManifest) -> Vec
         }
     }
     failures
+}
+
+fn validate_dockspace_binding(scenario: &NativeScenarioDeclaration, failures: &mut Vec<String>) {
+    let has_binding = scenario.dockspace_scenario.is_some()
+        || scenario.dockspace_step.is_some()
+        || !scenario.dockspace_oracles.is_empty();
+    if !has_binding {
+        return;
+    }
+    if scenario.package != NativeScenarioPackage::DockingNative {
+        failures.push(format!(
+            "{NATIVE_SCENARIO_MANIFEST_PATH}: native scenario `{}` binds dockspace metadata but package `{}` cannot execute Dock scenarios",
+            scenario.id,
+            scenario.package.as_str()
+        ));
+    }
+    if option_text(&scenario.dockspace_scenario).is_none() {
+        failures.push(format!(
+            "{NATIVE_SCENARIO_MANIFEST_PATH}: native scenario `{}` dockspace_scenario cannot be empty when dockspace metadata is present",
+            scenario.id
+        ));
+    }
+    if option_text(&scenario.dockspace_step).is_none() {
+        failures.push(format!(
+            "{NATIVE_SCENARIO_MANIFEST_PATH}: native scenario `{}` dockspace_step cannot be empty when dockspace metadata is present",
+            scenario.id
+        ));
+    }
+    if scenario.dockspace_oracles.is_empty() {
+        failures.push(format!(
+            "{NATIVE_SCENARIO_MANIFEST_PATH}: native scenario `{}` dockspace_oracles cannot be empty when dockspace metadata is present",
+            scenario.id
+        ));
+    }
+
+    for oracle in &scenario.dockspace_oracles {
+        for required_domain in required_domains_for_dockspace_oracle(*oracle) {
+            if !scenario.observation_domains.contains(required_domain) {
+                failures.push(format!(
+                    "{NATIVE_SCENARIO_MANIFEST_PATH}: native scenario `{}` dockspace oracle `{:?}` requires `{}` observation evidence",
+                    scenario.id,
+                    oracle,
+                    required_domain.as_str()
+                ));
+            }
+        }
+    }
+}
+
+fn option_text(value: &Option<String>) -> Option<&str> {
+    value
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+fn required_domains_for_dockspace_oracle(
+    oracle: NativeDockspaceOracle,
+) -> &'static [NativeObservationDomain] {
+    match oracle {
+        NativeDockspaceOracle::Presentation | NativeDockspaceOracle::FocusSelection => {
+            &[NativeObservationDomain::Presentation]
+        }
+        NativeDockspaceOracle::ViewportRoute => &[
+            NativeObservationDomain::Capture,
+            NativeObservationDomain::PointStack,
+            NativeObservationDomain::Presentation,
+        ],
+        NativeDockspaceOracle::NativeLifetime => &[
+            NativeObservationDomain::Presentation,
+            NativeObservationDomain::Lifetime,
+        ],
+        NativeDockspaceOracle::Graph
+        | NativeDockspaceOracle::Layout
+        | NativeDockspaceOracle::Performance => &[],
+    }
 }
 
 pub(crate) fn native_windows_interactive(root: &Path) -> Result<(), ()> {
@@ -595,6 +691,33 @@ mod tests {
         assert!(
             failures.contains("missing required native behavior `process-convergence`"),
             "missing fail-closed behavior diagnostic: {failures}"
+        );
+    }
+
+    #[test]
+    fn manifest_rejects_incomplete_dockspace_metadata_and_missing_evidence() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("xtask must remain a direct workspace child");
+        let mut manifest = load_native_scenario_manifest(root).expect("manifest should parse");
+        let scenario = manifest
+            .scenario
+            .iter_mut()
+            .find(|scenario| scenario.behavior == NativeScenarioBehavior::SourceCapture)
+            .expect("the repository manifest should own the source-capture behavior");
+        scenario.dockspace_step = None;
+        scenario
+            .dockspace_oracles
+            .insert(NativeDockspaceOracle::NativeLifetime);
+
+        let failures = native_manifest_failures(&manifest).join("\n");
+        assert!(
+            failures.contains("dockspace_step cannot be empty"),
+            "missing dockspace_step diagnostic: {failures}"
+        );
+        assert!(
+            failures.contains("requires `lifetime` observation evidence"),
+            "missing lifetime evidence diagnostic: {failures}"
         );
     }
 

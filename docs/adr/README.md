@@ -39,3 +39,4 @@ platform strategy, or ecosystem compatibility.
 - [ADR 0029: Open GPUI Platform Window Mutation Capabilities](0029-open-gpui-platform-window-mutation-capabilities.md)
 - [ADR 0030: Open GPUI Dock Surface Window Session Authority](0030-open-gpui-dock-surface-window-session-authority.md)
 - [ADR 0031: Open GPUI Renderer Surface Lifecycle Authority](0031-open-gpui-renderer-surface-lifecycle-authority.md)
+- [ADR 0032: Dockspace Scenario Testkit Boundary](0032-dockspace-scenario-testkit.md)

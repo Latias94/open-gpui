@@ -112,6 +112,12 @@ mod debug;
 mod divider_hit_map;
 #[cfg(test)]
 mod dock_op_fixture_tests;
+#[cfg(test)]
+mod dockspace_scenario_fixture_tests;
+#[cfg(any(test, feature = "test-support"))]
+mod dockspace_testkit;
+#[cfg(test)]
+mod dockspace_testkit_tests;
 mod drag;
 mod drag_visual;
 mod drop_preview;

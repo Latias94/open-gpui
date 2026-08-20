@@ -29,10 +29,10 @@ use crate::{
     SystemWindowTab, SystemWindowTabController, TaffyLayoutEngine, Task, TextRenderingMode,
     TextStyle, TextStyleRefinement, Underline, UnderlineStyle, WindowActivationPolicy,
     WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls,
-    WindowCreationFacts, WindowDecorations, WindowInitialPresentationOrder,
+    WindowCreationFacts, WindowDecorations, WindowFrameSubmissionOutcome,
+    WindowFrameSubmissionSnapshot, WindowFrameSubmissionTicket, WindowInitialPresentationOrder,
     WindowInitialPresentationStatus, WindowKind, WindowMutationDispatch, WindowMutationDomain,
     WindowMutationOutcome, WindowOptions, WindowParams, WindowPhysicalPlacementRequest,
-    WindowFrameSubmissionOutcome, WindowFrameSubmissionSnapshot, WindowFrameSubmissionTicket,
     WindowPlacementRequest, WindowPlacementState, WindowPlatformFacts, WindowPresentAttemptFacts,
     WindowPresentationFacts, WindowProvisionalOpeningClaim, WindowProvisionalPlacementOutcome,
     WindowProvisionalPlacementRequest, WindowProvisionalPlacementTicket,
@@ -597,6 +597,13 @@ impl<M: Focusable + EventEmitter<DismissEvent> + Render> ManagedView for M {}
 pub struct DismissEvent;
 
 type FrameCallback = Box<dyn FnOnce(&mut Window, &mut App)>;
+type FrameSubmissionPresentCallback =
+    Box<dyn FnOnce(WindowFrameSubmissionSnapshot, &mut Window, &mut App)>;
+
+struct ExactFrameSubmissionPresentCallback {
+    ticket: WindowFrameSubmissionTicket,
+    callback: FrameSubmissionPresentCallback,
+}
 
 pub(crate) type AnyMouseListener =
     Box<dyn FnMut(&dyn Any, DispatchPhase, &mut Window, &mut App) + 'static>;
@@ -1802,6 +1809,7 @@ pub struct Window {
     pub(crate) next_tooltip_id: TooltipId,
     pub(crate) tooltip_bounds: Option<TooltipBounds>,
     next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>>,
+    exact_frame_submission_present_callbacks: Vec<ExactFrameSubmissionPresentCallback>,
     pub(crate) dirty_views: FxHashSet<EntityId>,
     focus_listeners: SubscriberSet<(), AnyWindowFocusListener>,
     key_down_interceptors: SubscriberSet<(), AnyWindowKeyDownInterceptor>,
@@ -3039,6 +3047,7 @@ impl Window {
             submitted_frame_diagnostics: None,
             atlas_remove_diagnostics: Vec::new(),
             next_frame_callbacks,
+            exact_frame_submission_present_callbacks: Vec::new(),
             next_hitbox_id: HitboxId(0),
             next_pointer_capture_id: PointerCaptureId(0),
             next_portal_anchor_id: PortalAnchorId::default(),
@@ -3445,10 +3454,8 @@ impl Window {
             .generation
             .checked_add(1)
             .ok_or_else(|| anyhow!("exact-frame submission generation overflow"))?;
-        let ticket = WindowFrameSubmissionTicket::new(
-            self.handle.window_id(),
-            minimum_frame_generation,
-        );
+        let ticket =
+            WindowFrameSubmissionTicket::new(self.handle.window_id(), minimum_frame_generation);
         self.install_frame_submission_ticket(&ticket)?;
         self.refresh();
         self.platform_window.request_frame(RequestFrameOptions {
@@ -3493,8 +3500,7 @@ impl Window {
                     .is_none_or(|accepted| frame_generation >= accepted)
                 && matches!(
                     snapshot.outcome(),
-                    WindowFrameSubmissionOutcome::Pending
-                        | WindowFrameSubmissionOutcome::Accepted
+                    WindowFrameSubmissionOutcome::Pending | WindowFrameSubmissionOutcome::Accepted
                 ),
             "exact-frame submission ticket does not admit the candidate frame"
         );
@@ -3502,6 +3508,7 @@ impl Window {
             ticket.accept_frame(frame_generation),
             "exact-frame submission ticket rejected the candidate frame"
         );
+        self.needs_present.set(true);
         Ok(ticket.snapshot())
     }
 
@@ -3532,6 +3539,7 @@ impl Window {
             self.creation_can_commit() && self.presentation_shutdown.is_none(),
             "a terminal window cannot continue exact-frame submission"
         );
+        self.needs_present.set(true);
         self.platform_window.request_frame(RequestFrameOptions {
             force_render: false,
             require_presentation: true,
@@ -3539,18 +3547,32 @@ impl Window {
         Ok(())
     }
 
-    /// Releases one exact window-owned submission authority without fabricating an outcome.
+    /// Runs a callback after this exact-frame submission reaches a renderer-presented terminal
+    /// outcome for this window.
     #[doc(hidden)]
-    pub fn retire_exact_frame_submission(
+    pub fn on_exact_frame_submission_presented(
         &mut self,
         ticket: &WindowFrameSubmissionTicket,
-    ) -> bool {
+        callback: impl FnOnce(WindowFrameSubmissionSnapshot, &mut Window, &mut App) + 'static,
+    ) {
+        self.exact_frame_submission_present_callbacks
+            .push(ExactFrameSubmissionPresentCallback {
+                ticket: ticket.clone(),
+                callback: Box::new(callback),
+            });
+    }
+
+    /// Releases one exact window-owned submission authority without fabricating an outcome.
+    #[doc(hidden)]
+    pub fn retire_exact_frame_submission(&mut self, ticket: &WindowFrameSubmissionTicket) -> bool {
         let Some(current) = self.presentation_state.frame_submission_ticket.as_ref() else {
             return true;
         };
         if !current.same_authority(ticket) {
             return false;
         }
+        self.exact_frame_submission_present_callbacks
+            .retain(|callback| !callback.ticket.same_authority(ticket));
         self.presentation_state.frame_submission_ticket = None;
         true
     }
@@ -3841,7 +3863,7 @@ impl Window {
         })
     }
 
-    pub(crate) fn prepare_initial_presentation(&mut self) -> Result<()> {
+    pub(crate) fn prepare_initial_presentation(&mut self, cx: &mut App) -> Result<()> {
         if self.window_capabilities.creation.initial_presentation_order
             != WindowInitialPresentationOrder::BeforeVisibility
         {
@@ -3866,7 +3888,7 @@ impl Window {
             !self.platform_window.is_visible(),
             "platform window became visible before its first presentation"
         );
-        let outcome = self.present();
+        let outcome = self.present(cx);
         if outcome == PlatformWindowPresentOutcome::RepaintRequired {
             self.initial_presentation_retry.minimum_generation =
                 Some(self.rendered_frame.generation.saturating_add(1));
@@ -3920,6 +3942,18 @@ impl Window {
                         | WindowProvisionalSessionPhase::Terminal
                 )
         })
+    }
+
+    fn exact_frame_submission_progress_is_pending(&self) -> bool {
+        self.presentation_state
+            .frame_submission_ticket
+            .as_ref()
+            .is_some_and(|ticket| {
+                matches!(
+                    ticket.snapshot().outcome(),
+                    WindowFrameSubmissionOutcome::Pending | WindowFrameSubmissionOutcome::Accepted
+                )
+            })
     }
 
     fn request_renderer_repaint_frame(&mut self) {
@@ -7171,6 +7205,8 @@ impl Window {
         let initial_presentation_pending = self.fresh_initial_presentation_is_pending();
         let provisional_presentation_pending = request_frame_options.require_presentation
             && self.provisional_presentation_progress_is_pending();
+        let exact_frame_submission_pending = request_frame_options.require_presentation
+            && self.exact_frame_submission_progress_is_pending();
         let fresh_frame_required =
             self.fresh_initial_presentation_frame_is_required() || renderer_repaint_pending;
         // A force hint can outlive the recovery draw it requested. Once a suitable fresh scene is
@@ -7181,10 +7217,11 @@ impl Window {
         let min_frame_interval = if initial_presentation_pending
             || renderer_repaint_pending
             || provisional_presentation_pending
+            || exact_frame_submission_pending
         {
             // Recovery authority must survive inactive and thermal throttling. A hidden window has
-            // no ordinary frame pump, while an invalidated or provisional scene must reach its
-            // exact presentation acknowledgement before lifecycle progress can continue.
+            // no ordinary frame pump, while an invalidated, provisional, or exact-submission scene
+            // must reach its presentation acknowledgement before lifecycle progress can continue.
             None
         } else {
             FrameThrottleFacts {
@@ -7227,8 +7264,10 @@ impl Window {
                 }
                 let accepted_generation = self.presentation_state.frame_accepted_generation;
                 let arena_clear_needed = self.draw(cx);
-                if self.presentation_state.frame_accepted_generation != accepted_generation {
-                    self.present();
+                if self.presentation_state.frame_accepted_generation != accepted_generation
+                    || self.needs_present.get()
+                {
+                    self.present(cx);
                 }
                 arena_clear_needed.clear();
             })
@@ -7241,7 +7280,7 @@ impl Window {
                 self.complete_frame();
                 return;
             }
-            self.present();
+            self.present(cx);
         }
 
         if !self.presentation_is_allowed() {
@@ -7884,12 +7923,13 @@ impl Window {
     }
 
     #[profiling::function]
-    fn present(&mut self) -> PlatformWindowPresentOutcome {
+    fn present(&mut self, cx: &mut App) -> PlatformWindowPresentOutcome {
         let generation = self.rendered_frame.generation;
         if self.renderer_repaint_is_pending() {
             if self.record_exact_frame_submission_present_outcome(
                 generation,
                 PlatformWindowPresentOutcome::RepaintRequired,
+                cx,
             ) == WindowProvisionalSemanticsPresentTransition::Invalidated
             {
                 self.refresh();
@@ -7918,7 +7958,7 @@ impl Window {
                 .renderer_invalidated_generation
                 .get_or_insert(generation);
             *invalidated_generation = (*invalidated_generation).max(generation);
-            self.record_exact_frame_submission_present_outcome(generation, outcome);
+            self.record_exact_frame_submission_present_outcome(generation, outcome, cx);
             self.needs_present.set(false);
             self.refresh();
         } else if self
@@ -7945,7 +7985,7 @@ impl Window {
                 });
             }
             self.presentation_state.present_submitted_generation = Some(generation);
-            if self.record_exact_frame_submission_present_outcome(generation, outcome)
+            if self.record_exact_frame_submission_present_outcome(generation, outcome, cx)
                 == WindowProvisionalSemanticsPresentTransition::Invalidated
             {
                 self.refresh();
@@ -7989,7 +8029,7 @@ impl Window {
             }
             self.needs_present.set(false);
         } else if outcome != PlatformWindowPresentOutcome::RepaintRequired {
-            if self.record_exact_frame_submission_present_outcome(generation, outcome)
+            if self.record_exact_frame_submission_present_outcome(generation, outcome, cx)
                 == WindowProvisionalSemanticsPresentTransition::Invalidated
             {
                 self.refresh();
@@ -8006,6 +8046,7 @@ impl Window {
         &mut self,
         generation: u64,
         outcome: PlatformWindowPresentOutcome,
+        cx: &mut App,
     ) -> WindowProvisionalSemanticsPresentTransition {
         if !self.creation_can_commit() || self.presentation_shutdown.is_some() {
             return WindowProvisionalSemanticsPresentTransition::Unchanged;
@@ -8022,10 +8063,7 @@ impl Window {
             .provisional_session
             .as_ref()
             .filter(|session| {
-                session.owns_destination_semantics_submission(
-                    self.handle.window_id(),
-                    &ticket,
-                )
+                session.owns_destination_semantics_submission(self.handle.window_id(), &ticket)
             })
             .map_or_else(
                 || ticket.record_present_outcome(generation, outcome),
@@ -8039,15 +8077,34 @@ impl Window {
                     )
                 },
             );
-        if matches!(
+        let should_notify_present_callbacks = matches!(
             transition,
             WindowProvisionalSemanticsPresentTransition::Submitted
                 | WindowProvisionalSemanticsPresentTransition::Rejected
-        ) && self
-            .presentation_state
-            .frame_submission_ticket
-            .as_ref()
-            .is_some_and(|current| current.same_authority(&ticket))
+        );
+        let snapshot = ticket.snapshot();
+        if should_notify_present_callbacks {
+            let callbacks = std::mem::take(&mut self.exact_frame_submission_present_callbacks);
+            let mut retained_callbacks = Vec::new();
+            let mut matching_callbacks = Vec::new();
+            for callback in callbacks {
+                if callback.ticket.same_authority(&ticket) {
+                    matching_callbacks.push(callback.callback);
+                } else {
+                    retained_callbacks.push(callback);
+                }
+            }
+            self.exact_frame_submission_present_callbacks = retained_callbacks;
+            for callback in matching_callbacks {
+                callback(snapshot, self, cx);
+            }
+        }
+        if should_notify_present_callbacks
+            && self
+                .presentation_state
+                .frame_submission_ticket
+                .as_ref()
+                .is_some_and(|current| current.same_authority(&ticket))
         {
             self.presentation_state.frame_submission_ticket = None;
         }

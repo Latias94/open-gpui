@@ -5,14 +5,17 @@ use crate::{
     DockViewportHostGeometry,
     drop_runtime::{DockHostDropScene, DockHostDropSceneFact},
     drop_target::{
-        DockEmptySpaceDropTarget, DockLeafDropTarget, DockRootDropTarget, DockTabBarDropTarget,
-        DockTabLabelDropTarget,
+        DockEmptySpaceDropTarget, DockFloatingTitleBarDropTarget, DockLeafDropTarget,
+        DockRootDropTarget, DockTabBarDropTarget, DockTabLabelDropTarget,
     },
     viewport_drop_scene::{DockViewportHostSceneRegistry, DockViewportHostSceneSnapshot},
     viewport_registry::DockViewportWindowBoundsFrame,
 };
 use open_gpui::{Bounds, Pixels, Point, Size, WindowId, point, px, size};
 use std::hint::black_box;
+
+#[doc(hidden)]
+pub use crate::dockspace_testkit::benchmarks::DockspaceBenchmarkCase;
 
 /// A deterministic retained scene that exercises the production tab-drag resolver.
 #[doc(hidden)]
@@ -52,6 +55,148 @@ impl DockDragBenchmark {
     /// Runs the production per-pointer-move resolver against the retained scene.
     #[inline(never)]
     pub fn resolve_full_move(&self, iteration: usize) -> bool {
+        black_box(
+            self.scene
+                .resolve_pointer_move(
+                    black_box(self.position(iteration)),
+                    Some(self.payload_size),
+                    black_box(self.excluded_nodes.as_slice()),
+                    &self.policy,
+                    None,
+                    None,
+                )
+                .is_some(),
+        )
+    }
+
+    fn position(&self, iteration: usize) -> Point<Pixels> {
+        self.positions[iteration % self.positions.len()]
+    }
+}
+
+/// A retained split-plus-floating scene matching the complex dockspace fixture shape.
+#[doc(hidden)]
+pub struct DockComplexDockspaceBenchmark {
+    scene: DockHostDropScene,
+    policy: DockPolicy,
+    excluded_nodes: Vec<DockNodeId>,
+    positions: Vec<Point<Pixels>>,
+    payload_size: Size<Pixels>,
+}
+
+impl DockComplexDockspaceBenchmark {
+    /// Builds the `AAA, BBB | CCC + DDD` resolver fixture used by scenario tests.
+    pub fn tabs_split_float_merge() -> Self {
+        let mut graph = DockGraph::new();
+        let tabs_ab = graph.insert_node(DockNode::Tabs {
+            items: vec![DockItemId::new("AAA"), DockItemId::new("BBB")],
+            selected: Some(DockItemId::new("AAA")),
+        });
+        let tabs_c = graph.insert_node(DockNode::Tabs {
+            items: vec![DockItemId::new("CCC")],
+            selected: Some(DockItemId::new("CCC")),
+        });
+        let floating_child = graph.insert_node(DockNode::Tabs {
+            items: vec![DockItemId::new("DDD")],
+            selected: Some(DockItemId::new("DDD")),
+        });
+        let root = graph.insert_node(DockNode::Split {
+            axis: crate::SplitAxis::Horizontal,
+            children: vec![tabs_ab, tabs_c],
+            fractions: vec![0.5, 0.5],
+        });
+        let floating = graph.insert_node(DockNode::Floating {
+            child: floating_child,
+        });
+        graph.set_root(DockSpaceId::new("main"), root);
+
+        let root_bounds = rect(0.0, 0.0, 720.0, 320.0);
+        let left_leaf = rect(0.0, 0.0, 350.0, 320.0);
+        let right_leaf = rect(370.0, 0.0, 350.0, 320.0);
+        let left_tab_bar = rect(0.0, 0.0, 350.0, 28.0);
+        let right_tab_bar = rect(370.0, 0.0, 350.0, 28.0);
+        let floating_bounds = rect(64.0, 360.0, 320.0, 220.0);
+        let floating_title = rect(64.0, 360.0, 320.0, 32.0);
+
+        let mut scene = DockHostDropScene::new(point(px(0.0), px(0.0)));
+        for fact in [
+            DockHostDropSceneFact::Root(DockRootDropTarget {
+                root,
+                bounds: root_bounds,
+            }),
+            DockHostDropSceneFact::Leaf(DockLeafDropTarget {
+                root,
+                target_tabs: tabs_ab,
+                bounds: left_leaf,
+                is_central: true,
+            }),
+            DockHostDropSceneFact::Leaf(DockLeafDropTarget {
+                root,
+                target_tabs: tabs_c,
+                bounds: right_leaf,
+                is_central: false,
+            }),
+            DockHostDropSceneFact::TabBar(DockTabBarDropTarget {
+                target_tabs: tabs_ab,
+                insert_index: 2,
+                bounds: left_tab_bar,
+                is_central: true,
+            }),
+            DockHostDropSceneFact::TabBar(DockTabBarDropTarget {
+                target_tabs: tabs_c,
+                insert_index: 1,
+                bounds: right_tab_bar,
+                is_central: false,
+            }),
+            DockHostDropSceneFact::TabLabel(DockTabLabelDropTarget {
+                target_tabs: tabs_ab,
+                target_index: 0,
+                bounds: rect(0.0, 0.0, 88.0, 28.0),
+                is_central: true,
+            }),
+            DockHostDropSceneFact::TabLabel(DockTabLabelDropTarget {
+                target_tabs: tabs_ab,
+                target_index: 1,
+                bounds: rect(88.0, 0.0, 88.0, 28.0),
+                is_central: true,
+            }),
+            DockHostDropSceneFact::TabLabel(DockTabLabelDropTarget {
+                target_tabs: tabs_c,
+                target_index: 0,
+                bounds: rect(370.0, 0.0, 88.0, 28.0),
+                is_central: false,
+            }),
+            DockHostDropSceneFact::FloatingTitleBar(DockFloatingTitleBarDropTarget {
+                floating,
+                target_tabs: floating_child,
+                title_bounds: floating_title,
+                preview_bounds: floating_bounds,
+            }),
+            DockHostDropSceneFact::EmptySpace(DockEmptySpaceDropTarget {
+                space: DockSpaceId::new("main"),
+                bounds: root_bounds,
+                is_central: false,
+            }),
+        ] {
+            scene.push_fact(fact);
+        }
+
+        Self {
+            scene,
+            policy: DockPolicy::default(),
+            excluded_nodes: vec![tabs_ab],
+            positions: vec![
+                rect(370.0, 0.0, 88.0, 28.0).center(),
+                point(px(704.0), px(160.0)),
+                floating_title.center(),
+            ],
+            payload_size: size(px(420.0), px(260.0)),
+        }
+    }
+
+    /// Runs the production resolver across tab, inner-edge, and floating-title targets.
+    #[inline(never)]
+    pub fn resolve_complex_move(&self, iteration: usize) -> bool {
         black_box(
             self.scene
                 .resolve_pointer_move(
@@ -159,6 +304,26 @@ impl DockMultiViewDragBenchmark {
                     None,
                 )
                 .is_some(),
+        )
+    }
+
+    /// Resolves a pointer move against a stale window id and expects fail-closed routing.
+    #[inline(never)]
+    pub fn reject_unknown_target_move(&self, iteration: usize) -> bool {
+        let target = self.target(iteration);
+        black_box(
+            self.registry
+                .resolve_frame_for_window(
+                    black_box(&target.space),
+                    Some(WindowId::from(99_000_000 + iteration as u64)),
+                    black_box(target.position(iteration)),
+                    Some(self.payload_size),
+                    black_box(self.excluded_nodes.as_slice()),
+                    &self.policy,
+                    None,
+                    None,
+                )
+                .is_none(),
         )
     }
 

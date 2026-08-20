@@ -226,6 +226,8 @@ impl DockViewportRuntimeHandle {
                 DockViewportCommittedWindowEffectsAcceptanceOutcome::InProgress
             }
             DockViewportCommittedWindowEffectsPreparation::Transfer(transfer) => {
+                #[cfg(test)]
+                self.run_window_close_apply_hook_for_test(cx);
                 DockViewportCommittedWindowEffectsAcceptanceOutcome::Accepted(
                     transfer.accept(&self.runtime, cx),
                 )

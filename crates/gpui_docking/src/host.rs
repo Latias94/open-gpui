@@ -472,8 +472,12 @@ impl DockHostLiveDestinationPromotionReceipt {
             && self.semantics.token == prepared.token
             && self.semantics.registration == prepared.registration
             && self.semantics.surface_revision == prepared.committed_surface_revision
-            && self.semantics.destination.window_id() == prepared.destination.window_id()
-            && self.semantics.destination.leases() == prepared.destination.leases()
+            && matches!(
+                &self.semantics.payload,
+                DockHostLiveDestinationSemanticsPayload::Presentation(destination)
+                    if destination.window_id() == prepared.destination.window_id()
+                        && destination.leases() == prepared.destination.leases()
+            )
     }
 
     fn matches_exactly(&self, other: &Self) -> bool {
@@ -628,7 +632,35 @@ pub(crate) struct DockHostLiveDestinationSemantics {
     binding: DockHostWindowBinding,
     registration: DockViewportRegistrationKey,
     surface_revision: u64,
-    destination: view_presentation_window::LeaseBatch,
+    payload: DockHostLiveDestinationSemanticsPayload,
+}
+
+#[derive(Clone, Debug)]
+enum DockHostLiveDestinationSemanticsPayload {
+    Presentation(view_presentation_window::LeaseBatch),
+    HostDrop { window_id: WindowId },
+}
+
+impl DockHostLiveDestinationSemanticsPayload {
+    fn window_id(&self) -> WindowId {
+        match self {
+            Self::Presentation(destination) => destination.window_id(),
+            Self::HostDrop { window_id } => *window_id,
+        }
+    }
+
+    fn matches_exactly(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Presentation(left), Self::Presentation(right)) => {
+                left.window_id() == right.window_id() && left.leases() == right.leases()
+            }
+            (Self::HostDrop { window_id: left }, Self::HostDrop { window_id: right }) => {
+                left == right
+            }
+            (Self::Presentation(_), Self::HostDrop { .. })
+            | (Self::HostDrop { .. }, Self::Presentation(_)) => false,
+        }
+    }
 }
 
 impl DockHostLiveDestinationSemantics {
@@ -652,8 +684,24 @@ impl DockHostLiveDestinationSemantics {
         self.surface_revision
     }
 
+    pub(crate) fn destination_window_id(&self) -> WindowId {
+        self.payload.window_id()
+    }
+
     pub(crate) fn destination(&self) -> &view_presentation_window::LeaseBatch {
-        &self.destination
+        match &self.payload {
+            DockHostLiveDestinationSemanticsPayload::Presentation(destination) => destination,
+            DockHostLiveDestinationSemanticsPayload::HostDrop { .. } => {
+                panic!("host-drop destination semantics do not carry a presentation lease batch")
+            }
+        }
+    }
+
+    pub(crate) fn is_host_drop(&self) -> bool {
+        matches!(
+            self.payload,
+            DockHostLiveDestinationSemanticsPayload::HostDrop { .. }
+        )
     }
 
     fn matches_exactly(&self, other: &Self) -> bool {
@@ -662,8 +710,7 @@ impl DockHostLiveDestinationSemantics {
             && self.binding == other.binding
             && self.registration == other.registration
             && self.surface_revision == other.surface_revision
-            && self.destination.window_id() == other.destination.window_id()
-            && self.destination.leases() == other.destination.leases()
+            && self.payload.matches_exactly(&other.payload)
     }
 }
 
@@ -2838,7 +2885,7 @@ impl DockHost {
                 .clone()
                 .expect("promoted destination host must retain its exact registration"),
             surface_revision: prepared.committed_surface_revision,
-            destination: prepared.destination,
+            payload: DockHostLiveDestinationSemanticsPayload::Presentation(prepared.destination),
         };
         self.live_destination_semantics = Some(semantics.clone());
         let receipt = DockHostLiveDestinationPromotionReceipt { semantics };
@@ -2864,6 +2911,54 @@ impl DockHost {
         self.live_destination_semantics.clone()
     }
 
+    pub(crate) fn install_host_drop_destination_semantics(
+        &mut self,
+        identity: DockLiveUndockIdentity,
+        token: DockLiveUndockPromotionToken,
+        committed_surface_revision: u64,
+        binding: DockHostWindowBinding,
+        registration: DockViewportRegistrationKey,
+        destination_window_id: WindowId,
+        cx: &mut Context<Self>,
+    ) -> Option<DockHostLiveDestinationSemantics> {
+        let semantics = DockHostLiveDestinationSemantics {
+            identity,
+            token,
+            binding,
+            registration,
+            surface_revision: committed_surface_revision,
+            payload: DockHostLiveDestinationSemanticsPayload::HostDrop {
+                window_id: destination_window_id,
+            },
+        };
+        if let Some(current) = self.live_destination_semantics.as_ref() {
+            return current
+                .matches_exactly(&semantics)
+                .then_some(current.clone());
+        }
+        if committed_surface_revision == 0
+            || self.live_presentation.is_some()
+            || self.current_window_binding() != Some(binding)
+            || self.bound_viewport_registration.as_ref() != Some(&semantics.registration)
+            || self.space != *semantics.registration.space()
+            || semantics.registration.window_id() != binding.window_id()
+            || destination_window_id != binding.window_id()
+            || semantics.registration.lineage()
+                != DockViewportRuntimeLineage::Surface(identity.opening().lease())
+            || !matches!(
+                self.role,
+                DockHostRole::ManagedViewport(lease)
+                    | DockHostRole::PrimaryAnchor(DockHostPrimaryAnchorAuthority::Active(lease))
+                    if lease == identity.opening().lease()
+            )
+        {
+            return None;
+        }
+        self.live_destination_semantics = Some(semantics.clone());
+        cx.notify();
+        Some(semantics)
+    }
+
     pub(crate) fn accepts_live_destination_semantics(
         &self,
         semantics: &DockHostLiveDestinationSemantics,
@@ -2872,7 +2967,12 @@ impl DockHost {
             .as_ref()
             .is_some_and(|current| current.matches_exactly(semantics))
             && self.live_presentation.is_none()
-            && self.role == DockHostRole::ManagedViewport(semantics.identity.opening().lease())
+            && matches!(
+                self.role,
+                DockHostRole::ManagedViewport(lease)
+                    | DockHostRole::PrimaryAnchor(DockHostPrimaryAnchorAuthority::Active(lease))
+                    if lease == semantics.identity.opening().lease()
+            )
             && self.current_window_binding() == Some(semantics.binding)
             && self.bound_viewport_registration.as_ref() == Some(&semantics.registration)
             && self.space == *semantics.registration.space()

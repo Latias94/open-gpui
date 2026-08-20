@@ -1848,6 +1848,22 @@ When changing docking drop routing, delivery, or public surface boundaries, also
 cargo nextest run -p open-gpui-docking drop_target viewport_drop_route viewport_drop_delivery public_surface_tests --no-fail-fast
 ```
 
+For dockspace scenario-testkit, multiview parity, or benchmark-shape work, run:
+
+```sh
+cargo nextest run -p open-gpui-docking dockspace_testkit --no-fail-fast
+cargo nextest run -p open-gpui-docking dockspace_scenario_fixture_tests dock_op_fixture_tests --no-fail-fast
+cargo nextest run -p open-gpui-docking workspace_move workspace_drop workspace_action host_multiview_scenario_tests host_viewport_model_tests host_viewport_matrix_tests host_interaction_tests public_surface_tests --no-fail-fast
+cargo nextest run --locked -p xtask --lib manifest native_gate --no-fail-fast
+cargo bench -p open-gpui-docking --bench tab_drag_latency --features test-support
+python -m py_compile tools/benchmark_docking_drag.py
+python tools/benchmark_docking_drag.py --json
+```
+
+The dockspace scenario testkit is internal verification infrastructure, not a public headless
+docking crate. Scenario rows should identify typed oracle domains and ImGui reference categories
+without copying ImGui internals or replacing `DockSurface` as the application facade.
+
 For docking presentation/preview/motion work, the focused semantic gates are:
 
 ```sh
