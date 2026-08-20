@@ -1,14 +1,17 @@
 //! Internal benchmark fixtures for the docking hot path.
 
 use crate::{
-    DockGraph, DockItemId, DockNode, DockNodeId, DockPolicy, DockSpaceId,
+    DockDropGuideMetrics, DockGraph, DockItemId, DockNode, DockNodeId, DockPolicy, DockSpaceId,
+    DockViewportHostGeometry,
     drop_runtime::{DockHostDropScene, DockHostDropSceneFact},
     drop_target::{
         DockEmptySpaceDropTarget, DockLeafDropTarget, DockRootDropTarget, DockTabBarDropTarget,
         DockTabLabelDropTarget,
     },
+    viewport_drop_scene::{DockViewportHostSceneRegistry, DockViewportHostSceneSnapshot},
+    viewport_registry::DockViewportWindowBoundsFrame,
 };
-use open_gpui::{Bounds, Pixels, Point, Size, point, px, size};
+use open_gpui::{Bounds, Pixels, Point, Size, WindowId, point, px, size};
 use std::hint::black_box;
 
 /// A deterministic retained scene that exercises the production tab-drag resolver.
@@ -24,94 +27,24 @@ pub struct DockDragBenchmark {
 impl DockDragBenchmark {
     /// Builds a grid of tab stacks with realistic tab-label, tab-bar, and leaf facts.
     pub fn new(stack_count: usize, tabs_per_stack: usize) -> Self {
-        assert!(
-            stack_count >= 2,
-            "the benchmark needs a source and a target stack"
-        );
-        assert!(
-            tabs_per_stack > 0,
-            "each benchmark stack needs at least one tab"
-        );
-
         let mut graph = DockGraph::new();
-        let mut stack_ids = Vec::with_capacity(stack_count);
-        for stack_index in 0..stack_count {
-            let item = DockItemId::new(format!("panel-{stack_index}"));
-            stack_ids.push(graph.insert_node(DockNode::Tabs {
-                items: vec![item.clone()],
-                selected: Some(item),
-            }));
-        }
-
-        let columns = (stack_count as f32).sqrt().ceil() as usize;
-        let rows = stack_count.div_ceil(columns);
-        let tab_width = 88.0;
-        let tab_height = 28.0;
-        let stack_width = (tabs_per_stack as f32 * tab_width).max(320.0);
-        let stack_height = 220.0;
-        let gap = 12.0;
-        let host_width = columns as f32 * (stack_width + gap) - gap;
-        let host_height = rows as f32 * (stack_height + gap) - gap;
-        let host_bounds = rect(0.0, 0.0, host_width, host_height);
-        let root = stack_ids[0];
+        let fixture = build_tab_drag_scene(
+            &mut graph,
+            DockSpaceId::new("benchmark"),
+            stack_count,
+            tabs_per_stack,
+        );
         let mut scene = DockHostDropScene::new(point(px(0.0), px(0.0)));
-        scene.push_fact(DockHostDropSceneFact::Root(DockRootDropTarget {
-            root,
-            bounds: host_bounds,
-        }));
-
-        let mut positions = Vec::with_capacity((stack_count - 1) * tabs_per_stack);
-        for (stack_index, target_tabs) in stack_ids.iter().copied().enumerate() {
-            let column = stack_index % columns;
-            let row = stack_index / columns;
-            let x = column as f32 * (stack_width + gap);
-            let y = row as f32 * (stack_height + gap);
-            let stack_bounds = rect(x, y, stack_width, stack_height);
-            let tab_bar_bounds = rect(x, y, stack_width, tab_height);
-
-            scene.push_fact(DockHostDropSceneFact::TabBar(DockTabBarDropTarget {
-                target_tabs,
-                insert_index: tabs_per_stack,
-                bounds: tab_bar_bounds,
-                is_central: stack_index == 0,
-            }));
-            scene.push_fact(DockHostDropSceneFact::Leaf(DockLeafDropTarget {
-                root,
-                target_tabs,
-                bounds: stack_bounds,
-                is_central: stack_index == 0,
-            }));
-
-            for tab_index in 0..tabs_per_stack {
-                let label_bounds = rect(x + tab_index as f32 * tab_width, y, tab_width, tab_height);
-                scene.push_fact(DockHostDropSceneFact::TabLabel(DockTabLabelDropTarget {
-                    target_tabs,
-                    target_index: tab_index,
-                    bounds: label_bounds,
-                    is_central: stack_index == 0,
-                }));
-                if stack_index != 0 {
-                    positions.push(label_bounds.center());
-                }
-            }
+        for fact in fixture.facts {
+            scene.push_fact(fact);
         }
-
-        let space = DockSpaceId::new("benchmark");
-        scene.push_fact(DockHostDropSceneFact::EmptySpace(
-            DockEmptySpaceDropTarget {
-                space,
-                bounds: host_bounds,
-                is_central: false,
-            },
-        ));
-
-        let excluded_nodes = vec![stack_ids[0]];
+        let excluded_nodes = vec![fixture.root];
         let payload_size = size(px(420.0), px(260.0));
         Self {
             scene,
             policy: DockPolicy::default(),
             excluded_nodes,
-            positions,
+            positions: fixture.positions,
             payload_size,
         }
     }
@@ -135,6 +68,208 @@ impl DockDragBenchmark {
 
     fn position(&self, iteration: usize) -> Point<Pixels> {
         self.positions[iteration % self.positions.len()]
+    }
+}
+
+/// A deterministic multi-viewport fixture for the cross-window known-target hot path.
+#[doc(hidden)]
+pub struct DockMultiViewDragBenchmark {
+    registry: DockViewportHostSceneRegistry,
+    policy: DockPolicy,
+    excluded_nodes: Vec<DockNodeId>,
+    targets: Vec<DockMultiViewDragTarget>,
+    payload_size: Size<Pixels>,
+}
+
+struct DockMultiViewDragTarget {
+    space: DockSpaceId,
+    window_id: WindowId,
+    positions: Vec<Point<Pixels>>,
+}
+
+impl DockMultiViewDragBenchmark {
+    /// Builds multiple registered viewport host scenes and resolves against the selected target.
+    pub fn new(viewport_count: usize, stacks_per_viewport: usize, tabs_per_stack: usize) -> Self {
+        assert!(
+            viewport_count > 0,
+            "the benchmark needs at least one viewport"
+        );
+        let mut graph = DockGraph::new();
+        let source_item = DockItemId::new("source-panel");
+        let source_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![source_item.clone()],
+            selected: Some(source_item),
+        });
+        let mut registry = DockViewportHostSceneRegistry::default();
+        let mut targets = Vec::with_capacity(viewport_count);
+
+        for viewport_index in 0..viewport_count {
+            let space = DockSpaceId::new(format!("benchmark-view-{viewport_index}"));
+            let window_id = WindowId::from(20_000 + viewport_index as u64);
+            let fixture = build_tab_drag_scene(
+                &mut graph,
+                space.clone(),
+                stacks_per_viewport,
+                tabs_per_stack,
+            );
+            let geometry = DockViewportHostGeometry::identity_with_hit_region_for_test(
+                fixture.host_bounds,
+                fixture.host_bounds,
+            );
+            let snapshot = DockViewportHostSceneSnapshot::new_with_facts(
+                space.clone(),
+                window_id,
+                DockViewportWindowBoundsFrame::WindowLocal(fixture.host_bounds),
+                geometry,
+                point(px(0.0), px(0.0)),
+                DockDropGuideMetrics::default(),
+                fixture.facts,
+            );
+            registry.register(snapshot);
+            targets.push(DockMultiViewDragTarget {
+                space,
+                window_id,
+                positions: fixture.positions,
+            });
+        }
+
+        Self {
+            registry,
+            policy: DockPolicy::default(),
+            excluded_nodes: vec![source_tabs],
+            targets,
+            payload_size: size(px(420.0), px(260.0)),
+        }
+    }
+
+    /// Resolves one pointer move through the multi-viewport registry with a known target window.
+    #[inline(never)]
+    pub fn resolve_known_target_move(&self, iteration: usize) -> bool {
+        let target = self.target(iteration);
+        black_box(
+            self.registry
+                .resolve_frame_for_window(
+                    black_box(&target.space),
+                    Some(black_box(target.window_id)),
+                    black_box(target.position(iteration)),
+                    Some(self.payload_size),
+                    black_box(self.excluded_nodes.as_slice()),
+                    &self.policy,
+                    None,
+                    None,
+                )
+                .is_some(),
+        )
+    }
+
+    fn target(&self, iteration: usize) -> &DockMultiViewDragTarget {
+        &self.targets[iteration % self.targets.len()]
+    }
+}
+
+impl DockMultiViewDragTarget {
+    fn position(&self, iteration: usize) -> Point<Pixels> {
+        self.positions[iteration % self.positions.len()]
+    }
+}
+
+struct DockTabDragSceneFixture {
+    facts: Vec<DockHostDropSceneFact>,
+    positions: Vec<Point<Pixels>>,
+    host_bounds: Bounds<Pixels>,
+    root: DockNodeId,
+}
+
+fn build_tab_drag_scene(
+    graph: &mut DockGraph,
+    space: DockSpaceId,
+    stack_count: usize,
+    tabs_per_stack: usize,
+) -> DockTabDragSceneFixture {
+    assert!(
+        stack_count >= 2,
+        "the benchmark needs a source and a target stack"
+    );
+    assert!(
+        tabs_per_stack > 0,
+        "each benchmark stack needs at least one tab"
+    );
+
+    let mut stack_ids = Vec::with_capacity(stack_count);
+    for stack_index in 0..stack_count {
+        let item = DockItemId::new(format!("{space}-panel-{stack_index}"));
+        stack_ids.push(graph.insert_node(DockNode::Tabs {
+            items: vec![item.clone()],
+            selected: Some(item),
+        }));
+    }
+
+    let columns = (stack_count as f32).sqrt().ceil() as usize;
+    let rows = stack_count.div_ceil(columns);
+    let tab_width = 88.0;
+    let tab_height = 28.0;
+    let stack_width = (tabs_per_stack as f32 * tab_width).max(320.0);
+    let stack_height = 220.0;
+    let gap = 12.0;
+    let host_width = columns as f32 * (stack_width + gap) - gap;
+    let host_height = rows as f32 * (stack_height + gap) - gap;
+    let host_bounds = rect(0.0, 0.0, host_width, host_height);
+    let root = stack_ids[0];
+    let mut facts = Vec::with_capacity(1 + stack_count * (2 + tabs_per_stack) + 1);
+    facts.push(DockHostDropSceneFact::Root(DockRootDropTarget {
+        root,
+        bounds: host_bounds,
+    }));
+
+    let mut positions = Vec::with_capacity((stack_count - 1) * tabs_per_stack);
+    for (stack_index, target_tabs) in stack_ids.iter().copied().enumerate() {
+        let column = stack_index % columns;
+        let row = stack_index / columns;
+        let x = column as f32 * (stack_width + gap);
+        let y = row as f32 * (stack_height + gap);
+        let stack_bounds = rect(x, y, stack_width, stack_height);
+        let tab_bar_bounds = rect(x, y, stack_width, tab_height);
+
+        facts.push(DockHostDropSceneFact::TabBar(DockTabBarDropTarget {
+            target_tabs,
+            insert_index: tabs_per_stack,
+            bounds: tab_bar_bounds,
+            is_central: stack_index == 0,
+        }));
+        facts.push(DockHostDropSceneFact::Leaf(DockLeafDropTarget {
+            root,
+            target_tabs,
+            bounds: stack_bounds,
+            is_central: stack_index == 0,
+        }));
+
+        for tab_index in 0..tabs_per_stack {
+            let label_bounds = rect(x + tab_index as f32 * tab_width, y, tab_width, tab_height);
+            facts.push(DockHostDropSceneFact::TabLabel(DockTabLabelDropTarget {
+                target_tabs,
+                target_index: tab_index,
+                bounds: label_bounds,
+                is_central: stack_index == 0,
+            }));
+            if stack_index != 0 {
+                positions.push(label_bounds.center());
+            }
+        }
+    }
+
+    facts.push(DockHostDropSceneFact::EmptySpace(
+        DockEmptySpaceDropTarget {
+            space,
+            bounds: host_bounds,
+            is_central: false,
+        },
+    ));
+
+    DockTabDragSceneFixture {
+        facts,
+        positions,
+        host_bounds,
+        root,
     }
 }
 

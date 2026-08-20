@@ -229,25 +229,7 @@ pub(crate) fn drop_boxes_with_style(
     let mut boxes = Vec::new();
     match set {
         DockDropBoxSet::Inner => {
-            boxes.push(drop_box(
-                bounds,
-                DockDropBoxKind::Center,
-                {
-                    let draw = LocalRect::from_center(
-                        width / 2.0,
-                        height / 2.0,
-                        metrics.center_half,
-                        metrics.center_half,
-                    );
-                    (draw, draw.expand(inner_hit_expand(metrics)))
-                },
-                preview_bounds(
-                    DropZone::Center,
-                    width,
-                    height,
-                    metrics.split_preview_extent,
-                ),
-            ));
+            boxes.push(center_drop_box(bounds, metrics));
             boxes.extend(edge_drop_boxes(bounds, DockDropBoxKind::InnerEdge, metrics));
         }
         DockDropBoxSet::Outer => {
@@ -267,12 +249,39 @@ fn resolve_drop_geometry(
         return None;
     }
 
-    let boxes = drop_boxes_with_style(bounds, set, style);
-    boxes
-        .iter()
-        .copied()
-        .find(|drop_box| drop_box_contains_position(bounds, *drop_box, position, set, style))
-        .map(|drop_box| DockDropGeometry { drop_box })
+    let width = f32::from(bounds.size.width);
+    let height = f32::from(bounds.size.height);
+    if !valid_extent(width) || !valid_extent(height) {
+        return None;
+    }
+
+    let metrics = drop_box_metrics(width, height, style);
+    let radial_kind = if set == DockDropBoxSet::Inner {
+        inner_radial_drop_box_kind(bounds, position, style)
+    } else {
+        None
+    };
+    let contains_position = |drop_box: DockDropBox| {
+        radial_kind.map_or_else(
+            || drop_box.hit_bounds.contains(&position),
+            |kind| drop_box.kind == kind,
+        )
+    };
+    let drop_box = match set {
+        DockDropBoxSet::Inner => {
+            let center = center_drop_box(bounds, metrics);
+            if contains_position(center) {
+                Some(center)
+            } else {
+                edge_drop_boxes(bounds, DockDropBoxKind::InnerEdge, metrics)
+                    .find(|drop_box| contains_position(*drop_box))
+            }
+        }
+        DockDropBoxSet::Outer => edge_drop_boxes(bounds, DockDropBoxKind::OuterEdge, metrics)
+            .find(|drop_box| contains_position(*drop_box)),
+    }?;
+
+    Some(DockDropGeometry { drop_box })
 }
 
 fn valid_extent(value: f32) -> bool {
@@ -358,6 +367,28 @@ fn edge_drop_boxes(
     })
 }
 
+fn center_drop_box(bounds: Bounds<Pixels>, metrics: DockDropBoxMetrics) -> DockDropBox {
+    let width = f32::from(bounds.size.width);
+    let height = f32::from(bounds.size.height);
+    let draw = LocalRect::from_center(
+        width / 2.0,
+        height / 2.0,
+        metrics.center_half,
+        metrics.center_half,
+    );
+    drop_box(
+        bounds,
+        DockDropBoxKind::Center,
+        (draw, draw.expand(inner_hit_expand(metrics))),
+        preview_bounds(
+            DropZone::Center,
+            width,
+            height,
+            metrics.split_preview_extent,
+        ),
+    )
+}
+
 fn edge_drop_box(
     bounds: Bounds<Pixels>,
     kind: DockDropBoxKind,
@@ -438,22 +469,6 @@ fn edge_drop_box(
         draw_bounds,
         preview_bounds,
     })
-}
-
-fn drop_box_contains_position(
-    bounds: Bounds<Pixels>,
-    drop_box: DockDropBox,
-    position: Point<Pixels>,
-    set: DockDropBoxSet,
-    style: DockDropGuideMetrics,
-) -> bool {
-    if set == DockDropBoxSet::Inner
-        && let Some(kind) = inner_radial_drop_box_kind(bounds, position, style)
-    {
-        return drop_box.kind == kind;
-    }
-
-    drop_box.hit_bounds.contains(&position)
 }
 
 fn inner_radial_drop_box_kind(

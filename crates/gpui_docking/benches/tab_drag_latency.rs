@@ -1,4 +1,4 @@
-use open_gpui_docking::benchmark_support::DockDragBenchmark;
+use open_gpui_docking::benchmark_support::{DockDragBenchmark, DockMultiViewDragBenchmark};
 use serde_json::json;
 use std::{
     alloc::{GlobalAlloc, Layout, System},
@@ -41,11 +41,16 @@ static GLOBAL_ALLOCATOR: CountingAllocator = CountingAllocator;
 fn main() {
     let small = DockDragBenchmark::new(8, 8);
     let large = DockDragBenchmark::new(64, 8);
+    let multiview = DockMultiViewDragBenchmark::new(8, 8, 8);
 
     let open_gpui_ns_per_move =
         median_ns_per_operation(100_000, 7, |iteration| small.resolve_full_move(iteration));
     let open_gpui_large_scene_ns_per_move =
         median_ns_per_operation(20_000, 7, |iteration| large.resolve_full_move(iteration));
+    let open_gpui_multiview_known_target_ns_per_move =
+        median_ns_per_operation(100_000, 7, |iteration| {
+            multiview.resolve_known_target_move(iteration)
+        });
     let allocation_iterations = 20_000;
     let (allocation_count, allocated_bytes, all_resolved) = track_allocations(|| {
         let mut all_resolved = true;
@@ -54,15 +59,26 @@ fn main() {
         }
         all_resolved
     });
+    let (multiview_allocation_count, multiview_allocated_bytes, multiview_all_resolved) =
+        track_allocations(|| {
+            let mut all_resolved = true;
+            for iteration in 0..allocation_iterations {
+                all_resolved &= black_box(multiview.resolve_known_target_move(iteration));
+            }
+            all_resolved
+        });
 
     println!(
         "{}",
         json!({
-            "benchmark_passed": i32::from(all_resolved),
+            "benchmark_passed": i32::from(all_resolved && multiview_all_resolved),
             "open_gpui_ns_per_move": open_gpui_ns_per_move,
             "open_gpui_large_scene_ns_per_move": open_gpui_large_scene_ns_per_move,
             "open_gpui_allocations_per_move": allocation_count as f64 / allocation_iterations as f64,
             "open_gpui_bytes_per_move": allocated_bytes as f64 / allocation_iterations as f64,
+            "open_gpui_multiview_known_target_ns_per_move": open_gpui_multiview_known_target_ns_per_move,
+            "open_gpui_multiview_known_target_allocations_per_move": multiview_allocation_count as f64 / allocation_iterations as f64,
+            "open_gpui_multiview_known_target_bytes_per_move": multiview_allocated_bytes as f64 / allocation_iterations as f64,
         })
     );
 }

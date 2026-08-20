@@ -66,12 +66,12 @@ impl DockViewportRegistrationKey {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn for_test(space: DockSpaceId, window_id: WindowId) -> Self {
         Self::new(space, window_id, 0, DockViewportRuntimeLineage::Unmanaged)
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn for_test_generation(
         space: DockSpaceId,
         window_id: WindowId,

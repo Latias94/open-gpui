@@ -115,6 +115,10 @@ def main() -> None:
     result["resolver_to_imgui_setup_ratio"] = (
         result["open_gpui_ns_per_move"] / result["imgui_ns_per_preview"]
     )
+    result["multiview_known_target_to_imgui_known_host_ratio"] = (
+        result["open_gpui_multiview_known_target_ns_per_move"]
+        / result["imgui_multiview_known_host_ns_per_preview"]
+    )
     result["benchmark_passed"] = int(result.get("benchmark_passed", 0) == 1)
 
     if arguments.json:

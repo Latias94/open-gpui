@@ -3,7 +3,7 @@ use open_gpui::{Bounds, ElementGeometry, HitTestSnapshot, Hitbox, HitboxId, Pixe
 #[derive(Clone, Debug, PartialEq)]
 enum DockViewportHostHitRegion {
     Committed(HitTestSnapshot),
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     Synthetic(Bounds<Pixels>),
 }
 
@@ -45,7 +45,7 @@ impl DockViewportHostGeometry {
             DockViewportHostHitRegion::Committed(snapshot) => {
                 snapshot.is_window_point_target(position)
             }
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             DockViewportHostHitRegion::Synthetic(bounds) => bounds.contains(&position),
         };
         if !eligible {
@@ -76,7 +76,7 @@ impl DockViewportHostGeometry {
         self.geometry.layout_to_local_point(position).ok()
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn identity_with_hit_region_for_test(
         layout_bounds: Bounds<Pixels>,
         hit_region: Bounds<Pixels>,
@@ -88,14 +88,14 @@ impl DockViewportHostGeometry {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn with_committed_hitbox_for_test(mut self) -> Self {
         self.committed_hitbox = Some(HitboxId::placeholder());
         self
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl From<Bounds<Pixels>> for DockViewportHostGeometry {
     fn from(bounds: Bounds<Pixels>) -> Self {
         Self::identity_with_hit_region_for_test(bounds, bounds)

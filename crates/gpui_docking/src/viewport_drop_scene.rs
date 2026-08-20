@@ -170,7 +170,7 @@ impl DockViewportHostSceneDraft {
 }
 
 impl DockViewportHostSceneSnapshot {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn new(
         space: DockSpaceId,
         window_id: WindowId,
@@ -192,7 +192,7 @@ impl DockViewportHostSceneSnapshot {
         .expect("matching test registration must bind")
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn new_with_facts(
         space: DockSpaceId,
         window_id: WindowId,
