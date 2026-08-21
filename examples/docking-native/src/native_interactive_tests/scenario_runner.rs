@@ -16,6 +16,7 @@ pub(super) struct NativeDockspaceWorkflow {
     fixture: NativeDockspaceScenario,
     surface: DockSurface,
     native_observation: NativeWindowTestObservation,
+    lifecycle: Arc<Mutex<NativeLifecycleRecorder>>,
     windows: Vec<NativeDockspaceWindow>,
 }
 
@@ -75,6 +76,7 @@ struct NativeDockspaceStepObservation {
     preview_generation: u64,
     committed_generation: u64,
     focused_window: WindowId,
+    lifecycle: Option<serde_json::Value>,
 }
 
 pub(super) fn build_native_dockspace_workflow_scenario(
@@ -186,12 +188,67 @@ pub(super) fn build_native_dockspace_workflow_scenario(
         .runtime_status(cx)
         .window_ownership
         .owned_window_count;
+    let lifecycle = Arc::new(Mutex::new(NativeLifecycleRecorder::default()));
+    let mut mouse_interceptors = Vec::with_capacity(windows.len());
+    for native_window in &windows {
+        let lifecycle_for_window = Arc::clone(&lifecycle);
+        let window_id = native_window.window.window_id();
+        let source = format!("WindowMouseEvent::{}", native_window.space);
+        let interceptor = cx.update_window(native_window.window, move |_, window, _| {
+            window.intercept_window_mouse_events(move |event, _, _| {
+                let name = match event {
+                    WindowMouseEvent::Move(_) => "window_mouse_move",
+                    WindowMouseEvent::Down(_) => "window_mouse_down",
+                    WindowMouseEvent::Up(_) => "window_mouse_up",
+                    _ => return,
+                };
+                if let Ok(mut lifecycle) = lifecycle_for_window.lock() {
+                    lifecycle.record_raw(
+                        name,
+                        Instant::now(),
+                        NativeLifecycleTimingKind::ExactCallback,
+                        source.as_str(),
+                        None,
+                        None,
+                        None,
+                        format!("real GPUI mouse interceptor callback for {window_id:?}"),
+                    );
+                }
+            })
+        })?;
+        mouse_interceptors.push(interceptor);
+    }
     let surface_changes = Rc::new(RefCell::new(Vec::new()));
     let surface_changes_for_subscription = Rc::clone(&surface_changes);
+    let lifecycle_for_subscription = Arc::clone(&lifecycle);
     let surface_change_subscription = surface.subscribe_changes(cx, move |event, _| {
         surface_changes_for_subscription
             .borrow_mut()
             .push(event.clone());
+        if let Ok(mut lifecycle) = lifecycle_for_subscription.lock() {
+            let now = Instant::now();
+            lifecycle.record_raw(
+                "dock_surface_change",
+                now,
+                NativeLifecycleTimingKind::ExactCallback,
+                "DockSurface::subscribe_changes",
+                None,
+                None,
+                Some(event.revision()),
+                "durable surface change callback",
+            );
+            if lifecycle.observes_new_revision(event.revision()) {
+                lifecycle.record_observed_boundary(
+                    NativeLifecycleBoundary::GraphReceipt,
+                    now,
+                    "DockSurface::subscribe_changes",
+                    "durable graph receipt callback observed after the sample base revision",
+                    None,
+                    None,
+                    Some(event.revision()),
+                );
+            }
+        }
     });
     let live_undock_observation = surface.observe_live_undock_for_test(cx);
     let shutdown_observation = surface.observe_shutdown_for_test(cx);
@@ -227,10 +284,11 @@ pub(super) fn build_native_dockspace_workflow_scenario(
             fixture,
             surface,
             native_observation,
+            lifecycle,
             windows,
         }),
         workflow_milestones: Vec::new(),
-        _mouse_interceptors: Vec::new(),
+        _mouse_interceptors: mouse_interceptors,
         _surface_change_subscription: surface_change_subscription,
     })
 }
@@ -261,6 +319,83 @@ impl NativeDockspaceWorkflow {
         cx: &mut AsyncApp,
         scenario_id: &str,
     ) -> Result<Vec<String>> {
+        self.wait_until_ready(cx).await?;
+        let (milestones, _) = self.run_cycle(cx, scenario_id, 0, false).await?;
+        self.assert_cycle_terminal(cx)?;
+        Ok(milestones)
+    }
+
+    pub(super) async fn run_latency_baseline(
+        &mut self,
+        cx: &mut AsyncApp,
+        scenario_id: &str,
+    ) -> Result<(Vec<String>, serde_json::Value)> {
+        self.wait_until_ready(cx).await?;
+        ensure!(
+            self.windows.len() == 3,
+            "native latency baseline requires exactly three real HWNDs"
+        );
+        let (milestones, samples) = self.run_cycle(cx, scenario_id, 0, true).await?;
+        self.assert_cycle_terminal(cx)?;
+        ensure!(
+            !self
+                .lifecycle
+                .lock()
+                .map_err(|_| anyhow!("native lifecycle recorder lock was poisoned"))?
+                .is_active(),
+            "native lifecycle recorder remained active after the measured workflow"
+        );
+        let windows = cx.update(|app| {
+            self.windows
+                .iter()
+                .map(|native_window| {
+                    let facts = window_platform_facts(app, native_window.window)?;
+                    let scale_factor = window_scale_factor(app, native_window.window)?;
+                    let refresh_rate_hz = facts.display_id.and_then(|display_id| {
+                        native_test_displays()
+                            .into_iter()
+                            .find(|display| display.display_id() == display_id)
+                            .and_then(NativeTestDisplay::refresh_rate_hz)
+                    });
+                    Ok::<_, anyhow::Error>(serde_json::json!({
+                        "space": native_window.space.as_str(),
+                        "window_id": format!("{:?}", native_window.window.window_id()),
+                        "hwnd": native_window.hwnd.0 as isize,
+                        "display_id": facts.display_id.map(u64::from),
+                        "refresh_rate_hz": refresh_rate_hz,
+                        "scale_factor": scale_factor,
+                        "logical_bounds": {
+                            "x": native_window.bounds.origin.x.as_f32(),
+                            "y": native_window.bounds.origin.y.as_f32(),
+                            "width": native_window.bounds.size.width.as_f32(),
+                            "height": native_window.bounds.size.height.as_f32(),
+                        },
+                    }))
+                })
+                .collect::<Result<Vec<_>>>()
+        })?;
+        let report = serde_json::json!({
+            "schema_version": NATIVE_LIFECYCLE_SCHEMA_VERSION,
+            "scenario_id": scenario_id,
+            "fixture_id": self.fixture.id(),
+            "adapter": "windows_real_three_hwnd",
+            "clock": "std::time::Instant",
+            "sample_count": samples.len(),
+            "window_count": self.windows.len(),
+            "distinct_hwnd_count": self.windows.iter().map(|window| window.hwnd.0 as isize).collect::<BTreeSet<_>>().len(),
+            "boundary_names": NativeLifecycleBoundary::ALL.map(NativeLifecycleBoundary::as_str),
+            "environment": {
+                "platform": "windows",
+                "input": "SendInput through NativeTestSystemPointerGuard",
+                "input_assist": false,
+                "windows": windows,
+            },
+            "samples": samples,
+        });
+        Ok((milestones, report))
+    }
+
+    async fn wait_until_ready(&self, cx: &mut AsyncApp) -> Result<()> {
         wait_until(cx, "all native dockspace HWNDs to present", |cx| {
             cx.update(|app| {
                 self.windows.iter().try_fold(true, |ready, window| {
@@ -272,19 +407,33 @@ impl NativeDockspaceWorkflow {
                 })
             })
         })
-        .await?;
+        .await
+    }
 
+    async fn run_cycle(
+        &mut self,
+        cx: &mut AsyncApp,
+        scenario_id: &str,
+        cycle_index: usize,
+        record_lifecycle: bool,
+    ) -> Result<(Vec<String>, Vec<serde_json::Value>)> {
         let step_count = self.fixture.steps().len();
         ensure!(
             step_count > 0,
             "native dockspace workflow requires at least one fixture step"
         );
         let mut milestones = Vec::with_capacity(step_count * 2);
+        let mut samples = Vec::with_capacity(if record_lifecycle { step_count } else { 0 });
         for index in 0..step_count {
             let step = self.fixture.steps()[index].clone();
-            let observation = self.run_step(cx, index, &step).await?;
+            let observation = self
+                .run_step(cx, cycle_index, index, &step, record_lifecycle)
+                .await?;
             milestones.push(format!("dockspace.{}.preview-submitted", step.id()));
             milestones.push(format!("dockspace.{}.committed", step.id()));
+            if let Some(lifecycle) = observation.lifecycle.clone() {
+                samples.push(lifecycle);
+            }
             log::info!(
                 "scenario={scenario_id} workflow={} step={} source={} target={} item={} preview={:?} revision={}..{} generation={}..{} focus={:?}",
                 self.fixture.id(),
@@ -300,7 +449,11 @@ impl NativeDockspaceWorkflow {
                 observation.focused_window,
             );
         }
+        Ok((milestones, samples))
+    }
 
+    fn assert_cycle_terminal(&self, cx: &mut AsyncApp) -> Result<()> {
+        let step_count = self.fixture.steps().len();
         let final_layout = cx.update(|app| self.surface().export_snapshot(app).layout().clone());
         let expected = self
             .fixture
@@ -316,14 +469,16 @@ impl NativeDockspaceWorkflow {
                 .all(|window| unsafe { IsWindow(Some(window.hwnd)).as_bool() }),
             "all three native dockspace HWNDs must remain live through the complete workflow"
         );
-        Ok(milestones)
+        Ok(())
     }
 
     async fn run_step(
         &mut self,
         cx: &mut AsyncApp,
+        cycle_index: usize,
         index: usize,
         step: &NativeDockspaceStep,
+        record_lifecycle: bool,
     ) -> Result<NativeDockspaceStepObservation> {
         let source = self.window(step.source_space())?;
         let target = self.window(step.target().space())?;
@@ -369,11 +524,13 @@ impl NativeDockspaceWorkflow {
             );
         }
 
-        let (revision_before, target_generation_before) = cx.update(|app| {
+        let (revision_before, target_generation_before, release_before) = cx.update(|app| {
             Ok::<_, anyhow::Error>((
                 self.surface().export_snapshot(app).revision(),
                 submitted_debug_frame(app, target.window, &target_geometry.active_selector)?
                     .map(|frame| frame.generation),
+                native_captured_release_observation_for_test(source.window.window_id(), app)
+                    .map(|observation| (observation.generation(), observation.sequence())),
             ))
         })?;
         let native_event_cursor = self.native_observation().cursor();
@@ -394,11 +551,54 @@ impl NativeDockspaceWorkflow {
                 ))
         })
         .await?;
+        if record_lifecycle {
+            let now = Instant::now();
+            let mut lifecycle = self
+                .lifecycle
+                .lock()
+                .map_err(|_| anyhow!("native lifecycle recorder lock was poisoned"))?;
+            lifecycle.begin_sample(
+                NativeLifecycleSampleContext {
+                    cycle_index,
+                    step_index: index,
+                    step_id: step.id().to_owned(),
+                    source_space: step.source_space().as_str().to_owned(),
+                    target_space: step.target().space().as_str().to_owned(),
+                    item: step.item().as_str().to_owned(),
+                    source_window: source.window.window_id(),
+                    target_window: target.window.window_id(),
+                    source_hwnd: source.hwnd.0 as isize,
+                    target_hwnd: target.hwnd.0 as isize,
+                    base_revision: revision_before,
+                },
+                now,
+            );
+            lifecycle.record_origin(
+                NativeLifecycleOrigin::DragThresholdMove,
+                now,
+                "NativeTestSystemPointerGuard::inject",
+                "drag-threshold move injection requested",
+            );
+        }
         inject_system_pointer(activation_point, NativeTestPointerAction::Move)?;
         wait_until(cx, "native workflow drag activation", |cx| {
             Ok(cx.update(|app| app.has_active_drag()) && unsafe { GetCapture() } == source.hwnd)
         })
         .await?;
+        if record_lifecycle {
+            self.lifecycle
+                .lock()
+                .map_err(|_| anyhow!("native lifecycle recorder lock was poisoned"))?
+                .record_estimated_boundary(
+                NativeLifecycleBoundary::DragActivation,
+                Instant::now(),
+                "wait_until(App::has_active_drag)",
+                "first post-input state sample that observed active drag; timestamp is a polling upper bound",
+                None,
+                None,
+                None,
+            );
+        }
 
         raise_native_window(target.hwnd)?;
         let routed_hwnd = native_test_non_shell_root_window_at(target_point);
@@ -408,6 +608,17 @@ impl NativeDockspaceWorkflow {
             step.id(),
             target.hwnd
         );
+        if record_lifecycle {
+            self.lifecycle
+                .lock()
+                .map_err(|_| anyhow!("native lifecycle recorder lock was poisoned"))?
+                .record_origin(
+                    NativeLifecycleOrigin::TargetRouteMove,
+                    Instant::now(),
+                    "native_test_inject_system_pointer",
+                    "captured pointer move toward the accepted target was requested",
+                );
+        }
         inject_system_pointer(target_point, NativeTestPointerAction::Move)?;
         wait_for_cursor(cx, target_point, "native workflow target route").await?;
         let preview_wait = wait_until(cx, "native workflow preview submission", |cx| {
@@ -461,7 +672,32 @@ impl NativeDockspaceWorkflow {
             .selector_bounds
             .context("native workflow preview frame omitted its selector bounds")?;
         let preview_generation = preview_frame.generation;
+        if record_lifecycle {
+            self.lifecycle
+                .lock()
+                .map_err(|_| anyhow!("native lifecycle recorder lock was poisoned"))?
+                .record_estimated_boundary(
+                NativeLifecycleBoundary::AcceptedPreviewSubmitted,
+                Instant::now(),
+                "Window::submitted_frame_diagnostics_for_test",
+                "first observation of the exact accepted preview generation; timestamp is a polling upper bound",
+                Some(preview_generation),
+                None,
+                None,
+            );
+        }
 
+        if record_lifecycle {
+            self.lifecycle
+                .lock()
+                .map_err(|_| anyhow!("native lifecycle recorder lock was poisoned"))?
+                .record_origin(
+                    NativeLifecycleOrigin::PrimaryRelease,
+                    Instant::now(),
+                    "NativeTestSystemPointerGuard::inject",
+                    "primary-button release injection requested at the accepted target point",
+                );
+        }
         pointer_guard.inject(target_point, NativeTestPointerAction::PrimaryUp)?;
         let expected_layout = self
             .fixture
@@ -486,6 +722,28 @@ impl NativeDockspaceWorkflow {
             Ok(settled && unsafe { GetCapture() } == HWND::default())
         })
         .await?;
+        if record_lifecycle {
+            let release = cx.update(|app| {
+                native_captured_release_observation_for_test(source.window.window_id(), app)
+            });
+            if let Some(release) = release.filter(|observation| {
+                Some((observation.generation(), observation.sequence())) != release_before
+            }) {
+                self.lifecycle
+                    .lock()
+                    .map_err(|_| anyhow!("native lifecycle recorder lock was poisoned"))?
+                    .record_estimated_boundary(
+                        NativeLifecycleBoundary::ReleaseLock,
+                        Instant::now(),
+                        "native_captured_release_observation_for_test",
+                        "exact callback-scoped release identity observed after delivery; timestamp is a polling upper bound",
+                        Some(release.generation()),
+                        Some(release.sequence()),
+                        None,
+                    );
+            }
+        }
+        let destination_semantics_observed_at = Instant::now();
         wait_until(cx, "native workflow target focus", |cx| {
             Ok(cx.update(|app| {
                 app.focused_window().window() == Some(target.window)
@@ -493,6 +751,7 @@ impl NativeDockspaceWorkflow {
             }))
         })
         .await?;
+        let focus_observed_at = Instant::now();
         assert_native_capture_trace(
             self.native_observation(),
             source.window,
@@ -547,6 +806,42 @@ impl NativeDockspaceWorkflow {
             "native workflow step {} lacks a newer submitted commit frame without its preview: preview={preview_generation}, committed={committed_frame:?}",
             step.id()
         );
+        let lifecycle = if record_lifecycle {
+            let mut lifecycle = self
+                .lifecycle
+                .lock()
+                .map_err(|_| anyhow!("native lifecycle recorder lock was poisoned"))?;
+            lifecycle.record_estimated_boundary(
+                NativeLifecycleBoundary::DestinationSemanticsSubmitted,
+                destination_semantics_observed_at,
+                "Window::submitted_frame_diagnostics_for_test",
+                "first observation of the post-commit target frame with durable layout semantics and no preview; timestamp is a polling upper bound",
+                Some(committed_frame.generation),
+                None,
+                Some(revision_after),
+            );
+            lifecycle.record_estimated_boundary(
+                NativeLifecycleBoundary::FocusSettled,
+                focus_observed_at,
+                "App::focused_window + App::active_window",
+                "first observation that platform focus and GPUI active-window authority agreed on the destination; timestamp is a polling upper bound",
+                Some(committed_frame.generation),
+                None,
+                Some(revision_after),
+            );
+            ensure!(
+                lifecycle.has_observed_boundary(NativeLifecycleBoundary::GraphReceipt),
+                "native workflow step {} completed without an exact graph receipt callback",
+                step.id()
+            );
+            Some(
+                lifecycle
+                    .finish_sample()
+                    .context("native lifecycle recorder had no active sample")?,
+            )
+        } else {
+            None
+        };
 
         Ok(NativeDockspaceStepObservation {
             step_id: step.id().to_owned(),
@@ -559,6 +854,7 @@ impl NativeDockspaceWorkflow {
             preview_generation,
             committed_generation: committed_frame.generation,
             focused_window,
+            lifecycle,
         })
     }
 

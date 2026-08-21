@@ -5,7 +5,7 @@ use futures::FutureExt as _;
 use image::{Frame as ImageFrame, ImageBuffer, Rgba as ImageRgba};
 use open_gpui::{
     AnyWindowHandle, Application, AsyncApp, AtlasAccessOutcome, Bounds, DevicePixels, Empty,
-    ImageId, ImagePaintDiagnostic, InputLatencySnapshot, NativeCapturedDragReleaseTerminal,
+    ImageId, ImagePaintDiagnostic, NativeCapturedDragReleaseTerminal,
     NativeInputInvariantViolation, Pixels, PlatformWindowHit, PlatformWindowHitTerminus,
     PlatformWindowPresentOutcome, Point, QuitMode, RenderImage, Size, Subscription, Window,
     WindowId, WindowMouseEvent, WindowMutationDispatch, WindowPlatformFacts, img,
@@ -15,7 +15,7 @@ use open_gpui_docking::{
     DockSurfaceLiveUndockTestObservation, DockSurfaceShutdownTestEventKind,
     DockSurfaceShutdownTestObservation, DockSurfaceTransition, DockSurfaceWindowSessionPhase,
     DockSurfaceWindowSessionReason, DockSurfaceWindowSessionShutdownReason, model::DockGraph,
-    native_captured_drag_router_is_idle_for_test, native_captured_release_observation_for_test,
+    native_captured_release_observation_for_test,
 };
 use open_gpui_windows::{
     NATIVE_TEST_INPUT_CANARY, NativeTestDisplay, NativeTestOpaqueWindow, NativeTestPointerAction,
@@ -27,7 +27,6 @@ use open_gpui_windows::{
     native_test_acquire_foreground_window,
     native_test_client_screen_bounds as native_client_screen_bounds,
     native_test_confirm_scenario_behavior, native_test_displays,
-    native_test_highest_refresh_display,
     native_test_inject_system_pointer as inject_system_pointer,
     native_test_logical_client_point_to_screen as logical_client_point_to_screen,
     native_test_mixed_dpi_display_pair, native_test_non_shell_root_window_at,
@@ -72,6 +71,448 @@ const PROCESS_CONVERGENCE_CLEANUP_PANIC: &str =
 const NATIVE_SCENARIO_MANIFEST: &str =
     include_str!("../tests/native_windows_interactive.native-scenarios.toml");
 const DOCK_TEAR_OFF_MAX_WORK_AREA_FRACTION: f32 = 0.9;
+const NATIVE_LIFECYCLE_SCHEMA_VERSION: u32 = 1;
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum NativeLifecycleBoundary {
+    DragActivation,
+    AcceptedPreviewSubmitted,
+    ReleaseLock,
+    GraphReceipt,
+    DestinationSemanticsSubmitted,
+    FocusSettled,
+}
+
+impl NativeLifecycleBoundary {
+    const ALL: [Self; 6] = [
+        Self::DragActivation,
+        Self::AcceptedPreviewSubmitted,
+        Self::ReleaseLock,
+        Self::GraphReceipt,
+        Self::DestinationSemanticsSubmitted,
+        Self::FocusSettled,
+    ];
+
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::DragActivation => "drag_activation",
+            Self::AcceptedPreviewSubmitted => "accepted_preview_submitted",
+            Self::ReleaseLock => "release_lock",
+            Self::GraphReceipt => "graph_receipt",
+            Self::DestinationSemanticsSubmitted => "destination_semantics_submitted",
+            Self::FocusSettled => "focus_settled",
+        }
+    }
+
+    const fn origin(self) -> NativeLifecycleOrigin {
+        match self {
+            Self::DragActivation => NativeLifecycleOrigin::DragThresholdMove,
+            Self::AcceptedPreviewSubmitted => NativeLifecycleOrigin::TargetRouteMove,
+            Self::ReleaseLock
+            | Self::GraphReceipt
+            | Self::DestinationSemanticsSubmitted
+            | Self::FocusSettled => NativeLifecycleOrigin::PrimaryRelease,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum NativeLifecycleOrigin {
+    DragThresholdMove,
+    TargetRouteMove,
+    PrimaryRelease,
+}
+
+impl NativeLifecycleOrigin {
+    const ALL: [Self; 3] = [
+        Self::DragThresholdMove,
+        Self::TargetRouteMove,
+        Self::PrimaryRelease,
+    ];
+
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::DragThresholdMove => "drag_threshold_move",
+            Self::TargetRouteMove => "target_route_move",
+            Self::PrimaryRelease => "primary_release",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NativeLifecycleBoundaryStatus {
+    Observed,
+    Estimated,
+    Unavailable,
+}
+
+impl NativeLifecycleBoundaryStatus {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Observed => "observed",
+            Self::Estimated => "estimated",
+            Self::Unavailable => "unavailable",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum NativeLifecycleTimingKind {
+    ExactCallback,
+    InputInjection,
+    ObservationUpperBound,
+    Unavailable,
+}
+
+impl NativeLifecycleTimingKind {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::ExactCallback => "exact_callback",
+            Self::InputInjection => "input_injection",
+            Self::ObservationUpperBound => "observation_upper_bound",
+            Self::Unavailable => "unavailable",
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct NativeLifecycleSampleContext {
+    cycle_index: usize,
+    step_index: usize,
+    step_id: String,
+    source_space: String,
+    target_space: String,
+    item: String,
+    source_window: WindowId,
+    target_window: WindowId,
+    source_hwnd: isize,
+    target_hwnd: isize,
+    base_revision: u64,
+}
+
+#[derive(Clone, Debug)]
+struct NativeLifecycleOriginObservation {
+    at: Instant,
+    source: String,
+    detail: String,
+}
+
+#[derive(Clone, Debug)]
+struct NativeLifecycleBoundaryObservation {
+    status: NativeLifecycleBoundaryStatus,
+    timing: NativeLifecycleTimingKind,
+    origin: NativeLifecycleOrigin,
+    elapsed_ns: Option<u64>,
+    source: String,
+    detail: String,
+    generation: Option<u64>,
+    sequence: Option<u64>,
+    revision: Option<u64>,
+}
+
+#[derive(Clone, Debug)]
+struct NativeLifecycleRawEvent {
+    name: String,
+    timeline_elapsed_ns: u64,
+    timing: NativeLifecycleTimingKind,
+    source: String,
+    generation: Option<u64>,
+    sequence: Option<u64>,
+    revision: Option<u64>,
+    detail: String,
+}
+
+#[derive(Debug, Default)]
+struct NativeLifecycleRecorder {
+    started_at: Option<Instant>,
+    context: Option<NativeLifecycleSampleContext>,
+    origins: BTreeMap<NativeLifecycleOrigin, NativeLifecycleOriginObservation>,
+    boundaries: BTreeMap<NativeLifecycleBoundary, NativeLifecycleBoundaryObservation>,
+    raw_events: Vec<NativeLifecycleRawEvent>,
+}
+
+impl NativeLifecycleRecorder {
+    fn begin_sample(&mut self, context: NativeLifecycleSampleContext, now: Instant) {
+        self.started_at = Some(now);
+        self.context = Some(context);
+        self.origins.clear();
+        self.boundaries.clear();
+        self.raw_events.clear();
+    }
+
+    fn is_active(&self) -> bool {
+        self.started_at.is_some()
+    }
+
+    fn observes_new_revision(&self, revision: u64) -> bool {
+        self.context
+            .as_ref()
+            .is_some_and(|context| revision > context.base_revision)
+    }
+
+    fn elapsed_ns(&self, now: Instant) -> Option<u64> {
+        self.started_at.map(|started_at| {
+            now.saturating_duration_since(started_at)
+                .as_nanos()
+                .min(u128::from(u64::MAX)) as u64
+        })
+    }
+
+    fn record_raw(
+        &mut self,
+        name: impl Into<String>,
+        now: Instant,
+        timing: NativeLifecycleTimingKind,
+        source: impl Into<String>,
+        generation: Option<u64>,
+        sequence: Option<u64>,
+        revision: Option<u64>,
+        detail: impl Into<String>,
+    ) {
+        let Some(timeline_elapsed_ns) = self.elapsed_ns(now) else {
+            return;
+        };
+        self.raw_events.push(NativeLifecycleRawEvent {
+            name: name.into(),
+            timeline_elapsed_ns,
+            timing,
+            source: source.into(),
+            generation,
+            sequence,
+            revision,
+            detail: detail.into(),
+        });
+    }
+
+    fn record_origin(
+        &mut self,
+        origin: NativeLifecycleOrigin,
+        now: Instant,
+        source: impl Into<String>,
+        detail: impl Into<String>,
+    ) {
+        if !self.is_active() {
+            return;
+        }
+        let source = source.into();
+        let detail = detail.into();
+        self.origins
+            .entry(origin)
+            .or_insert_with(|| NativeLifecycleOriginObservation {
+                at: now,
+                source: source.clone(),
+                detail: detail.clone(),
+            });
+        self.record_raw(
+            format!("{}_injected", origin.as_str()),
+            now,
+            NativeLifecycleTimingKind::InputInjection,
+            source,
+            None,
+            None,
+            None,
+            detail,
+        );
+    }
+
+    fn record_observed_boundary(
+        &mut self,
+        boundary: NativeLifecycleBoundary,
+        now: Instant,
+        source: impl Into<String>,
+        detail: impl Into<String>,
+        generation: Option<u64>,
+        sequence: Option<u64>,
+        revision: Option<u64>,
+    ) {
+        self.record_boundary(
+            boundary,
+            NativeLifecycleBoundaryStatus::Observed,
+            NativeLifecycleTimingKind::ExactCallback,
+            now,
+            source,
+            detail,
+            generation,
+            sequence,
+            revision,
+        );
+    }
+
+    fn record_estimated_boundary(
+        &mut self,
+        boundary: NativeLifecycleBoundary,
+        now: Instant,
+        source: impl Into<String>,
+        detail: impl Into<String>,
+        generation: Option<u64>,
+        sequence: Option<u64>,
+        revision: Option<u64>,
+    ) {
+        self.record_boundary(
+            boundary,
+            NativeLifecycleBoundaryStatus::Estimated,
+            NativeLifecycleTimingKind::ObservationUpperBound,
+            now,
+            source,
+            detail,
+            generation,
+            sequence,
+            revision,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn record_boundary(
+        &mut self,
+        boundary: NativeLifecycleBoundary,
+        status: NativeLifecycleBoundaryStatus,
+        timing: NativeLifecycleTimingKind,
+        now: Instant,
+        source: impl Into<String>,
+        detail: impl Into<String>,
+        generation: Option<u64>,
+        sequence: Option<u64>,
+        revision: Option<u64>,
+    ) {
+        let origin = boundary.origin();
+        let Some(origin_observation) = self.origins.get(&origin) else {
+            return;
+        };
+        let source = source.into();
+        let detail = detail.into();
+        let elapsed_ns = now
+            .saturating_duration_since(origin_observation.at)
+            .as_nanos()
+            .min(u128::from(u64::MAX)) as u64;
+        self.record_raw(
+            format!("{}_{}", boundary.as_str(), status.as_str()),
+            now,
+            timing,
+            source.as_str(),
+            generation,
+            sequence,
+            revision,
+            detail.as_str(),
+        );
+        self.boundaries
+            .entry(boundary)
+            .or_insert_with(|| NativeLifecycleBoundaryObservation {
+                status,
+                timing,
+                origin,
+                elapsed_ns: Some(elapsed_ns),
+                source,
+                detail,
+                generation,
+                sequence,
+                revision,
+            });
+    }
+
+    fn has_observed_boundary(&self, boundary: NativeLifecycleBoundary) -> bool {
+        self.boundaries.get(&boundary).is_some_and(|observation| {
+            observation.status == NativeLifecycleBoundaryStatus::Observed
+        })
+    }
+
+    fn finish_sample(&mut self) -> Option<serde_json::Value> {
+        let context = self.context.take()?;
+        let started_at = self.started_at.take()?;
+        for boundary in NativeLifecycleBoundary::ALL {
+            self.boundaries
+                .entry(boundary)
+                .or_insert_with(|| NativeLifecycleBoundaryObservation {
+                    status: NativeLifecycleBoundaryStatus::Unavailable,
+                    timing: NativeLifecycleTimingKind::Unavailable,
+                    origin: boundary.origin(),
+                    elapsed_ns: None,
+                    source: "native-test-recorder".to_owned(),
+                    detail:
+                        "the workflow completed without a timestamped observation for this boundary"
+                            .to_owned(),
+                    generation: None,
+                    sequence: None,
+                    revision: None,
+                });
+        }
+        let boundaries = NativeLifecycleBoundary::ALL
+            .into_iter()
+            .map(|boundary| {
+                let observation = self
+                    .boundaries
+                    .get(&boundary)
+                    .expect("all lifecycle boundaries were completed above");
+                serde_json::json!({
+                    "name": boundary.as_str(),
+                    "status": observation.status.as_str(),
+                    "timing": observation.timing.as_str(),
+                    "origin": observation.origin.as_str(),
+                    "elapsed_ns": observation.elapsed_ns,
+                    "source": observation.source.as_str(),
+                    "detail": observation.detail.as_str(),
+                    "generation": observation.generation,
+                    "sequence": observation.sequence,
+                    "revision": observation.revision,
+                })
+            })
+            .collect::<Vec<_>>();
+        let origins = NativeLifecycleOrigin::ALL
+            .into_iter()
+            .filter_map(|origin| {
+                let observation = self.origins.get(&origin)?;
+                let timeline_elapsed_ns = observation
+                    .at
+                    .saturating_duration_since(started_at)
+                    .as_nanos()
+                    .min(u128::from(u64::MAX)) as u64;
+                Some(serde_json::json!({
+                    "name": origin.as_str(),
+                    "timeline_elapsed_ns": timeline_elapsed_ns,
+                    "source": observation.source.as_str(),
+                    "detail": observation.detail.as_str(),
+                }))
+            })
+            .collect::<Vec<_>>();
+        let raw_events = self
+            .raw_events
+            .iter()
+            .map(|event| {
+                serde_json::json!({
+                    "name": event.name.as_str(),
+                    "timeline_elapsed_ns": event.timeline_elapsed_ns,
+                    "timing": event.timing.as_str(),
+                    "source": event.source.as_str(),
+                    "generation": event.generation,
+                    "sequence": event.sequence,
+                    "revision": event.revision,
+                    "detail": event.detail.as_str(),
+                })
+            })
+            .collect::<Vec<_>>();
+        let report = serde_json::json!({
+            "cycle_index": context.cycle_index,
+            "step_index": context.step_index,
+            "step_id": context.step_id,
+            "source_space": context.source_space,
+            "target_space": context.target_space,
+            "item": context.item,
+            "source_window": format!("{:?}", context.source_window),
+            "target_window": format!("{:?}", context.target_window),
+            "source_hwnd": context.source_hwnd,
+            "target_hwnd": context.target_hwnd,
+            "base_revision": context.base_revision,
+            "clock": "std::time::Instant",
+            "timeline_origin": "drag_threshold_move_injection",
+            "origins": origins,
+            "boundaries": boundaries,
+            "raw_events": raw_events,
+        });
+        self.origins.clear();
+        self.boundaries.clear();
+        self.raw_events.clear();
+        Some(report)
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct NativeRendererPayloadRenderObservation {
@@ -323,7 +764,14 @@ impl NativeDockBehavior {
                 Ok(())
             }
             Self::TabDragLatencyBenchmark => {
-                run_captured_host_drop_latency_benchmark(cx, scenario).await
+                let mut workflow = scenario
+                    .dockspace_workflow
+                    .take()
+                    .context("native latency benchmark is missing its three-HWND fixture runner")?;
+                let (milestones, report) = workflow.run_latency_baseline(cx, scenario_id).await?;
+                scenario.workflow_milestones.extend(milestones);
+                scenario.dockspace_workflow = Some(workflow);
+                write_native_lifecycle_report(&report)
             }
             Self::OpaqueOcclusion
             | Self::ProvisionalSameHwndPromotion
@@ -993,8 +1441,15 @@ fn native_interactive_tab_drag_input_to_submit_latency_benchmark() {
         id: DRAG_LATENCY_BENCHMARK_ID.to_owned(),
         test: DRAG_LATENCY_BENCHMARK_TEST.to_owned(),
         behavior: NativeDockBehavior::TabDragLatencyBenchmark,
-        dockspace_scenario: None,
-        dockspace_oracles: BTreeSet::new(),
+        dockspace_scenario: Some("three_dockspace_rehome_cycle".to_owned()),
+        dockspace_oracles: BTreeSet::from([
+            NativeDockspaceManifestOracle::Graph,
+            NativeDockspaceManifestOracle::Layout,
+            NativeDockspaceManifestOracle::Presentation,
+            NativeDockspaceManifestOracle::FocusSelection,
+            NativeDockspaceManifestOracle::ViewportRoute,
+            NativeDockspaceManifestOracle::NativeLifetime,
+        ]),
     };
     ensure_native_interactive_runner(&registration.id);
     if process_harness::is_worker(&registration.id, registration.behavior) {
@@ -1069,13 +1524,15 @@ fn run_native_interactive_worker(registration: NativeScenarioRegistration) -> ! 
     process_harness::await_worker_start();
     let scenario_id = registration.id.clone();
     let behavior = registration.behavior;
-    let dockspace_binding = (behavior == NativeDockBehavior::ComplexDockspaceWorkflow).then(|| {
-        NativeDockspaceRunBinding {
-            scenario_id: registration.dockspace_scenario.clone().unwrap_or_else(|| {
-                panic!("complex native dockspace behavior requires dockspace_scenario metadata")
-            }),
-            oracles: registration.dockspace_oracles.clone(),
-        }
+    let dockspace_binding = matches!(
+        behavior,
+        NativeDockBehavior::ComplexDockspaceWorkflow | NativeDockBehavior::TabDragLatencyBenchmark
+    )
+    .then(|| NativeDockspaceRunBinding {
+        scenario_id: registration.dockspace_scenario.clone().unwrap_or_else(|| {
+            panic!("native dockspace behavior requires dockspace_scenario metadata")
+        }),
+        oracles: registration.dockspace_oracles.clone(),
     });
     let worker_subcase = process_harness::worker_subcase(&scenario_id, behavior);
     let mixed_dpi_pair_plan = process_harness::worker_mixed_dpi_pair_plan(behavior);
@@ -1738,17 +2195,20 @@ fn build_native_scenario(
     worker_subcase: process_harness::NativeWorkerSubcase,
     mixed_dpi_pair_plan: Option<process_harness::NativeMixedDpiPairPlan>,
 ) -> Result<NativeDockScenario> {
-    if behavior == NativeDockBehavior::ComplexDockspaceWorkflow {
+    if matches!(
+        behavior,
+        NativeDockBehavior::ComplexDockspaceWorkflow | NativeDockBehavior::TabDragLatencyBenchmark
+    ) {
         return build_native_dockspace_workflow_scenario(
             cx,
             native_observation,
             dockspace_binding
-                .context("complex native dockspace behavior requires a fixture workflow binding")?,
+                .context("native dockspace behavior requires a fixture workflow binding")?,
         );
     }
     ensure!(
         dockspace_binding.is_none(),
-        "only the complex native dockspace behavior may receive a fixture workflow binding"
+        "only native dockspace behaviors may receive a fixture workflow binding"
     );
     let mixed_dpi_displays = behavior
         .crosses_dpi_boundary()
@@ -1758,12 +2218,7 @@ fn build_native_scenario(
             select_native_mixed_dpi_display_pair(worker_subcase, plan)
         })
         .transpose()?;
-    let benchmark_display = (behavior == NativeDockBehavior::TabDragLatencyBenchmark)
-        .then(native_test_highest_refresh_display)
-        .transpose()?;
-    let selected_native_display = mixed_dpi_displays
-        .map(|displays| displays.source)
-        .or(benchmark_display);
+    let selected_native_display = mixed_dpi_displays.map(|displays| displays.source);
     let display = if let Some(display) = selected_native_display {
         cx.find_display(display.display_id()).with_context(|| {
             format!("the native Dock scenario could not resolve selected display {display:?}")
@@ -1852,7 +2307,9 @@ fn build_native_scenario(
     }
 
     let trace = Arc::new(Mutex::new(NativeMouseTrace::default()));
+    let lifecycle = Arc::new(Mutex::new(NativeLifecycleRecorder::default()));
     let source_trace = Arc::clone(&trace);
+    let source_lifecycle = Arc::clone(&lifecycle);
     let source_interceptor = cx.update_window(source_window, move |_, window, _| {
         window.intercept_window_mouse_events(move |event, _, _| {
             let kind = match event {
@@ -1866,9 +2323,29 @@ fn build_native_scenario(
             {
                 trace.source.push(kind);
             }
+            if let Ok(mut lifecycle) = source_lifecycle.lock() {
+                let now = Instant::now();
+                let event_name = match kind {
+                    Some(NativeMouseKind::Move) => "source_mouse_move",
+                    Some(NativeMouseKind::Down) => "source_mouse_down",
+                    Some(NativeMouseKind::Up) => "source_mouse_up",
+                    None => return,
+                };
+                lifecycle.record_raw(
+                    event_name,
+                    now,
+                    NativeLifecycleTimingKind::ExactCallback,
+                    "WindowMouseEvent::source",
+                    None,
+                    None,
+                    None,
+                    "real GPUI window mouse interceptor callback",
+                );
+            }
         })
     })?;
     let target_trace = Arc::clone(&trace);
+    let target_lifecycle = Arc::clone(&lifecycle);
     let target_interceptor = cx.update_window(target_window, move |_, window, _| {
         window.intercept_window_mouse_events(move |event, _, _| {
             let kind = match event {
@@ -1882,6 +2359,25 @@ fn build_native_scenario(
             {
                 trace.target.push(kind);
             }
+            if let Some(kind) = kind
+                && let Ok(mut lifecycle) = target_lifecycle.lock()
+            {
+                let event_name = match kind {
+                    NativeMouseKind::Move => "target_mouse_move",
+                    NativeMouseKind::Down => "target_mouse_down",
+                    NativeMouseKind::Up => "target_mouse_up",
+                };
+                lifecycle.record_raw(
+                    event_name,
+                    Instant::now(),
+                    NativeLifecycleTimingKind::ExactCallback,
+                    "WindowMouseEvent::target",
+                    None,
+                    None,
+                    None,
+                    "real GPUI window mouse interceptor callback",
+                );
+            }
         })
     })?;
     let initial_revision = surface.export_snapshot(cx).revision();
@@ -1893,10 +2389,35 @@ fn build_native_scenario(
         .owned_window_count;
     let surface_changes = Rc::new(RefCell::new(Vec::new()));
     let surface_changes_for_subscription = Rc::clone(&surface_changes);
+    let lifecycle_for_subscription = Arc::clone(&lifecycle);
     let surface_change_subscription = surface.subscribe_changes(cx, move |event, _| {
         surface_changes_for_subscription
             .borrow_mut()
             .push(event.clone());
+        if let Ok(mut lifecycle) = lifecycle_for_subscription.lock() {
+            let now = Instant::now();
+            lifecycle.record_raw(
+                "dock_surface_change",
+                now,
+                NativeLifecycleTimingKind::ExactCallback,
+                "DockSurface::subscribe_changes",
+                None,
+                None,
+                Some(event.revision()),
+                "durable surface change callback",
+            );
+            if lifecycle.observes_new_revision(event.revision()) {
+                lifecycle.record_observed_boundary(
+                    NativeLifecycleBoundary::GraphReceipt,
+                    now,
+                    "DockSurface::subscribe_changes",
+                    "durable graph receipt callback observed after the sample base revision",
+                    None,
+                    None,
+                    Some(event.revision()),
+                );
+            }
+        }
     });
     let live_undock_observation = surface.observe_live_undock_for_test(cx);
     let shutdown_observation = surface.observe_shutdown_for_test(cx);
@@ -2092,50 +2613,6 @@ async fn run_captured_host_drop_scenario(
         snapshot.revision()
     );
     Ok(())
-}
-
-async fn run_captured_host_drop_latency_benchmark(
-    cx: &mut AsyncApp,
-    scenario: &mut NativeDockScenario,
-) -> Result<()> {
-    raise_native_window(scenario.target_hwnd)?;
-    let points = cx.update(|app| {
-        Ok::<_, anyhow::Error>((
-            source_tab_screen_point(app, scenario, "preview")?,
-            source_tab_screen_point(app, scenario, "diff")?,
-        ))
-    })?;
-    let (mut pointer_guard, _) = begin_native_captured_drag_for_benchmark(cx, scenario).await?;
-    measure_native_tab_drag_latency(cx, scenario, &mut pointer_guard, points).await?;
-    pointer_guard.inject(points.1, NativeTestPointerAction::PrimaryUp)?;
-    wait_until(cx, "native tab-drag latency probe to release", |cx| {
-        Ok(unsafe { GetCapture() } == HWND::default()
-            && cx.update(|app| {
-                !app.has_active_drag() && native_captured_drag_router_is_idle_for_test(app)
-            }))
-    })
-    .await?;
-
-    cx.update(|app| {
-        app.update_window(scenario.target_window, |_, window, cx| {
-            window.remove_window(cx)
-        })
-    })?;
-    wait_until(
-        cx,
-        "native tab-drag latency benchmark surface to close",
-        |cx| {
-            Ok(cx.update(|app| {
-                let status = scenario.surface.window_session_status(app);
-                status.phase() == DockSurfaceWindowSessionPhase::Closed
-                    && app.windows().is_empty()
-                    && native_captured_drag_router_is_idle_for_test(app)
-            }) && !unsafe { IsWindow(Some(scenario.source_hwnd)).as_bool() }
-                && !unsafe { IsWindow(Some(scenario.target_hwnd)).as_bool() }
-                && native_observation_is_terminal(&scenario.native_observation))
-        },
-    )
-    .await
 }
 
 async fn run_no_input_pass_through_scenario(
@@ -2393,204 +2870,13 @@ fn source_preview_tab_screen_point(cx: &mut App, scenario: &NativeDockScenario) 
     source_tab_screen_point(cx, scenario, "preview")
 }
 
-async fn measure_native_tab_drag_latency(
-    cx: &mut AsyncApp,
-    scenario: &NativeDockScenario,
-    pointer_guard: &mut NativeTestSystemPointerGuard,
-    points: (POINT, POINT),
-) -> Result<()> {
-    const MOVE_COUNT: usize = 180;
-    const MOVE_INTERVAL: Duration = Duration::from_millis(4);
-
-    ensure!(
-        points.0 != points.1,
-        "the native drag latency probe requires two distinct tab positions"
-    );
-    for point in [points.0, points.1] {
-        ensure!(
-            native_test_non_shell_root_window_at(point) == Some(scenario.source_hwnd),
-            "the native drag latency probe point is occluded: point={point:?}, hit={:?}",
-            native_test_non_shell_root_window_at(point)
-        );
-    }
-
-    cx.update(|app| {
-        app.update_window(scenario.source_window, |_, window, _| {
-            window.reset_input_latency_measurements();
-        })?;
-        app.update_window(scenario.target_window, |_, window, _| {
-            window.reset_input_latency_measurements();
-        })?;
-        Ok::<_, anyhow::Error>(())
-    })?;
-    let source_moves_before = source_mouse_move_count(scenario)?;
-    let measurement_started = Instant::now();
-
-    for index in 0..MOVE_COUNT {
-        pointer_guard.inject(
-            if index % 2 == 0 { points.0 } else { points.1 },
-            NativeTestPointerAction::Move,
-        )?;
-        cx.background_executor().timer(MOVE_INTERVAL).await;
-    }
-
-    let wait_result = wait_until(cx, "native tab-drag latency samples to submit", |cx| {
-        let snapshot = cx.update(|app| input_latency_snapshot(app, scenario.source_window))?;
-        Ok(snapshot.pending_input_count == 0 && !snapshot.latency_histogram.is_empty())
-    })
-    .await;
-
-    let (
-        source_snapshot,
-        source_presentation,
-        source_platform,
-        target_snapshot,
-        target_presentation,
-        target_platform,
-    ) = cx.update(|app| {
-        let source = app.update_window(scenario.source_window, |_, window, _| {
-            (
-                window.input_latency_snapshot(),
-                window.presentation_facts(),
-                window.platform_facts().clone(),
-            )
-        })?;
-        let target = app.update_window(scenario.target_window, |_, window, _| {
-            (
-                window.input_latency_snapshot(),
-                window.presentation_facts(),
-                window.platform_facts().clone(),
-            )
-        })?;
-        Ok::<_, anyhow::Error>((source.0, source.1, source.2, target.0, target.1, target.2))
-    })?;
-    let source_moves = source_mouse_move_count(scenario)?.saturating_sub(source_moves_before);
-    let measurement_elapsed = measurement_started.elapsed();
-    let report = input_latency_report(
-        &source_snapshot,
-        source_presentation,
-        &source_platform,
-        &target_snapshot,
-        target_presentation,
-        &target_platform,
-        MOVE_COUNT,
-        source_moves,
-        measurement_elapsed,
-    );
+fn write_native_lifecycle_report(report: &serde_json::Value) -> Result<()> {
     let output = std::env::var(DRAG_LATENCY_OUTPUT_ENV)
-        .context("the native drag latency output path disappeared during measurement")?;
+        .context("the native lifecycle output path disappeared during measurement")?;
     fs::write(&output, serde_json::to_vec_pretty(&report)?)
-        .with_context(|| format!("failed to write native drag latency report `{output}`"))?;
+        .with_context(|| format!("failed to write native lifecycle report `{output}`"))?;
     println!("OPEN_GPUI_DOCK_DRAG_LATENCY_REPORT {report}");
-    if let Err(error) = wait_result {
-        bail!("{error}; diagnostics={report}");
-    }
     Ok(())
-}
-
-fn input_latency_snapshot(app: &mut App, window: AnyWindowHandle) -> Result<InputLatencySnapshot> {
-    app.update_window(window, |_, window, _| window.input_latency_snapshot())
-}
-
-fn source_mouse_move_count(scenario: &NativeDockScenario) -> Result<usize> {
-    Ok(scenario
-        .trace
-        .lock()
-        .map_err(|_| anyhow!("native mouse trace lock was poisoned"))?
-        .source
-        .iter()
-        .filter(|kind| **kind == NativeMouseKind::Move)
-        .count())
-}
-
-fn input_latency_report(
-    source_snapshot: &InputLatencySnapshot,
-    source_presentation: open_gpui::WindowPresentationFacts,
-    source_platform: &WindowPlatformFacts,
-    target_snapshot: &InputLatencySnapshot,
-    target_presentation: open_gpui::WindowPresentationFacts,
-    target_platform: &WindowPlatformFacts,
-    injected_moves: usize,
-    observed_moves: usize,
-    measurement_elapsed: Duration,
-) -> serde_json::Value {
-    let source = window_input_latency_report(source_snapshot, source_presentation, source_platform);
-    let target = window_input_latency_report(target_snapshot, target_presentation, target_platform);
-    let elapsed_seconds = measurement_elapsed.as_secs_f64();
-
-    serde_json::json!({
-        "injected_moves": injected_moves,
-        "observed_wndproc_moves": observed_moves,
-        "measurement_elapsed_ms": measurement_elapsed.as_secs_f64() * 1_000.0,
-        "observed_input_hz": observed_moves as f64 / elapsed_seconds,
-        "source_submitted_fps": source_snapshot.submitted_present_count as f64 / elapsed_seconds,
-        "target_submitted_fps": target_snapshot.submitted_present_count as f64 / elapsed_seconds,
-        "source": source,
-        "target": target,
-    })
-}
-
-fn window_input_latency_report(
-    snapshot: &InputLatencySnapshot,
-    presentation_facts: open_gpui::WindowPresentationFacts,
-    platform_facts: &WindowPlatformFacts,
-) -> serde_json::Value {
-    let latency = &snapshot.latency_histogram;
-    let events = &snapshot.events_per_frame_histogram;
-    let recorded_invalidating_events = events
-        .iter_recorded()
-        .map(|value| value.value_iterated_to() * value.count_at_value())
-        .sum::<u64>();
-    let nanos_to_millis = |value: u64| value as f64 / 1_000_000.0;
-    let display = platform_facts.display_id.map(|display_id| {
-        let native = native_test_displays()
-            .into_iter()
-            .find(|display| display.display_id() == display_id);
-        serde_json::json!({
-            "display_id": u64::from(display_id),
-            "refresh_rate_hz": native.and_then(NativeTestDisplay::refresh_rate_hz),
-        })
-    });
-
-    serde_json::json!({
-        "display": display,
-        "recorded_invalidating_events": recorded_invalidating_events,
-        "submitted_frame_samples": latency.len(),
-        "drawn_frames": snapshot.drawn_frame_count,
-        "present_attempts": snapshot.present_attempt_count,
-        "present_outcomes": {
-            "submitted": snapshot.submitted_present_count,
-            "deferred": snapshot.deferred_present_count,
-            "repaint_required": snapshot.repaint_required_present_count,
-            "rejected": snapshot.rejected_present_count,
-        },
-        "refresh_requests": snapshot.refresh_request_count,
-        "coalesced_refresh_requests": snapshot.coalesced_refresh_request_count,
-        "refresh_callsites": snapshot.refresh_callsites.iter().map(|callsite| serde_json::json!({
-            "file": callsite.file,
-            "line": callsite.line,
-            "requests": callsite.request_count,
-            "coalesced": callsite.coalesced_request_count,
-        })).collect::<Vec<_>>(),
-        "input_to_submit_ms": {
-            "p50": nanos_to_millis(latency.value_at_quantile(0.50)),
-            "p95": nanos_to_millis(latency.value_at_quantile(0.95)),
-            "p99": nanos_to_millis(latency.value_at_quantile(0.99)),
-            "max": nanos_to_millis(latency.max()),
-            "mean": latency.mean() / 1_000_000.0,
-        },
-        "invalidating_events_per_submitted_frame": {
-            "p50": events.value_at_quantile(0.50),
-            "p95": events.value_at_quantile(0.95),
-            "p99": events.value_at_quantile(0.99),
-            "max": events.max(),
-            "mean": events.mean(),
-        },
-        "mid_draw_events_dropped": snapshot.mid_draw_events_dropped,
-        "pending_input_count": snapshot.pending_input_count,
-        "present_submitted_generation": presentation_facts.present_submitted_generation,
-        "non_empty_presented_generation": presentation_facts.non_empty_presented_generation,
-    })
 }
 
 fn target_drop_preview_bounds(
@@ -2609,16 +2895,6 @@ async fn begin_native_captured_drag(
     scenario: &mut NativeDockScenario,
 ) -> Result<(NativeTestSystemPointerGuard, POINT)> {
     begin_native_captured_drag_with_provenance(cx, scenario, true).await
-}
-
-async fn begin_native_captured_drag_for_benchmark(
-    cx: &mut AsyncApp,
-    scenario: &mut NativeDockScenario,
-) -> Result<(NativeTestSystemPointerGuard, POINT)> {
-    // Remote and virtual display drivers may clear SendInput's dwExtraInfo marker before WndProc.
-    // This non-release benchmark still proves the exact HWND, coordinates, capture transition, and
-    // delivered move count. Manifest release scenarios continue to require the input canary.
-    begin_native_captured_drag_with_provenance(cx, scenario, false).await
 }
 
 async fn begin_native_captured_drag_with_provenance(

@@ -4,12 +4,14 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import json
 import math
 import os
 from pathlib import Path
 import platform
 import shutil
+import statistics
 import subprocess
 import sys
 from typing import Any
@@ -30,11 +32,31 @@ DOCKSPACE_SCENARIO_FIXTURES = (
 IMGUI_SCENARIO_HEADER = (
     ROOT / "target" / "benchmarks" / "three_dockspace_rehome.generated.h"
 )
-NATIVE_LATENCY_OUTPUT = ROOT / "target" / "benchmarks" / "native_tab_drag_input_to_submit.json"
+NATIVE_LATENCY_OUTPUT = ROOT / "target" / "benchmarks" / "native_three_hwnd_lifecycle.json"
+NATIVE_LATENCY_RAW_DIR = ROOT / "target" / "benchmarks" / "native_three_hwnd_lifecycle_runs"
 NATIVE_LATENCY_TEST = (
     "native_interactive_tests::native_interactive_tab_drag_input_to_submit_latency_benchmark"
 )
 NATIVE_LATENCY_OUTPUT_ENV = "OPEN_GPUI_DOCK_DRAG_LATENCY_OUTPUT"
+NATIVE_INTERACTIVE_ENV = "OPEN_GPUI_NATIVE_INTERACTIVE"
+NATIVE_LATENCY_PROCESS_SAMPLES_ENV = "OPEN_GPUI_NATIVE_LATENCY_PROCESS_SAMPLES"
+NATIVE_LATENCY_DEFAULT_PROCESS_SAMPLES = 5
+NATIVE_LIFECYCLE_BOUNDARIES = (
+    "drag_activation",
+    "accepted_preview_submitted",
+    "release_lock",
+    "graph_receipt",
+    "destination_semantics_submitted",
+    "focus_settled",
+)
+NATIVE_LIFECYCLE_BOUNDARY_ORIGINS = {
+    "drag_activation": "drag_threshold_move",
+    "accepted_preview_submitted": "target_route_move",
+    "release_lock": "primary_release",
+    "graph_receipt": "primary_release",
+    "destination_semantics_submitted": "primary_release",
+    "focus_settled": "primary_release",
+}
 COMPARISON_KEY_FIELDS = (
     "scenario_id",
     "step_id",
@@ -89,17 +111,6 @@ def last_json_line(output: str) -> dict[str, Any]:
         if isinstance(value, dict):
             return value
     raise RuntimeError(f"command did not emit a JSON object: {output[-1000:]}")
-
-
-def number_at(report: dict[str, Any], path: tuple[str, ...]) -> float:
-    value: Any = report
-    for segment in path:
-        if not isinstance(value, dict) or segment not in value:
-            raise RuntimeError(f"native latency report is missing {'.'.join(path)}")
-        value = value[segment]
-    if not isinstance(value, (int, float)):
-        raise RuntimeError(f"native latency report field {'.'.join(path)} is not numeric")
-    return float(value)
 
 
 def load_three_dockspace_rehome_scenario() -> dict[str, Any]:
@@ -543,39 +554,197 @@ def build_imgui_benchmark() -> None:
     )
 
 
-def summarize_native_latency(report: dict[str, Any]) -> dict[str, float]:
+def native_latency_process_sample_count() -> int:
+    raw = os.environ.get(
+        NATIVE_LATENCY_PROCESS_SAMPLES_ENV,
+        str(NATIVE_LATENCY_DEFAULT_PROCESS_SAMPLES),
+    )
+    try:
+        count = int(raw)
+    except ValueError as error:
+        raise RuntimeError(
+            f"{NATIVE_LATENCY_PROCESS_SAMPLES_ENV} must be an integer"
+        ) from error
+    if count < 2:
+        raise RuntimeError(
+            f"{NATIVE_LATENCY_PROCESS_SAMPLES_ENV} must be at least 2 to measure process noise"
+        )
+    return count
+
+
+def percentile(values: list[int], quantile: float) -> int:
+    if not values:
+        raise RuntimeError("native latency percentile requires at least one sample")
+    ordered = sorted(values)
+    index = max(0, math.ceil(quantile * len(ordered)) - 1)
+    return ordered[index]
+
+
+def validate_native_lifecycle_run(
+    report: dict[str, Any], *, source: str
+) -> list[dict[str, Any]]:
+    if report.get("schema_version") != 1:
+        raise RuntimeError(f"{source} must use native lifecycle schema version 1")
+    if report.get("fixture_id") != "three_dockspace_rehome_cycle":
+        raise RuntimeError(f"{source} must execute three_dockspace_rehome_cycle")
+    if report.get("adapter") != "windows_real_three_hwnd":
+        raise RuntimeError(f"{source} must use the real three-HWND adapter")
+    if report.get("window_count") != 3 or report.get("distinct_hwnd_count") != 3:
+        raise RuntimeError(f"{source} did not retain three distinct HWNDs")
+    if tuple(report.get("boundary_names", ())) != NATIVE_LIFECYCLE_BOUNDARIES:
+        raise RuntimeError(f"{source} declares an unexpected lifecycle boundary set")
+    samples = report.get("samples")
+    if not isinstance(samples, list) or not samples:
+        raise RuntimeError(f"{source} must contain lifecycle samples")
+    if report.get("sample_count") != len(samples):
+        raise RuntimeError(f"{source} sample_count does not match samples")
+
+    for sample_index, sample in enumerate(samples):
+        sample_source = f"{source} sample {sample_index}"
+        if not isinstance(sample, dict):
+            raise RuntimeError(f"{sample_source} must be an object")
+        if sample.get("source_hwnd") == sample.get("target_hwnd"):
+            raise RuntimeError(f"{sample_source} must cross distinct HWNDs")
+        origins = sample.get("origins")
+        if not isinstance(origins, list) or {
+            origin.get("name") for origin in origins if isinstance(origin, dict)
+        } != {"drag_threshold_move", "target_route_move", "primary_release"}:
+            raise RuntimeError(f"{sample_source} is missing a timing origin")
+        raw_events = sample.get("raw_events")
+        if not isinstance(raw_events, list) or not raw_events:
+            raise RuntimeError(f"{sample_source} must preserve raw events")
+        boundaries = sample.get("boundaries")
+        if not isinstance(boundaries, list):
+            raise RuntimeError(f"{sample_source} boundaries must be a list")
+        indexed = {}
+        for boundary in boundaries:
+            if not isinstance(boundary, dict):
+                raise RuntimeError(f"{sample_source} boundary must be an object")
+            name = boundary.get("name")
+            if name in indexed:
+                raise RuntimeError(f"{sample_source} repeats boundary {name!r}")
+            indexed[name] = boundary
+        if tuple(indexed) != NATIVE_LIFECYCLE_BOUNDARIES:
+            raise RuntimeError(f"{sample_source} has an incomplete boundary sequence")
+        for name, boundary in indexed.items():
+            status = boundary.get("status")
+            timing = boundary.get("timing")
+            elapsed_ns = boundary.get("elapsed_ns")
+            if boundary.get("origin") != NATIVE_LIFECYCLE_BOUNDARY_ORIGINS[name]:
+                raise RuntimeError(
+                    f"{sample_source} boundary {name!r} has the wrong timing origin"
+                )
+            if status == "observed":
+                valid = timing == "exact_callback" and type(elapsed_ns) is int
+            elif status == "estimated":
+                valid = timing == "observation_upper_bound" and type(elapsed_ns) is int
+            elif status == "unavailable":
+                valid = timing == "unavailable" and elapsed_ns is None
+            else:
+                valid = False
+            if not valid or (type(elapsed_ns) is int and elapsed_ns < 0):
+                raise RuntimeError(
+                    f"{sample_source} boundary {name!r} has inconsistent timing evidence"
+                )
+        graph_receipt = indexed["graph_receipt"]
+        if (
+            graph_receipt.get("status") != "observed"
+            or graph_receipt.get("timing") != "exact_callback"
+            or type(graph_receipt.get("revision")) is not int
+        ):
+            raise RuntimeError(
+                f"{sample_source} must carry an exact graph receipt callback"
+            )
+    return samples
+
+
+def summarize_native_latency(evidence: dict[str, Any]) -> dict[str, Any]:
+    runs = evidence.get("runs")
+    if not isinstance(runs, list) or len(runs) < 2:
+        raise RuntimeError("native lifecycle evidence requires at least two process runs")
+
+    samples_by_run = [
+        validate_native_lifecycle_run(run, source=f"native lifecycle run {index}")
+        for index, run in enumerate(runs)
+        if isinstance(run, dict)
+    ]
+    if len(samples_by_run) != len(runs):
+        raise RuntimeError("native lifecycle runs must be JSON objects")
+
+    boundary_summary: dict[str, dict[str, Any]] = {}
+    flattened: dict[str, Any] = {}
+    for boundary_name in NATIVE_LIFECYCLE_BOUNDARIES:
+        observations = []
+        per_process_values: list[list[int]] = []
+        status_counts = {"observed": 0, "estimated": 0, "unavailable": 0}
+        for samples in samples_by_run:
+            process_values = []
+            for sample in samples:
+                boundary = next(
+                    value
+                    for value in sample["boundaries"]
+                    if value["name"] == boundary_name
+                )
+                status_counts[boundary["status"]] += 1
+                elapsed_ns = boundary["elapsed_ns"]
+                if type(elapsed_ns) is int:
+                    observations.append(elapsed_ns)
+                    process_values.append(elapsed_ns)
+            per_process_values.append(process_values)
+        if not observations:
+            timing = {
+                "p50_ms": None,
+                "p95_ms": None,
+                "p99_ms": None,
+                "max_ms": None,
+            }
+            process_medians = []
+            noise_floor = {
+                "process_median_min_ms": None,
+                "process_median_max_ms": None,
+                "process_median_span_ms": None,
+                "process_median_span_ratio": None,
+            }
+        else:
+            timing = {
+                "p50_ms": percentile(observations, 0.50) / 1_000_000.0,
+                "p95_ms": percentile(observations, 0.95) / 1_000_000.0,
+                "p99_ms": percentile(observations, 0.99) / 1_000_000.0,
+                "max_ms": max(observations) / 1_000_000.0,
+            }
+            process_medians = [
+                int(statistics.median(values)) for values in per_process_values if values
+            ]
+            median_min = min(process_medians)
+            median_max = max(process_medians)
+            median_center = statistics.median(process_medians)
+            median_span = median_max - median_min
+            noise_floor = {
+                "process_median_min_ms": median_min / 1_000_000.0,
+                "process_median_max_ms": median_max / 1_000_000.0,
+                "process_median_span_ms": median_span / 1_000_000.0,
+                "process_median_span_ratio": (
+                    median_span / median_center if median_center > 0 else None
+                ),
+            }
+        boundary_summary[boundary_name] = {
+            "sample_count": sum(status_counts.values()),
+            "timed_sample_count": len(observations),
+            "status_counts": status_counts,
+            "timing": timing,
+            "noise_floor": noise_floor,
+            "process_medians_ns": process_medians,
+        }
+        for quantile in ("p50_ms", "p95_ms", "p99_ms", "max_ms"):
+            flattened[f"native_latency_{boundary_name}_{quantile}"] = timing[quantile]
+
+    workflow_sample_count = sum(len(samples) for samples in samples_by_run)
     return {
-        "native_latency_benchmark_passed": 1.0,
-        "native_latency_injected_moves": number_at(report, ("injected_moves",)),
-        "native_latency_observed_wndproc_moves": number_at(report, ("observed_wndproc_moves",)),
-        "native_latency_observed_input_hz": number_at(report, ("observed_input_hz",)),
-        "native_latency_measurement_elapsed_ms": number_at(report, ("measurement_elapsed_ms",)),
-        "native_latency_source_submitted_fps": number_at(report, ("source_submitted_fps",)),
-        "native_latency_target_submitted_fps": number_at(report, ("target_submitted_fps",)),
-        "native_latency_source_input_to_submit_p50_ms": number_at(
-            report, ("source", "input_to_submit_ms", "p50")
-        ),
-        "native_latency_source_input_to_submit_p95_ms": number_at(
-            report, ("source", "input_to_submit_ms", "p95")
-        ),
-        "native_latency_source_input_to_submit_p99_ms": number_at(
-            report, ("source", "input_to_submit_ms", "p99")
-        ),
-        "native_latency_source_input_to_submit_max_ms": number_at(
-            report, ("source", "input_to_submit_ms", "max")
-        ),
-        "native_latency_target_input_to_submit_p50_ms": number_at(
-            report, ("target", "input_to_submit_ms", "p50")
-        ),
-        "native_latency_target_input_to_submit_p95_ms": number_at(
-            report, ("target", "input_to_submit_ms", "p95")
-        ),
-        "native_latency_target_input_to_submit_p99_ms": number_at(
-            report, ("target", "input_to_submit_ms", "p99")
-        ),
-        "native_latency_target_input_to_submit_max_ms": number_at(
-            report, ("target", "input_to_submit_ms", "max")
-        ),
+        "native_latency_benchmark_passed": 1,
+        "native_latency_process_sample_count": len(runs),
+        "native_latency_workflow_sample_count": workflow_sample_count,
+        "native_latency_boundaries": boundary_summary,
+        **flattened,
     }
 
 
@@ -790,34 +959,94 @@ def require_comparison_keys(
         )
 
 
-def run_native_latency_benchmark() -> dict[str, float]:
+def native_benchmark_git_metadata() -> dict[str, Any]:
+    commit = run(["git", "rev-parse", "HEAD"]).strip()
+    status = run(["git", "status", "--porcelain=v1"])
+    return {
+        "commit": commit,
+        "dirty": bool(status.strip()),
+        "changed_path_count": len(status.splitlines()),
+    }
+
+
+def native_benchmark_environment() -> dict[str, Any]:
+    return {
+        "platform": platform.platform(),
+        "system": platform.system(),
+        "release": platform.release(),
+        "machine": platform.machine(),
+        "processor": platform.processor(),
+        "python": platform.python_version(),
+        "cpu_count": os.cpu_count(),
+        "cargo_build_jobs": os.environ.get("CARGO_BUILD_JOBS", "1"),
+    }
+
+
+def run_native_latency_benchmark() -> dict[str, Any]:
     if platform.system() != "Windows":
-        raise RuntimeError("native input-to-submit latency benchmark requires Windows")
+        raise RuntimeError("native three-HWND lifecycle benchmark requires Windows")
 
     NATIVE_LATENCY_OUTPUT.parent.mkdir(parents=True, exist_ok=True)
-    NATIVE_LATENCY_OUTPUT.unlink(missing_ok=True)
-    run(
-        [
-            "cargo",
-            "nextest",
-            "run",
-            "-p",
-            "open-gpui-docking-native",
-            "--run-ignored",
-            "only",
-            "--test-threads",
-            "1",
-            "--no-fail-fast",
-            "-E",
-            f"test(={NATIVE_LATENCY_TEST})",
-        ],
-        extra_env={NATIVE_LATENCY_OUTPUT_ENV: str(NATIVE_LATENCY_OUTPUT)},
+    NATIVE_LATENCY_RAW_DIR.mkdir(parents=True, exist_ok=True)
+    process_sample_count = native_latency_process_sample_count()
+    command = [
+        "cargo",
+        "nextest",
+        "run",
+        "--release",
+        "--locked",
+        "-p",
+        "open-gpui-docking-native",
+        "--run-ignored",
+        "only",
+        "--test-threads",
+        "1",
+        "--no-fail-fast",
+        "-E",
+        f"test(={NATIVE_LATENCY_TEST})",
+    ]
+    runs: list[dict[str, Any]] = []
+    for process_index in range(process_sample_count):
+        run_output = NATIVE_LATENCY_RAW_DIR / f"run-{process_index + 1:03d}.json"
+        run_output.unlink(missing_ok=True)
+        run(
+            command,
+            extra_env={
+                NATIVE_LATENCY_OUTPUT_ENV: str(run_output),
+                NATIVE_INTERACTIVE_ENV: "1",
+            },
+        )
+        with run_output.open("r", encoding="utf-8") as report_file:
+            report = json.load(report_file)
+        if not isinstance(report, dict):
+            raise RuntimeError(
+                f"native lifecycle benchmark run {process_index + 1} did not emit a JSON object"
+            )
+        validate_native_lifecycle_run(
+            report, source=f"native lifecycle benchmark run {process_index + 1}"
+        )
+        report["process_index"] = process_index
+        report["raw_output"] = str(run_output.relative_to(ROOT))
+        runs.append(report)
+
+    evidence = {
+        "schema_version": 1,
+        "evidence_kind": "native_three_hwnd_lifecycle_baseline",
+        "captured_at_utc": datetime.now(timezone.utc).isoformat(),
+        "git": native_benchmark_git_metadata(),
+        "environment": native_benchmark_environment(),
+        "command": command,
+        "profile": {"release": True, "locked": True, "nextest_threads": 1},
+        "process_sample_count": process_sample_count,
+        "runs": runs,
+    }
+    summary = summarize_native_latency(evidence)
+    evidence["summary"] = summary
+    NATIVE_LATENCY_OUTPUT.write_text(
+        json.dumps(evidence, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
     )
-    with NATIVE_LATENCY_OUTPUT.open("r", encoding="utf-8") as report_file:
-        report = json.load(report_file)
-    if not isinstance(report, dict):
-        raise RuntimeError("native latency benchmark did not emit a JSON object")
-    return summarize_native_latency(report)
+    return {**summary, "native_latency_evidence": evidence}
 
 
 def main() -> None:
@@ -827,7 +1056,7 @@ def main() -> None:
         "--native-latency",
         action="store_true",
         help=(
-            "also run the ignored Windows native input-to-submit latency benchmark; "
+            "also run the ignored Windows native three-HWND lifecycle baseline; "
             "this opens windows and injects mouse input"
         ),
     )
