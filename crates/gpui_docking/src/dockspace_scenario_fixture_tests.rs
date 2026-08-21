@@ -64,28 +64,26 @@ fn dockspace_scenario_fixtures_build_and_validate_adapter_oracles() {
         assert_unique_items(&seed.graph);
         assert_layout_roundtrip_preserves_space_items(&seed.graph);
         assert!(
-            scenario.adapters.contains(&DockspaceAdapterTag::Headless),
+            scenario.supports_adapter(DockspaceAdapterTag::Headless),
             "scenario {} should be headless-verifiable first",
             scenario.id
         );
+        let oracles = scenario.oracles();
         assert!(
-            scenario.oracles.contains(&DockspaceOracleKind::Graph),
+            oracles.contains(&DockspaceOracleKind::Graph),
             "scenario {} should carry a graph oracle",
             scenario.id
         );
-        if scenario
-            .oracles
-            .contains(&DockspaceOracleKind::NativeLifetime)
-        {
+        if oracles.contains(&DockspaceOracleKind::NativeLifetime) {
             assert!(
-                scenario.adapters.contains(&DockspaceAdapterTag::Native),
+                scenario.supports_adapter(DockspaceAdapterTag::Native),
                 "scenario {} should only request native oracles with native adapter support",
                 scenario.id
             );
         }
-        if scenario.oracles.contains(&DockspaceOracleKind::Performance) {
+        if oracles.contains(&DockspaceOracleKind::Performance) {
             assert!(
-                scenario.adapters.contains(&DockspaceAdapterTag::Benchmark),
+                scenario.supports_adapter(DockspaceAdapterTag::Benchmark),
                 "scenario {} should only request perf oracles with benchmark adapter support",
                 scenario.id
             );
@@ -117,12 +115,14 @@ fn scenario_backed_benchmarks_reference_declared_fixture_steps() {
     for benchmark in registered_benchmarks {
         let scenario = scenario_by_id(&scenarios, benchmark.scenario_id());
         assert!(
-            scenario.adapters.contains(&DockspaceAdapterTag::Benchmark),
+            scenario.supports_adapter(DockspaceAdapterTag::Benchmark),
             "scenario {} should opt into the benchmark adapter",
             scenario.id
         );
         assert!(
-            scenario.oracles.contains(&DockspaceOracleKind::Performance),
+            scenario
+                .oracles()
+                .contains(&DockspaceOracleKind::Performance),
             "scenario {} should request the performance oracle",
             scenario.id
         );
@@ -140,7 +140,7 @@ fn scenario_backed_benchmarks_reference_declared_fixture_steps() {
         .collect::<BTreeSet<_>>();
     let tagged_scenarios = scenarios
         .iter()
-        .filter(|scenario| scenario.adapters.contains(&DockspaceAdapterTag::Benchmark))
+        .filter(|scenario| scenario.supports_adapter(DockspaceAdapterTag::Benchmark))
         .map(|scenario| scenario.id.as_str())
         .collect::<BTreeSet<_>>();
     assert_eq!(

@@ -151,14 +151,13 @@ impl DockspaceGpuiHostRunner {
                 step: step_id,
             });
         }
-        let DockspaceScenarioStep::MoveItemToItem {
+        let crate::dockspace_testkit::ops::DockspaceSemanticOperation::MoveItemToItem {
             source_space,
             item,
             target_space,
             target_item,
             zone,
-            ..
-        } = step
+        } = step.operation()
         else {
             unreachable!("GPUI host support is limited to cross-space named-item moves");
         };

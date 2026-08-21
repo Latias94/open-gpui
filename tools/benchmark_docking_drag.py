@@ -25,7 +25,7 @@ DOCKSPACE_SCENARIO_FIXTURES = (
     / "gpui_docking"
     / "src"
     / "fixtures"
-    / "dockspace_scenarios_v1.json"
+    / "dockspace_scenarios_v2.json"
 )
 IMGUI_SCENARIO_HEADER = (
     ROOT / "target" / "benchmarks" / "three_dockspace_rehome.generated.h"
@@ -105,8 +105,8 @@ def number_at(report: dict[str, Any], path: tuple[str, ...]) -> float:
 def load_three_dockspace_rehome_scenario() -> dict[str, Any]:
     with DOCKSPACE_SCENARIO_FIXTURES.open("r", encoding="utf-8") as fixture_file:
         suite = json.load(fixture_file)
-    if not isinstance(suite, dict) or suite.get("schema_version") != 1:
-        raise RuntimeError("dockspace benchmark fixture must use schema version 1")
+    if not isinstance(suite, dict) or suite.get("schema_version") != 2:
+        raise RuntimeError("dockspace benchmark fixture must use schema version 2")
     scenarios = suite.get("scenarios")
     if not isinstance(scenarios, list):
         raise RuntimeError("dockspace benchmark fixture scenarios must be a list")
@@ -325,17 +325,20 @@ def render_imgui_rehome_scenario_header(scenario: dict[str, Any]) -> str:
         "bottom": "ImGuiDir_Down",
     }
     for index, step in enumerate(steps):
-        if not isinstance(step, dict) or step.get("type") != "move_item_to_item":
+        if not isinstance(step, dict):
+            raise RuntimeError("dockspace benchmark steps must be objects")
+        operation = step.get("operation")
+        if not isinstance(operation, dict) or operation.get("type") != "move_item_to_item":
             raise RuntimeError("ImGui rehome benchmark only supports named item moves")
         step_id = step.get("id")
         if not isinstance(step_id, str) or not step_id or step_id in step_ids:
             raise RuntimeError(f"invalid or duplicate dockspace benchmark step {step_id!r}")
         step_ids.add(step_id)
-        item = step.get("item")
-        target_item = step.get("target_item")
-        source_space = step.get("source_space")
-        target_space = step.get("target_space")
-        zone = step.get("zone")
+        item = operation.get("item")
+        target_item = operation.get("target_item")
+        source_space = operation.get("source_space")
+        target_space = operation.get("target_space")
+        zone = operation.get("zone")
         if item not in item_indexes or target_item not in item_indexes:
             raise RuntimeError("dockspace benchmark step references an unknown item")
         if source_space not in space_indexes or target_space not in space_indexes:
@@ -428,7 +431,7 @@ def render_imgui_rehome_scenario_header(scenario: dict[str, Any]) -> str:
         return json.dumps(value, ensure_ascii=True)
 
     lines = [
-        "// Generated from dockspace_scenarios_v1.json. Do not edit.",
+        "// Generated from dockspace_scenarios_v2.json. Do not edit.",
         "static constexpr RehomeItemSpec RehomeItems[] = {",
     ]
     lines.extend(

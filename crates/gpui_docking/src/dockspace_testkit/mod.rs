@@ -3,6 +3,7 @@
 pub(crate) mod assertions;
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) mod benchmarks;
+pub(crate) mod contract;
 pub(crate) mod fixtures;
 #[cfg(test)]
 pub(crate) mod gpui_host;
@@ -15,6 +16,7 @@ pub(crate) use assertions::{
     assert_layout_roundtrip_preserves_space_items, assert_root_horizontal_split,
     assert_space_items, assert_unique_items,
 };
+pub(crate) use contract::DockspaceAdapterTag;
 #[cfg(test)]
 pub(crate) use fixtures::load_builtin_scenario_fixtures;
 #[cfg(test)]
@@ -23,6 +25,6 @@ pub(crate) use gpui_host::DockspaceGpuiHostRunner;
 pub(crate) use headless::DockspaceHeadlessRunner;
 #[cfg(test)]
 pub(crate) use topology::{
-    DockspaceAdapterTag, DockspaceFloatingSpec, DockspaceOracleKind, DockspaceScenario,
-    DockspaceScenarioBuildError, DockspaceTopologyNode, DockspaceTopologySpace,
+    DockspaceFloatingSpec, DockspaceOracleKind, DockspaceScenario, DockspaceScenarioBuildError,
+    DockspaceTopologyNode, DockspaceTopologySpace,
 };

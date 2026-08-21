@@ -5,8 +5,13 @@ use crate::{
         DockspaceFloatingSpec, DockspaceScenario, DockspaceScenarioBuildError,
         DockspaceTopologyNode, DockspaceTopologySpace,
         assert_layout_roundtrip_preserves_space_items, assert_root_horizontal_split,
-        assert_space_items, assert_unique_items, load_builtin_scenario_fixtures,
-        ops::{DockspaceScenarioStep, DockspaceScenarioZone},
+        assert_space_items, assert_unique_items,
+        contract::{
+            DockspaceCommitObservation, DockspaceDragTerminal, DockspacePrepareDecision,
+            DockspaceReceiptExpectation, DockspaceStepExpectation,
+        },
+        load_builtin_scenario_fixtures,
+        ops::{DockspaceScenarioStep, DockspaceScenarioZone, DockspaceSemanticOperation},
     },
     native_scenario_support::{
         NativeDockspaceTarget, NativeDockspaceZone, load_native_dockspace_scenario,
@@ -178,13 +183,25 @@ fn dockspace_testkit_resolves_floating_payload_by_item_identity() {
                 bounds: dock_bounds(20.0 + index as f32 * 40.0, 30.0, 220.0, 140.0),
             });
     }
-    let step = DockspaceScenarioStep::MoveFloatingToItem {
-        id: Some("move-second".into()),
-        source_space: main.clone(),
-        floating_item: DockItemId::new("second"),
-        target_space: main.clone(),
-        target_item: DockItemId::new("target"),
-        zone: DockspaceScenarioZone::Center,
+    let step = DockspaceScenarioStep {
+        id: "move-second".into(),
+        operation: DockspaceSemanticOperation::MoveFloatingToItem {
+            source_space: main.clone(),
+            floating_item: DockItemId::new("second"),
+            target_space: main.clone(),
+            target_item: DockItemId::new("target"),
+            zone: DockspaceScenarioZone::Center,
+        },
+        interaction: None,
+        faults: Vec::new(),
+        expected: DockspaceStepExpectation {
+            prepare: DockspacePrepareDecision::Prepared,
+            commit: Some(DockspaceCommitObservation::Committed),
+            terminal: DockspaceDragTerminal::Committed,
+            receipt: DockspaceReceiptExpectation::New {
+                alias: "move-second".into(),
+            },
+        },
     };
     let mut runner =
         crate::dockspace_testkit::DockspaceHeadlessRunner::from_graph(main.clone(), graph);

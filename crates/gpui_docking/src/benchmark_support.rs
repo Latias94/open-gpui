@@ -118,14 +118,13 @@ fn scenario_workload_contract(scenario: &DockspaceScenario) -> String {
         if index > 0 {
             contract.push(';');
         }
-        let DockspaceScenarioStep::MoveItemToItem {
+        let crate::dockspace_testkit::ops::DockspaceSemanticOperation::MoveItemToItem {
             source_space,
             item,
             target_space,
             target_item,
             zone,
-            ..
-        } = step
+        } = step.operation()
         else {
             panic!("the three-dockspace benchmark contract only supports named item moves");
         };
@@ -142,7 +141,9 @@ fn scenario_workload_contract(scenario: &DockspaceScenario) -> String {
 
 fn append_topology_contract(contract: &mut String, node: &DockspaceTopologyNode) {
     match node {
-        DockspaceTopologyNode::Tabs { items, selected } => {
+        DockspaceTopologyNode::Tabs {
+            items, selected, ..
+        } => {
             let selected = selected
                 .as_ref()
                 .or_else(|| items.first())
@@ -161,6 +162,7 @@ fn append_topology_contract(contract: &mut String, node: &DockspaceTopologyNode)
             axis,
             children,
             fractions,
+            ..
         } => {
             contract.push('S');
             contract.push_str(match axis {

@@ -20,7 +20,7 @@ pub(crate) const NATIVE_SCENARIO_WORKFLOW_ENTRY: &str =
 
 const NATIVE_SCENARIO_SCHEMA: u16 = 6;
 const DOCKSPACE_SCENARIO_FIXTURES: &str =
-    include_str!("../../crates/gpui_docking/src/fixtures/dockspace_scenarios_v1.json");
+    include_str!("../../crates/gpui_docking/src/fixtures/dockspace_scenarios_v2.json");
 const NATIVE_DOCK_PACKAGE: &str = "open-gpui-docking-native";
 const WINDOWS_PACKAGE: &str = "open-gpui-windows";
 const NATIVE_SCENARIO_ENV: &str = "OPEN_GPUI_NATIVE_SCENARIO_ID";
@@ -304,10 +304,15 @@ struct DockspaceFixtureSuite {
 #[derive(Debug, Deserialize)]
 struct DockspaceFixtureScenario {
     id: String,
+    adapter_contracts: Vec<DockspaceFixtureAdapterContract>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DockspaceFixtureAdapterContract {
+    adapter: String,
+    required_oracles: Vec<String>,
     #[serde(default)]
-    adapters: Vec<String>,
-    #[serde(default)]
-    oracles: Vec<String>,
+    optional_oracles: Vec<String>,
 }
 
 impl NativeObservationDomain {
@@ -516,18 +521,24 @@ fn validate_dockspace_binding(
         ));
     }
     if let Some(fixture) = fixture {
-        if !fixture.adapters.iter().any(|adapter| adapter == "native") {
+        let native_contract = fixture
+            .adapter_contracts
+            .iter()
+            .find(|contract| contract.adapter == "native");
+        if native_contract.is_none() {
             failures.push(format!(
                 "{NATIVE_SCENARIO_MANIFEST_PATH}: native scenario `{}` references dockspace fixture `{}` without the native adapter",
                 scenario.id, fixture.id
             ));
         }
         for oracle in &scenario.dockspace_oracles {
-            if !fixture
-                .oracles
-                .iter()
-                .any(|fixture_oracle| fixture_oracle == oracle.fixture_name())
-            {
+            if !native_contract.is_some_and(|contract| {
+                contract
+                    .required_oracles
+                    .iter()
+                    .chain(&contract.optional_oracles)
+                    .any(|fixture_oracle| fixture_oracle == oracle.fixture_name())
+            }) {
                 failures.push(format!(
                     "{NATIVE_SCENARIO_MANIFEST_PATH}: native scenario `{}` requests oracle `{:?}` absent from dockspace fixture `{}`",
                     scenario.id, oracle, fixture.id
@@ -554,13 +565,13 @@ fn load_dockspace_fixture_catalog() -> Result<BTreeMap<String, DockspaceFixtureS
     let suite: DockspaceFixtureSuite = serde_json::from_str(DOCKSPACE_SCENARIO_FIXTURES).map_err(
         |error| {
             format!(
-                "crates/gpui_docking/src/fixtures/dockspace_scenarios_v1.json: invalid fixture corpus: {error}"
+                "crates/gpui_docking/src/fixtures/dockspace_scenarios_v2.json: invalid fixture corpus: {error}"
             )
         },
     )?;
-    if suite.schema_version != 1 {
+    if suite.schema_version != 2 {
         return Err(format!(
-            "crates/gpui_docking/src/fixtures/dockspace_scenarios_v1.json: unsupported schema {}; expected 1",
+            "crates/gpui_docking/src/fixtures/dockspace_scenarios_v2.json: unsupported schema {}; expected 2",
             suite.schema_version
         ));
     }
@@ -569,7 +580,7 @@ fn load_dockspace_fixture_catalog() -> Result<BTreeMap<String, DockspaceFixtureS
         let id = scenario.id.clone();
         if catalog.insert(id.clone(), scenario).is_some() {
             return Err(format!(
-                "crates/gpui_docking/src/fixtures/dockspace_scenarios_v1.json: duplicate scenario `{id}`"
+                "crates/gpui_docking/src/fixtures/dockspace_scenarios_v2.json: duplicate scenario `{id}`"
             ));
         }
     }

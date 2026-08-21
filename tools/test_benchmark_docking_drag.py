@@ -38,7 +38,7 @@ def passing_benchmark_result(**overrides):
 class ScenarioComparisonRowsTests(unittest.TestCase):
     def test_imgui_fixture_is_generated_from_the_shared_scenario(self):
         scenario = deepcopy(load_three_dockspace_rehome_scenario())
-        scenario["steps"][0]["zone"] = "left"
+        scenario["steps"][0]["operation"]["zone"] = "left"
         scenario["spaces"][0]["root"]["selected"] = "EEE"
         scenario["spaces"][2]["root"]["fractions"] = [1, 3]
 

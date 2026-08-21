@@ -282,7 +282,7 @@ pub fn load_native_dockspace_scenario(
         .into_iter()
         .find(|scenario| scenario.id == scenario_id)
         .ok_or_else(|| NativeDockspaceScenarioError::MissingScenario(scenario_id.to_owned()))?;
-    if !scenario.adapters.contains(&DockspaceAdapterTag::Native) {
+    if !scenario.supports_adapter(DockspaceAdapterTag::Native) {
         return Err(NativeDockspaceScenarioError::NativeAdapterMissing(
             scenario.id,
         ));
@@ -325,9 +325,8 @@ pub fn load_native_dockspace_scenario(
         expected_layouts.push(headless.graph().export_layout());
     }
     let oracles = scenario
-        .oracles
-        .iter()
-        .cloned()
+        .oracles()
+        .into_iter()
         .map(NativeDockspaceOracle::from)
         .collect();
 
@@ -355,14 +354,13 @@ fn project_step(
             scenario: scenario.to_owned(),
         })?
         .to_owned();
-    let (source_space, item, target) = match step {
-        DockspaceScenarioStep::MoveItemToItem {
+    let (source_space, item, target) = match step.operation() {
+        crate::dockspace_testkit::ops::DockspaceSemanticOperation::MoveItemToItem {
             source_space,
             item,
             target_space,
             target_item,
             zone,
-            ..
         } => (
             source_space.clone(),
             item.clone(),
@@ -372,11 +370,10 @@ fn project_step(
                 zone: NativeDockspaceZone::from(*zone),
             },
         ),
-        DockspaceScenarioStep::MoveItemToEmptySpace {
+        crate::dockspace_testkit::ops::DockspaceSemanticOperation::MoveItemToEmptySpace {
             source_space,
             item,
             target_space,
-            ..
         } => (
             source_space.clone(),
             item.clone(),
