@@ -225,15 +225,15 @@ enum GraphValidationMark {
 struct DockGraphValidator<'a> {
     graph: &'a DockGraph,
     marks: HashMap<DockNodeId, GraphValidationMark>,
-    items: HashMap<DockItemId, DockNodeId>,
+    items: HashMap<&'a DockItemId, DockNodeId>,
 }
 
 impl<'a> DockGraphValidator<'a> {
     fn new(graph: &'a DockGraph) -> Self {
         Self {
             graph,
-            marks: HashMap::new(),
-            items: HashMap::new(),
+            marks: HashMap::with_capacity(graph.nodes.len()),
+            items: HashMap::with_capacity(graph.nodes.len()),
         }
     }
 
@@ -278,8 +278,8 @@ impl<'a> DockGraphValidator<'a> {
     fn validate_tabs(
         &mut self,
         tabs: DockNodeId,
-        items: &[DockItemId],
-        selected: &Option<DockItemId>,
+        items: &'a [DockItemId],
+        selected: &'a Option<DockItemId>,
     ) -> Result<(), DockGraphValidationError> {
         if items.is_empty() {
             return Err(DockGraphValidationError::EmptyTabs { tabs });
@@ -295,7 +295,7 @@ impl<'a> DockGraphValidator<'a> {
         }
 
         for item in items {
-            if let Some(first_tabs) = self.items.insert(item.clone(), tabs) {
+            if let Some(first_tabs) = self.items.insert(item, tabs) {
                 return Err(DockGraphValidationError::DuplicateItemId {
                     item: item.clone(),
                     first_tabs,

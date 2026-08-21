@@ -1,6 +1,6 @@
 use crate::{
     DockGraph, DockGraphDropTarget, DockItemId, DockNodeId, DockOp, DockSpaceId, DropZone,
-    dock_bounds,
+    dock_bounds, dockspace_testkit::topology::DockspaceAdapterTag,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -15,6 +15,13 @@ pub(crate) enum DockspaceScenarioZone {
     Bottom,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum DockspaceScenarioTabPosition {
+    Before,
+    After,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum DockspaceScenarioStep {
@@ -26,6 +33,15 @@ pub(crate) enum DockspaceScenarioStep {
         target_space: DockSpaceId,
         target_item: DockItemId,
         zone: DockspaceScenarioZone,
+    },
+    MoveItemToTab {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        source_space: DockSpaceId,
+        item: DockItemId,
+        target_space: DockSpaceId,
+        target_item: DockItemId,
+        position: DockspaceScenarioTabPosition,
     },
     MoveItemToEmptySpace {
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -42,12 +58,14 @@ pub(crate) enum DockspaceScenarioStep {
         target_space: DockSpaceId,
         bounds: [f32; 4],
     },
-    MergeFirstFloating {
+    MoveFloatingToItem {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         id: Option<String>,
         source_space: DockSpaceId,
+        floating_item: DockItemId,
         target_space: DockSpaceId,
         target_item: DockItemId,
+        zone: DockspaceScenarioZone,
     },
 }
 
@@ -69,46 +87,45 @@ pub(crate) enum DockspaceStepResolveError {
         item: DockItemId,
         zone: DockspaceScenarioZone,
     },
-    #[error("scenario space {space} has no floating container")]
-    MissingFloating { space: DockSpaceId },
+    #[error("scenario item {item} was not found in a floating container in source space {space}")]
+    MissingFloatingItem {
+        space: DockSpaceId,
+        item: DockItemId,
+    },
 }
 
 impl DockspaceScenarioStep {
-    pub(crate) fn with_id(mut self, id: impl Into<String>) -> Self {
-        let id = Some(id.into());
-        match &mut self {
-            Self::MoveItemToItem { id: target, .. }
-            | Self::MoveItemToEmptySpace { id: target, .. }
-            | Self::FloatItemInWindow { id: target, .. }
-            | Self::MergeFirstFloating { id: target, .. } => *target = id,
-        }
-        self
-    }
-
-    pub(crate) fn move_item_to_item(
-        source_space: impl Into<DockSpaceId>,
-        item: impl Into<DockItemId>,
-        target_space: impl Into<DockSpaceId>,
-        target_item: impl Into<DockItemId>,
-        zone: DockspaceScenarioZone,
-    ) -> Self {
-        Self::MoveItemToItem {
-            id: None,
-            source_space: source_space.into(),
-            item: item.into(),
-            target_space: target_space.into(),
-            target_item: target_item.into(),
-            zone,
-        }
-    }
-
     pub(crate) fn id(&self) -> Option<&str> {
         match self {
             Self::MoveItemToItem { id, .. }
+            | Self::MoveItemToTab { id, .. }
             | Self::MoveItemToEmptySpace { id, .. }
             | Self::FloatItemInWindow { id, .. }
-            | Self::MergeFirstFloating { id, .. } => id.as_deref(),
+            | Self::MoveFloatingToItem { id, .. } => id.as_deref(),
         }
+    }
+
+    pub(crate) fn supports_adapter(&self, adapter: &DockspaceAdapterTag) -> bool {
+        match adapter {
+            DockspaceAdapterTag::Headless | DockspaceAdapterTag::Benchmark => true,
+            DockspaceAdapterTag::GpuiHost => matches!(
+                self,
+                Self::MoveItemToItem {
+                    source_space,
+                    target_space,
+                    ..
+                } if source_space != target_space
+            ),
+            DockspaceAdapterTag::Native => matches!(
+                self,
+                Self::MoveItemToItem { .. } | Self::MoveItemToEmptySpace { .. }
+            ),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn supports_gpui_host(&self) -> bool {
+        self.supports_adapter(&DockspaceAdapterTag::GpuiHost)
     }
 
     pub(crate) fn to_op(&self, graph: &DockGraph) -> Result<DockOp, DockspaceStepResolveError> {
@@ -140,6 +157,37 @@ impl DockspaceScenarioStep {
                     item: item.clone(),
                     target_space: target_space.clone(),
                     target,
+                })
+            }
+            Self::MoveItemToTab {
+                id: _,
+                source_space,
+                item,
+                target_space,
+                target_item,
+                position,
+            } => {
+                graph
+                    .find_item_in_space(source_space, item)
+                    .ok_or_else(|| DockspaceStepResolveError::MissingSourceItem {
+                        space: source_space.clone(),
+                        item: item.clone(),
+                    })?;
+                let (target_tabs, target_index) = graph
+                    .find_item_in_space(target_space, target_item)
+                    .ok_or_else(|| DockspaceStepResolveError::MissingTargetItem {
+                        space: target_space.clone(),
+                        item: target_item.clone(),
+                    })?;
+                let insert_index = match position {
+                    DockspaceScenarioTabPosition::Before => target_index,
+                    DockspaceScenarioTabPosition::After => target_index.saturating_add(1),
+                };
+                Ok(DockOp::MoveItem {
+                    source_space: source_space.clone(),
+                    item: item.clone(),
+                    target_space: target_space.clone(),
+                    target: DockGraphDropTarget::tab_bar(target_tabs, insert_index),
                 })
             }
             Self::MoveItemToEmptySpace {
@@ -181,17 +229,21 @@ impl DockspaceScenarioStep {
                     bounds: dock_bounds(bounds[0], bounds[1], bounds[2], bounds[3]),
                 })
             }
-            Self::MergeFirstFloating {
+            Self::MoveFloatingToItem {
                 id: _,
                 source_space,
+                floating_item,
                 target_space,
                 target_item,
+                zone,
             } => {
                 let floating = graph
                     .floating_containers(source_space)
-                    .first()
-                    .ok_or_else(|| DockspaceStepResolveError::MissingFloating {
+                    .iter()
+                    .find(|container| graph.subtree_contains_item(container.node, floating_item))
+                    .ok_or_else(|| DockspaceStepResolveError::MissingFloatingItem {
                         space: source_space.clone(),
+                        item: floating_item.clone(),
                     })?
                     .node;
                 let target_tabs = graph
@@ -201,11 +253,12 @@ impl DockspaceScenarioStep {
                         item: target_item.clone(),
                     })?
                     .0;
+                let target = zone.resolve_target(graph, target_space, target_item, target_tabs)?;
                 Ok(DockOp::MoveFloating {
                     source_space: source_space.clone(),
                     floating,
                     target_space: target_space.clone(),
-                    target: DockGraphDropTarget::center(target_tabs),
+                    target,
                 })
             }
         }

@@ -1,9 +1,11 @@
 #![cfg_attr(not(test), allow(dead_code))]
 
 pub(crate) mod assertions;
-#[cfg(feature = "test-support")]
+#[cfg(any(test, feature = "test-support"))]
 pub(crate) mod benchmarks;
 pub(crate) mod fixtures;
+#[cfg(test)]
+pub(crate) mod gpui_host;
 pub(crate) mod headless;
 pub(crate) mod ops;
 pub(crate) mod topology;
@@ -16,11 +18,11 @@ pub(crate) use assertions::{
 #[cfg(test)]
 pub(crate) use fixtures::load_builtin_scenario_fixtures;
 #[cfg(test)]
+pub(crate) use gpui_host::DockspaceGpuiHostRunner;
+#[cfg(test)]
 pub(crate) use headless::DockspaceHeadlessRunner;
 #[cfg(test)]
 pub(crate) use topology::{
     DockspaceAdapterTag, DockspaceFloatingSpec, DockspaceOracleKind, DockspaceScenario,
     DockspaceScenarioBuildError, DockspaceTopologyNode, DockspaceTopologySpace,
-    complex_tabs_split_float_scenario, empty_central_with_floating_scenario,
-    three_viewport_rehome_scenario,
 };

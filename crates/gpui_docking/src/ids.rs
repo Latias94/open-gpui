@@ -85,12 +85,12 @@ impl fmt::Display for DockSpaceId {
 ///
 /// Applications map this id to titles, view builders, and close policies outside the pure graph.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub struct DockItemId(String);
+pub struct DockItemId(Arc<str>);
 
 impl DockItemId {
     /// Creates a dock item id from a stable application-provided string.
     pub fn new(id: impl Into<String>) -> Self {
-        Self(id.into())
+        Self(Arc::from(id.into()))
     }
 
     /// Returns the underlying string id.

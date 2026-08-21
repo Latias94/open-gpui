@@ -264,6 +264,7 @@ pub struct DockGraph {
     floatings: HashMap<DockSpaceId, Vec<DockFloatingContainer>>,
     central_regions: HashMap<DockSpaceId, DockCentralRegion>,
     tab_selection_history: HashMap<DockNodeId, DockTabSelectionState>,
+    may_have_staging_nodes: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -292,7 +293,12 @@ impl DockGraph {
 
     /// Inserts a node and returns its runtime id.
     pub fn insert_node(&mut self, node: DockNode) -> DockNodeId {
+        self.mark_staging_nodes_possible();
         self.nodes.insert(node)
+    }
+
+    pub(in crate::graph) fn mark_staging_nodes_possible(&mut self) {
+        self.may_have_staging_nodes = true;
     }
 
     pub(in crate::graph) fn record_tab_selection(&mut self, tabs: DockNodeId, item: &DockItemId) {
@@ -342,7 +348,13 @@ impl DockGraph {
 
     /// Sets the root node for a dock space.
     pub fn set_root(&mut self, space: DockSpaceId, root: DockNodeId) {
-        self.roots.insert(space, root);
+        if self
+            .roots
+            .insert(space, root)
+            .is_some_and(|previous| previous != root)
+        {
+            self.mark_staging_nodes_possible();
+        }
     }
 
     pub(in crate::graph) fn set_root_for_empty_space(
@@ -366,7 +378,11 @@ impl DockGraph {
 
     /// Removes and returns the root node for a dock space.
     pub fn remove_root(&mut self, space: &DockSpaceId) -> Option<DockNodeId> {
-        self.roots.remove(space)
+        let removed = self.roots.remove(space);
+        if removed.is_some() {
+            self.mark_staging_nodes_possible();
+        }
+        removed
     }
 
     /// Returns all logical dock spaces known to the graph.
@@ -407,6 +423,7 @@ impl DockGraph {
         &mut self,
         space: DockSpaceId,
     ) -> &mut Vec<DockFloatingContainer> {
+        self.mark_staging_nodes_possible();
         self.floatings.entry(space).or_default()
     }
 

@@ -245,6 +245,8 @@ mod host_floating_tests;
 #[cfg(test)]
 mod host_interaction_tests;
 #[cfg(test)]
+mod host_multiview_scenario_tests;
+#[cfg(test)]
 mod host_panel_tests;
 #[cfg(test)]
 mod host_presentation_scene_tests;

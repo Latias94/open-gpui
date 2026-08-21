@@ -1,19 +1,27 @@
 use crate::{
-    DockGraph, DockItemId, DockLayoutRect, DockNode, DockSpaceId, SplitAxis,
+    DockFloatingContainer, DockGraph, DockItemId, DockLayoutRect, DockNode, DockSpaceId, SplitAxis,
+    dock_bounds,
     dockspace_testkit::{
         DockspaceFloatingSpec, DockspaceScenario, DockspaceScenarioBuildError,
         DockspaceTopologyNode, DockspaceTopologySpace,
         assert_layout_roundtrip_preserves_space_items, assert_root_horizontal_split,
-        assert_space_items, assert_unique_items, complex_tabs_split_float_scenario,
-        empty_central_with_floating_scenario, three_viewport_rehome_scenario,
+        assert_space_items, assert_unique_items, load_builtin_scenario_fixtures,
+        ops::{DockspaceScenarioStep, DockspaceScenarioZone},
     },
-    native_scenario_support::{NativeDockspaceZone, load_native_dockspace_scenario},
+    native_scenario_support::{
+        NativeDockspaceTarget, NativeDockspaceZone, load_native_dockspace_scenario,
+    },
 };
 use open_gpui::{Bounds, point, px, size};
 
 #[test]
 fn dockspace_testkit_builds_complex_tabs_split_float_topology() {
-    let scenario = complex_tabs_split_float_scenario();
+    let scenarios =
+        load_builtin_scenario_fixtures().expect("builtin dockspace fixtures should parse");
+    let scenario = scenarios
+        .iter()
+        .find(|scenario| scenario.id == "tabs_split_float_merge")
+        .expect("complex scenario should exist");
     let seed = scenario
         .build_graph()
         .expect("complex scenario should build");
@@ -71,7 +79,12 @@ fn dockspace_testkit_rejects_an_unknown_primary_space() {
 
 #[test]
 fn dockspace_testkit_preserves_empty_central_space_and_floating_roundtrip() {
-    let scenario = empty_central_with_floating_scenario();
+    let scenarios =
+        load_builtin_scenario_fixtures().expect("builtin dockspace fixtures should parse");
+    let scenario = scenarios
+        .iter()
+        .find(|scenario| scenario.id == "empty_central_with_floating")
+        .expect("empty central scenario should exist");
     let seed = scenario
         .build_graph()
         .expect("empty central fixture should build");
@@ -144,36 +157,62 @@ fn dockspace_testkit_uses_graph_nodes_without_second_engine_state() {
 }
 
 #[test]
-fn dockspace_testkit_typed_builder_drives_three_viewport_rehome_headlessly() {
-    let scenario = three_viewport_rehome_scenario();
+fn dockspace_testkit_resolves_floating_payload_by_item_identity() {
+    let main = DockSpaceId::from("main");
+    let mut graph = DockGraph::new();
+    let root = graph.insert_node(DockNode::Tabs {
+        items: vec![DockItemId::new("target")],
+        selected: Some(DockItemId::new("target")),
+    });
+    graph.set_root(main.clone(), root);
+    for (index, item) in ["first", "second"].into_iter().enumerate() {
+        let child = graph.insert_node(DockNode::Tabs {
+            items: vec![DockItemId::new(item)],
+            selected: Some(DockItemId::new(item)),
+        });
+        let floating = graph.insert_node(DockNode::Floating { child });
+        graph
+            .floating_containers_mut(main.clone())
+            .push(DockFloatingContainer {
+                node: floating,
+                bounds: dock_bounds(20.0 + index as f32 * 40.0, 30.0, 220.0, 140.0),
+            });
+    }
+    let step = DockspaceScenarioStep::MoveFloatingToItem {
+        id: Some("move-second".into()),
+        source_space: main.clone(),
+        floating_item: DockItemId::new("second"),
+        target_space: main.clone(),
+        target_item: DockItemId::new("target"),
+        zone: DockspaceScenarioZone::Center,
+    };
     let mut runner =
-        crate::dockspace_testkit::DockspaceHeadlessRunner::from_scenario(&scenario, "source")
-            .expect("typed multiview scenario should build");
+        crate::dockspace_testkit::DockspaceHeadlessRunner::from_graph(main.clone(), graph);
 
-    let outcomes = runner
-        .run_all(&scenario.steps)
-        .expect("typed multiview scenario should commit headlessly");
-    assert_eq!(
-        outcomes,
-        vec![
-            crate::DockActionOutcome::Changed,
-            crate::DockActionOutcome::Changed,
-            crate::DockActionOutcome::Changed,
-            crate::DockActionOutcome::Changed
-        ]
-    );
-    assert_unique_items(runner.graph());
     assert_eq!(
         runner
-            .graph()
-            .collect_items_in_space(&DockSpaceId::from("source")),
-        vec![DockItemId::new("EEE"), DockItemId::new("BBB")]
+            .run_step(&step)
+            .expect("the matching floating container should move"),
+        crate::DockActionOutcome::Changed
     );
-    assert_eq!(
+    let remaining = runner.graph().floating_containers(&main);
+    assert_eq!(remaining.len(), 1);
+    assert!(
         runner
             .graph()
-            .collect_items_in_space(&DockSpaceId::from("middle")),
-        vec![DockItemId::new("FFF"), DockItemId::new("AAA")]
+            .subtree_contains_item(remaining[0].node, &DockItemId::new("first")),
+        "the first floating must remain untouched when the second item is named"
+    );
+    let DockNode::Tabs { items, .. } = runner
+        .graph()
+        .node(root)
+        .expect("target tabs should remain present")
+    else {
+        panic!("target root should remain tabs");
+    };
+    assert_eq!(
+        items,
+        &vec![DockItemId::new("target"), DockItemId::new("second")]
     );
 }
 
@@ -221,6 +260,35 @@ fn native_dockspace_projection_exposes_the_full_three_window_workflow() {
                 .expect("every native step should carry a headless checkpoint"),
         )
         .expect("native checkpoint layout should import");
+    }
+}
+
+#[test]
+fn native_dockspace_projection_supports_empty_space_then_item_redock() {
+    let scenario = load_native_dockspace_scenario("empty_space_split_collapse_roundtrip")
+        .expect("native empty-space scenario projection should load");
+
+    assert_eq!(scenario.primary_space().as_str(), "source");
+    assert_eq!(scenario.steps().len(), 2);
+    assert!(matches!(
+        scenario.steps()[0].target(),
+        NativeDockspaceTarget::EmptySpace { space } if space.as_str() == "target"
+    ));
+    assert!(matches!(
+        scenario.steps()[1].target(),
+        NativeDockspaceTarget::Item {
+            space,
+            item,
+            zone: NativeDockspaceZone::Left,
+        } if space.as_str() == "source" && item.as_str() == "B"
+    ));
+    for index in 0..scenario.steps().len() {
+        DockGraph::import_layout(
+            scenario
+                .expected_layout_after_step(index)
+                .expect("every empty-space step should carry a headless checkpoint"),
+        )
+        .expect("empty-space checkpoint layout should import");
     }
 }
 

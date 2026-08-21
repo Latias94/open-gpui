@@ -4,8 +4,9 @@ use std::collections::HashSet;
 
 use super::{DockGraph, DockNode, SplitAxis};
 
-pub(in crate::graph) struct DockGraphMutationRetention {
-    staging_roots: HashSet<DockNodeId>,
+pub(in crate::graph) enum DockGraphMutationRetention {
+    Canonical,
+    StagingRoots(HashSet<DockNodeId>),
 }
 
 impl DockGraph {
@@ -16,6 +17,7 @@ impl DockGraph {
     /// to the caller. Use [`Self::canonicalize`] only at an explicit complete-graph commit boundary
     /// when all unattached nodes may be discarded.
     pub fn simplify_space(&mut self, space: &DockSpaceId) {
+        self.mark_staging_nodes_possible();
         self.simplify_space_structure(space);
     }
 
@@ -33,6 +35,10 @@ impl DockGraph {
     /// edited by the mutation; the final sweep must follow its current children so detached old
     /// dependencies can be reclaimed.
     pub(in crate::graph) fn capture_mutation_retention(&self) -> DockGraphMutationRetention {
+        if !self.may_have_staging_nodes {
+            return DockGraphMutationRetention::Canonical;
+        }
+
         let live = self.reachable_node_ids();
         let staging_nodes = self
             .nodes
@@ -63,7 +69,7 @@ impl DockGraph {
             .difference(&referenced_by_staging)
             .copied()
             .collect();
-        DockGraphMutationRetention { staging_roots }
+        DockGraphMutationRetention::StagingRoots(staging_roots)
     }
 
     /// Completes one checked mutation with a single mark-and-sweep.
@@ -75,18 +81,26 @@ impl DockGraph {
         &mut self,
         retention: DockGraphMutationRetention,
     ) {
-        let mut retained = self.reachable_node_ids();
-        retained.extend(
-            self.reachable_node_ids_from(
-                retention
-                    .staging_roots
-                    .iter()
-                    .copied()
-                    .filter(|node| self.nodes.contains_key(*node))
-                    .collect(),
-            ),
-        );
-        self.prune_nodes_not_in(&retained);
+        match retention {
+            DockGraphMutationRetention::Canonical => {
+                self.prune_unreachable_nodes();
+                self.may_have_staging_nodes = false;
+            }
+            DockGraphMutationRetention::StagingRoots(staging_roots) => {
+                let mut retained = self.reachable_node_ids();
+                let retained_staging = self.reachable_node_ids_from(
+                    staging_roots
+                        .iter()
+                        .copied()
+                        .filter(|node| self.nodes.contains_key(*node))
+                        .collect(),
+                );
+                self.may_have_staging_nodes =
+                    retained_staging.iter().any(|node| !retained.contains(node));
+                retained.extend(retained_staging);
+                self.prune_nodes_not_in(&retained);
+            }
+        }
     }
 
     /// Canonicalizes a fully assembled graph and removes every unattached node.
@@ -98,6 +112,7 @@ impl DockGraph {
             self.simplify_space_structure(&space);
         }
         self.prune_unreachable_nodes();
+        self.may_have_staging_nodes = false;
     }
 
     fn simplify_space_structure(&mut self, space: &DockSpaceId) {
@@ -207,8 +222,7 @@ impl DockGraph {
     }
 
     fn simplify_subtree(&mut self, node: DockNodeId) -> Option<DockNodeId> {
-        let node_value = self.nodes.get(node)?.clone();
-        match node_value {
+        match self.nodes.get(node)? {
             DockNode::Tabs { items, .. } => {
                 if items.is_empty() {
                     return None;
@@ -216,6 +230,7 @@ impl DockGraph {
                 Some(node)
             }
             DockNode::Floating { child } => {
+                let child = *child;
                 let child = self.simplify_subtree(child)?;
                 if let Some(DockNode::Floating {
                     child: current_child,
@@ -230,6 +245,9 @@ impl DockGraph {
                 children,
                 fractions,
             } => {
+                let axis = *axis;
+                let children = children.clone();
+                let fractions = fractions.clone();
                 let mut next_children = Vec::new();
                 let mut next_fractions = Vec::new();
                 for (index, child) in children.into_iter().enumerate() {
@@ -382,7 +400,7 @@ impl DockGraph {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DockItemId, DockNode, DockSpaceId};
+    use crate::{DockItemId, DockNode, DockOp, DockSpaceId};
 
     #[test]
     fn mutation_retention_recomputes_current_staging_dependencies() {
@@ -413,7 +431,10 @@ mod tests {
             fractions: vec![0.5, 0.5],
         });
         let retention = graph.capture_mutation_retention();
-        assert_eq!(retention.staging_roots, HashSet::from([staging_root]));
+        let DockGraphMutationRetention::StagingRoots(staging_roots) = retention else {
+            panic!("a graph with unattached nodes should capture staging roots");
+        };
+        assert_eq!(staging_roots, HashSet::from([staging_root]));
 
         let DockNode::Split { children, .. } = graph
             .nodes
@@ -423,7 +444,7 @@ mod tests {
             panic!("staging root should be a split");
         };
         children.retain(|child| *child != staging_dependency);
-        graph.finalize_checked_mutation(retention);
+        graph.finalize_checked_mutation(DockGraphMutationRetention::StagingRoots(staging_roots));
 
         assert!(graph.node(staging_root).is_some());
         assert!(graph.node(live_root).is_some());
@@ -433,5 +454,71 @@ mod tests {
             graph.node(staging_dependency).is_none(),
             "a dependency detached from the current staging closure must be reclaimed"
         );
+        assert!(matches!(
+            graph.capture_mutation_retention(),
+            DockGraphMutationRetention::StagingRoots(ref roots)
+                if roots == &HashSet::from([staging_root])
+        ));
+    }
+
+    #[test]
+    fn mutation_retention_returns_to_the_canonical_fast_path_when_all_nodes_are_attached() {
+        let mut graph = DockGraph::new();
+        let space = DockSpaceId::from("main");
+        let root = graph.insert_node(DockNode::Tabs {
+            items: vec![DockItemId::from("panel")],
+            selected: Some(DockItemId::from("panel")),
+        });
+        graph.set_root(space, root);
+
+        let retention = graph.capture_mutation_retention();
+        assert!(matches!(
+            retention,
+            DockGraphMutationRetention::StagingRoots(ref roots) if roots.is_empty()
+        ));
+
+        graph.finalize_checked_mutation(retention);
+
+        assert!(matches!(
+            graph.capture_mutation_retention(),
+            DockGraphMutationRetention::Canonical
+        ));
+    }
+
+    #[test]
+    fn replacing_root_authority_preserves_the_detached_root_across_checked_mutations() {
+        let mut graph = DockGraph::new();
+        let live_space = DockSpaceId::from("live");
+        let detached_space = DockSpaceId::from("detached");
+        let live_root = graph.insert_node(DockNode::Tabs {
+            items: vec![DockItemId::from("a"), DockItemId::from("b")],
+            selected: Some(DockItemId::from("a")),
+        });
+        let detached_root = graph.insert_node(DockNode::Tabs {
+            items: vec![DockItemId::from("staged")],
+            selected: Some(DockItemId::from("staged")),
+        });
+        graph.set_root(live_space, live_root);
+        graph.set_root(detached_space.clone(), detached_root);
+        graph.canonicalize();
+
+        assert_eq!(graph.remove_root(&detached_space), Some(detached_root));
+        assert!(
+            graph
+                .apply_op_checked(&DockOp::SelectTab {
+                    tabs: live_root,
+                    item: DockItemId::from("b"),
+                })
+                .expect("selecting a live tab should succeed")
+        );
+        assert!(
+            graph.node(detached_root).is_some(),
+            "a root detached through the public API remains available for later reattachment"
+        );
+
+        graph.set_root(detached_space, detached_root);
+        graph
+            .validate_canonical()
+            .expect("reattaching the staged root should restore a canonical graph");
     }
 }

@@ -1,6 +1,6 @@
 use crate::{
     DockCentralRegion, DockFloatingContainer, DockGraph, DockGraphValidationError, DockItemId,
-    DockLayoutRect, DockNode, DockNodeId, DockSpaceId, SplitAxis, dock_bounds,
+    DockLayoutRect, DockNode, DockNodeId, DockSpaceId, SplitAxis,
 };
 use open_gpui_ui_core::normalize_split_fractions;
 use serde::{Deserialize, Serialize};
@@ -14,6 +14,17 @@ pub(crate) enum DockspaceAdapterTag {
     GpuiHost,
     Native,
     Benchmark,
+}
+
+impl DockspaceAdapterTag {
+    pub(crate) const fn fixture_name(&self) -> &'static str {
+        match self {
+            Self::Headless => "headless",
+            Self::GpuiHost => "GPUI host",
+            Self::Native => "native",
+            Self::Benchmark => "benchmark",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -80,6 +91,12 @@ pub(crate) struct DockspaceTopologySpace {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) struct DockspaceScenarioCheckpoint {
+    pub(crate) after_step: String,
+    pub(crate) spaces: Vec<DockspaceTopologySpace>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct DockspaceScenario {
     pub(crate) id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -87,6 +104,8 @@ pub(crate) struct DockspaceScenario {
     pub(crate) spaces: Vec<DockspaceTopologySpace>,
     #[serde(default)]
     pub(crate) steps: Vec<crate::dockspace_testkit::ops::DockspaceScenarioStep>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) checkpoints: Vec<DockspaceScenarioCheckpoint>,
     #[serde(default)]
     pub(crate) adapters: Vec<DockspaceAdapterTag>,
     #[serde(default)]
@@ -198,12 +217,6 @@ impl DockspaceTopologySpace {
         self.floatings.push(floating);
         self
     }
-
-    pub(crate) fn empty_central(mut self, passthrough_when_empty: bool) -> Self {
-        self.keep_central_when_empty = true;
-        self.passthrough_when_empty = passthrough_when_empty;
-        self
-    }
 }
 
 impl DockspaceScenario {
@@ -213,6 +226,7 @@ impl DockspaceScenario {
             primary_space: None,
             spaces: Vec::new(),
             steps: Vec::new(),
+            checkpoints: Vec::new(),
             adapters: Vec::new(),
             oracles: Vec::new(),
             imgui_categories: Vec::new(),
@@ -229,44 +243,26 @@ impl DockspaceScenario {
         self
     }
 
-    pub(crate) fn step(
-        mut self,
-        step: crate::dockspace_testkit::ops::DockspaceScenarioStep,
-    ) -> Self {
-        self.steps.push(step);
-        self
-    }
-
-    pub(crate) fn adapters(
-        mut self,
-        adapters: impl IntoIterator<Item = DockspaceAdapterTag>,
-    ) -> Self {
-        self.adapters = adapters.into_iter().collect();
-        self
-    }
-
-    pub(crate) fn oracles(
-        mut self,
-        oracles: impl IntoIterator<Item = DockspaceOracleKind>,
-    ) -> Self {
-        self.oracles = oracles.into_iter().collect();
-        self
-    }
-
-    pub(crate) fn imgui_categories(
-        mut self,
-        categories: impl IntoIterator<Item = ImGuiDockingCategory>,
-    ) -> Self {
-        self.imgui_categories = categories.into_iter().collect();
-        self
-    }
-
     pub(crate) fn build_graph(
         &self,
     ) -> Result<DockspaceScenarioGraph, DockspaceScenarioBuildError> {
+        self.build_graph_from_spaces(&self.spaces)
+    }
+
+    pub(crate) fn build_checkpoint_graph(
+        &self,
+        checkpoint: &DockspaceScenarioCheckpoint,
+    ) -> Result<DockspaceScenarioGraph, DockspaceScenarioBuildError> {
+        self.build_graph_from_spaces(&checkpoint.spaces)
+    }
+
+    fn build_graph_from_spaces(
+        &self,
+        spaces: &[DockspaceTopologySpace],
+    ) -> Result<DockspaceScenarioGraph, DockspaceScenarioBuildError> {
         let mut seen_spaces = BTreeSet::new();
         let mut seen_items = BTreeSet::new();
-        for space in &self.spaces {
+        for space in spaces {
             if !seen_spaces.insert(space.id.clone()) {
                 return Err(DockspaceScenarioBuildError::DuplicateSpace {
                     scenario: self.id.clone(),
@@ -291,7 +287,7 @@ impl DockspaceScenario {
 
         let mut graph = DockGraph::new();
         let mut roots_by_space = HashMap::new();
-        for space in &self.spaces {
+        for space in spaces {
             if let Some(root) = &space.root {
                 let root = self.build_node(&mut graph, root)?;
                 graph.set_root(space.id.clone(), root);
@@ -425,138 +421,4 @@ impl DockspaceScenario {
             }
         }
     }
-}
-
-pub(crate) fn complex_tabs_split_float_scenario() -> DockspaceScenario {
-    DockspaceScenario::new("tabs_split_float_merge")
-        .space(
-            DockspaceTopologySpace::new("main")
-                .root(DockspaceTopologyNode::split(
-                    SplitAxis::Horizontal,
-                    [
-                        DockspaceTopologyNode::tabs_selected(["AAA", "BBB"], "AAA"),
-                        DockspaceTopologyNode::tabs(["CCC"]),
-                    ],
-                ))
-                .floating(DockspaceFloatingSpec::new(
-                    DockspaceTopologyNode::tabs(["DDD"]),
-                    fixture_bounds(24.0, 32.0, 320.0, 220.0),
-                )),
-        )
-        .adapters([
-            DockspaceAdapterTag::Headless,
-            DockspaceAdapterTag::GpuiHost,
-            DockspaceAdapterTag::Benchmark,
-        ])
-        .oracles([
-            DockspaceOracleKind::Graph,
-            DockspaceOracleKind::Layout,
-            DockspaceOracleKind::Presentation,
-            DockspaceOracleKind::Performance,
-        ])
-        .imgui_categories([
-            ImGuiDockingCategory::DockIntoParent,
-            ImGuiDockingCategory::SplitPayload,
-            ImGuiDockingCategory::Undock,
-        ])
-}
-
-pub(crate) fn empty_central_with_floating_scenario() -> DockspaceScenario {
-    DockspaceScenario::new("empty_central_with_floating")
-        .space(
-            DockspaceTopologySpace::new("main")
-                .empty_central(false)
-                .floating(DockspaceFloatingSpec::new(
-                    DockspaceTopologyNode::tabs(["floating"]),
-                    fixture_bounds(12.0, 18.0, 260.0, 160.0),
-                )),
-        )
-        .adapters([DockspaceAdapterTag::Headless])
-        .oracles([DockspaceOracleKind::Graph, DockspaceOracleKind::Layout])
-}
-
-pub(crate) fn three_viewport_rehome_scenario() -> DockspaceScenario {
-    use crate::dockspace_testkit::ops::{DockspaceScenarioStep, DockspaceScenarioZone};
-
-    DockspaceScenario::new("three_viewport_rehome")
-        .primary_space("target")
-        .space(
-            DockspaceTopologySpace::new("source").root(DockspaceTopologyNode::tabs(["AAA", "EEE"])),
-        )
-        .space(
-            DockspaceTopologySpace::new("middle").root(DockspaceTopologyNode::tabs(["BBB", "FFF"])),
-        )
-        .space(
-            DockspaceTopologySpace::new("target").root(DockspaceTopologyNode::split(
-                SplitAxis::Vertical,
-                [
-                    DockspaceTopologyNode::tabs(["CCC"]),
-                    DockspaceTopologyNode::tabs(["DDD"]),
-                ],
-            )),
-        )
-        .step(
-            DockspaceScenarioStep::move_item_to_item(
-                "source",
-                "AAA",
-                "target",
-                "CCC",
-                DockspaceScenarioZone::Right,
-            )
-            .with_id("cross_viewport_known_target_preview"),
-        )
-        .step(
-            DockspaceScenarioStep::move_item_to_item(
-                "middle",
-                "BBB",
-                "target",
-                "DDD",
-                DockspaceScenarioZone::Center,
-            )
-            .with_id("middle_viewport_known_target_dock"),
-        )
-        .step(
-            DockspaceScenarioStep::move_item_to_item(
-                "target",
-                "AAA",
-                "middle",
-                "FFF",
-                DockspaceScenarioZone::Center,
-            )
-            .with_id("cross_viewport_rehome_to_middle"),
-        )
-        .step(
-            DockspaceScenarioStep::move_item_to_item(
-                "target",
-                "BBB",
-                "source",
-                "EEE",
-                DockspaceScenarioZone::Center,
-            )
-            .with_id("cross_viewport_return_to_source"),
-        )
-        .adapters([
-            DockspaceAdapterTag::Headless,
-            DockspaceAdapterTag::GpuiHost,
-            DockspaceAdapterTag::Native,
-            DockspaceAdapterTag::Benchmark,
-        ])
-        .oracles([
-            DockspaceOracleKind::Graph,
-            DockspaceOracleKind::Layout,
-            DockspaceOracleKind::Presentation,
-            DockspaceOracleKind::FocusSelection,
-            DockspaceOracleKind::ViewportRoute,
-            DockspaceOracleKind::NativeLifetime,
-            DockspaceOracleKind::Performance,
-        ])
-        .imgui_categories([
-            ImGuiDockingCategory::ViewportFocus,
-            ImGuiDockingCategory::ViewportOwnerChange,
-            ImGuiDockingCategory::DockOverDockspace,
-        ])
-}
-
-pub(crate) fn fixture_bounds(x: f32, y: f32, width: f32, height: f32) -> DockLayoutRect {
-    DockLayoutRect::from_bounds(dock_bounds(x, y, width, height))
 }

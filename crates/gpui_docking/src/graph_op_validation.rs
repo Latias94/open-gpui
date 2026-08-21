@@ -378,21 +378,21 @@ impl DockGraph {
         &mut self,
         plan: DockTreeMutationPlan<'_>,
     ) -> Result<bool, DockGraphMutationError> {
+        let retention = self.capture_mutation_retention();
         let before = self.clone();
-        let before_layout = before.export_layout();
-        let retention = before.capture_mutation_retention();
-        let mut next = before.clone();
-        let changed = next.apply_op_unchecked(plan.op);
+        let changed = self.apply_op_unchecked(plan.op);
         if changed {
-            next.finalize_checked_mutation(retention);
+            self.finalize_checked_mutation(retention);
         }
-        let next_layout = next.export_layout();
 
         if !changed {
-            if next_layout != before_layout {
-                return Err(plan
-                    .invariant_violation("mutation reported no change after modifying the graph"));
+            if !self.matches_exactly(&before) {
+                let error = plan
+                    .invariant_violation("mutation reported no change after modifying the graph");
+                *self = before;
+                return Err(error);
             }
+            *self = before;
             if plan.allow_noop {
                 return Ok(false);
             }
@@ -401,15 +401,21 @@ impl DockGraph {
             );
         }
 
-        if next_layout == before_layout {
-            return Err(
-                plan.invariant_violation("mutation reported a change without changing graph state")
-            );
+        if self.matches_exactly(&before) {
+            let error =
+                plan.invariant_violation("mutation reported a change without changing graph state");
+            *self = before;
+            return Err(error);
         }
-        next.validate()
-            .map_err(|error| plan.invariant_violation(error.to_string()))?;
-        plan.expectation.verify(&next, plan.op_name())?;
-        *self = next;
+        if let Err(error) = self.validate() {
+            let error = plan.invariant_violation(error.to_string());
+            *self = before;
+            return Err(error);
+        }
+        if let Err(error) = plan.expectation.verify(self, plan.op_name()) {
+            *self = before;
+            return Err(error);
+        }
         Ok(true)
     }
 
@@ -609,9 +615,8 @@ impl DockTreeMutationExpectation {
         match self {
             Self::ValidateOnly => Ok(()),
             Self::ItemsReachable { space, items } => {
-                let reachable = graph.collect_items_in_space(space);
                 for item in items {
-                    if !reachable.contains(item) {
+                    if graph.find_item_in_space(space, item).is_none() {
                         return Err(DockGraphMutationError::MutationInvariantViolation {
                             op,
                             reason: format!(

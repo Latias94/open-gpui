@@ -1,8 +1,14 @@
 //! Internal benchmark fixtures for the docking hot path.
 
 use crate::{
-    DockDropGuideMetrics, DockGraph, DockItemId, DockNode, DockNodeId, DockPolicy, DockSpaceId,
-    DockViewportHostGeometry,
+    DockActionOutcome, DockDropGuideMetrics, DockGraph, DockItemId, DockLayout, DockNode,
+    DockNodeId, DockPolicy, DockSpaceId, DockViewportHostGeometry, SplitAxis,
+    dockspace_testkit::{
+        fixtures::load_builtin_scenario_fixtures,
+        headless::DockspaceHeadlessRunner,
+        ops::{DockspaceScenarioStep, DockspaceScenarioZone},
+        topology::{DockspaceScenario, DockspaceTopologyNode},
+    },
     drop_runtime::{DockHostDropScene, DockHostDropSceneFact},
     drop_target::{
         DockEmptySpaceDropTarget, DockFloatingTitleBarDropTarget, DockLeafDropTarget,
@@ -12,10 +18,218 @@ use crate::{
     viewport_registry::DockViewportWindowBoundsFrame,
 };
 use open_gpui::{Bounds, Pixels, Point, Size, WindowId, point, px, size};
-use std::hint::black_box;
+use open_gpui_ui_core::normalize_split_fractions;
+use std::{fmt::Write, hint::black_box};
 
 #[doc(hidden)]
 pub use crate::dockspace_testkit::benchmarks::DockspaceBenchmarkCase;
+
+/// A full headless workspace transaction sequence backed by the shared scenario corpus.
+#[doc(hidden)]
+pub struct DockspaceScenarioSequenceBenchmark {
+    runner: DockspaceHeadlessRunner,
+    steps: Vec<DockspaceScenarioStep>,
+    initial_layout: DockLayout,
+    workload_contract: String,
+}
+
+impl DockspaceScenarioSequenceBenchmark {
+    /// Builds the eight-step three-space rehome cycle used by functional regression tests.
+    pub fn three_dockspace_rehome_cycle() -> Self {
+        let scenarios = load_builtin_scenario_fixtures()
+            .expect("builtin dockspace benchmark fixtures should parse");
+        let scenario = scenarios
+            .into_iter()
+            .find(|scenario| scenario.id == "three_dockspace_rehome_cycle")
+            .expect("three-dockspace rehome benchmark scenario should exist");
+        let primary_space = scenario
+            .primary_space
+            .clone()
+            .or_else(|| scenario.spaces.first().map(|space| space.id.clone()))
+            .expect("three-dockspace rehome benchmark scenario should declare a space");
+        let runner = DockspaceHeadlessRunner::from_scenario(&scenario, primary_space)
+            .expect("three-dockspace rehome benchmark scenario should build");
+        let initial_layout = runner.graph().export_layout();
+        let workload_contract = scenario_workload_contract(&scenario);
+
+        Self {
+            runner,
+            steps: scenario.steps,
+            initial_layout,
+            workload_contract,
+        }
+    }
+
+    /// Runs one complete cycle through production workspace transactions.
+    #[inline(never)]
+    pub fn run_cycle(&mut self, _iteration: usize) -> bool {
+        for step in &self.steps {
+            if !matches!(self.runner.run_step(step), Ok(DockActionOutcome::Changed)) {
+                return false;
+            }
+        }
+        black_box(true)
+    }
+
+    /// Returns the number of workspace transactions in one measured cycle.
+    pub fn step_count(&self) -> usize {
+        self.steps.len()
+    }
+
+    /// Returns whether the complete cycle restored the exact initial serialized topology.
+    pub fn validate_cycle_state(&self) -> bool {
+        cycle_state_matches(self.runner.graph(), &self.initial_layout)
+    }
+
+    /// Returns the topology-and-operation contract shared with the Dear ImGui benchmark.
+    pub fn workload_contract(&self) -> &str {
+        &self.workload_contract
+    }
+}
+
+fn cycle_state_matches(graph: &DockGraph, initial_layout: &DockLayout) -> bool {
+    graph.validate_canonical().is_ok() && graph.export_layout() == *initial_layout
+}
+
+fn scenario_workload_contract(scenario: &DockspaceScenario) -> String {
+    let mut contract = String::from("dockspace-sequence-v2|spaces=");
+    for (index, space) in scenario.spaces.iter().enumerate() {
+        if index > 0 {
+            contract.push(';');
+        }
+        write!(&mut contract, "{}=", space.id).expect("writing to a String cannot fail");
+        let root = space
+            .root
+            .as_ref()
+            .expect("the benchmark contract requires a root in every dockspace");
+        append_topology_contract(&mut contract, root);
+        assert!(
+            space.floatings.is_empty(),
+            "the three-dockspace benchmark contract does not include floating containers"
+        );
+        assert!(
+            !space.keep_central_when_empty && !space.passthrough_when_empty,
+            "the three-dockspace benchmark contract does not include central-region empty-space policy"
+        );
+    }
+
+    contract.push_str("|steps=");
+    for (index, step) in scenario.steps.iter().enumerate() {
+        if index > 0 {
+            contract.push(';');
+        }
+        let DockspaceScenarioStep::MoveItemToItem {
+            source_space,
+            item,
+            target_space,
+            target_item,
+            zone,
+            ..
+        } = step
+        else {
+            panic!("the three-dockspace benchmark contract only supports named item moves");
+        };
+        write!(
+            &mut contract,
+            "{item}@{source_space}>{target_item}@{target_space}:{}",
+            scenario_zone_name(*zone)
+        )
+        .expect("writing to a String cannot fail");
+    }
+    contract.push_str("|final=initial");
+    contract
+}
+
+fn append_topology_contract(contract: &mut String, node: &DockspaceTopologyNode) {
+    match node {
+        DockspaceTopologyNode::Tabs { items, selected } => {
+            let selected = selected
+                .as_ref()
+                .or_else(|| items.first())
+                .expect("the benchmark contract requires non-empty tabs");
+            write!(contract, "T[selected={selected};items=")
+                .expect("writing to a String cannot fail");
+            for (index, item) in items.iter().enumerate() {
+                if index > 0 {
+                    contract.push(',');
+                }
+                contract.push_str(item.as_str());
+            }
+            contract.push(']');
+        }
+        DockspaceTopologyNode::Split {
+            axis,
+            children,
+            fractions,
+        } => {
+            contract.push('S');
+            contract.push_str(match axis {
+                SplitAxis::Horizontal => "horizontal",
+                SplitAxis::Vertical => "vertical",
+            });
+            contract.push_str("[fractions=");
+            let mut fractions = if fractions.is_empty() {
+                vec![1.0; children.len()]
+            } else {
+                fractions.clone()
+            };
+            normalize_split_fractions(&mut fractions);
+            for (index, fraction) in fractions.iter().copied().enumerate() {
+                if index > 0 {
+                    contract.push(',');
+                }
+                append_contract_fraction(contract, fraction);
+            }
+            contract.push_str("](");
+            for (index, child) in children.iter().enumerate() {
+                if index > 0 {
+                    contract.push(',');
+                }
+                append_topology_contract(contract, child);
+            }
+            contract.push(')');
+        }
+    }
+}
+
+fn append_contract_fraction(contract: &mut String, fraction: f32) {
+    let start = contract.len();
+    write!(contract, "{fraction:.6}").expect("writing to a String cannot fail");
+    while contract.len() > start && contract.ends_with('0') {
+        contract.pop();
+    }
+    if contract.ends_with('.') {
+        contract.pop();
+    }
+}
+
+const fn scenario_zone_name(zone: DockspaceScenarioZone) -> &'static str {
+    match zone {
+        DockspaceScenarioZone::Center => "center",
+        DockspaceScenarioZone::Left => "left",
+        DockspaceScenarioZone::Right => "right",
+        DockspaceScenarioZone::Top => "top",
+        DockspaceScenarioZone::Bottom => "bottom",
+    }
+}
+
+#[cfg(test)]
+mod scenario_sequence_tests {
+    use super::*;
+
+    #[test]
+    fn cycle_state_validation_rejects_unreachable_nodes_hidden_from_layout_export() {
+        let benchmark = DockspaceScenarioSequenceBenchmark::three_dockspace_rehome_cycle();
+        let mut graph = benchmark.runner.graph().clone();
+        graph.insert_node(DockNode::Tabs {
+            items: vec![DockItemId::new("orphan")],
+            selected: Some(DockItemId::new("orphan")),
+        });
+
+        assert_eq!(graph.export_layout(), benchmark.initial_layout);
+        assert!(!cycle_state_matches(&graph, &benchmark.initial_layout));
+    }
+}
 
 /// A deterministic retained scene that exercises the production tab-drag resolver.
 #[doc(hidden)]
@@ -362,10 +576,12 @@ fn build_tab_drag_scene(
 
     let mut stack_ids = Vec::with_capacity(stack_count);
     for stack_index in 0..stack_count {
-        let item = DockItemId::new(format!("{space}-panel-{stack_index}"));
+        let items = (0..tabs_per_stack)
+            .map(|tab_index| DockItemId::new(format!("{space}-panel-{stack_index}-{tab_index}")))
+            .collect::<Vec<_>>();
         stack_ids.push(graph.insert_node(DockNode::Tabs {
-            items: vec![item.clone()],
-            selected: Some(item),
+            selected: items.first().cloned(),
+            items,
         }));
     }
 

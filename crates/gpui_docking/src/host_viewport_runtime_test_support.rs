@@ -206,6 +206,27 @@ impl DockCrossWindowVisualDragFixture {
         );
     }
 
+    pub(crate) fn drag_source_tab_to_target_center_with_hover(
+        &self,
+        cx: &mut TestAppContext,
+        source_tabs: DockNodeId,
+        item: DockItemId,
+        target_tabs: DockNodeId,
+        context: &str,
+        before_release: impl FnOnce(&Entity<DockHost>, &mut TestAppContext),
+    ) {
+        self.drag_source_tab_to_target_region(
+            cx,
+            source_tabs,
+            item,
+            DockDebugRegion::Tabs { node: target_tabs },
+            center_drop_position,
+            DockCrossWindowDragRelease::Release,
+            context,
+            before_release,
+        );
+    }
+
     pub(crate) fn assert_drop_previews_cleared(&self, cx: &mut TestAppContext, context: &str) {
         assert!(
             !self.target.has_drop_preview(cx),

@@ -25,6 +25,11 @@ name = "tab_drag_latency"
 harness = false
 required-features = ["test-support"]
 
+[[bench]]
+name = "tab_drag_allocations"
+harness = false
+required-features = ["test-support"]
+
 [features]
 test-support = ["open_gpui/test-support"]
 
