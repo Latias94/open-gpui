@@ -1,0 +1,287 @@
+use crate::graph_assembly::{CanonicalDockGraph, DockGraphAssembly};
+use crate::graph_patch::{
+    GraphCommitOutcome, GraphGroupRead, GraphPatchOperation, GraphPatchTarget, GraphPrepareOutcome,
+    GraphReadView, GraphRevision, GraphSupersededReason,
+};
+use crate::graph_transaction::GraphTransactionEngine;
+use crate::ids::CanonicalGraphAuthority;
+use crate::{DockGroupId, DockItemId};
+use std::collections::BTreeMap;
+
+fn item(id: &str) -> DockItemId {
+    DockItemId::new(id)
+}
+
+fn canonical_graph() -> CanonicalDockGraph {
+    let mut authority = CanonicalGraphAuthority::new();
+    let mut assembly = DockGraphAssembly::new();
+    assembly.add_space("main").unwrap();
+    let editor = assembly
+        .add_group("editor", [item("A"), item("B")], item("A"))
+        .unwrap();
+    let inspector = assembly
+        .add_group("inspector", [item("C"), item("D")], item("C"))
+        .unwrap();
+    let root = assembly
+        .add_branch(crate::SplitAxis::Horizontal, editor, inspector, 0.5)
+        .unwrap();
+    assembly.set_root("main", root).unwrap();
+    assembly.publish(&mut authority).unwrap()
+}
+
+#[derive(Debug)]
+struct SelectionTarget {
+    revision: GraphRevision,
+    groups: BTreeMap<DockGroupId, GraphGroupRead>,
+    applied: usize,
+}
+
+impl SelectionTarget {
+    fn from_graph(graph: &CanonicalDockGraph) -> Self {
+        let groups = graph
+            .groups()
+            .iter()
+            .map(|(id, group)| {
+                (
+                    id.clone(),
+                    GraphGroupRead {
+                        group: id.clone(),
+                        items: group.items.clone(),
+                        selected: group.selected.clone(),
+                    },
+                )
+            })
+            .collect();
+        Self {
+            revision: GraphReadView::graph_revision(graph),
+            groups,
+            applied: 0,
+        }
+    }
+
+    fn select_unrelated_group(&mut self, group: &DockGroupId, item: &DockItemId) {
+        self.groups
+            .get_mut(group)
+            .expect("fixture group should exist")
+            .selected = item.clone();
+        self.revision = self.revision.with_selection(self.revision.selection() + 1);
+    }
+
+    fn change_topology(&mut self) {
+        self.revision = self.revision.with_topology(self.revision.topology() + 1);
+    }
+
+    fn replace_authority(&mut self) {
+        self.revision = GraphRevision::new(
+            self.revision.authority_epoch() + 1,
+            self.revision.topology(),
+            self.revision.selection(),
+            self.revision.interaction(),
+        );
+    }
+}
+
+impl GraphReadView for SelectionTarget {
+    fn graph_revision(&self) -> GraphRevision {
+        self.revision
+    }
+
+    fn read_group(&self, group: &DockGroupId) -> Option<GraphGroupRead> {
+        self.groups.get(group).cloned()
+    }
+}
+
+impl GraphPatchTarget for SelectionTarget {
+    fn apply_select_tab(&mut self, group: &DockGroupId, item: &DockItemId) -> GraphRevision {
+        let Some(group_state) = self.groups.get_mut(group) else {
+            return self.revision;
+        };
+        group_state.selected = item.clone();
+        self.applied += 1;
+        self.revision = self.revision.with_selection(self.revision.selection() + 1);
+        self.revision
+    }
+}
+
+#[test]
+fn prepare_is_read_only_and_captures_only_the_touched_group() {
+    let graph = canonical_graph();
+    let mut engine = GraphTransactionEngine::new();
+    let prepared = match engine.prepare_select_tab(&graph, "editor", "B").unwrap() {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("selection should change"),
+    };
+
+    assert_eq!(
+        graph.group(&DockGroupId::from("editor")).unwrap().selected,
+        item("A")
+    );
+    assert_eq!(
+        prepared.read_set().group().group,
+        DockGroupId::from("editor")
+    );
+    assert_eq!(
+        prepared.read_set().group().items,
+        vec![item("A"), item("B")]
+    );
+    assert!(prepared.read_set().domains().topology);
+    assert!(!prepared.read_set().domains().selection);
+    assert!(matches!(
+        prepared.operation(),
+        GraphPatchOperation::SelectTab { group, item: selected_item }
+            if group == &DockGroupId::from("editor") && selected_item == &item("B")
+    ));
+}
+
+#[test]
+fn commit_changes_the_target_once_and_replays_the_original_receipt() {
+    let graph = canonical_graph();
+    let mut target = SelectionTarget::from_graph(&graph);
+    let mut engine = GraphTransactionEngine::new();
+    let prepared = match engine.prepare_select_tab(&graph, "editor", "B").unwrap() {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("selection should change"),
+    };
+    let commit_id = prepared.commit_id();
+    let committed = engine.commit(&mut target, prepared);
+    let receipt = match committed {
+        GraphCommitOutcome::Committed(receipt) => receipt,
+        other => panic!("expected committed receipt, got {other:?}"),
+    };
+    assert_eq!(receipt.commit_id(), commit_id);
+    assert_eq!(
+        target.groups[&DockGroupId::from("editor")].selected,
+        item("B")
+    );
+    assert_eq!(target.applied, 1);
+
+    let replayed = engine
+        .replay(commit_id)
+        .expect("receipt should be retained");
+    assert_eq!(replayed, GraphCommitOutcome::AlreadyCommitted(receipt));
+    assert_eq!(target.applied, 1);
+    assert_eq!(engine.receipt_count(), 1);
+}
+
+#[test]
+fn stale_topology_is_rejected_before_the_target_write() {
+    let graph = canonical_graph();
+    let mut target = SelectionTarget::from_graph(&graph);
+    let mut engine = GraphTransactionEngine::new();
+    let prepared = match engine.prepare_select_tab(&graph, "editor", "B").unwrap() {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("selection should change"),
+    };
+    target.change_topology();
+
+    let result = engine.commit(&mut target, prepared);
+    assert!(matches!(
+        result,
+        GraphCommitOutcome::Superseded(receipt)
+            if receipt.reason() == &GraphSupersededReason::TopologyChanged
+    ));
+    assert_eq!(target.applied, 0);
+    assert_eq!(engine.receipt_count(), 0);
+}
+
+#[test]
+fn replacement_authority_rejects_an_old_commit_even_when_local_revisions_match() {
+    let graph = canonical_graph();
+    let mut target = SelectionTarget::from_graph(&graph);
+    let mut engine = GraphTransactionEngine::new();
+    let prepared = match engine.prepare_select_tab(&graph, "editor", "B").unwrap() {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("selection should change"),
+    };
+    let commit_id = prepared.commit_id();
+    target.replace_authority();
+
+    let result = engine.commit(&mut target, prepared);
+    assert!(matches!(
+        result,
+        GraphCommitOutcome::Superseded(receipt)
+            if receipt.commit_id() == commit_id
+                && receipt.reason() == &GraphSupersededReason::AuthorityChanged
+    ));
+    assert_eq!(target.applied, 0);
+    assert_eq!(engine.receipt_count(), 0);
+}
+
+#[test]
+fn unrelated_group_selection_does_not_supersede_a_local_select_tab_patch() {
+    let graph = canonical_graph();
+    let mut target = SelectionTarget::from_graph(&graph);
+    let mut engine = GraphTransactionEngine::new();
+    let prepared = match engine.prepare_select_tab(&graph, "editor", "B").unwrap() {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("selection should change"),
+    };
+    target.select_unrelated_group(&DockGroupId::from("inspector"), &item("D"));
+
+    assert!(matches!(
+        engine.commit(&mut target, prepared),
+        GraphCommitOutcome::Committed(_)
+    ));
+    assert_eq!(
+        target.groups[&DockGroupId::from("editor")].selected,
+        item("B")
+    );
+    assert_eq!(
+        target.groups[&DockGroupId::from("inspector")].selected,
+        item("D")
+    );
+    assert_eq!(target.applied, 1);
+}
+
+#[test]
+fn touched_group_selection_change_supersedes_before_mutation() {
+    let graph = canonical_graph();
+    let mut target = SelectionTarget::from_graph(&graph);
+    let mut engine = GraphTransactionEngine::new();
+    let prepared = match engine.prepare_select_tab(&graph, "editor", "B").unwrap() {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("selection should change"),
+    };
+    target.select_unrelated_group(&DockGroupId::from("editor"), &item("B"));
+
+    let result = engine.commit(&mut target, prepared);
+    assert!(matches!(
+        result,
+        GraphCommitOutcome::Superseded(receipt)
+            if receipt.reason() == &GraphSupersededReason::GroupSelectionChanged
+    ));
+    assert_eq!(target.applied, 0);
+}
+
+#[test]
+fn selecting_the_current_item_is_a_typed_no_op() {
+    let graph = canonical_graph();
+    let mut engine = GraphTransactionEngine::new();
+    let outcome = engine.prepare_select_tab(&graph, "editor", "A").unwrap();
+    assert!(
+        matches!(outcome, GraphPrepareOutcome::NoOp(receipt) if receipt.revision().topology() == 1)
+    );
+    assert_eq!(engine.receipt_count(), 0);
+}
+
+#[test]
+fn prepared_patch_is_consumed_by_move_and_cannot_be_reused() {
+    let graph = canonical_graph();
+    let mut target = SelectionTarget::from_graph(&graph);
+    let mut engine = GraphTransactionEngine::new();
+    let prepared = match engine.prepare_select_tab(&graph, "editor", "B").unwrap() {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("selection should change"),
+    };
+    let mut slot = Some(prepared);
+    let first = engine.commit(
+        &mut target,
+        slot.take().expect("prepared patch should exist"),
+    );
+    assert!(matches!(first, GraphCommitOutcome::Committed(_)));
+    assert!(
+        slot.is_none(),
+        "the linear prepared value must not remain available"
+    );
+    assert_eq!(target.applied, 1);
+}

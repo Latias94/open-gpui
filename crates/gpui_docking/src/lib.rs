@@ -103,6 +103,9 @@ pub mod advanced;
 #[cfg(feature = "test-support")]
 #[doc(hidden)]
 pub mod benchmark_support;
+mod binary_layout_policy;
+#[cfg(test)]
+mod binary_layout_policy_tests;
 mod builder;
 mod chrome_geometry;
 mod controller;
@@ -126,14 +129,22 @@ mod drop_scene_fact;
 mod drop_target;
 mod geometry;
 mod graph;
+mod graph_assembly;
 #[cfg(test)]
 mod graph_floating_tests;
+mod graph_index;
+#[cfg(test)]
+mod graph_kernel_tests;
 #[cfg(test)]
 mod graph_move_tests;
+mod graph_patch;
+#[cfg(test)]
+mod graph_patch_tests;
 #[cfg(test)]
 mod graph_split_tests;
 #[cfg(test)]
 mod graph_test_support;
+mod graph_transaction;
 #[cfg(test)]
 mod graph_validation_tests;
 mod host;
@@ -146,6 +157,7 @@ mod host_viewport_drop;
 mod ids;
 mod interaction;
 mod layout;
+mod layout_migration;
 mod locked_drop_identity;
 pub mod model;
 mod native_captured_drag;
@@ -158,11 +170,13 @@ pub use native_captured_drag::{
     NativeCapturedReleaseObservationForTest, native_captured_drag_router_is_idle_for_test,
     native_captured_release_observation_for_test,
 };
+mod detached_tree;
 mod op;
 mod panel;
 mod panel_catalog;
 mod panel_registry;
 mod panel_view;
+mod payload_ref;
 mod policy;
 pub mod prelude;
 mod presentation_commands;
@@ -289,6 +303,8 @@ mod host_viewport_tests;
 #[cfg(test)]
 mod host_zoom_focus_tests;
 #[cfg(test)]
+mod layout_migration_tests;
+#[cfg(test)]
 mod layout_tests;
 #[cfg(test)]
 mod public_surface_tests;
@@ -320,7 +336,10 @@ pub(crate) use graph::{
 #[cfg(test)]
 pub(crate) use host::DockHostOptions;
 pub(crate) use host::{DockHost, DockHostWindowBinding};
-pub(crate) use ids::DockNodeId;
+pub(crate) use ids::{
+    CanonicalGraphAuthority, CanonicalGraphVersion, CanonicalNodeId, DockFloatingId, DockGroupId,
+    DockNodeId,
+};
 pub use ids::{DockClassId, DockItemId, DockSpaceId};
 pub use layout::{DOCK_LAYOUT_VERSION, DockLayout, DockLayoutRect, DockLayoutValidationError};
 pub(crate) use op::DockGraphMutationError;

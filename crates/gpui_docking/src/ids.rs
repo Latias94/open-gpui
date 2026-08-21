@@ -1,10 +1,20 @@
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use slotmap::Key;
-use std::{borrow::Borrow, fmt, sync::Arc};
+use std::{
+    borrow::Borrow,
+    fmt,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+};
 
 slotmap::new_key_type! {
     /// Runtime identifier for a node in a [`model::DockGraph`](crate::model::DockGraph).
     pub struct DockNodeId;
+
+    /// Runtime structural identity in the canonical binary docking graph.
+    pub(crate) struct CanonicalNodeId;
 }
 
 impl DockNodeId {
@@ -30,6 +40,167 @@ impl DockSpaceId {
     /// Returns the underlying string id.
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+static NEXT_CANONICAL_AUTHORITY_EPOCH: AtomicU64 = AtomicU64::new(1);
+
+/// Opaque publication identity for one canonical graph authority.
+#[derive(Debug)]
+pub(crate) struct CanonicalGraphAuthority {
+    authority_epoch: u64,
+    topology_revision: u64,
+    selection_revision: u64,
+    interaction_revision: u64,
+}
+
+impl CanonicalGraphAuthority {
+    pub(crate) fn new() -> Self {
+        let authority_epoch = NEXT_CANONICAL_AUTHORITY_EPOCH.fetch_add(1, Ordering::Relaxed);
+        assert!(
+            authority_epoch != 0,
+            "canonical graph authority epoch exhausted"
+        );
+        Self {
+            authority_epoch,
+            topology_revision: 0,
+            selection_revision: 0,
+            interaction_revision: 0,
+        }
+    }
+
+    pub(crate) fn publish(&mut self) -> CanonicalGraphVersion {
+        self.topology_revision = self
+            .topology_revision
+            .checked_add(1)
+            .expect("canonical graph topology revision exhausted");
+        self.current()
+    }
+
+    pub(crate) fn current(&self) -> CanonicalGraphVersion {
+        CanonicalGraphVersion {
+            authority_epoch: self.authority_epoch,
+            topology_revision: self.topology_revision,
+            selection_revision: self.selection_revision,
+            interaction_revision: self.interaction_revision,
+        }
+    }
+
+    pub(crate) fn record_selection_change(&mut self) -> CanonicalGraphVersion {
+        self.selection_revision = self
+            .selection_revision
+            .checked_add(1)
+            .expect("canonical graph selection revision exhausted");
+        self.current()
+    }
+
+    pub(crate) fn record_interaction_change(&mut self) -> CanonicalGraphVersion {
+        self.interaction_revision = self
+            .interaction_revision
+            .checked_add(1)
+            .expect("canonical graph interaction revision exhausted");
+        self.current()
+    }
+}
+
+/// Identifies one canonical graph publication and its independent state revisions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) struct CanonicalGraphVersion {
+    authority_epoch: u64,
+    topology_revision: u64,
+    selection_revision: u64,
+    interaction_revision: u64,
+}
+
+impl CanonicalGraphVersion {
+    #[cfg(test)]
+    pub(crate) const fn new(authority_epoch: u64, topology_revision: u64) -> Self {
+        Self {
+            authority_epoch,
+            topology_revision,
+            selection_revision: 0,
+            interaction_revision: 0,
+        }
+    }
+
+    pub(crate) fn authority_epoch(self) -> u64 {
+        self.authority_epoch
+    }
+
+    pub(crate) fn topology_revision(self) -> u64 {
+        self.topology_revision
+    }
+
+    pub(crate) fn selection_revision(self) -> u64 {
+        self.selection_revision
+    }
+
+    pub(crate) fn interaction_revision(self) -> u64 {
+        self.interaction_revision
+    }
+}
+
+/// Durable identity for a tab group.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) struct DockGroupId(Arc<str>);
+
+impl DockGroupId {
+    pub(crate) fn new(id: impl Into<String>) -> Self {
+        Self(Arc::from(id.into()))
+    }
+
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<&str> for DockGroupId {
+    fn from(value: &str) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<String> for DockGroupId {
+    fn from(value: String) -> Self {
+        Self::new(value)
+    }
+}
+
+impl fmt::Display for DockGroupId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Durable identity for a first-class floating root.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) struct DockFloatingId(Arc<str>);
+
+impl DockFloatingId {
+    pub(crate) fn new(id: impl Into<String>) -> Self {
+        Self(Arc::from(id.into()))
+    }
+
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<&str> for DockFloatingId {
+    fn from(value: &str) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<String> for DockFloatingId {
+    fn from(value: String) -> Self {
+        Self::new(value)
+    }
+}
+
+impl fmt::Display for DockFloatingId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
     }
 }
 
