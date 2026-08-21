@@ -48,6 +48,7 @@ impl SelectionTarget {
                         group: id.clone(),
                         items: group.items.clone(),
                         selected: group.selected.clone(),
+                        mru: group.mru.clone(),
                     },
                 )
             })
@@ -60,10 +61,13 @@ impl SelectionTarget {
     }
 
     fn select_unrelated_group(&mut self, group: &DockGroupId, item: &DockItemId) {
-        self.groups
+        let group_state = self
+            .groups
             .get_mut(group)
-            .expect("fixture group should exist")
-            .selected = item.clone();
+            .expect("fixture group should exist");
+        group_state.selected = item.clone();
+        group_state.mru.retain(|entry| entry != item);
+        group_state.mru.insert(0, item.clone());
         self.revision = self.revision.with_selection(self.revision.selection() + 1);
     }
 
@@ -97,6 +101,8 @@ impl GraphPatchTarget for SelectionTarget {
             return self.revision;
         };
         group_state.selected = item.clone();
+        group_state.mru.retain(|entry| entry != item);
+        group_state.mru.insert(0, item.clone());
         self.applied += 1;
         self.revision = self.revision.with_selection(self.revision.selection() + 1);
         self.revision
@@ -254,14 +260,25 @@ fn touched_group_selection_change_supersedes_before_mutation() {
 }
 
 #[test]
-fn selecting_the_current_item_is_a_typed_no_op() {
+fn selecting_the_current_item_is_a_runtime_selection_action() {
     let graph = canonical_graph();
+    let mut target = SelectionTarget::from_graph(&graph);
     let mut engine = GraphTransactionEngine::new();
-    let outcome = engine.prepare_select_tab(&graph, "editor", "A").unwrap();
-    assert!(
-        matches!(outcome, GraphPrepareOutcome::NoOp(receipt) if receipt.revision().topology() == 1)
+    let prepared = match engine.prepare_select_tab(&graph, "editor", "A").unwrap() {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("selecting a tab records a runtime MRU action"),
+    };
+    let result = engine.commit(&mut target, prepared);
+    assert!(matches!(result, GraphCommitOutcome::Committed(_)));
+    assert_eq!(
+        target.groups[&DockGroupId::from("editor")].selected,
+        item("A")
     );
-    assert_eq!(engine.receipt_count(), 0);
+    assert_eq!(
+        target.groups[&DockGroupId::from("editor")].mru,
+        vec![item("A")]
+    );
+    assert_eq!(target.applied, 1);
 }
 
 #[test]

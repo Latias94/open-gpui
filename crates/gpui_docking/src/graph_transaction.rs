@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use crate::graph_patch::{
-    GraphCommitId, GraphCommitOutcome, GraphCommitReceipt, GraphNoOpReceipt, GraphPatch,
+    GraphCommitId, GraphCommitOutcome, GraphCommitReceipt, GraphPatch,
     GraphPatchOperation, GraphPatchTarget, GraphPrepareError, GraphPrepareOutcome, GraphReadSet,
     GraphReadView, GraphSupersededReceipt,
 };
@@ -45,11 +45,6 @@ impl GraphTransactionEngine {
             item: item.clone(),
         };
         let revision = view.graph_revision();
-        if current.selected == item {
-            return Ok(GraphPrepareOutcome::NoOp(GraphNoOpReceipt::new(
-                revision, operation,
-            )));
-        }
 
         let generation = self
             .next_generation

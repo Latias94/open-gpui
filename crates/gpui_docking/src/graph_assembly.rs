@@ -159,6 +159,30 @@ impl CanonicalDockGraph {
         self.version == other.version
     }
 
+    /// Applies a selection/MRU update after the transaction boundary has revalidated its read set.
+    ///
+    /// This is intentionally the only production mutation entry point for the canonical group
+    /// state in the first migration slice. Callers must prove membership before entering it; the
+    /// boolean is retained as an invariant check so future patch kinds can share the same seam.
+    pub(crate) fn apply_selection_for_commit(
+        &mut self,
+        group: &DockGroupId,
+        item: &DockItemId,
+        version: CanonicalGraphVersion,
+    ) -> bool {
+        let Some(group_state) = self.groups.get_mut(group) else {
+            return false;
+        };
+        if !group_state.items.contains(item) {
+            return false;
+        }
+        group_state.mru.retain(|entry| entry != item);
+        group_state.mru.insert(0, item.clone());
+        group_state.selected = item.clone();
+        self.version = version;
+        true
+    }
+
     #[cfg(test)]
     pub(crate) fn group_mut_for_test(&mut self, id: &DockGroupId) -> Option<&mut CanonicalGroup> {
         self.groups.get_mut(id)

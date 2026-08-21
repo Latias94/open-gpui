@@ -113,6 +113,7 @@ pub(crate) struct GraphGroupRead {
     pub(crate) group: DockGroupId,
     pub(crate) items: Vec<DockItemId>,
     pub(crate) selected: DockItemId,
+    pub(crate) mru: Vec<DockItemId>,
 }
 
 /// Declared revision domains that a patch depends on.
@@ -389,6 +390,7 @@ impl GraphReadView for CanonicalDockGraph {
             group: group.clone(),
             items: value.items.clone(),
             selected: value.selected.clone(),
+            mru: value.mru.clone(),
         })
     }
 }
@@ -435,6 +437,9 @@ impl GraphReadSet {
             return Err(GraphSupersededReason::GroupMembershipChanged);
         }
         if group.selected != self.group.selected {
+            return Err(GraphSupersededReason::GroupSelectionChanged);
+        }
+        if group.mru != self.group.mru {
             return Err(GraphSupersededReason::GroupSelectionChanged);
         }
         Ok(actual)

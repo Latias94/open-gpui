@@ -107,6 +107,9 @@ mod binary_layout_policy;
 #[cfg(test)]
 mod binary_layout_policy_tests;
 mod builder;
+mod canonical_runtime;
+#[cfg(test)]
+mod canonical_runtime_tests;
 mod chrome_geometry;
 mod controller;
 #[cfg(test)]
