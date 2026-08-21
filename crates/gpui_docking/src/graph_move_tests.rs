@@ -556,6 +556,47 @@ fn checked_move_item_rejects_stale_edge_plan_without_replanning() {
 }
 
 #[test]
+fn checked_float_item_apply_failure_restores_exact_graph_and_node_allocator() {
+    let (mut graph, root) = root_tabs_graph(&["a", "b"]);
+    let mut untouched = graph.clone();
+
+    let error = graph
+        .apply_op_checked(&DockOp::FloatItemInWindow {
+            source_space: space(),
+            item: item("b"),
+            target_space: space(),
+            bounds: dock_bounds(10.0, 20.0, -1.0, 200.0),
+        })
+        .expect_err("invalid floating bounds should fail after applying the planned mutation");
+
+    let DockGraphMutationError::MutationInvariantViolation { op, reason } = error else {
+        panic!("expected a typed apply invariant failure");
+    };
+    assert_eq!(op, "FloatItemInWindow");
+    assert!(reason.contains("invalid bounds"));
+
+    assert!(
+        graph.matches_exactly(&untouched),
+        "failed apply must restore all graph content and live node identities"
+    );
+    assert_eq!(graph.root(&space()), Some(root));
+    assert_eq!(graph.node(root), untouched.node(root));
+    assert_eq!(graph.stored_node_count(), untouched.stored_node_count());
+
+    let allocation_probe = DockNode::Tabs {
+        items: vec![item("allocation-probe")],
+        selected: Some(item("allocation-probe")),
+    };
+    let failed_graph_next = graph.insert_node(allocation_probe.clone());
+    let untouched_graph_next = untouched.insert_node(allocation_probe);
+    assert_eq!(
+        failed_graph_next, untouched_graph_next,
+        "failed apply must restore the SlotMap allocator generation and free-list state"
+    );
+    assert!(graph.matches_exactly(&untouched));
+}
+
+#[test]
 fn checked_move_item_to_empty_space_creates_target_root() {
     let (mut graph, root) = root_tabs_graph(&["a", "b"]);
     let detached = DockSpaceId::new("detached");

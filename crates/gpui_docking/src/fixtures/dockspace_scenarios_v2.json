@@ -3,6 +3,21 @@
   "scenarios": [
     {
       "id": "tabs_split_float_merge",
+      "phases": {
+        "fixture": {
+          "arrangement": "direct_deterministic"
+        },
+        "harness": {
+          "ready": "canonical_graph_published"
+        },
+        "warmup": {
+          "iterations": 0
+        },
+        "teardown": {
+          "require_canonical_graph": true,
+          "require_no_pending_progress": true
+        }
+      },
       "spaces": [
         {
           "id": "main",
@@ -138,10 +153,153 @@
             "performance"
           ]
         }
+      ],
+      "checkpoints": [
+        {
+          "after_step": "tab_to_nested_edge_preview",
+          "spaces": [
+            {
+              "id": "main",
+              "root": {
+                "kind": "split",
+                "axis": "Horizontal",
+                "children": [
+                  {
+                    "kind": "tabs",
+                    "items": [
+                      "BBB"
+                    ],
+                    "selected": "BBB"
+                  },
+                  {
+                    "kind": "tabs",
+                    "items": [
+                      "CCC"
+                    ],
+                    "selected": "CCC"
+                  },
+                  {
+                    "kind": "tabs",
+                    "items": [
+                      "AAA"
+                    ],
+                    "selected": "AAA"
+                  }
+                ],
+                "fractions": [
+                  0.5,
+                  0.25,
+                  0.25
+                ]
+              },
+              "floatings": [
+                {
+                  "root": {
+                    "kind": "tabs",
+                    "items": [
+                      "DDD"
+                    ],
+                    "selected": "DDD"
+                  },
+                  "bounds": {
+                    "x": 24,
+                    "y": 32,
+                    "width": 320,
+                    "height": 220
+                  }
+                }
+              ],
+              "keep_central_when_empty": false,
+              "passthrough_when_empty": false
+            }
+          ],
+          "facts": {
+            "terminal": "committed",
+            "receipt": {
+              "kind": "new",
+              "alias": "tab_to_nested_edge_preview"
+            },
+            "revisions": {
+              "topology_delta": 1
+            },
+            "unreachable_node_count": 0
+          },
+          "phase": "terminal"
+        },
+        {
+          "after_step": "merge_floating_ddd_into_target",
+          "spaces": [
+            {
+              "id": "main",
+              "root": {
+                "kind": "split",
+                "axis": "Horizontal",
+                "children": [
+                  {
+                    "kind": "tabs",
+                    "items": [
+                      "BBB"
+                    ],
+                    "selected": "BBB"
+                  },
+                  {
+                    "kind": "tabs",
+                    "items": [
+                      "CCC",
+                      "DDD"
+                    ],
+                    "selected": "DDD"
+                  },
+                  {
+                    "kind": "tabs",
+                    "items": [
+                      "AAA"
+                    ],
+                    "selected": "AAA"
+                  }
+                ],
+                "fractions": [
+                  0.5,
+                  0.25,
+                  0.25
+                ]
+              },
+              "keep_central_when_empty": false,
+              "passthrough_when_empty": false
+            }
+          ],
+          "facts": {
+            "terminal": "committed",
+            "receipt": {
+              "kind": "new",
+              "alias": "merge_floating_ddd_into_target"
+            },
+            "revisions": {
+              "topology_delta": 1
+            },
+            "unreachable_node_count": 0
+          },
+          "phase": "terminal"
+        }
       ]
     },
     {
       "id": "three_viewport_rehome",
+      "phases": {
+        "fixture": {
+          "arrangement": "direct_deterministic"
+        },
+        "harness": {
+          "ready": "canonical_graph_published"
+        },
+        "warmup": {
+          "iterations": 0
+        },
+        "teardown": {
+          "require_canonical_graph": true,
+          "require_no_pending_progress": true
+        }
+      },
       "primary_space": "target",
       "spaces": [
         {
@@ -404,10 +562,347 @@
             "viewport_route"
           ]
         }
+      ],
+      "checkpoints": [
+        {
+          "after_step": "cross_viewport_known_target_preview",
+          "spaces": [
+            {
+              "id": "source",
+              "root": {
+                "kind": "tabs",
+                "items": [
+                  "EEE"
+                ],
+                "selected": "EEE"
+              },
+              "keep_central_when_empty": false,
+              "passthrough_when_empty": false
+            },
+            {
+              "id": "middle",
+              "root": {
+                "kind": "tabs",
+                "items": [
+                  "BBB",
+                  "FFF"
+                ],
+                "selected": "BBB"
+              },
+              "keep_central_when_empty": false,
+              "passthrough_when_empty": false
+            },
+            {
+              "id": "target",
+              "root": {
+                "kind": "split",
+                "axis": "Vertical",
+                "children": [
+                  {
+                    "kind": "split",
+                    "axis": "Horizontal",
+                    "children": [
+                      {
+                        "kind": "tabs",
+                        "items": [
+                          "CCC"
+                        ],
+                        "selected": "CCC"
+                      },
+                      {
+                        "kind": "tabs",
+                        "items": [
+                          "AAA"
+                        ],
+                        "selected": "AAA"
+                      }
+                    ],
+                    "fractions": [
+                      0.5,
+                      0.5
+                    ]
+                  },
+                  {
+                    "kind": "tabs",
+                    "items": [
+                      "DDD"
+                    ],
+                    "selected": "DDD"
+                  }
+                ],
+                "fractions": [
+                  0.5,
+                  0.5
+                ]
+              },
+              "keep_central_when_empty": false,
+              "passthrough_when_empty": false
+            }
+          ],
+          "facts": {
+            "terminal": "committed",
+            "receipt": {
+              "kind": "new",
+              "alias": "cross_viewport_known_target_preview"
+            },
+            "revisions": {
+              "topology_delta": 1
+            },
+            "unreachable_node_count": 0
+          },
+          "phase": "terminal"
+        },
+        {
+          "after_step": "middle_viewport_known_target_dock",
+          "spaces": [
+            {
+              "id": "source",
+              "root": {
+                "kind": "tabs",
+                "items": [
+                  "EEE"
+                ],
+                "selected": "EEE"
+              },
+              "keep_central_when_empty": false,
+              "passthrough_when_empty": false
+            },
+            {
+              "id": "middle",
+              "root": {
+                "kind": "tabs",
+                "items": [
+                  "FFF"
+                ],
+                "selected": "FFF"
+              },
+              "keep_central_when_empty": false,
+              "passthrough_when_empty": false
+            },
+            {
+              "id": "target",
+              "root": {
+                "kind": "split",
+                "axis": "Vertical",
+                "children": [
+                  {
+                    "kind": "split",
+                    "axis": "Horizontal",
+                    "children": [
+                      {
+                        "kind": "tabs",
+                        "items": [
+                          "CCC"
+                        ],
+                        "selected": "CCC"
+                      },
+                      {
+                        "kind": "tabs",
+                        "items": [
+                          "AAA"
+                        ],
+                        "selected": "AAA"
+                      }
+                    ],
+                    "fractions": [
+                      0.5,
+                      0.5
+                    ]
+                  },
+                  {
+                    "kind": "tabs",
+                    "items": [
+                      "DDD",
+                      "BBB"
+                    ],
+                    "selected": "BBB"
+                  }
+                ],
+                "fractions": [
+                  0.5,
+                  0.5
+                ]
+              },
+              "keep_central_when_empty": false,
+              "passthrough_when_empty": false
+            }
+          ],
+          "facts": {
+            "terminal": "committed",
+            "receipt": {
+              "kind": "new",
+              "alias": "middle_viewport_known_target_dock"
+            },
+            "revisions": {
+              "topology_delta": 1
+            },
+            "unreachable_node_count": 0
+          },
+          "phase": "terminal"
+        },
+        {
+          "after_step": "cross_viewport_rehome_to_middle",
+          "spaces": [
+            {
+              "id": "source",
+              "root": {
+                "kind": "tabs",
+                "items": [
+                  "EEE"
+                ],
+                "selected": "EEE"
+              },
+              "keep_central_when_empty": false,
+              "passthrough_when_empty": false
+            },
+            {
+              "id": "middle",
+              "root": {
+                "kind": "tabs",
+                "items": [
+                  "FFF",
+                  "AAA"
+                ],
+                "selected": "AAA"
+              },
+              "keep_central_when_empty": false,
+              "passthrough_when_empty": false
+            },
+            {
+              "id": "target",
+              "root": {
+                "kind": "split",
+                "axis": "Vertical",
+                "children": [
+                  {
+                    "kind": "tabs",
+                    "items": [
+                      "CCC"
+                    ],
+                    "selected": "CCC"
+                  },
+                  {
+                    "kind": "tabs",
+                    "items": [
+                      "DDD",
+                      "BBB"
+                    ],
+                    "selected": "BBB"
+                  }
+                ],
+                "fractions": [
+                  0.5,
+                  0.5
+                ]
+              },
+              "keep_central_when_empty": false,
+              "passthrough_when_empty": false
+            }
+          ],
+          "facts": {
+            "terminal": "committed",
+            "receipt": {
+              "kind": "new",
+              "alias": "cross_viewport_rehome_to_middle"
+            },
+            "revisions": {
+              "topology_delta": 1
+            },
+            "unreachable_node_count": 0
+          },
+          "phase": "terminal"
+        },
+        {
+          "after_step": "cross_viewport_return_to_source",
+          "spaces": [
+            {
+              "id": "source",
+              "root": {
+                "kind": "tabs",
+                "items": [
+                  "EEE",
+                  "BBB"
+                ],
+                "selected": "BBB"
+              },
+              "keep_central_when_empty": false,
+              "passthrough_when_empty": false
+            },
+            {
+              "id": "middle",
+              "root": {
+                "kind": "tabs",
+                "items": [
+                  "FFF",
+                  "AAA"
+                ],
+                "selected": "AAA"
+              },
+              "keep_central_when_empty": false,
+              "passthrough_when_empty": false
+            },
+            {
+              "id": "target",
+              "root": {
+                "kind": "split",
+                "axis": "Vertical",
+                "children": [
+                  {
+                    "kind": "tabs",
+                    "items": [
+                      "CCC"
+                    ],
+                    "selected": "CCC"
+                  },
+                  {
+                    "kind": "tabs",
+                    "items": [
+                      "DDD"
+                    ],
+                    "selected": "DDD"
+                  }
+                ],
+                "fractions": [
+                  0.5,
+                  0.5
+                ]
+              },
+              "keep_central_when_empty": false,
+              "passthrough_when_empty": false
+            }
+          ],
+          "facts": {
+            "terminal": "committed",
+            "receipt": {
+              "kind": "new",
+              "alias": "cross_viewport_return_to_source"
+            },
+            "revisions": {
+              "topology_delta": 1
+            },
+            "unreachable_node_count": 0
+          },
+          "phase": "terminal"
+        }
       ]
     },
     {
       "id": "empty_space_split_collapse_roundtrip",
+      "phases": {
+        "fixture": {
+          "arrangement": "direct_deterministic"
+        },
+        "harness": {
+          "ready": "canonical_graph_published"
+        },
+        "warmup": {
+          "iterations": 0
+        },
+        "teardown": {
+          "require_canonical_graph": true,
+          "require_no_pending_progress": true
+        }
+      },
       "primary_space": "source",
       "spaces": [
         {
@@ -561,10 +1056,122 @@
             "viewport_route"
           ]
         }
+      ],
+      "checkpoints": [
+        {
+          "after_step": "singleton_to_empty_space",
+          "spaces": [
+            {
+              "id": "source",
+              "root": {
+                "kind": "tabs",
+                "items": [
+                  "B",
+                  "C"
+                ],
+                "selected": "B"
+              },
+              "keep_central_when_empty": false,
+              "passthrough_when_empty": false
+            },
+            {
+              "id": "target",
+              "root": {
+                "kind": "tabs",
+                "items": [
+                  "A"
+                ],
+                "selected": "A"
+              },
+              "keep_central_when_empty": true,
+              "passthrough_when_empty": false,
+              "central_item": "A"
+            }
+          ],
+          "facts": {
+            "terminal": "committed",
+            "receipt": {
+              "kind": "new",
+              "alias": "singleton_to_empty_space"
+            },
+            "revisions": {
+              "topology_delta": 1
+            },
+            "unreachable_node_count": 0
+          },
+          "phase": "terminal"
+        },
+        {
+          "after_step": "empty_space_item_redock_left",
+          "spaces": [
+            {
+              "id": "source",
+              "root": {
+                "kind": "split",
+                "axis": "Horizontal",
+                "children": [
+                  {
+                    "kind": "tabs",
+                    "items": [
+                      "A"
+                    ],
+                    "selected": "A"
+                  },
+                  {
+                    "kind": "tabs",
+                    "items": [
+                      "B",
+                      "C"
+                    ],
+                    "selected": "B"
+                  }
+                ],
+                "fractions": [
+                  0.5,
+                  0.5
+                ]
+              },
+              "keep_central_when_empty": false,
+              "passthrough_when_empty": false
+            },
+            {
+              "id": "target",
+              "keep_central_when_empty": true,
+              "passthrough_when_empty": false
+            }
+          ],
+          "facts": {
+            "terminal": "committed",
+            "receipt": {
+              "kind": "new",
+              "alias": "empty_space_item_redock_left"
+            },
+            "revisions": {
+              "topology_delta": 1
+            },
+            "unreachable_node_count": 0
+          },
+          "phase": "terminal"
+        }
       ]
     },
     {
       "id": "tab_reorder_roundtrip",
+      "phases": {
+        "fixture": {
+          "arrangement": "direct_deterministic"
+        },
+        "harness": {
+          "ready": "canonical_graph_published"
+        },
+        "warmup": {
+          "iterations": 0
+        },
+        "teardown": {
+          "require_canonical_graph": true,
+          "require_no_pending_progress": true
+        }
+      },
       "primary_space": "main",
       "spaces": [
         {
@@ -666,10 +1273,119 @@
             "layout"
           ]
         }
+      ],
+      "checkpoints": [
+        {
+          "after_step": "adjacent_before_noop",
+          "spaces": [
+            {
+              "id": "main",
+              "root": {
+                "kind": "tabs",
+                "items": [
+                  "A",
+                  "B",
+                  "C"
+                ],
+                "selected": "A"
+              },
+              "keep_central_when_empty": false,
+              "passthrough_when_empty": false
+            }
+          ],
+          "facts": {
+            "terminal": "unchanged",
+            "receipt": {
+              "kind": "none"
+            },
+            "revisions": {
+              "topology_delta": 0
+            },
+            "unreachable_node_count": 0
+          },
+          "phase": "terminal"
+        },
+        {
+          "after_step": "first_tab_after_last",
+          "spaces": [
+            {
+              "id": "main",
+              "root": {
+                "kind": "tabs",
+                "items": [
+                  "B",
+                  "C",
+                  "A"
+                ],
+                "selected": "A"
+              },
+              "keep_central_when_empty": false,
+              "passthrough_when_empty": false
+            }
+          ],
+          "facts": {
+            "terminal": "committed",
+            "receipt": {
+              "kind": "new",
+              "alias": "first_tab_after_last"
+            },
+            "revisions": {
+              "topology_delta": 1
+            },
+            "unreachable_node_count": 0
+          },
+          "phase": "terminal"
+        },
+        {
+          "after_step": "last_tab_before_first",
+          "spaces": [
+            {
+              "id": "main",
+              "root": {
+                "kind": "tabs",
+                "items": [
+                  "A",
+                  "B",
+                  "C"
+                ],
+                "selected": "A"
+              },
+              "keep_central_when_empty": false,
+              "passthrough_when_empty": false
+            }
+          ],
+          "facts": {
+            "terminal": "committed",
+            "receipt": {
+              "kind": "new",
+              "alias": "last_tab_before_first"
+            },
+            "revisions": {
+              "topology_delta": 1
+            },
+            "unreachable_node_count": 0
+          },
+          "phase": "terminal"
+        }
       ]
     },
     {
       "id": "floating_redock_by_item",
+      "phases": {
+        "fixture": {
+          "arrangement": "direct_deterministic"
+        },
+        "harness": {
+          "ready": "canonical_graph_published"
+        },
+        "warmup": {
+          "iterations": 0
+        },
+        "teardown": {
+          "require_canonical_graph": true,
+          "require_no_pending_progress": true
+        }
+      },
       "primary_space": "main",
       "spaces": [
         {
@@ -758,10 +1474,103 @@
             "layout"
           ]
         }
+      ],
+      "checkpoints": [
+        {
+          "after_step": "float_b_in_window",
+          "spaces": [
+            {
+              "id": "main",
+              "root": {
+                "kind": "tabs",
+                "items": [
+                  "A"
+                ],
+                "selected": "A"
+              },
+              "floatings": [
+                {
+                  "root": {
+                    "kind": "tabs",
+                    "items": [
+                      "B"
+                    ],
+                    "selected": "B"
+                  },
+                  "bounds": {
+                    "x": 40,
+                    "y": 52,
+                    "width": 280,
+                    "height": 180
+                  }
+                }
+              ],
+              "keep_central_when_empty": false,
+              "passthrough_when_empty": false
+            }
+          ],
+          "facts": {
+            "terminal": "committed",
+            "receipt": {
+              "kind": "new",
+              "alias": "float_b_in_window"
+            },
+            "revisions": {
+              "topology_delta": 1
+            },
+            "unreachable_node_count": 0
+          },
+          "phase": "terminal"
+        },
+        {
+          "after_step": "redock_floating_b_center",
+          "spaces": [
+            {
+              "id": "main",
+              "root": {
+                "kind": "tabs",
+                "items": [
+                  "A",
+                  "B"
+                ],
+                "selected": "B"
+              },
+              "keep_central_when_empty": false,
+              "passthrough_when_empty": false
+            }
+          ],
+          "facts": {
+            "terminal": "committed",
+            "receipt": {
+              "kind": "new",
+              "alias": "redock_floating_b_center"
+            },
+            "revisions": {
+              "topology_delta": 1
+            },
+            "unreachable_node_count": 0
+          },
+          "phase": "terminal"
+        }
       ]
     },
     {
       "id": "three_dockspace_rehome_cycle",
+      "phases": {
+        "fixture": {
+          "arrangement": "direct_deterministic"
+        },
+        "harness": {
+          "ready": "canonical_graph_published"
+        },
+        "warmup": {
+          "iterations": 0
+        },
+        "teardown": {
+          "require_canonical_graph": true,
+          "require_no_pending_progress": true
+        }
+      },
       "primary_space": "target",
       "spaces": [
         {
@@ -1156,7 +1965,8 @@
               "topology_delta": 1
             },
             "unreachable_node_count": 0
-          }
+          },
+          "phase": "terminal"
         },
         {
           "after_step": "cycle_middle_to_target_center",
@@ -1237,7 +2047,8 @@
               "topology_delta": 1
             },
             "unreachable_node_count": 0
-          }
+          },
+          "phase": "terminal"
         },
         {
           "after_step": "cycle_target_to_middle_center",
@@ -1302,7 +2113,8 @@
               "topology_delta": 1
             },
             "unreachable_node_count": 0
-          }
+          },
+          "phase": "terminal"
         },
         {
           "after_step": "cycle_target_to_source_center",
@@ -1367,7 +2179,8 @@
               "topology_delta": 1
             },
             "unreachable_node_count": 0
-          }
+          },
+          "phase": "terminal"
         },
         {
           "after_step": "cycle_restore_b_to_target",
@@ -1432,7 +2245,8 @@
               "topology_delta": 1
             },
             "unreachable_node_count": 0
-          }
+          },
+          "phase": "terminal"
         },
         {
           "after_step": "cycle_restore_a_to_target_edge",
@@ -1513,7 +2327,8 @@
               "topology_delta": 1
             },
             "unreachable_node_count": 0
-          }
+          },
+          "phase": "terminal"
         },
         {
           "after_step": "cycle_restore_b_to_middle_center",
@@ -1594,7 +2409,8 @@
               "topology_delta": 1
             },
             "unreachable_node_count": 0
-          }
+          },
+          "phase": "terminal"
         },
         {
           "after_step": "cycle_restore_a_to_source_center",
@@ -1659,7 +2475,8 @@
               "topology_delta": 1
             },
             "unreachable_node_count": 0
-          }
+          },
+          "phase": "terminal"
         }
       ],
       "imgui_categories": [
@@ -1741,6 +2558,21 @@
     },
     {
       "id": "empty_central_with_floating",
+      "phases": {
+        "fixture": {
+          "arrangement": "direct_deterministic"
+        },
+        "harness": {
+          "ready": "canonical_graph_published"
+        },
+        "warmup": {
+          "iterations": 0
+        },
+        "teardown": {
+          "require_canonical_graph": true,
+          "require_no_pending_progress": true
+        }
+      },
       "spaces": [
         {
           "id": "main",
@@ -1786,6 +2618,387 @@
           "required_oracles": [
             "graph",
             "layout"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "whole_group_cross_space_rehome",
+      "phases": {
+        "fixture": {
+          "arrangement": "direct_deterministic"
+        },
+        "harness": {
+          "ready": "canonical_graph_published"
+        },
+        "warmup": {
+          "iterations": 0
+        },
+        "teardown": {
+          "require_canonical_graph": true,
+          "require_no_pending_progress": true
+        }
+      },
+      "spaces": [
+        {
+          "id": "source",
+          "root": {
+            "kind": "tabs",
+            "group_key": "source_group",
+            "items": [
+              "A",
+              "B"
+            ],
+            "selected": "B"
+          }
+        },
+        {
+          "id": "target",
+          "root": {
+            "kind": "tabs",
+            "items": [
+              "C"
+            ],
+            "selected": "C"
+          }
+        }
+      ],
+      "steps": [
+        {
+          "id": "rehome_source_group",
+          "operation": {
+            "type": "move_group_to_item",
+            "source_space": "source",
+            "group_item": "A",
+            "target_space": "target",
+            "target_item": "C",
+            "zone": "center"
+          },
+          "expected": {
+            "prepare": "prepared",
+            "commit": "committed",
+            "terminal": "committed",
+            "receipt": {
+              "kind": "new",
+              "alias": "rehome_source_group"
+            }
+          }
+        }
+      ],
+      "checkpoints": [
+        {
+          "after_step": "rehome_source_group",
+          "phase": "terminal",
+          "spaces": [
+            {
+              "id": "source"
+            },
+            {
+              "id": "target",
+              "root": {
+                "kind": "tabs",
+                "items": [
+                  "C",
+                  "A",
+                  "B"
+                ],
+                "selected": "B"
+              }
+            }
+          ],
+          "facts": {
+            "groups": [
+              {
+                "group": "source_group",
+                "selected": "B"
+              }
+            ],
+            "terminal": "committed",
+            "revisions": {
+              "topology_delta": 1
+            },
+            "receipt": {
+              "kind": "new",
+              "alias": "rehome_source_group"
+            }
+          }
+        },
+        {
+          "after_step": "rehome_source_group",
+          "phase": "after_teardown",
+          "spaces": [
+            {
+              "id": "source"
+            },
+            {
+              "id": "target",
+              "root": {
+                "kind": "tabs",
+                "items": [
+                  "C",
+                  "A",
+                  "B"
+                ],
+                "selected": "B"
+              }
+            }
+          ]
+        }
+      ],
+      "imgui_categories": [
+        "split_payload",
+        "tab_focus_restore"
+      ],
+      "adapter_contracts": [
+        {
+          "adapter": "headless",
+          "required_capabilities": [
+            "cross_viewport",
+            "semantic_operation",
+            "whole_group_payload"
+          ],
+          "optional_capabilities": [
+            "commit_receipt",
+            "recovery",
+            "retained_subtree_payload",
+            "provider_first_reservation",
+            "shutdown_drain"
+          ],
+          "required_oracles": [
+            "graph",
+            "layout",
+            "focus_selection"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "provider_first_destination_loss_contract",
+      "phases": {
+        "fixture": {
+          "arrangement": "direct_deterministic"
+        },
+        "harness": {
+          "ready": "canonical_graph_published"
+        },
+        "warmup": {
+          "iterations": 0
+        },
+        "teardown": {
+          "require_canonical_graph": true,
+          "require_no_pending_progress": true
+        }
+      },
+      "spaces": [
+        {
+          "id": "source",
+          "root": {
+            "kind": "tabs",
+            "items": [
+              "A"
+            ],
+            "selected": "A"
+          }
+        },
+        {
+          "id": "target",
+          "root": {
+            "kind": "tabs",
+            "items": [
+              "B"
+            ],
+            "selected": "B"
+          }
+        }
+      ],
+      "steps": [
+        {
+          "id": "provider_destination_loss",
+          "operation": {
+            "type": "move_item_to_item",
+            "source_space": "source",
+            "item": "A",
+            "target_space": "target",
+            "target_item": "B",
+            "zone": "center"
+          },
+          "required_capabilities": [
+            "provider_first_reservation",
+            "recovery",
+            "shutdown_drain"
+          ],
+          "faults": [
+            {
+              "kind": "destination_loss",
+              "point": "after_graph_commit_before_submitted_semantics"
+            }
+          ],
+          "expected": {
+            "prepare": "prepared",
+            "commit": "committed",
+            "terminal": "recovered",
+            "receipt": {
+              "kind": "new",
+              "alias": "provider_destination_loss"
+            }
+          }
+        }
+      ],
+      "checkpoints": [
+        {
+          "after_step": "provider_destination_loss",
+          "phase": "after_prepare",
+          "spaces": [
+            {
+              "id": "source",
+              "root": {
+                "kind": "tabs",
+                "items": [
+                  "A"
+                ],
+                "selected": "A"
+              }
+            },
+            {
+              "id": "target",
+              "root": {
+                "kind": "tabs",
+                "items": [
+                  "B"
+                ],
+                "selected": "B"
+              }
+            }
+          ]
+        },
+        {
+          "after_step": "provider_destination_loss",
+          "phase": "after_provider_receipt",
+          "spaces": [
+            {
+              "id": "source",
+              "root": {
+                "kind": "tabs",
+                "items": [
+                  "A"
+                ],
+                "selected": "A"
+              }
+            },
+            {
+              "id": "target",
+              "root": {
+                "kind": "tabs",
+                "items": [
+                  "B"
+                ],
+                "selected": "B"
+              }
+            }
+          ],
+          "facts": {
+            "progress": "forward_only_prepared"
+          }
+        },
+        {
+          "after_step": "provider_destination_loss",
+          "phase": "after_recovery_transfer",
+          "spaces": [
+            {
+              "id": "source",
+              "root": {
+                "kind": "tabs",
+                "items": [
+                  "A"
+                ],
+                "selected": "A"
+              }
+            },
+            {
+              "id": "target",
+              "root": {
+                "kind": "tabs",
+                "items": [
+                  "B"
+                ],
+                "selected": "B"
+              }
+            }
+          ],
+          "facts": {
+            "progress": "recovery_pending"
+          }
+        },
+        {
+          "after_step": "provider_destination_loss",
+          "phase": "terminal",
+          "spaces": [
+            {
+              "id": "source"
+            },
+            {
+              "id": "target",
+              "root": {
+                "kind": "tabs",
+                "items": [
+                  "B",
+                  "A"
+                ],
+                "selected": "A"
+              }
+            }
+          ],
+          "facts": {
+            "terminal": "recovered",
+            "receipt": {
+              "kind": "new",
+              "alias": "provider_destination_loss"
+            }
+          }
+        },
+        {
+          "after_step": "provider_destination_loss",
+          "phase": "after_teardown",
+          "spaces": [
+            {
+              "id": "source"
+            },
+            {
+              "id": "target",
+              "root": {
+                "kind": "tabs",
+                "items": [
+                  "B",
+                  "A"
+                ],
+                "selected": "A"
+              }
+            }
+          ]
+        }
+      ],
+      "imgui_categories": [
+        "viewport_owner_change",
+        "viewport_close"
+      ],
+      "adapter_contracts": [
+        {
+          "adapter": "headless",
+          "required_capabilities": [
+            "cross_viewport",
+            "item_payload",
+            "move_item_to_item",
+            "semantic_operation"
+          ],
+          "optional_capabilities": [
+            "provider_first_reservation",
+            "recovery",
+            "shutdown_drain",
+            "commit_receipt"
+          ],
+          "required_oracles": [
+            "graph",
+            "focus_selection"
           ]
         }
       ]

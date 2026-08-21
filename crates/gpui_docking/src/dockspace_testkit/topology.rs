@@ -2,8 +2,8 @@ use crate::{
     DockCentralRegion, DockFloatingContainer, DockGraph, DockGraphValidationError, DockItemId,
     DockLayoutRect, DockNode, DockNodeId, DockSpaceId, SplitAxis,
     dockspace_testkit::contract::{
-        DockspaceAdapterContract, DockspaceDragTerminal, DockspaceProgressState,
-        DockspaceReceiptExpectation,
+        DockspaceAdapterContract, DockspaceAdapterStepSupport, DockspaceDragTerminal,
+        DockspaceProgressState, DockspaceReceiptExpectation,
     },
 };
 use open_gpui_ui_core::normalize_split_fractions;
@@ -27,6 +27,70 @@ pub(crate) enum ImGuiDockingCategory {
     ViewportFocus,
     ViewportClose,
     ViewportOwnerChange,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum DockspaceFixtureArrangement {
+    DirectDeterministic,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum DockspaceHarnessReadyPoint {
+    CanonicalGraphPublished,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct DockspaceFixturePhase {
+    pub(crate) arrangement: DockspaceFixtureArrangement,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct DockspaceHarnessPhase {
+    pub(crate) ready: DockspaceHarnessReadyPoint,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct DockspaceWarmupPhase {
+    pub(crate) iterations: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct DockspaceTeardownPhase {
+    pub(crate) require_canonical_graph: bool,
+    pub(crate) require_no_pending_progress: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct DockspaceScenarioPhases {
+    pub(crate) fixture: DockspaceFixturePhase,
+    pub(crate) harness: DockspaceHarnessPhase,
+    pub(crate) warmup: DockspaceWarmupPhase,
+    pub(crate) teardown: DockspaceTeardownPhase,
+}
+
+impl Default for DockspaceScenarioPhases {
+    fn default() -> Self {
+        Self {
+            fixture: DockspaceFixturePhase {
+                arrangement: DockspaceFixtureArrangement::DirectDeterministic,
+            },
+            harness: DockspaceHarnessPhase {
+                ready: DockspaceHarnessReadyPoint::CanonicalGraphPublished,
+            },
+            warmup: DockspaceWarmupPhase { iterations: 0 },
+            teardown: DockspaceTeardownPhase {
+                require_canonical_graph: true,
+                require_no_pending_progress: true,
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -72,6 +136,8 @@ pub(crate) struct DockspaceTopologySpace {
     pub(crate) keep_central_when_empty: bool,
     #[serde(default)]
     pub(crate) passthrough_when_empty: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) central_item: Option<DockItemId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -143,10 +209,21 @@ pub(crate) struct DockspaceCheckpointFacts {
     pub(crate) unreachable_node_count: Option<usize>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum DockspaceCheckpointPhase {
+    AfterPrepare,
+    AfterProviderReceipt,
+    AfterRecoveryTransfer,
+    Terminal,
+    AfterTeardown,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct DockspaceScenarioCheckpoint {
     pub(crate) after_step: String,
+    pub(crate) phase: DockspaceCheckpointPhase,
     pub(crate) spaces: Vec<DockspaceTopologySpace>,
     #[serde(default, skip_serializing_if = "DockspaceCheckpointFacts::is_empty")]
     pub(crate) facts: DockspaceCheckpointFacts,
@@ -156,6 +233,7 @@ pub(crate) struct DockspaceScenarioCheckpoint {
 #[serde(deny_unknown_fields)]
 pub(crate) struct DockspaceScenario {
     pub(crate) id: String,
+    pub(crate) phases: DockspaceScenarioPhases,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) primary_space: Option<DockSpaceId>,
     pub(crate) spaces: Vec<DockspaceTopologySpace>,
@@ -212,6 +290,14 @@ pub(crate) enum DockspaceScenarioBuildError {
         scenario: String,
         error: DockGraphValidationError,
     },
+    #[error("dockspace scenario {scenario} cannot observe missing graph node {node:?}")]
+    MissingObservedNode { scenario: String, node: DockNodeId },
+    #[error("dockspace scenario {scenario} central item {item} is not in the dock-space root")]
+    MissingCentralItem { scenario: String, item: DockItemId },
+    #[error("dockspace scenario {scenario} step {step} has no terminal checkpoint")]
+    MissingTerminalCheckpoint { scenario: String, step: String },
+    #[error("dockspace scenario {scenario} step {step} repeats its terminal checkpoint")]
+    DuplicateTerminalCheckpoint { scenario: String, step: String },
 }
 
 impl DockspaceTopologyNode {
@@ -297,6 +383,7 @@ impl DockspaceTopologySpace {
             floatings: Vec::new(),
             keep_central_when_empty: false,
             passthrough_when_empty: false,
+            central_item: None,
         }
     }
 
@@ -315,6 +402,7 @@ impl DockspaceScenario {
     pub(crate) fn new(id: impl Into<String>) -> Self {
         Self {
             id: id.into(),
+            phases: DockspaceScenarioPhases::default(),
             primary_space: None,
             spaces: Vec::new(),
             steps: Vec::new(),
@@ -337,6 +425,15 @@ impl DockspaceScenario {
         self.adapter_contract(adapter).is_some()
     }
 
+    pub(crate) fn adapter_step_support(
+        &self,
+        adapter: DockspaceAdapterTag,
+        step: &crate::dockspace_testkit::ops::DockspaceScenarioStep,
+    ) -> Option<DockspaceAdapterStepSupport> {
+        self.adapter_contract(adapter)
+            .map(|contract| contract.step_support(&step.required_capabilities()))
+    }
+
     pub(crate) fn oracles(&self) -> BTreeSet<DockspaceOracleKind> {
         self.adapter_contracts
             .iter()
@@ -348,6 +445,19 @@ impl DockspaceScenario {
             })
             .copied()
             .collect()
+    }
+
+    pub(crate) fn declared_items(&self) -> BTreeSet<DockItemId> {
+        let mut items = BTreeSet::new();
+        for space in &self.spaces {
+            if let Some(root) = &space.root {
+                Self::collect_node_items(root, &mut items);
+            }
+            for floating in &space.floatings {
+                Self::collect_node_items(&floating.root, &mut items);
+            }
+        }
+        items
     }
 
     pub(crate) fn primary_space(mut self, space: impl Into<DockSpaceId>) -> Self {
@@ -371,6 +481,118 @@ impl DockspaceScenario {
         checkpoint: &DockspaceScenarioCheckpoint,
     ) -> Result<DockspaceScenarioGraph, DockspaceScenarioBuildError> {
         self.build_graph_from_spaces(&checkpoint.spaces)
+    }
+
+    pub(crate) fn terminal_checkpoints(
+        &self,
+    ) -> Result<Vec<&DockspaceScenarioCheckpoint>, DockspaceScenarioBuildError> {
+        self.steps
+            .iter()
+            .map(|step| {
+                let mut matches = self.checkpoints.iter().filter(|checkpoint| {
+                    checkpoint.after_step == step.id
+                        && checkpoint.phase == DockspaceCheckpointPhase::Terminal
+                });
+                let checkpoint = matches.next().ok_or_else(|| {
+                    DockspaceScenarioBuildError::MissingTerminalCheckpoint {
+                        scenario: self.id.clone(),
+                        step: step.id.clone(),
+                    }
+                })?;
+                if matches.next().is_some() {
+                    return Err(DockspaceScenarioBuildError::DuplicateTerminalCheckpoint {
+                        scenario: self.id.clone(),
+                        step: step.id.clone(),
+                    });
+                }
+                Ok(checkpoint)
+            })
+            .collect()
+    }
+
+    pub(crate) fn observe_graph_spaces(
+        &self,
+        graph: &DockGraph,
+    ) -> Result<Vec<DockspaceTopologySpace>, DockspaceScenarioBuildError> {
+        self.spaces
+            .iter()
+            .map(|declared| {
+                let root = graph
+                    .root(&declared.id)
+                    .map(|root| self.observe_node(graph, root))
+                    .transpose()?;
+                let floatings = graph
+                    .floating_containers(&declared.id)
+                    .iter()
+                    .map(|floating| {
+                        Ok(DockspaceFloatingSpec {
+                            floating_key: None,
+                            root: self.observe_node(graph, floating.node)?,
+                            bounds: DockLayoutRect::from_bounds(floating.bounds),
+                        })
+                    })
+                    .collect::<Result<Vec<_>, DockspaceScenarioBuildError>>()?;
+                let central = graph.central_region(&declared.id);
+                Ok(DockspaceTopologySpace {
+                    id: declared.id.clone(),
+                    root,
+                    floatings,
+                    keep_central_when_empty: central
+                        .is_some_and(|region| region.keep_alive_when_empty),
+                    passthrough_when_empty: central
+                        .is_some_and(|region| region.passthrough_when_empty),
+                    central_item: central
+                        .and_then(|region| region.node)
+                        .and_then(|node| self.first_item_in_node(graph, node)),
+                })
+            })
+            .collect()
+    }
+
+    fn observe_node(
+        &self,
+        graph: &DockGraph,
+        node: DockNodeId,
+    ) -> Result<DockspaceTopologyNode, DockspaceScenarioBuildError> {
+        match graph
+            .node(node)
+            .ok_or_else(|| DockspaceScenarioBuildError::MissingObservedNode {
+                scenario: self.id.clone(),
+                node,
+            })? {
+            DockNode::Tabs { items, selected } => Ok(DockspaceTopologyNode::Tabs {
+                node_key: None,
+                group_key: None,
+                items: items.clone(),
+                selected: selected.clone(),
+            }),
+            DockNode::Split {
+                axis,
+                children,
+                fractions,
+            } => Ok(DockspaceTopologyNode::Split {
+                node_key: None,
+                axis: *axis,
+                children: children
+                    .iter()
+                    .map(|child| self.observe_node(graph, *child))
+                    .collect::<Result<Vec<_>, _>>()?,
+                fractions: fractions.clone(),
+            }),
+            DockNode::Floating { child } => self.observe_node(graph, *child),
+        }
+    }
+
+    fn first_item_in_node(&self, graph: &DockGraph, node: DockNodeId) -> Option<DockItemId> {
+        match graph.node(node)? {
+            DockNode::Tabs { items, selected } => {
+                selected.clone().or_else(|| items.first().cloned())
+            }
+            DockNode::Split { children, .. } => children
+                .iter()
+                .find_map(|child| self.first_item_in_node(graph, *child)),
+            DockNode::Floating { child } => self.first_item_in_node(graph, *child),
+        }
     }
 
     fn build_graph_from_spaces(
@@ -421,11 +643,24 @@ impl DockspaceScenario {
                     });
             }
             if space.keep_central_when_empty {
-                graph.set_central_region(
-                    space.id.clone(),
-                    DockCentralRegion::empty()
-                        .with_passthrough_when_empty(space.passthrough_when_empty),
-                );
+                let central = space
+                    .central_item
+                    .as_ref()
+                    .and_then(|item| graph.find_item_in_space(&space.id, item))
+                    .filter(|(node, _)| {
+                        roots_by_space.get(&space.id).copied()
+                            == graph.root_for_node_in_space(&space.id, *node)
+                    })
+                    .map(|(node, _)| DockCentralRegion::with_node(node))
+                    .unwrap_or_else(DockCentralRegion::empty)
+                    .with_passthrough_when_empty(space.passthrough_when_empty);
+                if space.central_item.is_some() && central.node.is_none() {
+                    return Err(DockspaceScenarioBuildError::MissingCentralItem {
+                        scenario: self.id.clone(),
+                        item: space.central_item.clone().expect("checked above"),
+                    });
+                }
+                graph.set_central_region(space.id.clone(), central);
             }
         }
         graph.canonicalize();
@@ -503,6 +738,19 @@ impl DockspaceScenario {
             }
         }
         Ok(())
+    }
+
+    fn collect_node_items(node: &DockspaceTopologyNode, items: &mut BTreeSet<DockItemId>) {
+        match node {
+            DockspaceTopologyNode::Tabs {
+                items: node_items, ..
+            } => items.extend(node_items.iter().cloned()),
+            DockspaceTopologyNode::Split { children, .. } => {
+                for child in children {
+                    Self::collect_node_items(child, items);
+                }
+            }
+        }
     }
 
     fn build_node(

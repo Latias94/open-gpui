@@ -37,6 +37,13 @@ pub(crate) enum DockspaceSemanticOperation {
         target_item: DockItemId,
         zone: DockspaceScenarioZone,
     },
+    MoveGroupToItem {
+        source_space: DockSpaceId,
+        group_item: DockItemId,
+        target_space: DockSpaceId,
+        target_item: DockItemId,
+        zone: DockspaceScenarioZone,
+    },
     MoveItemToTab {
         source_space: DockSpaceId,
         item: DockItemId,
@@ -85,6 +92,8 @@ pub(crate) struct DockspaceInteractionScript {
 pub(crate) struct DockspaceScenarioStep {
     pub(crate) id: String,
     pub(crate) operation: DockspaceSemanticOperation,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub(crate) required_capabilities: BTreeSet<DockspaceAdapterCapability>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) interaction: Option<DockspaceInteractionScript>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -127,7 +136,11 @@ impl DockspaceScenarioStep {
     }
 
     pub(crate) fn required_capabilities(&self) -> BTreeSet<DockspaceAdapterCapability> {
-        self.operation.required_capabilities()
+        self.operation
+            .required_capabilities()
+            .union(&self.required_capabilities)
+            .copied()
+            .collect()
     }
 
     pub(crate) fn supports_adapter(&self, adapter: DockspaceAdapterTag) -> bool {
@@ -156,12 +169,109 @@ impl DockspaceScenarioStep {
     pub(crate) fn to_op(&self, graph: &DockGraph) -> Result<DockOp, DockspaceStepResolveError> {
         self.operation.to_op(graph)
     }
+
+    pub(crate) fn validate_fixture_references(
+        &self,
+        spaces: &BTreeSet<DockSpaceId>,
+        items: &BTreeSet<DockItemId>,
+    ) -> Result<(), String> {
+        self.operation.validate_fixture_references(spaces, items)
+    }
 }
 
 impl DockspaceSemanticOperation {
+    fn validate_fixture_references(
+        &self,
+        spaces: &BTreeSet<DockSpaceId>,
+        items: &BTreeSet<DockItemId>,
+    ) -> Result<(), String> {
+        let (source_space, target_space) = match self {
+            Self::MoveItemToItem {
+                source_space,
+                target_space,
+                ..
+            }
+            | Self::MoveGroupToItem {
+                source_space,
+                target_space,
+                ..
+            }
+            | Self::MoveItemToTab {
+                source_space,
+                target_space,
+                ..
+            }
+            | Self::MoveItemToEmptySpace {
+                source_space,
+                target_space,
+                ..
+            }
+            | Self::FloatItemInWindow {
+                source_space,
+                target_space,
+                ..
+            }
+            | Self::MoveFloatingToItem {
+                source_space,
+                target_space,
+                ..
+            } => (source_space, target_space),
+        };
+        for space in [source_space, target_space] {
+            if !spaces.contains(space) {
+                return Err(format!(
+                    "operation references undeclared dock space {space}"
+                ));
+            }
+        }
+
+        let referenced_items = match self {
+            Self::MoveItemToItem {
+                item, target_item, ..
+            }
+            | Self::MoveGroupToItem {
+                group_item: item,
+                target_item,
+                ..
+            }
+            | Self::MoveItemToTab {
+                item, target_item, ..
+            } => [Some(item), Some(target_item)],
+            Self::MoveItemToEmptySpace { item, .. } | Self::FloatItemInWindow { item, .. } => {
+                [Some(item), None]
+            }
+            Self::MoveFloatingToItem {
+                floating_item,
+                target_item,
+                ..
+            } => [Some(floating_item), Some(target_item)],
+        };
+        for item in referenced_items.into_iter().flatten() {
+            if !items.contains(item) {
+                return Err(format!("operation references undeclared dock item {item}"));
+            }
+        }
+
+        if let Self::FloatItemInWindow { bounds, .. } = self
+            && (!bounds.iter().all(|value| value.is_finite())
+                || bounds[2] <= 0.0
+                || bounds[3] <= 0.0)
+        {
+            return Err(format!(
+                "operation declares invalid floating bounds {bounds:?}"
+            ));
+        }
+        Ok(())
+    }
+
     fn is_cross_viewport(&self) -> bool {
         match self {
             Self::MoveItemToItem {
+                source_space,
+                target_space,
+                ..
+            }
+            | Self::MoveGroupToItem {
                 source_space,
                 target_space,
                 ..
@@ -201,6 +311,16 @@ impl DockspaceSemanticOperation {
             } => {
                 capabilities.insert(Capability::MoveItemToItem);
                 capabilities.insert(Capability::ItemPayload);
+                if source_space != target_space {
+                    capabilities.insert(Capability::CrossViewport);
+                }
+            }
+            Self::MoveGroupToItem {
+                source_space,
+                target_space,
+                ..
+            } => {
+                capabilities.insert(Capability::WholeGroupPayload);
                 if source_space != target_space {
                     capabilities.insert(Capability::CrossViewport);
                 }
@@ -272,6 +392,35 @@ impl DockspaceSemanticOperation {
                 Ok(DockOp::MoveItem {
                     source_space: source_space.clone(),
                     item: item.clone(),
+                    target_space: target_space.clone(),
+                    target,
+                })
+            }
+            Self::MoveGroupToItem {
+                source_space,
+                group_item,
+                target_space,
+                target_item,
+                zone,
+            } => {
+                let source_tabs = graph
+                    .find_item_in_space(source_space, group_item)
+                    .ok_or_else(|| DockspaceStepResolveError::MissingSourceItem {
+                        space: source_space.clone(),
+                        item: group_item.clone(),
+                    })?
+                    .0;
+                let target_tabs = graph
+                    .find_item_in_space(target_space, target_item)
+                    .ok_or_else(|| DockspaceStepResolveError::MissingTargetItem {
+                        space: target_space.clone(),
+                        item: target_item.clone(),
+                    })?
+                    .0;
+                let target = zone.resolve_target(graph, target_space, target_item, target_tabs)?;
+                Ok(DockOp::MoveTabs {
+                    source_space: source_space.clone(),
+                    source_tabs,
                     target_space: target_space.clone(),
                     target,
                 })

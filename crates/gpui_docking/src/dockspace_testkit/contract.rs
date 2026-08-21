@@ -29,6 +29,7 @@ impl DockspaceAdapterTag {
                 Capability::MoveItemToItem,
                 Capability::MoveItemToTab,
                 Capability::MoveItemToEmptySpace,
+                Capability::WholeGroupPayload,
                 Capability::FloatItem,
                 Capability::MoveFloating,
                 Capability::ItemPayload,
@@ -56,6 +57,7 @@ impl DockspaceAdapterTag {
                 Capability::MoveItemToItem,
                 Capability::MoveItemToTab,
                 Capability::MoveItemToEmptySpace,
+                Capability::WholeGroupPayload,
                 Capability::FloatItem,
                 Capability::MoveFloating,
                 Capability::ItemPayload,
@@ -113,6 +115,52 @@ pub(crate) struct DockspaceAdapterContract {
     pub(crate) required_oracles: BTreeSet<DockspaceOracleKind>,
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub(crate) optional_oracles: BTreeSet<DockspaceOracleKind>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum DockspaceAdapterStepSupport {
+    Supported,
+    OptionalUnsupported {
+        capabilities: BTreeSet<DockspaceAdapterCapability>,
+    },
+    ContractMissing {
+        capabilities: BTreeSet<DockspaceAdapterCapability>,
+    },
+}
+
+impl DockspaceAdapterContract {
+    pub(crate) fn step_support(
+        &self,
+        required: &BTreeSet<DockspaceAdapterCapability>,
+    ) -> DockspaceAdapterStepSupport {
+        let declared = self
+            .required_capabilities
+            .union(&self.optional_capabilities)
+            .copied()
+            .collect::<BTreeSet<_>>();
+        let undeclared = required
+            .difference(&declared)
+            .copied()
+            .collect::<BTreeSet<_>>();
+        if !undeclared.is_empty() {
+            return DockspaceAdapterStepSupport::ContractMissing {
+                capabilities: undeclared,
+            };
+        }
+
+        let supported = self.adapter.supported_capabilities();
+        let unsupported = required
+            .difference(&supported)
+            .copied()
+            .collect::<BTreeSet<_>>();
+        if unsupported.is_empty() {
+            DockspaceAdapterStepSupport::Supported
+        } else {
+            DockspaceAdapterStepSupport::OptionalUnsupported {
+                capabilities: unsupported,
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

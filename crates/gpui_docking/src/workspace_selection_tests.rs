@@ -1,6 +1,7 @@
 use crate::{
     DockAction, DockActionApplyError, DockActionOutcome, DockGraph, DockGraphMutationError,
-    DockNode, DockNodeId, DockWorkspace, host_test_support::*, model::DockLayoutNode,
+    DockNode, DockNodeId, DockWorkspace, dock_bounds, host_test_support::*, model::DockLayoutNode,
+    workspace::DockWorkspaceGraphCommitPreparation,
 };
 use open_gpui::TestAppContext;
 use slotmap::Key;
@@ -228,6 +229,46 @@ fn workspace_rejects_invalid_select_tab_actions(cx: &mut TestAppContext) {
     assert_eq!(selected.as_ref(), Some(&item("a")));
     assert!(workspace.panels().contains(&item("a")));
     assert!(workspace.panels().contains(&item("b")));
+}
+
+#[open_gpui::test]
+fn workspace_failed_graph_apply_preserves_graph_revision(cx: &mut TestAppContext) {
+    let (graph, root) = tabs_graph(&["a", "b"]);
+    let mut workspace = workspace_with_panels(cx, graph, &[("a", "A", "A"), ("b", "B", "B")]);
+    workspace.policy_mut().set_allow_floating(true);
+    let before = workspace.graph().clone();
+    let commit_id = workspace.allocate_graph_commit_id();
+    let DockWorkspaceGraphCommitPreparation::Prepared(prepared) =
+        workspace.prepare_graph_commit(commit_id, before.clone())
+    else {
+        panic!("a fresh graph commit id should prepare against the current revision");
+    };
+    assert!(workspace.can_commit_prepared_graph(&prepared));
+
+    let error = workspace
+        .apply_action(&DockAction::FloatItemInWindow {
+            source_space: space(),
+            item: item("b"),
+            target_space: space(),
+            bounds: dock_bounds(10.0, 20.0, -1.0, 200.0),
+        })
+        .expect_err("invalid floating bounds should fail the graph apply phase");
+
+    let DockActionApplyError::Graph(DockGraphMutationError::MutationInvariantViolation {
+        op,
+        reason,
+    }) = error
+    else {
+        panic!("expected the workspace to preserve the typed graph apply failure");
+    };
+    assert_eq!(op, "FloatItemInWindow");
+    assert!(reason.contains("invalid bounds"));
+    assert!(workspace.graph().matches_exactly(&before));
+    assert_eq!(workspace.graph().root(&space()), Some(root));
+    assert!(
+        workspace.can_commit_prepared_graph(&prepared),
+        "a failed graph apply must not advance the workspace graph revision"
+    );
 }
 
 #[open_gpui::test]

@@ -13,10 +13,11 @@ pub(crate) mod topology;
 
 #[cfg(test)]
 pub(crate) use assertions::{
+    DockspaceCheckpointAssertionError, assert_headless_checkpoint,
     assert_layout_roundtrip_preserves_space_items, assert_root_horizontal_split,
     assert_space_items, assert_unique_items,
 };
-pub(crate) use contract::DockspaceAdapterTag;
+pub(crate) use contract::{DockspaceAdapterStepSupport, DockspaceAdapterTag};
 #[cfg(test)]
 pub(crate) use fixtures::load_builtin_scenario_fixtures;
 #[cfg(test)]

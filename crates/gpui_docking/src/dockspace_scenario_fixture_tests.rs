@@ -1,11 +1,16 @@
 #[cfg(feature = "test-support")]
 use crate::benchmark_support::DockspaceScenarioSequenceBenchmark;
+use crate::dockspace_testkit::contract::{
+    DockspaceAdapterCapability, DockspaceDragTerminal, DockspaceProgressState,
+};
+use crate::dockspace_testkit::topology::DockspaceCheckpointPhase;
 use crate::{
     DockActionOutcome, DockGraph, DockItemId, DockNode, DockSpaceId,
     dockspace_testkit::{
-        DockspaceAdapterTag, DockspaceHeadlessRunner, DockspaceOracleKind, DockspaceScenario,
-        assert_layout_roundtrip_preserves_space_items, assert_unique_items,
-        benchmarks::DockspaceBenchmarkCase, load_builtin_scenario_fixtures,
+        DockspaceAdapterStepSupport, DockspaceAdapterTag, DockspaceCheckpointAssertionError,
+        DockspaceHeadlessRunner, DockspaceOracleKind, DockspaceScenario, DockspaceTopologyNode,
+        assert_headless_checkpoint, assert_layout_roundtrip_preserves_space_items,
+        assert_unique_items, benchmarks::DockspaceBenchmarkCase, load_builtin_scenario_fixtures,
     },
 };
 use std::collections::BTreeSet;
@@ -101,6 +106,94 @@ fn dockspace_scenario_fixtures_build_and_validate_adapter_oracles() {
             .any(|step| step.id() == Some("cross_viewport_known_target_preview")),
         "native and benchmark adapters need a stable multiview step id"
     );
+}
+
+#[test]
+fn dockspace_scenario_checkpoints_are_independent_headless_observations() {
+    let scenarios =
+        load_builtin_scenario_fixtures().expect("builtin dockspace fixtures should parse");
+
+    for scenario in scenarios
+        .iter()
+        .filter(|scenario| scenario.supports_adapter(DockspaceAdapterTag::Headless))
+    {
+        let primary_space = scenario
+            .primary_space
+            .clone()
+            .or_else(|| scenario.spaces.first().map(|space| space.id.clone()))
+            .unwrap_or_else(|| panic!("scenario {} should declare a dock space", scenario.id));
+        let mut runner = DockspaceHeadlessRunner::from_scenario(scenario, primary_space)
+            .unwrap_or_else(|error| panic!("scenario {} should build: {error}", scenario.id));
+
+        let terminal_checkpoints = scenario.terminal_checkpoints().unwrap_or_else(|error| {
+            panic!(
+                "scenario {} should have terminal checkpoints: {error}",
+                scenario.id
+            )
+        });
+        for (step, checkpoint) in scenario.steps.iter().zip(terminal_checkpoints) {
+            let support = scenario
+                .adapter_step_support(DockspaceAdapterTag::Headless, step)
+                .expect("headless adapter contract should be declared");
+            if let DockspaceAdapterStepSupport::OptionalUnsupported { capabilities } = support {
+                assert!(
+                    !capabilities.is_empty(),
+                    "optional unsupported result must name its capabilities"
+                );
+                continue;
+            }
+            assert_eq!(
+                support,
+                DockspaceAdapterStepSupport::Supported,
+                "headless fixture step must be supported or explicitly optional"
+            );
+            let pre_state = scenario
+                .observe_graph_spaces(runner.graph())
+                .unwrap_or_else(|error| panic!("scenario {} should observe: {error}", scenario.id));
+            let outcome = runner.run_step(step).unwrap_or_else(|error| {
+                panic!(
+                    "scenario {} step {} should execute: {error}",
+                    scenario.id,
+                    step.id().unwrap_or("<missing>")
+                )
+            });
+            assert_headless_checkpoint(scenario, checkpoint, runner.graph(), outcome, &pre_state)
+                .unwrap_or_else(|error| panic!("{error}"));
+        }
+    }
+}
+
+#[test]
+fn checkpoint_mismatch_reports_action_field_values_and_pre_state() {
+    let scenarios =
+        load_builtin_scenario_fixtures().expect("builtin dockspace fixtures should parse");
+    let scenario = scenario_by_id(&scenarios, "tab_reorder_roundtrip");
+    let mut runner = DockspaceHeadlessRunner::from_scenario(scenario, "main")
+        .expect("tab reorder scenario should build");
+    let pre_state = scenario
+        .observe_graph_spaces(runner.graph())
+        .expect("pre-state should be observable");
+    let outcome = runner
+        .run_step(&scenario.steps[0])
+        .expect("no-op step should execute");
+    let mut checkpoint = scenario.checkpoints[0].clone();
+    let Some(DockspaceTopologyNode::Tabs { selected, .. }) = checkpoint.spaces[0].root.as_mut()
+    else {
+        panic!("tab reorder checkpoint should contain root tabs");
+    };
+    *selected = Some(DockItemId::new("B"));
+
+    let error =
+        assert_headless_checkpoint(scenario, &checkpoint, runner.graph(), outcome, &pre_state)
+            .expect_err("the altered checkpoint should mismatch");
+    let DockspaceCheckpointAssertionError::Mismatch(mismatch) = error else {
+        panic!("expected a structured checkpoint mismatch, got {error:?}");
+    };
+    assert_eq!(mismatch.action, "adjacent_before_noop");
+    assert_eq!(mismatch.field, "spaces[0].root.selected");
+    assert_eq!(mismatch.expected, serde_json::json!("B"));
+    assert_eq!(mismatch.actual, serde_json::json!("A"));
+    assert_eq!(mismatch.pre_state, serde_json::to_value(pre_state).unwrap());
 }
 
 #[test]
@@ -354,5 +447,94 @@ fn dockspace_scenario_fixtures_drive_cross_space_rehome_without_native_windows()
             .graph()
             .collect_items_in_space(&DockSpaceId::from("middle")),
         vec![crate::DockItemId::new("FFF"), crate::DockItemId::new("AAA")]
+    );
+}
+
+#[test]
+fn whole_group_fixture_preserves_order_and_selected_tab() {
+    let scenarios =
+        load_builtin_scenario_fixtures().expect("builtin dockspace fixtures should parse");
+    let scenario = scenario_by_id(&scenarios, "whole_group_cross_space_rehome");
+    let step = &scenario.steps[0];
+    assert_eq!(
+        scenario
+            .adapter_step_support(DockspaceAdapterTag::Headless, step)
+            .expect("group fixture should declare a headless contract"),
+        DockspaceAdapterStepSupport::Supported
+    );
+
+    let mut runner = DockspaceHeadlessRunner::from_scenario(scenario, "source")
+        .expect("whole-group fixture should build headlessly");
+    assert_eq!(
+        runner
+            .run_step(step)
+            .expect("whole-group move should commit"),
+        DockActionOutcome::Changed
+    );
+    assert!(
+        runner.graph().root(&DockSpaceId::from("source")).is_none(),
+        "the source DockSpace should be empty after moving its entire tab group"
+    );
+    assert_eq!(
+        tabs_items_for(runner.graph(), "target", "A"),
+        vec![
+            DockItemId::new("C"),
+            DockItemId::new("A"),
+            DockItemId::new("B")
+        ]
+    );
+    let (tabs, _) = runner
+        .graph()
+        .find_item_in_space(&DockSpaceId::from("target"), &DockItemId::new("A"))
+        .expect("moved group should be reachable in the target space");
+    assert_eq!(
+        runner.graph().selected_item_in_tabs(tabs),
+        Some(DockItemId::new("B")),
+        "moving a whole group should preserve its selected tab"
+    );
+}
+
+#[test]
+fn provider_first_fixture_is_explicitly_optional_until_reservation_support_exists() {
+    let scenarios =
+        load_builtin_scenario_fixtures().expect("builtin dockspace fixtures should parse");
+    let scenario = scenario_by_id(&scenarios, "provider_first_destination_loss_contract");
+    let step = &scenario.steps[0];
+    let support = scenario
+        .adapter_step_support(DockspaceAdapterTag::Headless, step)
+        .expect("provider-first fixture should declare a headless contract");
+    let DockspaceAdapterStepSupport::OptionalUnsupported { capabilities } = support else {
+        panic!("provider-first work must remain explicitly unsupported before U5");
+    };
+    assert!(capabilities.contains(&DockspaceAdapterCapability::ProviderFirstReservation));
+    assert!(capabilities.contains(&DockspaceAdapterCapability::Recovery));
+    assert!(capabilities.contains(&DockspaceAdapterCapability::ShutdownDrain));
+
+    let phases = scenario
+        .checkpoints
+        .iter()
+        .map(|checkpoint| checkpoint.phase)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        phases,
+        vec![
+            DockspaceCheckpointPhase::AfterPrepare,
+            DockspaceCheckpointPhase::AfterProviderReceipt,
+            DockspaceCheckpointPhase::AfterRecoveryTransfer,
+            DockspaceCheckpointPhase::Terminal,
+            DockspaceCheckpointPhase::AfterTeardown,
+        ]
+    );
+    assert_eq!(
+        scenario.checkpoints[1].facts.progress,
+        Some(DockspaceProgressState::ForwardOnlyPrepared)
+    );
+    assert_eq!(
+        scenario.checkpoints[2].facts.progress,
+        Some(DockspaceProgressState::RecoveryPending)
+    );
+    assert_eq!(
+        scenario.checkpoints[3].facts.terminal,
+        Some(DockspaceDragTerminal::Recovered)
     );
 }

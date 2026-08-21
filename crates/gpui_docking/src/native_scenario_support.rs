@@ -4,7 +4,6 @@ use crate::{
     DockDropGuideMetrics, DockItemId, DockLayout, DockSpaceId, DropZone,
     dockspace_testkit::{
         fixtures::load_builtin_scenario_fixtures,
-        headless::DockspaceHeadlessRunner,
         ops::{DockspaceScenarioStep, DockspaceScenarioZone},
         topology::{DockspaceAdapterTag, DockspaceOracleKind},
     },
@@ -260,16 +259,6 @@ pub enum NativeDockspaceScenarioError {
         /// Production graph validation diagnostic.
         message: String,
     },
-    /// The production headless transaction path rejected one fixture step.
-    #[error("dockspace scenario {scenario} failed to replay step {step}: {message}")]
-    Replay {
-        /// Scenario that failed to replay.
-        scenario: String,
-        /// Stable step id that failed.
-        step: String,
-        /// Production transaction diagnostic.
-        message: String,
-    },
 }
 
 /// Loads one native-ready scenario from the checked-in dockspace fixture corpus.
@@ -312,18 +301,23 @@ pub fn load_native_dockspace_scenario(
         .iter()
         .map(|step| project_step(&scenario.id, step))
         .collect::<Result<Vec<_>, _>>()?;
-    let mut headless = DockspaceHeadlessRunner::from_graph(primary_space.clone(), seed.graph);
-    let mut expected_layouts = Vec::with_capacity(scenario.steps.len());
-    for step in &scenario.steps {
-        headless
-            .run_step(step)
-            .map_err(|error| NativeDockspaceScenarioError::Replay {
-                scenario: scenario.id.clone(),
-                step: step.id().unwrap_or("<missing>").to_owned(),
-                message: error.to_string(),
-            })?;
-        expected_layouts.push(headless.graph().export_layout());
-    }
+    let expected_layouts = scenario
+        .terminal_checkpoints()
+        .map_err(|error| NativeDockspaceScenarioError::Build {
+            scenario: scenario.id.clone(),
+            message: error.to_string(),
+        })?
+        .into_iter()
+        .map(|checkpoint| {
+            scenario
+                .build_checkpoint_graph(checkpoint)
+                .map(|snapshot| snapshot.graph.export_layout())
+                .map_err(|error| NativeDockspaceScenarioError::Build {
+                    scenario: scenario.id.clone(),
+                    message: error.to_string(),
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let oracles = scenario
         .oracles()
         .into_iter()

@@ -192,6 +192,7 @@ fn dockspace_testkit_resolves_floating_payload_by_item_identity() {
             target_item: DockItemId::new("target"),
             zone: DockspaceScenarioZone::Center,
         },
+        required_capabilities: Default::default(),
         interaction: None,
         faults: Vec::new(),
         expected: DockspaceStepExpectation {

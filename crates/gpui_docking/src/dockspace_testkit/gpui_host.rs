@@ -4,7 +4,6 @@ use crate::{
     DropZone,
     debug::DockDebugRegion,
     dockspace_testkit::{
-        headless::{DockspaceHeadlessRunner, DockspaceScenarioRunError},
         ops::{DockspaceScenarioStep, DockspaceScenarioZone},
         topology::{DockspaceScenario, DockspaceScenarioBuildError},
     },
@@ -28,8 +27,6 @@ pub(crate) struct DockspaceGpuiHostRunner {
 pub(crate) enum DockspaceGpuiHostRunError {
     #[error(transparent)]
     Build(#[from] DockspaceScenarioBuildError),
-    #[error(transparent)]
-    Headless(#[from] DockspaceScenarioRunError),
     #[error("dockspace scenario {0} has no primary or declared space")]
     MissingPrimarySpace(String),
     #[error("dockspace scenario {scenario} step {step} is not supported by the GPUI host adapter")]
@@ -54,12 +51,15 @@ impl DockspaceGpuiHostRunner {
             .or_else(|| scenario.spaces.first().map(|space| space.id.clone()))
             .ok_or_else(|| DockspaceGpuiHostRunError::MissingPrimarySpace(scenario.id.clone()))?;
 
-        let mut headless = DockspaceHeadlessRunner::from_scenario(scenario, primary_space.clone())?;
-        let mut expected_layouts = Vec::with_capacity(scenario.steps.len());
-        for step in &scenario.steps {
-            headless.run_step(step)?;
-            expected_layouts.push(headless.graph().export_layout());
-        }
+        let terminal_checkpoints = scenario.terminal_checkpoints()?;
+        let expected_layouts = terminal_checkpoints
+            .into_iter()
+            .map(|checkpoint| {
+                scenario
+                    .build_checkpoint_graph(checkpoint)
+                    .map(|snapshot| snapshot.graph.export_layout())
+            })
+            .collect::<Result<Vec<_>, _>>()?;
 
         let graph = scenario.build_graph()?.graph;
         let mut workspace = DockWorkspace::new(primary_space, graph);

@@ -5,10 +5,10 @@ use crate::dockspace_testkit::{
         DockspaceStepExpectation,
     },
     ops::{DockspaceInteractionAction, DockspaceInteractionScript, DockspaceScenarioStep},
-    topology::DockspaceScenario,
+    topology::{DockspaceCheckpointPhase, DockspaceScenario},
 };
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
 
 const DOCKSPACE_SCENARIO_FIXTURE_SCHEMA_VERSION: u32 = 2;
@@ -28,6 +28,8 @@ pub(crate) enum DockspaceScenarioFixtureError {
     UnsupportedSchema(u32),
     #[error("dockspace scenario fixture contains no scenarios")]
     EmptySuite,
+    #[error("dockspace scenario fixture repeats scenario id {0}")]
+    DuplicateScenario(String),
     #[error("dockspace scenario fixture {0} has no adapters")]
     MissingAdapters(String),
     #[error("dockspace scenario fixture {0} has no oracles")]
@@ -38,14 +40,6 @@ pub(crate) enum DockspaceScenarioFixtureError {
     DuplicateStepId { scenario: String, step: String },
     #[error("dockspace scenario fixture {scenario} repeats adapter contract {adapter}")]
     DuplicateAdapter { scenario: String, adapter: String },
-    #[error(
-        "dockspace scenario fixture {scenario} has {checkpoints} checkpoints for {steps} steps"
-    )]
-    CheckpointCount {
-        scenario: String,
-        checkpoints: usize,
-        steps: usize,
-    },
     #[error("dockspace scenario fixture {scenario} is invalid: {message}")]
     InvalidScenario { scenario: String, message: String },
     #[error("dockspace scenario fixture {scenario} step {step} is invalid: {message}")]
@@ -74,7 +68,13 @@ fn load_scenario_fixtures(
     if suite.scenarios.is_empty() {
         return Err(DockspaceScenarioFixtureError::EmptySuite);
     }
+    let mut scenario_ids = BTreeSet::new();
     for scenario in &suite.scenarios {
+        if !scenario_ids.insert(scenario.id.clone()) {
+            return Err(DockspaceScenarioFixtureError::DuplicateScenario(
+                scenario.id.clone(),
+            ));
+        }
         if scenario.adapter_contracts.is_empty() {
             return Err(DockspaceScenarioFixtureError::MissingAdapters(
                 scenario.id.clone(),
@@ -86,6 +86,12 @@ fn load_scenario_fixtures(
             ));
         }
         validate_adapter_contracts(scenario)?;
+        let declared_spaces = scenario
+            .spaces
+            .iter()
+            .map(|space| space.id.clone())
+            .collect::<BTreeSet<_>>();
+        let declared_items = scenario.declared_items();
         let mut step_ids = BTreeSet::new();
         let mut receipt_aliases = BTreeSet::new();
         for step in &scenario.steps {
@@ -105,37 +111,48 @@ fn load_scenario_fixtures(
                 });
             }
             validate_step_contract(scenario, step, &receipt_aliases)?;
+            step.validate_fixture_references(&declared_spaces, &declared_items)
+                .map_err(|message| DockspaceScenarioFixtureError::InvalidStep {
+                    scenario: scenario.id.clone(),
+                    step: step_id.to_owned(),
+                    message,
+                })?;
             if let DockspaceReceiptExpectation::New { alias } = &step.expected.receipt {
                 receipt_aliases.insert(alias.clone());
             }
         }
-        if !scenario.checkpoints.is_empty() && scenario.checkpoints.len() != scenario.steps.len() {
-            return Err(DockspaceScenarioFixtureError::CheckpointCount {
-                scenario: scenario.id.clone(),
-                checkpoints: scenario.checkpoints.len(),
-                steps: scenario.steps.len(),
-            });
-        }
-        for (index, (step, checkpoint)) in
-            scenario.steps.iter().zip(&scenario.checkpoints).enumerate()
-        {
-            let Some(step_id) = step.id() else {
+        let steps_by_id = scenario
+            .steps
+            .iter()
+            .enumerate()
+            .map(|(index, step)| (step.id.as_str(), (index, step)))
+            .collect::<BTreeMap<_, _>>();
+        let mut seen_checkpoint_phases = BTreeSet::new();
+        let mut previous_checkpoint_order = None;
+        for checkpoint in &scenario.checkpoints {
+            let Some((step_index, step)) = steps_by_id.get(checkpoint.after_step.as_str()) else {
                 return Err(DockspaceScenarioFixtureError::InvalidStep {
                     scenario: scenario.id.clone(),
-                    step: format!("#{index}"),
-                    message: "checkpoint requires a stable step id".to_owned(),
+                    step: checkpoint.after_step.clone(),
+                    message: "checkpoint references an unknown step".to_owned(),
                 });
             };
-            if checkpoint.after_step != step_id {
+            if !seen_checkpoint_phases.insert((checkpoint.after_step.clone(), checkpoint.phase)) {
                 return Err(DockspaceScenarioFixtureError::InvalidStep {
                     scenario: scenario.id.clone(),
-                    step: step_id.to_owned(),
-                    message: format!(
-                        "checkpoint after_step {:?} does not match step id {:?}",
-                        checkpoint.after_step, step_id
-                    ),
+                    step: checkpoint.after_step.clone(),
+                    message: format!("checkpoint repeats phase {:?}", checkpoint.phase),
                 });
             }
+            let order = (*step_index, checkpoint.phase);
+            if previous_checkpoint_order.is_some_and(|previous| previous > order) {
+                return Err(DockspaceScenarioFixtureError::InvalidStep {
+                    scenario: scenario.id.clone(),
+                    step: checkpoint.after_step.clone(),
+                    message: "checkpoints are not ordered by step and phase".to_owned(),
+                });
+            }
+            previous_checkpoint_order = Some(order);
             if !checkpoint
                 .spaces
                 .iter()
@@ -144,86 +161,109 @@ fn load_scenario_fixtures(
             {
                 return Err(DockspaceScenarioFixtureError::InvalidStep {
                     scenario: scenario.id.clone(),
-                    step: step_id.to_owned(),
+                    step: checkpoint.after_step.clone(),
                     message: "checkpoint spaces do not match the scenario space order".to_owned(),
                 });
             }
+            validate_checkpoint_contract(step, checkpoint).map_err(|message| {
+                DockspaceScenarioFixtureError::InvalidStep {
+                    scenario: scenario.id.clone(),
+                    step: step.id.clone(),
+                    message,
+                }
+            })?;
         }
 
-        let mut graph = scenario
+        scenario
             .build_graph()
             .map_err(|error| DockspaceScenarioFixtureError::InvalidScenario {
                 scenario: scenario.id.clone(),
                 message: error.to_string(),
-            })?
-            .graph;
-        for (index, step) in scenario.steps.iter().enumerate() {
-            let step_id = step
-                .id()
-                .map(str::to_owned)
-                .unwrap_or_else(|| format!("#{index}"));
-            for contract in &scenario.adapter_contracts {
-                if !step.supports_adapter(contract.adapter) {
-                    return Err(DockspaceScenarioFixtureError::InvalidStep {
-                        scenario: scenario.id.clone(),
-                        step: step_id.clone(),
-                        message: format!(
-                            "step is not supported by the {} adapter",
-                            contract.adapter.fixture_name()
-                        ),
-                    });
-                }
-            }
-            let op =
-                step.to_op(&graph)
-                    .map_err(|error| DockspaceScenarioFixtureError::InvalidStep {
-                        scenario: scenario.id.clone(),
-                        step: step_id.clone(),
-                        message: error.to_string(),
-                    })?;
-            graph.apply_op_checked(&op).map_err(|error| {
-                DockspaceScenarioFixtureError::InvalidStep {
-                    scenario: scenario.id.clone(),
-                    step: step_id.clone(),
-                    message: error.to_string(),
-                }
             })?;
-            if let Some(checkpoint) = scenario.checkpoints.get(index) {
-                let expected = scenario
-                    .build_checkpoint_graph(checkpoint)
-                    .map_err(|error| DockspaceScenarioFixtureError::InvalidStep {
-                        scenario: scenario.id.clone(),
-                        step: step_id.clone(),
-                        message: format!("checkpoint topology is invalid: {error}"),
-                    })?
-                    .graph
-                    .export_layout();
-                let actual = graph.export_layout();
-                if actual != expected {
-                    return Err(DockspaceScenarioFixtureError::InvalidStep {
-                        scenario: scenario.id.clone(),
-                        step: step_id,
-                        message: format!(
-                            "graph layout does not match the declared checkpoint: expected {expected:?}, actual {actual:?}"
-                        ),
-                    });
-                }
+        scenario.terminal_checkpoints().map_err(|error| {
+            DockspaceScenarioFixtureError::InvalidScenario {
+                scenario: scenario.id.clone(),
+                message: error.to_string(),
             }
+        })?;
+        for checkpoint in &scenario.checkpoints {
+            scenario
+                .build_checkpoint_graph(checkpoint)
+                .map_err(|error| DockspaceScenarioFixtureError::InvalidStep {
+                    scenario: scenario.id.clone(),
+                    step: checkpoint.after_step.clone(),
+                    message: format!("checkpoint topology is invalid: {error}"),
+                })?;
         }
     }
     Ok(suite.scenarios)
+}
+
+fn validate_checkpoint_contract(
+    step: &DockspaceScenarioStep,
+    checkpoint: &crate::dockspace_testkit::topology::DockspaceScenarioCheckpoint,
+) -> Result<(), String> {
+    use crate::dockspace_testkit::contract::DockspaceProgressState;
+
+    match checkpoint.phase {
+        DockspaceCheckpointPhase::AfterPrepare => {
+            if checkpoint.facts.terminal.is_some() {
+                return Err("after_prepare checkpoint cannot declare a terminal".to_owned());
+            }
+        }
+        DockspaceCheckpointPhase::AfterProviderReceipt => {
+            if checkpoint.facts.progress != Some(DockspaceProgressState::ForwardOnlyPrepared) {
+                return Err(
+                    "after_provider_receipt checkpoint must be forward_only_prepared".to_owned(),
+                );
+            }
+            if checkpoint.facts.terminal.is_some() {
+                return Err(
+                    "after_provider_receipt checkpoint cannot declare a terminal".to_owned(),
+                );
+            }
+        }
+        DockspaceCheckpointPhase::AfterRecoveryTransfer => {
+            if checkpoint.facts.progress != Some(DockspaceProgressState::RecoveryPending) {
+                return Err(
+                    "after_recovery_transfer checkpoint must be recovery_pending".to_owned(),
+                );
+            }
+            if checkpoint.facts.terminal.is_some() {
+                return Err(
+                    "after_recovery_transfer checkpoint cannot declare a terminal".to_owned(),
+                );
+            }
+        }
+        DockspaceCheckpointPhase::Terminal => {
+            if checkpoint.facts.progress.is_some() {
+                return Err("terminal checkpoint cannot retain non-terminal progress".to_owned());
+            }
+            if checkpoint.facts.terminal != Some(step.expected.terminal) {
+                return Err(format!(
+                    "terminal checkpoint must declare {:?}",
+                    step.expected.terminal
+                ));
+            }
+            if checkpoint.facts.receipt.as_ref() != Some(&step.expected.receipt) {
+                return Err(
+                    "terminal checkpoint receipt must match the step expectation".to_owned(),
+                );
+            }
+        }
+        DockspaceCheckpointPhase::AfterTeardown => {
+            if checkpoint.facts.progress.is_some() {
+                return Err("after_teardown checkpoint cannot retain pending progress".to_owned());
+            }
+        }
+    }
+    Ok(())
 }
 
 fn validate_adapter_contracts(
     scenario: &DockspaceScenario,
 ) -> Result<(), DockspaceScenarioFixtureError> {
     let mut adapters = BTreeSet::new();
-    let step_capabilities = scenario
-        .steps
-        .iter()
-        .flat_map(DockspaceScenarioStep::required_capabilities)
-        .collect::<BTreeSet<_>>();
-
     for contract in &scenario.adapter_contracts {
         if !adapters.insert(contract.adapter) {
             return Err(DockspaceScenarioFixtureError::DuplicateAdapter {
@@ -264,18 +304,20 @@ fn validate_adapter_contracts(
                 ),
             });
         }
-        if !step_capabilities.is_subset(&contract.required_capabilities) {
-            let missing = step_capabilities
-                .difference(&contract.required_capabilities)
-                .copied()
-                .collect::<Vec<_>>();
-            return Err(DockspaceScenarioFixtureError::InvalidScenario {
-                scenario: scenario.id.clone(),
-                message: format!(
-                    "{} adapter contract does not declare required step capabilities {missing:?}",
-                    contract.adapter.fixture_name()
-                ),
-            });
+        for step in &scenario.steps {
+            if let crate::dockspace_testkit::contract::DockspaceAdapterStepSupport::ContractMissing {
+                capabilities,
+            } = contract.step_support(&step.required_capabilities())
+            {
+                return Err(DockspaceScenarioFixtureError::InvalidScenario {
+                    scenario: scenario.id.clone(),
+                    message: format!(
+                        "{} adapter contract does not declare step {} capabilities {capabilities:?}",
+                        contract.adapter.fixture_name(),
+                        step.id
+                    ),
+                });
+            }
         }
         let supported = contract.adapter.supported_capabilities();
         if !contract.required_capabilities.is_subset(&supported) {
@@ -456,6 +498,15 @@ mod tests {
             "scenarios": [
                 {
                     "id": "minimal",
+                    "phases": {
+                        "fixture": { "arrangement": "direct_deterministic" },
+                        "harness": { "ready": "canonical_graph_published" },
+                        "warmup": { "iterations": 0 },
+                        "teardown": {
+                            "require_canonical_graph": true,
+                            "require_no_pending_progress": true
+                        }
+                    },
                     "spaces": [
                         {
                             "id": "main",
@@ -662,6 +713,15 @@ mod tests {
             "scenarios": [
                 {
                     "id": "checkpoint-mismatch",
+                    "phases": {
+                        "fixture": { "arrangement": "direct_deterministic" },
+                        "harness": { "ready": "canonical_graph_published" },
+                        "warmup": { "iterations": 0 },
+                        "teardown": {
+                            "require_canonical_graph": true,
+                            "require_no_pending_progress": true
+                        }
+                    },
                     "spaces": [
                         {
                             "id": "source",
@@ -693,6 +753,7 @@ mod tests {
                     "checkpoints": [
                         {
                             "after_step": "move-a",
+                            "phase": "terminal",
                             "spaces": [
                                 { "id": "source" },
                                 {
@@ -703,7 +764,11 @@ mod tests {
                                         "selected": "B"
                                     }
                                 }
-                            ]
+                            ],
+                            "facts": {
+                                "terminal": "committed",
+                                "receipt": { "kind": "new", "alias": "move-a" }
+                            }
                         }
                     ],
                     "adapter_contracts": [
@@ -719,43 +784,36 @@ mod tests {
             ]
         });
 
-        assert!(matches!(
-            load_fixture_value(&fixture),
-            DockspaceScenarioFixtureError::InvalidStep { scenario, step, message }
-                if scenario == "checkpoint-mismatch"
-                    && step == "move-a"
-                    && message.contains("does not match the declared checkpoint")
-        ));
+        load_scenario_fixtures(&fixture.to_string()).expect(
+            "the fixture loader should validate checkpoint structure without executing production operations",
+        );
 
-        let mut wrong_order = fixture;
+        let mut wrong_order = fixture.clone();
         wrong_order["scenarios"][0]["checkpoints"][0]["after_step"] = json!("another-step");
         assert!(matches!(
             load_fixture_value(&wrong_order),
             DockspaceScenarioFixtureError::InvalidStep { scenario, step, message }
                 if scenario == "checkpoint-mismatch"
-                    && step == "move-a"
-                    && message.contains("does not match step id")
+                    && step == "another-step"
+                    && message.contains("unknown step")
         ));
 
-        let mut wrong_count = wrong_order;
-        wrong_count["scenarios"][0]["checkpoints"] = json!([
-            {
-                "after_step": "move-a",
-                "spaces": []
-            },
-            {
-                "after_step": "extra",
-                "spaces": []
-            }
-        ]);
-        assert!(matches!(
-            load_fixture_value(&wrong_count),
-            DockspaceScenarioFixtureError::CheckpointCount {
-                scenario,
-                checkpoints: 2,
-                steps: 1
-            } if scenario == "checkpoint-mismatch"
-        ));
+        let mut wrong_count = fixture;
+        let duplicate_checkpoint = wrong_count["scenarios"][0]["checkpoints"][0].clone();
+        wrong_count["scenarios"][0]["checkpoints"] =
+            json!([duplicate_checkpoint.clone(), duplicate_checkpoint]);
+        let wrong_count_error = load_fixture_value(&wrong_count);
+        let wrong_count_diagnostic = format!("{wrong_count_error:?}");
+        assert!(
+            matches!(
+                wrong_count_error,
+            DockspaceScenarioFixtureError::InvalidStep { scenario, step, message }
+                if scenario == "checkpoint-mismatch"
+                    && step == "move-a"
+                    && message.contains("repeats phase")
+            ),
+            "unexpected wrong-count error: {wrong_count_diagnostic}"
+        );
     }
 
     #[test]
