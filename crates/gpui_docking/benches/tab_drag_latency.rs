@@ -12,6 +12,8 @@ fn main() {
     let multiview = DockMultiViewDragBenchmark::new(8, 8, 8);
     let mut dockspace_cycle = DockspaceScenarioSequenceBenchmark::three_dockspace_rehome_cycle();
     let mut canonical_group_edge = CanonicalGroupEdgePatchBenchmark::new();
+    let mut canonical_group_edge_many_spaces =
+        CanonicalGroupEdgePatchBenchmark::with_space_count(64);
     let dockspace_cycle_step_count = dockspace_cycle.step_count();
     let dockspace_cycle_workload_contract = dockspace_cycle.workload_contract().to_owned();
 
@@ -36,9 +38,17 @@ fn main() {
         median_ns_per_operation(20_000, 7, |iteration| {
             canonical_group_edge.run_operation(iteration)
         });
+    let open_gpui_canonical_group_edge_64_spaces_ns_per_operation =
+        median_ns_per_operation(20_000, 7, |iteration| {
+            canonical_group_edge_many_spaces.run_operation(iteration)
+        });
     assert!(
         canonical_group_edge.validate_state(),
         "canonical group-edge benchmark must preserve graph invariants"
+    );
+    assert!(
+        canonical_group_edge_many_spaces.validate_state(),
+        "large canonical group-edge benchmark must preserve graph invariants"
     );
 
     let small_case = DockspaceBenchmarkCase::retained_tab_grid_small();
@@ -106,6 +116,15 @@ fn main() {
             "measurement_layer": "canonical_patch_prepare_commit",
             "scope": "one_main_dockspace_two_groups_local_parent_rewire",
             "open_gpui_ns_per_operation": open_gpui_canonical_group_edge_ns_per_operation,
+        },
+        {
+            "scenario_id": "canonical_group_edge_patch_many_spaces",
+            "step_id": "prepare_commit",
+            "operation_family": "whole_group_edge_dock",
+            "measurement_layer": "canonical_patch_prepare_commit",
+            "scope": "one_touched_dockspace_63_unrelated_dockspaces_local_parent_rewire",
+            "dockspace_count": 64,
+            "open_gpui_ns_per_operation": open_gpui_canonical_group_edge_64_spaces_ns_per_operation,
         }
     ]);
 
@@ -121,6 +140,8 @@ fn main() {
             "open_gpui_three_dockspace_cycle_ns_per_sequence": open_gpui_three_dockspace_cycle_ns_per_sequence,
             "open_gpui_three_dockspace_cycle_ns_per_step": open_gpui_three_dockspace_cycle_ns_per_sequence / dockspace_cycle_step_count as f64,
             "open_gpui_canonical_group_edge_ns_per_operation": open_gpui_canonical_group_edge_ns_per_operation,
+            "open_gpui_canonical_group_edge_64_spaces_ns_per_operation": open_gpui_canonical_group_edge_64_spaces_ns_per_operation,
+            "open_gpui_canonical_group_edge_64_spaces_slowdown": open_gpui_canonical_group_edge_64_spaces_ns_per_operation / open_gpui_canonical_group_edge_ns_per_operation,
             "open_gpui_scenario_rows": open_gpui_scenario_rows,
         })
     );

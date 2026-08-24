@@ -47,6 +47,15 @@ pub struct CanonicalGroupEdgePatchBenchmark {
 
 impl CanonicalGroupEdgePatchBenchmark {
     pub fn new() -> Self {
+        Self::with_space_count(1)
+    }
+
+    /// Builds the same local two-group workload with unrelated retained dock spaces.
+    ///
+    /// A canonical local patch should not become materially more expensive merely because the
+    /// graph authority owns other spaces that are absent from its read and write sets.
+    pub fn with_space_count(space_count: usize) -> Self {
+        assert!(space_count > 0, "canonical benchmark needs a main dock space");
         let mut assembly = DockGraphAssembly::new();
         assembly
             .add_space("main")
@@ -71,6 +80,30 @@ impl CanonicalGroupEdgePatchBenchmark {
         assembly
             .set_root("main", root)
             .expect("canonical benchmark root should attach");
+
+        for index in 1..space_count {
+            let space = format!("unrelated-space-{index}");
+            let first_group = format!("unrelated-group-{index}-first");
+            let second_group = format!("unrelated-group-{index}-second");
+            let first_item = DockItemId::new(format!("unrelated-item-{index}-first"));
+            let second_item = DockItemId::new(format!("unrelated-item-{index}-second"));
+            assembly
+                .add_space(space.clone())
+                .expect("unrelated canonical benchmark space should be valid");
+            let first = assembly
+                .add_group(first_group, [first_item.clone()], first_item)
+                .expect("unrelated canonical benchmark group should be valid");
+            let second = assembly
+                .add_group(second_group, [second_item.clone()], second_item)
+                .expect("unrelated canonical benchmark group should be valid");
+            let root = assembly
+                .add_branch(SplitAxis::Vertical, first, second, 0.5)
+                .expect("unrelated canonical benchmark root should be valid");
+            assembly
+                .set_root(space, root)
+                .expect("unrelated canonical benchmark root should attach");
+        }
+
         Self {
             runtime: CanonicalGraphRuntime::from_assembly(assembly)
                 .expect("canonical benchmark graph should publish"),
