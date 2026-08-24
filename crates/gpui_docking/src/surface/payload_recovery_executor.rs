@@ -1185,6 +1185,7 @@ fn start_prepared_payload_recovery_restore(
     let (resolved_roots, source_session, destination_session) =
         cx.read_entity(&controller, |controller, _| {
             let workspace = controller.workspace();
+            let projection = restore.project_graph(workspace.graph())?;
             let resolved_roots = restore
                 .items()
                 .iter()
@@ -1192,16 +1193,20 @@ fn start_prepared_payload_recovery_restore(
                 .collect::<Vec<_>>();
             let source_session = DockHostPresentationSession::payload_recovery_projection(
                 restore.source_space().clone(),
-                restore.projected_graph(),
+                &projection,
                 workspace,
             );
             let destination_session = DockHostPresentationSession::payload_recovery_projection(
                 restore.primary_space().clone(),
-                restore.projected_graph(),
+                &projection,
                 workspace,
             );
-            (resolved_roots, source_session, destination_session)
-        });
+            Ok::<_, DockPayloadRecoveryRestoreError>((
+                resolved_roots,
+                source_session,
+                destination_session,
+            ))
+        })?;
 
     if let Some(leases) = origin.provider_terminal_leases() {
         let origin_window: AnyWindowHandle = origin.window().into();

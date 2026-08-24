@@ -1104,7 +1104,9 @@ fn restore_rehomes_lost_item_and_consumes_the_exact_recovery_action() {
         &prepared,
     ));
 
-    fixture.graph = prepared.projected_graph().clone();
+    fixture.graph = prepared
+        .project_graph(&fixture.graph)
+        .expect("prepared recovery operations should project");
     let restored = registry.commit_prepared_restore(prepared);
     assert_eq!(restored.recovery(), recovery);
     assert_eq!(registry.visible_records().count(), 0);
@@ -1168,7 +1170,9 @@ fn restore_moves_only_the_payload_range_after_tabs_were_flattened_with_a_peer() 
             action,
         )
         .expect("flattened tabs should project into the primary recovery group");
-    fixture.graph = prepared.projected_graph().clone();
+    fixture.graph = prepared
+        .project_graph(&fixture.graph)
+        .expect("prepared recovery operations should project");
     registry.commit_prepared_restore(prepared);
 
     let Some(DockNode::Tabs { items, .. }) = fixture.graph.node(fixture.primary_tabs) else {
@@ -1203,7 +1207,9 @@ fn restore_flattens_a_split_floating_payload_into_the_primary_recovery_group() {
             action,
         )
         .expect("split floating payload should prepare as ordered items");
-    fixture.graph = prepared.projected_graph().clone();
+    fixture.graph = prepared
+        .project_graph(&fixture.graph)
+        .expect("prepared recovery operations should project");
     registry.commit_prepared_restore(prepared);
 
     fixture

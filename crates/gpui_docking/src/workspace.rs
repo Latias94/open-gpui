@@ -179,6 +179,16 @@ impl DockWorkspace {
         receipt
     }
 
+    pub(crate) fn commit_graph_operations(
+        &mut self,
+        operations: &[DockOp],
+    ) -> Result<(), DockGraphMutationError> {
+        for operation in operations {
+            self.apply_op_checked(operation)?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn graph_commit(
         &self,
         commit_id: DockWorkspaceGraphCommitId,

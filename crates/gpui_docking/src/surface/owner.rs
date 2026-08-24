@@ -1328,9 +1328,12 @@ impl DockSurfaceOwner {
             .payload_recovery
             .committed_restore_receipt(prepared.prepared.action())
             .is_some();
-        let projected_graph = prepared.prepared.projected_graph().clone();
+        let operations = prepared.prepared.operations().to_vec();
         cx.update_entity(&self.controller, |controller, controller_cx| {
-            controller.workspace_mut().set_graph(projected_graph);
+            controller
+                .workspace_mut()
+                .commit_graph_operations(&operations)
+                .expect("prepared payload recovery operations must remain applicable");
             controller_cx.notify();
         });
         let receipt = self
@@ -1380,9 +1383,14 @@ impl DockSurfaceOwner {
         cx: &mut Context<Self>,
     ) -> bool {
         let active_anchor = self.window_session.active_lease();
-        let graph = cx.read_entity(&self.controller, |controller, _| controller.graph().clone());
-        self.payload_recovery
-            .can_commit_restore(&graph, self.revision, active_anchor, prepared)
+        cx.read_entity(&self.controller, |controller, _| {
+            self.payload_recovery.can_commit_restore(
+                controller.graph(),
+                self.revision,
+                active_anchor,
+                prepared,
+            )
+        })
     }
 
     pub(crate) fn commit_prepared_payload_recovery_restore(
@@ -1396,9 +1404,12 @@ impl DockSurfaceOwner {
             self.can_commit_prepared_payload_recovery_restore(&prepared, cx),
             "prepared payload recovery restore must remain exact until commit"
         );
-        let projected_graph = prepared.projected_graph().clone();
+        let operations = prepared.operations().to_vec();
         cx.update_entity(&self.controller, |controller, _| {
-            controller.workspace_mut().set_graph(projected_graph);
+            controller
+                .workspace_mut()
+                .commit_graph_operations(&operations)
+                .expect("prepared payload recovery operations must remain applicable");
         });
         let receipt = self.payload_recovery.commit_prepared_restore(prepared);
         self.record_changes(

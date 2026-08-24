@@ -366,11 +366,10 @@ impl DockPayloadRecoveryRestoreAction {
     }
 }
 
-/// Fully projected graph replacement for one exact recovery action.
+/// Prepared operation sequence for one exact recovery action.
 ///
-/// Every fallible lookup and graph mutation happens before this value exists. The owning surface
-/// may therefore swap `projected_graph` and consume the matching registry record without another
-/// graph-level failure boundary.
+/// The sequence is the durable graph commit proof. A temporary graph projection may be rebuilt
+/// from it for presentation, but no projected graph crosses the asynchronous recovery boundary.
 #[derive(Clone, Debug)]
 pub(crate) struct DockPayloadRecoveryRestorePrepared {
     action: DockPayloadRecoveryRestoreAction,
@@ -378,7 +377,7 @@ pub(crate) struct DockPayloadRecoveryRestorePrepared {
     primary_space: DockSpaceId,
     source_location: DockPayloadRecoveryLocation,
     target_tabs: Option<DockNodeId>,
-    projected_graph: DockGraph,
+    operations: Vec<DockOp>,
     items: Vec<DockItemId>,
     focus_item: Option<DockItemId>,
     descendant_focus: Option<DockLiveUndockSourceFocusSnapshot>,
@@ -390,8 +389,21 @@ impl DockPayloadRecoveryRestorePrepared {
         self.action
     }
 
-    pub(crate) fn projected_graph(&self) -> &DockGraph {
-        &self.projected_graph
+    pub(crate) fn operations(&self) -> &[DockOp] {
+        &self.operations
+    }
+
+    pub(crate) fn project_graph(
+        &self,
+        graph: &DockGraph,
+    ) -> Result<DockGraph, DockPayloadRecoveryRestoreError> {
+        let mut projected = graph.clone();
+        for operation in &self.operations {
+            projected
+                .apply_op_checked(operation)
+                .map_err(DockPayloadRecoveryRestoreError::GraphMutation)?;
+        }
+        Ok(projected)
     }
 
     pub(crate) fn source_space(&self) -> &DockSpaceId {
@@ -921,7 +933,7 @@ impl DockPayloadRecoveryRegistry {
             .focus
             .as_ref()
             .and_then(DockPayloadRecoveryFocus::item);
-        let (projected_graph, focus_item) = project_restore_graph(
+        let (_, operations, focus_item) = project_restore_graph(
             graph,
             primary_space,
             target_tabs,
@@ -934,7 +946,7 @@ impl DockPayloadRecoveryRegistry {
             primary_space: primary_space.clone(),
             source_location,
             target_tabs,
-            projected_graph,
+            operations,
             items: payload_items(&record.payload_identity),
             focus_item,
             descendant_focus: record
@@ -966,11 +978,9 @@ impl DockPayloadRecoveryRegistry {
         let Some(record) = self.record(prepared.action.recovery) else {
             return false;
         };
-        graph.matches_exactly(&prepared.projected_graph)
-            || (graph.recovery_target_tabs(&prepared.primary_space) == prepared.target_tabs
-                && DockPayloadRecoveryLocation::resolve_unique(graph, &record.payload_identity)
-                    .as_ref()
-                    == Ok(&prepared.source_location))
+        graph.recovery_target_tabs(&prepared.primary_space) == prepared.target_tabs
+            && DockPayloadRecoveryLocation::resolve_unique(graph, &record.payload_identity).as_ref()
+                == Ok(&prepared.source_location)
     }
 
     pub(crate) fn commit_prepared_restore(
@@ -1265,13 +1275,14 @@ fn project_restore_graph(
     initial_target_tabs: Option<DockNodeId>,
     payload: &DockLockedPayloadIdentity,
     preferred_focus_item: Option<&DockItemId>,
-) -> Result<(DockGraph, Option<DockItemId>), DockPayloadRecoveryRestoreError> {
+) -> Result<(DockGraph, Vec<DockOp>, Option<DockItemId>), DockPayloadRecoveryRestoreError> {
     let items = payload_items(payload);
     let focus_item = preferred_focus_item
         .filter(|preferred| items.contains(preferred))
         .cloned()
         .or_else(|| items.first().cloned());
     let mut projected = graph.clone();
+    let mut operations = Vec::new();
     let mut target_tabs = initial_target_tabs;
 
     for item in &items {
@@ -1298,14 +1309,16 @@ fn project_restore_graph(
             }
             None => DockGraphDropTarget::empty_space(),
         };
+        let operation = DockOp::MoveItem {
+            source_space,
+            item: item.clone(),
+            target_space: primary_space.clone(),
+            target,
+        };
         projected
-            .apply_op_checked(&DockOp::MoveItem {
-                source_space,
-                item: item.clone(),
-                target_space: primary_space.clone(),
-                target,
-            })
+            .apply_op_checked(&operation)
             .map_err(DockPayloadRecoveryRestoreError::GraphMutation)?;
+        operations.push(operation);
         if target_tabs.is_none() {
             target_tabs = projected
                 .find_item_in_space(primary_space, item)
@@ -1319,14 +1332,16 @@ fn project_restore_graph(
             .map(|(current, _)| current)
             == Some(tabs)
     {
+        let operation = DockOp::SelectTab {
+            tabs,
+            item: item.clone(),
+        };
         projected
-            .apply_op_checked(&DockOp::SelectTab {
-                tabs,
-                item: item.clone(),
-            })
+            .apply_op_checked(&operation)
             .map_err(DockPayloadRecoveryRestoreError::GraphMutation)?;
+        operations.push(operation);
     }
-    Ok((projected, focus_item))
+    Ok((projected, operations, focus_item))
 }
 
 fn payload_items(payload: &DockLockedPayloadIdentity) -> Vec<DockItemId> {
