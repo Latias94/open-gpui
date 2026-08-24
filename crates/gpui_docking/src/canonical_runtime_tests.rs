@@ -30,6 +30,20 @@ fn runtime() -> CanonicalGraphRuntime {
     CanonicalGraphRuntime::from_assembly(assembly).expect("fixture publication should succeed")
 }
 
+fn three_tab_runtime() -> CanonicalGraphRuntime {
+    let mut assembly = DockGraphAssembly::new();
+    assembly.add_space("main").unwrap();
+    let editor = assembly
+        .add_group(
+            "editor",
+            [item("A"), item("B"), item("C")],
+            item("A"),
+        )
+        .unwrap();
+    assembly.set_root("main", editor).unwrap();
+    CanonicalGraphRuntime::from_assembly(assembly).unwrap()
+}
+
 fn multiview_runtime() -> CanonicalGraphRuntime {
     let mut assembly = DockGraphAssembly::new();
     assembly.add_space("main").unwrap();
@@ -984,6 +998,123 @@ fn empty_space_patch_preserves_newer_source_selection_but_rejects_target_topolog
 }
 
 #[test]
+fn move_item_to_empty_space_creates_a_new_leaf_for_a_multi_item_source() {
+    let mut runtime = empty_target_runtime();
+    let source = DockGroupId::from("editor");
+    let destination = DockGroupId::from("moved-a");
+
+    let prepared = match runtime
+        .prepare_move_item_to_empty_space("A", "main", "empty", destination.clone())
+        .expect("multi-item extraction should prepare")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("item extraction must be structural"),
+    };
+    assert!(matches!(
+        runtime.commit(prepared),
+        GraphCommitOutcome::Committed(_)
+    ));
+
+    let source_group = runtime.graph().group(&source).unwrap();
+    assert_eq!(source_group.items, vec![item("B")]);
+    assert_eq!(source_group.selected, item("B"));
+    let destination_group = runtime.graph().group(&destination).unwrap();
+    assert_eq!(destination_group.items, vec![item("A")]);
+    assert_eq!(destination_group.selected, item("A"));
+    assert_eq!(destination_group.mru, vec![item("A")]);
+    let destination_node = runtime.graph().index().node_for_group(&destination).unwrap();
+    let target = runtime.graph().space(&DockSpaceId::from("empty")).unwrap();
+    assert_eq!(target.root, Some(destination_node));
+    assert_eq!(target.central.node, Some(destination_node));
+    assert_eq!(
+        runtime.graph().index().group_for_item(&item("A")),
+        Some(&destination)
+    );
+    runtime
+        .graph()
+        .validate()
+        .expect("multi-item extraction should preserve canonical indexes");
+}
+
+#[test]
+fn move_item_to_empty_space_preserves_a_singleton_leaf_identity() {
+    let mut runtime = empty_target_runtime();
+    let source = DockGroupId::from("inspector");
+    let source_node = runtime.graph().index().node_for_group(&source).unwrap();
+
+    let prepared = match runtime
+        .prepare_move_item_to_empty_space("C", "main", "empty", source.clone())
+        .expect("singleton item move should prepare")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("singleton item move must be structural"),
+    };
+    assert!(matches!(
+        runtime.commit(prepared),
+        GraphCommitOutcome::Committed(_)
+    ));
+
+    assert_eq!(runtime.graph().index().node_for_group(&source), Some(source_node));
+    let target = runtime.graph().space(&DockSpaceId::from("empty")).unwrap();
+    assert_eq!(target.root, Some(source_node));
+    assert_eq!(target.central.node, Some(source_node));
+    runtime
+        .graph()
+        .validate()
+        .expect("singleton item move should preserve canonical indexes");
+}
+
+#[test]
+fn move_item_to_empty_space_can_promote_the_only_floating_singleton() {
+    let mut runtime = floating_only_runtime(false);
+    let source = DockGroupId::from("source");
+    let source_node = runtime.graph().index().node_for_group(&source).unwrap();
+
+    let prepared = match runtime
+        .prepare_move_item_to_empty_space("S", "main", "main", source.clone())
+        .expect("floating singleton promotion should prepare")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("floating singleton promotion must be structural"),
+    };
+    assert!(matches!(
+        runtime.commit(prepared),
+        GraphCommitOutcome::Committed(_)
+    ));
+
+    let space = runtime.graph().space(&DockSpaceId::from("main")).unwrap();
+    assert_eq!(space.root, Some(source_node));
+    assert_eq!(space.central.node, Some(source_node));
+    assert!(space.floating_roots.is_empty());
+    assert!(runtime.graph().floating_roots().is_empty());
+    runtime
+        .graph()
+        .validate()
+        .expect("floating singleton promotion should preserve canonical indexes");
+}
+
+#[test]
+fn move_item_to_empty_space_rejects_invalid_group_identity() {
+    let mut singleton = empty_target_runtime();
+    assert!(matches!(
+        singleton.prepare_move_item_to_empty_space("C", "main", "empty", "new-inspector"),
+        Err(GraphPrepareError::InvalidItemMoveGroupIdentity { .. })
+    ));
+
+    let mut multi = empty_target_runtime();
+    assert!(matches!(
+        multi.prepare_move_item_to_empty_space("A", "main", "empty", "editor"),
+        Err(GraphPrepareError::InvalidItemMoveGroupIdentity { .. })
+    ));
+
+    let mut occupied = runtime();
+    assert!(matches!(
+        occupied.prepare_move_item_to_empty_space("A", "main", "main", "moved-a"),
+        Err(GraphPrepareError::TargetSpaceNotEmpty { .. })
+    ));
+}
+
+#[test]
 fn move_item_to_group_preserves_source_group_and_updates_target_selection() {
     let mut runtime = runtime();
     let prepared = match runtime
@@ -1100,6 +1231,33 @@ fn same_group_item_move_reorders_tabs_and_adjacent_moves_are_noops() {
         .graph()
         .validate()
         .expect("tab reorder should preserve canonical indexes");
+}
+
+#[test]
+fn same_group_item_move_can_place_the_first_tab_after_the_last_tab() {
+    let mut runtime = three_tab_runtime();
+    let prepared = match runtime
+        .prepare_move_item_to_group("A", "editor", "main", "main", Some(3))
+        .expect("trailing tab reorder should prepare")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("trailing tab reorder must be structural"),
+    };
+    assert!(matches!(
+        runtime.commit(prepared),
+        GraphCommitOutcome::Committed(_)
+    ));
+
+    let editor = runtime
+        .graph()
+        .group(&DockGroupId::from("editor"))
+        .unwrap();
+    assert_eq!(editor.items, vec![item("B"), item("C"), item("A")]);
+    assert_eq!(editor.selected, item("A"));
+    runtime
+        .graph()
+        .validate()
+        .expect("trailing tab reorder should preserve canonical indexes");
 }
 
 #[test]

@@ -329,6 +329,14 @@ pub(crate) enum GraphPatchOperation {
         target_space: DockSpaceId,
         insert_index: Option<usize>,
     },
+    /// Moves one item into an empty dock-space root, preserving or creating its group leaf.
+    MoveItemToEmptySpace {
+        item: DockItemId,
+        source_group: DockGroupId,
+        new_group: DockGroupId,
+        source_space: DockSpaceId,
+        target_space: DockSpaceId,
+    },
     /// Moves one complete floating root beside a target group and retires its floating chrome.
     MoveFloatingRootToEdge {
         floating: DockFloatingId,
@@ -612,6 +620,15 @@ pub(crate) trait GraphPatchTarget: GraphReadView {
         insert_index: Option<usize>,
     ) -> GraphRevision;
 
+    fn apply_move_item_to_empty_space(
+        &mut self,
+        item: &DockItemId,
+        source_group: &DockGroupId,
+        new_group: &DockGroupId,
+        source_space: &DockSpaceId,
+        target_space: &DockSpaceId,
+    ) -> GraphRevision;
+
     fn apply_move_floating_root_to_edge(
         &mut self,
         floating: &DockFloatingId,
@@ -697,6 +714,13 @@ pub(crate) enum GraphPrepareError {
     GroupAlreadyExists { group: DockGroupId },
     #[error("new group id cannot be empty")]
     EmptyGroupId,
+    #[error(
+        "item-to-empty-space move has invalid group identity: source {source_group}, destination {new_group}"
+    )]
+    InvalidItemMoveGroupIdentity {
+        source_group: DockGroupId,
+        new_group: DockGroupId,
+    },
     #[error("new group {group} contains duplicate item {item}")]
     DuplicateNewGroupItem {
         group: DockGroupId,

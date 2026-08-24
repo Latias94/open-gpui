@@ -629,10 +629,11 @@ impl CanonicalDockGraph {
                 .get_mut(source_group)
                 .expect("validated source group must remain present");
             let moved = group.items.remove(source_index);
-            let mut insert_at = insert_index.unwrap_or(group.items.len()).min(group.items.len());
+            let mut insert_at = insert_index.unwrap_or(group.items.len());
             if insert_index.is_some_and(|index| index > source_index) {
                 insert_at = insert_at.saturating_sub(1);
             }
+            insert_at = insert_at.min(group.items.len());
             group.items.insert(insert_at, moved);
             group.selected = item.clone();
             group.mru.retain(|entry| entry != item);
@@ -674,6 +675,135 @@ impl CanonicalDockGraph {
         }
         self.index
             .move_item_to_group(item, source_group, target_group, &target_owner);
+        self.version = version;
+        true
+    }
+
+    /// Moves one item into an empty main root, either reusing a singleton group or creating a
+    /// new durable group leaf while retaining the remaining source group.
+    pub(crate) fn apply_move_item_to_empty_space_for_commit(
+        &mut self,
+        item: &DockItemId,
+        source_group: &DockGroupId,
+        new_group: &DockGroupId,
+        source_space: &DockSpaceId,
+        target_space: &DockSpaceId,
+        version: CanonicalGraphVersion,
+    ) -> bool {
+        let Some(source_node) = self.index.node_for_group(source_group) else {
+            return false;
+        };
+        let Some(source_owner) = self.index.owner_for_node(source_node).cloned() else {
+            return false;
+        };
+        let source_owner_space = match &source_owner {
+            CanonicalNodeOwner::Main(space) | CanonicalNodeOwner::Floating { space, .. } => space,
+        };
+        if source_owner_space != source_space {
+            return false;
+        }
+        let Some(source_state) = self.groups.get(source_group) else {
+            return false;
+        };
+        let source_len = source_state.items.len();
+        if !source_state.items.iter().any(|candidate| candidate == item) {
+            return false;
+        }
+        let Some(target_state) = self.spaces.get(target_space) else {
+            return false;
+        };
+        let target_is_empty = if source_space == target_space {
+            target_state.root.is_none()
+                && source_len == 1
+                && self.index.parent_of(source_node) == Some(None)
+                && matches!(
+                    &source_owner,
+                    CanonicalNodeOwner::Floating { floating, .. }
+                        if target_state.floating_roots.len() == 1
+                            && target_state.floating_roots.contains(floating)
+                )
+        } else {
+            target_state.root.is_none() && target_state.floating_roots.is_empty()
+        };
+        if !target_is_empty {
+            return false;
+        }
+        if source_len == 1 && new_group != source_group {
+            return false;
+        }
+        if source_len > 1 && (new_group == source_group || self.groups.contains_key(new_group)) {
+            return false;
+        }
+        let bind_central = target_state.central.keep_alive_when_empty
+            && target_state.central.node.is_none();
+
+        if source_len == 1 {
+            if !self.detach_group_leaf_for_commit(source_node, &source_owner) {
+                return false;
+            }
+            let target_state = self
+                .spaces
+                .get_mut(target_space)
+                .expect("validated target space must remain present");
+            target_state.root = Some(source_node);
+            if bind_central {
+                target_state.central.node = Some(source_node);
+            }
+            self.index.set_parent(source_node, None);
+            self.index.update_owner_subtree(
+                &self.nodes,
+                &self.groups,
+                source_node,
+                CanonicalNodeOwner::Main(target_space.clone()),
+            );
+            self.version = version;
+            return true;
+        }
+
+        let source = self
+            .groups
+            .get_mut(source_group)
+            .expect("validated source group must remain present");
+        source.items.retain(|candidate| candidate != item);
+        source.mru.retain(|entry| entry != item);
+        if source.selected == *item {
+            source.selected = source
+                .items
+                .first()
+                .cloned()
+                .expect("a multi-item source group retains one item");
+        }
+
+        let new_leaf = self.nodes.insert(CanonicalNode::Group {
+            group: new_group.clone(),
+            size_ref: None,
+        });
+        self.groups.insert(
+            new_group.clone(),
+            CanonicalGroup {
+                items: vec![item.clone()],
+                selected: item.clone(),
+                mru: vec![item.clone()],
+            },
+        );
+        let target_state = self
+            .spaces
+            .get_mut(target_space)
+            .expect("validated target space must remain present");
+        target_state.root = Some(new_leaf);
+        if bind_central {
+            target_state.central.node = Some(new_leaf);
+        }
+        self.index.remove_item_membership(item, source_group);
+        self.index.insert_group(
+            new_leaf,
+            new_group,
+            self.groups
+                .get(new_group)
+                .expect("new group inserted above"),
+            None,
+            CanonicalNodeOwner::Main(target_space.clone()),
+        );
         self.version = version;
         true
     }

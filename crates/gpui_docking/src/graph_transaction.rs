@@ -423,6 +423,100 @@ impl GraphTransactionEngine {
         ))
     }
 
+    /// Prepares moving one item into an empty dock-space root.
+    pub(crate) fn prepare_move_item_to_empty_space<T: GraphReadView>(
+        &mut self,
+        view: &T,
+        item: impl Into<DockItemId>,
+        source_space: impl Into<DockSpaceId>,
+        target_space: impl Into<DockSpaceId>,
+        new_group: impl Into<DockGroupId>,
+    ) -> Result<GraphPrepareOutcome, GraphPrepareError> {
+        let item = item.into();
+        let source_space = source_space.into();
+        let target_space = target_space.into();
+        let new_group = new_group.into();
+        let source_group = view
+            .read_item_group(&item)
+            .ok_or_else(|| GraphPrepareError::MissingItem { item: item.clone() })?;
+        let source =
+            view.read_group(&source_group)
+                .ok_or_else(|| GraphPrepareError::MissingGroup {
+                    group: source_group.clone(),
+                })?;
+        if !source.items.iter().any(|candidate| candidate == &item) {
+            return Err(GraphPrepareError::ItemNotInGroup {
+                group: source_group,
+                item,
+            });
+        }
+        if source.space != source_space {
+            return Err(GraphPrepareError::GroupOutsideSpace {
+                group: source_group,
+                space: source_space,
+            });
+        }
+        let target = view.read_space(&target_space).ok_or_else(|| {
+            GraphPrepareError::MissingSpace {
+                space: target_space.clone(),
+            }
+        })?;
+        let target_is_empty = if source_space == target_space {
+            !target.has_main_root
+                && source.items.len() == 1
+                && source.is_owner_root
+                && source.floating.as_ref().is_some_and(|floating| {
+                    target.floating_roots.as_slice() == std::slice::from_ref(floating)
+                })
+        } else {
+            !target.has_main_root && target.floating_roots.is_empty()
+        };
+        if !target_is_empty {
+            return Err(GraphPrepareError::TargetSpaceNotEmpty {
+                space: target_space,
+            });
+        }
+        if new_group.as_str().is_empty() {
+            return Err(GraphPrepareError::EmptyGroupId);
+        }
+        if new_group != source_group && view.read_group(&new_group).is_some() {
+            return Err(GraphPrepareError::GroupAlreadyExists { group: new_group });
+        }
+        if source.items.len() == 1 && new_group != source_group {
+            return Err(GraphPrepareError::InvalidItemMoveGroupIdentity {
+                source_group,
+                new_group,
+            });
+        }
+        if source.items.len() > 1 && new_group == source_group {
+            return Err(GraphPrepareError::InvalidItemMoveGroupIdentity {
+                source_group,
+                new_group,
+            });
+        }
+
+        let operation = GraphPatchOperation::MoveItemToEmptySpace {
+            item,
+            source_group,
+            new_group,
+            source_space,
+            target_space,
+        };
+        let revision = view.graph_revision();
+        let generation = self
+            .next_generation
+            .checked_add(1)
+            .ok_or(GraphPrepareError::CommitIdExhausted)?;
+        self.next_generation = generation;
+        let read_set = GraphReadSet::for_group_to_empty_space(revision, source, target);
+        Ok(GraphPrepareOutcome::Prepared(
+            crate::graph_patch::PreparedGraphPatch::new(
+                GraphCommitId::new(revision.authority_epoch(), generation),
+                GraphPatch::new(operation, read_set),
+            ),
+        ))
+    }
+
     /// Prepares docking an entire floating root beside a target group.
     pub(crate) fn prepare_move_floating_root_to_edge<T: GraphReadView>(
         &mut self,
@@ -584,6 +678,19 @@ impl GraphTransactionEngine {
                 source_space,
                 target_space,
                 *insert_index,
+            ),
+            GraphPatchOperation::MoveItemToEmptySpace {
+                item,
+                source_group,
+                new_group,
+                source_space,
+                target_space,
+            } => target.apply_move_item_to_empty_space(
+                item,
+                source_group,
+                new_group,
+                source_space,
+                target_space,
             ),
             GraphPatchOperation::MoveFloatingRootToEdge {
                 floating,
