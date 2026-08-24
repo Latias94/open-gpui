@@ -6,7 +6,9 @@ use crate::graph_patch::{
     GraphRevision,
 };
 use crate::graph_transaction::GraphTransactionEngine;
-use crate::{CanonicalGraphAuthority, CanonicalGraphVersion, DockGroupId, DockItemId};
+use crate::{
+    CanonicalGraphAuthority, CanonicalGraphVersion, DockGroupId, DockItemId, DockSpaceId, SplitAxis,
+};
 use thiserror::Error;
 
 /// Production owner for one published canonical docking graph.
@@ -79,6 +81,33 @@ impl CanonicalGraphRuntime {
         result
     }
 
+    pub(crate) fn prepare_split_group(
+        &mut self,
+        space: impl Into<DockSpaceId>,
+        target_group: impl Into<DockGroupId>,
+        new_group: impl Into<DockGroupId>,
+        items: impl IntoIterator<Item = DockItemId>,
+        selected: impl Into<DockItemId>,
+        axis: SplitAxis,
+        insert_before: bool,
+        ratio: f32,
+    ) -> Result<GraphPrepareOutcome, GraphPrepareError> {
+        let mut transactions = std::mem::take(&mut self.transactions);
+        let result = transactions.prepare_split_group(
+            self,
+            space,
+            target_group,
+            new_group,
+            items,
+            selected,
+            axis,
+            insert_before,
+            ratio,
+        );
+        self.transactions = transactions;
+        result
+    }
+
     pub(crate) fn commit(
         &mut self,
         prepared: crate::graph_patch::PreparedGraphPatch,
@@ -103,6 +132,10 @@ impl GraphReadView for CanonicalGraphRuntime {
     fn read_group(&self, group: &DockGroupId) -> Option<crate::graph_patch::GraphGroupRead> {
         self.graph.read_group(group)
     }
+
+    fn read_item_group(&self, item: &DockItemId) -> Option<DockGroupId> {
+        self.graph.index().group_for_item(item).cloned()
+    }
 }
 
 impl GraphPatchTarget for CanonicalGraphRuntime {
@@ -119,6 +152,33 @@ impl GraphPatchTarget for CanonicalGraphRuntime {
             .graph
             .apply_selection_for_commit(group, item, next_version);
         debug_assert!(applied, "validated selection patch must be applicable");
+        GraphRevision::from_version(self.graph.version())
+    }
+
+    fn apply_split_group(
+        &mut self,
+        target_group: &DockGroupId,
+        new_group: &DockGroupId,
+        items: &[DockItemId],
+        selected: &DockItemId,
+        axis: SplitAxis,
+        insert_before: bool,
+        ratio: f32,
+        space: &DockSpaceId,
+    ) -> GraphRevision {
+        let next_version = self.authority.record_topology_change();
+        let applied = self.graph.apply_split_group_for_commit(
+            target_group,
+            new_group,
+            items,
+            selected,
+            axis,
+            insert_before,
+            ratio,
+            space,
+            next_version,
+        );
+        debug_assert!(applied, "validated split-group patch must be applicable");
         GraphRevision::from_version(self.graph.version())
     }
 }

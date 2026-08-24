@@ -183,6 +183,124 @@ impl CanonicalDockGraph {
         true
     }
 
+    /// Inserts a new group beside an existing group and rewires only its local parent/root path.
+    pub(crate) fn apply_split_group_for_commit(
+        &mut self,
+        target_group: &DockGroupId,
+        new_group: &DockGroupId,
+        items: &[DockItemId],
+        selected: &DockItemId,
+        axis: SplitAxis,
+        insert_before: bool,
+        ratio: f32,
+        space: &DockSpaceId,
+        version: CanonicalGraphVersion,
+    ) -> bool {
+        let Some(target_node) = self.index.node_for_group(target_group) else {
+            return false;
+        };
+        let Some(owner) = self.index.owner_for_node(target_node).cloned() else {
+            return false;
+        };
+        let owner_space = match &owner {
+            CanonicalNodeOwner::Main(owner_space)
+            | CanonicalNodeOwner::Floating {
+                space: owner_space, ..
+            } => owner_space,
+        };
+        if owner_space != space
+            || self.groups.contains_key(new_group)
+            || items.is_empty()
+            || !items.contains(selected)
+            || !ratio.is_finite()
+            || !(0.0..=1.0).contains(&ratio)
+            || ratio <= 0.0
+            || ratio >= 1.0
+        {
+            return false;
+        }
+        if items
+            .iter()
+            .any(|item| self.index.group_for_item(item).is_some())
+        {
+            return false;
+        }
+
+        let parent = self.index.parent_of(target_node).flatten();
+        if let Some(parent) = parent
+            && !matches!(self.nodes.get(parent), Some(CanonicalNode::Branch { .. }))
+        {
+            return false;
+        }
+
+        self.groups.insert(
+            new_group.clone(),
+            CanonicalGroup {
+                items: items.to_vec(),
+                selected: selected.clone(),
+                mru: Vec::new(),
+            },
+        );
+        let new_leaf = self.nodes.insert(CanonicalNode::Group {
+            group: new_group.clone(),
+            size_ref: None,
+        });
+        let branch = if insert_before {
+            CanonicalNode::Branch {
+                axis,
+                first: new_leaf,
+                second: target_node,
+                ratio,
+                size_ref: None,
+            }
+        } else {
+            CanonicalNode::Branch {
+                axis,
+                first: target_node,
+                second: new_leaf,
+                ratio,
+                size_ref: None,
+            }
+        };
+        let branch_id = self.nodes.insert(branch);
+
+        if let Some(parent) = parent {
+            let parent_node = self
+                .nodes
+                .get_mut(parent)
+                .expect("validated parent must remain in the node map");
+            match parent_node {
+                CanonicalNode::Branch { first, second, .. } if *first == target_node => {
+                    *first = branch_id;
+                }
+                CanonicalNode::Branch { first, second, .. } if *second == target_node => {
+                    *second = branch_id;
+                }
+                _ => unreachable!("validated parent must reference the target node"),
+            }
+        } else {
+            match owner {
+                CanonicalNodeOwner::Main(owner_space) => {
+                    self.spaces
+                        .get_mut(&owner_space)
+                        .expect("validated main owner must remain present")
+                        .root = Some(branch_id);
+                }
+                CanonicalNodeOwner::Floating { floating, .. } => {
+                    self.floating_roots
+                        .get_mut(&floating)
+                        .expect("validated floating owner must remain present")
+                        .root = branch_id;
+                }
+            }
+        }
+
+        self.index = CanonicalGraphIndex::build(self)
+            .expect("a prepared canonical split must preserve graph invariants");
+        self.version = version;
+        true
+    }
+
     #[cfg(test)]
     pub(crate) fn group_mut_for_test(&mut self, id: &DockGroupId) -> Option<&mut CanonicalGroup> {
         self.groups.get_mut(id)

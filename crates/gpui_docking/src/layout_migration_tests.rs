@@ -70,6 +70,54 @@ fn v2_three_child_split_migrates_to_deterministic_right_deep_binary_tree() {
 }
 
 #[test]
+fn v2_root_split_central_resolves_to_remainder_group_leaf() {
+    let layout = DockLayout::from_raw_parts(
+        vec![DockLayoutSpace {
+            id: DockSpaceId::from("main"),
+            root: Some(10),
+            floatings: Vec::new(),
+            central: Some(DockLayoutCentralRegion {
+                node: Some(10),
+                keep_alive_when_empty: true,
+                passthrough_when_empty: false,
+            }),
+        }],
+        vec![
+            tabs(1, "A"),
+            tabs(2, "B"),
+            tabs(3, "C"),
+            DockLayoutNode::Split {
+                id: 10,
+                axis: SplitAxis::Horizontal,
+                children: vec![1, 2, 3],
+                fractions: vec![0.2, 0.3, 0.5],
+            },
+        ],
+    );
+
+    let migrated = migrate_layout_v2(&layout).expect("split central should migrate");
+    let central = migrated.spaces[0]
+        .central
+        .as_ref()
+        .and_then(|central| central.node)
+        .expect("central policy should resolve to a group leaf");
+
+    assert!(migrated.nodes.iter().any(|node| matches!(
+        node,
+        CanonicalLayoutNodeV3::Group {
+            id,
+            group_id,
+            items,
+            ..
+        } if *id == central
+            && group_id == "group:4:main:main/2"
+            && items.len() == 1
+            && items[0] == item("C")
+    )));
+    validate_layout_v3(&migrated).expect("resolved central leaf should validate");
+}
+
+#[test]
 fn v2_zero_share_suffix_and_floating_root_roundtrip_without_loss() {
     let children = (1..=8).collect::<Vec<_>>();
     let items = (1..=9)

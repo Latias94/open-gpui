@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use crate::graph_assembly::CanonicalDockGraph;
-use crate::{CanonicalGraphVersion, DockGroupId, DockItemId};
+use crate::{CanonicalGraphVersion, DockGroupId, DockItemId, DockSpaceId, SplitAxis};
 use std::fmt;
 use thiserror::Error;
 
@@ -111,9 +111,23 @@ impl fmt::Display for GraphCommitId {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct GraphGroupRead {
     pub(crate) group: DockGroupId,
+    pub(crate) space: DockSpaceId,
     pub(crate) items: Vec<DockItemId>,
     pub(crate) selected: DockItemId,
     pub(crate) mru: Vec<DockItemId>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct GraphSplitRatio(u32);
+
+impl GraphSplitRatio {
+    pub(crate) fn new(value: f32) -> Option<Self> {
+        (value.is_finite() && value > 0.0 && value < 1.0).then_some(Self(value.to_bits()))
+    }
+
+    pub(crate) fn get(self) -> f32 {
+        f32::from_bits(self.0)
+    }
 }
 
 /// Declared revision domains that a patch depends on.
@@ -142,6 +156,9 @@ pub(crate) struct GraphReadSet {
     base_revision: GraphRevision,
     domains: GraphReadDomains,
     group: GraphGroupRead,
+    additional_groups: Vec<GraphGroupRead>,
+    group_selection_sensitive: bool,
+    group_mru_sensitive: bool,
 }
 
 impl GraphReadSet {
@@ -150,6 +167,31 @@ impl GraphReadSet {
             base_revision,
             domains: GraphReadDomains::select_tab(),
             group,
+            additional_groups: Vec::new(),
+            group_selection_sensitive: true,
+            group_mru_sensitive: true,
+        }
+    }
+
+    pub(crate) fn for_groups(
+        base_revision: GraphRevision,
+        groups: impl IntoIterator<Item = GraphGroupRead>,
+    ) -> Self {
+        let mut groups = groups.into_iter();
+        let group = groups
+            .next()
+            .expect("a graph patch must read at least one group");
+        Self {
+            base_revision,
+            domains: GraphReadDomains {
+                topology: true,
+                selection: false,
+                interaction: false,
+            },
+            group,
+            additional_groups: groups.collect(),
+            group_selection_sensitive: false,
+            group_mru_sensitive: false,
         }
     }
 
@@ -164,6 +206,10 @@ impl GraphReadSet {
     pub(crate) fn group(&self) -> &GraphGroupRead {
         &self.group
     }
+
+    pub(crate) fn groups(&self) -> impl Iterator<Item = &GraphGroupRead> {
+        std::iter::once(&self.group).chain(self.additional_groups.iter())
+    }
 }
 
 /// Symbolic operation recorded by a prepared patch.
@@ -173,6 +219,17 @@ pub(crate) enum GraphPatchOperation {
     SelectTab {
         group: DockGroupId,
         item: DockItemId,
+    },
+    /// Inserts a newly created group beside an existing group in its current root.
+    SplitGroup {
+        target_group: DockGroupId,
+        new_group: DockGroupId,
+        items: Vec<DockItemId>,
+        selected: DockItemId,
+        axis: SplitAxis,
+        insert_before: bool,
+        ratio: GraphSplitRatio,
+        space: DockSpaceId,
     },
 }
 
@@ -270,6 +327,7 @@ pub(crate) enum GraphSupersededReason {
     InteractionChanged,
     GroupMissing,
     GroupIdentityChanged,
+    GroupOwnerChanged,
     GroupMembershipChanged,
     GroupSelectionChanged,
 }
@@ -369,15 +427,32 @@ pub(crate) trait GraphReadView {
     fn graph_revision(&self) -> GraphRevision;
 
     fn read_group(&self, group: &DockGroupId) -> Option<GraphGroupRead>;
+
+    fn read_item_group(&self, item: &DockItemId) -> Option<DockGroupId> {
+        let _ = item;
+        None
+    }
 }
 
 /// Infallible write boundary for a proven symbolic patch.
 ///
 /// The trait intentionally has no `Result` return. All domain validation belongs to preparation
-/// and read-set revalidation; once this method is called, the target has promised that the local
+/// and read-set revalidation; once either method is called, the target has promised that the local
 /// write is structurally valid.
 pub(crate) trait GraphPatchTarget: GraphReadView {
     fn apply_select_tab(&mut self, group: &DockGroupId, item: &DockItemId) -> GraphRevision;
+
+    fn apply_split_group(
+        &mut self,
+        target_group: &DockGroupId,
+        new_group: &DockGroupId,
+        items: &[DockItemId],
+        selected: &DockItemId,
+        axis: SplitAxis,
+        insert_before: bool,
+        ratio: f32,
+        space: &DockSpaceId,
+    ) -> GraphRevision;
 }
 
 impl GraphReadView for CanonicalDockGraph {
@@ -388,10 +463,20 @@ impl GraphReadView for CanonicalDockGraph {
     fn read_group(&self, group: &DockGroupId) -> Option<GraphGroupRead> {
         self.group(group).map(|value| GraphGroupRead {
             group: group.clone(),
+            space: self
+                .index()
+                .node_for_group(group)
+                .and_then(|node| self.index().space_for_node(node))
+                .cloned()
+                .expect("published group must have a space owner"),
             items: value.items.clone(),
             selected: value.selected.clone(),
             mru: value.mru.clone(),
         })
+    }
+
+    fn read_item_group(&self, item: &DockItemId) -> Option<DockGroupId> {
+        self.index().group_for_item(item).cloned()
     }
 }
 
@@ -403,6 +488,27 @@ pub(crate) enum GraphPrepareError {
     ItemNotInGroup {
         group: DockGroupId,
         item: DockItemId,
+    },
+    #[error("group {group} already exists")]
+    GroupAlreadyExists { group: DockGroupId },
+    #[error("new group id cannot be empty")]
+    EmptyGroupId,
+    #[error("new group {group} contains duplicate item {item}")]
+    DuplicateNewGroupItem {
+        group: DockGroupId,
+        item: DockItemId,
+    },
+    #[error("item {item} already belongs to group {group}")]
+    ItemAlreadyExists {
+        item: DockItemId,
+        group: DockGroupId,
+    },
+    #[error("split ratio must be finite and strictly between zero and one")]
+    InvalidSplitRatio,
+    #[error("group {group} is not owned by dock space {space}")]
+    GroupOutsideSpace {
+        group: DockGroupId,
+        space: DockSpaceId,
     },
     #[error("graph commit id space is exhausted")]
     CommitIdExhausted,
@@ -427,20 +533,25 @@ impl GraphReadSet {
             return Err(GraphSupersededReason::InteractionChanged);
         }
 
-        let Some(group) = target.read_group(&self.group.group) else {
-            return Err(GraphSupersededReason::GroupMissing);
-        };
-        if group.group != self.group.group {
-            return Err(GraphSupersededReason::GroupIdentityChanged);
-        }
-        if group.items != self.group.items {
-            return Err(GraphSupersededReason::GroupMembershipChanged);
-        }
-        if group.selected != self.group.selected {
-            return Err(GraphSupersededReason::GroupSelectionChanged);
-        }
-        if group.mru != self.group.mru {
-            return Err(GraphSupersededReason::GroupSelectionChanged);
+        for expected in self.groups() {
+            let Some(group) = target.read_group(&expected.group) else {
+                return Err(GraphSupersededReason::GroupMissing);
+            };
+            if group.group != expected.group {
+                return Err(GraphSupersededReason::GroupIdentityChanged);
+            }
+            if group.space != expected.space {
+                return Err(GraphSupersededReason::GroupOwnerChanged);
+            }
+            if group.items != expected.items {
+                return Err(GraphSupersededReason::GroupMembershipChanged);
+            }
+            if self.group_selection_sensitive && group.selected != expected.selected {
+                return Err(GraphSupersededReason::GroupSelectionChanged);
+            }
+            if self.group_mru_sensitive && group.mru != expected.mru {
+                return Err(GraphSupersededReason::GroupSelectionChanged);
+            }
         }
         Ok(actual)
     }

@@ -171,6 +171,10 @@ pub(crate) enum LayoutMigrationError {
     CentralNodeNotGroup { space: DockSpaceId, node: u32 },
     #[error("layout v3 floating root {id} has invalid bounds")]
     InvalidFloatingBounds { id: String },
+    #[error(
+        "layout v2 central node {node} in space {space} cannot resolve to a canonical tab group leaf"
+    )]
+    UnresolvableLegacyCentral { space: DockSpaceId, node: u32 },
     #[error("layout v2 split {id} has zero total weight")]
     AllZeroSplit { id: u32 },
     #[error("layout migration exhausted structural node ids")]
@@ -282,14 +286,7 @@ pub(crate) fn migrate_layout_v2(
             Some(CanonicalLayoutCentralV3 {
                 node: central
                     .node
-                    .map(|node| {
-                        state.memo.get(&node).copied().ok_or_else(|| {
-                            LayoutMigrationError::MissingCentralNode {
-                                space: space.id.clone(),
-                                node,
-                            }
-                        })
-                    })
+                    .map(|node| state.resolve_central_group(node, &space.id))
                     .transpose()?,
                 keep_alive_when_empty: central.keep_alive_when_empty,
                 passthrough_when_empty: central.passthrough_when_empty,
@@ -627,6 +624,35 @@ struct MigrationState<'a> {
 }
 
 impl MigrationState<'_> {
+    fn resolve_central_group(
+        &self,
+        legacy_node: u32,
+        space: &DockSpaceId,
+    ) -> Result<u32, LayoutMigrationError> {
+        let unresolved = || LayoutMigrationError::UnresolvableLegacyCentral {
+            space: space.clone(),
+            node: legacy_node,
+        };
+        let mut current = legacy_node;
+        let mut visited = BTreeSet::new();
+        loop {
+            if !visited.insert(current) {
+                return Err(unresolved());
+            }
+            match self.by_id.get(&current).copied() {
+                Some(DockLayoutNode::Tabs { .. }) => {
+                    return self.memo.get(&current).copied().ok_or_else(|| unresolved());
+                }
+                Some(DockLayoutNode::Split { children, .. }) => {
+                    // The right-deep v2 fold prepends each earlier sibling, so the suffix child
+                    // inherits ImGui's central remainder and remains the deterministic central path.
+                    current = children.last().copied().ok_or_else(|| unresolved())?;
+                }
+                None => return Err(unresolved()),
+            }
+        }
+    }
+
     fn convert_node(
         &mut self,
         id: u32,

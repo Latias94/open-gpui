@@ -1,11 +1,12 @@
 #![allow(dead_code)]
 
 use crate::graph_patch::{
-    GraphCommitId, GraphCommitOutcome, GraphCommitReceipt, GraphPatch,
-    GraphPatchOperation, GraphPatchTarget, GraphPrepareError, GraphPrepareOutcome, GraphReadSet,
-    GraphReadView, GraphSupersededReceipt,
+    GraphCommitId, GraphCommitOutcome, GraphCommitReceipt, GraphPatch, GraphPatchOperation,
+    GraphPatchTarget, GraphPrepareError, GraphPrepareOutcome, GraphReadSet, GraphReadView,
+    GraphSplitRatio, GraphSupersededReceipt,
 };
-use crate::{DockGroupId, DockItemId};
+use crate::{DockGroupId, DockItemId, DockSpaceId, SplitAxis};
+use std::collections::BTreeSet;
 
 /// Prepared-patch owner for the canonical graph transaction boundary.
 ///
@@ -60,6 +61,89 @@ impl GraphTransactionEngine {
         ))
     }
 
+    /// Prepares insertion of a newly created group beside an existing target group.
+    pub(crate) fn prepare_split_group<T: GraphReadView>(
+        &mut self,
+        view: &T,
+        space: impl Into<DockSpaceId>,
+        target_group: impl Into<DockGroupId>,
+        new_group: impl Into<DockGroupId>,
+        items: impl IntoIterator<Item = DockItemId>,
+        selected: impl Into<DockItemId>,
+        axis: SplitAxis,
+        insert_before: bool,
+        ratio: f32,
+    ) -> Result<GraphPrepareOutcome, GraphPrepareError> {
+        let space = space.into();
+        let target_group = target_group.into();
+        let new_group = new_group.into();
+        let items = items.into_iter().collect::<Vec<_>>();
+        let selected = selected.into();
+        let target =
+            view.read_group(&target_group)
+                .ok_or_else(|| GraphPrepareError::MissingGroup {
+                    group: target_group.clone(),
+                })?;
+        if target.space != space {
+            return Err(GraphPrepareError::GroupOutsideSpace {
+                group: target_group,
+                space,
+            });
+        }
+        if view.read_group(&new_group).is_some() {
+            return Err(GraphPrepareError::GroupAlreadyExists { group: new_group });
+        }
+        if new_group.as_str().is_empty() {
+            return Err(GraphPrepareError::EmptyGroupId);
+        }
+        if items.is_empty() || !items.contains(&selected) {
+            return Err(GraphPrepareError::ItemNotInGroup {
+                group: new_group,
+                item: selected,
+            });
+        }
+        let mut unique_items = BTreeSet::new();
+        for item in &items {
+            if !unique_items.insert(item.clone()) {
+                return Err(GraphPrepareError::DuplicateNewGroupItem {
+                    group: new_group,
+                    item: item.clone(),
+                });
+            }
+            if let Some(group) = view.read_item_group(item) {
+                return Err(GraphPrepareError::ItemAlreadyExists {
+                    item: item.clone(),
+                    group,
+                });
+            }
+        }
+        let ratio = GraphSplitRatio::new(ratio).ok_or(GraphPrepareError::InvalidSplitRatio)?;
+
+        let operation = GraphPatchOperation::SplitGroup {
+            target_group,
+            new_group,
+            items,
+            selected,
+            axis,
+            insert_before,
+            ratio,
+            space,
+        };
+        let revision = view.graph_revision();
+        let generation = self
+            .next_generation
+            .checked_add(1)
+            .ok_or(GraphPrepareError::CommitIdExhausted)?;
+        self.next_generation = generation;
+        let read_set = GraphReadSet::for_groups(revision, [target]);
+        Ok(GraphPrepareOutcome::Prepared(
+            crate::graph_patch::PreparedGraphPatch::new(
+                GraphCommitId::new(revision.authority_epoch(), generation),
+                GraphPatch::new(operation, read_set),
+            ),
+        ))
+    }
+
     /// Commits a prepared patch or returns a typed stale/replay observation.
     ///
     /// Every business check happens before [`GraphPatchTarget::apply_select_tab`]. The target
@@ -92,6 +176,25 @@ impl GraphTransactionEngine {
         let operation = prepared.operation();
         let after = match operation {
             GraphPatchOperation::SelectTab { group, item } => target.apply_select_tab(group, item),
+            GraphPatchOperation::SplitGroup {
+                target_group,
+                new_group,
+                items,
+                selected,
+                axis,
+                insert_before,
+                ratio,
+                space,
+            } => target.apply_split_group(
+                target_group,
+                new_group,
+                items,
+                selected,
+                *axis,
+                *insert_before,
+                ratio.get(),
+                space,
+            ),
         };
         let receipt = GraphCommitReceipt::new(
             commit_id,
@@ -101,6 +204,25 @@ impl GraphTransactionEngine {
                 GraphPatchOperation::SelectTab { group, item } => GraphPatchOperation::SelectTab {
                     group: group.clone(),
                     item: item.clone(),
+                },
+                GraphPatchOperation::SplitGroup {
+                    target_group,
+                    new_group,
+                    items,
+                    selected,
+                    axis,
+                    insert_before,
+                    ratio,
+                    space,
+                } => GraphPatchOperation::SplitGroup {
+                    target_group: target_group.clone(),
+                    new_group: new_group.clone(),
+                    items: items.clone(),
+                    selected: selected.clone(),
+                    axis: *axis,
+                    insert_before: *insert_before,
+                    ratio: *ratio,
+                    space: space.clone(),
                 },
             },
         );

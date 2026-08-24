@@ -77,6 +77,10 @@ impl CanonicalGraphAuthority {
         self.current()
     }
 
+    pub(crate) fn record_topology_change(&mut self) -> CanonicalGraphVersion {
+        self.publish()
+    }
+
     pub(crate) fn current(&self) -> CanonicalGraphVersion {
         CanonicalGraphVersion {
             authority_epoch: self.authority_epoch,

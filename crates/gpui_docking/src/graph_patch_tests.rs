@@ -46,6 +46,7 @@ impl SelectionTarget {
                     id.clone(),
                     GraphGroupRead {
                         group: id.clone(),
+                        space: "main".into(),
                         items: group.items.clone(),
                         selected: group.selected.clone(),
                         mru: group.mru.clone(),
@@ -106,6 +107,20 @@ impl GraphPatchTarget for SelectionTarget {
         self.applied += 1;
         self.revision = self.revision.with_selection(self.revision.selection() + 1);
         self.revision
+    }
+
+    fn apply_split_group(
+        &mut self,
+        _target_group: &DockGroupId,
+        _new_group: &DockGroupId,
+        _items: &[DockItemId],
+        _selected: &DockItemId,
+        _axis: crate::SplitAxis,
+        _insert_before: bool,
+        _ratio: f32,
+        _space: &crate::DockSpaceId,
+    ) -> GraphRevision {
+        panic!("selection target does not support structural patches")
     }
 }
 
