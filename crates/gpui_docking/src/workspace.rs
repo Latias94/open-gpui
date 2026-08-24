@@ -221,19 +221,24 @@ impl DockWorkspace {
     pub(crate) fn commit_or_replay_locked_payload_drop(
         &mut self,
         commit_id: DockWorkspaceLockedPayloadDropCommitId,
-        expected_graph: &DockGraph,
-        projected_graph: DockGraph,
+        expected_revision: u64,
+        operation: DockOp,
         outcome: DockWorkspacePayloadDropOutcome,
     ) -> Option<DockWorkspaceLockedPayloadDropCommitReceipt> {
         if let Some(receipt) = self.locked_payload_drop_commits.get(&commit_id) {
             return Some(receipt.clone());
         }
-        if !self.graph.matches_exactly(expected_graph) {
+        if self.graph_revision != expected_revision
+            || self.graph.validate_op_checked(&operation).is_err()
+        {
             return None;
         }
 
+        let changed = self.apply_op_checked(&operation).ok()?;
+        if changed != outcome.changed() {
+            return None;
+        }
         let receipt = DockWorkspaceLockedPayloadDropCommitReceipt::new(commit_id, outcome);
-        self.replace_graph(projected_graph);
         self.locked_payload_drop_commits
             .insert(commit_id, receipt.clone());
         Some(receipt)

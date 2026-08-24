@@ -25,8 +25,10 @@ pub(crate) struct DockWorkspaceLockedPayloadDropRequest<'a> {
 #[must_use = "a prepared locked payload drop must commit its projected graph"]
 pub(crate) struct DockWorkspacePreparedLockedPayloadDrop {
     commit_id: DockWorkspaceLockedPayloadDropCommitId,
-    expected_graph: crate::DockGraph,
-    graph: crate::DockGraph,
+    expected_revision: u64,
+    operation: DockOp,
+    source_space: DockSpaceId,
+    source_space_empty: bool,
     outcome: DockWorkspacePayloadDropOutcome,
 }
 
@@ -40,7 +42,7 @@ impl DockWorkspacePreparedLockedPayloadDrop {
     }
 
     pub(crate) fn space_is_empty(&self, space: &DockSpaceId) -> bool {
-        self.graph.collect_items_in_space(space).is_empty()
+        self.source_space_empty && self.source_space == *space
     }
 
     pub(crate) fn commit_or_replay(
@@ -49,8 +51,8 @@ impl DockWorkspacePreparedLockedPayloadDrop {
     ) -> Option<DockWorkspaceLockedPayloadDropCommitReceipt> {
         workspace.commit_or_replay_locked_payload_drop(
             self.commit_id,
-            &self.expected_graph,
-            self.graph.clone(),
+            self.expected_revision,
+            self.operation.clone(),
             self.outcome.clone(),
         )
     }
@@ -234,8 +236,7 @@ impl DockWorkspace {
             .into_locked_identity();
         let plan = DockWorkspaceLockedPayloadDropPlan { source, target };
         plan.validate(self)?;
-        let mut graph = self.graph().clone();
-        graph.apply_op_checked(&plan.graph_op())?;
+        self.graph().validate_op_checked(&plan.graph_op())?;
         Ok(plan)
     }
 
@@ -256,25 +257,24 @@ impl DockWorkspace {
             frozen_focus_item,
         } = request;
         plan.validate(self)?;
-        let focus_target_space = plan.target_space().clone();
         let focus_item = match plan.payload() {
             DockWorkspaceDropPayload::Item { item, .. } => Some((*item).clone()),
             DockWorkspaceDropPayload::Tabs { .. } | DockWorkspaceDropPayload::Floating { .. } => {
                 frozen_focus_item.cloned()
             }
         };
-        let expected_graph = self.graph().clone();
-        let mut graph = expected_graph.clone();
-        let action = DockActionOutcome::from_changed(graph.apply_op_checked(&plan.graph_op())?);
-        let focus_item = focus_item.filter(|item| {
-            graph
-                .find_item_in_space(&focus_target_space, item)
-                .is_some()
-        });
+        let operation = plan.graph_op();
+        let changed = self.graph().validate_op_checked(&operation)?;
+        let action = DockActionOutcome::from_changed(changed);
+        let focus_item = focus_item.filter(|item| plan.source.contains_item(item));
         Ok(DockWorkspacePreparedLockedPayloadDrop {
             commit_id: self.allocate_locked_payload_drop_commit_id(),
-            expected_graph,
-            graph,
+            expected_revision: self.graph_revision(),
+            operation,
+            source_space: plan.source_space().clone(),
+            source_space_empty: plan
+                .source
+                .source_space_will_be_empty_after_move(self.graph(), &plan.target_space()),
             outcome: DockWorkspacePayloadDropOutcome::new(action, focus_item),
         })
     }

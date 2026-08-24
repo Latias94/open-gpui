@@ -172,6 +172,35 @@ impl DockLockedPayloadIdentity {
         }
     }
 
+    pub(crate) fn contains_item(&self, item: &DockItemId) -> bool {
+        match self {
+            Self::Item {
+                item: payload_item, ..
+            } => payload_item == item,
+            Self::Tabs { ordered_items, .. } | Self::Floating { ordered_items, .. } => {
+                ordered_items.iter().any(|candidate| candidate == item)
+            }
+        }
+    }
+
+    pub(crate) fn source_space_will_be_empty_after_move(
+        &self,
+        graph: &DockGraph,
+        target_space: &DockSpaceId,
+    ) -> bool {
+        if self.source_space() == target_space {
+            return false;
+        }
+        let source_items = graph.collect_items_in_space(self.source_space());
+        match self {
+            Self::Item { item, .. } => source_items.len() == 1 && source_items[0] == *item,
+            Self::Tabs { ordered_items, .. } | Self::Floating { ordered_items, .. } => {
+                source_items.len() == ordered_items.len()
+                    && source_items.iter().all(|item| ordered_items.contains(item))
+            }
+        }
+    }
+
     pub(crate) const fn source_node(&self) -> DockNodeId {
         match self {
             Self::Item { source_tabs, .. } | Self::Tabs { source_tabs, .. } => *source_tabs,
