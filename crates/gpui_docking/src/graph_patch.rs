@@ -217,6 +217,16 @@ impl GraphReadSet {
         read_set
     }
 
+    pub(crate) fn for_group_merge(
+        base_revision: GraphRevision,
+        groups: impl IntoIterator<Item = GraphGroupRead>,
+    ) -> Self {
+        let mut read_set = Self::for_groups(base_revision, groups);
+        read_set.group_selection_sensitive = true;
+        read_set.group_mru_sensitive = true;
+        read_set
+    }
+
     pub(crate) const fn base_revision(&self) -> GraphRevision {
         self.base_revision
     }
@@ -266,6 +276,13 @@ pub(crate) enum GraphPatchOperation {
         axis: SplitAxis,
         insert_before: bool,
         ratio: GraphSplitRatio,
+    },
+    /// Merges every source tab into the target group and retires the source group leaf.
+    MoveGroupToCenter {
+        source_group: DockGroupId,
+        target_group: DockGroupId,
+        source_space: DockSpaceId,
+        target_space: DockSpaceId,
     },
     /// Moves one complete floating root beside a target group and retires its floating chrome.
     MoveFloatingRootToEdge {
@@ -516,6 +533,14 @@ pub(crate) trait GraphPatchTarget: GraphReadView {
         axis: SplitAxis,
         insert_before: bool,
         ratio: f32,
+    ) -> GraphRevision;
+
+    fn apply_move_group_to_center(
+        &mut self,
+        source_group: &DockGroupId,
+        target_group: &DockGroupId,
+        source_space: &DockSpaceId,
+        target_space: &DockSpaceId,
     ) -> GraphRevision;
 
     fn apply_move_floating_root_to_edge(

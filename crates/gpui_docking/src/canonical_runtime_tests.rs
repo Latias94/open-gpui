@@ -536,6 +536,229 @@ fn move_group_to_edge_relinks_a_same_space_sibling_without_replacing_leaf_ids() 
 }
 
 #[test]
+fn move_group_to_center_merges_tabs_and_retires_the_source_leaf() {
+    let mut runtime = runtime();
+    let editor = DockGroupId::from("editor");
+    let inspector = DockGroupId::from("inspector");
+    let inspector_node = runtime.graph().index().node_for_group(&inspector).unwrap();
+
+    let prepared = match runtime
+        .prepare_move_group_to_center(
+            editor.clone(),
+            inspector.clone(),
+            "main",
+            "main",
+        )
+        .expect("same-space group merge should prepare")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("different groups must produce a merge patch"),
+    };
+    assert!(matches!(
+        prepared.operation(),
+        GraphPatchOperation::MoveGroupToCenter {
+            source_group,
+            target_group,
+            ..
+        } if source_group == &editor && target_group == &inspector
+    ));
+    let receipt = match runtime.commit(prepared) {
+        GraphCommitOutcome::Committed(receipt) => receipt,
+        other => panic!("same-space group merge should commit, got {other:?}"),
+    };
+
+    assert_eq!(receipt.after().topology(), receipt.before().topology() + 1);
+    assert!(runtime.graph().group(&editor).is_none());
+    let target = runtime
+        .graph()
+        .group(&inspector)
+        .expect("target group should remain present");
+    assert_eq!(target.items, vec![item("C"), item("D"), item("A"), item("B")]);
+    assert_eq!(target.selected, item("A"));
+    assert_eq!(target.mru, vec![item("A"), item("C")]);
+    assert_eq!(
+        runtime
+            .graph()
+            .space(&DockSpaceId::from("main"))
+            .and_then(|space| space.root),
+        Some(inspector_node)
+    );
+    assert_eq!(runtime.graph().nodes().len(), 1);
+    assert_eq!(
+        runtime.graph().index().group_for_item(&item("A")),
+        Some(&inspector)
+    );
+    runtime
+        .graph()
+        .validate()
+        .expect("same-space merge should preserve canonical indexes");
+}
+
+#[test]
+fn move_group_to_center_preserves_the_remaining_source_space_across_dockspaces() {
+    let mut runtime = multiview_runtime();
+    let editor = DockGroupId::from("editor");
+    let inspector = DockGroupId::from("inspector");
+    let detached_target = DockGroupId::from("detached-target");
+    let inspector_node = runtime.graph().index().node_for_group(&inspector).unwrap();
+    let detached_target_node = runtime
+        .graph()
+        .index()
+        .node_for_group(&detached_target)
+        .unwrap();
+
+    let prepared = match runtime
+        .prepare_move_group_to_center(
+            editor.clone(),
+            detached_target.clone(),
+            "main",
+            "detached",
+        )
+        .expect("cross-space group merge should prepare")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("cross-space merge must be structural"),
+    };
+    assert!(matches!(
+        runtime.commit(prepared),
+        GraphCommitOutcome::Committed(_)
+    ));
+
+    assert_eq!(
+        runtime
+            .graph()
+            .space(&DockSpaceId::from("main"))
+            .and_then(|space| space.root),
+        Some(inspector_node)
+    );
+    assert_eq!(
+        runtime
+            .graph()
+            .space(&DockSpaceId::from("detached"))
+            .and_then(|space| space.root),
+        Some(detached_target_node)
+    );
+    assert!(runtime.graph().group(&editor).is_none());
+    assert_eq!(
+        runtime.graph().group(&detached_target).unwrap().items,
+        vec![item("X"), item("A"), item("B")]
+    );
+    runtime
+        .graph()
+        .validate()
+        .expect("cross-space merge should preserve canonical indexes");
+}
+
+#[test]
+fn move_group_to_center_rehomes_item_ownership_into_a_floating_target() {
+    let mut runtime = floating_runtime();
+    let source = DockGroupId::from("source");
+    let target = DockGroupId::from("target");
+    let floating = crate::DockFloatingId::from("floating-target");
+
+    let prepared = match runtime
+        .prepare_move_group_to_center(source.clone(), target.clone(), "main", "main")
+        .expect("floating-target group merge should prepare")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("floating-target merge must be structural"),
+    };
+    assert!(matches!(
+        runtime.commit(prepared),
+        GraphCommitOutcome::Committed(_)
+    ));
+
+    assert!(runtime.graph().group(&source).is_none());
+    assert_eq!(
+        runtime.graph().group(&target).unwrap().items,
+        vec![item("T"), item("S")]
+    );
+    assert_eq!(
+        runtime.graph().index().floating_for_item(&item("S")),
+        Some(&floating)
+    );
+    runtime
+        .graph()
+        .validate()
+        .expect("floating-target merge should preserve canonical indexes");
+}
+
+#[test]
+fn move_group_to_center_retires_a_single_group_floating_source() {
+    let mut runtime = floating_source_runtime();
+    let source = DockGroupId::from("source");
+    let target = DockGroupId::from("target");
+    let floating = crate::DockFloatingId::from("floating-source");
+
+    let prepared = match runtime
+        .prepare_move_group_to_center(source.clone(), target.clone(), "main", "main")
+        .expect("floating-source group merge should prepare")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("floating-source merge must be structural"),
+    };
+    assert!(matches!(
+        runtime.commit(prepared),
+        GraphCommitOutcome::Committed(_)
+    ));
+
+    assert!(runtime.graph().floating_roots().get(&floating).is_none());
+    assert!(runtime.graph().group(&source).is_none());
+    assert_eq!(
+        runtime.graph().group(&target).unwrap().items,
+        vec![item("T"), item("S")]
+    );
+    assert!(
+        runtime
+            .graph()
+            .index()
+            .floating_for_item(&item("S"))
+            .is_none()
+    );
+    runtime
+        .graph()
+        .validate()
+        .expect("floating-source merge should preserve canonical indexes");
+}
+
+#[test]
+fn group_merge_is_noop_for_the_same_group_and_stale_after_source_selection_changes() {
+    let mut runtime = runtime();
+    let no_op = runtime
+        .prepare_move_group_to_center("editor", "editor", "main", "main")
+        .expect("same-group center move should resolve");
+    assert!(matches!(
+        no_op,
+        GraphPrepareOutcome::NoOp(receipt)
+            if matches!(receipt.operation(), GraphPatchOperation::MoveGroupToCenter { .. })
+    ));
+
+    let merge = match runtime
+        .prepare_move_group_to_center("editor", "inspector", "main", "main")
+        .expect("group merge should prepare")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("different groups must produce a merge patch"),
+    };
+    let selection = match runtime
+        .prepare_select_tab("editor", "B")
+        .expect("source selection should prepare")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("selection should produce a patch"),
+    };
+    assert!(matches!(
+        runtime.commit(selection),
+        GraphCommitOutcome::Committed(_)
+    ));
+    assert!(matches!(
+        runtime.commit(merge),
+        GraphCommitOutcome::Superseded(receipt)
+            if receipt.reason() == &GraphSupersededReason::GroupSelectionChanged
+    ));
+}
+
+#[test]
 fn move_group_to_edge_can_insert_into_a_floating_root() {
     let mut runtime = floating_runtime();
     let target = DockGroupId::from("target");

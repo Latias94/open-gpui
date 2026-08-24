@@ -136,6 +136,16 @@ impl GraphPatchTarget for SelectionTarget {
         panic!("selection target does not support structural patches")
     }
 
+    fn apply_move_group_to_center(
+        &mut self,
+        _source_group: &DockGroupId,
+        _target_group: &DockGroupId,
+        _source_space: &DockSpaceId,
+        _target_space: &DockSpaceId,
+    ) -> GraphRevision {
+        panic!("selection target does not support structural patches")
+    }
+
     fn apply_move_floating_root_to_edge(
         &mut self,
         _floating: &crate::DockFloatingId,

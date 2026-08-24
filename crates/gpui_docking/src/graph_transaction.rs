@@ -1,9 +1,9 @@
 #![allow(dead_code)]
 
 use crate::graph_patch::{
-    GraphCommitId, GraphCommitOutcome, GraphCommitReceipt, GraphPatch, GraphPatchOperation,
-    GraphPatchTarget, GraphPrepareError, GraphPrepareOutcome, GraphReadSet, GraphReadView,
-    GraphSplitRatio, GraphSupersededReceipt,
+    GraphCommitId, GraphCommitOutcome, GraphCommitReceipt, GraphNoOpReceipt, GraphPatch,
+    GraphPatchOperation, GraphPatchTarget, GraphPrepareError, GraphPrepareOutcome, GraphReadSet,
+    GraphReadView, GraphSplitRatio, GraphSupersededReceipt,
 };
 use crate::{DockFloatingId, DockGroupId, DockItemId, DockSpaceId, SplitAxis};
 use std::collections::{BTreeMap, BTreeSet};
@@ -210,6 +210,69 @@ impl GraphTransactionEngine {
         ))
     }
 
+    /// Prepares merging a complete source tab group into a target tab group.
+    pub(crate) fn prepare_move_group_to_center<T: GraphReadView>(
+        &mut self,
+        view: &T,
+        source_group: impl Into<DockGroupId>,
+        target_group: impl Into<DockGroupId>,
+        source_space: impl Into<DockSpaceId>,
+        target_space: impl Into<DockSpaceId>,
+    ) -> Result<GraphPrepareOutcome, GraphPrepareError> {
+        let source_group = source_group.into();
+        let target_group = target_group.into();
+        let source_space = source_space.into();
+        let target_space = target_space.into();
+        let source =
+            view.read_group(&source_group)
+                .ok_or_else(|| GraphPrepareError::MissingGroup {
+                    group: source_group.clone(),
+                })?;
+        if source.space != source_space {
+            return Err(GraphPrepareError::GroupOutsideSpace {
+                group: source_group,
+                space: source_space,
+            });
+        }
+        let target =
+            view.read_group(&target_group)
+                .ok_or_else(|| GraphPrepareError::MissingGroup {
+                    group: target_group.clone(),
+                })?;
+        if target.space != target_space {
+            return Err(GraphPrepareError::GroupOutsideSpace {
+                group: target_group,
+                space: target_space,
+            });
+        }
+
+        let operation = GraphPatchOperation::MoveGroupToCenter {
+            source_group: source_group.clone(),
+            target_group: target_group.clone(),
+            source_space,
+            target_space,
+        };
+        let revision = view.graph_revision();
+        if source_group == target_group {
+            return Ok(GraphPrepareOutcome::NoOp(GraphNoOpReceipt::new(
+                revision, operation,
+            )));
+        }
+
+        let generation = self
+            .next_generation
+            .checked_add(1)
+            .ok_or(GraphPrepareError::CommitIdExhausted)?;
+        self.next_generation = generation;
+        let read_set = GraphReadSet::for_group_merge(revision, [source, target]);
+        Ok(GraphPrepareOutcome::Prepared(
+            crate::graph_patch::PreparedGraphPatch::new(
+                GraphCommitId::new(revision.authority_epoch(), generation),
+                GraphPatch::new(operation, read_set),
+            ),
+        ))
+    }
+
     /// Prepares docking an entire floating root beside a target group.
     pub(crate) fn prepare_move_floating_root_to_edge<T: GraphReadView>(
         &mut self,
@@ -298,8 +361,8 @@ impl GraphTransactionEngine {
             ));
         }
 
-        let operation = prepared.operation();
-        let after = match operation {
+        let operation = prepared.operation().clone();
+        let after = match &operation {
             GraphPatchOperation::SelectTab { group, item } => target.apply_select_tab(group, item),
             GraphPatchOperation::SplitGroup {
                 target_group,
@@ -337,6 +400,17 @@ impl GraphTransactionEngine {
                 *insert_before,
                 ratio.get(),
             ),
+            GraphPatchOperation::MoveGroupToCenter {
+                source_group,
+                target_group,
+                source_space,
+                target_space,
+            } => target.apply_move_group_to_center(
+                source_group,
+                target_group,
+                source_space,
+                target_space,
+            ),
             GraphPatchOperation::MoveFloatingRootToEdge {
                 floating,
                 source_space,
@@ -355,70 +429,7 @@ impl GraphTransactionEngine {
                 ratio.get(),
             ),
         };
-        let receipt = GraphCommitReceipt::new(
-            commit_id,
-            before,
-            after,
-            match operation {
-                GraphPatchOperation::SelectTab { group, item } => GraphPatchOperation::SelectTab {
-                    group: group.clone(),
-                    item: item.clone(),
-                },
-                GraphPatchOperation::SplitGroup {
-                    target_group,
-                    new_group,
-                    items,
-                    selected,
-                    axis,
-                    insert_before,
-                    ratio,
-                    space,
-                } => GraphPatchOperation::SplitGroup {
-                    target_group: target_group.clone(),
-                    new_group: new_group.clone(),
-                    items: items.clone(),
-                    selected: selected.clone(),
-                    axis: *axis,
-                    insert_before: *insert_before,
-                    ratio: *ratio,
-                    space: space.clone(),
-                },
-                GraphPatchOperation::MoveGroupToEdge {
-                    source_group,
-                    target_group,
-                    source_space,
-                    target_space,
-                    axis,
-                    insert_before,
-                    ratio,
-                } => GraphPatchOperation::MoveGroupToEdge {
-                    source_group: source_group.clone(),
-                    target_group: target_group.clone(),
-                    source_space: source_space.clone(),
-                    target_space: target_space.clone(),
-                    axis: *axis,
-                    insert_before: *insert_before,
-                    ratio: *ratio,
-                },
-                GraphPatchOperation::MoveFloatingRootToEdge {
-                    floating,
-                    source_space,
-                    target_group,
-                    target_space,
-                    axis,
-                    insert_before,
-                    ratio,
-                } => GraphPatchOperation::MoveFloatingRootToEdge {
-                    floating: floating.clone(),
-                    source_space: source_space.clone(),
-                    target_group: target_group.clone(),
-                    target_space: target_space.clone(),
-                    axis: *axis,
-                    insert_before: *insert_before,
-                    ratio: *ratio,
-                },
-            },
-        );
+        let receipt = GraphCommitReceipt::new(commit_id, before, after, operation);
         self.receipts.insert(commit_id, receipt.clone());
         GraphCommitOutcome::Committed(receipt)
     }

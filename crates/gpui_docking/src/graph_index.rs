@@ -199,6 +199,34 @@ impl CanonicalGraphIndex {
         }
     }
 
+    /// Retires one source group leaf and rebinds all of its items to an existing target group.
+    pub(crate) fn merge_group_into(
+        &mut self,
+        source_node: CanonicalNodeId,
+        source_group: &DockGroupId,
+        source_items: &[DockItemId],
+        target_group: &DockGroupId,
+        target_owner: &CanonicalNodeOwner,
+    ) {
+        let removed_node = self.group_node.remove(source_group);
+        debug_assert_eq!(removed_node, Some(source_node));
+        self.parent_by_node.remove(&source_node);
+        self.owner_by_node.remove(&source_node);
+
+        for item in source_items {
+            let previous = self.item_group.insert(item.clone(), target_group.clone());
+            debug_assert_eq!(previous.as_ref(), Some(source_group));
+            match target_owner {
+                CanonicalNodeOwner::Main(_) => {
+                    self.floating_by_item.remove(item);
+                }
+                CanonicalNodeOwner::Floating { floating, .. } => {
+                    self.floating_by_item.insert(item.clone(), floating.clone());
+                }
+            }
+        }
+    }
+
     /// Reassigns ownership for a moved subtree and updates floating item membership locally.
     pub(crate) fn update_owner_subtree(
         &mut self,
