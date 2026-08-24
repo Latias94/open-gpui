@@ -147,11 +147,16 @@ impl GraphPatchTarget for CanonicalGraphRuntime {
             "prepared selection patch must prove group membership before commit"
         );
 
-        let next_version: CanonicalGraphVersion = self.authority.record_selection_change();
+        let next_version: CanonicalGraphVersion = self
+            .authority
+            .next_selection_change()
+            .expect("canonical graph selection revision exhausted");
         let applied = self
             .graph
             .apply_selection_for_commit(group, item, next_version);
-        debug_assert!(applied, "validated selection patch must be applicable");
+        assert!(applied, "validated selection patch must be applicable");
+        let recorded = self.authority.record_selection_change();
+        debug_assert_eq!(recorded, next_version);
         GraphRevision::from_version(self.graph.version())
     }
 
@@ -166,7 +171,10 @@ impl GraphPatchTarget for CanonicalGraphRuntime {
         ratio: f32,
         space: &DockSpaceId,
     ) -> GraphRevision {
-        let next_version = self.authority.record_topology_change();
+        let next_version = self
+            .authority
+            .next_topology_change()
+            .expect("canonical graph topology revision exhausted");
         let applied = self.graph.apply_split_group_for_commit(
             target_group,
             new_group,
@@ -178,7 +186,9 @@ impl GraphPatchTarget for CanonicalGraphRuntime {
             space,
             next_version,
         );
-        debug_assert!(applied, "validated split-group patch must be applicable");
+        assert!(applied, "validated split-group patch must be applicable");
+        let recorded = self.authority.record_topology_change();
+        debug_assert_eq!(recorded, next_version);
         GraphRevision::from_version(self.graph.version())
     }
 }

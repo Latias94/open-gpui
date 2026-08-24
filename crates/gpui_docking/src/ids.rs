@@ -70,15 +70,24 @@ impl CanonicalGraphAuthority {
     }
 
     pub(crate) fn publish(&mut self) -> CanonicalGraphVersion {
-        self.topology_revision = self
-            .topology_revision
-            .checked_add(1)
-            .expect("canonical graph topology revision exhausted");
-        self.current()
+        self.record_topology_change()
+    }
+
+    pub(crate) fn next_topology_change(&self) -> Option<CanonicalGraphVersion> {
+        Some(CanonicalGraphVersion {
+            authority_epoch: self.authority_epoch,
+            topology_revision: self.topology_revision.checked_add(1)?,
+            selection_revision: self.selection_revision,
+            interaction_revision: self.interaction_revision,
+        })
     }
 
     pub(crate) fn record_topology_change(&mut self) -> CanonicalGraphVersion {
-        self.publish()
+        let next = self
+            .next_topology_change()
+            .expect("canonical graph topology revision exhausted");
+        self.topology_revision = next.topology_revision;
+        next
     }
 
     pub(crate) fn current(&self) -> CanonicalGraphVersion {
@@ -91,11 +100,21 @@ impl CanonicalGraphAuthority {
     }
 
     pub(crate) fn record_selection_change(&mut self) -> CanonicalGraphVersion {
-        self.selection_revision = self
-            .selection_revision
-            .checked_add(1)
-            .expect("canonical graph selection revision exhausted");
-        self.current()
+        self.next_selection_change()
+            .map(|next| {
+                self.selection_revision = next.selection_revision;
+                next
+            })
+            .expect("canonical graph selection revision exhausted")
+    }
+
+    pub(crate) fn next_selection_change(&self) -> Option<CanonicalGraphVersion> {
+        Some(CanonicalGraphVersion {
+            authority_epoch: self.authority_epoch,
+            topology_revision: self.topology_revision,
+            selection_revision: self.selection_revision.checked_add(1)?,
+            interaction_revision: self.interaction_revision,
+        })
     }
 
     pub(crate) fn record_interaction_change(&mut self) -> CanonicalGraphVersion {
