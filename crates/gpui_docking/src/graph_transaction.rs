@@ -144,6 +144,72 @@ impl GraphTransactionEngine {
         ))
     }
 
+    /// Prepares moving an existing group beside a target group in a binary edge split.
+    pub(crate) fn prepare_move_group_to_edge<T: GraphReadView>(
+        &mut self,
+        view: &T,
+        source_group: impl Into<DockGroupId>,
+        target_group: impl Into<DockGroupId>,
+        source_space: impl Into<DockSpaceId>,
+        target_space: impl Into<DockSpaceId>,
+        axis: SplitAxis,
+        insert_before: bool,
+        ratio: f32,
+    ) -> Result<GraphPrepareOutcome, GraphPrepareError> {
+        let source_group = source_group.into();
+        let target_group = target_group.into();
+        let source_space = source_space.into();
+        let target_space = target_space.into();
+        if source_group == target_group {
+            return Err(GraphPrepareError::SameGroupMove);
+        }
+        let source =
+            view.read_group(&source_group)
+                .ok_or_else(|| GraphPrepareError::MissingGroup {
+                    group: source_group.clone(),
+                })?;
+        let target =
+            view.read_group(&target_group)
+                .ok_or_else(|| GraphPrepareError::MissingGroup {
+                    group: target_group.clone(),
+                })?;
+        if source.space != source_space {
+            return Err(GraphPrepareError::GroupOutsideSpace {
+                group: source_group,
+                space: source_space,
+            });
+        }
+        if target.space != target_space {
+            return Err(GraphPrepareError::GroupOutsideSpace {
+                group: target_group,
+                space: target_space,
+            });
+        }
+        let ratio = GraphSplitRatio::new(ratio).ok_or(GraphPrepareError::InvalidSplitRatio)?;
+        let operation = GraphPatchOperation::MoveGroupToEdge {
+            source_group,
+            target_group,
+            source_space,
+            target_space,
+            axis,
+            insert_before,
+            ratio,
+        };
+        let revision = view.graph_revision();
+        let generation = self
+            .next_generation
+            .checked_add(1)
+            .ok_or(GraphPrepareError::CommitIdExhausted)?;
+        self.next_generation = generation;
+        let read_set = GraphReadSet::for_groups(revision, [source, target]);
+        Ok(GraphPrepareOutcome::Prepared(
+            crate::graph_patch::PreparedGraphPatch::new(
+                GraphCommitId::new(revision.authority_epoch(), generation),
+                GraphPatch::new(operation, read_set),
+            ),
+        ))
+    }
+
     /// Commits a prepared patch or returns a typed stale/replay observation.
     ///
     /// Every business check happens before [`GraphPatchTarget::apply_select_tab`]. The target
@@ -195,6 +261,23 @@ impl GraphTransactionEngine {
                 ratio.get(),
                 space,
             ),
+            GraphPatchOperation::MoveGroupToEdge {
+                source_group,
+                target_group,
+                source_space,
+                target_space,
+                axis,
+                insert_before,
+                ratio,
+            } => target.apply_move_group_to_edge(
+                source_group,
+                target_group,
+                source_space,
+                target_space,
+                *axis,
+                *insert_before,
+                ratio.get(),
+            ),
         };
         let receipt = GraphCommitReceipt::new(
             commit_id,
@@ -223,6 +306,23 @@ impl GraphTransactionEngine {
                     insert_before: *insert_before,
                     ratio: *ratio,
                     space: space.clone(),
+                },
+                GraphPatchOperation::MoveGroupToEdge {
+                    source_group,
+                    target_group,
+                    source_space,
+                    target_space,
+                    axis,
+                    insert_before,
+                    ratio,
+                } => GraphPatchOperation::MoveGroupToEdge {
+                    source_group: source_group.clone(),
+                    target_group: target_group.clone(),
+                    source_space: source_space.clone(),
+                    target_space: target_space.clone(),
+                    axis: *axis,
+                    insert_before: *insert_before,
+                    ratio: *ratio,
                 },
             },
         );

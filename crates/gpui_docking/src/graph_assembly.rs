@@ -301,6 +301,205 @@ impl CanonicalDockGraph {
         true
     }
 
+    pub(crate) fn apply_move_group_to_edge_for_commit(
+        &mut self,
+        source_group: &DockGroupId,
+        target_group: &DockGroupId,
+        source_space: &DockSpaceId,
+        target_space: &DockSpaceId,
+        axis: SplitAxis,
+        insert_before: bool,
+        ratio: f32,
+        version: CanonicalGraphVersion,
+    ) -> bool {
+        if source_group == target_group
+            || !ratio.is_finite()
+            || !(0.0..=1.0).contains(&ratio)
+            || ratio <= 0.0
+            || ratio >= 1.0
+        {
+            return false;
+        }
+        let Some(source_node) = self.index.node_for_group(source_group) else {
+            return false;
+        };
+        let Some(target_node) = self.index.node_for_group(target_group) else {
+            return false;
+        };
+        let Some(source_owner) = self.index.owner_for_node(source_node).cloned() else {
+            return false;
+        };
+        let Some(target_owner) = self.index.owner_for_node(target_node).cloned() else {
+            return false;
+        };
+        let source_owner_space = match &source_owner {
+            CanonicalNodeOwner::Main(space) | CanonicalNodeOwner::Floating { space, .. } => space,
+        };
+        let target_owner_space = match &target_owner {
+            CanonicalNodeOwner::Main(space) | CanonicalNodeOwner::Floating { space, .. } => space,
+        };
+        if source_owner_space != source_space || target_owner_space != target_space {
+            return false;
+        }
+        if !matches!(source_owner, CanonicalNodeOwner::Main(_)) {
+            return false;
+        }
+
+        let source_parent = self.index.parent_of(source_node).flatten();
+        if let Some(parent) = source_parent {
+            let sibling = match self.nodes.get(parent) {
+                Some(CanonicalNode::Branch { first, second, .. }) if *first == source_node => {
+                    *second
+                }
+                Some(CanonicalNode::Branch { first, second, .. }) if *second == source_node => {
+                    *first
+                }
+                _ => return false,
+            };
+            let grandparent = self.index.parent_of(parent).flatten();
+            if let Some(grandparent) = grandparent {
+                let parent_node = self
+                    .nodes
+                    .get_mut(grandparent)
+                    .expect("validated source grandparent must remain present");
+                match parent_node {
+                    CanonicalNode::Branch { first, second, .. } if *first == parent => {
+                        *first = sibling;
+                    }
+                    CanonicalNode::Branch { first, second, .. } if *second == parent => {
+                        *second = sibling;
+                    }
+                    _ => return false,
+                }
+            } else {
+                let CanonicalNodeOwner::Main(ref owner_space) = source_owner else {
+                    return false;
+                };
+                self.spaces
+                    .get_mut(owner_space)
+                    .expect("validated source space must remain present")
+                    .root = Some(sibling);
+            }
+            self.nodes.remove(parent);
+            if let CanonicalNodeOwner::Main(owner_space) = &source_owner
+                && self
+                    .spaces
+                    .get(owner_space)
+                    .and_then(|space| space.central.node)
+                    == Some(source_node)
+            {
+                self.spaces
+                    .get_mut(owner_space)
+                    .expect("validated source space must remain present")
+                    .central
+                    .node = Some(sibling);
+            }
+        } else {
+            let CanonicalNodeOwner::Main(owner_space) = &source_owner else {
+                return false;
+            };
+            let space = self
+                .spaces
+                .get_mut(owner_space)
+                .expect("validated source space must remain present");
+            if space.root != Some(source_node) {
+                return false;
+            }
+            space.root = None;
+            if space.central.node == Some(source_node) {
+                space.central.node = None;
+            }
+        }
+
+        let target_parent = match &target_owner {
+            CanonicalNodeOwner::Main(owner_space) => {
+                let root = self
+                    .spaces
+                    .get(owner_space)
+                    .and_then(|space| space.root)
+                    .expect("validated target main space must retain a root");
+                Self::find_reachable_parent(self, root, target_node, None)
+                    .expect("validated target group must remain reachable")
+            }
+            CanonicalNodeOwner::Floating { floating, .. } => {
+                let root = self
+                    .floating_roots
+                    .get(floating)
+                    .map(|floating| floating.root)
+                    .expect("validated target floating root must remain present");
+                Self::find_reachable_parent(self, root, target_node, None)
+                    .expect("validated target group must remain reachable")
+            }
+        };
+        let branch_id = self.nodes.insert(if insert_before {
+            CanonicalNode::Branch {
+                axis,
+                first: source_node,
+                second: target_node,
+                ratio,
+                size_ref: None,
+            }
+        } else {
+            CanonicalNode::Branch {
+                axis,
+                first: target_node,
+                second: source_node,
+                ratio,
+                size_ref: None,
+            }
+        });
+        if let Some(parent) = target_parent {
+            let parent_node = self
+                .nodes
+                .get_mut(parent)
+                .expect("validated target parent must remain present");
+            match parent_node {
+                CanonicalNode::Branch { first, second, .. } if *first == target_node => {
+                    *first = branch_id;
+                }
+                CanonicalNode::Branch { first, second, .. } if *second == target_node => {
+                    *second = branch_id;
+                }
+                _ => return false,
+            }
+        } else {
+            match target_owner {
+                CanonicalNodeOwner::Main(owner_space) => {
+                    self.spaces
+                        .get_mut(&owner_space)
+                        .expect("validated target space must remain present")
+                        .root = Some(branch_id);
+                }
+                CanonicalNodeOwner::Floating { floating, .. } => {
+                    self.floating_roots
+                        .get_mut(&floating)
+                        .expect("validated target floating root must remain present")
+                        .root = branch_id;
+                }
+            }
+        }
+        self.index = CanonicalGraphIndex::build(self)
+            .expect("a prepared group move must preserve graph invariants");
+        self.version = version;
+        true
+    }
+
+    fn find_reachable_parent(
+        graph: &Self,
+        current: CanonicalNodeId,
+        target: CanonicalNodeId,
+        parent: Option<CanonicalNodeId>,
+    ) -> Option<Option<CanonicalNodeId>> {
+        if current == target {
+            return Some(parent);
+        }
+        let CanonicalNode::Branch { first, second, .. } = graph.nodes.get(current)? else {
+            return None;
+        };
+        Self::find_reachable_parent(graph, *first, target, Some(current))
+            .or_else(|| Self::find_reachable_parent(graph, *second, target, Some(current)))
+    }
+
     #[cfg(test)]
     pub(crate) fn group_mut_for_test(&mut self, id: &DockGroupId) -> Option<&mut CanonicalGroup> {
         self.groups.get_mut(id)

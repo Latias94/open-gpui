@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use crate::graph_assembly::{CanonicalDockGraph, CanonicalGraphError, DockGraphAssembly};
+use crate::graph_index::CanonicalNodeOwner;
 use crate::graph_patch::{
     GraphCommitOutcome, GraphPatchTarget, GraphPrepareError, GraphPrepareOutcome, GraphReadView,
     GraphRevision,
@@ -108,6 +109,50 @@ impl CanonicalGraphRuntime {
         result
     }
 
+    pub(crate) fn prepare_move_group_to_edge(
+        &mut self,
+        source_group: impl Into<DockGroupId>,
+        target_group: impl Into<DockGroupId>,
+        source_space: impl Into<DockSpaceId>,
+        target_space: impl Into<DockSpaceId>,
+        axis: SplitAxis,
+        insert_before: bool,
+        ratio: f32,
+    ) -> Result<GraphPrepareOutcome, GraphPrepareError> {
+        let source_group = source_group.into();
+        if self.graph.group(&source_group).is_none() {
+            return Err(GraphPrepareError::MissingGroup {
+                group: source_group,
+            });
+        }
+        let source_node = self
+            .graph
+            .index()
+            .node_for_group(&source_group)
+            .expect("published group must have a canonical node");
+        if !matches!(
+            self.graph.index().owner_for_node(source_node),
+            Some(CanonicalNodeOwner::Main(_))
+        ) {
+            return Err(GraphPrepareError::GroupNotMovable {
+                group: source_group,
+            });
+        }
+        let mut transactions = std::mem::take(&mut self.transactions);
+        let result = transactions.prepare_move_group_to_edge(
+            self,
+            source_group,
+            target_group,
+            source_space,
+            target_space,
+            axis,
+            insert_before,
+            ratio,
+        );
+        self.transactions = transactions;
+        result
+    }
+
     pub(crate) fn commit(
         &mut self,
         prepared: crate::graph_patch::PreparedGraphPatch,
@@ -187,6 +232,36 @@ impl GraphPatchTarget for CanonicalGraphRuntime {
             next_version,
         );
         assert!(applied, "validated split-group patch must be applicable");
+        let recorded = self.authority.record_topology_change();
+        debug_assert_eq!(recorded, next_version);
+        GraphRevision::from_version(self.graph.version())
+    }
+
+    fn apply_move_group_to_edge(
+        &mut self,
+        source_group: &DockGroupId,
+        target_group: &DockGroupId,
+        source_space: &DockSpaceId,
+        target_space: &DockSpaceId,
+        axis: SplitAxis,
+        insert_before: bool,
+        ratio: f32,
+    ) -> GraphRevision {
+        let next_version = self
+            .authority
+            .next_topology_change()
+            .expect("canonical graph topology revision exhausted");
+        let applied = self.graph.apply_move_group_to_edge_for_commit(
+            source_group,
+            target_group,
+            source_space,
+            target_space,
+            axis,
+            insert_before,
+            ratio,
+            next_version,
+        );
+        assert!(applied, "validated group move patch must be applicable");
         let recorded = self.authority.record_topology_change();
         debug_assert_eq!(recorded, next_version);
         GraphRevision::from_version(self.graph.version())

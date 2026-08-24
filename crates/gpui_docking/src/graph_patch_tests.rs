@@ -5,7 +5,7 @@ use crate::graph_patch::{
 };
 use crate::graph_transaction::GraphTransactionEngine;
 use crate::ids::CanonicalGraphAuthority;
-use crate::{DockGroupId, DockItemId};
+use crate::{DockGroupId, DockItemId, DockSpaceId};
 use std::collections::BTreeMap;
 
 fn item(id: &str) -> DockItemId {
@@ -119,6 +119,19 @@ impl GraphPatchTarget for SelectionTarget {
         _insert_before: bool,
         _ratio: f32,
         _space: &crate::DockSpaceId,
+    ) -> GraphRevision {
+        panic!("selection target does not support structural patches")
+    }
+
+    fn apply_move_group_to_edge(
+        &mut self,
+        _source_group: &DockGroupId,
+        _target_group: &DockGroupId,
+        _source_space: &DockSpaceId,
+        _target_space: &DockSpaceId,
+        _axis: crate::SplitAxis,
+        _insert_before: bool,
+        _ratio: f32,
     ) -> GraphRevision {
         panic!("selection target does not support structural patches")
     }

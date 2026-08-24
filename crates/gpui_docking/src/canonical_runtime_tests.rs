@@ -30,6 +30,81 @@ fn runtime() -> CanonicalGraphRuntime {
     CanonicalGraphRuntime::from_assembly(assembly).expect("fixture publication should succeed")
 }
 
+fn multiview_runtime() -> CanonicalGraphRuntime {
+    let mut assembly = DockGraphAssembly::new();
+    assembly.add_space("main").unwrap();
+    assembly.add_space("detached").unwrap();
+    let editor = assembly
+        .add_group("editor", [item("A"), item("B")], item("A"))
+        .unwrap();
+    let inspector = assembly
+        .add_group("inspector", [item("C")], item("C"))
+        .unwrap();
+    let detached_target = assembly
+        .add_group("detached-target", [item("X")], item("X"))
+        .unwrap();
+    let main_root = assembly
+        .add_branch(SplitAxis::Horizontal, editor, inspector, 0.5)
+        .unwrap();
+    assembly.set_root("main", main_root).unwrap();
+    assembly.set_root("detached", detached_target).unwrap();
+    CanonicalGraphRuntime::from_assembly(assembly).unwrap()
+}
+
+fn floating_runtime() -> CanonicalGraphRuntime {
+    let mut assembly = DockGraphAssembly::new();
+    assembly.add_space("main").unwrap();
+    let target = assembly
+        .add_group("target", [item("T")], item("T"))
+        .unwrap();
+    let source = assembly
+        .add_group("source", [item("S")], item("S"))
+        .unwrap();
+    assembly.set_root("main", source).unwrap();
+    assembly
+        .add_floating_root(
+            "floating-target",
+            "main",
+            target,
+            crate::DockLayoutRect {
+                x: 10.0,
+                y: 10.0,
+                width: 320.0,
+                height: 240.0,
+            },
+            1,
+        )
+        .unwrap();
+    CanonicalGraphRuntime::from_assembly(assembly).unwrap()
+}
+
+fn floating_source_runtime() -> CanonicalGraphRuntime {
+    let mut assembly = DockGraphAssembly::new();
+    assembly.add_space("main").unwrap();
+    let target = assembly
+        .add_group("target", [item("T")], item("T"))
+        .unwrap();
+    let source = assembly
+        .add_group("source", [item("S")], item("S"))
+        .unwrap();
+    assembly.set_root("main", target).unwrap();
+    assembly
+        .add_floating_root(
+            "floating-source",
+            "main",
+            source,
+            crate::DockLayoutRect {
+                x: 10.0,
+                y: 10.0,
+                width: 320.0,
+                height: 240.0,
+            },
+            1,
+        )
+        .unwrap();
+    CanonicalGraphRuntime::from_assembly(assembly).unwrap()
+}
+
 #[test]
 fn real_runtime_commits_selection_and_mru_without_a_graph_copy() {
     let mut runtime = runtime();
@@ -295,4 +370,208 @@ fn split_preparation_rejects_duplicate_or_already_owned_items() {
     ));
     assert_eq!(runtime.graph().nodes().len(), 3);
     assert_eq!(runtime.graph_revision().topology(), 1);
+}
+
+#[test]
+fn move_group_to_edge_preserves_group_identity_across_dockspaces() {
+    let mut runtime = multiview_runtime();
+    let editor = DockGroupId::from("editor");
+    let inspector = DockGroupId::from("inspector");
+    let detached_target = DockGroupId::from("detached-target");
+    let editor_node = runtime.graph().index().node_for_group(&editor).unwrap();
+    let inspector_node = runtime.graph().index().node_for_group(&inspector).unwrap();
+    let detached_target_node = runtime
+        .graph()
+        .index()
+        .node_for_group(&detached_target)
+        .unwrap();
+
+    let prepared = match runtime
+        .prepare_move_group_to_edge(
+            editor.clone(),
+            detached_target.clone(),
+            "main",
+            "detached",
+            SplitAxis::Vertical,
+            true,
+            0.25,
+        )
+        .expect("cross-space group move should prepare")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("group move must produce a structural patch"),
+    };
+    let receipt = match runtime.commit(prepared) {
+        GraphCommitOutcome::Committed(receipt) => receipt,
+        other => panic!("group move should commit, got {other:?}"),
+    };
+
+    assert_eq!(receipt.after().topology(), receipt.before().topology() + 1);
+    assert_eq!(
+        runtime
+            .graph()
+            .space(&DockSpaceId::from("main"))
+            .unwrap()
+            .root,
+        Some(inspector_node)
+    );
+    let detached_root = runtime
+        .graph()
+        .space(&DockSpaceId::from("detached"))
+        .and_then(|space| space.root)
+        .unwrap();
+    assert!(matches!(
+        runtime.graph().node(detached_root),
+        Some(CanonicalNode::Branch {
+            axis: SplitAxis::Vertical,
+            first,
+            second,
+            ratio,
+            ..
+        }) if *first == editor_node && *second == detached_target_node && *ratio == 0.25
+    ));
+    assert_eq!(
+        runtime.graph().index().node_for_group(&editor),
+        Some(editor_node)
+    );
+    assert_eq!(
+        runtime.graph().index().node_for_group(&detached_target),
+        Some(detached_target_node)
+    );
+    runtime
+        .graph()
+        .validate()
+        .expect("cross-space group move should preserve canonical indexes");
+}
+
+#[test]
+fn move_group_to_edge_relinks_a_same_space_sibling_without_replacing_leaf_ids() {
+    let mut runtime = runtime();
+    let editor = DockGroupId::from("editor");
+    let inspector = DockGroupId::from("inspector");
+    let editor_node = runtime.graph().index().node_for_group(&editor).unwrap();
+    let inspector_node = runtime.graph().index().node_for_group(&inspector).unwrap();
+
+    let prepared = match runtime
+        .prepare_move_group_to_edge(
+            editor.clone(),
+            inspector.clone(),
+            "main",
+            "main",
+            SplitAxis::Vertical,
+            true,
+            0.35,
+        )
+        .expect("same-space group move should prepare")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("group move must produce a structural patch"),
+    };
+    let receipt = match runtime.commit(prepared) {
+        GraphCommitOutcome::Committed(receipt) => receipt,
+        other => panic!("same-space group move should commit, got {other:?}"),
+    };
+
+    assert_eq!(receipt.after().topology(), receipt.before().topology() + 1);
+    let root = runtime
+        .graph()
+        .space(&DockSpaceId::from("main"))
+        .and_then(|space| space.root)
+        .unwrap();
+    assert!(matches!(
+        runtime.graph().node(root),
+        Some(CanonicalNode::Branch {
+            axis: SplitAxis::Vertical,
+            first,
+            second,
+            ratio,
+            ..
+        }) if *first == editor_node && *second == inspector_node && *ratio == 0.35
+    ));
+    assert_eq!(
+        runtime.graph().index().node_for_group(&editor),
+        Some(editor_node)
+    );
+    assert_eq!(
+        runtime.graph().index().node_for_group(&inspector),
+        Some(inspector_node)
+    );
+    runtime
+        .graph()
+        .validate()
+        .expect("same-space group move should preserve canonical indexes");
+}
+
+#[test]
+fn move_group_to_edge_can_insert_into_a_floating_root() {
+    let mut runtime = floating_runtime();
+    let target = DockGroupId::from("target");
+    let source = DockGroupId::from("source");
+    let target_node = runtime.graph().index().node_for_group(&target).unwrap();
+    let source_node = runtime.graph().index().node_for_group(&source).unwrap();
+
+    let prepared = match runtime
+        .prepare_move_group_to_edge(
+            source.clone(),
+            target.clone(),
+            "main",
+            "main",
+            SplitAxis::Horizontal,
+            false,
+            0.5,
+        )
+        .expect("floating-target group move should prepare")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("group move must produce a structural patch"),
+    };
+    assert!(matches!(
+        runtime.commit(prepared),
+        GraphCommitOutcome::Committed(_)
+    ));
+
+    assert!(
+        runtime
+            .graph()
+            .space(&DockSpaceId::from("main"))
+            .is_some_and(|space| space.root.is_none())
+    );
+    let floating_root = runtime
+        .graph()
+        .floating_roots()
+        .get(&crate::DockFloatingId::from("floating-target"))
+        .expect("floating root should remain present")
+        .root;
+    assert!(matches!(
+        runtime.graph().node(floating_root),
+        Some(CanonicalNode::Branch {
+            axis: SplitAxis::Horizontal,
+            first,
+            second,
+            ..
+        }) if *first == target_node && *second == source_node
+    ));
+    runtime
+        .graph()
+        .validate()
+        .expect("floating-target move should preserve canonical indexes");
+}
+
+#[test]
+fn move_group_to_edge_rejects_a_floating_source_before_preparation() {
+    let mut runtime = floating_source_runtime();
+    let result = runtime.prepare_move_group_to_edge(
+        "source",
+        "target",
+        "main",
+        "main",
+        SplitAxis::Horizontal,
+        true,
+        0.5,
+    );
+    assert!(matches!(
+        result,
+        Err(GraphPrepareError::GroupNotMovable { group })
+            if group == DockGroupId::from("source")
+    ));
 }

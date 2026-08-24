@@ -231,6 +231,16 @@ pub(crate) enum GraphPatchOperation {
         ratio: GraphSplitRatio,
         space: DockSpaceId,
     },
+    /// Moves an existing durable group beside a target group while preserving its identity.
+    MoveGroupToEdge {
+        source_group: DockGroupId,
+        target_group: DockGroupId,
+        source_space: DockSpaceId,
+        target_space: DockSpaceId,
+        axis: SplitAxis,
+        insert_before: bool,
+        ratio: GraphSplitRatio,
+    },
 }
 
 /// A local symbolic patch and its declared read set.
@@ -453,6 +463,17 @@ pub(crate) trait GraphPatchTarget: GraphReadView {
         ratio: f32,
         space: &DockSpaceId,
     ) -> GraphRevision;
+
+    fn apply_move_group_to_edge(
+        &mut self,
+        source_group: &DockGroupId,
+        target_group: &DockGroupId,
+        source_space: &DockSpaceId,
+        target_space: &DockSpaceId,
+        axis: SplitAxis,
+        insert_before: bool,
+        ratio: f32,
+    ) -> GraphRevision;
 }
 
 impl GraphReadView for CanonicalDockGraph {
@@ -510,6 +531,10 @@ pub(crate) enum GraphPrepareError {
         group: DockGroupId,
         space: DockSpaceId,
     },
+    #[error("group {group} is not a movable main-space group")]
+    GroupNotMovable { group: DockGroupId },
+    #[error("source and target groups must be different")]
+    SameGroupMove,
     #[error("graph commit id space is exhausted")]
     CommitIdExhausted,
 }
