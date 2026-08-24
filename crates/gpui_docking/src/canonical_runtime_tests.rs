@@ -558,20 +558,62 @@ fn move_group_to_edge_can_insert_into_a_floating_root() {
 }
 
 #[test]
-fn move_group_to_edge_rejects_a_floating_source_before_preparation() {
+fn move_group_to_edge_can_move_a_floating_source_into_the_main_root() {
     let mut runtime = floating_source_runtime();
-    let result = runtime.prepare_move_group_to_edge(
-        "source",
-        "target",
-        "main",
-        "main",
-        SplitAxis::Horizontal,
-        true,
-        0.5,
-    );
+    let target = DockGroupId::from("target");
+    let source = DockGroupId::from("source");
+    let target_node = runtime.graph().index().node_for_group(&target).unwrap();
+    let source_node = runtime.graph().index().node_for_group(&source).unwrap();
+
+    let prepared = match runtime
+        .prepare_move_group_to_edge(
+            source,
+            target.clone(),
+            "main",
+            "main",
+            SplitAxis::Horizontal,
+            true,
+            0.5,
+        )
+        .expect("floating-source group move should prepare")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("group move must produce a structural patch"),
+    };
     assert!(matches!(
-        result,
-        Err(GraphPrepareError::GroupNotMovable { group })
-            if group == DockGroupId::from("source")
+        runtime.commit(prepared),
+        GraphCommitOutcome::Committed(_)
     ));
+
+    let main_root = runtime
+        .graph()
+        .space(&DockSpaceId::from("main"))
+        .and_then(|space| space.root)
+        .expect("main root should contain the moved group");
+    assert!(matches!(
+        runtime.graph().node(main_root),
+        Some(CanonicalNode::Branch {
+            axis: SplitAxis::Horizontal,
+            first,
+            second,
+            ..
+        }) if *first == source_node && *second == target_node
+    ));
+    assert!(
+        runtime
+            .graph()
+            .floating_roots()
+            .get(&crate::DockFloatingId::from("floating-source"))
+            .is_none()
+    );
+    assert!(
+        runtime
+            .graph()
+            .space(&DockSpaceId::from("main"))
+            .is_some_and(|space| space.floating_roots.is_empty())
+    );
+    runtime
+        .graph()
+        .validate()
+        .expect("floating-source move should preserve canonical indexes");
 }

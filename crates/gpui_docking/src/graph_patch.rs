@@ -531,8 +531,6 @@ pub(crate) enum GraphPrepareError {
         group: DockGroupId,
         space: DockSpaceId,
     },
-    #[error("group {group} is not a movable main-space group")]
-    GroupNotMovable { group: DockGroupId },
     #[error("source and target groups must be different")]
     SameGroupMove,
     #[error("graph commit id space is exhausted")]

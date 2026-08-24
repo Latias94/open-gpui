@@ -1,7 +1,6 @@
 #![allow(dead_code)]
 
 use crate::graph_assembly::{CanonicalDockGraph, CanonicalGraphError, DockGraphAssembly};
-use crate::graph_index::CanonicalNodeOwner;
 use crate::graph_patch::{
     GraphCommitOutcome, GraphPatchTarget, GraphPrepareError, GraphPrepareOutcome, GraphReadView,
     GraphRevision,
@@ -119,25 +118,6 @@ impl CanonicalGraphRuntime {
         insert_before: bool,
         ratio: f32,
     ) -> Result<GraphPrepareOutcome, GraphPrepareError> {
-        let source_group = source_group.into();
-        if self.graph.group(&source_group).is_none() {
-            return Err(GraphPrepareError::MissingGroup {
-                group: source_group,
-            });
-        }
-        let source_node = self
-            .graph
-            .index()
-            .node_for_group(&source_group)
-            .expect("published group must have a canonical node");
-        if !matches!(
-            self.graph.index().owner_for_node(source_node),
-            Some(CanonicalNodeOwner::Main(_))
-        ) {
-            return Err(GraphPrepareError::GroupNotMovable {
-                group: source_group,
-            });
-        }
         let mut transactions = std::mem::take(&mut self.transactions);
         let result = transactions.prepare_move_group_to_edge(
             self,

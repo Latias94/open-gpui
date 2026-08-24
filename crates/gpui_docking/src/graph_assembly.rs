@@ -341,10 +341,6 @@ impl CanonicalDockGraph {
         if source_owner_space != source_space || target_owner_space != target_space {
             return false;
         }
-        if !matches!(source_owner, CanonicalNodeOwner::Main(_)) {
-            return false;
-        }
-
         let source_parent = self.index.parent_of(source_node).flatten();
         if let Some(parent) = source_parent {
             let sibling = match self.nodes.get(parent) {
@@ -372,13 +368,20 @@ impl CanonicalDockGraph {
                     _ => return false,
                 }
             } else {
-                let CanonicalNodeOwner::Main(ref owner_space) = source_owner else {
-                    return false;
-                };
-                self.spaces
-                    .get_mut(owner_space)
-                    .expect("validated source space must remain present")
-                    .root = Some(sibling);
+                match &source_owner {
+                    CanonicalNodeOwner::Main(owner_space) => {
+                        self.spaces
+                            .get_mut(owner_space)
+                            .expect("validated source space must remain present")
+                            .root = Some(sibling);
+                    }
+                    CanonicalNodeOwner::Floating { floating, .. } => {
+                        self.floating_roots
+                            .get_mut(floating)
+                            .expect("validated source floating root must remain present")
+                            .root = sibling;
+                    }
+                }
             }
             self.nodes.remove(parent);
             if let CanonicalNodeOwner::Main(owner_space) = &source_owner
@@ -395,19 +398,35 @@ impl CanonicalDockGraph {
                     .node = Some(sibling);
             }
         } else {
-            let CanonicalNodeOwner::Main(owner_space) = &source_owner else {
-                return false;
-            };
-            let space = self
-                .spaces
-                .get_mut(owner_space)
-                .expect("validated source space must remain present");
-            if space.root != Some(source_node) {
-                return false;
-            }
-            space.root = None;
-            if space.central.node == Some(source_node) {
-                space.central.node = None;
+            match &source_owner {
+                CanonicalNodeOwner::Main(owner_space) => {
+                    let space = self
+                        .spaces
+                        .get_mut(owner_space)
+                        .expect("validated source space must remain present");
+                    if space.root != Some(source_node) {
+                        return false;
+                    }
+                    space.root = None;
+                    if space.central.node == Some(source_node) {
+                        space.central.node = None;
+                    }
+                }
+                CanonicalNodeOwner::Floating { space, floating } => {
+                    let floating_root = self
+                        .floating_roots
+                        .get(floating)
+                        .expect("validated source floating root must remain present");
+                    if floating_root.root != source_node {
+                        return false;
+                    }
+                    self.floating_roots.remove(floating);
+                    self.spaces
+                        .get_mut(space)
+                        .expect("validated source space must remain present")
+                        .floating_roots
+                        .retain(|candidate| candidate != floating);
+                }
             }
         }
 
