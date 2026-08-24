@@ -1,9 +1,10 @@
 #![allow(dead_code)]
 
 use crate::graph_assembly::{
-    CanonicalDockGraph, CanonicalGraphError, CanonicalNode, CanonicalSizeRef,
+    CanonicalDockGraph, CanonicalGraphError, CanonicalGroup, CanonicalNode, CanonicalSizeRef,
 };
 use crate::{CanonicalNodeId, DockFloatingId, DockGroupId, DockItemId, DockSpaceId};
+use slotmap::SlotMap;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// The root authority that owns a canonical structural node.
@@ -148,6 +149,89 @@ impl CanonicalGraphIndex {
     pub(crate) fn node_for_item(&self, item: &DockItemId) -> Option<CanonicalNodeId> {
         self.group_for_item(item)
             .and_then(|group| self.node_for_group(group))
+    }
+
+    /// Updates one node's retained parent without rebuilding unrelated topology.
+    pub(crate) fn set_parent(&mut self, node: CanonicalNodeId, parent: Option<CanonicalNodeId>) {
+        debug_assert!(self.owner_by_node.contains_key(&node));
+        self.parent_by_node.insert(node, parent);
+    }
+
+    /// Removes a retired branch from the derived index.
+    pub(crate) fn remove_branch(&mut self, node: CanonicalNodeId) {
+        debug_assert!(!self.group_node.values().any(|candidate| *candidate == node));
+        self.parent_by_node.remove(&node);
+        self.owner_by_node.remove(&node);
+    }
+
+    /// Inserts a newly allocated branch into the derived index.
+    pub(crate) fn insert_branch(
+        &mut self,
+        node: CanonicalNodeId,
+        parent: Option<CanonicalNodeId>,
+        owner: CanonicalNodeOwner,
+    ) {
+        debug_assert!(!self.parent_by_node.contains_key(&node));
+        self.parent_by_node.insert(node, parent);
+        self.owner_by_node.insert(node, owner);
+    }
+
+    /// Inserts a newly allocated group leaf and its durable item membership.
+    pub(crate) fn insert_group(
+        &mut self,
+        node: CanonicalNodeId,
+        group: &DockGroupId,
+        state: &CanonicalGroup,
+        parent: Option<CanonicalNodeId>,
+        owner: CanonicalNodeOwner,
+    ) {
+        debug_assert!(!self.parent_by_node.contains_key(&node));
+        debug_assert!(!self.group_node.contains_key(group));
+        self.parent_by_node.insert(node, parent);
+        self.owner_by_node.insert(node, owner.clone());
+        self.group_node.insert(group.clone(), node);
+        for item in &state.items {
+            debug_assert!(!self.item_group.contains_key(item));
+            self.item_group.insert(item.clone(), group.clone());
+            if let CanonicalNodeOwner::Floating { floating, .. } = &owner {
+                self.floating_by_item.insert(item.clone(), floating.clone());
+            }
+        }
+    }
+
+    /// Reassigns ownership for a moved subtree and updates floating item membership locally.
+    pub(crate) fn update_owner_subtree(
+        &mut self,
+        nodes: &SlotMap<CanonicalNodeId, CanonicalNode>,
+        groups: &BTreeMap<DockGroupId, CanonicalGroup>,
+        root: CanonicalNodeId,
+        owner: CanonicalNodeOwner,
+    ) {
+        let mut pending = vec![root];
+        while let Some(node) = pending.pop() {
+            self.owner_by_node.insert(node, owner.clone());
+            match nodes.get(node).expect("owned subtree node must exist") {
+                CanonicalNode::Group { group, .. } => {
+                    let state = groups.get(group).expect("owned group must exist");
+                    match &owner {
+                        CanonicalNodeOwner::Main(_) => {
+                            for item in &state.items {
+                                self.floating_by_item.remove(item);
+                            }
+                        }
+                        CanonicalNodeOwner::Floating { floating, .. } => {
+                            for item in &state.items {
+                                self.floating_by_item.insert(item.clone(), floating.clone());
+                            }
+                        }
+                    }
+                }
+                CanonicalNode::Branch { first, second, .. } => {
+                    pending.push(*first);
+                    pending.push(*second);
+                }
+            }
+        }
     }
 
     #[allow(clippy::too_many_arguments)]

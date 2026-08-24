@@ -279,24 +279,35 @@ impl CanonicalDockGraph {
                 _ => unreachable!("validated parent must reference the target node"),
             }
         } else {
-            match owner {
+            match &owner {
                 CanonicalNodeOwner::Main(owner_space) => {
                     self.spaces
-                        .get_mut(&owner_space)
+                        .get_mut(owner_space)
                         .expect("validated main owner must remain present")
                         .root = Some(branch_id);
                 }
                 CanonicalNodeOwner::Floating { floating, .. } => {
                     self.floating_roots
-                        .get_mut(&floating)
+                        .get_mut(floating)
                         .expect("validated floating owner must remain present")
                         .root = branch_id;
                 }
             }
         }
 
-        self.index = CanonicalGraphIndex::build(self)
-            .expect("a prepared canonical split must preserve graph invariants");
+        let new_group_state = self
+            .groups
+            .get(new_group)
+            .expect("validated new group must remain present");
+        self.index.insert_group(
+            new_leaf,
+            new_group,
+            new_group_state,
+            Some(branch_id),
+            owner.clone(),
+        );
+        self.index.insert_branch(branch_id, parent, owner.clone());
+        self.index.set_parent(target_node, Some(branch_id));
         self.version = version;
         true
     }
@@ -384,6 +395,8 @@ impl CanonicalDockGraph {
                 }
             }
             self.nodes.remove(parent);
+            self.index.remove_branch(parent);
+            self.index.set_parent(sibling, grandparent);
             if let CanonicalNodeOwner::Main(owner_space) = &source_owner
                 && self
                     .spaces
@@ -491,23 +504,27 @@ impl CanonicalDockGraph {
                 _ => unreachable!("validated target parent must reference the target node"),
             }
         } else {
-            match target_owner {
+            match &target_owner {
                 CanonicalNodeOwner::Main(owner_space) => {
                     self.spaces
-                        .get_mut(&owner_space)
+                        .get_mut(owner_space)
                         .expect("validated target space must remain present")
                         .root = Some(branch_id);
                 }
                 CanonicalNodeOwner::Floating { floating, .. } => {
                     self.floating_roots
-                        .get_mut(&floating)
+                        .get_mut(floating)
                         .expect("validated target floating root must remain present")
                         .root = branch_id;
                 }
             }
         }
-        self.index = CanonicalGraphIndex::build(self)
-            .expect("a prepared group move must preserve graph invariants");
+        self.index
+            .insert_branch(branch_id, target_parent, target_owner.clone());
+        self.index.set_parent(target_node, Some(branch_id));
+        self.index.set_parent(source_node, Some(branch_id));
+        self.index
+            .update_owner_subtree(&self.nodes, &self.groups, source_node, target_owner);
         self.version = version;
         true
     }
@@ -615,23 +632,31 @@ impl CanonicalDockGraph {
                 _ => return false,
             }
         } else {
-            match target_owner {
+            match &target_owner {
                 CanonicalNodeOwner::Main(owner_space) => {
                     self.spaces
-                        .get_mut(&owner_space)
+                        .get_mut(owner_space)
                         .expect("validated target space must remain present")
                         .root = Some(branch_id);
                 }
                 CanonicalNodeOwner::Floating { floating, .. } => {
                     self.floating_roots
-                        .get_mut(&floating)
+                        .get_mut(floating)
                         .expect("validated target floating root must remain present")
                         .root = branch_id;
                 }
             }
         }
-        self.index = CanonicalGraphIndex::build(self)
-            .expect("a prepared floating-root move must preserve graph invariants");
+        self.index
+            .insert_branch(branch_id, target_parent, target_owner.clone());
+        self.index.set_parent(target_node, Some(branch_id));
+        self.index.set_parent(source_floating.root, Some(branch_id));
+        self.index.update_owner_subtree(
+            &self.nodes,
+            &self.groups,
+            source_floating.root,
+            target_owner,
+        );
         self.version = version;
         true
     }
