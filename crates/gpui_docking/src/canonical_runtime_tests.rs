@@ -1164,6 +1164,221 @@ fn move_item_to_group_preserves_source_group_and_updates_target_selection() {
 }
 
 #[test]
+fn move_item_to_edge_extracts_a_multi_item_source_into_a_new_binary_leaf() {
+    let mut runtime = multiview_runtime();
+    let source = DockGroupId::from("editor");
+    let destination = DockGroupId::from("moved-a");
+    let target = DockGroupId::from("detached-target");
+    let target_node = runtime.graph().index().node_for_group(&target).unwrap();
+
+    let prepared = match runtime
+        .prepare_move_item_to_edge(
+            "A",
+            destination.clone(),
+            target.clone(),
+            "main",
+            "detached",
+            SplitAxis::Horizontal,
+            false,
+            0.5,
+        )
+        .expect("cross-space item edge move should prepare")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("item edge move must be structural"),
+    };
+    assert!(matches!(
+        prepared.operation(),
+        GraphPatchOperation::MoveItemToEdge { item: moved, new_group, .. }
+            if moved == &item("A") && new_group == &destination
+    ));
+    assert!(matches!(
+        runtime.commit(prepared),
+        GraphCommitOutcome::Committed(_)
+    ));
+
+    assert_eq!(
+        runtime.graph().group(&source).unwrap().items,
+        vec![item("B")]
+    );
+    let moved_group = runtime.graph().group(&destination).unwrap();
+    assert_eq!(moved_group.items, vec![item("A")]);
+    assert_eq!(moved_group.selected, item("A"));
+    assert_eq!(moved_group.mru, vec![item("A")]);
+    let moved_node = runtime.graph().index().node_for_group(&destination).unwrap();
+    let root = runtime
+        .graph()
+        .space(&DockSpaceId::from("detached"))
+        .and_then(|space| space.root)
+        .unwrap();
+    assert!(matches!(
+        runtime.graph().node(root),
+        Some(CanonicalNode::Branch {
+            axis: SplitAxis::Horizontal,
+            first,
+            second,
+            ratio,
+            ..
+        }) if *first == target_node && *second == moved_node && *ratio == 0.5
+    ));
+    assert_eq!(
+        runtime.graph().index().space_for_node(moved_node),
+        Some(&DockSpaceId::from("detached"))
+    );
+    runtime
+        .graph()
+        .validate()
+        .expect("multi-item edge extraction should preserve canonical indexes");
+}
+
+#[test]
+fn move_item_to_edge_preserves_a_singleton_group_and_leaf_identity() {
+    let mut runtime = multiview_runtime();
+    let source = DockGroupId::from("inspector");
+    let target = DockGroupId::from("detached-target");
+    let source_node = runtime.graph().index().node_for_group(&source).unwrap();
+    let target_node = runtime.graph().index().node_for_group(&target).unwrap();
+    let editor_node = runtime
+        .graph()
+        .index()
+        .node_for_group(&DockGroupId::from("editor"))
+        .unwrap();
+
+    let prepared = match runtime
+        .prepare_move_item_to_edge(
+            "C",
+            source.clone(),
+            target,
+            "main",
+            "detached",
+            SplitAxis::Vertical,
+            true,
+            0.4,
+        )
+        .expect("singleton item edge move should prepare")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("cross-space singleton move must be structural"),
+    };
+    assert!(matches!(
+        runtime.commit(prepared),
+        GraphCommitOutcome::Committed(_)
+    ));
+
+    assert_eq!(runtime.graph().index().node_for_group(&source), Some(source_node));
+    assert_eq!(
+        runtime
+            .graph()
+            .space(&DockSpaceId::from("main"))
+            .and_then(|space| space.root),
+        Some(editor_node)
+    );
+    let root = runtime
+        .graph()
+        .space(&DockSpaceId::from("detached"))
+        .and_then(|space| space.root)
+        .unwrap();
+    assert!(matches!(
+        runtime.graph().node(root),
+        Some(CanonicalNode::Branch {
+            axis: SplitAxis::Vertical,
+            first,
+            second,
+            ratio,
+            ..
+        }) if *first == source_node && *second == target_node && *ratio == 0.4
+    ));
+    runtime
+        .graph()
+        .validate()
+        .expect("singleton edge move should preserve canonical indexes");
+}
+
+#[test]
+fn move_item_to_edge_can_split_an_item_from_its_own_group() {
+    let mut runtime = runtime();
+    let source = DockGroupId::from("editor");
+    let destination = DockGroupId::from("split-a");
+    let source_node = runtime.graph().index().node_for_group(&source).unwrap();
+
+    let prepared = match runtime
+        .prepare_move_item_to_edge(
+            "A",
+            destination.clone(),
+            source.clone(),
+            "main",
+            "main",
+            SplitAxis::Horizontal,
+            true,
+            0.5,
+        )
+        .expect("same-group edge extraction should prepare")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("same-group edge extraction must be structural"),
+    };
+    assert!(matches!(
+        runtime.commit(prepared),
+        GraphCommitOutcome::Committed(_)
+    ));
+
+    assert_eq!(runtime.graph().group(&source).unwrap().items, vec![item("B")]);
+    let destination_node = runtime.graph().index().node_for_group(&destination).unwrap();
+    let parent = runtime
+        .graph()
+        .index()
+        .parent_of(source_node)
+        .flatten()
+        .expect("source group should be wrapped by the new split");
+    assert!(matches!(
+        runtime.graph().node(parent),
+        Some(CanonicalNode::Branch { first, second, .. })
+            if *first == destination_node && *second == source_node
+    ));
+    runtime
+        .graph()
+        .validate()
+        .expect("same-group edge extraction should preserve canonical indexes");
+}
+
+#[test]
+fn move_item_to_edge_rejects_invalid_group_identity_and_noops_on_a_singleton_self_target() {
+    let mut multi = runtime();
+    assert!(matches!(
+        multi.prepare_move_item_to_edge(
+            "A",
+            "editor",
+            "inspector",
+            "main",
+            "main",
+            SplitAxis::Horizontal,
+            false,
+            0.5,
+        ),
+        Err(GraphPrepareError::InvalidItemMoveGroupIdentity { .. })
+    ));
+
+    let mut singleton = empty_target_runtime();
+    let outcome = singleton
+        .prepare_move_item_to_edge(
+            "C",
+            "inspector",
+            "inspector",
+            "main",
+            "main",
+            SplitAxis::Horizontal,
+            false,
+            0.5,
+        )
+        .expect("singleton self edge should resolve");
+    assert!(matches!(
+        outcome,
+        GraphPrepareOutcome::NoOp(receipt)
+            if matches!(receipt.operation(), GraphPatchOperation::MoveItemToEdge { .. })
+    ));
+}
+
+#[test]
 fn moving_the_last_item_retires_the_source_leaf_and_floating_owner() {
     let mut runtime = floating_source_runtime();
     let prepared = match runtime

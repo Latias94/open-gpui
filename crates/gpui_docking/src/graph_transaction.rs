@@ -423,6 +423,111 @@ impl GraphTransactionEngine {
         ))
     }
 
+    /// Prepares moving one item beside a target group.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn prepare_move_item_to_edge<T: GraphReadView>(
+        &mut self,
+        view: &T,
+        item: impl Into<DockItemId>,
+        new_group: impl Into<DockGroupId>,
+        target_group: impl Into<DockGroupId>,
+        source_space: impl Into<DockSpaceId>,
+        target_space: impl Into<DockSpaceId>,
+        axis: SplitAxis,
+        insert_before: bool,
+        ratio: f32,
+    ) -> Result<GraphPrepareOutcome, GraphPrepareError> {
+        let item = item.into();
+        let new_group = new_group.into();
+        let target_group = target_group.into();
+        let source_space = source_space.into();
+        let target_space = target_space.into();
+        let source_group = view
+            .read_item_group(&item)
+            .ok_or_else(|| GraphPrepareError::MissingItem { item: item.clone() })?;
+        let source =
+            view.read_group(&source_group)
+                .ok_or_else(|| GraphPrepareError::MissingGroup {
+                    group: source_group.clone(),
+                })?;
+        if !source.items.iter().any(|candidate| candidate == &item) {
+            return Err(GraphPrepareError::ItemNotInGroup {
+                group: source_group,
+                item,
+            });
+        }
+        if source.space != source_space {
+            return Err(GraphPrepareError::GroupOutsideSpace {
+                group: source_group,
+                space: source_space,
+            });
+        }
+        let target =
+            view.read_group(&target_group)
+                .ok_or_else(|| GraphPrepareError::MissingGroup {
+                    group: target_group.clone(),
+                })?;
+        if target.space != target_space {
+            return Err(GraphPrepareError::GroupOutsideSpace {
+                group: target_group,
+                space: target_space,
+            });
+        }
+        let ratio = GraphSplitRatio::new(ratio).ok_or(GraphPrepareError::InvalidSplitRatio)?;
+        if new_group.as_str().is_empty() {
+            return Err(GraphPrepareError::EmptyGroupId);
+        }
+        if new_group != source_group && view.read_group(&new_group).is_some() {
+            return Err(GraphPrepareError::GroupAlreadyExists { group: new_group });
+        }
+        if (source.items.len() == 1 && new_group != source_group)
+            || (source.items.len() > 1 && new_group == source_group)
+        {
+            return Err(GraphPrepareError::InvalidItemMoveGroupIdentity {
+                source_group,
+                new_group,
+            });
+        }
+
+        let operation = GraphPatchOperation::MoveItemToEdge {
+            item,
+            source_group: source_group.clone(),
+            new_group,
+            target_group: target_group.clone(),
+            source_space,
+            target_space,
+            axis,
+            insert_before,
+            ratio,
+        };
+        let revision = view.graph_revision();
+        if source_group == target_group && source.items.len() == 1 {
+            return Ok(GraphPrepareOutcome::NoOp(GraphNoOpReceipt::new(
+                revision, operation,
+            )));
+        }
+
+        let generation = self
+            .next_generation
+            .checked_add(1)
+            .ok_or(GraphPrepareError::CommitIdExhausted)?;
+        self.next_generation = generation;
+        let read_set = GraphReadSet::for_group_state_sensitive_operation(
+            revision,
+            if source_group == target_group {
+                vec![source]
+            } else {
+                vec![source, target]
+            },
+        );
+        Ok(GraphPrepareOutcome::Prepared(
+            crate::graph_patch::PreparedGraphPatch::new(
+                GraphCommitId::new(revision.authority_epoch(), generation),
+                GraphPatch::new(operation, read_set),
+            ),
+        ))
+    }
+
     /// Prepares moving one item into an empty dock-space root.
     pub(crate) fn prepare_move_item_to_empty_space<T: GraphReadView>(
         &mut self,
@@ -678,6 +783,27 @@ impl GraphTransactionEngine {
                 source_space,
                 target_space,
                 *insert_index,
+            ),
+            GraphPatchOperation::MoveItemToEdge {
+                item,
+                source_group,
+                new_group,
+                target_group,
+                source_space,
+                target_space,
+                axis,
+                insert_before,
+                ratio,
+            } => target.apply_move_item_to_edge(
+                item,
+                source_group,
+                new_group,
+                target_group,
+                source_space,
+                target_space,
+                *axis,
+                *insert_before,
+                ratio.get(),
             ),
             GraphPatchOperation::MoveItemToEmptySpace {
                 item,

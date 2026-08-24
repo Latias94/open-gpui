@@ -679,6 +679,127 @@ impl CanonicalDockGraph {
         true
     }
 
+    /// Moves one item beside a target group, preserving a singleton source leaf or creating a
+    /// new durable group for an item extracted from a multi-item source.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn apply_move_item_to_edge_for_commit(
+        &mut self,
+        item: &DockItemId,
+        source_group: &DockGroupId,
+        new_group: &DockGroupId,
+        target_group: &DockGroupId,
+        source_space: &DockSpaceId,
+        target_space: &DockSpaceId,
+        axis: SplitAxis,
+        insert_before: bool,
+        ratio: f32,
+        version: CanonicalGraphVersion,
+    ) -> bool {
+        if !ratio.is_finite() || !(0.0..=1.0).contains(&ratio) || ratio <= 0.0 || ratio >= 1.0 {
+            return false;
+        }
+        let Some(source_node) = self.index.node_for_group(source_group) else {
+            return false;
+        };
+        let Some(target_node) = self.index.node_for_group(target_group) else {
+            return false;
+        };
+        let Some(source_owner) = self.index.owner_for_node(source_node).cloned() else {
+            return false;
+        };
+        let Some(target_owner) = self.index.owner_for_node(target_node).cloned() else {
+            return false;
+        };
+        let source_owner_space = match &source_owner {
+            CanonicalNodeOwner::Main(space) | CanonicalNodeOwner::Floating { space, .. } => space,
+        };
+        let target_owner_space = match &target_owner {
+            CanonicalNodeOwner::Main(space) | CanonicalNodeOwner::Floating { space, .. } => space,
+        };
+        if source_owner_space != source_space || target_owner_space != target_space {
+            return false;
+        }
+        let Some(source_state) = self.groups.get(source_group) else {
+            return false;
+        };
+        let source_len = source_state.items.len();
+        let Some(source_index) = source_state
+            .items
+            .iter()
+            .position(|candidate| candidate == item)
+        else {
+            return false;
+        };
+
+        if source_len == 1 {
+            if new_group != source_group {
+                return false;
+            }
+            return self.apply_move_group_to_edge_for_commit(
+                source_group,
+                target_group,
+                source_space,
+                target_space,
+                axis,
+                insert_before,
+                ratio,
+                version,
+            );
+        }
+        if new_group == source_group || self.groups.contains_key(new_group) {
+            return false;
+        }
+        let Some(target_parent) = self.index.parent_of(target_node) else {
+            return false;
+        };
+        if let Some(parent) = target_parent
+            && !matches!(
+                self.nodes.get(parent),
+                Some(CanonicalNode::Branch { first, second, .. })
+                    if *first == target_node || *second == target_node
+            )
+        {
+            return false;
+        }
+
+        let source = self
+            .groups
+            .get_mut(source_group)
+            .expect("validated source group must remain present");
+        source.items.remove(source_index);
+        source.mru.retain(|entry| entry != item);
+        if source.selected == *item {
+            source.selected = source
+                .items
+                .first()
+                .cloned()
+                .expect("a multi-item source group retains one item");
+        }
+        self.index.remove_item_membership(item, source_group);
+
+        let applied = self.apply_split_group_for_commit(
+            target_group,
+            new_group,
+            std::slice::from_ref(item),
+            item,
+            axis,
+            insert_before,
+            ratio,
+            target_space,
+            version,
+        );
+        assert!(
+            applied,
+            "validated item edge split must be applicable after local extraction"
+        );
+        self.groups
+            .get_mut(new_group)
+            .expect("item edge split inserted the destination group")
+            .mru
+            .push(item.clone());
+        true
+    }
+
     /// Moves one item into an empty main root, either reusing a singleton group or creating a
     /// new durable group leaf while retaining the remaining source group.
     pub(crate) fn apply_move_item_to_empty_space_for_commit(

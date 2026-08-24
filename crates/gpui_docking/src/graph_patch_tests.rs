@@ -160,6 +160,21 @@ impl GraphPatchTarget for SelectionTarget {
         panic!("selection target does not support structural patches")
     }
 
+    fn apply_move_item_to_edge(
+        &mut self,
+        _item: &DockItemId,
+        _source_group: &DockGroupId,
+        _new_group: &DockGroupId,
+        _target_group: &DockGroupId,
+        _source_space: &DockSpaceId,
+        _target_space: &DockSpaceId,
+        _axis: crate::SplitAxis,
+        _insert_before: bool,
+        _ratio: f32,
+    ) -> GraphRevision {
+        panic!("selection target does not support structural patches")
+    }
+
     fn apply_move_item_to_empty_space(
         &mut self,
         _item: &DockItemId,

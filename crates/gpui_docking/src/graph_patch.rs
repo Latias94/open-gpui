@@ -329,6 +329,18 @@ pub(crate) enum GraphPatchOperation {
         target_space: DockSpaceId,
         insert_index: Option<usize>,
     },
+    /// Moves one item beside a target group, preserving or creating its durable group leaf.
+    MoveItemToEdge {
+        item: DockItemId,
+        source_group: DockGroupId,
+        new_group: DockGroupId,
+        target_group: DockGroupId,
+        source_space: DockSpaceId,
+        target_space: DockSpaceId,
+        axis: SplitAxis,
+        insert_before: bool,
+        ratio: GraphSplitRatio,
+    },
     /// Moves one item into an empty dock-space root, preserving or creating its group leaf.
     MoveItemToEmptySpace {
         item: DockItemId,
@@ -618,6 +630,19 @@ pub(crate) trait GraphPatchTarget: GraphReadView {
         source_space: &DockSpaceId,
         target_space: &DockSpaceId,
         insert_index: Option<usize>,
+    ) -> GraphRevision;
+
+    fn apply_move_item_to_edge(
+        &mut self,
+        item: &DockItemId,
+        source_group: &DockGroupId,
+        new_group: &DockGroupId,
+        target_group: &DockGroupId,
+        source_space: &DockSpaceId,
+        target_space: &DockSpaceId,
+        axis: SplitAxis,
+        insert_before: bool,
+        ratio: f32,
     ) -> GraphRevision;
 
     fn apply_move_item_to_empty_space(
