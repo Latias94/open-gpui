@@ -6,7 +6,7 @@ use crate::graph_patch::{
     GraphSplitRatio, GraphSupersededReceipt,
 };
 use crate::{DockFloatingId, DockGroupId, DockItemId, DockSpaceId, SplitAxis};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Prepared-patch owner for the canonical graph transaction boundary.
 ///
@@ -15,7 +15,7 @@ use std::collections::BTreeSet;
 #[derive(Debug, Default)]
 pub(crate) struct GraphTransactionEngine {
     next_generation: u64,
-    receipts: Vec<GraphCommitReceipt>,
+    receipts: BTreeMap<GraphCommitId, GraphCommitReceipt>,
 }
 
 impl GraphTransactionEngine {
@@ -284,11 +284,7 @@ impl GraphTransactionEngine {
         prepared: crate::graph_patch::PreparedGraphPatch,
     ) -> GraphCommitOutcome {
         let commit_id = prepared.commit_id();
-        if let Some(receipt) = self
-            .receipts
-            .iter()
-            .find(|receipt| receipt.commit_id() == commit_id)
-        {
+        if let Some(receipt) = self.receipts.get(&commit_id) {
             return GraphCommitOutcome::AlreadyCommitted(receipt.clone());
         }
 
@@ -423,15 +419,14 @@ impl GraphTransactionEngine {
                 },
             },
         );
-        self.receipts.push(receipt.clone());
+        self.receipts.insert(commit_id, receipt.clone());
         GraphCommitOutcome::Committed(receipt)
     }
 
     /// Replays a retained receipt without touching the target.
     pub(crate) fn replay(&self, commit_id: GraphCommitId) -> Option<GraphCommitOutcome> {
         self.receipts
-            .iter()
-            .find(|receipt| receipt.commit_id() == commit_id)
+            .get(&commit_id)
             .cloned()
             .map(GraphCommitOutcome::AlreadyCommitted)
     }

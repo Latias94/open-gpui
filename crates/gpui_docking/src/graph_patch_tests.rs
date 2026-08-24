@@ -211,6 +211,46 @@ fn commit_changes_the_target_once_and_replays_the_original_receipt() {
 }
 
 #[test]
+fn replay_remains_addressable_after_a_long_commit_history() {
+    let graph = canonical_graph();
+    let mut target = SelectionTarget::from_graph(&graph);
+    let mut engine = GraphTransactionEngine::new();
+    let mut first_commit_id = None;
+    let mut last_commit_id = None;
+
+    for round in 0..512 {
+        let selected = if round % 2 == 0 { "B" } else { "A" };
+        let prepared = match engine
+            .prepare_select_tab(&target, "editor", selected)
+            .unwrap()
+        {
+            GraphPrepareOutcome::Prepared(prepared) => prepared,
+            GraphPrepareOutcome::NoOp(_) => panic!("selection should change"),
+        };
+        let commit_id = prepared.commit_id();
+        if first_commit_id.is_none() {
+            first_commit_id = Some(commit_id);
+        }
+        last_commit_id = Some(commit_id);
+        assert!(matches!(
+            engine.commit(&mut target, prepared),
+            GraphCommitOutcome::Committed(_)
+        ));
+    }
+
+    assert_eq!(engine.receipt_count(), 512);
+    assert!(matches!(
+        engine.replay(first_commit_id.expect("first commit should exist")),
+        Some(GraphCommitOutcome::AlreadyCommitted(_))
+    ));
+    assert!(matches!(
+        engine.replay(last_commit_id.expect("last commit should exist")),
+        Some(GraphCommitOutcome::AlreadyCommitted(_))
+    ));
+    assert_eq!(target.applied, 512);
+}
+
+#[test]
 fn stale_topology_is_rejected_before_the_target_write() {
     let graph = canonical_graph();
     let mut target = SelectionTarget::from_graph(&graph);
