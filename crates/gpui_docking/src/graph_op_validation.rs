@@ -257,7 +257,10 @@ impl DockGraph {
                 Ok(true)
             }
             DockOp::FloatItemInWindow {
-                source_space, item, ..
+                source_space,
+                item,
+                target_space,
+                bounds,
             } => {
                 if self.find_item_in_space(source_space, item).is_none() {
                     return Err(DockGraphMutationError::ItemNotFound {
@@ -265,21 +268,35 @@ impl DockGraph {
                         item: item.clone(),
                     });
                 }
+                self.validate_floating_bounds(target_space, *bounds)?;
                 Ok(true)
             }
             DockOp::FloatTabsInWindow {
                 source_space,
                 source_tabs,
-                ..
+                target_space,
+                bounds,
             } => {
                 self.require_non_empty_tabs_node(*source_tabs)?;
                 self.require_source_node_in_space(source_space, *source_tabs)?;
+                self.validate_floating_bounds(target_space, *bounds)?;
                 Ok(true)
             }
             DockOp::SetFloatingBounds {
-                space, floating, ..
+                space,
+                floating,
+                bounds,
+            } => {
+                if self.floating_container(space, *floating).is_none() {
+                    return Err(DockGraphMutationError::FloatingContainerNotFound {
+                        space: space.clone(),
+                        floating: *floating,
+                    });
+                }
+                self.validate_floating_bounds(space, *bounds)?;
+                Ok(true)
             }
-            | DockOp::RaiseFloating { space, floating } => {
+            DockOp::RaiseFloating { space, floating } => {
                 if self.floating_container(space, *floating).is_none() {
                     return Err(DockGraphMutationError::FloatingContainerNotFound {
                         space: space.clone(),
@@ -309,6 +326,9 @@ impl DockGraph {
 
     /// Applies an operation with validation for the common error-prone cases.
     pub(crate) fn apply_op_checked(&mut self, op: &DockOp) -> Result<bool, DockGraphMutationError> {
+        // All fallible semantic decisions happen before the first authoritative write. The
+        // operation-specific branches below only perform the already-validated mutation.
+        self.validate_op_checked(op)?;
         match op {
             DockOp::SelectTab { tabs, item } => {
                 let items = self.require_tabs_node(*tabs)?;
@@ -514,49 +534,51 @@ impl DockGraph {
         }
     }
 
+    fn validate_floating_bounds(
+        &self,
+        space: &DockSpaceId,
+        bounds: open_gpui::Bounds<open_gpui::Pixels>,
+    ) -> Result<(), DockGraphMutationError> {
+        let valid = f32::from(bounds.origin.x).is_finite()
+            && f32::from(bounds.origin.y).is_finite()
+            && f32::from(bounds.size.width).is_finite()
+            && f32::from(bounds.size.height).is_finite()
+            && f32::from(bounds.size.width) >= 0.0
+            && f32::from(bounds.size.height) >= 0.0;
+        if valid {
+            Ok(())
+        } else {
+            Err(DockGraphMutationError::InvalidFloatingBounds {
+                space: space.clone(),
+            })
+        }
+    }
+
     fn apply_tree_mutation_plan(
         &mut self,
         plan: DockTreeMutationPlan<'_>,
     ) -> Result<bool, DockGraphMutationError> {
         let retention = self.capture_mutation_retention();
-        let before = self.clone();
         let changed = self.apply_op_unchecked(plan.op);
         if changed {
             self.finalize_checked_mutation(retention);
         }
-
-        if !changed {
-            if !self.matches_exactly(&before) {
-                let error = plan
-                    .invariant_violation("mutation reported no change after modifying the graph");
-                *self = before;
-                return Err(error);
-            }
-            *self = before;
-            if plan.allow_noop {
-                return Ok(false);
-            }
-            return Err(
-                plan.invariant_violation("validated mutation did not attach its planned subtree")
-            );
-        }
-
-        if self.matches_exactly(&before) {
-            let error =
-                plan.invariant_violation("mutation reported a change without changing graph state");
-            *self = before;
-            return Err(error);
-        }
-        if let Err(error) = self.validate() {
-            let error = plan.invariant_violation(error.to_string());
-            *self = before;
-            return Err(error);
-        }
-        if let Err(error) = plan.expectation.verify(self, plan.op_name()) {
-            *self = before;
-            return Err(error);
-        }
-        Ok(true)
+        assert!(
+            changed || plan.allow_noop,
+            "validated dock graph operation unexpectedly reported no change: {}",
+            plan.op_name()
+        );
+        debug_assert!(
+            self.validate().is_ok(),
+            "validated dock graph operation violated graph invariants: {}",
+            plan.op_name()
+        );
+        debug_assert!(
+            plan.expectation.verify(self, plan.op_name()).is_ok(),
+            "validated dock graph operation violated its postcondition: {}",
+            plan.op_name()
+        );
+        Ok(changed)
     }
 
     fn validate_move_item(
@@ -727,13 +749,6 @@ impl<'a> DockTreeMutationPlan<'a> {
             DockOp::SetSplitFractionsMany { .. } => "SetSplitFractionsMany",
             #[cfg(test)]
             DockOp::SetSplitFractionTwo { .. } => "SetSplitFractionTwo",
-        }
-    }
-
-    fn invariant_violation(&self, reason: impl Into<String>) -> DockGraphMutationError {
-        DockGraphMutationError::MutationInvariantViolation {
-            op: self.op_name(),
-            reason: reason.into(),
         }
     }
 }

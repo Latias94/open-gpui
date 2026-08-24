@@ -367,6 +367,13 @@ pub enum DockGraphMutationError {
         split: DockNodeId,
     },
 
+    /// A floating container has non-finite coordinates or a negative size.
+    #[error("dock space {space} has invalid floating bounds")]
+    InvalidFloatingBounds {
+        /// Dock space receiving or owning the floating container.
+        space: DockSpaceId,
+    },
+
     /// The graph mutation reported success or no-op incorrectly after partially changing state.
     #[error("dock graph mutation {op} violated transactional guarantees: {reason}")]
     MutationInvariantViolation {

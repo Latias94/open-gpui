@@ -569,11 +569,10 @@ fn checked_float_item_apply_failure_restores_exact_graph_and_node_allocator() {
         })
         .expect_err("invalid floating bounds should fail after applying the planned mutation");
 
-    let DockGraphMutationError::MutationInvariantViolation { op, reason } = error else {
-        panic!("expected a typed apply invariant failure");
-    };
-    assert_eq!(op, "FloatItemInWindow");
-    assert!(reason.contains("invalid bounds"));
+    assert_eq!(
+        error,
+        DockGraphMutationError::InvalidFloatingBounds { space: space() }
+    );
 
     assert!(
         graph.matches_exactly(&untouched),

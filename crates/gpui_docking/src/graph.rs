@@ -274,6 +274,7 @@ pub(in crate::graph) struct DockTabSelectionState {
 }
 
 impl DockGraph {
+    #[cfg(test)]
     pub(crate) fn matches_exactly(&self, other: &Self) -> bool {
         self.nodes.len() == other.nodes.len()
             && self

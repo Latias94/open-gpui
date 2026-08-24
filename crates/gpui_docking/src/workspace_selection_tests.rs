@@ -260,15 +260,12 @@ fn workspace_failed_graph_apply_preserves_graph_revision(cx: &mut TestAppContext
         })
         .expect_err("invalid floating bounds should fail the graph apply phase");
 
-    let DockActionApplyError::Graph(DockGraphMutationError::MutationInvariantViolation {
-        op,
-        reason,
-    }) = error
-    else {
-        panic!("expected the workspace to preserve the typed graph apply failure");
-    };
-    assert_eq!(op, "FloatItemInWindow");
-    assert!(reason.contains("invalid bounds"));
+    assert_eq!(
+        error,
+        DockActionApplyError::Graph(DockGraphMutationError::InvalidFloatingBounds {
+            space: space()
+        })
+    );
     assert_eq!(workspace.graph().root(&space()), Some(root));
     assert!(
         workspace.can_commit_prepared_graph(&prepared),
