@@ -582,6 +582,102 @@ impl CanonicalDockGraph {
         true
     }
 
+    /// Moves one item into a target group, retiring an empty source leaf when necessary.
+    pub(crate) fn apply_move_item_to_group_for_commit(
+        &mut self,
+        item: &DockItemId,
+        source_group: &DockGroupId,
+        target_group: &DockGroupId,
+        source_space: &DockSpaceId,
+        target_space: &DockSpaceId,
+        insert_index: Option<usize>,
+        version: CanonicalGraphVersion,
+    ) -> bool {
+        let Some(source_node) = self.index.node_for_group(source_group) else {
+            return false;
+        };
+        let Some(target_node) = self.index.node_for_group(target_group) else {
+            return false;
+        };
+        let Some(source_owner) = self.index.owner_for_node(source_node).cloned() else {
+            return false;
+        };
+        let Some(target_owner) = self.index.owner_for_node(target_node).cloned() else {
+            return false;
+        };
+        let source_owner_space = match &source_owner {
+            CanonicalNodeOwner::Main(space) | CanonicalNodeOwner::Floating { space, .. } => space,
+        };
+        let target_owner_space = match &target_owner {
+            CanonicalNodeOwner::Main(space) | CanonicalNodeOwner::Floating { space, .. } => space,
+        };
+        if source_owner_space != source_space || target_owner_space != target_space {
+            return false;
+        }
+
+        let Some(source_index) = self
+            .groups
+            .get(source_group)
+            .and_then(|group| group.items.iter().position(|candidate| candidate == item))
+        else {
+            return false;
+        };
+
+        if source_group == target_group {
+            let group = self
+                .groups
+                .get_mut(source_group)
+                .expect("validated source group must remain present");
+            let moved = group.items.remove(source_index);
+            let mut insert_at = insert_index.unwrap_or(group.items.len()).min(group.items.len());
+            if insert_index.is_some_and(|index| index > source_index) {
+                insert_at = insert_at.saturating_sub(1);
+            }
+            group.items.insert(insert_at, moved);
+            group.selected = item.clone();
+            group.mru.retain(|entry| entry != item);
+            group.mru.insert(0, item.clone());
+            self.version = version;
+            return true;
+        }
+
+        let source_empty = {
+            let source = self
+                .groups
+                .get_mut(source_group)
+                .expect("validated source group must remain present");
+            source.items.remove(source_index);
+            source.mru.retain(|entry| entry != item);
+            if source.selected == *item {
+                source.selected = source.items.first().cloned().unwrap_or_else(|| item.clone());
+            }
+            source.items.is_empty()
+        };
+        let target = self
+            .groups
+            .get_mut(target_group)
+            .expect("validated target group must remain present");
+        let insert_at = insert_index.unwrap_or(target.items.len()).min(target.items.len());
+        target.items.insert(insert_at, item.clone());
+        target.selected = item.clone();
+        target.mru.retain(|entry| entry != item);
+        target.mru.insert(0, item.clone());
+
+        if source_empty {
+            if !self.detach_group_leaf_for_commit(source_node, &source_owner) {
+                return false;
+            }
+            self.groups.remove(source_group);
+            self.nodes.remove(source_node);
+            self.index
+                .merge_group_into(source_node, source_group, &[], target_group, &target_owner);
+        }
+        self.index
+            .move_item_to_group(item, source_group, target_group, &target_owner);
+        self.version = version;
+        true
+    }
+
     /// Moves a complete floating subtree beside a target group and retires its floating owner.
     pub(crate) fn apply_move_floating_root_to_edge_for_commit(
         &mut self,

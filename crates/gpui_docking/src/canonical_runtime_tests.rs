@@ -984,6 +984,153 @@ fn empty_space_patch_preserves_newer_source_selection_but_rejects_target_topolog
 }
 
 #[test]
+fn move_item_to_group_preserves_source_group_and_updates_target_selection() {
+    let mut runtime = runtime();
+    let prepared = match runtime
+        .prepare_move_item_to_group("A", "inspector", "main", "main", None)
+        .expect("center item move should prepare")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("item move must be structural"),
+    };
+    assert!(matches!(
+        prepared.operation(),
+        GraphPatchOperation::MoveItemToGroup {
+            item: moved_item,
+            target_group,
+            insert_index: None,
+            ..
+        } if moved_item == &item("A") && target_group == &DockGroupId::from("inspector")
+    ));
+    assert!(matches!(
+        runtime.commit(prepared),
+        GraphCommitOutcome::Committed(_)
+    ));
+
+    assert_eq!(
+        runtime.graph().group(&DockGroupId::from("editor")).unwrap().items,
+        vec![item("B")]
+    );
+    assert_eq!(
+        runtime.graph().group(&DockGroupId::from("editor")).unwrap().selected,
+        item("B")
+    );
+    let target = runtime
+        .graph()
+        .group(&DockGroupId::from("inspector"))
+        .unwrap();
+    assert_eq!(target.items, vec![item("C"), item("D"), item("A")]);
+    assert_eq!(target.selected, item("A"));
+    assert_eq!(target.mru, vec![item("A")]);
+    assert_eq!(
+        runtime.graph().index().group_for_item(&item("A")),
+        Some(&DockGroupId::from("inspector"))
+    );
+    runtime
+        .graph()
+        .validate()
+        .expect("center item move should preserve canonical indexes");
+}
+
+#[test]
+fn moving_the_last_item_retires_the_source_leaf_and_floating_owner() {
+    let mut runtime = floating_source_runtime();
+    let prepared = match runtime
+        .prepare_move_item_to_group("S", "target", "main", "main", None)
+        .expect("floating item center move should prepare")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("floating item move must be structural"),
+    };
+    assert!(matches!(
+        runtime.commit(prepared),
+        GraphCommitOutcome::Committed(_)
+    ));
+
+    assert!(runtime.graph().group(&DockGroupId::from("source")).is_none());
+    assert!(runtime.graph().floating_roots().is_empty());
+    assert_eq!(
+        runtime.graph().group(&DockGroupId::from("target")).unwrap().items,
+        vec![item("T"), item("S")]
+    );
+    assert!(
+        runtime
+            .graph()
+            .index()
+            .floating_for_item(&item("S"))
+            .is_none()
+    );
+    runtime
+        .graph()
+        .validate()
+        .expect("last floating item move should preserve canonical indexes");
+}
+
+#[test]
+fn same_group_item_move_reorders_tabs_and_adjacent_moves_are_noops() {
+    let mut runtime = runtime();
+    let no_op = runtime
+        .prepare_move_item_to_group("B", "editor", "main", "main", Some(2))
+        .expect("adjacent tab move should resolve");
+    assert!(matches!(
+        no_op,
+        GraphPrepareOutcome::NoOp(receipt)
+            if matches!(receipt.operation(), GraphPatchOperation::MoveItemToGroup { .. })
+    ));
+
+    let prepared = match runtime
+        .prepare_move_item_to_group("B", "editor", "main", "main", Some(0))
+        .expect("tab reorder should prepare")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("non-adjacent tab move must be structural"),
+    };
+    assert!(matches!(
+        runtime.commit(prepared),
+        GraphCommitOutcome::Committed(_)
+    ));
+    let editor = runtime
+        .graph()
+        .group(&DockGroupId::from("editor"))
+        .unwrap();
+    assert_eq!(editor.items, vec![item("B"), item("A")]);
+    assert_eq!(editor.selected, item("B"));
+    assert_eq!(editor.mru, vec![item("B")]);
+    runtime
+        .graph()
+        .validate()
+        .expect("tab reorder should preserve canonical indexes");
+}
+
+#[test]
+fn item_move_read_set_allows_unrelated_selection_but_rejects_touched_group_changes() {
+    let mut runtime = runtime();
+    let prepared = match runtime
+        .prepare_move_item_to_group("A", "inspector", "main", "main", None)
+        .expect("item move should prepare")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("item move must be structural"),
+    };
+    let unrelated = match runtime
+        .prepare_select_tab("inspector", "D")
+        .expect("unrelated selection should prepare")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("selection should produce a patch"),
+    };
+    assert!(matches!(
+        runtime.commit(unrelated),
+        GraphCommitOutcome::Committed(_)
+    ));
+    assert!(matches!(
+        runtime.commit(prepared),
+        GraphCommitOutcome::Superseded(receipt)
+            if receipt.reason() == &GraphSupersededReason::GroupSelectionChanged
+    ));
+}
+
+#[test]
 fn move_group_to_edge_can_insert_into_a_floating_root() {
     let mut runtime = floating_runtime();
     let target = DockGroupId::from("target");

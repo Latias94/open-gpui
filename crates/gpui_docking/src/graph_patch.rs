@@ -243,7 +243,7 @@ impl GraphReadSet {
         read_set
     }
 
-    pub(crate) fn for_group_merge(
+    pub(crate) fn for_group_state_sensitive_operation(
         base_revision: GraphRevision,
         groups: impl IntoIterator<Item = GraphGroupRead>,
     ) -> Self {
@@ -319,6 +319,15 @@ pub(crate) enum GraphPatchOperation {
         source_group: DockGroupId,
         source_space: DockSpaceId,
         target_space: DockSpaceId,
+    },
+    /// Moves one item into a target group, optionally at an explicit tab insertion index.
+    MoveItemToGroup {
+        item: DockItemId,
+        source_group: DockGroupId,
+        target_group: DockGroupId,
+        source_space: DockSpaceId,
+        target_space: DockSpaceId,
+        insert_index: Option<usize>,
     },
     /// Moves one complete floating root beside a target group and retires its floating chrome.
     MoveFloatingRootToEdge {
@@ -593,6 +602,16 @@ pub(crate) trait GraphPatchTarget: GraphReadView {
         target_space: &DockSpaceId,
     ) -> GraphRevision;
 
+    fn apply_move_item_to_group(
+        &mut self,
+        item: &DockItemId,
+        source_group: &DockGroupId,
+        target_group: &DockGroupId,
+        source_space: &DockSpaceId,
+        target_space: &DockSpaceId,
+        insert_index: Option<usize>,
+    ) -> GraphRevision;
+
     fn apply_move_floating_root_to_edge(
         &mut self,
         floating: &DockFloatingId,
@@ -667,6 +686,8 @@ impl GraphReadView for CanonicalDockGraph {
 pub(crate) enum GraphPrepareError {
     #[error("group {group} does not exist")]
     MissingGroup { group: DockGroupId },
+    #[error("item {item} does not exist")]
+    MissingItem { item: DockItemId },
     #[error("item {item} is not a member of group {group}")]
     ItemNotInGroup {
         group: DockGroupId,

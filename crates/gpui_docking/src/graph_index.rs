@@ -214,15 +214,26 @@ impl CanonicalGraphIndex {
         self.owner_by_node.remove(&source_node);
 
         for item in source_items {
-            let previous = self.item_group.insert(item.clone(), target_group.clone());
-            debug_assert_eq!(previous.as_ref(), Some(source_group));
-            match target_owner {
-                CanonicalNodeOwner::Main(_) => {
-                    self.floating_by_item.remove(item);
-                }
-                CanonicalNodeOwner::Floating { floating, .. } => {
-                    self.floating_by_item.insert(item.clone(), floating.clone());
-                }
+            self.move_item_to_group(item, source_group, target_group, target_owner);
+        }
+    }
+
+    /// Rebinds one item to an existing target group and its current root owner.
+    pub(crate) fn move_item_to_group(
+        &mut self,
+        item: &DockItemId,
+        source_group: &DockGroupId,
+        target_group: &DockGroupId,
+        target_owner: &CanonicalNodeOwner,
+    ) {
+        let previous = self.item_group.insert(item.clone(), target_group.clone());
+        debug_assert_eq!(previous.as_ref(), Some(source_group));
+        match target_owner {
+            CanonicalNodeOwner::Main(_) => {
+                self.floating_by_item.remove(item);
+            }
+            CanonicalNodeOwner::Floating { floating, .. } => {
+                self.floating_by_item.insert(item.clone(), floating.clone());
             }
         }
     }

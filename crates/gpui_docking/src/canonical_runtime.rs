@@ -170,6 +170,27 @@ impl CanonicalGraphRuntime {
         result
     }
 
+    pub(crate) fn prepare_move_item_to_group(
+        &mut self,
+        item: impl Into<DockItemId>,
+        target_group: impl Into<DockGroupId>,
+        source_space: impl Into<DockSpaceId>,
+        target_space: impl Into<DockSpaceId>,
+        insert_index: Option<usize>,
+    ) -> Result<GraphPrepareOutcome, GraphPrepareError> {
+        let mut transactions = std::mem::take(&mut self.transactions);
+        let result = transactions.prepare_move_item_to_group(
+            self,
+            item,
+            target_group,
+            source_space,
+            target_space,
+            insert_index,
+        );
+        self.transactions = transactions;
+        result
+    }
+
     pub(crate) fn prepare_move_floating_root_to_edge(
         &mut self,
         floating: impl Into<DockFloatingId>,
@@ -367,6 +388,34 @@ impl GraphPatchTarget for CanonicalGraphRuntime {
             applied,
             "validated group-to-empty-space patch must be applicable"
         );
+        let recorded = self.authority.record_topology_change();
+        debug_assert_eq!(recorded, next_version);
+        GraphRevision::from_version(self.graph.version())
+    }
+
+    fn apply_move_item_to_group(
+        &mut self,
+        item: &DockItemId,
+        source_group: &DockGroupId,
+        target_group: &DockGroupId,
+        source_space: &DockSpaceId,
+        target_space: &DockSpaceId,
+        insert_index: Option<usize>,
+    ) -> GraphRevision {
+        let next_version = self
+            .authority
+            .next_topology_change()
+            .expect("canonical graph topology revision exhausted");
+        let applied = self.graph.apply_move_item_to_group_for_commit(
+            item,
+            source_group,
+            target_group,
+            source_space,
+            target_space,
+            insert_index,
+            next_version,
+        );
+        assert!(applied, "validated item move patch must be applicable");
         let recorded = self.authority.record_topology_change();
         debug_assert_eq!(recorded, next_version);
         GraphRevision::from_version(self.graph.version())

@@ -264,7 +264,8 @@ impl GraphTransactionEngine {
             .checked_add(1)
             .ok_or(GraphPrepareError::CommitIdExhausted)?;
         self.next_generation = generation;
-        let read_set = GraphReadSet::for_group_merge(revision, [source, target]);
+        let read_set =
+            GraphReadSet::for_group_state_sensitive_operation(revision, [source, target]);
         Ok(GraphPrepareOutcome::Prepared(
             crate::graph_patch::PreparedGraphPatch::new(
                 GraphCommitId::new(revision.authority_epoch(), generation),
@@ -327,6 +328,93 @@ impl GraphTransactionEngine {
             .ok_or(GraphPrepareError::CommitIdExhausted)?;
         self.next_generation = generation;
         let read_set = GraphReadSet::for_group_to_empty_space(revision, source, target);
+        Ok(GraphPrepareOutcome::Prepared(
+            crate::graph_patch::PreparedGraphPatch::new(
+                GraphCommitId::new(revision.authority_epoch(), generation),
+                GraphPatch::new(operation, read_set),
+            ),
+        ))
+    }
+
+    /// Prepares moving one item into a target group or tab insertion position.
+    pub(crate) fn prepare_move_item_to_group<T: GraphReadView>(
+        &mut self,
+        view: &T,
+        item: impl Into<DockItemId>,
+        target_group: impl Into<DockGroupId>,
+        source_space: impl Into<DockSpaceId>,
+        target_space: impl Into<DockSpaceId>,
+        insert_index: Option<usize>,
+    ) -> Result<GraphPrepareOutcome, GraphPrepareError> {
+        let item = item.into();
+        let target_group = target_group.into();
+        let source_space = source_space.into();
+        let target_space = target_space.into();
+        let source_group = view
+            .read_item_group(&item)
+            .ok_or_else(|| GraphPrepareError::MissingItem { item: item.clone() })?;
+        let source =
+            view.read_group(&source_group)
+                .ok_or_else(|| GraphPrepareError::MissingGroup {
+                    group: source_group.clone(),
+                })?;
+        let source_index = source.items.iter().position(|candidate| candidate == &item).ok_or_else(
+            || GraphPrepareError::ItemNotInGroup {
+                group: source_group.clone(),
+                item: item.clone(),
+            },
+        )?;
+        if source.space != source_space {
+            return Err(GraphPrepareError::GroupOutsideSpace {
+                group: source_group,
+                space: source_space,
+            });
+        }
+        let target =
+            view.read_group(&target_group)
+                .ok_or_else(|| GraphPrepareError::MissingGroup {
+                    group: target_group.clone(),
+                })?;
+        if target.space != target_space {
+            return Err(GraphPrepareError::GroupOutsideSpace {
+                group: target_group,
+                space: target_space,
+            });
+        }
+        let insert_index = insert_index.map(|index| index.min(target.items.len()));
+        let operation = GraphPatchOperation::MoveItemToGroup {
+            item,
+            source_group: source_group.clone(),
+            target_group: target_group.clone(),
+            source_space,
+            target_space,
+            insert_index,
+        };
+        let revision = view.graph_revision();
+        if source_group == target_group
+            && (insert_index.is_none()
+                || insert_index.is_some_and(|index| {
+                    index == source_index || index == source_index.saturating_add(1)
+                }))
+        {
+            return Ok(GraphPrepareOutcome::NoOp(GraphNoOpReceipt::new(
+                revision, operation,
+            )));
+        }
+
+        let generation = self
+            .next_generation
+            .checked_add(1)
+            .ok_or(GraphPrepareError::CommitIdExhausted)?;
+        self.next_generation = generation;
+        let read_set = GraphReadSet::for_group_state_sensitive_operation(
+            revision,
+            if source_group == target_group {
+                vec![source]
+            } else {
+                vec![source, target]
+            },
+        );
         Ok(GraphPrepareOutcome::Prepared(
             crate::graph_patch::PreparedGraphPatch::new(
                 GraphCommitId::new(revision.authority_epoch(), generation),
@@ -481,6 +569,21 @@ impl GraphTransactionEngine {
                 source_group,
                 source_space,
                 target_space,
+            ),
+            GraphPatchOperation::MoveItemToGroup {
+                item,
+                source_group,
+                target_group,
+                source_space,
+                target_space,
+                insert_index,
+            } => target.apply_move_item_to_group(
+                item,
+                source_group,
+                target_group,
+                source_space,
+                target_space,
+                *insert_index,
             ),
             GraphPatchOperation::MoveFloatingRootToEdge {
                 floating,
