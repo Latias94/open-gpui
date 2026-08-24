@@ -1132,7 +1132,7 @@ mod runtime_suite {
                 selected: Some(item("c")),
             });
             graph.set_root(detached_space.clone(), reinjected_tabs);
-            controller.workspace_mut().set_graph(graph);
+            controller.workspace_mut().install_test_graph(graph);
         });
 
         let second_should_close = cx.update(|app| {
@@ -1563,7 +1563,7 @@ mod runtime_suite {
                 fractions: vec![0.5, 0.5],
             });
             graph.set_root(main_space.clone(), main_root);
-            controller.workspace_mut().set_graph(graph);
+            controller.workspace_mut().install_test_graph(graph);
             controller
                 .workspace_mut()
                 .select_tab(target_right, item("right-b"))
@@ -1665,7 +1665,7 @@ mod runtime_suite {
                 fractions: vec![0.5, 0.5],
             });
             graph.set_root(main_space.clone(), main_root);
-            controller.workspace_mut().set_graph(graph);
+            controller.workspace_mut().install_test_graph(graph);
             controller
                 .workspace_mut()
                 .close_item(main_space.clone(), item("left-b"))
@@ -3604,7 +3604,7 @@ mod handle_suite {
                 selected: Some(item("occupied")),
             });
             graph.set_root(detached_space.clone(), blocker_tabs);
-            controller.workspace_mut().set_graph(graph);
+            controller.workspace_mut().install_test_graph(graph);
         });
         let unregistered_window: open_gpui::AnyWindowHandle = cx
             .open_window(size(px(360.0), px(220.0)), |_, cx| {

@@ -995,7 +995,9 @@ mod runtime_suite {
         );
 
         fixture.controller.update(cx, |controller, cx| {
-            controller.workspace_mut().set_graph(DockGraph::new());
+            controller
+                .workspace_mut()
+                .install_test_graph(DockGraph::new());
             cx.notify();
         });
         let move_apply = runtime

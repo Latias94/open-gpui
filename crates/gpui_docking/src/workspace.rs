@@ -285,9 +285,12 @@ impl DockWorkspace {
         &self.graph
     }
 
-    /// Replaces the workspace graph.
-    pub fn set_graph(&mut self, graph: DockGraph) {
-        self.replace_graph(graph);
+    /// Installs a graph for crate-local test fixtures without exposing graph replacement in the
+    /// production workspace API.
+    #[cfg(test)]
+    pub(crate) fn install_test_graph(&mut self, graph: DockGraph) {
+        self.graph = graph;
+        self.advance_graph_revision();
     }
 
     pub(crate) fn apply_op_checked(&mut self, op: &DockOp) -> Result<bool, DockGraphMutationError> {
@@ -311,11 +314,6 @@ impl DockWorkspace {
             );
         }
         changed
-    }
-
-    fn replace_graph(&mut self, graph: DockGraph) {
-        self.graph = graph;
-        self.advance_graph_revision();
     }
 
     fn advance_graph_revision(&mut self) {
@@ -519,7 +517,7 @@ mod tests {
             .expect("the exact initial graph should accept the commit");
         assert!(workspace.graph().root(&main_space()).is_none());
 
-        workspace.set_graph(newer.clone());
+        workspace.install_test_graph(newer.clone());
         let replay = workspace
             .commit_or_replay_graph(commit_id, workspace.graph_revision(), operation)
             .expect("the same commit id should replay its receipt");
@@ -553,8 +551,8 @@ mod tests {
             Some(DockWorkspaceGraphCommitObservation::Exact)
         );
 
-        workspace.set_graph(intervening);
-        workspace.set_graph(DockGraph::new());
+        workspace.install_test_graph(intervening);
+        workspace.install_test_graph(DockGraph::new());
 
         assert!(workspace.graph().root(&main_space()).is_none());
         assert_eq!(
@@ -581,8 +579,8 @@ mod tests {
             panic!("a fresh graph commit must prepare one single-use token");
         };
 
-        workspace.set_graph(intermediate);
-        workspace.set_graph(initial);
+        workspace.install_test_graph(intermediate);
+        workspace.install_test_graph(initial);
 
         assert!(!workspace.can_commit_prepared_graph(&prepared));
     }
@@ -598,7 +596,7 @@ mod tests {
             item: "initial".into(),
         };
 
-        workspace.set_graph(initial);
+        workspace.install_test_graph(initial);
         assert!(
             workspace
                 .commit_or_replay_graph(commit_id, expected_revision, operation)

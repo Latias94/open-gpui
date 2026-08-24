@@ -175,7 +175,7 @@ fn rendered_scene_clears_missing_zoom_target(cx: &mut TestAppContext) {
             selected: Some(item("a")),
         });
         graph.set_root(space(), remaining);
-        controller.workspace_mut().set_graph(graph);
+        controller.workspace_mut().install_test_graph(graph);
         cx.notify();
     });
     window

@@ -5180,7 +5180,7 @@ fn native_captured_release_does_not_retarget_to_a_scene_created_by_mouse_up_list
                                     selected: Some(item("b")),
                                 });
                                 graph.set_root(empty_space, replacement_tabs);
-                                controller.workspace_mut().set_graph(graph);
+                                controller.workspace_mut().install_test_graph(graph);
                                 controller_cx.notify();
                             });
                             target_host.update(cx, |_, host_cx| host_cx.notify());
@@ -6707,7 +6707,7 @@ fn same_window_post_swap_graph_replacement_recovers_before_semantics(cx: &mut Te
                     selected: Some(item("c")),
                 });
                 graph.set_root(destination_space, replacement);
-                controller.workspace_mut().set_graph(graph);
+                controller.workspace_mut().install_test_graph(graph);
                 controller_cx.notify();
             });
         }
@@ -6981,7 +6981,7 @@ fn same_window_superseded_graph_before_interaction_admission_recovers_committed_
                     selected: Some(item("c")),
                 });
                 graph.set_root(destination_space, replacement);
-                controller.workspace_mut().set_graph(graph);
+                controller.workspace_mut().install_test_graph(graph);
                 controller_cx.notify();
             });
         }
@@ -9465,7 +9465,7 @@ fn runtime_native_captured_desktop_release_tears_off_tab(cx: &mut TestAppContext
                                 selected: Some(item("listener-occupied")),
                             });
                             graph.set_root(base.clone(), occupied_tabs);
-                            controller.workspace_mut().set_graph(graph);
+                            controller.workspace_mut().install_test_graph(graph);
                             controller_cx.notify();
                         });
                         occupied_base.replace(Some(base));

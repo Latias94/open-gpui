@@ -4126,7 +4126,7 @@ fn set_render_passthrough_graph(
             DockCentralRegion::empty().with_passthrough_when_empty(true)
         };
         graph.set_central_region(space(), central);
-        controller.workspace_mut().set_graph(graph);
+        controller.workspace_mut().install_test_graph(graph);
         cx.notify();
     });
 }
@@ -4201,7 +4201,7 @@ fn empty_central_passthrough_queues_pointer_input_without_mutating_committed_fac
             space(),
             DockCentralRegion::with_node(tabs).with_passthrough_when_empty(true),
         );
-        controller.workspace_mut().set_graph(graph);
+        controller.workspace_mut().install_test_graph(graph);
         cx.notify();
     });
     cx.run_until_parked();
