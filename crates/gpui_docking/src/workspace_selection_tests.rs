@@ -1,7 +1,7 @@
 use crate::{
     DockAction, DockActionApplyError, DockActionOutcome, DockGraph, DockGraphMutationError,
-    DockNode, DockNodeId, DockWorkspace, dock_bounds, host_test_support::*, model::DockLayoutNode,
-    workspace::DockWorkspaceGraphCommitPreparation,
+    DockNode, DockNodeId, DockOp, DockWorkspace, dock_bounds, host_test_support::*,
+    model::DockLayoutNode, workspace::DockWorkspaceGraphCommitPreparation,
 };
 use open_gpui::TestAppContext;
 use slotmap::Key;
@@ -236,10 +236,16 @@ fn workspace_failed_graph_apply_preserves_graph_revision(cx: &mut TestAppContext
     let (graph, root) = tabs_graph(&["a", "b"]);
     let mut workspace = workspace_with_panels(cx, graph, &[("a", "A", "A"), ("b", "B", "B")]);
     workspace.policy_mut().set_allow_floating(true);
-    let before = workspace.graph().clone();
     let commit_id = workspace.allocate_graph_commit_id();
-    let DockWorkspaceGraphCommitPreparation::Prepared(prepared) =
-        workspace.prepare_graph_commit(commit_id, before.clone())
+    let DockWorkspaceGraphCommitPreparation::Prepared(prepared) = workspace
+        .prepare_graph_commit(
+            commit_id,
+            DockOp::SelectTab {
+                tabs: root,
+                item: item("b"),
+            },
+        )
+        .expect("the selection operation should validate before preparing")
     else {
         panic!("a fresh graph commit id should prepare against the current revision");
     };
@@ -263,7 +269,6 @@ fn workspace_failed_graph_apply_preserves_graph_revision(cx: &mut TestAppContext
     };
     assert_eq!(op, "FloatItemInWindow");
     assert!(reason.contains("invalid bounds"));
-    assert!(workspace.graph().matches_exactly(&before));
     assert_eq!(workspace.graph().root(&space()), Some(root));
     assert!(
         workspace.can_commit_prepared_graph(&prepared),

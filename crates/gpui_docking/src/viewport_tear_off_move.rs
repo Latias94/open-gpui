@@ -209,15 +209,17 @@ impl DockViewportTearOffMovePlan {
         &self.source
     }
 
+    pub(crate) fn graph_op(&self) -> crate::DockOp {
+        self.source
+            .graph_op(&self.target_space, DockGraphDropTarget::empty_space())
+    }
+
     fn commit(
         self,
         workspace: &mut DockWorkspace,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
         self.source.validate(workspace.graph())?;
-        workspace.commit_graph_op(
-            self.source
-                .graph_op(&self.target_space, DockGraphDropTarget::empty_space()),
-        )
+        workspace.commit_graph_op(self.graph_op())
     }
 
     fn source_status(&self, graph: &DockGraph) -> DockViewportTearOffSourceStatus {

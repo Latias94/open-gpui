@@ -32,7 +32,7 @@ use super::{
     },
 };
 use crate::{
-    DockController, DockGraph, DockHost, DockHostWindowBinding, DockSpaceId,
+    DockController, DockHost, DockHostWindowBinding, DockOp, DockSpaceId,
     DockSurfaceActivationOutcome, DockSurfaceActivationRequestId,
     DockViewportCommittedWindowEffectsAcceptanceOutcome, DockViewportCommittedWindowEffectsReceipt,
     DockViewportDropPayload, DockViewportLockedDropRoute,
@@ -1326,8 +1326,8 @@ struct DockLiveUndockSameWindowPromotionCommit {
 #[derive(Clone)]
 struct DockLiveUndockPreparedGraphCommit {
     commit_id: DockWorkspaceGraphCommitId,
-    expected: DockGraph,
-    projected: DockGraph,
+    expected_revision: u64,
+    operation: DockOp,
 }
 
 struct DockLiveUndockHostPromotionCommit {
@@ -8542,17 +8542,20 @@ impl DockLiveUndockRuntime {
                 controller
                     .workspace()
                     .graph()
-                    .matches_exactly(&prepared_graph.expected),
-                "preflighted promotion graph must remain exact before the final swap"
+                    .validate_op_checked(&prepared_graph.operation)
+                    .is_ok(),
+                "preflighted promotion operation must remain valid before the final swap"
             );
             match controller
                 .workspace()
-                .prepare_graph_commit(prepared_graph.commit_id, prepared_graph.projected.clone())
+                .prepare_graph_commit(prepared_graph.commit_id, prepared_graph.operation.clone())
+                .ok()
             {
-                DockWorkspaceGraphCommitPreparation::Prepared(prepared) => prepared,
-                DockWorkspaceGraphCommitPreparation::AlreadyCommitted(_) => {
+                Some(DockWorkspaceGraphCommitPreparation::Prepared(prepared)) => prepared,
+                Some(DockWorkspaceGraphCommitPreparation::AlreadyCommitted(_)) => {
                     panic!("a fresh promotion graph commit cannot already be committed")
                 }
+                None => panic!("preflighted promotion operation must remain valid before commit"),
             }
         });
         let destination_window = self
@@ -9124,8 +9127,8 @@ impl DockLiveUndockRuntime {
                 }
                 controller.workspace_mut().commit_or_replay_graph(
                     prepared_graph.commit_id,
-                    &prepared_graph.expected,
-                    prepared_graph.projected,
+                    prepared_graph.expected_revision,
+                    prepared_graph.operation,
                 )
             });
             if let DockLiveUndockPromotionCommitExecution::SameWindow(commit) =
@@ -9610,7 +9613,7 @@ impl DockLiveUndockRuntime {
     ) -> Option<DockLiveUndockPreparedGraphCommit> {
         cx.read_entity(controller, |controller, _| {
             let commit_id = controller.workspace().allocate_graph_commit_id();
-            let expected = controller.graph().clone();
+            let expected_revision = controller.workspace().graph_revision();
             let projected = move_plan
                 .project_graph(controller.workspace())
                 .or_else(|error| {
@@ -9625,8 +9628,8 @@ impl DockLiveUndockRuntime {
             let (projected, changed) = projected.ok()?;
             (changed && projected.validate().is_ok()).then_some(DockLiveUndockPreparedGraphCommit {
                 commit_id,
-                expected,
-                projected,
+                expected_revision,
+                operation: move_plan.graph_op(),
             })
         })
     }
