@@ -3,6 +3,7 @@
 use crate::{
     DockActionOutcome, DockDropGuideMetrics, DockGraph, DockItemId, DockLayout, DockNode,
     DockNodeId, DockPolicy, DockSpaceId, DockViewportHostGeometry, SplitAxis,
+    canonical_runtime::CanonicalGraphRuntime,
     dockspace_testkit::{
         fixtures::load_builtin_scenario_fixtures,
         headless::DockspaceHeadlessRunner,
@@ -14,6 +15,7 @@ use crate::{
         DockEmptySpaceDropTarget, DockFloatingTitleBarDropTarget, DockLeafDropTarget,
         DockRootDropTarget, DockTabBarDropTarget, DockTabLabelDropTarget,
     },
+    graph_assembly::DockGraphAssembly,
     viewport_drop_scene::{DockViewportHostSceneRegistry, DockViewportHostSceneSnapshot},
     viewport_registry::DockViewportWindowBoundsFrame,
 };
@@ -31,6 +33,77 @@ pub struct DockspaceScenarioSequenceBenchmark {
     steps: Vec<DockspaceScenarioStep>,
     initial_layout: DockLayout,
     workload_contract: String,
+}
+
+/// Canonical binary-kernel benchmark for a repeated whole-group edge move.
+///
+/// The source and target groups remain stable while the local parent branch is replaced on every
+/// operation. This isolates prepared-patch and local commit cost from graph construction and from
+/// the retained host hit-test scene.
+#[doc(hidden)]
+pub struct CanonicalGroupEdgePatchBenchmark {
+    runtime: CanonicalGraphRuntime,
+}
+
+impl CanonicalGroupEdgePatchBenchmark {
+    pub fn new() -> Self {
+        let mut assembly = DockGraphAssembly::new();
+        assembly
+            .add_space("main")
+            .expect("canonical benchmark space should be valid");
+        let source = assembly
+            .add_group(
+                "source",
+                [DockItemId::new("source-item")],
+                DockItemId::new("source-item"),
+            )
+            .expect("canonical benchmark source group should be valid");
+        let target = assembly
+            .add_group(
+                "target",
+                [DockItemId::new("target-item")],
+                DockItemId::new("target-item"),
+            )
+            .expect("canonical benchmark target group should be valid");
+        let root = assembly
+            .add_branch(SplitAxis::Horizontal, source, target, 0.5)
+            .expect("canonical benchmark root should be valid");
+        assembly
+            .set_root("main", root)
+            .expect("canonical benchmark root should attach");
+        Self {
+            runtime: CanonicalGraphRuntime::from_assembly(assembly)
+                .expect("canonical benchmark graph should publish"),
+        }
+    }
+
+    #[inline(never)]
+    pub fn run_operation(&mut self, _iteration: usize) -> bool {
+        let prepared = match self
+            .runtime
+            .prepare_move_group_to_edge(
+                "source",
+                "target",
+                "main",
+                "main",
+                SplitAxis::Horizontal,
+                true,
+                0.5,
+            )
+            .expect("canonical benchmark patch should prepare")
+        {
+            crate::graph_patch::GraphPrepareOutcome::Prepared(prepared) => prepared,
+            crate::graph_patch::GraphPrepareOutcome::NoOp(_) => return false,
+        };
+        matches!(
+            self.runtime.commit(prepared),
+            crate::graph_patch::GraphCommitOutcome::Committed(_)
+        )
+    }
+
+    pub fn validate_state(&self) -> bool {
+        self.runtime.graph().validate().is_ok()
+    }
 }
 
 impl DockspaceScenarioSequenceBenchmark {
