@@ -5,7 +5,7 @@ use crate::graph_patch::{
     GraphPatchTarget, GraphPrepareError, GraphPrepareOutcome, GraphReadSet, GraphReadView,
     GraphSplitRatio, GraphSupersededReceipt,
 };
-use crate::{DockGroupId, DockItemId, DockSpaceId, SplitAxis};
+use crate::{DockFloatingId, DockGroupId, DockItemId, DockSpaceId, SplitAxis};
 use std::collections::BTreeSet;
 
 /// Prepared-patch owner for the canonical graph transaction boundary.
@@ -210,6 +210,69 @@ impl GraphTransactionEngine {
         ))
     }
 
+    /// Prepares docking an entire floating root beside a target group.
+    pub(crate) fn prepare_move_floating_root_to_edge<T: GraphReadView>(
+        &mut self,
+        view: &T,
+        floating: impl Into<DockFloatingId>,
+        source_space: impl Into<DockSpaceId>,
+        target_group: impl Into<DockGroupId>,
+        target_space: impl Into<DockSpaceId>,
+        axis: SplitAxis,
+        insert_before: bool,
+        ratio: f32,
+    ) -> Result<GraphPrepareOutcome, GraphPrepareError> {
+        let floating = floating.into();
+        let source_space = source_space.into();
+        let target_group = target_group.into();
+        let target_space = target_space.into();
+        let floating_read = view.read_floating_root(&floating).ok_or_else(|| {
+            GraphPrepareError::MissingFloating {
+                floating: floating.clone(),
+            }
+        })?;
+        if floating_read.space != source_space {
+            return Err(GraphPrepareError::FloatingOutsideSpace {
+                floating,
+                space: source_space,
+            });
+        }
+        let target =
+            view.read_group(&target_group)
+                .ok_or_else(|| GraphPrepareError::MissingGroup {
+                    group: target_group.clone(),
+                })?;
+        if target.space != target_space {
+            return Err(GraphPrepareError::GroupOutsideSpace {
+                group: target_group,
+                space: target_space,
+            });
+        }
+        let ratio = GraphSplitRatio::new(ratio).ok_or(GraphPrepareError::InvalidSplitRatio)?;
+        let operation = GraphPatchOperation::MoveFloatingRootToEdge {
+            floating,
+            source_space,
+            target_group,
+            target_space,
+            axis,
+            insert_before,
+            ratio,
+        };
+        let revision = view.graph_revision();
+        let generation = self
+            .next_generation
+            .checked_add(1)
+            .ok_or(GraphPrepareError::CommitIdExhausted)?;
+        self.next_generation = generation;
+        let read_set = GraphReadSet::for_floating_and_groups(revision, floating_read, [target]);
+        Ok(GraphPrepareOutcome::Prepared(
+            crate::graph_patch::PreparedGraphPatch::new(
+                GraphCommitId::new(revision.authority_epoch(), generation),
+                GraphPatch::new(operation, read_set),
+            ),
+        ))
+    }
+
     /// Commits a prepared patch or returns a typed stale/replay observation.
     ///
     /// Every business check happens before [`GraphPatchTarget::apply_select_tab`]. The target
@@ -278,6 +341,23 @@ impl GraphTransactionEngine {
                 *insert_before,
                 ratio.get(),
             ),
+            GraphPatchOperation::MoveFloatingRootToEdge {
+                floating,
+                source_space,
+                target_group,
+                target_space,
+                axis,
+                insert_before,
+                ratio,
+            } => target.apply_move_floating_root_to_edge(
+                floating,
+                source_space,
+                target_group,
+                target_space,
+                *axis,
+                *insert_before,
+                ratio.get(),
+            ),
         };
         let receipt = GraphCommitReceipt::new(
             commit_id,
@@ -319,6 +399,23 @@ impl GraphTransactionEngine {
                     source_group: source_group.clone(),
                     target_group: target_group.clone(),
                     source_space: source_space.clone(),
+                    target_space: target_space.clone(),
+                    axis: *axis,
+                    insert_before: *insert_before,
+                    ratio: *ratio,
+                },
+                GraphPatchOperation::MoveFloatingRootToEdge {
+                    floating,
+                    source_space,
+                    target_group,
+                    target_space,
+                    axis,
+                    insert_before,
+                    ratio,
+                } => GraphPatchOperation::MoveFloatingRootToEdge {
+                    floating: floating.clone(),
+                    source_space: source_space.clone(),
+                    target_group: target_group.clone(),
                     target_space: target_space.clone(),
                     axis: *axis,
                     insert_before: *insert_before,

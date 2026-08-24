@@ -1,7 +1,9 @@
 #![allow(dead_code)]
 
 use crate::graph_assembly::CanonicalDockGraph;
-use crate::{CanonicalGraphVersion, DockGroupId, DockItemId, DockSpaceId, SplitAxis};
+use crate::{
+    CanonicalGraphVersion, DockFloatingId, DockGroupId, DockItemId, DockSpaceId, SplitAxis,
+};
 use std::fmt;
 use thiserror::Error;
 
@@ -117,6 +119,13 @@ pub(crate) struct GraphGroupRead {
     pub(crate) mru: Vec<DockItemId>,
 }
 
+/// Small immutable floating-root fact captured by a prepared structural patch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct GraphFloatingRootRead {
+    pub(crate) floating: DockFloatingId,
+    pub(crate) space: DockSpaceId,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct GraphSplitRatio(u32);
 
@@ -157,6 +166,7 @@ pub(crate) struct GraphReadSet {
     domains: GraphReadDomains,
     group: GraphGroupRead,
     additional_groups: Vec<GraphGroupRead>,
+    floating_roots: Vec<GraphFloatingRootRead>,
     group_selection_sensitive: bool,
     group_mru_sensitive: bool,
 }
@@ -168,6 +178,7 @@ impl GraphReadSet {
             domains: GraphReadDomains::select_tab(),
             group,
             additional_groups: Vec::new(),
+            floating_roots: Vec::new(),
             group_selection_sensitive: true,
             group_mru_sensitive: true,
         }
@@ -190,9 +201,20 @@ impl GraphReadSet {
             },
             group,
             additional_groups: groups.collect(),
+            floating_roots: Vec::new(),
             group_selection_sensitive: false,
             group_mru_sensitive: false,
         }
+    }
+
+    pub(crate) fn for_floating_and_groups(
+        base_revision: GraphRevision,
+        floating: GraphFloatingRootRead,
+        groups: impl IntoIterator<Item = GraphGroupRead>,
+    ) -> Self {
+        let mut read_set = Self::for_groups(base_revision, groups);
+        read_set.floating_roots.push(floating);
+        read_set
     }
 
     pub(crate) const fn base_revision(&self) -> GraphRevision {
@@ -209,6 +231,10 @@ impl GraphReadSet {
 
     pub(crate) fn groups(&self) -> impl Iterator<Item = &GraphGroupRead> {
         std::iter::once(&self.group).chain(self.additional_groups.iter())
+    }
+
+    pub(crate) fn floating_roots(&self) -> impl Iterator<Item = &GraphFloatingRootRead> {
+        self.floating_roots.iter()
     }
 }
 
@@ -236,6 +262,16 @@ pub(crate) enum GraphPatchOperation {
         source_group: DockGroupId,
         target_group: DockGroupId,
         source_space: DockSpaceId,
+        target_space: DockSpaceId,
+        axis: SplitAxis,
+        insert_before: bool,
+        ratio: GraphSplitRatio,
+    },
+    /// Moves one complete floating root beside a target group and retires its floating chrome.
+    MoveFloatingRootToEdge {
+        floating: DockFloatingId,
+        source_space: DockSpaceId,
+        target_group: DockGroupId,
         target_space: DockSpaceId,
         axis: SplitAxis,
         insert_before: bool,
@@ -340,6 +376,8 @@ pub(crate) enum GraphSupersededReason {
     GroupOwnerChanged,
     GroupMembershipChanged,
     GroupSelectionChanged,
+    FloatingMissing,
+    FloatingOwnerChanged,
 }
 
 /// Receipt returned when a read-set check fails before mutation.
@@ -442,6 +480,11 @@ pub(crate) trait GraphReadView {
         let _ = item;
         None
     }
+
+    fn read_floating_root(&self, floating: &DockFloatingId) -> Option<GraphFloatingRootRead> {
+        let _ = floating;
+        None
+    }
 }
 
 /// Infallible write boundary for a proven symbolic patch.
@@ -474,6 +517,17 @@ pub(crate) trait GraphPatchTarget: GraphReadView {
         insert_before: bool,
         ratio: f32,
     ) -> GraphRevision;
+
+    fn apply_move_floating_root_to_edge(
+        &mut self,
+        floating: &DockFloatingId,
+        source_space: &DockSpaceId,
+        target_group: &DockGroupId,
+        target_space: &DockSpaceId,
+        axis: SplitAxis,
+        insert_before: bool,
+        ratio: f32,
+    ) -> GraphRevision;
 }
 
 impl GraphReadView for CanonicalDockGraph {
@@ -498,6 +552,15 @@ impl GraphReadView for CanonicalDockGraph {
 
     fn read_item_group(&self, item: &DockItemId) -> Option<DockGroupId> {
         self.index().group_for_item(item).cloned()
+    }
+
+    fn read_floating_root(&self, floating: &DockFloatingId) -> Option<GraphFloatingRootRead> {
+        self.floating_roots()
+            .get(floating)
+            .map(|root| GraphFloatingRootRead {
+                floating: floating.clone(),
+                space: root.space.clone(),
+            })
     }
 }
 
@@ -529,6 +592,13 @@ pub(crate) enum GraphPrepareError {
     #[error("group {group} is not owned by dock space {space}")]
     GroupOutsideSpace {
         group: DockGroupId,
+        space: DockSpaceId,
+    },
+    #[error("floating root {floating} does not exist")]
+    MissingFloating { floating: DockFloatingId },
+    #[error("floating root {floating} is not owned by dock space {space}")]
+    FloatingOutsideSpace {
+        floating: DockFloatingId,
         space: DockSpaceId,
     },
     #[error("source and target groups must be different")]
@@ -574,6 +644,14 @@ impl GraphReadSet {
             }
             if self.group_mru_sensitive && group.mru != expected.mru {
                 return Err(GraphSupersededReason::GroupSelectionChanged);
+            }
+        }
+        for expected in self.floating_roots() {
+            let Some(floating) = target.read_floating_root(&expected.floating) else {
+                return Err(GraphSupersededReason::FloatingMissing);
+            };
+            if floating.space != expected.space {
+                return Err(GraphSupersededReason::FloatingOwnerChanged);
             }
         }
         Ok(actual)

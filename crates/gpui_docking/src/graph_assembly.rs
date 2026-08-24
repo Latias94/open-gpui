@@ -450,6 +450,15 @@ impl CanonicalDockGraph {
                     .expect("validated target group must remain reachable")
             }
         };
+        if let Some(parent) = target_parent
+            && !matches!(
+                self.nodes.get(parent),
+                Some(CanonicalNode::Branch { first, second, .. })
+                    if *first == target_node || *second == target_node
+            )
+        {
+            return false;
+        }
         let branch_id = self.nodes.insert(if insert_before {
             CanonicalNode::Branch {
                 axis,
@@ -463,6 +472,130 @@ impl CanonicalDockGraph {
                 axis,
                 first: target_node,
                 second: source_node,
+                ratio,
+                size_ref: None,
+            }
+        });
+        if let Some(parent) = target_parent {
+            let parent_node = self
+                .nodes
+                .get_mut(parent)
+                .expect("validated target parent must remain present");
+            match parent_node {
+                CanonicalNode::Branch { first, second, .. } if *first == target_node => {
+                    *first = branch_id;
+                }
+                CanonicalNode::Branch { first, second, .. } if *second == target_node => {
+                    *second = branch_id;
+                }
+                _ => unreachable!("validated target parent must reference the target node"),
+            }
+        } else {
+            match target_owner {
+                CanonicalNodeOwner::Main(owner_space) => {
+                    self.spaces
+                        .get_mut(&owner_space)
+                        .expect("validated target space must remain present")
+                        .root = Some(branch_id);
+                }
+                CanonicalNodeOwner::Floating { floating, .. } => {
+                    self.floating_roots
+                        .get_mut(&floating)
+                        .expect("validated target floating root must remain present")
+                        .root = branch_id;
+                }
+            }
+        }
+        self.index = CanonicalGraphIndex::build(self)
+            .expect("a prepared group move must preserve graph invariants");
+        self.version = version;
+        true
+    }
+
+    /// Moves a complete floating subtree beside a target group and retires its floating owner.
+    pub(crate) fn apply_move_floating_root_to_edge_for_commit(
+        &mut self,
+        floating: &DockFloatingId,
+        source_space: &DockSpaceId,
+        target_group: &DockGroupId,
+        target_space: &DockSpaceId,
+        axis: SplitAxis,
+        insert_before: bool,
+        ratio: f32,
+        version: CanonicalGraphVersion,
+    ) -> bool {
+        if !ratio.is_finite() || !(0.0..=1.0).contains(&ratio) || ratio <= 0.0 || ratio >= 1.0 {
+            return false;
+        }
+        let Some(source_floating) = self.floating_roots.get(floating).cloned() else {
+            return false;
+        };
+        if source_floating.space != *source_space {
+            return false;
+        }
+        let Some(source_space_state) = self.spaces.get(source_space) else {
+            return false;
+        };
+        if !source_space_state.floating_roots.contains(floating) {
+            return false;
+        }
+        let Some(target_node) = self.index.node_for_group(target_group) else {
+            return false;
+        };
+        let Some(target_owner) = self.index.owner_for_node(target_node).cloned() else {
+            return false;
+        };
+        let target_owner_space = match &target_owner {
+            CanonicalNodeOwner::Main(space) | CanonicalNodeOwner::Floating { space, .. } => space,
+        };
+        if target_owner_space != target_space {
+            return false;
+        }
+        if Self::find_reachable_parent(self, source_floating.root, target_node, None).is_some() {
+            return false;
+        }
+
+        let target_parent = match &target_owner {
+            CanonicalNodeOwner::Main(owner_space) => {
+                let root = self
+                    .spaces
+                    .get(owner_space)
+                    .and_then(|space| space.root)
+                    .expect("validated target main space must retain a root");
+                Self::find_reachable_parent(self, root, target_node, None)
+                    .expect("validated target group must remain reachable")
+            }
+            CanonicalNodeOwner::Floating { floating, .. } => {
+                let root = self
+                    .floating_roots
+                    .get(floating)
+                    .map(|floating| floating.root)
+                    .expect("validated target floating root must remain present");
+                Self::find_reachable_parent(self, root, target_node, None)
+                    .expect("validated target group must remain reachable")
+            }
+        };
+
+        self.floating_roots.remove(floating);
+        self.spaces
+            .get_mut(source_space)
+            .expect("validated source space must remain present")
+            .floating_roots
+            .retain(|candidate| candidate != floating);
+
+        let branch_id = self.nodes.insert(if insert_before {
+            CanonicalNode::Branch {
+                axis,
+                first: source_floating.root,
+                second: target_node,
+                ratio,
+                size_ref: None,
+            }
+        } else {
+            CanonicalNode::Branch {
+                axis,
+                first: target_node,
+                second: source_floating.root,
                 ratio,
                 size_ref: None,
             }
@@ -498,7 +631,7 @@ impl CanonicalDockGraph {
             }
         }
         self.index = CanonicalGraphIndex::build(self)
-            .expect("a prepared group move must preserve graph invariants");
+            .expect("a prepared floating-root move must preserve graph invariants");
         self.version = version;
         true
     }

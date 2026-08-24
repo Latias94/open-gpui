@@ -7,7 +7,8 @@ use crate::graph_patch::{
 };
 use crate::graph_transaction::GraphTransactionEngine;
 use crate::{
-    CanonicalGraphAuthority, CanonicalGraphVersion, DockGroupId, DockItemId, DockSpaceId, SplitAxis,
+    CanonicalGraphAuthority, CanonicalGraphVersion, DockFloatingId, DockGroupId, DockItemId,
+    DockSpaceId, SplitAxis,
 };
 use thiserror::Error;
 
@@ -133,6 +134,31 @@ impl CanonicalGraphRuntime {
         result
     }
 
+    pub(crate) fn prepare_move_floating_root_to_edge(
+        &mut self,
+        floating: impl Into<DockFloatingId>,
+        source_space: impl Into<DockSpaceId>,
+        target_group: impl Into<DockGroupId>,
+        target_space: impl Into<DockSpaceId>,
+        axis: SplitAxis,
+        insert_before: bool,
+        ratio: f32,
+    ) -> Result<GraphPrepareOutcome, GraphPrepareError> {
+        let mut transactions = std::mem::take(&mut self.transactions);
+        let result = transactions.prepare_move_floating_root_to_edge(
+            self,
+            floating,
+            source_space,
+            target_group,
+            target_space,
+            axis,
+            insert_before,
+            ratio,
+        );
+        self.transactions = transactions;
+        result
+    }
+
     pub(crate) fn commit(
         &mut self,
         prepared: crate::graph_patch::PreparedGraphPatch,
@@ -160,6 +186,13 @@ impl GraphReadView for CanonicalGraphRuntime {
 
     fn read_item_group(&self, item: &DockItemId) -> Option<DockGroupId> {
         self.graph.index().group_for_item(item).cloned()
+    }
+
+    fn read_floating_root(
+        &self,
+        floating: &DockFloatingId,
+    ) -> Option<crate::graph_patch::GraphFloatingRootRead> {
+        self.graph.read_floating_root(floating)
     }
 }
 
@@ -242,6 +275,39 @@ impl GraphPatchTarget for CanonicalGraphRuntime {
             next_version,
         );
         assert!(applied, "validated group move patch must be applicable");
+        let recorded = self.authority.record_topology_change();
+        debug_assert_eq!(recorded, next_version);
+        GraphRevision::from_version(self.graph.version())
+    }
+
+    fn apply_move_floating_root_to_edge(
+        &mut self,
+        floating: &DockFloatingId,
+        source_space: &DockSpaceId,
+        target_group: &DockGroupId,
+        target_space: &DockSpaceId,
+        axis: SplitAxis,
+        insert_before: bool,
+        ratio: f32,
+    ) -> GraphRevision {
+        let next_version = self
+            .authority
+            .next_topology_change()
+            .expect("canonical graph topology revision exhausted");
+        let applied = self.graph.apply_move_floating_root_to_edge_for_commit(
+            floating,
+            source_space,
+            target_group,
+            target_space,
+            axis,
+            insert_before,
+            ratio,
+            next_version,
+        );
+        assert!(
+            applied,
+            "validated floating-root move patch must be applicable"
+        );
         let recorded = self.authority.record_topology_change();
         debug_assert_eq!(recorded, next_version);
         GraphRevision::from_version(self.graph.version())

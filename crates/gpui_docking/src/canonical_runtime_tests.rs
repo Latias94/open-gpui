@@ -105,6 +105,39 @@ fn floating_source_runtime() -> CanonicalGraphRuntime {
     CanonicalGraphRuntime::from_assembly(assembly).unwrap()
 }
 
+fn floating_subtree_runtime() -> CanonicalGraphRuntime {
+    let mut assembly = DockGraphAssembly::new();
+    assembly.add_space("main").unwrap();
+    let target = assembly
+        .add_group("target", [item("T")], item("T"))
+        .unwrap();
+    let source_left = assembly
+        .add_group("source-left", [item("L")], item("L"))
+        .unwrap();
+    let source_right = assembly
+        .add_group("source-right", [item("R")], item("R"))
+        .unwrap();
+    let floating_tree = assembly
+        .add_branch(SplitAxis::Vertical, source_left, source_right, 0.6)
+        .unwrap();
+    assembly.set_root("main", target).unwrap();
+    assembly
+        .add_floating_root(
+            "floating-subtree",
+            "main",
+            floating_tree,
+            crate::DockLayoutRect {
+                x: 20.0,
+                y: 20.0,
+                width: 480.0,
+                height: 320.0,
+            },
+            1,
+        )
+        .unwrap();
+    CanonicalGraphRuntime::from_assembly(assembly).unwrap()
+}
+
 #[test]
 fn real_runtime_commits_selection_and_mru_without_a_graph_copy() {
     let mut runtime = runtime();
@@ -616,4 +649,88 @@ fn move_group_to_edge_can_move_a_floating_source_into_the_main_root() {
         .graph()
         .validate()
         .expect("floating-source move should preserve canonical indexes");
+}
+
+#[test]
+fn move_floating_root_to_edge_preserves_the_subtree_and_retires_floating_ownership() {
+    let mut runtime = floating_subtree_runtime();
+    let floating = crate::DockFloatingId::from("floating-subtree");
+    let target = DockGroupId::from("target");
+    let source_left = DockGroupId::from("source-left");
+    let source_right = DockGroupId::from("source-right");
+    let target_node = runtime.graph().index().node_for_group(&target).unwrap();
+    let source_left_node = runtime
+        .graph()
+        .index()
+        .node_for_group(&source_left)
+        .unwrap();
+    let source_right_node = runtime
+        .graph()
+        .index()
+        .node_for_group(&source_right)
+        .unwrap();
+    let floating_root = runtime
+        .graph()
+        .floating_roots()
+        .get(&floating)
+        .unwrap()
+        .root;
+
+    let prepared = match runtime
+        .prepare_move_floating_root_to_edge(
+            floating.clone(),
+            "main",
+            target,
+            "main",
+            SplitAxis::Horizontal,
+            true,
+            0.4,
+        )
+        .expect("floating subtree move should prepare")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("floating subtree move must be structural"),
+    };
+    assert!(matches!(
+        runtime.commit(prepared),
+        GraphCommitOutcome::Committed(_)
+    ));
+
+    let main_root = runtime
+        .graph()
+        .space(&DockSpaceId::from("main"))
+        .and_then(|space| space.root)
+        .expect("main root should contain the moved floating subtree");
+    let Some(CanonicalNode::Branch {
+        axis: outer_axis,
+        first,
+        second,
+        ..
+    }) = runtime.graph().node(main_root)
+    else {
+        panic!("main root should be the new outer branch");
+    };
+    assert_eq!(*outer_axis, SplitAxis::Horizontal);
+    assert_eq!(*first, floating_root);
+    assert_eq!(*second, target_node);
+    assert!(matches!(
+        runtime.graph().node(floating_root),
+        Some(CanonicalNode::Branch {
+            axis: SplitAxis::Vertical,
+            first,
+            second,
+            ..
+        }) if *first == source_left_node && *second == source_right_node
+    ));
+    assert!(runtime.graph().floating_roots().get(&floating).is_none());
+    assert!(
+        runtime
+            .graph()
+            .space(&DockSpaceId::from("main"))
+            .is_some_and(|space| space.floating_roots.is_empty())
+    );
+    runtime
+        .graph()
+        .validate()
+        .expect("floating subtree move should preserve canonical indexes");
 }
