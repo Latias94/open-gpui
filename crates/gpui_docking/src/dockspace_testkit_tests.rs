@@ -43,6 +43,125 @@ fn dockspace_testkit_builds_complex_tabs_split_float_topology() {
 }
 
 #[test]
+fn dockspace_testkit_builds_all_fixture_and_checkpoint_topologies_as_canonical_binary_graphs() {
+    let scenarios =
+        load_builtin_scenario_fixtures().expect("builtin dockspace fixtures should parse");
+
+    for scenario in scenarios {
+        let runtime = scenario
+            .build_canonical_runtime()
+            .unwrap_or_else(|error| panic!("{} should build canonically: {error}", scenario.id));
+        runtime
+            .graph()
+            .validate()
+            .unwrap_or_else(|error| panic!("{} should validate: {error}", scenario.id));
+        for space in &scenario.spaces {
+            let state = runtime
+                .graph()
+                .space(&space.id)
+                .unwrap_or_else(|| panic!("{} should retain space {}", scenario.id, space.id));
+            assert_eq!(state.root.is_some(), space.root.is_some(), "{}", scenario.id);
+            assert_eq!(
+                state.floating_roots.len(),
+                space.floatings.len(),
+                "{}",
+                scenario.id
+            );
+            if let Some(item) = &space.central_item {
+                let central_group = runtime
+                    .graph()
+                    .index()
+                    .group_for_item(item)
+                    .expect("central item should have a group");
+                let central_node = runtime
+                    .graph()
+                    .index()
+                    .node_for_group(central_group)
+                    .expect("central group should have a leaf");
+                assert_eq!(state.central.node, Some(central_node), "{}", scenario.id);
+            }
+        }
+        for item in scenario.declared_items() {
+            assert!(
+                runtime.graph().index().group_for_item(&item).is_some(),
+                "{} should retain item {item}",
+                scenario.id
+            );
+        }
+
+        for checkpoint in &scenario.checkpoints {
+            scenario
+                .build_canonical_checkpoint_runtime(checkpoint)
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "{} checkpoint {} should build canonically: {error}",
+                        scenario.id, checkpoint.after_step
+                    )
+                });
+        }
+    }
+}
+
+#[test]
+fn canonical_fixture_builder_preserves_nary_split_weights_in_a_binary_tree() {
+    let scenario = DockspaceScenario::new("nary-binary").space(
+        DockspaceTopologySpace::new("main").root(DockspaceTopologyNode::Split {
+            node_key: Some("root".into()),
+            axis: SplitAxis::Horizontal,
+            children: vec![
+                DockspaceTopologyNode::tabs(["A"]),
+                DockspaceTopologyNode::tabs(["B"]),
+                DockspaceTopologyNode::tabs(["C"]),
+            ],
+            fractions: vec![0.2, 0.3, 0.5],
+        }),
+    );
+    let runtime = scenario
+        .build_canonical_runtime()
+        .expect("n-ary fixture should build canonically");
+    let root = runtime
+        .graph()
+        .space(&DockSpaceId::from("main"))
+        .and_then(|space| space.root)
+        .expect("canonical fixture should retain a root");
+    let a = runtime
+        .graph()
+        .index()
+        .node_for_item(&DockItemId::new("A"))
+        .unwrap();
+    let b = runtime
+        .graph()
+        .index()
+        .node_for_item(&DockItemId::new("B"))
+        .unwrap();
+    let c = runtime
+        .graph()
+        .index()
+        .node_for_item(&DockItemId::new("C"))
+        .unwrap();
+    let Some(crate::graph_assembly::CanonicalNode::Branch {
+        first,
+        second,
+        ratio,
+        ..
+    }) = runtime.graph().node(root)
+    else {
+        panic!("canonical root should be binary");
+    };
+    assert_eq!(*first, a);
+    assert!((*ratio - 0.2).abs() <= f32::EPSILON);
+    assert!(matches!(
+        runtime.graph().node(*second),
+        Some(crate::graph_assembly::CanonicalNode::Branch {
+            first,
+            second,
+            ratio,
+            ..
+        }) if *first == b && *second == c && (*ratio - 0.375).abs() <= f32::EPSILON
+    ));
+}
+
+#[test]
 fn dockspace_testkit_rejects_duplicate_panel_labels_before_graph_creation() {
     let scenario = DockspaceScenario::new("duplicate-panels").space(
         DockspaceTopologySpace::new("main").root(DockspaceTopologyNode::split(

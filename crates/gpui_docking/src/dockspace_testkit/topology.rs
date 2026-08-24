@@ -1,10 +1,12 @@
 use crate::{
-    DockCentralRegion, DockFloatingContainer, DockGraph, DockGraphValidationError, DockItemId,
-    DockLayoutRect, DockNode, DockNodeId, DockSpaceId, SplitAxis,
+    DockCentralRegion, DockFloatingContainer, DockFloatingId, DockGraph, DockGraphValidationError,
+    DockGroupId, DockItemId, DockLayoutRect, DockNode, DockNodeId, DockSpaceId, SplitAxis,
+    canonical_runtime::CanonicalGraphRuntime,
     dockspace_testkit::contract::{
         DockspaceAdapterContract, DockspaceAdapterStepSupport, DockspaceDragTerminal,
         DockspaceProgressState, DockspaceReceiptExpectation,
     },
+    graph_assembly::{AssemblyNodeId, CanonicalGraphError, DockGraphAssembly},
 };
 use open_gpui_ui_core::normalize_split_fractions;
 use serde::{Deserialize, Serialize};
@@ -290,6 +292,16 @@ pub(crate) enum DockspaceScenarioBuildError {
         scenario: String,
         error: DockGraphValidationError,
     },
+    #[error("dockspace scenario {scenario} built an invalid canonical graph: {error}")]
+    InvalidCanonicalGraph {
+        scenario: String,
+        error: CanonicalGraphError,
+    },
+    #[error("dockspace scenario {scenario} has too many floating roots in space {space}")]
+    FloatingOrderOverflow {
+        scenario: String,
+        space: DockSpaceId,
+    },
     #[error("dockspace scenario {scenario} cannot observe missing graph node {node:?}")]
     MissingObservedNode { scenario: String, node: DockNodeId },
     #[error("dockspace scenario {scenario} central item {item} is not in the dock-space root")]
@@ -483,6 +495,19 @@ impl DockspaceScenario {
         self.build_graph_from_spaces(&checkpoint.spaces)
     }
 
+    pub(crate) fn build_canonical_runtime(
+        &self,
+    ) -> Result<CanonicalGraphRuntime, DockspaceScenarioBuildError> {
+        self.build_canonical_runtime_from_spaces(&self.spaces)
+    }
+
+    pub(crate) fn build_canonical_checkpoint_runtime(
+        &self,
+        checkpoint: &DockspaceScenarioCheckpoint,
+    ) -> Result<CanonicalGraphRuntime, DockspaceScenarioBuildError> {
+        self.build_canonical_runtime_from_spaces(&checkpoint.spaces)
+    }
+
     pub(crate) fn terminal_checkpoints(
         &self,
     ) -> Result<Vec<&DockspaceScenarioCheckpoint>, DockspaceScenarioBuildError> {
@@ -599,30 +624,7 @@ impl DockspaceScenario {
         &self,
         spaces: &[DockspaceTopologySpace],
     ) -> Result<DockspaceScenarioGraph, DockspaceScenarioBuildError> {
-        let mut seen_spaces = BTreeSet::new();
-        let mut seen_items = BTreeSet::new();
-        for space in spaces {
-            if !seen_spaces.insert(space.id.clone()) {
-                return Err(DockspaceScenarioBuildError::DuplicateSpace {
-                    scenario: self.id.clone(),
-                    space: space.id.clone(),
-                });
-            }
-            if let Some(root) = &space.root {
-                self.validate_node_items(root, &mut seen_items)?;
-            }
-            for floating in &space.floatings {
-                self.validate_node_items(&floating.root, &mut seen_items)?;
-            }
-        }
-        if let Some(primary_space) = &self.primary_space
-            && !seen_spaces.contains(primary_space)
-        {
-            return Err(DockspaceScenarioBuildError::UnknownPrimarySpace {
-                scenario: self.id.clone(),
-                space: primary_space.clone(),
-            });
-        }
+        self.validate_spaces(spaces)?;
 
         let mut graph = DockGraph::new();
         let mut roots_by_space = HashMap::new();
@@ -674,6 +676,212 @@ impl DockspaceScenario {
             graph,
             roots_by_space,
         })
+    }
+
+    fn validate_spaces(
+        &self,
+        spaces: &[DockspaceTopologySpace],
+    ) -> Result<(), DockspaceScenarioBuildError> {
+        let mut seen_spaces = BTreeSet::new();
+        let mut seen_items = BTreeSet::new();
+        for space in spaces {
+            if !seen_spaces.insert(space.id.clone()) {
+                return Err(DockspaceScenarioBuildError::DuplicateSpace {
+                    scenario: self.id.clone(),
+                    space: space.id.clone(),
+                });
+            }
+            if let Some(root) = &space.root {
+                self.validate_node_items(root, &mut seen_items)?;
+            }
+            for floating in &space.floatings {
+                self.validate_node_items(&floating.root, &mut seen_items)?;
+            }
+        }
+        if let Some(primary_space) = &self.primary_space
+            && !seen_spaces.contains(primary_space)
+        {
+            return Err(DockspaceScenarioBuildError::UnknownPrimarySpace {
+                scenario: self.id.clone(),
+                space: primary_space.clone(),
+            });
+        }
+        Ok(())
+    }
+
+    fn build_canonical_runtime_from_spaces(
+        &self,
+        spaces: &[DockspaceTopologySpace],
+    ) -> Result<CanonicalGraphRuntime, DockspaceScenarioBuildError> {
+        self.validate_spaces(spaces)?;
+
+        let mut assembly = DockGraphAssembly::new();
+        for space in spaces {
+            assembly
+                .add_space(space.id.clone())
+                .map_err(|error| self.canonical_build_error(error))?;
+        }
+
+        for space in spaces {
+            let mut main_item_nodes = BTreeMap::new();
+            if let Some(root) = &space.root {
+                let root = self.build_canonical_node(
+                    &mut assembly,
+                    &space.id,
+                    "root",
+                    root,
+                    &mut main_item_nodes,
+                )?;
+                assembly
+                    .set_root(space.id.clone(), root)
+                    .map_err(|error| self.canonical_build_error(error))?;
+            }
+
+            for (index, floating) in space.floatings.iter().enumerate() {
+                let mut floating_item_nodes = BTreeMap::new();
+                let root = self.build_canonical_node(
+                    &mut assembly,
+                    &space.id,
+                    &format!("floating-{index}"),
+                    &floating.root,
+                    &mut floating_item_nodes,
+                )?;
+                let floating_id = floating
+                    .floating_key
+                    .clone()
+                    .map(DockFloatingId::from)
+                    .unwrap_or_else(|| {
+                        DockFloatingId::new(format!(
+                            "fixture:{}:{}:floating:{index}",
+                            self.id,
+                            space.id.as_str()
+                        ))
+                    });
+                let z_order = i32::try_from(index).map_err(|_| {
+                    DockspaceScenarioBuildError::FloatingOrderOverflow {
+                        scenario: self.id.clone(),
+                        space: space.id.clone(),
+                    }
+                })?;
+                assembly
+                    .add_floating_root(
+                        floating_id,
+                        space.id.clone(),
+                        root,
+                        floating.bounds,
+                        z_order,
+                    )
+                    .map_err(|error| self.canonical_build_error(error))?;
+            }
+
+            let central = match &space.central_item {
+                Some(item) => Some(*main_item_nodes.get(item).ok_or_else(|| {
+                    DockspaceScenarioBuildError::MissingCentralItem {
+                        scenario: self.id.clone(),
+                        item: item.clone(),
+                    }
+                })?),
+                None => None,
+            };
+            assembly
+                .set_central_node(
+                    space.id.clone(),
+                    central,
+                    space.keep_central_when_empty,
+                    space.passthrough_when_empty,
+                )
+                .map_err(|error| self.canonical_build_error(error))?;
+        }
+
+        CanonicalGraphRuntime::from_assembly(assembly)
+            .map_err(|error| self.canonical_build_error(error))
+    }
+
+    fn build_canonical_node(
+        &self,
+        assembly: &mut DockGraphAssembly,
+        space: &DockSpaceId,
+        path: &str,
+        node: &DockspaceTopologyNode,
+        item_nodes: &mut BTreeMap<DockItemId, AssemblyNodeId>,
+    ) -> Result<AssemblyNodeId, DockspaceScenarioBuildError> {
+        match node {
+            DockspaceTopologyNode::Tabs {
+                node_key,
+                group_key,
+                items,
+                selected,
+            } => {
+                let group = group_key
+                    .as_ref()
+                    .or(node_key.as_ref())
+                    .cloned()
+                    .map(DockGroupId::from)
+                    .unwrap_or_else(|| {
+                        DockGroupId::new(format!(
+                            "fixture:{}:{}:group:{path}",
+                            self.id,
+                            space.as_str()
+                        ))
+                    });
+                let selected = selected
+                    .clone()
+                    .or_else(|| items.first().cloned())
+                    .expect("validated fixture tabs must be non-empty");
+                let leaf = assembly
+                    .add_group(group, items.iter().cloned(), selected)
+                    .map_err(|error| self.canonical_build_error(error))?;
+                for item in items {
+                    item_nodes.insert(item.clone(), leaf);
+                }
+                Ok(leaf)
+            }
+            DockspaceTopologyNode::Split {
+                axis,
+                children,
+                fractions,
+                ..
+            } => {
+                let mut built = children
+                    .iter()
+                    .enumerate()
+                    .map(|(index, child)| {
+                        self.build_canonical_node(
+                            assembly,
+                            space,
+                            &format!("{path}/child-{index}"),
+                            child,
+                            item_nodes,
+                        )
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let mut weights = if fractions.is_empty() {
+                    vec![1.0; built.len()]
+                } else {
+                    fractions.clone()
+                };
+                normalize_split_fractions(&mut weights);
+
+                let mut current = built.pop().expect("validated split has children");
+                let mut remaining_weight = weights.pop().expect("weights match children");
+                for (child, weight) in built.into_iter().zip(weights).rev() {
+                    let total = weight + remaining_weight;
+                    let ratio = if total > 0.0 { weight / total } else { 0.5 };
+                    current = assembly
+                        .add_branch(*axis, child, current, ratio)
+                        .map_err(|error| self.canonical_build_error(error))?;
+                    remaining_weight = total;
+                }
+                Ok(current)
+            }
+        }
+    }
+
+    fn canonical_build_error(&self, error: CanonicalGraphError) -> DockspaceScenarioBuildError {
+        DockspaceScenarioBuildError::InvalidCanonicalGraph {
+            scenario: self.id.clone(),
+            error,
+        }
     }
 
     fn validate_node_items(
