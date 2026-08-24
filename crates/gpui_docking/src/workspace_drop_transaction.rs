@@ -624,6 +624,46 @@ mod tests {
     }
 
     #[test]
+    fn locked_drop_observation_mismatch_does_not_mutate_graph() {
+        let (mut workspace, _root, left, right) = split_workspace();
+        let item_a = item("a");
+        let plan = workspace
+            .lock_resolved_payload_drop(
+                &space(),
+                DockWorkspaceDropPayload::Item {
+                    source_tabs: left,
+                    item: &item_a,
+                },
+                workspace_kind_target(
+                    &space(),
+                    DockResolvedDropTargetKind::TabBar {
+                        target_tabs: right,
+                        insert_index: 1,
+                    },
+                ),
+            )
+            .expect("the exact source and target should lock");
+        let mut prepared = workspace
+            .prepare_locked_payload_drop(DockWorkspaceLockedPayloadDropRequest {
+                plan,
+                frozen_focus_item: None,
+            })
+            .expect("the locked drop should prepare");
+        prepared.outcome.action = DockActionOutcome::Unchanged;
+
+        let root_before = workspace.graph().root(&space());
+        let left_before = workspace.graph().node(left).cloned();
+        let right_before = workspace.graph().node(right).cloned();
+        let revision_before = workspace.graph_revision();
+        assert!(prepared.commit_or_replay(&mut workspace).is_none());
+        assert_eq!(workspace.graph().root(&space()), root_before);
+        assert_eq!(workspace.graph().node(left), left_before.as_ref());
+        assert_eq!(workspace.graph().node(right), right_before.as_ref());
+        assert_eq!(workspace.graph_revision(), revision_before);
+        assert_eq!(workspace.locked_payload_drop_commit_count(), 0);
+    }
+
+    #[test]
     fn locked_tab_bar_target_rejects_a_changed_target_tab_sequence() {
         let (mut workspace, _root, left, right) = split_workspace();
         let item_a = item("a");

@@ -329,7 +329,7 @@ impl DockWorkspace {
             return self.commit_merge_space_floating_forest_into(
                 source_space,
                 target_space,
-                policy_validation,
+                DockMergePolicyValidation::PrevalidatedPolicy,
             );
         }
 
@@ -344,7 +344,7 @@ impl DockWorkspace {
                 .commit_merge_space_floating_forest_into(
                     source_space,
                     target_space,
-                    policy_validation,
+                    DockMergePolicyValidation::PrevalidatedPolicy,
                 )?
                 .changed();
             return Ok(if changed {
@@ -356,25 +356,23 @@ impl DockWorkspace {
 
         self.validate_non_empty_merge_payload(source_space, target_space)?;
         let target_tabs = self.merge_target_tabs(target_space, target_tabs)?;
-        let mut next = self.graph().clone();
-        let changed = next.move_root_to_non_empty_space(source_space, target_space, target_tabs);
+        let changed = self.commit_infallible_graph_mutation(|graph| {
+            graph.move_root_to_non_empty_space(source_space, target_space, target_tabs)
+        });
         if !changed {
             return self.commit_merge_space_floating_forest_into(
                 source_space,
                 target_space,
-                policy_validation,
+                DockMergePolicyValidation::PrevalidatedPolicy,
             );
         }
-        next.validate().map_err(|error| {
-            DockActionApplyError::Graph(DockGraphMutationError::MutationInvariantViolation {
-                op: "MergeSpaceIntoNonEmptySpace",
-                reason: error.to_string(),
-            })
-        })?;
-        self.set_graph(next);
         let mut changed = true;
         changed |= self
-            .commit_merge_space_floating_forest_into(source_space, target_space, policy_validation)?
+            .commit_merge_space_floating_forest_into(
+                source_space,
+                target_space,
+                DockMergePolicyValidation::PrevalidatedPolicy,
+            )?
             .changed();
 
         Ok(if changed {
@@ -392,18 +390,12 @@ impl DockWorkspace {
     ) -> Result<DockActionOutcome, DockActionApplyError> {
         self.validate_merge_root_into_empty_space(source_space, target_space, policy_validation)?;
 
-        let mut next = self.graph().clone();
-        let changed = next.move_root_to_empty_space(source_space, target_space);
+        let changed = self.commit_infallible_graph_mutation(|graph| {
+            graph.move_root_to_empty_space(source_space, target_space)
+        });
         if !changed {
             return Ok(DockActionOutcome::Unchanged);
         }
-        next.validate().map_err(|error| {
-            DockActionApplyError::Graph(DockGraphMutationError::MutationInvariantViolation {
-                op: "MergeSpaceRootIntoEmptySpace",
-                reason: error.to_string(),
-            })
-        })?;
-        self.set_graph(next);
         Ok(DockActionOutcome::Changed)
     }
 
@@ -417,18 +409,12 @@ impl DockWorkspace {
             self.move_validation()
                 .validate_space_floating_forest_target_space(source_space, target_space)?;
         }
-        let mut next = self.graph().clone();
-        let changed = next.merge_space_floating_forest_into(source_space, target_space);
+        let changed = self.commit_infallible_graph_mutation(|graph| {
+            graph.merge_space_floating_forest_into(source_space, target_space)
+        });
         if !changed {
             return Ok(DockActionOutcome::Unchanged);
         }
-        next.validate().map_err(|error| {
-            DockActionApplyError::Graph(DockGraphMutationError::MutationInvariantViolation {
-                op: "MergeSpaceFloatingForest",
-                reason: error.to_string(),
-            })
-        })?;
-        self.set_graph(next);
         Ok(DockActionOutcome::Changed)
     }
 }

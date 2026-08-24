@@ -238,16 +238,19 @@ impl DockWorkspace {
         if let Some(receipt) = self.locked_payload_drop_commits.get(&commit_id) {
             return Some(receipt.clone());
         }
-        if self.graph_revision != expected_revision
-            || self.graph.validate_op_checked(&operation).is_err()
-        {
+        if self.graph_revision != expected_revision {
+            return None;
+        }
+
+        // Compare the prepared observation before the first authoritative write. A failed
+        // observation must never leave a partially committed graph behind.
+        let expected_changed = self.graph.validate_op_checked(&operation).ok()?;
+        if expected_changed != outcome.changed() {
             return None;
         }
 
         let changed = self.apply_op_checked(&operation).ok()?;
-        if changed != outcome.changed() {
-            return None;
-        }
+        debug_assert_eq!(changed, expected_changed);
         let receipt = DockWorkspaceLockedPayloadDropCommitReceipt::new(commit_id, outcome);
         self.locked_payload_drop_commits
             .insert(commit_id, receipt.clone());
@@ -295,6 +298,21 @@ impl DockWorkspace {
             self.advance_graph_revision();
         }
         Ok(changed)
+    }
+
+    pub(crate) fn commit_infallible_graph_mutation(
+        &mut self,
+        mutation: impl FnOnce(&mut DockGraph) -> bool,
+    ) -> bool {
+        let changed = mutation(&mut self.graph);
+        if changed {
+            self.advance_graph_revision();
+            debug_assert!(
+                self.graph.validate().is_ok(),
+                "a prevalidated graph mutation must preserve graph invariants"
+            );
+        }
+        changed
     }
 
     fn replace_graph(&mut self, graph: DockGraph) {
