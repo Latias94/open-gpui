@@ -114,6 +114,8 @@ impl fmt::Display for GraphCommitId {
 pub(crate) struct GraphGroupRead {
     pub(crate) group: DockGroupId,
     pub(crate) space: DockSpaceId,
+    pub(crate) floating: Option<DockFloatingId>,
+    pub(crate) is_owner_root: bool,
     pub(crate) items: Vec<DockItemId>,
     pub(crate) selected: DockItemId,
     pub(crate) mru: Vec<DockItemId>,
@@ -124,6 +126,17 @@ pub(crate) struct GraphGroupRead {
 pub(crate) struct GraphFloatingRootRead {
     pub(crate) floating: DockFloatingId,
     pub(crate) space: DockSpaceId,
+}
+
+/// Small immutable dock-space fact captured by an empty-space move.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct GraphSpaceRead {
+    pub(crate) space: DockSpaceId,
+    pub(crate) has_main_root: bool,
+    pub(crate) floating_roots: Vec<DockFloatingId>,
+    pub(crate) central_group: Option<DockGroupId>,
+    pub(crate) keep_central_alive_when_empty: bool,
+    pub(crate) passthrough_when_empty: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -167,6 +180,7 @@ pub(crate) struct GraphReadSet {
     group: GraphGroupRead,
     additional_groups: Vec<GraphGroupRead>,
     floating_roots: Vec<GraphFloatingRootRead>,
+    spaces: Vec<GraphSpaceRead>,
     group_selection_sensitive: bool,
     group_mru_sensitive: bool,
 }
@@ -179,6 +193,7 @@ impl GraphReadSet {
             group,
             additional_groups: Vec::new(),
             floating_roots: Vec::new(),
+            spaces: Vec::new(),
             group_selection_sensitive: true,
             group_mru_sensitive: true,
         }
@@ -202,6 +217,7 @@ impl GraphReadSet {
             group,
             additional_groups: groups.collect(),
             floating_roots: Vec::new(),
+            spaces: Vec::new(),
             group_selection_sensitive: false,
             group_mru_sensitive: false,
         }
@@ -214,6 +230,16 @@ impl GraphReadSet {
     ) -> Self {
         let mut read_set = Self::for_groups(base_revision, groups);
         read_set.floating_roots.push(floating);
+        read_set
+    }
+
+    pub(crate) fn for_group_to_empty_space(
+        base_revision: GraphRevision,
+        group: GraphGroupRead,
+        target_space: GraphSpaceRead,
+    ) -> Self {
+        let mut read_set = Self::for_groups(base_revision, [group]);
+        read_set.spaces.push(target_space);
         read_set
     }
 
@@ -245,6 +271,10 @@ impl GraphReadSet {
 
     pub(crate) fn floating_roots(&self) -> impl Iterator<Item = &GraphFloatingRootRead> {
         self.floating_roots.iter()
+    }
+
+    pub(crate) fn spaces(&self) -> impl Iterator<Item = &GraphSpaceRead> {
+        self.spaces.iter()
     }
 }
 
@@ -281,6 +311,12 @@ pub(crate) enum GraphPatchOperation {
     MoveGroupToCenter {
         source_group: DockGroupId,
         target_group: DockGroupId,
+        source_space: DockSpaceId,
+        target_space: DockSpaceId,
+    },
+    /// Moves one durable group leaf into an empty main dock-space root.
+    MoveGroupToEmptySpace {
+        source_group: DockGroupId,
         source_space: DockSpaceId,
         target_space: DockSpaceId,
     },
@@ -395,6 +431,8 @@ pub(crate) enum GraphSupersededReason {
     GroupSelectionChanged,
     FloatingMissing,
     FloatingOwnerChanged,
+    SpaceMissing,
+    SpaceTopologyChanged,
 }
 
 /// Receipt returned when a read-set check fails before mutation.
@@ -502,6 +540,11 @@ pub(crate) trait GraphReadView {
         let _ = floating;
         None
     }
+
+    fn read_space(&self, space: &DockSpaceId) -> Option<GraphSpaceRead> {
+        let _ = space;
+        None
+    }
 }
 
 /// Infallible write boundary for a proven symbolic patch.
@@ -543,6 +586,13 @@ pub(crate) trait GraphPatchTarget: GraphReadView {
         target_space: &DockSpaceId,
     ) -> GraphRevision;
 
+    fn apply_move_group_to_empty_space(
+        &mut self,
+        source_group: &DockGroupId,
+        source_space: &DockSpaceId,
+        target_space: &DockSpaceId,
+    ) -> GraphRevision;
+
     fn apply_move_floating_root_to_edge(
         &mut self,
         floating: &DockFloatingId,
@@ -561,14 +611,20 @@ impl GraphReadView for CanonicalDockGraph {
     }
 
     fn read_group(&self, group: &DockGroupId) -> Option<GraphGroupRead> {
-        self.group(group).map(|value| GraphGroupRead {
+        let value = self.group(group)?;
+        let node = self.index().node_for_group(group)?;
+        let owner = self.index().owner_for_node(node)?;
+        let (space, floating) = match owner {
+            crate::graph_index::CanonicalNodeOwner::Main(space) => (space.clone(), None),
+            crate::graph_index::CanonicalNodeOwner::Floating { space, floating } => {
+                (space.clone(), Some(floating.clone()))
+            }
+        };
+        Some(GraphGroupRead {
             group: group.clone(),
-            space: self
-                .index()
-                .node_for_group(group)
-                .and_then(|node| self.index().space_for_node(node))
-                .cloned()
-                .expect("published group must have a space owner"),
+            space,
+            floating,
+            is_owner_root: self.index().parent_of(node) == Some(None),
             items: value.items.clone(),
             selected: value.selected.clone(),
             mru: value.mru.clone(),
@@ -586,6 +642,24 @@ impl GraphReadView for CanonicalDockGraph {
                 floating: floating.clone(),
                 space: root.space.clone(),
             })
+    }
+
+    fn read_space(&self, space: &DockSpaceId) -> Option<GraphSpaceRead> {
+        let state = self.space(space)?;
+        let central_group = state.central.node.and_then(|node| match self.node(node) {
+            Some(crate::graph_assembly::CanonicalNode::Group { group, .. }) => {
+                Some(group.clone())
+            }
+            Some(crate::graph_assembly::CanonicalNode::Branch { .. }) | None => None,
+        });
+        Some(GraphSpaceRead {
+            space: space.clone(),
+            has_main_root: state.root.is_some(),
+            floating_roots: state.floating_roots.clone(),
+            central_group,
+            keep_central_alive_when_empty: state.central.keep_alive_when_empty,
+            passthrough_when_empty: state.central.passthrough_when_empty,
+        })
     }
 }
 
@@ -626,6 +700,10 @@ pub(crate) enum GraphPrepareError {
         floating: DockFloatingId,
         space: DockSpaceId,
     },
+    #[error("dock space {space} does not exist")]
+    MissingSpace { space: DockSpaceId },
+    #[error("dock space {space} is not empty")]
+    TargetSpaceNotEmpty { space: DockSpaceId },
     #[error("source and target groups must be different")]
     SameGroupMove,
     #[error("graph commit id space is exhausted")]
@@ -658,7 +736,10 @@ impl GraphReadSet {
             if group.group != expected.group {
                 return Err(GraphSupersededReason::GroupIdentityChanged);
             }
-            if group.space != expected.space {
+            if group.space != expected.space
+                || group.floating != expected.floating
+                || group.is_owner_root != expected.is_owner_root
+            {
                 return Err(GraphSupersededReason::GroupOwnerChanged);
             }
             if group.items != expected.items {
@@ -677,6 +758,14 @@ impl GraphReadSet {
             };
             if floating.space != expected.space {
                 return Err(GraphSupersededReason::FloatingOwnerChanged);
+            }
+        }
+        for expected in self.spaces() {
+            let Some(space) = target.read_space(&expected.space) else {
+                return Err(GraphSupersededReason::SpaceMissing);
+            };
+            if &space != expected {
+                return Err(GraphSupersededReason::SpaceTopologyChanged);
             }
         }
         Ok(actual)

@@ -40,18 +40,11 @@ impl SelectionTarget {
     fn from_graph(graph: &CanonicalDockGraph) -> Self {
         let groups = graph
             .groups()
-            .iter()
-            .map(|(id, group)| {
-                (
-                    id.clone(),
-                    GraphGroupRead {
-                        group: id.clone(),
-                        space: "main".into(),
-                        items: group.items.clone(),
-                        selected: group.selected.clone(),
-                        mru: group.mru.clone(),
-                    },
-                )
+            .keys()
+            .map(|id| {
+                let read = GraphReadView::read_group(graph, id)
+                    .expect("published fixture group should remain readable");
+                (id.clone(), read)
             })
             .collect();
         Self {
@@ -140,6 +133,15 @@ impl GraphPatchTarget for SelectionTarget {
         &mut self,
         _source_group: &DockGroupId,
         _target_group: &DockGroupId,
+        _source_space: &DockSpaceId,
+        _target_space: &DockSpaceId,
+    ) -> GraphRevision {
+        panic!("selection target does not support structural patches")
+    }
+
+    fn apply_move_group_to_empty_space(
+        &mut self,
+        _source_group: &DockGroupId,
         _source_space: &DockSpaceId,
         _target_space: &DockSpaceId,
     ) -> GraphRevision {

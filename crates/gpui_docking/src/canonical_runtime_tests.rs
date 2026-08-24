@@ -51,6 +51,65 @@ fn multiview_runtime() -> CanonicalGraphRuntime {
     CanonicalGraphRuntime::from_assembly(assembly).unwrap()
 }
 
+fn empty_target_runtime() -> CanonicalGraphRuntime {
+    let mut assembly = DockGraphAssembly::new();
+    assembly.add_space("main").unwrap();
+    assembly.add_space("empty").unwrap();
+    let editor = assembly
+        .add_group("editor", [item("A"), item("B")], item("A"))
+        .unwrap();
+    let inspector = assembly
+        .add_group("inspector", [item("C")], item("C"))
+        .unwrap();
+    let main_root = assembly
+        .add_branch(SplitAxis::Horizontal, editor, inspector, 0.5)
+        .unwrap();
+    assembly.set_root("main", main_root).unwrap();
+    CanonicalGraphRuntime::from_assembly(assembly).unwrap()
+}
+
+fn floating_only_runtime(include_other_floating: bool) -> CanonicalGraphRuntime {
+    let mut assembly = DockGraphAssembly::new();
+    assembly.add_space("main").unwrap();
+    let source = assembly
+        .add_group("source", [item("S")], item("S"))
+        .unwrap();
+    assembly
+        .add_floating_root(
+            "floating-source",
+            "main",
+            source,
+            crate::DockLayoutRect {
+                x: 10.0,
+                y: 10.0,
+                width: 320.0,
+                height: 240.0,
+            },
+            1,
+        )
+        .unwrap();
+    if include_other_floating {
+        let other = assembly
+            .add_group("other", [item("O")], item("O"))
+            .unwrap();
+        assembly
+            .add_floating_root(
+                "floating-other",
+                "main",
+                other,
+                crate::DockLayoutRect {
+                    x: 40.0,
+                    y: 40.0,
+                    width: 320.0,
+                    height: 240.0,
+                },
+                2,
+            )
+            .unwrap();
+    }
+    CanonicalGraphRuntime::from_assembly(assembly).unwrap()
+}
+
 fn floating_runtime() -> CanonicalGraphRuntime {
     let mut assembly = DockGraphAssembly::new();
     assembly.add_space("main").unwrap();
@@ -755,6 +814,172 @@ fn group_merge_is_noop_for_the_same_group_and_stale_after_source_selection_chang
         runtime.commit(merge),
         GraphCommitOutcome::Superseded(receipt)
             if receipt.reason() == &GraphSupersededReason::GroupSelectionChanged
+    ));
+}
+
+#[test]
+fn move_group_to_empty_space_preserves_leaf_identity_and_binds_the_central_region() {
+    let mut runtime = empty_target_runtime();
+    let editor = DockGroupId::from("editor");
+    let inspector = DockGroupId::from("inspector");
+    let editor_node = runtime.graph().index().node_for_group(&editor).unwrap();
+    let inspector_node = runtime.graph().index().node_for_group(&inspector).unwrap();
+
+    let prepared = match runtime
+        .prepare_move_group_to_empty_space(editor.clone(), "main", "empty")
+        .expect("cross-space empty-root move should prepare")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("empty-root move must be structural"),
+    };
+    assert!(matches!(
+        prepared.operation(),
+        GraphPatchOperation::MoveGroupToEmptySpace { source_group, .. }
+            if source_group == &editor
+    ));
+    assert!(matches!(
+        runtime.commit(prepared),
+        GraphCommitOutcome::Committed(_)
+    ));
+
+    assert_eq!(
+        runtime
+            .graph()
+            .space(&DockSpaceId::from("main"))
+            .and_then(|space| space.root),
+        Some(inspector_node)
+    );
+    let target = runtime
+        .graph()
+        .space(&DockSpaceId::from("empty"))
+        .expect("target space should remain present");
+    assert_eq!(target.root, Some(editor_node));
+    assert_eq!(target.central.node, Some(editor_node));
+    assert_eq!(
+        runtime.graph().index().node_for_group(&editor),
+        Some(editor_node)
+    );
+    assert_eq!(
+        runtime.graph().index().space_for_node(editor_node),
+        Some(&DockSpaceId::from("empty"))
+    );
+    runtime
+        .graph()
+        .validate()
+        .expect("empty-root move should preserve canonical indexes");
+}
+
+#[test]
+fn move_group_to_empty_space_can_promote_the_only_floating_group_to_main() {
+    let mut runtime = floating_only_runtime(false);
+    let source = DockGroupId::from("source");
+    let source_node = runtime.graph().index().node_for_group(&source).unwrap();
+
+    let prepared = match runtime
+        .prepare_move_group_to_empty_space(source.clone(), "main", "main")
+        .expect("same-space floating promotion should prepare")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("floating promotion must be structural"),
+    };
+    assert!(matches!(
+        runtime.commit(prepared),
+        GraphCommitOutcome::Committed(_)
+    ));
+
+    let space = runtime
+        .graph()
+        .space(&DockSpaceId::from("main"))
+        .expect("main space should remain present");
+    assert_eq!(space.root, Some(source_node));
+    assert_eq!(space.central.node, Some(source_node));
+    assert!(space.floating_roots.is_empty());
+    assert!(runtime.graph().floating_roots().is_empty());
+    assert!(
+        runtime
+            .graph()
+            .index()
+            .floating_for_item(&item("S"))
+            .is_none()
+    );
+    runtime
+        .graph()
+        .validate()
+        .expect("floating promotion should preserve canonical indexes");
+}
+
+#[test]
+fn move_group_to_empty_space_rejects_non_empty_or_missing_targets() {
+    let mut rooted = runtime();
+    assert!(matches!(
+        rooted.prepare_move_group_to_empty_space("editor", "main", "main"),
+        Err(GraphPrepareError::TargetSpaceNotEmpty { .. })
+    ));
+    assert!(matches!(
+        rooted.prepare_move_group_to_empty_space("editor", "main", "missing"),
+        Err(GraphPrepareError::MissingSpace { .. })
+    ));
+
+    let mut floating = floating_only_runtime(true);
+    assert!(matches!(
+        floating.prepare_move_group_to_empty_space("source", "main", "main"),
+        Err(GraphPrepareError::TargetSpaceNotEmpty { .. })
+    ));
+}
+
+#[test]
+fn empty_space_patch_preserves_newer_source_selection_but_rejects_target_topology_changes() {
+    let mut runtime = empty_target_runtime();
+    let editor_move = match runtime
+        .prepare_move_group_to_empty_space("editor", "main", "empty")
+        .expect("editor move should prepare")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("editor move must be structural"),
+    };
+    let selection = match runtime
+        .prepare_select_tab("editor", "B")
+        .expect("editor selection should prepare")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("selection should produce a patch"),
+    };
+    assert!(matches!(
+        runtime.commit(selection),
+        GraphCommitOutcome::Committed(_)
+    ));
+    assert!(matches!(
+        runtime.commit(editor_move),
+        GraphCommitOutcome::Committed(_)
+    ));
+    assert_eq!(
+        runtime.graph().group(&DockGroupId::from("editor")).unwrap().selected,
+        item("B")
+    );
+
+    let mut runtime = empty_target_runtime();
+    let editor_move = match runtime
+        .prepare_move_group_to_empty_space("editor", "main", "empty")
+        .unwrap()
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("editor move must be structural"),
+    };
+    let inspector_move = match runtime
+        .prepare_move_group_to_empty_space("inspector", "main", "empty")
+        .unwrap()
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("inspector move must be structural"),
+    };
+    assert!(matches!(
+        runtime.commit(inspector_move),
+        GraphCommitOutcome::Committed(_)
+    ));
+    assert!(matches!(
+        runtime.commit(editor_move),
+        GraphCommitOutcome::Superseded(receipt)
+            if receipt.reason() == &GraphSupersededReason::TopologyChanged
     ));
 }
 

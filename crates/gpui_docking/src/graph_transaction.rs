@@ -273,6 +273,68 @@ impl GraphTransactionEngine {
         ))
     }
 
+    /// Prepares moving a durable group leaf into an empty dock-space main root.
+    pub(crate) fn prepare_move_group_to_empty_space<T: GraphReadView>(
+        &mut self,
+        view: &T,
+        source_group: impl Into<DockGroupId>,
+        source_space: impl Into<DockSpaceId>,
+        target_space: impl Into<DockSpaceId>,
+    ) -> Result<GraphPrepareOutcome, GraphPrepareError> {
+        let source_group = source_group.into();
+        let source_space = source_space.into();
+        let target_space = target_space.into();
+        let source =
+            view.read_group(&source_group)
+                .ok_or_else(|| GraphPrepareError::MissingGroup {
+                    group: source_group.clone(),
+                })?;
+        if source.space != source_space {
+            return Err(GraphPrepareError::GroupOutsideSpace {
+                group: source_group,
+                space: source_space,
+            });
+        }
+        let target = view.read_space(&target_space).ok_or_else(|| {
+            GraphPrepareError::MissingSpace {
+                space: target_space.clone(),
+            }
+        })?;
+        let target_is_empty = if source_space == target_space {
+            !target.has_main_root
+                && source.is_owner_root
+                && source.floating.as_ref().is_some_and(|floating| {
+                    target.floating_roots.as_slice() == [floating.clone()]
+                })
+        } else {
+            !target.has_main_root && target.floating_roots.is_empty()
+        };
+        if !target_is_empty {
+            return Err(GraphPrepareError::TargetSpaceNotEmpty {
+                space: target_space,
+            });
+        }
+
+        let operation = GraphPatchOperation::MoveGroupToEmptySpace {
+            source_group,
+            source_space,
+            target_space,
+        };
+        let revision = view.graph_revision();
+        let generation = self
+            .next_generation
+            .checked_add(1)
+            .ok_or(GraphPrepareError::CommitIdExhausted)?;
+        self.next_generation = generation;
+        let read_set = GraphReadSet::for_group_to_empty_space(revision, source, target);
+        Ok(GraphPrepareOutcome::Prepared(
+            crate::graph_patch::PreparedGraphPatch::new(
+                GraphCommitId::new(revision.authority_epoch(), generation),
+                GraphPatch::new(operation, read_set),
+            ),
+        ))
+    }
+
     /// Prepares docking an entire floating root beside a target group.
     pub(crate) fn prepare_move_floating_root_to_edge<T: GraphReadView>(
         &mut self,
@@ -408,6 +470,15 @@ impl GraphTransactionEngine {
             } => target.apply_move_group_to_center(
                 source_group,
                 target_group,
+                source_space,
+                target_space,
+            ),
+            GraphPatchOperation::MoveGroupToEmptySpace {
+                source_group,
+                source_space,
+                target_space,
+            } => target.apply_move_group_to_empty_space(
+                source_group,
                 source_space,
                 target_space,
             ),

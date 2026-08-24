@@ -153,6 +153,23 @@ impl CanonicalGraphRuntime {
         result
     }
 
+    pub(crate) fn prepare_move_group_to_empty_space(
+        &mut self,
+        source_group: impl Into<DockGroupId>,
+        source_space: impl Into<DockSpaceId>,
+        target_space: impl Into<DockSpaceId>,
+    ) -> Result<GraphPrepareOutcome, GraphPrepareError> {
+        let mut transactions = std::mem::take(&mut self.transactions);
+        let result = transactions.prepare_move_group_to_empty_space(
+            self,
+            source_group,
+            source_space,
+            target_space,
+        );
+        self.transactions = transactions;
+        result
+    }
+
     pub(crate) fn prepare_move_floating_root_to_edge(
         &mut self,
         floating: impl Into<DockFloatingId>,
@@ -212,6 +229,13 @@ impl GraphReadView for CanonicalGraphRuntime {
         floating: &DockFloatingId,
     ) -> Option<crate::graph_patch::GraphFloatingRootRead> {
         self.graph.read_floating_root(floating)
+    }
+
+    fn read_space(
+        &self,
+        space: &DockSpaceId,
+    ) -> Option<crate::graph_patch::GraphSpaceRead> {
+        self.graph.read_space(space)
     }
 }
 
@@ -318,6 +342,31 @@ impl GraphPatchTarget for CanonicalGraphRuntime {
             next_version,
         );
         assert!(applied, "validated group merge patch must be applicable");
+        let recorded = self.authority.record_topology_change();
+        debug_assert_eq!(recorded, next_version);
+        GraphRevision::from_version(self.graph.version())
+    }
+
+    fn apply_move_group_to_empty_space(
+        &mut self,
+        source_group: &DockGroupId,
+        source_space: &DockSpaceId,
+        target_space: &DockSpaceId,
+    ) -> GraphRevision {
+        let next_version = self
+            .authority
+            .next_topology_change()
+            .expect("canonical graph topology revision exhausted");
+        let applied = self.graph.apply_move_group_to_empty_space_for_commit(
+            source_group,
+            source_space,
+            target_space,
+            next_version,
+        );
+        assert!(
+            applied,
+            "validated group-to-empty-space patch must be applicable"
+        );
         let recorded = self.authority.record_topology_change();
         debug_assert_eq!(recorded, next_version);
         GraphRevision::from_version(self.graph.version())

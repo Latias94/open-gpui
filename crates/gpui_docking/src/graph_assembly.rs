@@ -516,6 +516,72 @@ impl CanonicalDockGraph {
         true
     }
 
+    /// Rehomes one durable group leaf as the main root of an empty dock space.
+    pub(crate) fn apply_move_group_to_empty_space_for_commit(
+        &mut self,
+        source_group: &DockGroupId,
+        source_space: &DockSpaceId,
+        target_space: &DockSpaceId,
+        version: CanonicalGraphVersion,
+    ) -> bool {
+        let Some(source_node) = self.index.node_for_group(source_group) else {
+            return false;
+        };
+        let Some(source_owner) = self.index.owner_for_node(source_node).cloned() else {
+            return false;
+        };
+        let source_owner_space = match &source_owner {
+            CanonicalNodeOwner::Main(space) | CanonicalNodeOwner::Floating { space, .. } => space,
+        };
+        if source_owner_space != source_space {
+            return false;
+        }
+        let Some(target_state) = self.spaces.get(target_space) else {
+            return false;
+        };
+        if target_state.root.is_some() {
+            return false;
+        }
+        if source_space == target_space {
+            let CanonicalNodeOwner::Floating { floating, .. } = &source_owner else {
+                return false;
+            };
+            if target_state.floating_roots.as_slice() != [floating.clone()]
+                || !self
+                    .floating_roots
+                    .get(floating)
+                    .is_some_and(|root| root.root == source_node)
+            {
+                return false;
+            }
+        } else if !target_state.floating_roots.is_empty() {
+            return false;
+        }
+        let bind_central = target_state.central.keep_alive_when_empty
+            && target_state.central.node.is_none();
+
+        if !self.detach_group_leaf_for_commit(source_node, &source_owner) {
+            return false;
+        }
+        let target_state = self
+            .spaces
+            .get_mut(target_space)
+            .expect("validated target space must remain present");
+        target_state.root = Some(source_node);
+        if bind_central {
+            target_state.central.node = Some(source_node);
+        }
+        self.index.set_parent(source_node, None);
+        self.index.update_owner_subtree(
+            &self.nodes,
+            &self.groups,
+            source_node,
+            CanonicalNodeOwner::Main(target_space.clone()),
+        );
+        self.version = version;
+        true
+    }
+
     /// Moves a complete floating subtree beside a target group and retires its floating owner.
     pub(crate) fn apply_move_floating_root_to_edge_for_commit(
         &mut self,
