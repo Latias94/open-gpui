@@ -1332,8 +1332,7 @@ impl DockSurfaceOwner {
         cx.update_entity(&self.controller, |controller, controller_cx| {
             controller
                 .workspace_mut()
-                .commit_graph_operations(&operations)
-                .expect("prepared payload recovery operations must remain applicable");
+                .commit_prevalidated_graph_operations(&operations);
             controller_cx.notify();
         });
         let receipt = self
@@ -1408,8 +1407,7 @@ impl DockSurfaceOwner {
         cx.update_entity(&self.controller, |controller, _| {
             controller
                 .workspace_mut()
-                .commit_graph_operations(&operations)
-                .expect("prepared payload recovery operations must remain applicable");
+                .commit_prevalidated_graph_operations(&operations);
         });
         let receipt = self.payload_recovery.commit_prepared_restore(prepared);
         self.record_changes(

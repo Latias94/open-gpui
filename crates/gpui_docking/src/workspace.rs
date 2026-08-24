@@ -122,9 +122,8 @@ impl DockWorkspace {
             return None;
         }
 
-        if self.apply_op_checked(&operation).is_err() {
-            return None;
-        }
+        self.apply_op_checked(&operation)
+            .expect("a validated graph commit operation must remain applicable");
         let receipt = DockWorkspaceGraphCommitReceipt {
             commit_id,
             graph_revision: self.graph_revision,
@@ -179,14 +178,11 @@ impl DockWorkspace {
         receipt
     }
 
-    pub(crate) fn commit_graph_operations(
-        &mut self,
-        operations: &[DockOp],
-    ) -> Result<(), DockGraphMutationError> {
+    pub(crate) fn commit_prevalidated_graph_operations(&mut self, operations: &[DockOp]) {
         for operation in operations {
-            self.apply_op_checked(operation)?;
+            self.apply_op_checked(operation)
+                .expect("a prepared graph operation sequence must remain applicable");
         }
-        Ok(())
     }
 
     pub(crate) fn graph_commit(
@@ -249,7 +245,9 @@ impl DockWorkspace {
             return None;
         }
 
-        let changed = self.apply_op_checked(&operation).ok()?;
+        let changed = self
+            .apply_op_checked(&operation)
+            .expect("a validated locked payload drop must remain applicable");
         debug_assert_eq!(changed, expected_changed);
         let receipt = DockWorkspaceLockedPayloadDropCommitReceipt::new(commit_id, outcome);
         self.locked_payload_drop_commits
