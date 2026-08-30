@@ -84,19 +84,25 @@ impl GraphRevision {
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) struct GraphCommitId {
     authority_epoch: u64,
+    transaction_epoch: u64,
     generation: u64,
 }
 
 impl GraphCommitId {
-    pub(crate) const fn new(authority_epoch: u64, generation: u64) -> Self {
+    pub(crate) const fn new(authority_epoch: u64, transaction_epoch: u64, generation: u64) -> Self {
         Self {
             authority_epoch,
+            transaction_epoch,
             generation,
         }
     }
 
     pub(crate) const fn authority_epoch(self) -> u64 {
         self.authority_epoch
+    }
+
+    pub(crate) const fn transaction_epoch(self) -> u64 {
+        self.transaction_epoch
     }
 
     pub(crate) const fn generation(self) -> u64 {
@@ -106,7 +112,11 @@ impl GraphCommitId {
 
 impl fmt::Display for GraphCommitId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{}:{}", self.authority_epoch, self.generation)
+        write!(
+            formatter,
+            "{}:{}:{}",
+            self.authority_epoch, self.transaction_epoch, self.generation
+        )
     }
 }
 
@@ -474,7 +484,7 @@ impl PreparedGraphPatch {
         Self {
             commit_id,
             patch,
-            receipt_reservation: Box::default(),
+            receipt_reservation: Box::new(GraphReceiptReservation::new(commit_id)),
         }
     }
 
@@ -488,6 +498,10 @@ impl PreparedGraphPatch {
 
     pub(crate) fn read_set(&self) -> &GraphReadSet {
         self.patch.read_set()
+    }
+
+    pub(crate) fn has_receipt_reservation_for(&self, commit_id: GraphCommitId) -> bool {
+        self.receipt_reservation.commit_id() == commit_id
     }
 
     pub(crate) fn into_commit_parts(
@@ -532,6 +546,7 @@ impl GraphNoOpReceipt {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum GraphSupersededReason {
     AuthorityChanged,
+    TransactionOwnerChanged,
     TopologyChanged,
     SelectionChanged,
     InteractionChanged,
@@ -591,14 +606,27 @@ impl GraphSupersededReceipt {
 ///
 /// The generation table retains only pointer-sized address slots. Abandoned or superseded patches
 /// drop this cell, while a successful commit fills and transfers it without allocating.
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct GraphReceiptReservation {
+    commit_id: GraphCommitId,
     receipt: Option<GraphCommitReceipt>,
 }
 
 impl GraphReceiptReservation {
+    pub(crate) const fn new(commit_id: GraphCommitId) -> Self {
+        Self {
+            commit_id,
+            receipt: None,
+        }
+    }
+
+    pub(crate) const fn commit_id(&self) -> GraphCommitId {
+        self.commit_id
+    }
+
     pub(crate) fn install(&mut self, receipt: GraphCommitReceipt) {
         debug_assert!(self.receipt.is_none());
+        debug_assert_eq!(receipt.commit_id(), self.commit_id);
         self.receipt = Some(receipt);
     }
 

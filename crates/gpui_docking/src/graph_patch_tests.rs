@@ -364,6 +364,45 @@ fn abandoned_and_superseded_preparations_leave_inert_receipt_holes() {
 }
 
 #[test]
+fn foreign_transaction_engine_rejects_a_prepared_slot_before_target_write() {
+    let graph = canonical_graph();
+    let mut target = SelectionTarget::from_graph(&graph);
+    let mut source_engine = GraphTransactionEngine::new();
+    let mut foreign_engine = GraphTransactionEngine::new();
+
+    let source_prepared = match source_engine
+        .prepare_select_tab(&target, "editor", "B")
+        .unwrap()
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("selection should change"),
+    };
+    let foreign_prepared = match foreign_engine
+        .prepare_select_tab(&target, "editor", "B")
+        .unwrap()
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("selection should change"),
+    };
+
+    assert_ne!(source_prepared.commit_id(), foreign_prepared.commit_id());
+    assert!(matches!(
+        foreign_engine.commit(&mut target, source_prepared),
+        GraphCommitOutcome::Superseded(receipt)
+            if receipt.reason() == &GraphSupersededReason::TransactionOwnerChanged
+    ));
+    assert_eq!(target.applied, 0);
+    assert_eq!(foreign_engine.receipt_count(), 0);
+
+    assert!(matches!(
+        foreign_engine.commit(&mut target, foreign_prepared),
+        GraphCommitOutcome::Committed(_)
+    ));
+    assert_eq!(target.applied, 1);
+    assert_eq!(foreign_engine.receipt_count(), 1);
+}
+
+#[test]
 fn stale_topology_is_rejected_before_the_target_write() {
     let graph = canonical_graph();
     let mut target = SelectionTarget::from_graph(&graph);

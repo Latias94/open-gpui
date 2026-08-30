@@ -8,21 +8,40 @@ use crate::graph_patch::{
 };
 use crate::{DockFloatingId, DockGroupId, DockItemId, DockLayoutRect, DockSpaceId, SplitAxis};
 use std::collections::BTreeSet;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static NEXT_GRAPH_TRANSACTION_EPOCH: AtomicU64 = AtomicU64::new(1);
 
 /// Prepared-patch owner for the canonical graph transaction boundary.
 ///
 /// This engine retains receipts in generation-indexed slots and never retains a complete graph. It
 /// reserves each receipt slot while preparing a symbolic local patch; the caller supplies the write
 /// target at commit time.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct GraphTransactionEngine {
+    transaction_epoch: u64,
     next_generation: u64,
     receipts: Vec<Option<Box<GraphReceiptReservation>>>,
 }
 
+impl Default for GraphTransactionEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GraphTransactionEngine {
     pub(crate) fn new() -> Self {
-        Self::default()
+        let transaction_epoch = NEXT_GRAPH_TRANSACTION_EPOCH.fetch_add(1, Ordering::Relaxed);
+        assert!(
+            transaction_epoch != 0,
+            "graph transaction engine epoch exhausted"
+        );
+        Self {
+            transaction_epoch,
+            next_generation: 0,
+            receipts: Vec::new(),
+        }
     }
 
     fn reserve_commit_id(
@@ -41,7 +60,11 @@ impl GraphTransactionEngine {
             .map_err(|_| GraphPrepareError::CommitReceiptCapacityExhausted)?;
         self.receipts.push(None);
         self.next_generation = generation;
-        Ok(GraphCommitId::new(revision.authority_epoch(), generation))
+        Ok(GraphCommitId::new(
+            revision.authority_epoch(),
+            self.transaction_epoch,
+            generation,
+        ))
     }
 
     fn receipt(&self, commit_id: GraphCommitId) -> Option<&GraphCommitReceipt> {
@@ -66,6 +89,23 @@ impl GraphTransactionEngine {
             .expect("prepared patch must own a reserved receipt slot");
         debug_assert!(stored.is_none());
         *stored = Some(reservation);
+    }
+
+    fn owns_receipt_slot(&self, prepared: &crate::graph_patch::PreparedGraphPatch) -> bool {
+        let commit_id = prepared.commit_id();
+        if commit_id.transaction_epoch() != self.transaction_epoch
+            || !prepared.has_receipt_reservation_for(commit_id)
+        {
+            return false;
+        }
+        let Some(slot) = commit_id
+            .generation()
+            .checked_sub(1)
+            .and_then(|slot| usize::try_from(slot).ok())
+        else {
+            return false;
+        };
+        self.receipts.get(slot).is_some()
     }
 
     /// Prepares a selection change after validating the target group and item.
@@ -821,6 +861,14 @@ impl GraphTransactionEngine {
         prepared: crate::graph_patch::PreparedGraphPatch,
     ) -> GraphCommitOutcome {
         let commit_id = prepared.commit_id();
+        if !self.owns_receipt_slot(&prepared) {
+            return GraphCommitOutcome::Superseded(GraphSupersededReceipt::new(
+                commit_id,
+                prepared.read_set().base_revision(),
+                target.graph_revision(),
+                crate::graph_patch::GraphSupersededReason::TransactionOwnerChanged,
+            ));
+        }
         if let Some(receipt) = self.receipt(commit_id) {
             return GraphCommitOutcome::AlreadyCommitted(receipt.clone());
         }
