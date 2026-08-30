@@ -14,12 +14,15 @@ pub(crate) mod topology;
 
 #[cfg(test)]
 pub(crate) use assertions::{
-    DockspaceCheckpointAssertionError, assert_headless_checkpoint,
-    assert_layout_roundtrip_preserves_space_items, assert_root_horizontal_split,
-    assert_space_items, assert_unique_items,
+    DockspaceCheckpointAssertionError, assert_canonical_checkpoint, assert_canonical_edge_locality,
+    assert_headless_checkpoint, assert_layout_roundtrip_preserves_space_items,
+    assert_root_horizontal_split, assert_space_items, assert_unique_items,
+    capture_canonical_edge_target,
 };
 #[cfg(test)]
-pub(crate) use canonical_headless::CanonicalDockspaceHeadlessRunner;
+pub(crate) use canonical_headless::{
+    CanonicalDockspaceHeadlessRunner, CanonicalDockspaceScenarioRunError,
+};
 pub(crate) use contract::{DockspaceAdapterStepSupport, DockspaceAdapterTag};
 #[cfg(test)]
 pub(crate) use fixtures::load_builtin_scenario_fixtures;

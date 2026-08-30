@@ -1,15 +1,22 @@
 use crate::{
-    DockActionOutcome, DockFloatingId, DockGroupId, DockItemId, DockSpaceId, SplitAxis,
+    DockFloatingId, DockGroupId, DockItemId, DockSpaceId, SplitAxis,
     canonical_runtime::CanonicalGraphRuntime,
-    dockspace_testkit::ops::{
-        DockspaceScenarioStep, DockspaceScenarioTabPosition, DockspaceScenarioZone,
-        DockspaceSemanticOperation,
+    dockspace_testkit::{
+        contract::{
+            DockspaceAdapterCapability, DockspaceCommitObservation, DockspaceDragTerminal,
+            DockspaceFaultInjection, DockspacePrepareDecision,
+        },
+        ops::{
+            DockspaceScenarioStep, DockspaceScenarioTabPosition, DockspaceScenarioZone,
+            DockspaceSemanticOperation,
+        },
     },
     graph_assembly::CanonicalNode,
     graph_patch::{
-        GraphCommitOutcome, GraphPrepareError, GraphPrepareOutcome, GraphSupersededReason,
+        GraphCommitId, GraphCommitOutcome, GraphPrepareError, GraphPrepareOutcome, GraphRevision,
     },
 };
+use std::collections::BTreeSet;
 use thiserror::Error;
 
 /// Headless runner backed directly by the canonical binary docking kernel.
@@ -23,8 +30,28 @@ pub(crate) struct CanonicalDockspaceHeadlessRunner {
     runtime: CanonicalGraphRuntime,
 }
 
+/// Complete transaction evidence emitted by one canonical fixture step.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CanonicalDockspaceStepEvidence {
+    pub(crate) prepare: DockspacePrepareDecision,
+    pub(crate) commit: Option<DockspaceCommitObservation>,
+    pub(crate) terminal: DockspaceDragTerminal,
+    pub(crate) receipt_id: Option<GraphCommitId>,
+    pub(crate) before: GraphRevision,
+    pub(crate) after: GraphRevision,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub(crate) enum CanonicalDockspaceScenarioRunError {
+    #[error(
+        "canonical scenario {scenario} step {step} requires unsupported capabilities {capabilities:?} or fault injections {faults:?}"
+    )]
+    UnsupportedStepContract {
+        scenario: String,
+        step: String,
+        capabilities: BTreeSet<DockspaceAdapterCapability>,
+        faults: Vec<DockspaceFaultInjection>,
+    },
     #[error("canonical scenario {scenario} step {step} does not support operation {operation}")]
     UnsupportedOperation {
         scenario: String,
@@ -73,12 +100,6 @@ pub(crate) enum CanonicalDockspaceScenarioRunError {
         #[source]
         source: GraphPrepareError,
     },
-    #[error("canonical scenario {scenario} step {step} was superseded before commit: {reason:?}")]
-    Superseded {
-        scenario: String,
-        step: String,
-        reason: GraphSupersededReason,
-    },
 }
 
 impl CanonicalDockspaceHeadlessRunner {
@@ -98,23 +119,90 @@ impl CanonicalDockspaceHeadlessRunner {
     pub(crate) fn run_step(
         &mut self,
         step: &DockspaceScenarioStep,
-    ) -> Result<DockActionOutcome, CanonicalDockspaceScenarioRunError> {
+    ) -> Result<CanonicalDockspaceStepEvidence, CanonicalDockspaceScenarioRunError> {
+        self.ensure_step_supported(step)?;
+        let before = GraphRevision::from_version(self.runtime.graph().version());
         let prepared = self.prepare_step(step)?;
         match prepared {
-            GraphPrepareOutcome::NoOp(_) => Ok(DockActionOutcome::Unchanged),
+            GraphPrepareOutcome::NoOp(receipt) => {
+                debug_assert_eq!(receipt.revision(), before);
+                Ok(CanonicalDockspaceStepEvidence {
+                    prepare: DockspacePrepareDecision::NoOp,
+                    commit: None,
+                    terminal: DockspaceDragTerminal::Unchanged,
+                    receipt_id: None,
+                    before,
+                    after: GraphRevision::from_version(self.runtime.graph().version()),
+                })
+            }
             GraphPrepareOutcome::Prepared(prepared) => match self.runtime.commit(prepared) {
-                GraphCommitOutcome::Committed(_) | GraphCommitOutcome::AlreadyCommitted(_) => {
-                    Ok(DockActionOutcome::Changed)
-                }
-                GraphCommitOutcome::Superseded(receipt) => {
-                    Err(CanonicalDockspaceScenarioRunError::Superseded {
-                        scenario: self.scenario_id.clone(),
-                        step: step.id.clone(),
-                        reason: receipt.reason().clone(),
+                GraphCommitOutcome::Committed(receipt) => {
+                    debug_assert_eq!(receipt.before(), before);
+                    Ok(CanonicalDockspaceStepEvidence {
+                        prepare: DockspacePrepareDecision::Prepared,
+                        commit: Some(DockspaceCommitObservation::Committed),
+                        terminal: DockspaceDragTerminal::Committed,
+                        receipt_id: Some(receipt.commit_id()),
+                        before,
+                        after: receipt.after(),
                     })
                 }
+                GraphCommitOutcome::AlreadyCommitted(receipt) => {
+                    Ok(CanonicalDockspaceStepEvidence {
+                        prepare: DockspacePrepareDecision::Prepared,
+                        commit: Some(DockspaceCommitObservation::AlreadyCommitted),
+                        terminal: DockspaceDragTerminal::Committed,
+                        receipt_id: Some(receipt.commit_id()),
+                        before,
+                        after: GraphRevision::from_version(self.runtime.graph().version()),
+                    })
+                }
+                GraphCommitOutcome::Superseded(receipt) => Ok(CanonicalDockspaceStepEvidence {
+                    prepare: DockspacePrepareDecision::Prepared,
+                    commit: Some(DockspaceCommitObservation::Superseded),
+                    terminal: DockspaceDragTerminal::Superseded,
+                    receipt_id: Some(receipt.commit_id()),
+                    before,
+                    after: receipt.actual_revision(),
+                }),
             },
         }
+    }
+
+    fn ensure_step_supported(
+        &self,
+        step: &DockspaceScenarioStep,
+    ) -> Result<(), CanonicalDockspaceScenarioRunError> {
+        use DockspaceAdapterCapability as Capability;
+
+        let supported = BTreeSet::from([
+            Capability::SemanticOperation,
+            Capability::MoveItemToItem,
+            Capability::MoveItemToTab,
+            Capability::MoveItemToEmptySpace,
+            Capability::MoveFloating,
+            Capability::ItemPayload,
+            Capability::WholeGroupPayload,
+            Capability::WholeFloatingPayload,
+            Capability::CrossViewport,
+            Capability::CommitReceipt,
+        ]);
+        let capabilities = step
+            .required_capabilities()
+            .difference(&supported)
+            .copied()
+            .collect::<BTreeSet<_>>();
+        if capabilities.is_empty() && step.faults.is_empty() {
+            return Ok(());
+        }
+        Err(
+            CanonicalDockspaceScenarioRunError::UnsupportedStepContract {
+                scenario: self.scenario_id.clone(),
+                step: step.id.clone(),
+                capabilities,
+                faults: step.faults.clone(),
+            },
+        )
     }
 
     fn prepare_step(

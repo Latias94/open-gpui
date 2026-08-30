@@ -1,20 +1,24 @@
 #[cfg(feature = "test-support")]
 use crate::benchmark_support::DockspaceScenarioSequenceBenchmark;
 use crate::dockspace_testkit::contract::{
-    DockspaceAdapterCapability, DockspaceDragTerminal, DockspaceProgressState,
+    DockspaceAdapterCapability, DockspaceDragTerminal, DockspaceFaultInjection, DockspaceFaultKind,
+    DockspaceFaultPoint, DockspaceProgressState,
 };
+use crate::dockspace_testkit::ops::{DockspaceScenarioZone, DockspaceSemanticOperation};
 use crate::dockspace_testkit::topology::DockspaceCheckpointPhase;
 use crate::{
     DockActionOutcome, DockGraph, DockItemId, DockNode, DockSpaceId,
     dockspace_testkit::{
-        CanonicalDockspaceHeadlessRunner, DockspaceAdapterStepSupport, DockspaceAdapterTag,
-        DockspaceCheckpointAssertionError, DockspaceHeadlessRunner, DockspaceOracleKind,
-        DockspaceScenario, DockspaceTopologyNode, assert_headless_checkpoint,
+        CanonicalDockspaceHeadlessRunner, CanonicalDockspaceScenarioRunError,
+        DockspaceAdapterStepSupport, DockspaceAdapterTag, DockspaceCheckpointAssertionError,
+        DockspaceHeadlessRunner, DockspaceOracleKind, DockspaceScenario, DockspaceTopologyNode,
+        assert_canonical_checkpoint, assert_canonical_edge_locality, assert_headless_checkpoint,
         assert_layout_roundtrip_preserves_space_items, assert_unique_items,
-        benchmarks::DockspaceBenchmarkCase, load_builtin_scenario_fixtures,
+        benchmarks::DockspaceBenchmarkCase, capture_canonical_edge_target,
+        load_builtin_scenario_fixtures,
     },
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 fn scenario_by_id<'a>(scenarios: &'a [DockspaceScenario], id: &str) -> &'a DockspaceScenario {
     scenarios
@@ -165,62 +169,144 @@ fn dockspace_scenario_checkpoints_are_independent_headless_observations() {
 }
 
 #[test]
-fn canonical_headless_runner_replays_binary_kernel_fixture_checkpoints() {
+fn canonical_headless_runner_enforces_full_fixture_evidence_contract() {
     let scenarios =
         load_builtin_scenario_fixtures().expect("builtin dockspace fixtures should parse");
-    let supported_scenarios = [
-        "tabs_split_float_merge",
-        "three_viewport_rehome",
-        "empty_space_split_collapse_roundtrip",
-        "tab_reorder_roundtrip",
-        "three_dockspace_rehome_cycle",
-        "whole_group_cross_space_rehome",
-    ];
 
-    for scenario_id in supported_scenarios {
-        let scenario = scenario_by_id(&scenarios, scenario_id);
+    for scenario in &scenarios {
+        let scenario_id = &scenario.id;
         let mut runner =
             CanonicalDockspaceHeadlessRunner::from_scenario(scenario).unwrap_or_else(|error| {
                 panic!("canonical scenario {scenario_id} should build: {error}")
             });
+        runner
+            .graph()
+            .validate()
+            .unwrap_or_else(|error| panic!("canonical scenario {scenario_id} seed: {error}"));
         let terminal_checkpoints = scenario.terminal_checkpoints().unwrap_or_else(|error| {
             panic!("scenario {scenario_id} should have terminal checkpoints: {error}")
         });
+        let mut receipt_aliases = BTreeMap::new();
+        let mut unsupported_step = None;
         for (step, checkpoint) in scenario.steps.iter().zip(terminal_checkpoints) {
             let pre_state = scenario
                 .observe_canonical_spaces(runner.graph())
                 .unwrap_or_else(|error| {
                     panic!("canonical scenario {scenario_id} pre-state should observe: {error}")
                 });
-            let outcome = runner.run_step(step).unwrap_or_else(|error| {
-                panic!(
+            let edge_probe = capture_canonical_edge_target(runner.graph(), step);
+            if is_edge_target_operation(&step.operation) {
+                assert!(
+                    edge_probe.is_some(),
+                    "canonical scenario {scenario_id}/{} must resolve its edge target before prepare",
+                    step.id
+                );
+            }
+            let evidence = match runner.run_step(step) {
+                Ok(evidence) => evidence,
+                Err(error @ CanonicalDockspaceScenarioRunError::UnsupportedStepContract { .. }) => {
+                    let post_state = scenario
+                        .observe_canonical_spaces(runner.graph())
+                        .expect("unsupported canonical step must remain observable");
+                    assert_eq!(
+                        post_state, pre_state,
+                        "unsupported canonical scenario {scenario_id}/{} mutated graph authority",
+                        step.id
+                    );
+                    assert_expected_canonical_unsupported(scenario_id, &step.id, &error);
+                    unsupported_step = Some(step.id.as_str());
+                    break;
+                }
+                Err(error) => panic!(
                     "canonical scenario {scenario_id} step {} should execute: {error}",
                     step.id
-                )
-            });
-            let actual = scenario
-                .observe_canonical_spaces(runner.graph())
-                .unwrap_or_else(|error| {
-                    panic!("canonical scenario {scenario_id} post-state should observe: {error}")
-                });
+                ),
+            };
+            assert_canonical_checkpoint(
+                scenario,
+                step,
+                checkpoint,
+                runner.graph(),
+                &evidence,
+                &mut receipt_aliases,
+                &pre_state,
+            )
+            .unwrap_or_else(|error| panic!("{error}"));
+            assert_canonical_edge_locality(
+                scenario,
+                checkpoint,
+                runner.graph(),
+                edge_probe,
+                &pre_state,
+            )
+            .unwrap_or_else(|error| panic!("{error}"));
+        }
+
+        let expected_unsupported_step = match scenario_id.as_str() {
+            "floating_redock_by_item" => Some("float_b_in_window"),
+            "provider_first_destination_loss_contract" => Some("provider_destination_loss"),
+            _ => None,
+        };
+        assert_eq!(
+            unsupported_step, expected_unsupported_step,
+            "canonical fixture support classification drifted for {scenario_id}"
+        );
+    }
+}
+
+fn is_edge_target_operation(operation: &DockspaceSemanticOperation) -> bool {
+    matches!(
+        operation,
+        DockspaceSemanticOperation::MoveItemToItem { zone, .. }
+            | DockspaceSemanticOperation::MoveGroupToItem { zone, .. }
+            | DockspaceSemanticOperation::MoveFloatingToItem { zone, .. }
+            if *zone != DockspaceScenarioZone::Center
+    )
+}
+
+fn assert_expected_canonical_unsupported(
+    scenario: &str,
+    step: &str,
+    error: &CanonicalDockspaceScenarioRunError,
+) {
+    let CanonicalDockspaceScenarioRunError::UnsupportedStepContract {
+        scenario: actual_scenario,
+        step: actual_step,
+        capabilities,
+        faults,
+    } = error
+    else {
+        panic!("expected typed unsupported contract, got {error}");
+    };
+    assert_eq!(actual_scenario, scenario);
+    assert_eq!(actual_step, step);
+
+    match scenario {
+        "floating_redock_by_item" => {
             assert_eq!(
-                serde_json::to_value(&actual).unwrap(),
-                serde_json::to_value(&checkpoint.spaces).unwrap(),
-                "canonical checkpoint mismatch for {scenario_id}/{}; pre-state={:?}",
-                step.id,
-                pre_state
+                capabilities,
+                &BTreeSet::from([DockspaceAdapterCapability::FloatItem])
             );
-            let expected_changed = checkpoint
-                .facts
-                .terminal
-                .is_some_and(|terminal| terminal == DockspaceDragTerminal::Committed);
+            assert!(faults.is_empty());
+        }
+        "provider_first_destination_loss_contract" => {
             assert_eq!(
-                outcome.changed(),
-                expected_changed,
-                "canonical outcome mismatch for {scenario_id}/{}",
-                step.id
+                capabilities,
+                &BTreeSet::from([
+                    DockspaceAdapterCapability::ProviderFirstReservation,
+                    DockspaceAdapterCapability::Recovery,
+                    DockspaceAdapterCapability::ShutdownDrain,
+                ])
+            );
+            assert_eq!(
+                faults,
+                &[DockspaceFaultInjection {
+                    kind: DockspaceFaultKind::DestinationLoss,
+                    point: DockspaceFaultPoint::AfterGraphCommitBeforeSubmittedSemantics,
+                }]
             );
         }
+        _ => panic!("canonical scenario {scenario}/{step} was silently excluded"),
     }
 }
 
