@@ -157,6 +157,34 @@ impl CanonicalGraphIndex {
         self.parent_by_node.insert(node, parent);
     }
 
+    /// Promotes a sibling's contents into its existing parent while detaching the other child.
+    pub(crate) fn promote_sibling_into_parent(
+        &mut self,
+        parent: CanonicalNodeId,
+        source: CanonicalNodeId,
+        sibling: CanonicalNodeId,
+        promoted: &CanonicalNode,
+    ) {
+        debug_assert_eq!(self.parent_by_node.get(&source), Some(&Some(parent)));
+        debug_assert_eq!(self.parent_by_node.get(&sibling), Some(&Some(parent)));
+        debug_assert!(self.owner_by_node.contains_key(&parent));
+
+        self.parent_by_node.insert(source, None);
+        self.parent_by_node.remove(&sibling);
+        self.owner_by_node.remove(&sibling);
+
+        match promoted {
+            CanonicalNode::Group { group, .. } => {
+                let previous = self.group_node.insert(group.clone(), parent);
+                debug_assert_eq!(previous, Some(sibling));
+            }
+            CanonicalNode::Branch { first, second, .. } => {
+                self.parent_by_node.insert(*first, Some(parent));
+                self.parent_by_node.insert(*second, Some(parent));
+            }
+        }
+    }
+
     /// Removes a retired branch from the derived index.
     pub(crate) fn remove_branch(&mut self, node: CanonicalNodeId) {
         debug_assert!(!self.group_node.values().any(|candidate| *candidate == node));

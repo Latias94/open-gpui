@@ -487,6 +487,11 @@ fn move_group_to_edge_preserves_group_identity_across_dockspaces() {
     let editor = DockGroupId::from("editor");
     let inspector = DockGroupId::from("inspector");
     let detached_target = DockGroupId::from("detached-target");
+    let original_main_root = runtime
+        .graph()
+        .space(&DockSpaceId::from("main"))
+        .and_then(|space| space.root)
+        .unwrap();
     let editor_node = runtime.graph().index().node_for_group(&editor).unwrap();
     let inspector_node = runtime.graph().index().node_for_group(&inspector).unwrap();
     let detached_target_node = runtime
@@ -522,8 +527,13 @@ fn move_group_to_edge_preserves_group_identity_across_dockspaces() {
             .space(&DockSpaceId::from("main"))
             .unwrap()
             .root,
-        Some(inspector_node)
+        Some(original_main_root)
     );
+    assert_eq!(
+        runtime.graph().index().node_for_group(&inspector),
+        Some(original_main_root)
+    );
+    assert!(runtime.graph().node(inspector_node).is_none());
     let detached_root = runtime
         .graph()
         .space(&DockSpaceId::from("detached"))
@@ -554,10 +564,15 @@ fn move_group_to_edge_preserves_group_identity_across_dockspaces() {
 }
 
 #[test]
-fn move_group_to_edge_relinks_a_same_space_sibling_without_replacing_leaf_ids() {
+fn move_group_to_edge_promotes_the_sibling_into_the_existing_parent_identity() {
     let mut runtime = runtime();
     let editor = DockGroupId::from("editor");
     let inspector = DockGroupId::from("inspector");
+    let original_root = runtime
+        .graph()
+        .space(&DockSpaceId::from("main"))
+        .and_then(|space| space.root)
+        .unwrap();
     let editor_node = runtime.graph().index().node_for_group(&editor).unwrap();
     let inspector_node = runtime.graph().index().node_for_group(&inspector).unwrap();
 
@@ -595,7 +610,7 @@ fn move_group_to_edge_relinks_a_same_space_sibling_without_replacing_leaf_ids() 
             second,
             ratio,
             ..
-        }) if *first == editor_node && *second == inspector_node && *ratio == 0.35
+        }) if *first == editor_node && *second == original_root && *ratio == 0.35
     ));
     assert_eq!(
         runtime.graph().index().node_for_group(&editor),
@@ -603,8 +618,9 @@ fn move_group_to_edge_relinks_a_same_space_sibling_without_replacing_leaf_ids() 
     );
     assert_eq!(
         runtime.graph().index().node_for_group(&inspector),
-        Some(inspector_node)
+        Some(original_root)
     );
+    assert!(runtime.graph().node(inspector_node).is_none());
     runtime
         .graph()
         .validate()
@@ -616,6 +632,12 @@ fn move_group_to_center_merges_tabs_and_preserves_the_source_group_identity() {
     let mut runtime = runtime();
     let editor = DockGroupId::from("editor");
     let inspector = DockGroupId::from("inspector");
+    let original_root = runtime
+        .graph()
+        .space(&DockSpaceId::from("main"))
+        .and_then(|space| space.root)
+        .unwrap();
+    let editor_node = runtime.graph().index().node_for_group(&editor).unwrap();
     let inspector_node = runtime.graph().index().node_for_group(&inspector).unwrap();
 
     let prepared = match runtime
@@ -655,8 +677,14 @@ fn move_group_to_center_merges_tabs_and_preserves_the_source_group_identity() {
             .graph()
             .space(&DockSpaceId::from("main"))
             .and_then(|space| space.root),
-        Some(inspector_node)
+        Some(original_root)
     );
+    assert_eq!(
+        runtime.graph().index().node_for_group(&editor),
+        Some(original_root)
+    );
+    assert!(runtime.graph().node(editor_node).is_none());
+    assert!(runtime.graph().node(inspector_node).is_none());
     assert_eq!(runtime.graph().nodes().len(), 1);
     assert_eq!(
         runtime.graph().index().group_for_item(&item("A")),
@@ -678,6 +706,11 @@ fn move_group_to_center_preserves_the_remaining_source_space_across_dockspaces()
     let editor = DockGroupId::from("editor");
     let inspector = DockGroupId::from("inspector");
     let detached_target = DockGroupId::from("detached-target");
+    let original_main_root = runtime
+        .graph()
+        .space(&DockSpaceId::from("main"))
+        .and_then(|space| space.root)
+        .unwrap();
     let inspector_node = runtime.graph().index().node_for_group(&inspector).unwrap();
     let detached_target_node = runtime
         .graph()
@@ -702,8 +735,13 @@ fn move_group_to_center_preserves_the_remaining_source_space_across_dockspaces()
             .graph()
             .space(&DockSpaceId::from("main"))
             .and_then(|space| space.root),
-        Some(inspector_node)
+        Some(original_main_root)
     );
+    assert_eq!(
+        runtime.graph().index().node_for_group(&inspector),
+        Some(original_main_root)
+    );
+    assert!(runtime.graph().node(inspector_node).is_none());
     assert_eq!(
         runtime
             .graph()
@@ -840,6 +878,11 @@ fn move_group_to_empty_space_preserves_leaf_identity_and_binds_the_central_regio
     let mut runtime = empty_target_runtime();
     let editor = DockGroupId::from("editor");
     let inspector = DockGroupId::from("inspector");
+    let original_main_root = runtime
+        .graph()
+        .space(&DockSpaceId::from("main"))
+        .and_then(|space| space.root)
+        .unwrap();
     let editor_node = runtime.graph().index().node_for_group(&editor).unwrap();
     let inspector_node = runtime.graph().index().node_for_group(&inspector).unwrap();
 
@@ -865,8 +908,13 @@ fn move_group_to_empty_space_preserves_leaf_identity_and_binds_the_central_regio
             .graph()
             .space(&DockSpaceId::from("main"))
             .and_then(|space| space.root),
-        Some(inspector_node)
+        Some(original_main_root)
     );
+    assert_eq!(
+        runtime.graph().index().node_for_group(&inspector),
+        Some(original_main_root)
+    );
+    assert!(runtime.graph().node(inspector_node).is_none());
     let target = runtime
         .graph()
         .space(&DockSpaceId::from("empty"))
@@ -1589,6 +1637,11 @@ fn move_item_to_edge_preserves_a_singleton_group_and_leaf_identity() {
     let mut runtime = multiview_runtime();
     let source = DockGroupId::from("inspector");
     let target = DockGroupId::from("detached-target");
+    let original_main_root = runtime
+        .graph()
+        .space(&DockSpaceId::from("main"))
+        .and_then(|space| space.root)
+        .unwrap();
     let source_node = runtime.graph().index().node_for_group(&source).unwrap();
     let target_node = runtime.graph().index().node_for_group(&target).unwrap();
     let editor_node = runtime
@@ -1627,8 +1680,16 @@ fn move_item_to_edge_preserves_a_singleton_group_and_leaf_identity() {
             .graph()
             .space(&DockSpaceId::from("main"))
             .and_then(|space| space.root),
-        Some(editor_node)
+        Some(original_main_root)
     );
+    assert_eq!(
+        runtime
+            .graph()
+            .index()
+            .node_for_group(&DockGroupId::from("editor")),
+        Some(original_main_root)
+    );
+    assert!(runtime.graph().node(editor_node).is_none());
     let root = runtime
         .graph()
         .space(&DockSpaceId::from("detached"))

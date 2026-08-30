@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use crate::binary_layout_policy::{StructuralIdentityRemap, plan_sibling_promotion};
 use crate::graph_index::{CanonicalGraphIndex, CanonicalNodeOwner};
 use crate::{
     CanonicalGraphAuthority, CanonicalGraphVersion, CanonicalNodeId, DockFloatingId, DockGroupId,
@@ -89,6 +90,20 @@ pub(crate) struct CanonicalDockGraph {
     floating_roots: BTreeMap<DockFloatingId, CanonicalFloatingRoot>,
     index: CanonicalGraphIndex,
     version: CanonicalGraphVersion,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CanonicalLeafDetach {
+    remap: Option<StructuralIdentityRemap>,
+}
+
+impl CanonicalLeafDetach {
+    fn remap_node(self, node: CanonicalNodeId) -> CanonicalNodeId {
+        match self.remap {
+            Some(remap) if remap.from == node => remap.to,
+            Some(_) | None => node,
+        }
+    }
 }
 
 impl PartialEq for CanonicalDockGraph {
@@ -352,9 +367,10 @@ impl CanonicalDockGraph {
         if source_owner_space != source_space || target_owner_space != target_space {
             return false;
         }
-        if !self.detach_group_leaf_for_commit(source_node, &source_owner) {
+        let Some(detach) = self.detach_group_leaf_for_commit(source_node, &source_owner) else {
             return false;
-        }
+        };
+        let target_node = detach.remap_node(target_node);
 
         let target_parent = match &target_owner {
             CanonicalNodeOwner::Main(owner_space) => {
@@ -480,9 +496,10 @@ impl CanonicalDockGraph {
         if source_owner_space != source_space || target_owner_space != target_space {
             return false;
         }
-        if !self.detach_group_leaf_for_commit(source_node, &source_owner) {
+        let Some(detach) = self.detach_group_leaf_for_commit(source_node, &source_owner) else {
             return false;
-        }
+        };
+        let target_node = detach.remap_node(target_node);
 
         let target_state = self
             .groups
@@ -578,7 +595,10 @@ impl CanonicalDockGraph {
         let bind_central =
             target_state.central.keep_alive_when_empty && target_state.central.node.is_none();
 
-        if !self.detach_group_leaf_for_commit(source_node, &source_owner) {
+        if self
+            .detach_group_leaf_for_commit(source_node, &source_owner)
+            .is_none()
+        {
             return false;
         }
         let target_state = self
@@ -689,7 +709,10 @@ impl CanonicalDockGraph {
         target.mru.insert(0, item.clone());
 
         if source_empty {
-            if !self.detach_group_leaf_for_commit(source_node, &source_owner) {
+            if self
+                .detach_group_leaf_for_commit(source_node, &source_owner)
+                .is_none()
+            {
                 return false;
             }
             self.groups.remove(source_group);
@@ -888,7 +911,10 @@ impl CanonicalDockGraph {
             target_state.central.keep_alive_when_empty && target_state.central.node.is_none();
 
         if source_len == 1 {
-            if !self.detach_group_leaf_for_commit(source_node, &source_owner) {
+            if self
+                .detach_group_leaf_for_commit(source_node, &source_owner)
+                .is_none()
+            {
                 return false;
             }
             let target_state = self
@@ -1044,7 +1070,10 @@ impl CanonicalDockGraph {
         }
 
         let floating_root = if source_len == 1 {
-            if !self.detach_group_leaf_for_commit(source_node, &source_owner) {
+            if self
+                .detach_group_leaf_for_commit(source_node, &source_owner)
+                .is_none()
+            {
                 return false;
             }
             source_node
@@ -1248,14 +1277,14 @@ impl CanonicalDockGraph {
         true
     }
 
-    /// Detaches a group leaf while locally collapsing its retired binary parent.
+    /// Detaches a group leaf while promoting its sibling into the existing parent identity.
     fn detach_group_leaf_for_commit(
         &mut self,
         source_node: CanonicalNodeId,
         source_owner: &CanonicalNodeOwner,
-    ) -> bool {
+    ) -> Option<CanonicalLeafDetach> {
         let Some(source_parent) = self.index.parent_of(source_node) else {
-            return false;
+            return None;
         };
         let source_is_central = match source_owner {
             CanonicalNodeOwner::Main(space) => self
@@ -1269,10 +1298,10 @@ impl CanonicalDockGraph {
             match source_owner {
                 CanonicalNodeOwner::Main(space) => {
                     let Some(state) = self.spaces.get_mut(space) else {
-                        return false;
+                        return None;
                     };
                     if state.root != Some(source_node) {
-                        return false;
+                        return None;
                     }
                     state.root = None;
                     if source_is_central {
@@ -1285,7 +1314,7 @@ impl CanonicalDockGraph {
                         .get(floating)
                         .is_some_and(|root| root.root == source_node)
                     {
-                        return false;
+                        return None;
                     }
                     self.floating_roots.remove(floating);
                     self.spaces
@@ -1295,79 +1324,66 @@ impl CanonicalDockGraph {
                         .retain(|candidate| candidate != floating);
                 }
             }
-            return true;
+            return Some(CanonicalLeafDetach { remap: None });
         };
 
-        let sibling = match self.nodes.get(parent) {
-            Some(CanonicalNode::Branch { first, second, .. }) if *first == source_node => *second,
-            Some(CanonicalNode::Branch { first, second, .. }) if *second == source_node => *first,
-            _ => return false,
-        };
-        let grandparent = self.index.parent_of(parent).flatten();
-        if let Some(grandparent) = grandparent {
-            if !matches!(
-                self.nodes.get(grandparent),
-                Some(CanonicalNode::Branch { first, second, .. })
-                    if *first == parent || *second == parent
-            ) {
-                return false;
+        let (first, second, parent_size_ref, sibling) = match self.nodes.get(parent) {
+            Some(CanonicalNode::Branch {
+                first,
+                second,
+                size_ref,
+                ..
+            }) if *first == source_node => (*first, *second, *size_ref, *second),
+            Some(CanonicalNode::Branch {
+                first,
+                second,
+                size_ref,
+                ..
+            }) if *second == source_node => (*first, *second, *size_ref, *first),
+            Some(CanonicalNode::Branch { .. }) | Some(CanonicalNode::Group { .. }) | None => {
+                return None;
             }
-        } else {
-            let root_matches = match source_owner {
-                CanonicalNodeOwner::Main(space) => self
-                    .spaces
-                    .get(space)
-                    .is_some_and(|state| state.root == Some(parent)),
-                CanonicalNodeOwner::Floating { floating, .. } => self
-                    .floating_roots
-                    .get(floating)
-                    .is_some_and(|root| root.root == parent),
-            };
-            if !root_matches {
-                return false;
+        };
+        if self.index.parent_of(sibling) != Some(Some(parent))
+            || self.index.owner_for_node(parent) != Some(source_owner)
+            || self.index.owner_for_node(sibling) != Some(source_owner)
+        {
+            return None;
+        }
+        let promotion =
+            plan_sibling_promotion(parent, first, second, sibling, parent_size_ref).ok()?;
+        let mut promoted = self.nodes.get(sibling)?.clone();
+        match &mut promoted {
+            CanonicalNode::Branch { size_ref, .. } | CanonicalNode::Group { size_ref, .. } => {
+                *size_ref = promotion.preserved_size_ref;
             }
         }
 
-        if let Some(grandparent) = grandparent {
-            let grandparent_node = self
-                .nodes
-                .get_mut(grandparent)
-                .expect("validated source grandparent must remain present");
-            match grandparent_node {
-                CanonicalNode::Branch { first, .. } if *first == parent => *first = sibling,
-                CanonicalNode::Branch { second, .. } if *second == parent => *second = sibling,
-                _ => unreachable!("validated source grandparent must reference its child"),
-            }
-        } else {
-            match source_owner {
-                CanonicalNodeOwner::Main(space) => {
-                    self.spaces
-                        .get_mut(space)
-                        .expect("validated source space must remain present")
-                        .root = Some(sibling);
-                }
-                CanonicalNodeOwner::Floating { floating, .. } => {
-                    self.floating_roots
-                        .get_mut(floating)
-                        .expect("validated source floating root must remain present")
-                        .root = sibling;
-                }
-            }
-        }
-        self.nodes.remove(parent);
-        self.index.remove_branch(parent);
-        self.index.set_parent(sibling, grandparent);
+        *self
+            .nodes
+            .get_mut(parent)
+            .expect("validated source parent must remain present") = promoted.clone();
+        self.nodes
+            .remove(sibling)
+            .expect("validated sibling must remain present");
+        self.index
+            .promote_sibling_into_parent(parent, source_node, sibling, &promoted);
 
-        if source_is_central && let CanonicalNodeOwner::Main(space) = source_owner {
-            let replacement = matches!(self.nodes.get(sibling), Some(CanonicalNode::Group { .. }))
-                .then_some(sibling);
-            self.spaces
+        if let CanonicalNodeOwner::Main(space) = source_owner {
+            let state = self
+                .spaces
                 .get_mut(space)
-                .expect("validated source space must remain present")
-                .central
-                .node = replacement;
+                .expect("validated source space must remain present");
+            if state.central.node == Some(sibling) {
+                state.central.node = Some(parent);
+            } else if source_is_central {
+                state.central.node =
+                    matches!(promoted, CanonicalNode::Group { .. }).then_some(parent);
+            }
         }
-        true
+        Some(CanonicalLeafDetach {
+            remap: Some(promotion.remap),
+        })
     }
 
     fn find_reachable_parent(
