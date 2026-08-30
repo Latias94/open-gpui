@@ -708,9 +708,7 @@ impl GraphReadView for CanonicalDockGraph {
     fn read_space(&self, space: &DockSpaceId) -> Option<GraphSpaceRead> {
         let state = self.space(space)?;
         let central_group = state.central.node.and_then(|node| match self.node(node) {
-            Some(crate::graph_assembly::CanonicalNode::Group { group, .. }) => {
-                Some(group.clone())
-            }
+            Some(crate::graph_assembly::CanonicalNode::Group { group, .. }) => Some(group.clone()),
             Some(crate::graph_assembly::CanonicalNode::Branch { .. }) | None => None,
         });
         Some(GraphSpaceRead {

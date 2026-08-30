@@ -239,11 +239,7 @@ impl CanonicalGraphIndex {
     }
 
     /// Removes one item membership before inserting it into a newly allocated group leaf.
-    pub(crate) fn remove_item_membership(
-        &mut self,
-        item: &DockItemId,
-        source_group: &DockGroupId,
-    ) {
+    pub(crate) fn remove_item_membership(&mut self, item: &DockItemId, source_group: &DockGroupId) {
         let previous = self.item_group.remove(item);
         debug_assert_eq!(previous.as_ref(), Some(source_group));
         self.floating_by_item.remove(item);

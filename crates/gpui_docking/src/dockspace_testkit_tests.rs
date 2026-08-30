@@ -60,7 +60,12 @@ fn dockspace_testkit_builds_all_fixture_and_checkpoint_topologies_as_canonical_b
                 .graph()
                 .space(&space.id)
                 .unwrap_or_else(|| panic!("{} should retain space {}", scenario.id, space.id));
-            assert_eq!(state.root.is_some(), space.root.is_some(), "{}", scenario.id);
+            assert_eq!(
+                state.root.is_some(),
+                space.root.is_some(),
+                "{}",
+                scenario.id
+            );
             assert_eq!(
                 state.floating_roots.len(),
                 space.floatings.len(),

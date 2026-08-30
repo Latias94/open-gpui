@@ -34,11 +34,7 @@ fn three_tab_runtime() -> CanonicalGraphRuntime {
     let mut assembly = DockGraphAssembly::new();
     assembly.add_space("main").unwrap();
     let editor = assembly
-        .add_group(
-            "editor",
-            [item("A"), item("B"), item("C")],
-            item("A"),
-        )
+        .add_group("editor", [item("A"), item("B"), item("C")], item("A"))
         .unwrap();
     assembly.set_root("main", editor).unwrap();
     CanonicalGraphRuntime::from_assembly(assembly).unwrap()
@@ -103,9 +99,7 @@ fn floating_only_runtime(include_other_floating: bool) -> CanonicalGraphRuntime 
         )
         .unwrap();
     if include_other_floating {
-        let other = assembly
-            .add_group("other", [item("O")], item("O"))
-            .unwrap();
+        let other = assembly.add_group("other", [item("O")], item("O")).unwrap();
         assembly
             .add_floating_root(
                 "floating-other",
@@ -616,12 +610,7 @@ fn move_group_to_center_merges_tabs_and_retires_the_source_leaf() {
     let inspector_node = runtime.graph().index().node_for_group(&inspector).unwrap();
 
     let prepared = match runtime
-        .prepare_move_group_to_center(
-            editor.clone(),
-            inspector.clone(),
-            "main",
-            "main",
-        )
+        .prepare_move_group_to_center(editor.clone(), inspector.clone(), "main", "main")
         .expect("same-space group merge should prepare")
     {
         GraphPrepareOutcome::Prepared(prepared) => prepared,
@@ -646,7 +635,10 @@ fn move_group_to_center_merges_tabs_and_retires_the_source_leaf() {
         .graph()
         .group(&inspector)
         .expect("target group should remain present");
-    assert_eq!(target.items, vec![item("C"), item("D"), item("A"), item("B")]);
+    assert_eq!(
+        target.items,
+        vec![item("C"), item("D"), item("A"), item("B")]
+    );
     assert_eq!(target.selected, item("A"));
     assert_eq!(target.mru, vec![item("A"), item("C")]);
     assert_eq!(
@@ -681,12 +673,7 @@ fn move_group_to_center_preserves_the_remaining_source_space_across_dockspaces()
         .unwrap();
 
     let prepared = match runtime
-        .prepare_move_group_to_center(
-            editor.clone(),
-            detached_target.clone(),
-            "main",
-            "detached",
-        )
+        .prepare_move_group_to_center(editor.clone(), detached_target.clone(), "main", "detached")
         .expect("cross-space group merge should prepare")
     {
         GraphPrepareOutcome::Prepared(prepared) => prepared,
@@ -967,7 +954,11 @@ fn empty_space_patch_preserves_newer_source_selection_but_rejects_target_topolog
         GraphCommitOutcome::Committed(_)
     ));
     assert_eq!(
-        runtime.graph().group(&DockGroupId::from("editor")).unwrap().selected,
+        runtime
+            .graph()
+            .group(&DockGroupId::from("editor"))
+            .unwrap()
+            .selected,
         item("B")
     );
 
@@ -1022,7 +1013,11 @@ fn move_item_to_empty_space_creates_a_new_leaf_for_a_multi_item_source() {
     assert_eq!(destination_group.items, vec![item("A")]);
     assert_eq!(destination_group.selected, item("A"));
     assert_eq!(destination_group.mru, vec![item("A")]);
-    let destination_node = runtime.graph().index().node_for_group(&destination).unwrap();
+    let destination_node = runtime
+        .graph()
+        .index()
+        .node_for_group(&destination)
+        .unwrap();
     let target = runtime.graph().space(&DockSpaceId::from("empty")).unwrap();
     assert_eq!(target.root, Some(destination_node));
     assert_eq!(target.central.node, Some(destination_node));
@@ -1054,7 +1049,10 @@ fn move_item_to_empty_space_preserves_a_singleton_leaf_identity() {
         GraphCommitOutcome::Committed(_)
     ));
 
-    assert_eq!(runtime.graph().index().node_for_group(&source), Some(source_node));
+    assert_eq!(
+        runtime.graph().index().node_for_group(&source),
+        Some(source_node)
+    );
     let target = runtime.graph().space(&DockSpaceId::from("empty")).unwrap();
     assert_eq!(target.root, Some(source_node));
     assert_eq!(target.central.node, Some(source_node));
@@ -1139,11 +1137,19 @@ fn move_item_to_group_preserves_source_group_and_updates_target_selection() {
     ));
 
     assert_eq!(
-        runtime.graph().group(&DockGroupId::from("editor")).unwrap().items,
+        runtime
+            .graph()
+            .group(&DockGroupId::from("editor"))
+            .unwrap()
+            .items,
         vec![item("B")]
     );
     assert_eq!(
-        runtime.graph().group(&DockGroupId::from("editor")).unwrap().selected,
+        runtime
+            .graph()
+            .group(&DockGroupId::from("editor"))
+            .unwrap()
+            .selected,
         item("B")
     );
     let target = runtime
@@ -1205,7 +1211,11 @@ fn move_item_to_edge_extracts_a_multi_item_source_into_a_new_binary_leaf() {
     assert_eq!(moved_group.items, vec![item("A")]);
     assert_eq!(moved_group.selected, item("A"));
     assert_eq!(moved_group.mru, vec![item("A")]);
-    let moved_node = runtime.graph().index().node_for_group(&destination).unwrap();
+    let moved_node = runtime
+        .graph()
+        .index()
+        .node_for_group(&destination)
+        .unwrap();
     let root = runtime
         .graph()
         .space(&DockSpaceId::from("detached"))
@@ -1265,7 +1275,10 @@ fn move_item_to_edge_preserves_a_singleton_group_and_leaf_identity() {
         GraphCommitOutcome::Committed(_)
     ));
 
-    assert_eq!(runtime.graph().index().node_for_group(&source), Some(source_node));
+    assert_eq!(
+        runtime.graph().index().node_for_group(&source),
+        Some(source_node)
+    );
     assert_eq!(
         runtime
             .graph()
@@ -1322,8 +1335,15 @@ fn move_item_to_edge_can_split_an_item_from_its_own_group() {
         GraphCommitOutcome::Committed(_)
     ));
 
-    assert_eq!(runtime.graph().group(&source).unwrap().items, vec![item("B")]);
-    let destination_node = runtime.graph().index().node_for_group(&destination).unwrap();
+    assert_eq!(
+        runtime.graph().group(&source).unwrap().items,
+        vec![item("B")]
+    );
+    let destination_node = runtime
+        .graph()
+        .index()
+        .node_for_group(&destination)
+        .unwrap();
     let parent = runtime
         .graph()
         .index()
@@ -1393,10 +1413,19 @@ fn moving_the_last_item_retires_the_source_leaf_and_floating_owner() {
         GraphCommitOutcome::Committed(_)
     ));
 
-    assert!(runtime.graph().group(&DockGroupId::from("source")).is_none());
+    assert!(
+        runtime
+            .graph()
+            .group(&DockGroupId::from("source"))
+            .is_none()
+    );
     assert!(runtime.graph().floating_roots().is_empty());
     assert_eq!(
-        runtime.graph().group(&DockGroupId::from("target")).unwrap().items,
+        runtime
+            .graph()
+            .group(&DockGroupId::from("target"))
+            .unwrap()
+            .items,
         vec![item("T"), item("S")]
     );
     assert!(
@@ -1435,10 +1464,7 @@ fn same_group_item_move_reorders_tabs_and_adjacent_moves_are_noops() {
         runtime.commit(prepared),
         GraphCommitOutcome::Committed(_)
     ));
-    let editor = runtime
-        .graph()
-        .group(&DockGroupId::from("editor"))
-        .unwrap();
+    let editor = runtime.graph().group(&DockGroupId::from("editor")).unwrap();
     assert_eq!(editor.items, vec![item("B"), item("A")]);
     assert_eq!(editor.selected, item("B"));
     assert_eq!(editor.mru, vec![item("B")]);
@@ -1463,10 +1489,7 @@ fn same_group_item_move_can_place_the_first_tab_after_the_last_tab() {
         GraphCommitOutcome::Committed(_)
     ));
 
-    let editor = runtime
-        .graph()
-        .group(&DockGroupId::from("editor"))
-        .unwrap();
+    let editor = runtime.graph().group(&DockGroupId::from("editor")).unwrap();
     assert_eq!(editor.items, vec![item("B"), item("C"), item("A")]);
     assert_eq!(editor.selected, item("A"));
     runtime

@@ -299,10 +299,7 @@ impl GraphReadView for CanonicalGraphRuntime {
         self.graph.read_floating_root(floating)
     }
 
-    fn read_space(
-        &self,
-        space: &DockSpaceId,
-    ) -> Option<crate::graph_patch::GraphSpaceRead> {
+    fn read_space(&self, space: &DockSpaceId) -> Option<crate::graph_patch::GraphSpaceRead> {
         self.graph.read_space(space)
     }
 }

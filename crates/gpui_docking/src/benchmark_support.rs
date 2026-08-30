@@ -55,7 +55,10 @@ impl CanonicalGroupEdgePatchBenchmark {
     /// A canonical local patch should not become materially more expensive merely because the
     /// graph authority owns other spaces that are absent from its read and write sets.
     pub fn with_space_count(space_count: usize) -> Self {
-        assert!(space_count > 0, "canonical benchmark needs a main dock space");
+        assert!(
+            space_count > 0,
+            "canonical benchmark needs a main dock space"
+        );
         let mut assembly = DockGraphAssembly::new();
         assembly
             .add_space("main")

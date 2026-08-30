@@ -500,7 +500,9 @@ impl CanonicalDockGraph {
                 merged_mru.push(candidate.clone());
             }
         }
-        target_state.items.extend(source_state.items.iter().cloned());
+        target_state
+            .items
+            .extend(source_state.items.iter().cloned());
         target_state.selected = source_state.selected.clone();
         target_state.mru = merged_mru;
 
@@ -557,8 +559,8 @@ impl CanonicalDockGraph {
         } else if !target_state.floating_roots.is_empty() {
             return false;
         }
-        let bind_central = target_state.central.keep_alive_when_empty
-            && target_state.central.node.is_none();
+        let bind_central =
+            target_state.central.keep_alive_when_empty && target_state.central.node.is_none();
 
         if !self.detach_group_leaf_for_commit(source_node, &source_owner) {
             return false;
@@ -650,7 +652,11 @@ impl CanonicalDockGraph {
             source.items.remove(source_index);
             source.mru.retain(|entry| entry != item);
             if source.selected == *item {
-                source.selected = source.items.first().cloned().unwrap_or_else(|| item.clone());
+                source.selected = source
+                    .items
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| item.clone());
             }
             source.items.is_empty()
         };
@@ -658,7 +664,9 @@ impl CanonicalDockGraph {
             .groups
             .get_mut(target_group)
             .expect("validated target group must remain present");
-        let insert_at = insert_index.unwrap_or(target.items.len()).min(target.items.len());
+        let insert_at = insert_index
+            .unwrap_or(target.items.len())
+            .min(target.items.len());
         target.items.insert(insert_at, item.clone());
         target.selected = item.clone();
         target.mru.retain(|entry| entry != item);
@@ -670,8 +678,13 @@ impl CanonicalDockGraph {
             }
             self.groups.remove(source_group);
             self.nodes.remove(source_node);
-            self.index
-                .merge_group_into(source_node, source_group, &[], target_group, &target_owner);
+            self.index.merge_group_into(
+                source_node,
+                source_group,
+                &[],
+                target_group,
+                &target_owner,
+            );
         }
         self.index
             .move_item_to_group(item, source_group, target_group, &target_owner);
@@ -855,8 +868,8 @@ impl CanonicalDockGraph {
         if source_len > 1 && (new_group == source_group || self.groups.contains_key(new_group)) {
             return false;
         }
-        let bind_central = target_state.central.keep_alive_when_empty
-            && target_state.central.node.is_none();
+        let bind_central =
+            target_state.central.keep_alive_when_empty && target_state.central.node.is_none();
 
         if source_len == 1 {
             if !self.detach_group_leaf_for_commit(source_node, &source_owner) {
@@ -1171,9 +1184,7 @@ impl CanonicalDockGraph {
         self.index.remove_branch(parent);
         self.index.set_parent(sibling, grandparent);
 
-        if source_is_central
-            && let CanonicalNodeOwner::Main(space) = source_owner
-        {
+        if source_is_central && let CanonicalNodeOwner::Main(space) = source_owner {
             let replacement = matches!(self.nodes.get(sibling), Some(CanonicalNode::Group { .. }))
                 .then_some(sibling);
             self.spaces

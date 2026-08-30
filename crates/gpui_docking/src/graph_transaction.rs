@@ -296,17 +296,18 @@ impl GraphTransactionEngine {
                 space: source_space,
             });
         }
-        let target = view.read_space(&target_space).ok_or_else(|| {
-            GraphPrepareError::MissingSpace {
-                space: target_space.clone(),
-            }
-        })?;
+        let target =
+            view.read_space(&target_space)
+                .ok_or_else(|| GraphPrepareError::MissingSpace {
+                    space: target_space.clone(),
+                })?;
         let target_is_empty = if source_space == target_space {
             !target.has_main_root
                 && source.is_owner_root
-                && source.floating.as_ref().is_some_and(|floating| {
-                    target.floating_roots.as_slice() == [floating.clone()]
-                })
+                && source
+                    .floating
+                    .as_ref()
+                    .is_some_and(|floating| target.floating_roots.as_slice() == [floating.clone()])
         } else {
             !target.has_main_root && target.floating_roots.is_empty()
         };
@@ -358,12 +359,14 @@ impl GraphTransactionEngine {
                 .ok_or_else(|| GraphPrepareError::MissingGroup {
                     group: source_group.clone(),
                 })?;
-        let source_index = source.items.iter().position(|candidate| candidate == &item).ok_or_else(
-            || GraphPrepareError::ItemNotInGroup {
+        let source_index = source
+            .items
+            .iter()
+            .position(|candidate| candidate == &item)
+            .ok_or_else(|| GraphPrepareError::ItemNotInGroup {
                 group: source_group.clone(),
                 item: item.clone(),
-            },
-        )?;
+            })?;
         if source.space != source_space {
             return Err(GraphPrepareError::GroupOutsideSpace {
                 group: source_group,
@@ -561,11 +564,11 @@ impl GraphTransactionEngine {
                 space: source_space,
             });
         }
-        let target = view.read_space(&target_space).ok_or_else(|| {
-            GraphPrepareError::MissingSpace {
-                space: target_space.clone(),
-            }
-        })?;
+        let target =
+            view.read_space(&target_space)
+                .ok_or_else(|| GraphPrepareError::MissingSpace {
+                    space: target_space.clone(),
+                })?;
         let target_is_empty = if source_space == target_space {
             !target.has_main_root
                 && source.items.len() == 1
@@ -764,11 +767,7 @@ impl GraphTransactionEngine {
                 source_group,
                 source_space,
                 target_space,
-            } => target.apply_move_group_to_empty_space(
-                source_group,
-                source_space,
-                target_space,
-            ),
+            } => target.apply_move_group_to_empty_space(source_group, source_space, target_space),
             GraphPatchOperation::MoveItemToGroup {
                 item,
                 source_group,
