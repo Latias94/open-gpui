@@ -8,7 +8,7 @@ use crate::{
     DockItemId, DockLayoutRect, DockSpaceId, SplitAxis,
 };
 use slotmap::SlotMap;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use thiserror::Error;
 
 /// A canonical tab group with durable content identity.
@@ -86,9 +86,9 @@ pub(crate) struct CanonicalSpace {
 #[derive(Debug)]
 pub(crate) struct CanonicalDockGraph {
     nodes: SlotMap<CanonicalNodeId, CanonicalNode>,
-    groups: BTreeMap<DockGroupId, CanonicalGroup>,
+    groups: HashMap<DockGroupId, CanonicalGroup>,
     spaces: BTreeMap<DockSpaceId, CanonicalSpace>,
-    floating_roots: BTreeMap<DockFloatingId, CanonicalFloatingRoot>,
+    floating_roots: HashMap<DockFloatingId, CanonicalFloatingRoot>,
     index: CanonicalGraphIndex,
     version: CanonicalGraphVersion,
 }
@@ -149,7 +149,7 @@ impl CanonicalDockGraph {
         &self.nodes
     }
 
-    pub(crate) fn groups(&self) -> &BTreeMap<DockGroupId, CanonicalGroup> {
+    pub(crate) fn groups(&self) -> &HashMap<DockGroupId, CanonicalGroup> {
         &self.groups
     }
 
@@ -157,7 +157,7 @@ impl CanonicalDockGraph {
         &self.spaces
     }
 
-    pub(crate) fn floating_roots(&self) -> &BTreeMap<DockFloatingId, CanonicalFloatingRoot> {
+    pub(crate) fn floating_roots(&self) -> &HashMap<DockFloatingId, CanonicalFloatingRoot> {
         &self.floating_roots
     }
 
@@ -1868,7 +1868,7 @@ impl DockGraphAssembly {
     ) -> Result<CanonicalDockGraph, CanonicalGraphError> {
         let mut graph = CanonicalDockGraph {
             nodes: SlotMap::with_key(),
-            groups: self.groups.clone(),
+            groups: self.groups.clone().into_iter().collect(),
             spaces: self
                 .spaces
                 .iter()
@@ -1887,7 +1887,7 @@ impl DockGraphAssembly {
                     )
                 })
                 .collect(),
-            floating_roots: BTreeMap::new(),
+            floating_roots: HashMap::new(),
             index: CanonicalGraphIndex::default(),
             version: publication.current_version(),
         };

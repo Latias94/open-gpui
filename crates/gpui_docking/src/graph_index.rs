@@ -4,8 +4,8 @@ use crate::graph_assembly::{
     CanonicalDockGraph, CanonicalGraphError, CanonicalGroup, CanonicalNode, CanonicalSizeRef,
 };
 use crate::{CanonicalNodeId, DockFloatingId, DockGroupId, DockItemId, DockSpaceId};
-use slotmap::SlotMap;
-use std::collections::{BTreeMap, BTreeSet};
+use slotmap::{SecondaryMap, SlotMap};
+use std::collections::{BTreeSet, HashMap};
 
 /// The root authority that owns a canonical structural node.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,11 +28,11 @@ impl CanonicalNodeOwner {
 /// Reverse indexes derived from one canonical graph publication.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct CanonicalGraphIndex {
-    parent_by_node: BTreeMap<CanonicalNodeId, Option<CanonicalNodeId>>,
-    owner_by_node: BTreeMap<CanonicalNodeId, CanonicalNodeOwner>,
-    group_node: BTreeMap<DockGroupId, CanonicalNodeId>,
-    item_group: BTreeMap<DockItemId, DockGroupId>,
-    floating_by_item: BTreeMap<DockItemId, DockFloatingId>,
+    parent_by_node: SecondaryMap<CanonicalNodeId, Option<CanonicalNodeId>>,
+    owner_by_node: SecondaryMap<CanonicalNodeId, CanonicalNodeOwner>,
+    group_node: HashMap<DockGroupId, CanonicalNodeId>,
+    item_group: HashMap<DockItemId, DockGroupId>,
+    floating_by_item: HashMap<DockItemId, DockFloatingId>,
 }
 
 impl CanonicalGraphIndex {
@@ -123,15 +123,15 @@ impl CanonicalGraphIndex {
     }
 
     pub(crate) fn parent_of(&self, node: CanonicalNodeId) -> Option<Option<CanonicalNodeId>> {
-        self.parent_by_node.get(&node).copied()
+        self.parent_by_node.get(node).copied()
     }
 
     pub(crate) fn space_for_node(&self, node: CanonicalNodeId) -> Option<&DockSpaceId> {
-        self.owner_by_node.get(&node).map(CanonicalNodeOwner::space)
+        self.owner_by_node.get(node).map(CanonicalNodeOwner::space)
     }
 
     pub(crate) fn owner_for_node(&self, node: CanonicalNodeId) -> Option<&CanonicalNodeOwner> {
-        self.owner_by_node.get(&node)
+        self.owner_by_node.get(node)
     }
 
     pub(crate) fn node_for_group(&self, group: &DockGroupId) -> Option<CanonicalNodeId> {
@@ -153,7 +153,7 @@ impl CanonicalGraphIndex {
 
     /// Updates one node's retained parent without rebuilding unrelated topology.
     pub(crate) fn set_parent(&mut self, node: CanonicalNodeId, parent: Option<CanonicalNodeId>) {
-        debug_assert!(self.owner_by_node.contains_key(&node));
+        debug_assert!(self.owner_by_node.contains_key(node));
         self.parent_by_node.insert(node, parent);
     }
 
@@ -166,13 +166,13 @@ impl CanonicalGraphIndex {
         sibling: CanonicalNodeId,
         promoted: &CanonicalNode,
     ) {
-        debug_assert_eq!(self.parent_by_node.get(&source), Some(&Some(parent)));
-        debug_assert_eq!(self.parent_by_node.get(&sibling), Some(&Some(parent)));
-        debug_assert!(self.owner_by_node.contains_key(&parent));
+        debug_assert_eq!(self.parent_by_node.get(source), Some(&Some(parent)));
+        debug_assert_eq!(self.parent_by_node.get(sibling), Some(&Some(parent)));
+        debug_assert!(self.owner_by_node.contains_key(parent));
 
         self.retire_group_leaf(source, source_group);
-        self.parent_by_node.remove(&sibling);
-        self.owner_by_node.remove(&sibling);
+        self.parent_by_node.remove(sibling);
+        self.owner_by_node.remove(sibling);
 
         match promoted {
             CanonicalNode::Group { group, .. } => {
@@ -190,8 +190,8 @@ impl CanonicalGraphIndex {
     pub(crate) fn retire_group_leaf(&mut self, node: CanonicalNodeId, group: &DockGroupId) {
         let removed = self.group_node.remove(group);
         debug_assert_eq!(removed, Some(node));
-        self.parent_by_node.remove(&node);
-        self.owner_by_node.remove(&node);
+        self.parent_by_node.remove(node);
+        self.owner_by_node.remove(node);
     }
 
     /// Binds an existing durable group to a newly allocated structural leaf.
@@ -203,7 +203,7 @@ impl CanonicalGraphIndex {
         parent: Option<CanonicalNodeId>,
         owner: CanonicalNodeOwner,
     ) {
-        debug_assert!(!self.parent_by_node.contains_key(&node));
+        debug_assert!(!self.parent_by_node.contains_key(node));
         debug_assert!(!self.group_node.contains_key(group));
         self.parent_by_node.insert(node, parent);
         self.owner_by_node.insert(node, owner.clone());
@@ -224,8 +224,8 @@ impl CanonicalGraphIndex {
     /// Removes a retired branch from the derived index.
     pub(crate) fn remove_branch(&mut self, node: CanonicalNodeId) {
         debug_assert!(!self.group_node.values().any(|candidate| *candidate == node));
-        self.parent_by_node.remove(&node);
-        self.owner_by_node.remove(&node);
+        self.parent_by_node.remove(node);
+        self.owner_by_node.remove(node);
     }
 
     /// Inserts a newly allocated branch into the derived index.
@@ -235,7 +235,7 @@ impl CanonicalGraphIndex {
         parent: Option<CanonicalNodeId>,
         owner: CanonicalNodeOwner,
     ) {
-        debug_assert!(!self.parent_by_node.contains_key(&node));
+        debug_assert!(!self.parent_by_node.contains_key(node));
         self.parent_by_node.insert(node, parent);
         self.owner_by_node.insert(node, owner);
     }
@@ -249,7 +249,7 @@ impl CanonicalGraphIndex {
         parent: Option<CanonicalNodeId>,
         owner: CanonicalNodeOwner,
     ) {
-        debug_assert!(!self.parent_by_node.contains_key(&node));
+        debug_assert!(!self.parent_by_node.contains_key(node));
         debug_assert!(!self.group_node.contains_key(group));
         self.parent_by_node.insert(node, parent);
         self.owner_by_node.insert(node, owner.clone());
@@ -279,8 +279,8 @@ impl CanonicalGraphIndex {
         target_owner: &CanonicalNodeOwner,
     ) {
         debug_assert!(!self.group_node.contains_key(source_group));
-        debug_assert!(!self.parent_by_node.contains_key(&source_node));
-        debug_assert!(!self.owner_by_node.contains_key(&source_node));
+        debug_assert!(!self.parent_by_node.contains_key(source_node));
+        debug_assert!(!self.owner_by_node.contains_key(source_node));
         let removed_target = self.group_node.remove(target_group);
         debug_assert_eq!(removed_target, Some(target_node));
         let replaced = self.group_node.insert(source_group.clone(), target_node);
@@ -325,7 +325,7 @@ impl CanonicalGraphIndex {
     pub(crate) fn update_owner_subtree(
         &mut self,
         nodes: &SlotMap<CanonicalNodeId, CanonicalNode>,
-        groups: &BTreeMap<DockGroupId, CanonicalGroup>,
+        groups: &HashMap<DockGroupId, CanonicalGroup>,
         root: CanonicalNodeId,
         owner: CanonicalNodeOwner,
     ) {

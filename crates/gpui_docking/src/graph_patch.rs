@@ -20,6 +20,7 @@ use thiserror::Error;
 pub(crate) struct GraphRevision {
     authority_epoch: u64,
     topology: u64,
+    allocator: u64,
     selection: u64,
     interaction: u64,
 }
@@ -34,6 +35,7 @@ impl GraphRevision {
         Self {
             authority_epoch,
             topology,
+            allocator: topology,
             selection,
             interaction,
         }
@@ -43,6 +45,7 @@ impl GraphRevision {
         Self {
             authority_epoch: version.authority_epoch(),
             topology: version.topology_revision(),
+            allocator: version.allocator_revision(),
             selection: version.selection_revision(),
             interaction: version.interaction_revision(),
         }
@@ -56,6 +59,10 @@ impl GraphRevision {
         self.topology
     }
 
+    pub(crate) const fn allocator(self) -> u64 {
+        self.allocator
+    }
+
     pub(crate) const fn selection(self) -> u64 {
         self.selection
     }
@@ -66,6 +73,10 @@ impl GraphRevision {
 
     pub(crate) const fn with_topology(self, topology: u64) -> Self {
         Self { topology, ..self }
+    }
+
+    pub(crate) const fn with_allocator(self, allocator: u64) -> Self {
+        Self { allocator, ..self }
     }
 
     pub(crate) const fn with_selection(self, selection: u64) -> Self {
@@ -215,6 +226,7 @@ impl GraphFloatingBounds {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct GraphReadDomains {
     pub(crate) topology: bool,
+    pub(crate) allocator: bool,
     pub(crate) selection: bool,
     pub(crate) interaction: bool,
 }
@@ -223,6 +235,7 @@ impl GraphReadDomains {
     pub(crate) const fn select_tab() -> Self {
         Self {
             topology: true,
+            allocator: false,
             // Selection is checked locally on the touched group, so an unrelated group can
             // change selection without invalidating this patch.
             selection: false,
@@ -270,6 +283,7 @@ impl GraphReadSet {
             base_revision,
             domains: GraphReadDomains {
                 topology: true,
+                allocator: true,
                 selection: false,
                 interaction: false,
             },
@@ -547,6 +561,7 @@ impl GraphNoOpReceipt {
 pub(crate) enum GraphSupersededReason {
     AuthorityChanged,
     TransactionOwnerChanged,
+    AllocatorChanged,
     TopologyChanged,
     SelectionChanged,
     InteractionChanged,
@@ -1090,6 +1105,9 @@ impl GraphReadSet {
         }
         if self.domains.topology && actual.topology() != self.base_revision.topology() {
             return Err(GraphSupersededReason::TopologyChanged);
+        }
+        if self.domains.allocator && actual.allocator() != self.base_revision.allocator() {
+            return Err(GraphSupersededReason::AllocatorChanged);
         }
         if self.domains.selection && actual.selection() != self.base_revision.selection() {
             return Err(GraphSupersededReason::SelectionChanged);

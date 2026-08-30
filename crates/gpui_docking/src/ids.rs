@@ -50,6 +50,7 @@ static NEXT_CANONICAL_AUTHORITY_EPOCH: AtomicU64 = AtomicU64::new(1);
 pub(crate) struct CanonicalGraphAuthority {
     authority_epoch: u64,
     topology_revision: u64,
+    allocator_revision: u64,
     selection_revision: u64,
     interaction_revision: u64,
 }
@@ -64,6 +65,7 @@ impl CanonicalGraphAuthority {
         Self {
             authority_epoch,
             topology_revision: 0,
+            allocator_revision: 0,
             selection_revision: 0,
             interaction_revision: 0,
         }
@@ -77,6 +79,7 @@ impl CanonicalGraphAuthority {
         Some(CanonicalGraphVersion {
             authority_epoch: self.authority_epoch,
             topology_revision: self.topology_revision.checked_add(1)?,
+            allocator_revision: self.allocator_revision.checked_add(1)?,
             selection_revision: self.selection_revision,
             interaction_revision: self.interaction_revision,
         })
@@ -87,6 +90,7 @@ impl CanonicalGraphAuthority {
             .next_topology_change()
             .expect("canonical graph topology revision exhausted");
         self.topology_revision = next.topology_revision;
+        self.allocator_revision = next.allocator_revision;
         next
     }
 
@@ -94,6 +98,7 @@ impl CanonicalGraphAuthority {
         CanonicalGraphVersion {
             authority_epoch: self.authority_epoch,
             topology_revision: self.topology_revision,
+            allocator_revision: self.allocator_revision,
             selection_revision: self.selection_revision,
             interaction_revision: self.interaction_revision,
         }
@@ -112,6 +117,7 @@ impl CanonicalGraphAuthority {
         Some(CanonicalGraphVersion {
             authority_epoch: self.authority_epoch,
             topology_revision: self.topology_revision,
+            allocator_revision: self.allocator_revision,
             selection_revision: self.selection_revision.checked_add(1)?,
             interaction_revision: self.interaction_revision,
         })
@@ -131,6 +137,7 @@ impl CanonicalGraphAuthority {
 pub(crate) struct CanonicalGraphVersion {
     authority_epoch: u64,
     topology_revision: u64,
+    allocator_revision: u64,
     selection_revision: u64,
     interaction_revision: u64,
 }
@@ -141,6 +148,7 @@ impl CanonicalGraphVersion {
         Self {
             authority_epoch,
             topology_revision,
+            allocator_revision: topology_revision,
             selection_revision: 0,
             interaction_revision: 0,
         }
@@ -152,6 +160,10 @@ impl CanonicalGraphVersion {
 
     pub(crate) fn topology_revision(self) -> u64 {
         self.topology_revision
+    }
+
+    pub(crate) fn allocator_revision(self) -> u64 {
+        self.allocator_revision
     }
 
     pub(crate) fn selection_revision(self) -> u64 {

@@ -200,6 +200,12 @@ fn failed_publication_does_not_consume_authority_revision() {
     valid.set_root("main", group).unwrap();
     let graph = valid.publish(&mut authority).unwrap();
     assert_eq!(graph.version().topology_revision(), 1);
+    assert_eq!(graph.version().allocator_revision(), 1);
+
+    let after_selection = authority.record_selection_change();
+    assert_eq!(after_selection.allocator_revision(), 1);
+    let after_topology = authority.record_topology_change();
+    assert_eq!(after_topology.allocator_revision(), 2);
 }
 
 #[test]
