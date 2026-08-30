@@ -1,13 +1,31 @@
 use crate::canonical_runtime::CanonicalGraphRuntime;
 use crate::graph_assembly::{CanonicalNode, DockGraphAssembly};
 use crate::graph_patch::{
-    GraphCommitOutcome, GraphPatchOperation, GraphPrepareError, GraphPrepareOutcome,
-    GraphSupersededReason,
+    GraphCommitOutcome, GraphCommitReceipt, GraphPatchOperation, GraphPrepareError,
+    GraphPrepareOutcome, GraphSupersededReason,
 };
-use crate::{DockGroupId, DockItemId, DockLayoutRect, DockSpaceId, SplitAxis};
+use crate::{CanonicalNodeId, DockGroupId, DockItemId, DockLayoutRect, DockSpaceId, SplitAxis};
 
 fn item(id: &str) -> DockItemId {
     DockItemId::new(id)
+}
+
+fn assert_group_leaf_replaced(
+    runtime: &CanonicalGraphRuntime,
+    receipt: &GraphCommitReceipt,
+    group: &DockGroupId,
+    retired: CanonicalNodeId,
+) -> CanonicalNodeId {
+    let created = runtime
+        .graph()
+        .index()
+        .node_for_group(group)
+        .expect("durable group must remain bound to a structural leaf");
+    assert_ne!(created, retired);
+    assert!(runtime.graph().node(retired).is_none());
+    assert!(receipt.effects().retired_nodes().contains(&retired));
+    assert!(receipt.effects().created_nodes().contains(&created));
+    created
 }
 
 fn runtime() -> CanonicalGraphRuntime {
@@ -482,7 +500,7 @@ fn split_preparation_rejects_duplicate_or_already_owned_items() {
 }
 
 #[test]
-fn move_group_to_edge_preserves_group_identity_across_dockspaces() {
+fn move_group_to_edge_preserves_group_identity_and_replaces_its_leaf_across_dockspaces() {
     let mut runtime = multiview_runtime();
     let editor = DockGroupId::from("editor");
     let inspector = DockGroupId::from("inspector");
@@ -534,6 +552,7 @@ fn move_group_to_edge_preserves_group_identity_across_dockspaces() {
         Some(original_main_root)
     );
     assert!(runtime.graph().node(inspector_node).is_none());
+    let moved_node = assert_group_leaf_replaced(&runtime, &receipt, &editor, editor_node);
     let detached_root = runtime
         .graph()
         .space(&DockSpaceId::from("detached"))
@@ -547,16 +566,21 @@ fn move_group_to_edge_preserves_group_identity_across_dockspaces() {
             second,
             ratio,
             ..
-        }) if *first == editor_node && *second == detached_target_node && *ratio == 0.25
+        }) if *first == moved_node && *second == detached_target_node && *ratio == 0.25
     ));
-    assert_eq!(
-        runtime.graph().index().node_for_group(&editor),
-        Some(editor_node)
-    );
     assert_eq!(
         runtime.graph().index().node_for_group(&detached_target),
         Some(detached_target_node)
     );
+    assert!(receipt.effects().retired_nodes().contains(&inspector_node));
+    assert!(
+        receipt
+            .effects()
+            .identity_remaps()
+            .iter()
+            .any(|remap| { remap.from == inspector_node && remap.to == original_main_root })
+    );
+    assert!(receipt.effects().created_nodes().contains(&detached_root));
     runtime
         .graph()
         .validate()
@@ -597,6 +621,7 @@ fn move_group_to_edge_promotes_the_sibling_into_the_existing_parent_identity() {
     };
 
     assert_eq!(receipt.after().topology(), receipt.before().topology() + 1);
+    let moved_node = assert_group_leaf_replaced(&runtime, &receipt, &editor, editor_node);
     let root = runtime
         .graph()
         .space(&DockSpaceId::from("main"))
@@ -610,17 +635,22 @@ fn move_group_to_edge_promotes_the_sibling_into_the_existing_parent_identity() {
             second,
             ratio,
             ..
-        }) if *first == editor_node && *second == original_root && *ratio == 0.35
+        }) if *first == moved_node && *second == original_root && *ratio == 0.35
     ));
-    assert_eq!(
-        runtime.graph().index().node_for_group(&editor),
-        Some(editor_node)
-    );
     assert_eq!(
         runtime.graph().index().node_for_group(&inspector),
         Some(original_root)
     );
     assert!(runtime.graph().node(inspector_node).is_none());
+    assert!(receipt.effects().retired_nodes().contains(&inspector_node));
+    assert!(
+        receipt
+            .effects()
+            .identity_remaps()
+            .iter()
+            .any(|remap| { remap.from == inspector_node && remap.to == original_root })
+    );
+    assert!(receipt.effects().created_nodes().contains(&root));
     runtime
         .graph()
         .validate()
@@ -711,6 +741,7 @@ fn move_group_to_center_preserves_the_remaining_source_space_across_dockspaces()
         .space(&DockSpaceId::from("main"))
         .and_then(|space| space.root)
         .unwrap();
+    let editor_node = runtime.graph().index().node_for_group(&editor).unwrap();
     let inspector_node = runtime.graph().index().node_for_group(&inspector).unwrap();
     let detached_target_node = runtime
         .graph()
@@ -725,11 +756,13 @@ fn move_group_to_center_preserves_the_remaining_source_space_across_dockspaces()
         GraphPrepareOutcome::Prepared(prepared) => prepared,
         GraphPrepareOutcome::NoOp(_) => panic!("cross-space merge must be structural"),
     };
-    assert!(matches!(
-        runtime.commit(prepared),
-        GraphCommitOutcome::Committed(_)
-    ));
+    let receipt = match runtime.commit(prepared) {
+        GraphCommitOutcome::Committed(receipt) => receipt,
+        other => panic!("cross-space group merge should commit, got {other:?}"),
+    };
 
+    assert!(runtime.graph().node(editor_node).is_none());
+    assert!(receipt.effects().retired_nodes().contains(&editor_node));
     assert_eq!(
         runtime
             .graph()
@@ -874,7 +907,7 @@ fn group_merge_is_noop_for_the_same_group_and_stale_after_source_selection_chang
 }
 
 #[test]
-fn move_group_to_empty_space_preserves_leaf_identity_and_binds_the_central_region() {
+fn move_group_to_empty_space_replaces_the_leaf_and_binds_the_central_region() {
     let mut runtime = empty_target_runtime();
     let editor = DockGroupId::from("editor");
     let inspector = DockGroupId::from("inspector");
@@ -898,10 +931,10 @@ fn move_group_to_empty_space_preserves_leaf_identity_and_binds_the_central_regio
         GraphPatchOperation::MoveGroupToEmptySpace { source_group, .. }
             if source_group == &editor
     ));
-    assert!(matches!(
-        runtime.commit(prepared),
-        GraphCommitOutcome::Committed(_)
-    ));
+    let receipt = match runtime.commit(prepared) {
+        GraphCommitOutcome::Committed(receipt) => receipt,
+        other => panic!("empty-root move should commit, got {other:?}"),
+    };
 
     assert_eq!(
         runtime
@@ -915,19 +948,24 @@ fn move_group_to_empty_space_preserves_leaf_identity_and_binds_the_central_regio
         Some(original_main_root)
     );
     assert!(runtime.graph().node(inspector_node).is_none());
+    let target_leaf = assert_group_leaf_replaced(&runtime, &receipt, &editor, editor_node);
     let target = runtime
         .graph()
         .space(&DockSpaceId::from("empty"))
         .expect("target space should remain present");
-    assert_eq!(target.root, Some(editor_node));
-    assert_eq!(target.central.node, Some(editor_node));
+    assert_eq!(target.root, Some(target_leaf));
+    assert_eq!(target.central.node, Some(target_leaf));
     assert_eq!(
-        runtime.graph().index().node_for_group(&editor),
-        Some(editor_node)
-    );
-    assert_eq!(
-        runtime.graph().index().space_for_node(editor_node),
+        runtime.graph().index().space_for_node(target_leaf),
         Some(&DockSpaceId::from("empty"))
+    );
+    assert!(receipt.effects().retired_nodes().contains(&inspector_node));
+    assert!(
+        receipt
+            .effects()
+            .identity_remaps()
+            .iter()
+            .any(|remap| { remap.from == inspector_node && remap.to == original_main_root })
     );
     runtime
         .graph()
@@ -936,7 +974,7 @@ fn move_group_to_empty_space_preserves_leaf_identity_and_binds_the_central_regio
 }
 
 #[test]
-fn move_group_to_empty_space_can_promote_the_only_floating_group_to_main() {
+fn move_group_to_empty_space_can_replace_the_only_floating_group_leaf_in_main() {
     let mut runtime = floating_only_runtime(false);
     let source = DockGroupId::from("source");
     let source_node = runtime.graph().index().node_for_group(&source).unwrap();
@@ -948,19 +986,26 @@ fn move_group_to_empty_space_can_promote_the_only_floating_group_to_main() {
         GraphPrepareOutcome::Prepared(prepared) => prepared,
         GraphPrepareOutcome::NoOp(_) => panic!("floating promotion must be structural"),
     };
-    assert!(matches!(
-        runtime.commit(prepared),
-        GraphCommitOutcome::Committed(_)
-    ));
+    let receipt = match runtime.commit(prepared) {
+        GraphCommitOutcome::Committed(receipt) => receipt,
+        other => panic!("floating promotion should commit, got {other:?}"),
+    };
 
+    let target_leaf = assert_group_leaf_replaced(&runtime, &receipt, &source, source_node);
     let space = runtime
         .graph()
         .space(&DockSpaceId::from("main"))
         .expect("main space should remain present");
-    assert_eq!(space.root, Some(source_node));
-    assert_eq!(space.central.node, Some(source_node));
+    assert_eq!(space.root, Some(target_leaf));
+    assert_eq!(space.central.node, Some(target_leaf));
     assert!(space.floating_roots.is_empty());
     assert!(runtime.graph().floating_roots().is_empty());
+    assert!(
+        receipt
+            .effects()
+            .retired_floatings()
+            .contains(&crate::DockFloatingId::from("floating-source"))
+    );
     assert!(
         runtime
             .graph()
@@ -1054,6 +1099,67 @@ fn empty_space_patch_preserves_newer_source_selection_but_rejects_target_topolog
 }
 
 #[test]
+fn multi_item_extractions_reject_source_group_state_changes() {
+    let mut runtime = empty_target_runtime();
+    let empty_move = match runtime
+        .prepare_move_item_to_empty_space("A", "main", "empty", "moved-a")
+        .expect("multi-item empty-space extraction should prepare")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("item extraction must be structural"),
+    };
+    let selection = match runtime
+        .prepare_select_tab("editor", "B")
+        .expect("source selection should prepare")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("selection should produce a patch"),
+    };
+    assert!(matches!(
+        runtime.commit(selection),
+        GraphCommitOutcome::Committed(_)
+    ));
+    assert!(matches!(
+        runtime.commit(empty_move),
+        GraphCommitOutcome::Superseded(receipt)
+            if receipt.reason() == &GraphSupersededReason::GroupSelectionChanged
+    ));
+
+    let mut runtime = three_tab_runtime();
+    let float_move = match runtime
+        .prepare_float_item_in_window(
+            item("A"),
+            "floating-a-group",
+            "floating-a",
+            "main",
+            "main",
+            floating_bounds(),
+        )
+        .expect("multi-item floating extraction should prepare")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("item floating must be structural"),
+    };
+    let selection = match runtime
+        .prepare_select_tab("editor", "B")
+        .expect("source selection should prepare")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("selection should produce a patch"),
+    };
+    assert!(matches!(
+        runtime.commit(selection),
+        GraphCommitOutcome::Committed(_)
+    ));
+    assert!(matches!(
+        runtime.commit(float_move),
+        GraphCommitOutcome::Superseded(receipt)
+            if receipt.reason() == &GraphSupersededReason::GroupSelectionChanged
+    ));
+    assert!(runtime.graph().floating_roots().is_empty());
+}
+
+#[test]
 fn move_item_to_empty_space_creates_a_new_leaf_for_a_multi_item_source() {
     let mut runtime = empty_target_runtime();
     let source = DockGroupId::from("editor");
@@ -1097,7 +1203,7 @@ fn move_item_to_empty_space_creates_a_new_leaf_for_a_multi_item_source() {
 }
 
 #[test]
-fn move_item_to_empty_space_preserves_a_singleton_leaf_identity() {
+fn move_item_to_empty_space_preserves_the_singleton_group_but_replaces_its_leaf() {
     let mut runtime = empty_target_runtime();
     let source = DockGroupId::from("inspector");
     let source_node = runtime.graph().index().node_for_group(&source).unwrap();
@@ -1109,18 +1215,15 @@ fn move_item_to_empty_space_preserves_a_singleton_leaf_identity() {
         GraphPrepareOutcome::Prepared(prepared) => prepared,
         GraphPrepareOutcome::NoOp(_) => panic!("singleton item move must be structural"),
     };
-    assert!(matches!(
-        runtime.commit(prepared),
-        GraphCommitOutcome::Committed(_)
-    ));
+    let receipt = match runtime.commit(prepared) {
+        GraphCommitOutcome::Committed(receipt) => receipt,
+        other => panic!("singleton item move should commit, got {other:?}"),
+    };
 
-    assert_eq!(
-        runtime.graph().index().node_for_group(&source),
-        Some(source_node)
-    );
+    let target_leaf = assert_group_leaf_replaced(&runtime, &receipt, &source, source_node);
     let target = runtime.graph().space(&DockSpaceId::from("empty")).unwrap();
-    assert_eq!(target.root, Some(source_node));
-    assert_eq!(target.central.node, Some(source_node));
+    assert_eq!(target.root, Some(target_leaf));
+    assert_eq!(target.central.node, Some(target_leaf));
     runtime
         .graph()
         .validate()
@@ -1128,7 +1231,7 @@ fn move_item_to_empty_space_preserves_a_singleton_leaf_identity() {
 }
 
 #[test]
-fn move_item_to_empty_space_can_promote_the_only_floating_singleton() {
+fn move_item_to_empty_space_can_replace_the_only_floating_singleton_leaf() {
     let mut runtime = floating_only_runtime(false);
     let source = DockGroupId::from("source");
     let source_node = runtime.graph().index().node_for_group(&source).unwrap();
@@ -1140,16 +1243,23 @@ fn move_item_to_empty_space_can_promote_the_only_floating_singleton() {
         GraphPrepareOutcome::Prepared(prepared) => prepared,
         GraphPrepareOutcome::NoOp(_) => panic!("floating singleton promotion must be structural"),
     };
-    assert!(matches!(
-        runtime.commit(prepared),
-        GraphCommitOutcome::Committed(_)
-    ));
+    let receipt = match runtime.commit(prepared) {
+        GraphCommitOutcome::Committed(receipt) => receipt,
+        other => panic!("floating singleton promotion should commit, got {other:?}"),
+    };
 
+    let target_leaf = assert_group_leaf_replaced(&runtime, &receipt, &source, source_node);
     let space = runtime.graph().space(&DockSpaceId::from("main")).unwrap();
-    assert_eq!(space.root, Some(source_node));
-    assert_eq!(space.central.node, Some(source_node));
+    assert_eq!(space.root, Some(target_leaf));
+    assert_eq!(space.central.node, Some(target_leaf));
     assert!(space.floating_roots.is_empty());
     assert!(runtime.graph().floating_roots().is_empty());
+    assert!(
+        receipt
+            .effects()
+            .retired_floatings()
+            .contains(&crate::DockFloatingId::from("floating-source"))
+    );
     runtime
         .graph()
         .validate()
@@ -1245,7 +1355,7 @@ fn float_item_in_window_extracts_a_multi_item_source_into_a_new_floating_group()
 }
 
 #[test]
-fn float_singleton_in_window_preserves_group_and_leaf_identity_across_spaces() {
+fn float_singleton_in_window_preserves_group_identity_and_replaces_the_leaf() {
     let mut assembly = DockGraphAssembly::new();
     assembly.add_space("source").unwrap();
     assembly.add_space("target").unwrap();
@@ -1285,10 +1395,10 @@ fn float_singleton_in_window_preserves_group_and_leaf_identity_across_spaces() {
         GraphPrepareOutcome::Prepared(prepared) => prepared,
         GraphPrepareOutcome::NoOp(_) => panic!("creating a floating root must be structural"),
     };
-    assert!(matches!(
-        runtime.commit(prepared),
-        GraphCommitOutcome::Committed(_)
-    ));
+    let receipt = match runtime.commit(prepared) {
+        GraphCommitOutcome::Committed(receipt) => receipt,
+        other => panic!("singleton floating should commit, got {other:?}"),
+    };
 
     assert_eq!(
         runtime
@@ -1306,10 +1416,7 @@ fn float_singleton_in_window_preserves_group_and_leaf_identity_across_spaces() {
             .root,
         Some(target_node)
     );
-    assert_eq!(
-        runtime.graph().index().node_for_group(&source_group),
-        Some(source_node)
-    );
+    let floating_leaf = assert_group_leaf_replaced(&runtime, &receipt, &source_group, source_node);
     assert_eq!(
         runtime
             .graph()
@@ -1317,8 +1424,9 @@ fn float_singleton_in_window_preserves_group_and_leaf_identity_across_spaces() {
             .get(&floating)
             .unwrap()
             .root,
-        source_node
+        floating_leaf
     );
+    assert!(receipt.effects().created_floatings().contains(&floating));
     assert_eq!(
         runtime.graph().index().floating_for_item(&item("A")),
         Some(&floating)
@@ -1633,7 +1741,7 @@ fn move_item_to_edge_extracts_a_multi_item_source_into_a_new_binary_leaf() {
 }
 
 #[test]
-fn move_item_to_edge_preserves_a_singleton_group_and_leaf_identity() {
+fn move_item_to_edge_preserves_a_singleton_group_and_replaces_its_leaf() {
     let mut runtime = multiview_runtime();
     let source = DockGroupId::from("inspector");
     let target = DockGroupId::from("detached-target");
@@ -1666,15 +1774,12 @@ fn move_item_to_edge_preserves_a_singleton_group_and_leaf_identity() {
         GraphPrepareOutcome::Prepared(prepared) => prepared,
         GraphPrepareOutcome::NoOp(_) => panic!("cross-space singleton move must be structural"),
     };
-    assert!(matches!(
-        runtime.commit(prepared),
-        GraphCommitOutcome::Committed(_)
-    ));
+    let receipt = match runtime.commit(prepared) {
+        GraphCommitOutcome::Committed(receipt) => receipt,
+        other => panic!("singleton item edge move should commit, got {other:?}"),
+    };
 
-    assert_eq!(
-        runtime.graph().index().node_for_group(&source),
-        Some(source_node)
-    );
+    let moved_node = assert_group_leaf_replaced(&runtime, &receipt, &source, source_node);
     assert_eq!(
         runtime
             .graph()
@@ -1703,8 +1808,16 @@ fn move_item_to_edge_preserves_a_singleton_group_and_leaf_identity() {
             second,
             ratio,
             ..
-        }) if *first == source_node && *second == target_node && *ratio == 0.4
+        }) if *first == moved_node && *second == target_node && *ratio == 0.4
     ));
+    assert!(receipt.effects().retired_nodes().contains(&editor_node));
+    assert!(
+        receipt
+            .effects()
+            .identity_remaps()
+            .iter()
+            .any(|remap| { remap.from == editor_node && remap.to == original_main_root })
+    );
     runtime
         .graph()
         .validate()
@@ -1953,11 +2066,12 @@ fn move_group_to_edge_can_insert_into_a_floating_root() {
         GraphPrepareOutcome::Prepared(prepared) => prepared,
         GraphPrepareOutcome::NoOp(_) => panic!("group move must produce a structural patch"),
     };
-    assert!(matches!(
-        runtime.commit(prepared),
-        GraphCommitOutcome::Committed(_)
-    ));
+    let receipt = match runtime.commit(prepared) {
+        GraphCommitOutcome::Committed(receipt) => receipt,
+        other => panic!("floating-target group move should commit, got {other:?}"),
+    };
 
+    let moved_node = assert_group_leaf_replaced(&runtime, &receipt, &source, source_node);
     assert!(
         runtime
             .graph()
@@ -1977,8 +2091,9 @@ fn move_group_to_edge_can_insert_into_a_floating_root() {
             first,
             second,
             ..
-        }) if *first == target_node && *second == source_node
+        }) if *first == target_node && *second == moved_node
     ));
+    assert!(receipt.effects().created_nodes().contains(&floating_root));
     runtime
         .graph()
         .validate()
@@ -1995,7 +2110,7 @@ fn move_group_to_edge_can_move_a_floating_source_into_the_main_root() {
 
     let prepared = match runtime
         .prepare_move_group_to_edge(
-            source,
+            source.clone(),
             target.clone(),
             "main",
             "main",
@@ -2008,11 +2123,12 @@ fn move_group_to_edge_can_move_a_floating_source_into_the_main_root() {
         GraphPrepareOutcome::Prepared(prepared) => prepared,
         GraphPrepareOutcome::NoOp(_) => panic!("group move must produce a structural patch"),
     };
-    assert!(matches!(
-        runtime.commit(prepared),
-        GraphCommitOutcome::Committed(_)
-    ));
+    let receipt = match runtime.commit(prepared) {
+        GraphCommitOutcome::Committed(receipt) => receipt,
+        other => panic!("floating-source group move should commit, got {other:?}"),
+    };
 
+    let moved_node = assert_group_leaf_replaced(&runtime, &receipt, &source, source_node);
     let main_root = runtime
         .graph()
         .space(&DockSpaceId::from("main"))
@@ -2025,7 +2141,7 @@ fn move_group_to_edge_can_move_a_floating_source_into_the_main_root() {
             first,
             second,
             ..
-        }) if *first == source_node && *second == target_node
+        }) if *first == moved_node && *second == target_node
     ));
     assert!(
         runtime
@@ -2040,10 +2156,46 @@ fn move_group_to_edge_can_move_a_floating_source_into_the_main_root() {
             .space(&DockSpaceId::from("main"))
             .is_some_and(|space| space.floating_roots.is_empty())
     );
+    assert!(
+        receipt
+            .effects()
+            .retired_floatings()
+            .contains(&crate::DockFloatingId::from("floating-source"))
+    );
     runtime
         .graph()
         .validate()
         .expect("floating-source move should preserve canonical indexes");
+}
+
+#[test]
+fn move_floating_root_to_its_own_descendant_is_rejected_during_prepare() {
+    let mut runtime = floating_subtree_runtime();
+    let floating = crate::DockFloatingId::from("floating-subtree");
+
+    for target in ["source-left", "source-right"] {
+        assert!(matches!(
+            runtime.prepare_move_floating_root_to_edge(
+                floating.clone(),
+                "main",
+                target,
+                "main",
+                SplitAxis::Horizontal,
+                true,
+                0.4,
+            ),
+            Err(GraphPrepareError::FloatingTargetInsidePayload {
+                floating: rejected_floating,
+                group,
+            }) if rejected_floating == floating && group == DockGroupId::from(target)
+        ));
+    }
+
+    assert_eq!(runtime.receipt_count(), 0);
+    runtime
+        .graph()
+        .validate()
+        .expect("rejected self-docking must leave canonical indexes untouched");
 }
 
 #[test]

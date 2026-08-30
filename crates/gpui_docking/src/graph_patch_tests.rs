@@ -1,7 +1,7 @@
 use crate::graph_assembly::{CanonicalDockGraph, DockGraphAssembly};
 use crate::graph_patch::{
-    GraphCommitOutcome, GraphGroupRead, GraphPatchOperation, GraphPatchTarget, GraphPrepareOutcome,
-    GraphReadView, GraphRevision, GraphSupersededReason,
+    GraphAppliedPatch, GraphCommitEffects, GraphCommitOutcome, GraphGroupRead, GraphPatchOperation,
+    GraphPatchTarget, GraphPrepareOutcome, GraphReadView, GraphRevision, GraphSupersededReason,
 };
 use crate::graph_transaction::GraphTransactionEngine;
 use crate::ids::CanonicalGraphAuthority;
@@ -90,16 +90,16 @@ impl GraphReadView for SelectionTarget {
 }
 
 impl GraphPatchTarget for SelectionTarget {
-    fn apply_select_tab(&mut self, group: &DockGroupId, item: &DockItemId) -> GraphRevision {
+    fn apply_select_tab(&mut self, group: &DockGroupId, item: &DockItemId) -> GraphAppliedPatch {
         let Some(group_state) = self.groups.get_mut(group) else {
-            return self.revision;
+            return GraphAppliedPatch::new(self.revision, GraphCommitEffects::default());
         };
         group_state.selected = item.clone();
         group_state.mru.retain(|entry| entry != item);
         group_state.mru.insert(0, item.clone());
         self.applied += 1;
         self.revision = self.revision.with_selection(self.revision.selection() + 1);
-        self.revision
+        GraphAppliedPatch::new(self.revision, GraphCommitEffects::default())
     }
 
     fn apply_split_group(
@@ -112,7 +112,7 @@ impl GraphPatchTarget for SelectionTarget {
         _insert_before: bool,
         _ratio: f32,
         _space: &crate::DockSpaceId,
-    ) -> GraphRevision {
+    ) -> GraphAppliedPatch {
         panic!("selection target does not support structural patches")
     }
 
@@ -125,7 +125,7 @@ impl GraphPatchTarget for SelectionTarget {
         _axis: crate::SplitAxis,
         _insert_before: bool,
         _ratio: f32,
-    ) -> GraphRevision {
+    ) -> GraphAppliedPatch {
         panic!("selection target does not support structural patches")
     }
 
@@ -135,7 +135,7 @@ impl GraphPatchTarget for SelectionTarget {
         _target_group: &DockGroupId,
         _source_space: &DockSpaceId,
         _target_space: &DockSpaceId,
-    ) -> GraphRevision {
+    ) -> GraphAppliedPatch {
         panic!("selection target does not support structural patches")
     }
 
@@ -144,7 +144,7 @@ impl GraphPatchTarget for SelectionTarget {
         _source_group: &DockGroupId,
         _source_space: &DockSpaceId,
         _target_space: &DockSpaceId,
-    ) -> GraphRevision {
+    ) -> GraphAppliedPatch {
         panic!("selection target does not support structural patches")
     }
 
@@ -156,7 +156,7 @@ impl GraphPatchTarget for SelectionTarget {
         _source_space: &DockSpaceId,
         _target_space: &DockSpaceId,
         _insert_index: Option<usize>,
-    ) -> GraphRevision {
+    ) -> GraphAppliedPatch {
         panic!("selection target does not support structural patches")
     }
 
@@ -171,7 +171,7 @@ impl GraphPatchTarget for SelectionTarget {
         _axis: crate::SplitAxis,
         _insert_before: bool,
         _ratio: f32,
-    ) -> GraphRevision {
+    ) -> GraphAppliedPatch {
         panic!("selection target does not support structural patches")
     }
 
@@ -182,7 +182,7 @@ impl GraphPatchTarget for SelectionTarget {
         _new_group: &DockGroupId,
         _source_space: &DockSpaceId,
         _target_space: &DockSpaceId,
-    ) -> GraphRevision {
+    ) -> GraphAppliedPatch {
         panic!("selection target does not support structural patches")
     }
 
@@ -197,7 +197,7 @@ impl GraphPatchTarget for SelectionTarget {
         _retired_floating: Option<&crate::DockFloatingId>,
         _bounds: crate::DockLayoutRect,
         _z_order: i32,
-    ) -> GraphRevision {
+    ) -> GraphAppliedPatch {
         panic!("selection target does not support structural patches")
     }
 
@@ -210,7 +210,7 @@ impl GraphPatchTarget for SelectionTarget {
         _axis: crate::SplitAxis,
         _insert_before: bool,
         _ratio: f32,
-    ) -> GraphRevision {
+    ) -> GraphAppliedPatch {
         panic!("selection target does not support structural patches")
     }
 }
@@ -313,6 +313,54 @@ fn replay_remains_addressable_after_a_long_commit_history() {
         Some(GraphCommitOutcome::AlreadyCommitted(_))
     ));
     assert_eq!(target.applied, 512);
+}
+
+#[test]
+fn abandoned_and_superseded_preparations_leave_inert_receipt_holes() {
+    let graph = canonical_graph();
+    let mut target = SelectionTarget::from_graph(&graph);
+    let mut engine = GraphTransactionEngine::new();
+
+    let abandoned = match engine.prepare_select_tab(&target, "editor", "B").unwrap() {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("selection should change"),
+    };
+    let abandoned_id = abandoned.commit_id();
+    drop(abandoned);
+
+    let superseded = match engine.prepare_select_tab(&target, "editor", "B").unwrap() {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("selection should change"),
+    };
+    let superseded_id = superseded.commit_id();
+    target.change_topology();
+    assert!(matches!(
+        engine.commit(&mut target, superseded),
+        GraphCommitOutcome::Superseded(receipt)
+            if receipt.reason() == &GraphSupersededReason::TopologyChanged
+    ));
+
+    let prepared = match engine.prepare_select_tab(&target, "editor", "B").unwrap() {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("selection should change"),
+    };
+    let committed_id = prepared.commit_id();
+    let receipt = match engine.commit(&mut target, prepared) {
+        GraphCommitOutcome::Committed(receipt) => receipt,
+        other => panic!("expected committed receipt, got {other:?}"),
+    };
+
+    assert_eq!(abandoned_id.generation(), 1);
+    assert_eq!(superseded_id.generation(), 2);
+    assert_eq!(committed_id.generation(), 3);
+    assert!(engine.replay(abandoned_id).is_none());
+    assert!(engine.replay(superseded_id).is_none());
+    assert_eq!(
+        engine.replay(committed_id),
+        Some(GraphCommitOutcome::AlreadyCommitted(receipt))
+    );
+    assert_eq!(engine.receipt_count(), 1);
+    assert_eq!(target.applied, 1);
 }
 
 #[test]

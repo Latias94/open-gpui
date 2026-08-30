@@ -157,11 +157,12 @@ impl CanonicalGraphIndex {
         self.parent_by_node.insert(node, parent);
     }
 
-    /// Promotes a sibling's contents into its existing parent while detaching the other child.
+    /// Promotes a sibling's contents into its existing parent while retiring both child roots.
     pub(crate) fn promote_sibling_into_parent(
         &mut self,
         parent: CanonicalNodeId,
         source: CanonicalNodeId,
+        source_group: &DockGroupId,
         sibling: CanonicalNodeId,
         promoted: &CanonicalNode,
     ) {
@@ -169,7 +170,7 @@ impl CanonicalGraphIndex {
         debug_assert_eq!(self.parent_by_node.get(&sibling), Some(&Some(parent)));
         debug_assert!(self.owner_by_node.contains_key(&parent));
 
-        self.parent_by_node.insert(source, None);
+        self.retire_group_leaf(source, source_group);
         self.parent_by_node.remove(&sibling);
         self.owner_by_node.remove(&sibling);
 
@@ -181,6 +182,41 @@ impl CanonicalGraphIndex {
             CanonicalNode::Branch { first, second, .. } => {
                 self.parent_by_node.insert(*first, Some(parent));
                 self.parent_by_node.insert(*second, Some(parent));
+            }
+        }
+    }
+
+    /// Retires a structural leaf while preserving its durable group and item memberships.
+    pub(crate) fn retire_group_leaf(&mut self, node: CanonicalNodeId, group: &DockGroupId) {
+        let removed = self.group_node.remove(group);
+        debug_assert_eq!(removed, Some(node));
+        self.parent_by_node.remove(&node);
+        self.owner_by_node.remove(&node);
+    }
+
+    /// Binds an existing durable group to a newly allocated structural leaf.
+    pub(crate) fn bind_existing_group(
+        &mut self,
+        node: CanonicalNodeId,
+        group: &DockGroupId,
+        state: &CanonicalGroup,
+        parent: Option<CanonicalNodeId>,
+        owner: CanonicalNodeOwner,
+    ) {
+        debug_assert!(!self.parent_by_node.contains_key(&node));
+        debug_assert!(!self.group_node.contains_key(group));
+        self.parent_by_node.insert(node, parent);
+        self.owner_by_node.insert(node, owner.clone());
+        self.group_node.insert(group.clone(), node);
+        for item in &state.items {
+            debug_assert_eq!(self.item_group.get(item), Some(group));
+            match &owner {
+                CanonicalNodeOwner::Main(_) => {
+                    self.floating_by_item.remove(item);
+                }
+                CanonicalNodeOwner::Floating { floating, .. } => {
+                    self.floating_by_item.insert(item.clone(), floating.clone());
+                }
             }
         }
     }
@@ -227,25 +263,6 @@ impl CanonicalGraphIndex {
         }
     }
 
-    /// Retires one source group leaf and rebinds all of its items to an existing target group.
-    pub(crate) fn merge_group_into(
-        &mut self,
-        source_node: CanonicalNodeId,
-        source_group: &DockGroupId,
-        source_items: &[DockItemId],
-        target_group: &DockGroupId,
-        target_owner: &CanonicalNodeOwner,
-    ) {
-        let removed_node = self.group_node.remove(source_group);
-        debug_assert_eq!(removed_node, Some(source_node));
-        self.parent_by_node.remove(&source_node);
-        self.owner_by_node.remove(&source_node);
-
-        for item in source_items {
-            self.move_item_to_group(item, source_group, target_group, target_owner);
-        }
-    }
-
     /// Preserves a moved payload group while retiring the target group's content identity.
     ///
     /// The target structural leaf remains in place because structural identities are replaceable;
@@ -261,12 +278,11 @@ impl CanonicalGraphIndex {
         target_items: &[DockItemId],
         target_owner: &CanonicalNodeOwner,
     ) {
-        let removed_source = self.group_node.remove(source_group);
-        debug_assert_eq!(removed_source, Some(source_node));
+        debug_assert!(!self.group_node.contains_key(source_group));
+        debug_assert!(!self.parent_by_node.contains_key(&source_node));
+        debug_assert!(!self.owner_by_node.contains_key(&source_node));
         let removed_target = self.group_node.remove(target_group);
         debug_assert_eq!(removed_target, Some(target_node));
-        self.parent_by_node.remove(&source_node);
-        self.owner_by_node.remove(&source_node);
         let replaced = self.group_node.insert(source_group.clone(), target_node);
         debug_assert!(replaced.is_none());
 

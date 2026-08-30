@@ -1,11 +1,14 @@
 #![allow(dead_code)]
 
+use crate::binary_layout_policy::StructuralIdentityRemap;
 use crate::graph_assembly::CanonicalDockGraph;
 use crate::{
-    CanonicalGraphVersion, DockFloatingId, DockGroupId, DockItemId, DockLayoutRect, DockSpaceId,
-    SplitAxis,
+    CanonicalGraphVersion, CanonicalNodeId, DockFloatingId, DockGroupId, DockItemId,
+    DockLayoutRect, DockSpaceId, SplitAxis,
 };
+use smallvec::SmallVec;
 use std::fmt;
+use std::sync::Arc;
 use thiserror::Error;
 
 /// Typed revision observed by a prepared graph patch.
@@ -289,6 +292,16 @@ impl GraphReadSet {
         read_set
     }
 
+    pub(crate) fn for_group_and_space_state_sensitive(
+        base_revision: GraphRevision,
+        group: GraphGroupRead,
+        target_space: GraphSpaceRead,
+    ) -> Self {
+        let mut read_set = Self::for_group_state_sensitive_operation(base_revision, [group]);
+        read_set.spaces.push(target_space);
+        read_set
+    }
+
     pub(crate) fn for_group_state_sensitive_operation(
         base_revision: GraphRevision,
         groups: impl IntoIterator<Item = GraphGroupRead>,
@@ -422,20 +435,20 @@ pub(crate) enum GraphPatchOperation {
 /// A local symbolic patch and its declared read set.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct GraphPatch {
-    operation: GraphPatchOperation,
+    operation: Arc<GraphPatchOperation>,
     read_set: GraphReadSet,
 }
 
 impl GraphPatch {
-    pub(crate) const fn new(operation: GraphPatchOperation, read_set: GraphReadSet) -> Self {
+    pub(crate) fn new(operation: GraphPatchOperation, read_set: GraphReadSet) -> Self {
         Self {
-            operation,
+            operation: Arc::new(operation),
             read_set,
         }
     }
 
     pub(crate) fn operation(&self) -> &GraphPatchOperation {
-        &self.operation
+        self.operation.as_ref()
     }
 
     pub(crate) fn read_set(&self) -> &GraphReadSet {
@@ -453,11 +466,16 @@ impl GraphPatch {
 pub(crate) struct PreparedGraphPatch {
     commit_id: GraphCommitId,
     patch: GraphPatch,
+    receipt_reservation: Box<GraphReceiptReservation>,
 }
 
 impl PreparedGraphPatch {
-    pub(crate) const fn new(commit_id: GraphCommitId, patch: GraphPatch) -> Self {
-        Self { commit_id, patch }
+    pub(crate) fn new(commit_id: GraphCommitId, patch: GraphPatch) -> Self {
+        Self {
+            commit_id,
+            patch,
+            receipt_reservation: Box::default(),
+        }
     }
 
     pub(crate) fn commit_id(&self) -> GraphCommitId {
@@ -470,6 +488,12 @@ impl PreparedGraphPatch {
 
     pub(crate) fn read_set(&self) -> &GraphReadSet {
         self.patch.read_set()
+    }
+
+    pub(crate) fn into_commit_parts(
+        self,
+    ) -> (Arc<GraphPatchOperation>, Box<GraphReceiptReservation>) {
+        (self.patch.operation, self.receipt_reservation)
     }
 }
 
@@ -563,27 +587,174 @@ impl GraphSupersededReceipt {
     }
 }
 
+/// Heap-backed receipt cell reserved by a prepared patch.
+///
+/// The generation table retains only pointer-sized address slots. Abandoned or superseded patches
+/// drop this cell, while a successful commit fills and transfers it without allocating.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct GraphReceiptReservation {
+    receipt: Option<GraphCommitReceipt>,
+}
+
+impl GraphReceiptReservation {
+    pub(crate) fn install(&mut self, receipt: GraphCommitReceipt) {
+        debug_assert!(self.receipt.is_none());
+        self.receipt = Some(receipt);
+    }
+
+    pub(crate) fn receipt(&self) -> Option<&GraphCommitReceipt> {
+        self.receipt.as_ref()
+    }
+}
+
+/// Identity-level effects emitted by one canonical graph commit.
+///
+/// Each operation has a small fixed structural footprint. Inline storage keeps receipt cloning and
+/// installation allocation-free for every currently supported patch kind.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct GraphCommitEffects {
+    created_nodes: SmallVec<[CanonicalNodeId; 4]>,
+    retired_nodes: SmallVec<[CanonicalNodeId; 4]>,
+    identity_remaps: SmallVec<[StructuralIdentityRemap; 2]>,
+    created_groups: SmallVec<[DockGroupId; 2]>,
+    retired_groups: SmallVec<[DockGroupId; 2]>,
+    created_floatings: SmallVec<[DockFloatingId; 2]>,
+    retired_floatings: SmallVec<[DockFloatingId; 2]>,
+}
+
+impl GraphCommitEffects {
+    pub(crate) fn record_created_node(&mut self, node: CanonicalNodeId) {
+        self.created_nodes.push(node);
+    }
+
+    pub(crate) fn record_retired_node(&mut self, node: CanonicalNodeId) {
+        if !self.retired_nodes.contains(&node) {
+            self.retired_nodes.push(node);
+        }
+    }
+
+    pub(crate) fn record_identity_remap(&mut self, remap: StructuralIdentityRemap) {
+        if !self.identity_remaps.contains(&remap) {
+            self.identity_remaps.push(remap);
+        }
+    }
+
+    pub(crate) fn record_created_group(&mut self, group: DockGroupId) {
+        self.created_groups.push(group);
+    }
+
+    pub(crate) fn record_retired_group(&mut self, group: DockGroupId) {
+        self.retired_groups.push(group);
+    }
+
+    pub(crate) fn record_created_floating(&mut self, floating: DockFloatingId) {
+        self.created_floatings.push(floating);
+    }
+
+    pub(crate) fn record_retired_floating(&mut self, floating: DockFloatingId) {
+        if !self.retired_floatings.contains(&floating) {
+            self.retired_floatings.push(floating);
+        }
+    }
+
+    pub(crate) fn merge(&mut self, other: Self) {
+        for node in other.created_nodes {
+            self.record_created_node(node);
+        }
+        for node in other.retired_nodes {
+            self.record_retired_node(node);
+        }
+        for remap in other.identity_remaps {
+            self.record_identity_remap(remap);
+        }
+        for group in other.created_groups {
+            self.record_created_group(group);
+        }
+        for group in other.retired_groups {
+            self.record_retired_group(group);
+        }
+        for floating in other.created_floatings {
+            self.record_created_floating(floating);
+        }
+        for floating in other.retired_floatings {
+            self.record_retired_floating(floating);
+        }
+    }
+
+    pub(crate) fn created_nodes(&self) -> &[CanonicalNodeId] {
+        &self.created_nodes
+    }
+
+    pub(crate) fn retired_nodes(&self) -> &[CanonicalNodeId] {
+        &self.retired_nodes
+    }
+
+    pub(crate) fn identity_remaps(&self) -> &[StructuralIdentityRemap] {
+        &self.identity_remaps
+    }
+
+    pub(crate) fn created_groups(&self) -> &[DockGroupId] {
+        &self.created_groups
+    }
+
+    pub(crate) fn retired_groups(&self) -> &[DockGroupId] {
+        &self.retired_groups
+    }
+
+    pub(crate) fn created_floatings(&self) -> &[DockFloatingId] {
+        &self.created_floatings
+    }
+
+    pub(crate) fn retired_floatings(&self) -> &[DockFloatingId] {
+        &self.retired_floatings
+    }
+}
+
+/// Result returned by the infallible graph write boundary.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct GraphAppliedPatch {
+    after: GraphRevision,
+    effects: GraphCommitEffects,
+}
+
+impl GraphAppliedPatch {
+    pub(crate) const fn new(after: GraphRevision, effects: GraphCommitEffects) -> Self {
+        Self { after, effects }
+    }
+
+    pub(crate) const fn after(&self) -> GraphRevision {
+        self.after
+    }
+
+    pub(crate) fn into_effects(self) -> GraphCommitEffects {
+        self.effects
+    }
+}
+
 /// Receipt retained for idempotent commit replay.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct GraphCommitReceipt {
     commit_id: GraphCommitId,
     before: GraphRevision,
     after: GraphRevision,
-    operation: GraphPatchOperation,
+    operation: Arc<GraphPatchOperation>,
+    effects: GraphCommitEffects,
 }
 
 impl GraphCommitReceipt {
-    pub(crate) const fn new(
+    pub(crate) fn new(
         commit_id: GraphCommitId,
         before: GraphRevision,
         after: GraphRevision,
-        operation: GraphPatchOperation,
+        operation: Arc<GraphPatchOperation>,
+        effects: GraphCommitEffects,
     ) -> Self {
         Self {
             commit_id,
             before,
             after,
             operation,
+            effects,
         }
     }
 
@@ -600,7 +771,11 @@ impl GraphCommitReceipt {
     }
 
     pub(crate) fn operation(&self) -> &GraphPatchOperation {
-        &self.operation
+        self.operation.as_ref()
+    }
+
+    pub(crate) fn effects(&self) -> &GraphCommitEffects {
+        &self.effects
     }
 }
 
@@ -640,7 +815,7 @@ pub(crate) trait GraphReadView {
 /// and read-set revalidation; once either method is called, the target has promised that the local
 /// write is structurally valid.
 pub(crate) trait GraphPatchTarget: GraphReadView {
-    fn apply_select_tab(&mut self, group: &DockGroupId, item: &DockItemId) -> GraphRevision;
+    fn apply_select_tab(&mut self, group: &DockGroupId, item: &DockItemId) -> GraphAppliedPatch;
 
     fn apply_split_group(
         &mut self,
@@ -652,7 +827,7 @@ pub(crate) trait GraphPatchTarget: GraphReadView {
         insert_before: bool,
         ratio: f32,
         space: &DockSpaceId,
-    ) -> GraphRevision;
+    ) -> GraphAppliedPatch;
 
     fn apply_move_group_to_edge(
         &mut self,
@@ -663,7 +838,7 @@ pub(crate) trait GraphPatchTarget: GraphReadView {
         axis: SplitAxis,
         insert_before: bool,
         ratio: f32,
-    ) -> GraphRevision;
+    ) -> GraphAppliedPatch;
 
     fn apply_move_group_to_center(
         &mut self,
@@ -671,14 +846,14 @@ pub(crate) trait GraphPatchTarget: GraphReadView {
         target_group: &DockGroupId,
         source_space: &DockSpaceId,
         target_space: &DockSpaceId,
-    ) -> GraphRevision;
+    ) -> GraphAppliedPatch;
 
     fn apply_move_group_to_empty_space(
         &mut self,
         source_group: &DockGroupId,
         source_space: &DockSpaceId,
         target_space: &DockSpaceId,
-    ) -> GraphRevision;
+    ) -> GraphAppliedPatch;
 
     fn apply_move_item_to_group(
         &mut self,
@@ -688,7 +863,7 @@ pub(crate) trait GraphPatchTarget: GraphReadView {
         source_space: &DockSpaceId,
         target_space: &DockSpaceId,
         insert_index: Option<usize>,
-    ) -> GraphRevision;
+    ) -> GraphAppliedPatch;
 
     fn apply_move_item_to_edge(
         &mut self,
@@ -701,7 +876,7 @@ pub(crate) trait GraphPatchTarget: GraphReadView {
         axis: SplitAxis,
         insert_before: bool,
         ratio: f32,
-    ) -> GraphRevision;
+    ) -> GraphAppliedPatch;
 
     fn apply_move_item_to_empty_space(
         &mut self,
@@ -710,7 +885,7 @@ pub(crate) trait GraphPatchTarget: GraphReadView {
         new_group: &DockGroupId,
         source_space: &DockSpaceId,
         target_space: &DockSpaceId,
-    ) -> GraphRevision;
+    ) -> GraphAppliedPatch;
 
     #[allow(clippy::too_many_arguments)]
     fn apply_float_item_in_window(
@@ -724,7 +899,7 @@ pub(crate) trait GraphPatchTarget: GraphReadView {
         retired_floating: Option<&DockFloatingId>,
         bounds: DockLayoutRect,
         z_order: i32,
-    ) -> GraphRevision;
+    ) -> GraphAppliedPatch;
 
     fn apply_move_floating_root_to_edge(
         &mut self,
@@ -735,7 +910,7 @@ pub(crate) trait GraphPatchTarget: GraphReadView {
         axis: SplitAxis,
         insert_before: bool,
         ratio: f32,
-    ) -> GraphRevision;
+    ) -> GraphAppliedPatch;
 }
 
 impl GraphReadView for CanonicalDockGraph {
@@ -859,6 +1034,11 @@ pub(crate) enum GraphPrepareError {
         floating: DockFloatingId,
         space: DockSpaceId,
     },
+    #[error("floating root {floating} cannot dock beside its own descendant group {group}")]
+    FloatingTargetInsidePayload {
+        floating: DockFloatingId,
+        group: DockGroupId,
+    },
     #[error("dock space {space} does not exist")]
     MissingSpace { space: DockSpaceId },
     #[error("dock space {space} is not empty")]
@@ -867,6 +1047,8 @@ pub(crate) enum GraphPrepareError {
     SameGroupMove,
     #[error("graph commit id space is exhausted")]
     CommitIdExhausted,
+    #[error("graph receipt capacity is exhausted")]
+    CommitReceiptCapacityExhausted,
 }
 
 impl GraphReadSet {

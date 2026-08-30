@@ -2,8 +2,8 @@
 
 use crate::graph_assembly::{CanonicalDockGraph, CanonicalGraphError, DockGraphAssembly};
 use crate::graph_patch::{
-    GraphCommitOutcome, GraphPatchTarget, GraphPrepareError, GraphPrepareOutcome, GraphReadView,
-    GraphRevision,
+    GraphAppliedPatch, GraphCommitOutcome, GraphPatchTarget, GraphPrepareError,
+    GraphPrepareOutcome, GraphReadView, GraphRevision,
 };
 use crate::graph_transaction::GraphTransactionEngine;
 use crate::{
@@ -329,7 +329,7 @@ impl GraphReadView for CanonicalGraphRuntime {
 }
 
 impl GraphPatchTarget for CanonicalGraphRuntime {
-    fn apply_select_tab(&mut self, group: &DockGroupId, item: &DockItemId) -> GraphRevision {
+    fn apply_select_tab(&mut self, group: &DockGroupId, item: &DockItemId) -> GraphAppliedPatch {
         debug_assert!(
             self.graph
                 .group(group)
@@ -341,13 +341,13 @@ impl GraphPatchTarget for CanonicalGraphRuntime {
             .authority
             .next_selection_change()
             .expect("canonical graph selection revision exhausted");
-        let applied = self
+        let effects = self
             .graph
-            .apply_selection_for_commit(group, item, next_version);
-        assert!(applied, "validated selection patch must be applicable");
+            .apply_selection_for_commit(group, item, next_version)
+            .expect("validated selection patch must be applicable");
         let recorded = self.authority.record_selection_change();
         debug_assert_eq!(recorded, next_version);
-        GraphRevision::from_version(self.graph.version())
+        GraphAppliedPatch::new(GraphRevision::from_version(self.graph.version()), effects)
     }
 
     fn apply_split_group(
@@ -360,26 +360,28 @@ impl GraphPatchTarget for CanonicalGraphRuntime {
         insert_before: bool,
         ratio: f32,
         space: &DockSpaceId,
-    ) -> GraphRevision {
+    ) -> GraphAppliedPatch {
         let next_version = self
             .authority
             .next_topology_change()
             .expect("canonical graph topology revision exhausted");
-        let applied = self.graph.apply_split_group_for_commit(
-            target_group,
-            new_group,
-            items,
-            selected,
-            axis,
-            insert_before,
-            ratio,
-            space,
-            next_version,
-        );
-        assert!(applied, "validated split-group patch must be applicable");
+        let effects = self
+            .graph
+            .apply_split_group_for_commit(
+                target_group,
+                new_group,
+                items,
+                selected,
+                axis,
+                insert_before,
+                ratio,
+                space,
+                next_version,
+            )
+            .expect("validated split-group patch must be applicable");
         let recorded = self.authority.record_topology_change();
         debug_assert_eq!(recorded, next_version);
-        GraphRevision::from_version(self.graph.version())
+        GraphAppliedPatch::new(GraphRevision::from_version(self.graph.version()), effects)
     }
 
     fn apply_move_group_to_edge(
@@ -391,25 +393,27 @@ impl GraphPatchTarget for CanonicalGraphRuntime {
         axis: SplitAxis,
         insert_before: bool,
         ratio: f32,
-    ) -> GraphRevision {
+    ) -> GraphAppliedPatch {
         let next_version = self
             .authority
             .next_topology_change()
             .expect("canonical graph topology revision exhausted");
-        let applied = self.graph.apply_move_group_to_edge_for_commit(
-            source_group,
-            target_group,
-            source_space,
-            target_space,
-            axis,
-            insert_before,
-            ratio,
-            next_version,
-        );
-        assert!(applied, "validated group move patch must be applicable");
+        let effects = self
+            .graph
+            .apply_move_group_to_edge_for_commit(
+                source_group,
+                target_group,
+                source_space,
+                target_space,
+                axis,
+                insert_before,
+                ratio,
+                next_version,
+            )
+            .expect("validated group move patch must be applicable");
         let recorded = self.authority.record_topology_change();
         debug_assert_eq!(recorded, next_version);
-        GraphRevision::from_version(self.graph.version())
+        GraphAppliedPatch::new(GraphRevision::from_version(self.graph.version()), effects)
     }
 
     fn apply_move_group_to_center(
@@ -418,22 +422,24 @@ impl GraphPatchTarget for CanonicalGraphRuntime {
         target_group: &DockGroupId,
         source_space: &DockSpaceId,
         target_space: &DockSpaceId,
-    ) -> GraphRevision {
+    ) -> GraphAppliedPatch {
         let next_version = self
             .authority
             .next_topology_change()
             .expect("canonical graph topology revision exhausted");
-        let applied = self.graph.apply_move_group_to_center_for_commit(
-            source_group,
-            target_group,
-            source_space,
-            target_space,
-            next_version,
-        );
-        assert!(applied, "validated group merge patch must be applicable");
+        let effects = self
+            .graph
+            .apply_move_group_to_center_for_commit(
+                source_group,
+                target_group,
+                source_space,
+                target_space,
+                next_version,
+            )
+            .expect("validated group merge patch must be applicable");
         let recorded = self.authority.record_topology_change();
         debug_assert_eq!(recorded, next_version);
-        GraphRevision::from_version(self.graph.version())
+        GraphAppliedPatch::new(GraphRevision::from_version(self.graph.version()), effects)
     }
 
     fn apply_move_group_to_empty_space(
@@ -441,24 +447,23 @@ impl GraphPatchTarget for CanonicalGraphRuntime {
         source_group: &DockGroupId,
         source_space: &DockSpaceId,
         target_space: &DockSpaceId,
-    ) -> GraphRevision {
+    ) -> GraphAppliedPatch {
         let next_version = self
             .authority
             .next_topology_change()
             .expect("canonical graph topology revision exhausted");
-        let applied = self.graph.apply_move_group_to_empty_space_for_commit(
-            source_group,
-            source_space,
-            target_space,
-            next_version,
-        );
-        assert!(
-            applied,
-            "validated group-to-empty-space patch must be applicable"
-        );
+        let effects = self
+            .graph
+            .apply_move_group_to_empty_space_for_commit(
+                source_group,
+                source_space,
+                target_space,
+                next_version,
+            )
+            .expect("validated group-to-empty-space patch must be applicable");
         let recorded = self.authority.record_topology_change();
         debug_assert_eq!(recorded, next_version);
-        GraphRevision::from_version(self.graph.version())
+        GraphAppliedPatch::new(GraphRevision::from_version(self.graph.version()), effects)
     }
 
     fn apply_move_item_to_group(
@@ -469,24 +474,26 @@ impl GraphPatchTarget for CanonicalGraphRuntime {
         source_space: &DockSpaceId,
         target_space: &DockSpaceId,
         insert_index: Option<usize>,
-    ) -> GraphRevision {
+    ) -> GraphAppliedPatch {
         let next_version = self
             .authority
             .next_topology_change()
             .expect("canonical graph topology revision exhausted");
-        let applied = self.graph.apply_move_item_to_group_for_commit(
-            item,
-            source_group,
-            target_group,
-            source_space,
-            target_space,
-            insert_index,
-            next_version,
-        );
-        assert!(applied, "validated item move patch must be applicable");
+        let effects = self
+            .graph
+            .apply_move_item_to_group_for_commit(
+                item,
+                source_group,
+                target_group,
+                source_space,
+                target_space,
+                insert_index,
+                next_version,
+            )
+            .expect("validated item move patch must be applicable");
         let recorded = self.authority.record_topology_change();
         debug_assert_eq!(recorded, next_version);
-        GraphRevision::from_version(self.graph.version())
+        GraphAppliedPatch::new(GraphRevision::from_version(self.graph.version()), effects)
     }
 
     fn apply_move_item_to_edge(
@@ -500,27 +507,29 @@ impl GraphPatchTarget for CanonicalGraphRuntime {
         axis: SplitAxis,
         insert_before: bool,
         ratio: f32,
-    ) -> GraphRevision {
+    ) -> GraphAppliedPatch {
         let next_version = self
             .authority
             .next_topology_change()
             .expect("canonical graph topology revision exhausted");
-        let applied = self.graph.apply_move_item_to_edge_for_commit(
-            item,
-            source_group,
-            new_group,
-            target_group,
-            source_space,
-            target_space,
-            axis,
-            insert_before,
-            ratio,
-            next_version,
-        );
-        assert!(applied, "validated item edge patch must be applicable");
+        let effects = self
+            .graph
+            .apply_move_item_to_edge_for_commit(
+                item,
+                source_group,
+                new_group,
+                target_group,
+                source_space,
+                target_space,
+                axis,
+                insert_before,
+                ratio,
+                next_version,
+            )
+            .expect("validated item edge patch must be applicable");
         let recorded = self.authority.record_topology_change();
         debug_assert_eq!(recorded, next_version);
-        GraphRevision::from_version(self.graph.version())
+        GraphAppliedPatch::new(GraphRevision::from_version(self.graph.version()), effects)
     }
 
     fn apply_move_item_to_empty_space(
@@ -530,26 +539,25 @@ impl GraphPatchTarget for CanonicalGraphRuntime {
         new_group: &DockGroupId,
         source_space: &DockSpaceId,
         target_space: &DockSpaceId,
-    ) -> GraphRevision {
+    ) -> GraphAppliedPatch {
         let next_version = self
             .authority
             .next_topology_change()
             .expect("canonical graph topology revision exhausted");
-        let applied = self.graph.apply_move_item_to_empty_space_for_commit(
-            item,
-            source_group,
-            new_group,
-            source_space,
-            target_space,
-            next_version,
-        );
-        assert!(
-            applied,
-            "validated item-to-empty-space patch must be applicable"
-        );
+        let effects = self
+            .graph
+            .apply_move_item_to_empty_space_for_commit(
+                item,
+                source_group,
+                new_group,
+                source_space,
+                target_space,
+                next_version,
+            )
+            .expect("validated item-to-empty-space patch must be applicable");
         let recorded = self.authority.record_topology_change();
         debug_assert_eq!(recorded, next_version);
-        GraphRevision::from_version(self.graph.version())
+        GraphAppliedPatch::new(GraphRevision::from_version(self.graph.version()), effects)
     }
 
     fn apply_float_item_in_window(
@@ -563,27 +571,29 @@ impl GraphPatchTarget for CanonicalGraphRuntime {
         retired_floating: Option<&DockFloatingId>,
         bounds: DockLayoutRect,
         z_order: i32,
-    ) -> GraphRevision {
+    ) -> GraphAppliedPatch {
         let next_version = self
             .authority
             .next_topology_change()
             .expect("canonical graph topology revision exhausted");
-        let applied = self.graph.apply_float_item_in_window_for_commit(
-            item,
-            source_group,
-            new_group,
-            floating,
-            source_space,
-            target_space,
-            retired_floating,
-            bounds,
-            z_order,
-            next_version,
-        );
-        assert!(applied, "validated item float patch must be applicable");
+        let effects = self
+            .graph
+            .apply_float_item_in_window_for_commit(
+                item,
+                source_group,
+                new_group,
+                floating,
+                source_space,
+                target_space,
+                retired_floating,
+                bounds,
+                z_order,
+                next_version,
+            )
+            .expect("validated item float patch must be applicable");
         let recorded = self.authority.record_topology_change();
         debug_assert_eq!(recorded, next_version);
-        GraphRevision::from_version(self.graph.version())
+        GraphAppliedPatch::new(GraphRevision::from_version(self.graph.version()), effects)
     }
 
     fn apply_move_floating_root_to_edge(
@@ -595,27 +605,26 @@ impl GraphPatchTarget for CanonicalGraphRuntime {
         axis: SplitAxis,
         insert_before: bool,
         ratio: f32,
-    ) -> GraphRevision {
+    ) -> GraphAppliedPatch {
         let next_version = self
             .authority
             .next_topology_change()
             .expect("canonical graph topology revision exhausted");
-        let applied = self.graph.apply_move_floating_root_to_edge_for_commit(
-            floating,
-            source_space,
-            target_group,
-            target_space,
-            axis,
-            insert_before,
-            ratio,
-            next_version,
-        );
-        assert!(
-            applied,
-            "validated floating-root move patch must be applicable"
-        );
+        let effects = self
+            .graph
+            .apply_move_floating_root_to_edge_for_commit(
+                floating,
+                source_space,
+                target_group,
+                target_space,
+                axis,
+                insert_before,
+                ratio,
+                next_version,
+            )
+            .expect("validated floating-root move patch must be applicable");
         let recorded = self.authority.record_topology_change();
         debug_assert_eq!(recorded, next_version);
-        GraphRevision::from_version(self.graph.version())
+        GraphAppliedPatch::new(GraphRevision::from_version(self.graph.version()), effects)
     }
 }

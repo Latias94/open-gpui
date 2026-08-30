@@ -2,6 +2,7 @@
 
 use crate::binary_layout_policy::{StructuralIdentityRemap, plan_sibling_promotion};
 use crate::graph_index::{CanonicalGraphIndex, CanonicalNodeOwner};
+use crate::graph_patch::GraphCommitEffects;
 use crate::{
     CanonicalGraphAuthority, CanonicalGraphVersion, CanonicalNodeId, DockFloatingId, DockGroupId,
     DockItemId, DockLayoutRect, DockSpaceId, SplitAxis,
@@ -92,13 +93,15 @@ pub(crate) struct CanonicalDockGraph {
     version: CanonicalGraphVersion,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 struct CanonicalLeafDetach {
+    size_ref: Option<CanonicalSizeRef>,
     remap: Option<StructuralIdentityRemap>,
+    effects: GraphCommitEffects,
 }
 
 impl CanonicalLeafDetach {
-    fn remap_node(self, node: CanonicalNodeId) -> CanonicalNodeId {
+    fn remap_node(&self, node: CanonicalNodeId) -> CanonicalNodeId {
         match self.remap {
             Some(remap) if remap.from == node => remap.to,
             Some(_) | None => node,
@@ -178,24 +181,25 @@ impl CanonicalDockGraph {
     ///
     /// This is intentionally the only production mutation entry point for the canonical group
     /// state in the first migration slice. Callers must prove membership before entering it; the
-    /// boolean is retained as an invariant check so future patch kinds can share the same seam.
+    /// optional result is retained as an invariant check so future patch kinds can share the same
+    /// boundary.
     pub(crate) fn apply_selection_for_commit(
         &mut self,
         group: &DockGroupId,
         item: &DockItemId,
         version: CanonicalGraphVersion,
-    ) -> bool {
+    ) -> Option<GraphCommitEffects> {
         let Some(group_state) = self.groups.get_mut(group) else {
-            return false;
+            return None;
         };
         if !group_state.items.contains(item) {
-            return false;
+            return None;
         }
         group_state.mru.retain(|entry| entry != item);
         group_state.mru.insert(0, item.clone());
         group_state.selected = item.clone();
         self.version = version;
-        true
+        Some(GraphCommitEffects::default())
     }
 
     /// Inserts a new group beside an existing group and rewires only its local parent/root path.
@@ -210,12 +214,12 @@ impl CanonicalDockGraph {
         ratio: f32,
         space: &DockSpaceId,
         version: CanonicalGraphVersion,
-    ) -> bool {
+    ) -> Option<GraphCommitEffects> {
         let Some(target_node) = self.index.node_for_group(target_group) else {
-            return false;
+            return None;
         };
         let Some(owner) = self.index.owner_for_node(target_node).cloned() else {
-            return false;
+            return None;
         };
         let owner_space = match &owner {
             CanonicalNodeOwner::Main(owner_space)
@@ -232,20 +236,20 @@ impl CanonicalDockGraph {
             || ratio <= 0.0
             || ratio >= 1.0
         {
-            return false;
+            return None;
         }
         if items
             .iter()
             .any(|item| self.index.group_for_item(item).is_some())
         {
-            return false;
+            return None;
         }
 
         let parent = self.index.parent_of(target_node).flatten();
         if let Some(parent) = parent
             && !matches!(self.nodes.get(parent), Some(CanonicalNode::Branch { .. }))
         {
-            return false;
+            return None;
         }
 
         self.groups.insert(
@@ -324,7 +328,11 @@ impl CanonicalDockGraph {
         self.index.insert_branch(branch_id, parent, owner.clone());
         self.index.set_parent(target_node, Some(branch_id));
         self.version = version;
-        true
+        let mut effects = GraphCommitEffects::default();
+        effects.record_created_group(new_group.clone());
+        effects.record_created_node(new_leaf);
+        effects.record_created_node(branch_id);
+        Some(effects)
     }
 
     pub(crate) fn apply_move_group_to_edge_for_commit(
@@ -337,26 +345,26 @@ impl CanonicalDockGraph {
         insert_before: bool,
         ratio: f32,
         version: CanonicalGraphVersion,
-    ) -> bool {
+    ) -> Option<GraphCommitEffects> {
         if source_group == target_group
             || !ratio.is_finite()
             || !(0.0..=1.0).contains(&ratio)
             || ratio <= 0.0
             || ratio >= 1.0
         {
-            return false;
+            return None;
         }
         let Some(source_node) = self.index.node_for_group(source_group) else {
-            return false;
+            return None;
         };
         let Some(target_node) = self.index.node_for_group(target_group) else {
-            return false;
+            return None;
         };
         let Some(source_owner) = self.index.owner_for_node(source_node).cloned() else {
-            return false;
+            return None;
         };
         let Some(target_owner) = self.index.owner_for_node(target_node).cloned() else {
-            return false;
+            return None;
         };
         let source_owner_space = match &source_owner {
             CanonicalNodeOwner::Main(space) | CanonicalNodeOwner::Floating { space, .. } => space,
@@ -365,10 +373,10 @@ impl CanonicalDockGraph {
             CanonicalNodeOwner::Main(space) | CanonicalNodeOwner::Floating { space, .. } => space,
         };
         if source_owner_space != source_space || target_owner_space != target_space {
-            return false;
+            return None;
         }
         let Some(detach) = self.detach_group_leaf_for_commit(source_node, &source_owner) else {
-            return false;
+            return None;
         };
         let target_node = detach.remap_node(target_node);
 
@@ -402,10 +410,16 @@ impl CanonicalDockGraph {
                 "reachable target parent must reference the target node"
             );
         }
+        let source_leaf = self.bind_detached_group_leaf(
+            source_group,
+            detach.size_ref,
+            None,
+            target_owner.clone(),
+        );
         let branch_id = self.nodes.insert(if insert_before {
             CanonicalNode::Branch {
                 axis,
-                first: source_node,
+                first: source_leaf,
                 second: target_node,
                 ratio,
                 size_ref: None,
@@ -414,7 +428,7 @@ impl CanonicalDockGraph {
             CanonicalNode::Branch {
                 axis,
                 first: target_node,
-                second: source_node,
+                second: source_leaf,
                 ratio,
                 size_ref: None,
             }
@@ -452,11 +466,12 @@ impl CanonicalDockGraph {
         self.index
             .insert_branch(branch_id, target_parent, target_owner.clone());
         self.index.set_parent(target_node, Some(branch_id));
-        self.index.set_parent(source_node, Some(branch_id));
-        self.index
-            .update_owner_subtree(&self.nodes, &self.groups, source_node, target_owner);
+        self.index.set_parent(source_leaf, Some(branch_id));
         self.version = version;
-        true
+        let mut effects = detach.effects;
+        effects.record_created_node(source_leaf);
+        effects.record_created_node(branch_id);
+        Some(effects)
     }
 
     /// Merges a target group into a complete source payload and preserves the source identity.
@@ -471,21 +486,21 @@ impl CanonicalDockGraph {
         source_space: &DockSpaceId,
         target_space: &DockSpaceId,
         version: CanonicalGraphVersion,
-    ) -> bool {
+    ) -> Option<GraphCommitEffects> {
         if source_group == target_group {
-            return false;
+            return None;
         }
         let Some(source_node) = self.index.node_for_group(source_group) else {
-            return false;
+            return None;
         };
         let Some(target_node) = self.index.node_for_group(target_group) else {
-            return false;
+            return None;
         };
         let Some(source_owner) = self.index.owner_for_node(source_node).cloned() else {
-            return false;
+            return None;
         };
         let Some(target_owner) = self.index.owner_for_node(target_node).cloned() else {
-            return false;
+            return None;
         };
         let source_owner_space = match &source_owner {
             CanonicalNodeOwner::Main(space) | CanonicalNodeOwner::Floating { space, .. } => space,
@@ -494,10 +509,10 @@ impl CanonicalDockGraph {
             CanonicalNodeOwner::Main(space) | CanonicalNodeOwner::Floating { space, .. } => space,
         };
         if source_owner_space != source_space || target_owner_space != target_space {
-            return false;
+            return None;
         }
         let Some(detach) = self.detach_group_leaf_for_commit(source_node, &source_owner) else {
-            return false;
+            return None;
         };
         let target_node = detach.remap_node(target_node);
 
@@ -537,7 +552,6 @@ impl CanonicalDockGraph {
         };
         *group = source_group.clone();
 
-        self.nodes.remove(source_node);
         self.index.merge_target_group_into_source_at_target_leaf(
             source_node,
             source_group,
@@ -548,7 +562,9 @@ impl CanonicalDockGraph {
             &target_owner,
         );
         self.version = version;
-        true
+        let mut effects = detach.effects;
+        effects.record_retired_group(target_group.clone());
+        Some(effects)
     }
 
     /// Rehomes one durable group leaf as the main root of an empty dock space.
@@ -558,28 +574,28 @@ impl CanonicalDockGraph {
         source_space: &DockSpaceId,
         target_space: &DockSpaceId,
         version: CanonicalGraphVersion,
-    ) -> bool {
+    ) -> Option<GraphCommitEffects> {
         let Some(source_node) = self.index.node_for_group(source_group) else {
-            return false;
+            return None;
         };
         let Some(source_owner) = self.index.owner_for_node(source_node).cloned() else {
-            return false;
+            return None;
         };
         let source_owner_space = match &source_owner {
             CanonicalNodeOwner::Main(space) | CanonicalNodeOwner::Floating { space, .. } => space,
         };
         if source_owner_space != source_space {
-            return false;
+            return None;
         }
         let Some(target_state) = self.spaces.get(target_space) else {
-            return false;
+            return None;
         };
         if target_state.root.is_some() {
-            return false;
+            return None;
         }
         if source_space == target_space {
             let CanonicalNodeOwner::Floating { floating, .. } = &source_owner else {
-                return false;
+                return None;
             };
             if target_state.floating_roots.as_slice() != [floating.clone()]
                 || !self
@@ -587,37 +603,32 @@ impl CanonicalDockGraph {
                     .get(floating)
                     .is_some_and(|root| root.root == source_node)
             {
-                return false;
+                return None;
             }
         } else if !target_state.floating_roots.is_empty() {
-            return false;
+            return None;
         }
         let bind_central =
             target_state.central.keep_alive_when_empty && target_state.central.node.is_none();
 
-        if self
-            .detach_group_leaf_for_commit(source_node, &source_owner)
-            .is_none()
-        {
-            return false;
-        }
+        let Some(detach) = self.detach_group_leaf_for_commit(source_node, &source_owner) else {
+            return None;
+        };
+        let target_owner = CanonicalNodeOwner::Main(target_space.clone());
+        let target_leaf =
+            self.bind_detached_group_leaf(source_group, detach.size_ref, None, target_owner);
         let target_state = self
             .spaces
             .get_mut(target_space)
             .expect("validated target space must remain present");
-        target_state.root = Some(source_node);
+        target_state.root = Some(target_leaf);
         if bind_central {
-            target_state.central.node = Some(source_node);
+            target_state.central.node = Some(target_leaf);
         }
-        self.index.set_parent(source_node, None);
-        self.index.update_owner_subtree(
-            &self.nodes,
-            &self.groups,
-            source_node,
-            CanonicalNodeOwner::Main(target_space.clone()),
-        );
         self.version = version;
-        true
+        let mut effects = detach.effects;
+        effects.record_created_node(target_leaf);
+        Some(effects)
     }
 
     /// Moves one item into a target group, retiring an empty source leaf when necessary.
@@ -630,18 +641,18 @@ impl CanonicalDockGraph {
         target_space: &DockSpaceId,
         insert_index: Option<usize>,
         version: CanonicalGraphVersion,
-    ) -> bool {
+    ) -> Option<GraphCommitEffects> {
         let Some(source_node) = self.index.node_for_group(source_group) else {
-            return false;
+            return None;
         };
         let Some(target_node) = self.index.node_for_group(target_group) else {
-            return false;
+            return None;
         };
         let Some(source_owner) = self.index.owner_for_node(source_node).cloned() else {
-            return false;
+            return None;
         };
         let Some(target_owner) = self.index.owner_for_node(target_node).cloned() else {
-            return false;
+            return None;
         };
         let source_owner_space = match &source_owner {
             CanonicalNodeOwner::Main(space) | CanonicalNodeOwner::Floating { space, .. } => space,
@@ -650,7 +661,7 @@ impl CanonicalDockGraph {
             CanonicalNodeOwner::Main(space) | CanonicalNodeOwner::Floating { space, .. } => space,
         };
         if source_owner_space != source_space || target_owner_space != target_space {
-            return false;
+            return None;
         }
 
         let Some(source_index) = self
@@ -658,7 +669,7 @@ impl CanonicalDockGraph {
             .get(source_group)
             .and_then(|group| group.items.iter().position(|candidate| candidate == item))
         else {
-            return false;
+            return None;
         };
 
         if source_group == target_group {
@@ -677,7 +688,7 @@ impl CanonicalDockGraph {
             group.mru.retain(|entry| entry != item);
             group.mru.insert(0, item.clone());
             self.version = version;
-            return true;
+            return Some(GraphCommitEffects::default());
         }
 
         let source_empty = {
@@ -708,31 +719,23 @@ impl CanonicalDockGraph {
         target.mru.retain(|entry| entry != item);
         target.mru.insert(0, item.clone());
 
+        let mut effects = GraphCommitEffects::default();
         if source_empty {
-            if self
-                .detach_group_leaf_for_commit(source_node, &source_owner)
-                .is_none()
-            {
-                return false;
-            }
+            let Some(detach) = self.detach_group_leaf_for_commit(source_node, &source_owner) else {
+                return None;
+            };
+            effects.merge(detach.effects);
             self.groups.remove(source_group);
-            self.nodes.remove(source_node);
-            self.index.merge_group_into(
-                source_node,
-                source_group,
-                &[],
-                target_group,
-                &target_owner,
-            );
+            effects.record_retired_group(source_group.clone());
         }
         self.index
             .move_item_to_group(item, source_group, target_group, &target_owner);
         self.version = version;
-        true
+        Some(effects)
     }
 
-    /// Moves one item beside a target group, preserving a singleton source leaf or creating a
-    /// new durable group for an item extracted from a multi-item source.
+    /// Moves one item beside a target group, preserving a singleton source group while replacing
+    /// its structural leaf or creating a durable group for a multi-item extraction.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn apply_move_item_to_edge_for_commit(
         &mut self,
@@ -746,21 +749,21 @@ impl CanonicalDockGraph {
         insert_before: bool,
         ratio: f32,
         version: CanonicalGraphVersion,
-    ) -> bool {
+    ) -> Option<GraphCommitEffects> {
         if !ratio.is_finite() || !(0.0..=1.0).contains(&ratio) || ratio <= 0.0 || ratio >= 1.0 {
-            return false;
+            return None;
         }
         let Some(source_node) = self.index.node_for_group(source_group) else {
-            return false;
+            return None;
         };
         let Some(target_node) = self.index.node_for_group(target_group) else {
-            return false;
+            return None;
         };
         let Some(source_owner) = self.index.owner_for_node(source_node).cloned() else {
-            return false;
+            return None;
         };
         let Some(target_owner) = self.index.owner_for_node(target_node).cloned() else {
-            return false;
+            return None;
         };
         let source_owner_space = match &source_owner {
             CanonicalNodeOwner::Main(space) | CanonicalNodeOwner::Floating { space, .. } => space,
@@ -769,10 +772,10 @@ impl CanonicalDockGraph {
             CanonicalNodeOwner::Main(space) | CanonicalNodeOwner::Floating { space, .. } => space,
         };
         if source_owner_space != source_space || target_owner_space != target_space {
-            return false;
+            return None;
         }
         let Some(source_state) = self.groups.get(source_group) else {
-            return false;
+            return None;
         };
         let source_len = source_state.items.len();
         let Some(source_index) = source_state
@@ -780,12 +783,12 @@ impl CanonicalDockGraph {
             .iter()
             .position(|candidate| candidate == item)
         else {
-            return false;
+            return None;
         };
 
         if source_len == 1 {
             if new_group != source_group {
-                return false;
+                return None;
             }
             return self.apply_move_group_to_edge_for_commit(
                 source_group,
@@ -799,10 +802,10 @@ impl CanonicalDockGraph {
             );
         }
         if new_group == source_group || self.groups.contains_key(new_group) {
-            return false;
+            return None;
         }
         let Some(target_parent) = self.index.parent_of(target_node) else {
-            return false;
+            return None;
         };
         if let Some(parent) = target_parent
             && !matches!(
@@ -811,7 +814,7 @@ impl CanonicalDockGraph {
                     if *first == target_node || *second == target_node
             )
         {
-            return false;
+            return None;
         }
 
         let source = self
@@ -829,31 +832,29 @@ impl CanonicalDockGraph {
         }
         self.index.remove_item_membership(item, source_group);
 
-        let applied = self.apply_split_group_for_commit(
-            target_group,
-            new_group,
-            std::slice::from_ref(item),
-            item,
-            axis,
-            insert_before,
-            ratio,
-            target_space,
-            version,
-        );
-        assert!(
-            applied,
-            "validated item edge split must be applicable after local extraction"
-        );
+        let effects = self
+            .apply_split_group_for_commit(
+                target_group,
+                new_group,
+                std::slice::from_ref(item),
+                item,
+                axis,
+                insert_before,
+                ratio,
+                target_space,
+                version,
+            )
+            .expect("validated item edge split must be applicable after local extraction");
         self.groups
             .get_mut(new_group)
             .expect("item edge split inserted the destination group")
             .mru
             .push(item.clone());
-        true
+        Some(effects)
     }
 
-    /// Moves one item into an empty main root, either reusing a singleton group or creating a
-    /// new durable group leaf while retaining the remaining source group.
+    /// Moves one item into an empty main root, either retaining a singleton group behind a new
+    /// structural leaf or creating a durable group while retaining the remaining source group.
     pub(crate) fn apply_move_item_to_empty_space_for_commit(
         &mut self,
         item: &DockItemId,
@@ -862,28 +863,28 @@ impl CanonicalDockGraph {
         source_space: &DockSpaceId,
         target_space: &DockSpaceId,
         version: CanonicalGraphVersion,
-    ) -> bool {
+    ) -> Option<GraphCommitEffects> {
         let Some(source_node) = self.index.node_for_group(source_group) else {
-            return false;
+            return None;
         };
         let Some(source_owner) = self.index.owner_for_node(source_node).cloned() else {
-            return false;
+            return None;
         };
         let source_owner_space = match &source_owner {
             CanonicalNodeOwner::Main(space) | CanonicalNodeOwner::Floating { space, .. } => space,
         };
         if source_owner_space != source_space {
-            return false;
+            return None;
         }
         let Some(source_state) = self.groups.get(source_group) else {
-            return false;
+            return None;
         };
         let source_len = source_state.items.len();
         if !source_state.items.iter().any(|candidate| candidate == item) {
-            return false;
+            return None;
         }
         let Some(target_state) = self.spaces.get(target_space) else {
-            return false;
+            return None;
         };
         let target_is_empty = if source_space == target_space {
             target_state.root.is_none()
@@ -899,41 +900,24 @@ impl CanonicalDockGraph {
             target_state.root.is_none() && target_state.floating_roots.is_empty()
         };
         if !target_is_empty {
-            return false;
+            return None;
         }
         if source_len == 1 && new_group != source_group {
-            return false;
+            return None;
         }
         if source_len > 1 && (new_group == source_group || self.groups.contains_key(new_group)) {
-            return false;
+            return None;
         }
         let bind_central =
             target_state.central.keep_alive_when_empty && target_state.central.node.is_none();
 
         if source_len == 1 {
-            if self
-                .detach_group_leaf_for_commit(source_node, &source_owner)
-                .is_none()
-            {
-                return false;
-            }
-            let target_state = self
-                .spaces
-                .get_mut(target_space)
-                .expect("validated target space must remain present");
-            target_state.root = Some(source_node);
-            if bind_central {
-                target_state.central.node = Some(source_node);
-            }
-            self.index.set_parent(source_node, None);
-            self.index.update_owner_subtree(
-                &self.nodes,
-                &self.groups,
-                source_node,
-                CanonicalNodeOwner::Main(target_space.clone()),
+            return self.apply_move_group_to_empty_space_for_commit(
+                source_group,
+                source_space,
+                target_space,
+                version,
             );
-            self.version = version;
-            return true;
         }
 
         let source = self
@@ -981,7 +965,10 @@ impl CanonicalDockGraph {
             CanonicalNodeOwner::Main(target_space.clone()),
         );
         self.version = version;
-        true
+        let mut effects = GraphCommitEffects::default();
+        effects.record_created_group(new_group.clone());
+        effects.record_created_node(new_leaf);
+        Some(effects)
     }
 
     /// Extracts one item into a new first-class floating root.
@@ -998,7 +985,7 @@ impl CanonicalDockGraph {
         bounds: DockLayoutRect,
         z_order: i32,
         version: CanonicalGraphVersion,
-    ) -> bool {
+    ) -> Option<GraphCommitEffects> {
         if !bounds.is_finite_with_non_negative_size()
             || bounds.width <= 0.0
             || bounds.height <= 0.0
@@ -1006,22 +993,22 @@ impl CanonicalDockGraph {
             || new_group.as_str().is_empty()
             || self.floating_roots.contains_key(floating)
         {
-            return false;
+            return None;
         }
         let Some(source_node) = self.index.node_for_group(source_group) else {
-            return false;
+            return None;
         };
         let Some(source_owner) = self.index.owner_for_node(source_node).cloned() else {
-            return false;
+            return None;
         };
         let source_owner_space = match &source_owner {
             CanonicalNodeOwner::Main(space) | CanonicalNodeOwner::Floating { space, .. } => space,
         };
         if source_owner_space != source_space {
-            return false;
+            return None;
         }
         let Some(source_state) = self.groups.get(source_group) else {
-            return false;
+            return None;
         };
         let source_len = source_state.items.len();
         let actual_retired_floating = match &source_owner {
@@ -1033,23 +1020,23 @@ impl CanonicalDockGraph {
             CanonicalNodeOwner::Main(_) | CanonicalNodeOwner::Floating { .. } => None,
         };
         if actual_retired_floating != retired_floating {
-            return false;
+            return None;
         }
         let Some(source_index) = source_state
             .items
             .iter()
             .position(|candidate| candidate == item)
         else {
-            return false;
+            return None;
         };
         if (source_len == 1 && new_group != source_group)
             || (source_len > 1
                 && (new_group == source_group || self.groups.contains_key(new_group)))
         {
-            return false;
+            return None;
         }
         let Some(target_state) = self.spaces.get(target_space) else {
-            return false;
+            return None;
         };
         let expected_z_order = target_state
             .floating_roots
@@ -1066,17 +1053,22 @@ impl CanonicalDockGraph {
             .max()
             .map_or(Some(0), |current| current.checked_add(1));
         if expected_z_order != Some(z_order) {
-            return false;
+            return None;
         }
 
-        let floating_root = if source_len == 1 {
-            if self
-                .detach_group_leaf_for_commit(source_node, &source_owner)
-                .is_none()
-            {
-                return false;
-            }
-            source_node
+        let owner = CanonicalNodeOwner::Floating {
+            space: target_space.clone(),
+            floating: floating.clone(),
+        };
+        let (floating_root, mut effects) = if source_len == 1 {
+            let Some(detach) = self.detach_group_leaf_for_commit(source_node, &source_owner) else {
+                return None;
+            };
+            let new_leaf =
+                self.bind_detached_group_leaf(source_group, detach.size_ref, None, owner.clone());
+            let mut effects = detach.effects;
+            effects.record_created_node(new_leaf);
+            (new_leaf, effects)
         } else {
             let source = self
                 .groups
@@ -1105,7 +1097,10 @@ impl CanonicalDockGraph {
                     mru: vec![item.clone()],
                 },
             );
-            new_leaf
+            let mut effects = GraphCommitEffects::default();
+            effects.record_created_group(new_group.clone());
+            effects.record_created_node(new_leaf);
+            (new_leaf, effects)
         };
 
         self.floating_roots.insert(
@@ -1122,15 +1117,7 @@ impl CanonicalDockGraph {
             .expect("validated target space must remain present")
             .floating_roots
             .push(floating.clone());
-        let owner = CanonicalNodeOwner::Floating {
-            space: target_space.clone(),
-            floating: floating.clone(),
-        };
-        if source_len == 1 {
-            self.index.set_parent(floating_root, None);
-            self.index
-                .update_owner_subtree(&self.nodes, &self.groups, floating_root, owner);
-        } else {
+        if source_len > 1 {
             self.index.insert_group(
                 floating_root,
                 new_group,
@@ -1142,7 +1129,8 @@ impl CanonicalDockGraph {
             );
         }
         self.version = version;
-        true
+        effects.record_created_floating(floating.clone());
+        Some(effects)
     }
 
     /// Moves a complete floating subtree beside a target group and retires its floating owner.
@@ -1156,36 +1144,36 @@ impl CanonicalDockGraph {
         insert_before: bool,
         ratio: f32,
         version: CanonicalGraphVersion,
-    ) -> bool {
+    ) -> Option<GraphCommitEffects> {
         if !ratio.is_finite() || !(0.0..=1.0).contains(&ratio) || ratio <= 0.0 || ratio >= 1.0 {
-            return false;
+            return None;
         }
         let Some(source_floating) = self.floating_roots.get(floating).cloned() else {
-            return false;
+            return None;
         };
         if source_floating.space != *source_space {
-            return false;
+            return None;
         }
         let Some(source_space_state) = self.spaces.get(source_space) else {
-            return false;
+            return None;
         };
         if !source_space_state.floating_roots.contains(floating) {
-            return false;
+            return None;
         }
         let Some(target_node) = self.index.node_for_group(target_group) else {
-            return false;
+            return None;
         };
         let Some(target_owner) = self.index.owner_for_node(target_node).cloned() else {
-            return false;
+            return None;
         };
         let target_owner_space = match &target_owner {
             CanonicalNodeOwner::Main(space) | CanonicalNodeOwner::Floating { space, .. } => space,
         };
         if target_owner_space != target_space {
-            return false;
+            return None;
         }
         if Self::find_reachable_parent(self, source_floating.root, target_node, None).is_some() {
-            return false;
+            return None;
         }
 
         let target_parent = match &target_owner {
@@ -1274,15 +1262,22 @@ impl CanonicalDockGraph {
             target_owner,
         );
         self.version = version;
-        true
+        let mut effects = GraphCommitEffects::default();
+        effects.record_created_node(branch_id);
+        effects.record_retired_floating(floating.clone());
+        Some(effects)
     }
 
-    /// Detaches a group leaf while promoting its sibling into the existing parent identity.
+    /// Detaches a group payload while retiring its structural leaf.
     fn detach_group_leaf_for_commit(
         &mut self,
         source_node: CanonicalNodeId,
         source_owner: &CanonicalNodeOwner,
     ) -> Option<CanonicalLeafDetach> {
+        let (source_group, source_size_ref) = match self.nodes.get(source_node)? {
+            CanonicalNode::Group { group, size_ref } => (group.clone(), *size_ref),
+            CanonicalNode::Branch { .. } => return None,
+        };
         let Some(source_parent) = self.index.parent_of(source_node) else {
             return None;
         };
@@ -1324,7 +1319,20 @@ impl CanonicalDockGraph {
                         .retain(|candidate| candidate != floating);
                 }
             }
-            return Some(CanonicalLeafDetach { remap: None });
+            let mut effects = GraphCommitEffects::default();
+            if let CanonicalNodeOwner::Floating { floating, .. } = source_owner {
+                effects.record_retired_floating(floating.clone());
+            }
+            self.nodes
+                .remove(source_node)
+                .expect("validated source leaf must remain present");
+            self.index.retire_group_leaf(source_node, &source_group);
+            effects.record_retired_node(source_node);
+            return Some(CanonicalLeafDetach {
+                size_ref: source_size_ref,
+                remap: None,
+                effects,
+            });
         };
 
         let (first, second, parent_size_ref, sibling) = match self.nodes.get(parent) {
@@ -1366,8 +1374,16 @@ impl CanonicalDockGraph {
         self.nodes
             .remove(sibling)
             .expect("validated sibling must remain present");
-        self.index
-            .promote_sibling_into_parent(parent, source_node, sibling, &promoted);
+        self.nodes
+            .remove(source_node)
+            .expect("validated source leaf must remain present");
+        self.index.promote_sibling_into_parent(
+            parent,
+            source_node,
+            &source_group,
+            sibling,
+            &promoted,
+        );
 
         if let CanonicalNodeOwner::Main(space) = source_owner {
             let state = self
@@ -1381,9 +1397,39 @@ impl CanonicalDockGraph {
                     matches!(promoted, CanonicalNode::Group { .. }).then_some(parent);
             }
         }
+        let mut effects = GraphCommitEffects::default();
+        for retired in promotion.retired {
+            effects.record_retired_node(retired);
+        }
+        effects.record_identity_remap(promotion.remap);
         Some(CanonicalLeafDetach {
+            size_ref: source_size_ref,
             remap: Some(promotion.remap),
+            effects,
         })
+    }
+
+    fn bind_detached_group_leaf(
+        &mut self,
+        group: &DockGroupId,
+        size_ref: Option<CanonicalSizeRef>,
+        parent: Option<CanonicalNodeId>,
+        owner: CanonicalNodeOwner,
+    ) -> CanonicalNodeId {
+        let node = self.nodes.insert(CanonicalNode::Group {
+            group: group.clone(),
+            size_ref,
+        });
+        self.index.bind_existing_group(
+            node,
+            group,
+            self.groups
+                .get(group)
+                .expect("detached durable group must remain present"),
+            parent,
+            owner,
+        );
+        node
     }
 
     fn find_reachable_parent(

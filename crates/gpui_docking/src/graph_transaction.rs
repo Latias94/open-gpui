@@ -3,24 +3,69 @@
 use crate::graph_patch::{
     GraphCommitId, GraphCommitOutcome, GraphCommitReceipt, GraphFloatingBounds, GraphNoOpReceipt,
     GraphPatch, GraphPatchOperation, GraphPatchTarget, GraphPrepareError, GraphPrepareOutcome,
-    GraphReadSet, GraphReadView, GraphSplitRatio, GraphSupersededReceipt,
+    GraphReadSet, GraphReadView, GraphReceiptReservation, GraphRevision, GraphSplitRatio,
+    GraphSupersededReceipt,
 };
 use crate::{DockFloatingId, DockGroupId, DockItemId, DockLayoutRect, DockSpaceId, SplitAxis};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 /// Prepared-patch owner for the canonical graph transaction boundary.
 ///
-/// This engine retains receipts by commit id and never retains a complete graph. It only allocates
-/// a symbolic local patch during preparation; the caller supplies the write target at commit time.
+/// This engine retains receipts in generation-indexed slots and never retains a complete graph. It
+/// reserves each receipt slot while preparing a symbolic local patch; the caller supplies the write
+/// target at commit time.
 #[derive(Debug, Default)]
 pub(crate) struct GraphTransactionEngine {
     next_generation: u64,
-    receipts: BTreeMap<GraphCommitId, GraphCommitReceipt>,
+    receipts: Vec<Option<Box<GraphReceiptReservation>>>,
 }
 
 impl GraphTransactionEngine {
     pub(crate) fn new() -> Self {
         Self::default()
+    }
+
+    fn reserve_commit_id(
+        &mut self,
+        revision: GraphRevision,
+    ) -> Result<GraphCommitId, GraphPrepareError> {
+        let generation = self
+            .next_generation
+            .checked_add(1)
+            .ok_or(GraphPrepareError::CommitIdExhausted)?;
+        let slot =
+            usize::try_from(generation - 1).map_err(|_| GraphPrepareError::CommitIdExhausted)?;
+        debug_assert_eq!(slot, self.receipts.len());
+        self.receipts
+            .try_reserve(1)
+            .map_err(|_| GraphPrepareError::CommitReceiptCapacityExhausted)?;
+        self.receipts.push(None);
+        self.next_generation = generation;
+        Ok(GraphCommitId::new(revision.authority_epoch(), generation))
+    }
+
+    fn receipt(&self, commit_id: GraphCommitId) -> Option<&GraphCommitReceipt> {
+        let slot = usize::try_from(commit_id.generation().checked_sub(1)?).ok()?;
+        self.receipts
+            .get(slot)?
+            .as_deref()?
+            .receipt()
+            .filter(|receipt| receipt.commit_id() == commit_id)
+    }
+
+    fn install_receipt(&mut self, reservation: Box<GraphReceiptReservation>) {
+        let commit_id = reservation
+            .receipt()
+            .expect("committed receipt reservation must be filled")
+            .commit_id();
+        let slot = usize::try_from(commit_id.generation() - 1)
+            .expect("prepared receipt slot must fit in usize");
+        let stored = self
+            .receipts
+            .get_mut(slot)
+            .expect("prepared patch must own a reserved receipt slot");
+        debug_assert!(stored.is_none());
+        *stored = Some(reservation);
     }
 
     /// Prepares a selection change after validating the target group and item.
@@ -46,16 +91,11 @@ impl GraphTransactionEngine {
             item: item.clone(),
         };
         let revision = view.graph_revision();
-
-        let generation = self
-            .next_generation
-            .checked_add(1)
-            .ok_or(GraphPrepareError::CommitIdExhausted)?;
-        self.next_generation = generation;
+        let commit_id = self.reserve_commit_id(revision)?;
         let read_set = GraphReadSet::for_select_tab(revision, current);
         Ok(GraphPrepareOutcome::Prepared(
             crate::graph_patch::PreparedGraphPatch::new(
-                GraphCommitId::new(revision.authority_epoch(), generation),
+                commit_id,
                 GraphPatch::new(operation, read_set),
             ),
         ))
@@ -130,15 +170,11 @@ impl GraphTransactionEngine {
             space,
         };
         let revision = view.graph_revision();
-        let generation = self
-            .next_generation
-            .checked_add(1)
-            .ok_or(GraphPrepareError::CommitIdExhausted)?;
-        self.next_generation = generation;
+        let commit_id = self.reserve_commit_id(revision)?;
         let read_set = GraphReadSet::for_groups(revision, [target]);
         Ok(GraphPrepareOutcome::Prepared(
             crate::graph_patch::PreparedGraphPatch::new(
-                GraphCommitId::new(revision.authority_epoch(), generation),
+                commit_id,
                 GraphPatch::new(operation, read_set),
             ),
         ))
@@ -196,15 +232,11 @@ impl GraphTransactionEngine {
             ratio,
         };
         let revision = view.graph_revision();
-        let generation = self
-            .next_generation
-            .checked_add(1)
-            .ok_or(GraphPrepareError::CommitIdExhausted)?;
-        self.next_generation = generation;
+        let commit_id = self.reserve_commit_id(revision)?;
         let read_set = GraphReadSet::for_groups(revision, [source, target]);
         Ok(GraphPrepareOutcome::Prepared(
             crate::graph_patch::PreparedGraphPatch::new(
-                GraphCommitId::new(revision.authority_epoch(), generation),
+                commit_id,
                 GraphPatch::new(operation, read_set),
             ),
         ))
@@ -259,16 +291,12 @@ impl GraphTransactionEngine {
             )));
         }
 
-        let generation = self
-            .next_generation
-            .checked_add(1)
-            .ok_or(GraphPrepareError::CommitIdExhausted)?;
-        self.next_generation = generation;
+        let commit_id = self.reserve_commit_id(revision)?;
         let read_set =
             GraphReadSet::for_group_state_sensitive_operation(revision, [source, target]);
         Ok(GraphPrepareOutcome::Prepared(
             crate::graph_patch::PreparedGraphPatch::new(
-                GraphCommitId::new(revision.authority_epoch(), generation),
+                commit_id,
                 GraphPatch::new(operation, read_set),
             ),
         ))
@@ -323,15 +351,11 @@ impl GraphTransactionEngine {
             target_space,
         };
         let revision = view.graph_revision();
-        let generation = self
-            .next_generation
-            .checked_add(1)
-            .ok_or(GraphPrepareError::CommitIdExhausted)?;
-        self.next_generation = generation;
+        let commit_id = self.reserve_commit_id(revision)?;
         let read_set = GraphReadSet::for_group_and_space(revision, source, target);
         Ok(GraphPrepareOutcome::Prepared(
             crate::graph_patch::PreparedGraphPatch::new(
-                GraphCommitId::new(revision.authority_epoch(), generation),
+                commit_id,
                 GraphPatch::new(operation, read_set),
             ),
         ))
@@ -405,11 +429,7 @@ impl GraphTransactionEngine {
             )));
         }
 
-        let generation = self
-            .next_generation
-            .checked_add(1)
-            .ok_or(GraphPrepareError::CommitIdExhausted)?;
-        self.next_generation = generation;
+        let commit_id = self.reserve_commit_id(revision)?;
         let read_set = GraphReadSet::for_group_state_sensitive_operation(
             revision,
             if source_group == target_group {
@@ -420,7 +440,7 @@ impl GraphTransactionEngine {
         );
         Ok(GraphPrepareOutcome::Prepared(
             crate::graph_patch::PreparedGraphPatch::new(
-                GraphCommitId::new(revision.authority_epoch(), generation),
+                commit_id,
                 GraphPatch::new(operation, read_set),
             ),
         ))
@@ -453,7 +473,7 @@ impl GraphTransactionEngine {
                 .ok_or_else(|| GraphPrepareError::MissingGroup {
                     group: source_group.clone(),
                 })?;
-        if !source.items.iter().any(|candidate| candidate == &item) {
+        if !source.items.contains(&item) {
             return Err(GraphPrepareError::ItemNotInGroup {
                 group: source_group,
                 item,
@@ -510,11 +530,7 @@ impl GraphTransactionEngine {
             )));
         }
 
-        let generation = self
-            .next_generation
-            .checked_add(1)
-            .ok_or(GraphPrepareError::CommitIdExhausted)?;
-        self.next_generation = generation;
+        let commit_id = self.reserve_commit_id(revision)?;
         let read_set = GraphReadSet::for_group_state_sensitive_operation(
             revision,
             if source_group == target_group {
@@ -525,7 +541,7 @@ impl GraphTransactionEngine {
         );
         Ok(GraphPrepareOutcome::Prepared(
             crate::graph_patch::PreparedGraphPatch::new(
-                GraphCommitId::new(revision.authority_epoch(), generation),
+                commit_id,
                 GraphPatch::new(operation, read_set),
             ),
         ))
@@ -552,7 +568,7 @@ impl GraphTransactionEngine {
                 .ok_or_else(|| GraphPrepareError::MissingGroup {
                     group: source_group.clone(),
                 })?;
-        if !source.items.iter().any(|candidate| candidate == &item) {
+        if !source.items.contains(&item) {
             return Err(GraphPrepareError::ItemNotInGroup {
                 group: source_group,
                 item,
@@ -603,6 +619,7 @@ impl GraphTransactionEngine {
             });
         }
 
+        let source_state_sensitive = source.items.len() > 1;
         let operation = GraphPatchOperation::MoveItemToEmptySpace {
             item,
             source_group,
@@ -611,15 +628,15 @@ impl GraphTransactionEngine {
             target_space,
         };
         let revision = view.graph_revision();
-        let generation = self
-            .next_generation
-            .checked_add(1)
-            .ok_or(GraphPrepareError::CommitIdExhausted)?;
-        self.next_generation = generation;
-        let read_set = GraphReadSet::for_group_and_space(revision, source, target);
+        let commit_id = self.reserve_commit_id(revision)?;
+        let read_set = if source_state_sensitive {
+            GraphReadSet::for_group_and_space_state_sensitive(revision, source, target)
+        } else {
+            GraphReadSet::for_group_and_space(revision, source, target)
+        };
         Ok(GraphPrepareOutcome::Prepared(
             crate::graph_patch::PreparedGraphPatch::new(
-                GraphCommitId::new(revision.authority_epoch(), generation),
+                commit_id,
                 GraphPatch::new(operation, read_set),
             ),
         ))
@@ -701,6 +718,7 @@ impl GraphTransactionEngine {
                 space: target_space.clone(),
             })?;
 
+        let source_state_sensitive = source.items.len() > 1;
         let operation = GraphPatchOperation::FloatItemInWindow {
             item,
             source_group,
@@ -713,15 +731,15 @@ impl GraphTransactionEngine {
             z_order,
         };
         let revision = view.graph_revision();
-        let generation = self
-            .next_generation
-            .checked_add(1)
-            .ok_or(GraphPrepareError::CommitIdExhausted)?;
-        self.next_generation = generation;
-        let read_set = GraphReadSet::for_group_and_space(revision, source, target);
+        let commit_id = self.reserve_commit_id(revision)?;
+        let read_set = if source_state_sensitive {
+            GraphReadSet::for_group_and_space_state_sensitive(revision, source, target)
+        } else {
+            GraphReadSet::for_group_and_space(revision, source, target)
+        };
         Ok(GraphPrepareOutcome::Prepared(
             crate::graph_patch::PreparedGraphPatch::new(
-                GraphCommitId::new(revision.authority_epoch(), generation),
+                commit_id,
                 GraphPatch::new(operation, read_set),
             ),
         ))
@@ -765,6 +783,12 @@ impl GraphTransactionEngine {
                 space: target_space,
             });
         }
+        if target.floating.as_ref() == Some(&floating) {
+            return Err(GraphPrepareError::FloatingTargetInsidePayload {
+                floating,
+                group: target_group,
+            });
+        }
         let ratio = GraphSplitRatio::new(ratio).ok_or(GraphPrepareError::InvalidSplitRatio)?;
         let operation = GraphPatchOperation::MoveFloatingRootToEdge {
             floating,
@@ -776,15 +800,11 @@ impl GraphTransactionEngine {
             ratio,
         };
         let revision = view.graph_revision();
-        let generation = self
-            .next_generation
-            .checked_add(1)
-            .ok_or(GraphPrepareError::CommitIdExhausted)?;
-        self.next_generation = generation;
+        let commit_id = self.reserve_commit_id(revision)?;
         let read_set = GraphReadSet::for_floating_and_groups(revision, floating_read, [target]);
         Ok(GraphPrepareOutcome::Prepared(
             crate::graph_patch::PreparedGraphPatch::new(
-                GraphCommitId::new(revision.authority_epoch(), generation),
+                commit_id,
                 GraphPatch::new(operation, read_set),
             ),
         ))
@@ -801,7 +821,7 @@ impl GraphTransactionEngine {
         prepared: crate::graph_patch::PreparedGraphPatch,
     ) -> GraphCommitOutcome {
         let commit_id = prepared.commit_id();
-        if let Some(receipt) = self.receipts.get(&commit_id) {
+        if let Some(receipt) = self.receipt(commit_id) {
             return GraphCommitOutcome::AlreadyCommitted(receipt.clone());
         }
 
@@ -815,8 +835,8 @@ impl GraphTransactionEngine {
             ));
         }
 
-        let operation = prepared.operation().clone();
-        let after = match &operation {
+        let (operation, mut receipt_reservation) = prepared.into_commit_parts();
+        let applied = match operation.as_ref() {
             GraphPatchOperation::SelectTab { group, item } => target.apply_select_tab(group, item),
             GraphPatchOperation::SplitGroup {
                 target_group,
@@ -958,21 +978,26 @@ impl GraphTransactionEngine {
                 ratio.get(),
             ),
         };
-        let receipt = GraphCommitReceipt::new(commit_id, before, after, operation);
-        self.receipts.insert(commit_id, receipt.clone());
+        let after = applied.after();
+        let receipt =
+            GraphCommitReceipt::new(commit_id, before, after, operation, applied.into_effects());
+        receipt_reservation.install(receipt.clone());
+        self.install_receipt(receipt_reservation);
         GraphCommitOutcome::Committed(receipt)
     }
 
     /// Replays a retained receipt without touching the target.
     pub(crate) fn replay(&self, commit_id: GraphCommitId) -> Option<GraphCommitOutcome> {
-        self.receipts
-            .get(&commit_id)
+        self.receipt(commit_id)
             .cloned()
             .map(GraphCommitOutcome::AlreadyCommitted)
     }
 
     #[cfg(test)]
     pub(crate) fn receipt_count(&self) -> usize {
-        self.receipts.len()
+        self.receipts
+            .iter()
+            .filter(|receipt| receipt.is_some())
+            .count()
     }
 }
