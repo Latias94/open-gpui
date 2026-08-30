@@ -1,11 +1,11 @@
 #![allow(dead_code)]
 
 use crate::graph_patch::{
-    GraphCommitId, GraphCommitOutcome, GraphCommitReceipt, GraphNoOpReceipt, GraphPatch,
-    GraphPatchOperation, GraphPatchTarget, GraphPrepareError, GraphPrepareOutcome, GraphReadSet,
-    GraphReadView, GraphSplitRatio, GraphSupersededReceipt,
+    GraphCommitId, GraphCommitOutcome, GraphCommitReceipt, GraphFloatingBounds, GraphNoOpReceipt,
+    GraphPatch, GraphPatchOperation, GraphPatchTarget, GraphPrepareError, GraphPrepareOutcome,
+    GraphReadSet, GraphReadView, GraphSplitRatio, GraphSupersededReceipt,
 };
-use crate::{DockFloatingId, DockGroupId, DockItemId, DockSpaceId, SplitAxis};
+use crate::{DockFloatingId, DockGroupId, DockItemId, DockLayoutRect, DockSpaceId, SplitAxis};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Prepared-patch owner for the canonical graph transaction boundary.
@@ -328,7 +328,7 @@ impl GraphTransactionEngine {
             .checked_add(1)
             .ok_or(GraphPrepareError::CommitIdExhausted)?;
         self.next_generation = generation;
-        let read_set = GraphReadSet::for_group_to_empty_space(revision, source, target);
+        let read_set = GraphReadSet::for_group_and_space(revision, source, target);
         Ok(GraphPrepareOutcome::Prepared(
             crate::graph_patch::PreparedGraphPatch::new(
                 GraphCommitId::new(revision.authority_epoch(), generation),
@@ -616,7 +616,109 @@ impl GraphTransactionEngine {
             .checked_add(1)
             .ok_or(GraphPrepareError::CommitIdExhausted)?;
         self.next_generation = generation;
-        let read_set = GraphReadSet::for_group_to_empty_space(revision, source, target);
+        let read_set = GraphReadSet::for_group_and_space(revision, source, target);
+        Ok(GraphPrepareOutcome::Prepared(
+            crate::graph_patch::PreparedGraphPatch::new(
+                GraphCommitId::new(revision.authority_epoch(), generation),
+                GraphPatch::new(operation, read_set),
+            ),
+        ))
+    }
+
+    /// Prepares extracting one item into a new first-class floating root.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn prepare_float_item_in_window<T: GraphReadView>(
+        &mut self,
+        view: &T,
+        item: impl Into<DockItemId>,
+        new_group: impl Into<DockGroupId>,
+        floating: impl Into<DockFloatingId>,
+        source_space: impl Into<DockSpaceId>,
+        target_space: impl Into<DockSpaceId>,
+        bounds: DockLayoutRect,
+    ) -> Result<GraphPrepareOutcome, GraphPrepareError> {
+        let item = item.into();
+        let new_group = new_group.into();
+        let floating = floating.into();
+        let source_space = source_space.into();
+        let target_space = target_space.into();
+        let source_group = view
+            .read_item_group(&item)
+            .ok_or_else(|| GraphPrepareError::MissingItem { item: item.clone() })?;
+        let source =
+            view.read_group(&source_group)
+                .ok_or_else(|| GraphPrepareError::MissingGroup {
+                    group: source_group.clone(),
+                })?;
+        if !source.items.contains(&item) {
+            return Err(GraphPrepareError::ItemNotInGroup {
+                group: source_group,
+                item,
+            });
+        }
+        if source.space != source_space {
+            return Err(GraphPrepareError::GroupOutsideSpace {
+                group: source_group,
+                space: source_space,
+            });
+        }
+        let target =
+            view.read_space(&target_space)
+                .ok_or_else(|| GraphPrepareError::MissingSpace {
+                    space: target_space.clone(),
+                })?;
+        if new_group.as_str().is_empty() {
+            return Err(GraphPrepareError::EmptyGroupId);
+        }
+        if new_group != source_group && view.read_group(&new_group).is_some() {
+            return Err(GraphPrepareError::GroupAlreadyExists { group: new_group });
+        }
+        if (source.items.len() == 1 && new_group != source_group)
+            || (source.items.len() > 1 && new_group == source_group)
+        {
+            return Err(GraphPrepareError::InvalidItemMoveGroupIdentity {
+                source_group,
+                new_group,
+            });
+        }
+        if floating.as_str().is_empty() {
+            return Err(GraphPrepareError::EmptyFloatingId);
+        }
+        if view.read_floating_root(&floating).is_some() {
+            return Err(GraphPrepareError::FloatingAlreadyExists { floating });
+        }
+        let bounds =
+            GraphFloatingBounds::new(bounds).ok_or(GraphPrepareError::InvalidFloatingBounds)?;
+        let retired_floating = (source.items.len() == 1 && source.is_owner_root)
+            .then(|| source.floating.clone())
+            .flatten();
+        let excluded_from_target = (source_space == target_space)
+            .then_some(retired_floating.as_ref())
+            .flatten();
+        let z_order = target
+            .next_floating_z_order_excluding(excluded_from_target)
+            .ok_or_else(|| GraphPrepareError::FloatingZOrderExhausted {
+                space: target_space.clone(),
+            })?;
+
+        let operation = GraphPatchOperation::FloatItemInWindow {
+            item,
+            source_group,
+            new_group,
+            floating,
+            source_space,
+            target_space,
+            retired_floating,
+            bounds,
+            z_order,
+        };
+        let revision = view.graph_revision();
+        let generation = self
+            .next_generation
+            .checked_add(1)
+            .ok_or(GraphPrepareError::CommitIdExhausted)?;
+        self.next_generation = generation;
+        let read_set = GraphReadSet::for_group_and_space(revision, source, target);
         Ok(GraphPrepareOutcome::Prepared(
             crate::graph_patch::PreparedGraphPatch::new(
                 GraphCommitId::new(revision.authority_epoch(), generation),
@@ -816,6 +918,27 @@ impl GraphTransactionEngine {
                 new_group,
                 source_space,
                 target_space,
+            ),
+            GraphPatchOperation::FloatItemInWindow {
+                item,
+                source_group,
+                new_group,
+                floating,
+                source_space,
+                target_space,
+                retired_floating,
+                bounds,
+                z_order,
+            } => target.apply_float_item_in_window(
+                item,
+                source_group,
+                new_group,
+                floating,
+                source_space,
+                target_space,
+                retired_floating.as_ref(),
+                bounds.get(),
+                *z_order,
             ),
             GraphPatchOperation::MoveFloatingRootToEdge {
                 floating,

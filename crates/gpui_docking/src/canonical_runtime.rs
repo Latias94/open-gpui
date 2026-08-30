@@ -8,7 +8,7 @@ use crate::graph_patch::{
 use crate::graph_transaction::GraphTransactionEngine;
 use crate::{
     CanonicalGraphAuthority, CanonicalGraphVersion, DockFloatingId, DockGroupId, DockItemId,
-    DockSpaceId, SplitAxis,
+    DockLayoutRect, DockSpaceId, SplitAxis,
 };
 use thiserror::Error;
 
@@ -233,6 +233,30 @@ impl CanonicalGraphRuntime {
             source_space,
             target_space,
             new_group,
+        );
+        self.transactions = transactions;
+        result
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn prepare_float_item_in_window(
+        &mut self,
+        item: impl Into<DockItemId>,
+        new_group: impl Into<DockGroupId>,
+        floating: impl Into<DockFloatingId>,
+        source_space: impl Into<DockSpaceId>,
+        target_space: impl Into<DockSpaceId>,
+        bounds: DockLayoutRect,
+    ) -> Result<GraphPrepareOutcome, GraphPrepareError> {
+        let mut transactions = std::mem::take(&mut self.transactions);
+        let result = transactions.prepare_float_item_in_window(
+            self,
+            item,
+            new_group,
+            floating,
+            source_space,
+            target_space,
+            bounds,
         );
         self.transactions = transactions;
         result
@@ -523,6 +547,40 @@ impl GraphPatchTarget for CanonicalGraphRuntime {
             applied,
             "validated item-to-empty-space patch must be applicable"
         );
+        let recorded = self.authority.record_topology_change();
+        debug_assert_eq!(recorded, next_version);
+        GraphRevision::from_version(self.graph.version())
+    }
+
+    fn apply_float_item_in_window(
+        &mut self,
+        item: &DockItemId,
+        source_group: &DockGroupId,
+        new_group: &DockGroupId,
+        floating: &DockFloatingId,
+        source_space: &DockSpaceId,
+        target_space: &DockSpaceId,
+        retired_floating: Option<&DockFloatingId>,
+        bounds: DockLayoutRect,
+        z_order: i32,
+    ) -> GraphRevision {
+        let next_version = self
+            .authority
+            .next_topology_change()
+            .expect("canonical graph topology revision exhausted");
+        let applied = self.graph.apply_float_item_in_window_for_commit(
+            item,
+            source_group,
+            new_group,
+            floating,
+            source_space,
+            target_space,
+            retired_floating,
+            bounds,
+            z_order,
+            next_version,
+        );
+        assert!(applied, "validated item float patch must be applicable");
         let recorded = self.authority.record_topology_change();
         debug_assert_eq!(recorded, next_version);
         GraphRevision::from_version(self.graph.version())

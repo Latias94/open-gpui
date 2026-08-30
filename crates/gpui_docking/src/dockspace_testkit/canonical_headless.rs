@@ -1,5 +1,5 @@
 use crate::{
-    DockFloatingId, DockGroupId, DockItemId, DockSpaceId, SplitAxis,
+    DockFloatingId, DockGroupId, DockItemId, DockLayoutRect, DockSpaceId, SplitAxis,
     canonical_runtime::CanonicalGraphRuntime,
     dockspace_testkit::{
         contract::{
@@ -28,6 +28,7 @@ use thiserror::Error;
 pub(crate) struct CanonicalDockspaceHeadlessRunner {
     scenario_id: String,
     runtime: CanonicalGraphRuntime,
+    next_identity: u64,
 }
 
 /// Complete transaction evidence emitted by one canonical fixture step.
@@ -51,12 +52,6 @@ pub(crate) enum CanonicalDockspaceScenarioRunError {
         step: String,
         capabilities: BTreeSet<DockspaceAdapterCapability>,
         faults: Vec<DockspaceFaultInjection>,
-    },
-    #[error("canonical scenario {scenario} step {step} does not support operation {operation}")]
-    UnsupportedOperation {
-        scenario: String,
-        step: String,
-        operation: &'static str,
     },
     #[error(
         "canonical scenario {scenario} step {step} cannot resolve item {item} in space {space}"
@@ -109,6 +104,7 @@ impl CanonicalDockspaceHeadlessRunner {
         Ok(Self {
             scenario_id: scenario.id.clone(),
             runtime: scenario.build_canonical_runtime()?,
+            next_identity: 0,
         })
     }
 
@@ -180,6 +176,7 @@ impl CanonicalDockspaceHeadlessRunner {
             Capability::MoveItemToItem,
             Capability::MoveItemToTab,
             Capability::MoveItemToEmptySpace,
+            Capability::FloatItem,
             Capability::MoveFloating,
             Capability::ItemPayload,
             Capability::WholeGroupPayload,
@@ -376,12 +373,28 @@ impl CanonicalDockspaceHeadlessRunner {
                     }
                 }
             }
-            DockspaceSemanticOperation::FloatItemInWindow { .. } => {
-                return Err(CanonicalDockspaceScenarioRunError::UnsupportedOperation {
-                    scenario: self.scenario_id.clone(),
-                    step: step.id.clone(),
-                    operation: "float_item_in_window",
-                });
+            DockspaceSemanticOperation::FloatItemInWindow {
+                source_space,
+                item,
+                target_space,
+                bounds,
+            } => {
+                let source_group = self.require_item_group(step, source_space, item, true)?;
+                let new_group = self.item_destination_group(step, &source_group, item);
+                let floating = self.next_floating_identity(step, item);
+                self.runtime.prepare_float_item_in_window(
+                    item.clone(),
+                    new_group,
+                    floating,
+                    source_space.clone(),
+                    target_space.clone(),
+                    DockLayoutRect {
+                        x: bounds[0],
+                        y: bounds[1],
+                        width: bounds[2],
+                        height: bounds[3],
+                    },
+                )
             }
         };
         result.map_err(|source| CanonicalDockspaceScenarioRunError::Prepare {
@@ -481,7 +494,7 @@ impl CanonicalDockspaceHeadlessRunner {
     }
 
     fn item_destination_group(
-        &self,
+        &mut self,
         step: &DockspaceScenarioStep,
         source_group: &DockGroupId,
         item: &DockItemId,
@@ -494,13 +507,52 @@ impl CanonicalDockspaceHeadlessRunner {
         if state.items.len() == 1 {
             source_group.clone()
         } else {
-            DockGroupId::new(format!(
-                "fixture:{}:step:{}:item-group:{}",
+            loop {
+                let generation = self.take_identity_generation();
+                let candidate = DockGroupId::new(format!(
+                    "fixture:{}:step:{}:item-group:{}:{generation}",
+                    self.scenario_id,
+                    step.id,
+                    item.as_str()
+                ));
+                if candidate != *source_group && self.runtime.graph().group(&candidate).is_none() {
+                    return candidate;
+                }
+            }
+        }
+    }
+
+    fn next_floating_identity(
+        &mut self,
+        step: &DockspaceScenarioStep,
+        item: &DockItemId,
+    ) -> DockFloatingId {
+        loop {
+            let generation = self.take_identity_generation();
+            let candidate = DockFloatingId::new(format!(
+                "fixture:{}:step:{}:floating:{}:{generation}",
                 self.scenario_id,
                 step.id,
                 item.as_str()
-            ))
+            ));
+            if !self
+                .runtime
+                .graph()
+                .floating_roots()
+                .contains_key(&candidate)
+            {
+                return candidate;
+            }
         }
+    }
+
+    fn take_identity_generation(&mut self) -> u64 {
+        let generation = self.next_identity;
+        self.next_identity = self
+            .next_identity
+            .checked_add(1)
+            .expect("canonical fixture identity space exhausted");
+        generation
     }
 }
 

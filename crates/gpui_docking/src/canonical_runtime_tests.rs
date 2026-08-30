@@ -4,7 +4,7 @@ use crate::graph_patch::{
     GraphCommitOutcome, GraphPatchOperation, GraphPrepareError, GraphPrepareOutcome,
     GraphSupersededReason,
 };
-use crate::{DockGroupId, DockItemId, DockSpaceId, SplitAxis};
+use crate::{DockGroupId, DockItemId, DockLayoutRect, DockSpaceId, SplitAxis};
 
 fn item(id: &str) -> DockItemId {
     DockItemId::new(id)
@@ -203,6 +203,15 @@ fn floating_subtree_runtime() -> CanonicalGraphRuntime {
         )
         .unwrap();
     CanonicalGraphRuntime::from_assembly(assembly).unwrap()
+}
+
+fn floating_bounds() -> DockLayoutRect {
+    DockLayoutRect {
+        x: -120.0,
+        y: 40.0,
+        width: 360.0,
+        height: 240.0,
+    }
 }
 
 #[test]
@@ -1118,6 +1127,332 @@ fn move_item_to_empty_space_rejects_invalid_group_identity() {
         occupied.prepare_move_item_to_empty_space("A", "main", "main", "moved-a"),
         Err(GraphPrepareError::TargetSpaceNotEmpty { .. })
     ));
+}
+
+#[test]
+fn float_item_in_window_extracts_a_multi_item_source_into_a_new_floating_group() {
+    let mut runtime = three_tab_runtime();
+    let source = DockGroupId::from("editor");
+    let destination = DockGroupId::from("floating-a-group");
+    let floating = crate::DockFloatingId::from("floating-a");
+    let source_node = runtime.graph().index().node_for_group(&source).unwrap();
+
+    let prepared = match runtime
+        .prepare_float_item_in_window(
+            item("A"),
+            destination.clone(),
+            floating.clone(),
+            "main",
+            "main",
+            floating_bounds(),
+        )
+        .expect("item floating should prepare")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("creating a floating root must be structural"),
+    };
+    assert!(matches!(
+        prepared.operation(),
+        GraphPatchOperation::FloatItemInWindow {
+            item: prepared_item,
+            source_group,
+            new_group,
+            floating: prepared_floating,
+            bounds,
+            z_order: 0,
+            ..
+        } if prepared_item == &item("A")
+            && source_group == &source
+            && new_group == &destination
+            && prepared_floating == &floating
+            && bounds.get() == floating_bounds()
+    ));
+    let receipt = match runtime.commit(prepared) {
+        GraphCommitOutcome::Committed(receipt) => receipt,
+        other => panic!("item floating should commit, got {other:?}"),
+    };
+    assert_eq!(receipt.after().topology(), receipt.before().topology() + 1);
+
+    assert_eq!(
+        runtime.graph().group(&source).unwrap().items,
+        vec![item("B"), item("C")]
+    );
+    let floating_group = runtime.graph().group(&destination).unwrap();
+    assert_eq!(floating_group.items, vec![item("A")]);
+    assert_eq!(floating_group.selected, item("A"));
+    assert_eq!(floating_group.mru, vec![item("A")]);
+    let floating_root = runtime.graph().floating_roots().get(&floating).unwrap();
+    assert_eq!(floating_root.space, DockSpaceId::from("main"));
+    assert_eq!(floating_root.bounds, floating_bounds());
+    assert_eq!(floating_root.z_order, 0);
+    assert_ne!(floating_root.root, source_node);
+    assert_eq!(
+        runtime.graph().index().floating_for_item(&item("A")),
+        Some(&floating)
+    );
+    runtime
+        .graph()
+        .validate()
+        .expect("item floating should preserve canonical indexes");
+}
+
+#[test]
+fn float_singleton_in_window_preserves_group_and_leaf_identity_across_spaces() {
+    let mut assembly = DockGraphAssembly::new();
+    assembly.add_space("source").unwrap();
+    assembly.add_space("target").unwrap();
+    let source = assembly
+        .add_group("source-group", [item("A")], item("A"))
+        .unwrap();
+    let target = assembly
+        .add_group("target-group", [item("T")], item("T"))
+        .unwrap();
+    assembly.set_root("source", source).unwrap();
+    assembly.set_root("target", target).unwrap();
+    let mut runtime = CanonicalGraphRuntime::from_assembly(assembly).unwrap();
+    let source_group = DockGroupId::from("source-group");
+    let source_node = runtime
+        .graph()
+        .index()
+        .node_for_group(&source_group)
+        .unwrap();
+    let target_node = runtime
+        .graph()
+        .index()
+        .node_for_group(&DockGroupId::from("target-group"))
+        .unwrap();
+    let floating = crate::DockFloatingId::from("floating-a");
+
+    let prepared = match runtime
+        .prepare_float_item_in_window(
+            item("A"),
+            source_group.clone(),
+            floating.clone(),
+            "source",
+            "target",
+            floating_bounds(),
+        )
+        .expect("singleton floating should prepare")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("creating a floating root must be structural"),
+    };
+    assert!(matches!(
+        runtime.commit(prepared),
+        GraphCommitOutcome::Committed(_)
+    ));
+
+    assert_eq!(
+        runtime
+            .graph()
+            .space(&DockSpaceId::from("source"))
+            .unwrap()
+            .root,
+        None
+    );
+    assert_eq!(
+        runtime
+            .graph()
+            .space(&DockSpaceId::from("target"))
+            .unwrap()
+            .root,
+        Some(target_node)
+    );
+    assert_eq!(
+        runtime.graph().index().node_for_group(&source_group),
+        Some(source_node)
+    );
+    assert_eq!(
+        runtime
+            .graph()
+            .floating_roots()
+            .get(&floating)
+            .unwrap()
+            .root,
+        source_node
+    );
+    assert_eq!(
+        runtime.graph().index().floating_for_item(&item("A")),
+        Some(&floating)
+    );
+    runtime
+        .graph()
+        .validate()
+        .expect("singleton floating should preserve canonical indexes");
+}
+
+#[test]
+fn float_item_in_window_appends_after_the_highest_existing_z_order() {
+    let mut runtime = floating_runtime();
+    let floating = crate::DockFloatingId::from("floating-source");
+    let prepared = match runtime
+        .prepare_float_item_in_window(
+            item("S"),
+            "source",
+            floating.clone(),
+            "main",
+            "main",
+            floating_bounds(),
+        )
+        .expect("floating above an existing root should prepare")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("creating a floating root must be structural"),
+    };
+    assert!(matches!(
+        prepared.operation(),
+        GraphPatchOperation::FloatItemInWindow { z_order: 2, .. }
+    ));
+    assert!(matches!(
+        runtime.commit(prepared),
+        GraphCommitOutcome::Committed(_)
+    ));
+
+    let space = runtime.graph().space(&DockSpaceId::from("main")).unwrap();
+    assert_eq!(
+        space.floating_roots,
+        vec![
+            crate::DockFloatingId::from("floating-target"),
+            floating.clone()
+        ]
+    );
+    assert_eq!(runtime.graph().floating_roots()[&floating].z_order, 2);
+    runtime
+        .graph()
+        .validate()
+        .expect("floating z-order append should remain canonical");
+}
+
+#[test]
+fn refloating_a_singleton_excludes_its_retired_root_from_z_order() {
+    let mut runtime = floating_only_runtime(false);
+    let retired = crate::DockFloatingId::from("floating-source");
+    let replacement = crate::DockFloatingId::from("floating-replacement");
+    let prepared = match runtime
+        .prepare_float_item_in_window(
+            item("S"),
+            "source",
+            replacement.clone(),
+            "main",
+            "main",
+            floating_bounds(),
+        )
+        .expect("refloating the only singleton should prepare")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("refloating must be structural"),
+    };
+    assert!(matches!(
+        prepared.operation(),
+        GraphPatchOperation::FloatItemInWindow {
+            retired_floating: Some(prepared_retired),
+            z_order: 0,
+            ..
+        } if prepared_retired == &retired
+    ));
+    assert!(matches!(
+        runtime.commit(prepared),
+        GraphCommitOutcome::Committed(_)
+    ));
+
+    assert!(!runtime.graph().floating_roots().contains_key(&retired));
+    assert_eq!(runtime.graph().floating_roots()[&replacement].z_order, 0);
+    assert_eq!(
+        runtime
+            .graph()
+            .space(&DockSpaceId::from("main"))
+            .unwrap()
+            .floating_roots,
+        vec![replacement]
+    );
+    runtime
+        .graph()
+        .validate()
+        .expect("refloating should replace the root without inflating z-order");
+}
+
+#[test]
+fn float_item_prepare_rejects_invalid_identity_bounds_and_floating_collisions() {
+    let mut runtime = three_tab_runtime();
+    assert!(matches!(
+        runtime.prepare_float_item_in_window(
+            item("A"),
+            "editor",
+            "floating-a",
+            "main",
+            "main",
+            floating_bounds(),
+        ),
+        Err(GraphPrepareError::InvalidItemMoveGroupIdentity { .. })
+    ));
+    assert_eq!(
+        runtime
+            .prepare_float_item_in_window(
+                item("A"),
+                "floating-a-group",
+                "floating-a",
+                "main",
+                "main",
+                DockLayoutRect {
+                    width: 0.0,
+                    ..floating_bounds()
+                },
+            )
+            .expect_err("zero-width floating bounds must fail during prepare"),
+        GraphPrepareError::InvalidFloatingBounds
+    );
+
+    let mut runtime = floating_runtime();
+    assert_eq!(
+        runtime
+            .prepare_float_item_in_window(
+                item("S"),
+                "source",
+                "floating-target",
+                "main",
+                "main",
+                floating_bounds(),
+            )
+            .expect_err("floating identity collision must fail during prepare"),
+        GraphPrepareError::FloatingAlreadyExists {
+            floating: crate::DockFloatingId::from("floating-target"),
+        }
+    );
+
+    let mut assembly = DockGraphAssembly::new();
+    assembly.add_space("main").unwrap();
+    let source = assembly
+        .add_group("source", [item("S")], item("S"))
+        .unwrap();
+    let existing = assembly
+        .add_group("existing", [item("E")], item("E"))
+        .unwrap();
+    assembly.set_root("main", source).unwrap();
+    assembly
+        .add_floating_root(
+            "floating-max",
+            "main",
+            existing,
+            floating_bounds(),
+            i32::MAX,
+        )
+        .unwrap();
+    let mut runtime = CanonicalGraphRuntime::from_assembly(assembly).unwrap();
+    assert_eq!(
+        runtime
+            .prepare_float_item_in_window(
+                item("S"),
+                "source",
+                "floating-overflow",
+                "main",
+                "main",
+                floating_bounds(),
+            )
+            .expect_err("floating z-order exhaustion must fail during prepare"),
+        GraphPrepareError::FloatingZOrderExhausted {
+            space: DockSpaceId::from("main"),
+        }
+    );
 }
 
 #[test]

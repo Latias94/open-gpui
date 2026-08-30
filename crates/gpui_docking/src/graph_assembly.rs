@@ -958,6 +958,164 @@ impl CanonicalDockGraph {
         true
     }
 
+    /// Extracts one item into a new first-class floating root.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn apply_float_item_in_window_for_commit(
+        &mut self,
+        item: &DockItemId,
+        source_group: &DockGroupId,
+        new_group: &DockGroupId,
+        floating: &DockFloatingId,
+        source_space: &DockSpaceId,
+        target_space: &DockSpaceId,
+        retired_floating: Option<&DockFloatingId>,
+        bounds: DockLayoutRect,
+        z_order: i32,
+        version: CanonicalGraphVersion,
+    ) -> bool {
+        if !bounds.is_finite_with_non_negative_size()
+            || bounds.width <= 0.0
+            || bounds.height <= 0.0
+            || floating.as_str().is_empty()
+            || new_group.as_str().is_empty()
+            || self.floating_roots.contains_key(floating)
+        {
+            return false;
+        }
+        let Some(source_node) = self.index.node_for_group(source_group) else {
+            return false;
+        };
+        let Some(source_owner) = self.index.owner_for_node(source_node).cloned() else {
+            return false;
+        };
+        let source_owner_space = match &source_owner {
+            CanonicalNodeOwner::Main(space) | CanonicalNodeOwner::Floating { space, .. } => space,
+        };
+        if source_owner_space != source_space {
+            return false;
+        }
+        let Some(source_state) = self.groups.get(source_group) else {
+            return false;
+        };
+        let source_len = source_state.items.len();
+        let actual_retired_floating = match &source_owner {
+            CanonicalNodeOwner::Floating { floating, .. }
+                if source_len == 1 && self.index.parent_of(source_node) == Some(None) =>
+            {
+                Some(floating)
+            }
+            CanonicalNodeOwner::Main(_) | CanonicalNodeOwner::Floating { .. } => None,
+        };
+        if actual_retired_floating != retired_floating {
+            return false;
+        }
+        let Some(source_index) = source_state
+            .items
+            .iter()
+            .position(|candidate| candidate == item)
+        else {
+            return false;
+        };
+        if (source_len == 1 && new_group != source_group)
+            || (source_len > 1
+                && (new_group == source_group || self.groups.contains_key(new_group)))
+        {
+            return false;
+        }
+        let Some(target_state) = self.spaces.get(target_space) else {
+            return false;
+        };
+        let expected_z_order = target_state
+            .floating_roots
+            .iter()
+            .filter(|candidate| {
+                source_space != target_space || Some(*candidate) != retired_floating
+            })
+            .map(|candidate| {
+                self.floating_roots
+                    .get(candidate)
+                    .expect("validated target space must reference a floating root")
+                    .z_order
+            })
+            .max()
+            .map_or(Some(0), |current| current.checked_add(1));
+        if expected_z_order != Some(z_order) {
+            return false;
+        }
+
+        let floating_root = if source_len == 1 {
+            if !self.detach_group_leaf_for_commit(source_node, &source_owner) {
+                return false;
+            }
+            source_node
+        } else {
+            let source = self
+                .groups
+                .get_mut(source_group)
+                .expect("validated source group must remain present");
+            source.items.remove(source_index);
+            source.mru.retain(|entry| entry != item);
+            if source.selected == *item {
+                source.selected = source
+                    .items
+                    .first()
+                    .cloned()
+                    .expect("a multi-item source group retains one item");
+            }
+            self.index.remove_item_membership(item, source_group);
+
+            let new_leaf = self.nodes.insert(CanonicalNode::Group {
+                group: new_group.clone(),
+                size_ref: None,
+            });
+            self.groups.insert(
+                new_group.clone(),
+                CanonicalGroup {
+                    items: vec![item.clone()],
+                    selected: item.clone(),
+                    mru: vec![item.clone()],
+                },
+            );
+            new_leaf
+        };
+
+        self.floating_roots.insert(
+            floating.clone(),
+            CanonicalFloatingRoot {
+                space: target_space.clone(),
+                root: floating_root,
+                bounds,
+                z_order,
+            },
+        );
+        self.spaces
+            .get_mut(target_space)
+            .expect("validated target space must remain present")
+            .floating_roots
+            .push(floating.clone());
+        let owner = CanonicalNodeOwner::Floating {
+            space: target_space.clone(),
+            floating: floating.clone(),
+        };
+        if source_len == 1 {
+            self.index.set_parent(floating_root, None);
+            self.index
+                .update_owner_subtree(&self.nodes, &self.groups, floating_root, owner);
+        } else {
+            self.index.insert_group(
+                floating_root,
+                new_group,
+                self.groups
+                    .get(new_group)
+                    .expect("new floating group inserted above"),
+                None,
+                owner,
+            );
+        }
+        self.version = version;
+        true
+    }
+
     /// Moves a complete floating subtree beside a target group and retires its floating owner.
     pub(crate) fn apply_move_floating_root_to_edge_for_commit(
         &mut self,

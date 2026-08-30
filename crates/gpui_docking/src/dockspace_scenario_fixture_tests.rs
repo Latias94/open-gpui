@@ -243,7 +243,6 @@ fn canonical_headless_runner_enforces_full_fixture_evidence_contract() {
         }
 
         let expected_unsupported_step = match scenario_id.as_str() {
-            "floating_redock_by_item" => Some("float_b_in_window"),
             "provider_first_destination_loss_contract" => Some("provider_destination_loss"),
             _ => None,
         };
@@ -252,6 +251,66 @@ fn canonical_headless_runner_enforces_full_fixture_evidence_contract() {
             "canonical fixture support classification drifted for {scenario_id}"
         );
     }
+}
+
+#[test]
+fn canonical_float_redock_can_repeat_without_synthetic_identity_collision() {
+    let scenarios =
+        load_builtin_scenario_fixtures().expect("builtin dockspace fixtures should parse");
+    let scenario = scenario_by_id(&scenarios, "floating_redock_by_item");
+    let mut runner = CanonicalDockspaceHeadlessRunner::from_scenario(scenario)
+        .expect("canonical floating scenario should build");
+
+    for cycle in 0..2 {
+        for step in &scenario.steps {
+            runner.run_step(step).unwrap_or_else(|error| {
+                panic!(
+                    "floating cycle {cycle} step {} should execute: {error}",
+                    step.id
+                )
+            });
+        }
+        runner.graph().validate().unwrap_or_else(|error| {
+            panic!("floating cycle {cycle} must remain canonical: {error}")
+        });
+    }
+
+    let item_a = DockItemId::from("A");
+    let item_b = DockItemId::from("B");
+    let group_a = runner.graph().index().group_for_item(&item_a).unwrap();
+    let group_b = runner.graph().index().group_for_item(&item_b).unwrap();
+    assert_eq!(group_a, group_b);
+    let group = runner.graph().group(group_a).unwrap();
+    assert_eq!(group.items, vec![item_a, item_b.clone()]);
+    assert_eq!(group.selected, item_b);
+    assert!(runner.graph().floating_roots().is_empty());
+}
+
+#[test]
+fn float_item_capabilities_distinguish_same_space_and_cross_viewport_moves() {
+    let same_space = DockspaceSemanticOperation::FloatItemInWindow {
+        source_space: DockSpaceId::from("main"),
+        item: DockItemId::from("A"),
+        target_space: DockSpaceId::from("main"),
+        bounds: [0.0, 0.0, 320.0, 240.0],
+    };
+    let cross_viewport = DockspaceSemanticOperation::FloatItemInWindow {
+        source_space: DockSpaceId::from("main"),
+        item: DockItemId::from("A"),
+        target_space: DockSpaceId::from("secondary"),
+        bounds: [0.0, 0.0, 320.0, 240.0],
+    };
+
+    assert!(
+        !same_space
+            .required_capabilities()
+            .contains(&DockspaceAdapterCapability::CrossViewport)
+    );
+    assert!(
+        cross_viewport
+            .required_capabilities()
+            .contains(&DockspaceAdapterCapability::CrossViewport)
+    );
 }
 
 fn is_edge_target_operation(operation: &DockspaceSemanticOperation) -> bool {
@@ -282,13 +341,6 @@ fn assert_expected_canonical_unsupported(
     assert_eq!(actual_step, step);
 
     match scenario {
-        "floating_redock_by_item" => {
-            assert_eq!(
-                capabilities,
-                &BTreeSet::from([DockspaceAdapterCapability::FloatItem])
-            );
-            assert!(faults.is_empty());
-        }
         "provider_first_destination_loss_contract" => {
             assert_eq!(
                 capabilities,

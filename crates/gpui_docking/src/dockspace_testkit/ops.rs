@@ -347,9 +347,16 @@ impl DockspaceSemanticOperation {
                     capabilities.insert(Capability::CrossViewport);
                 }
             }
-            Self::FloatItemInWindow { .. } => {
+            Self::FloatItemInWindow {
+                source_space,
+                target_space,
+                ..
+            } => {
                 capabilities.insert(Capability::FloatItem);
                 capabilities.insert(Capability::ItemPayload);
+                if source_space != target_space {
+                    capabilities.insert(Capability::CrossViewport);
+                }
             }
             Self::MoveFloatingToItem {
                 source_space,

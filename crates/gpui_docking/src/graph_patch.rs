@@ -2,7 +2,8 @@
 
 use crate::graph_assembly::CanonicalDockGraph;
 use crate::{
-    CanonicalGraphVersion, DockFloatingId, DockGroupId, DockItemId, DockSpaceId, SplitAxis,
+    CanonicalGraphVersion, DockFloatingId, DockGroupId, DockItemId, DockLayoutRect, DockSpaceId,
+    SplitAxis,
 };
 use std::fmt;
 use thiserror::Error;
@@ -128,15 +129,30 @@ pub(crate) struct GraphFloatingRootRead {
     pub(crate) space: DockSpaceId,
 }
 
-/// Small immutable dock-space fact captured by an empty-space move.
+/// Small immutable dock-space fact captured by a prepared structural operation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct GraphSpaceRead {
     pub(crate) space: DockSpaceId,
     pub(crate) has_main_root: bool,
     pub(crate) floating_roots: Vec<DockFloatingId>,
+    pub(crate) floating_z_orders: Vec<(DockFloatingId, i32)>,
     pub(crate) central_group: Option<DockGroupId>,
     pub(crate) keep_central_alive_when_empty: bool,
     pub(crate) passthrough_when_empty: bool,
+}
+
+impl GraphSpaceRead {
+    pub(crate) fn next_floating_z_order_excluding(
+        &self,
+        excluded: Option<&DockFloatingId>,
+    ) -> Option<i32> {
+        self.floating_z_orders
+            .iter()
+            .filter(|(floating, _)| Some(floating) != excluded)
+            .map(|(_, z_order)| *z_order)
+            .max()
+            .map_or(Some(0), |z_order| z_order.checked_add(1))
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -149,6 +165,36 @@ impl GraphSplitRatio {
 
     pub(crate) fn get(self) -> f32 {
         f32::from_bits(self.0)
+    }
+}
+
+/// Finite positive floating bounds frozen into an equality-safe prepared patch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct GraphFloatingBounds {
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+}
+
+impl GraphFloatingBounds {
+    pub(crate) fn new(bounds: DockLayoutRect) -> Option<Self> {
+        (bounds.is_finite_with_non_negative_size() && bounds.width > 0.0 && bounds.height > 0.0)
+            .then_some(Self {
+                x: bounds.x.to_bits(),
+                y: bounds.y.to_bits(),
+                width: bounds.width.to_bits(),
+                height: bounds.height.to_bits(),
+            })
+    }
+
+    pub(crate) fn get(self) -> DockLayoutRect {
+        DockLayoutRect {
+            x: f32::from_bits(self.x),
+            y: f32::from_bits(self.y),
+            width: f32::from_bits(self.width),
+            height: f32::from_bits(self.height),
+        }
     }
 }
 
@@ -233,7 +279,7 @@ impl GraphReadSet {
         read_set
     }
 
-    pub(crate) fn for_group_to_empty_space(
+    pub(crate) fn for_group_and_space(
         base_revision: GraphRevision,
         group: GraphGroupRead,
         target_space: GraphSpaceRead,
@@ -348,6 +394,18 @@ pub(crate) enum GraphPatchOperation {
         new_group: DockGroupId,
         source_space: DockSpaceId,
         target_space: DockSpaceId,
+    },
+    /// Extracts one item into a new first-class floating root.
+    FloatItemInWindow {
+        item: DockItemId,
+        source_group: DockGroupId,
+        new_group: DockGroupId,
+        floating: DockFloatingId,
+        source_space: DockSpaceId,
+        target_space: DockSpaceId,
+        retired_floating: Option<DockFloatingId>,
+        bounds: GraphFloatingBounds,
+        z_order: i32,
     },
     /// Moves one complete floating root beside a target group and retires its floating chrome.
     MoveFloatingRootToEdge {
@@ -654,6 +712,20 @@ pub(crate) trait GraphPatchTarget: GraphReadView {
         target_space: &DockSpaceId,
     ) -> GraphRevision;
 
+    #[allow(clippy::too_many_arguments)]
+    fn apply_float_item_in_window(
+        &mut self,
+        item: &DockItemId,
+        source_group: &DockGroupId,
+        new_group: &DockGroupId,
+        floating: &DockFloatingId,
+        source_space: &DockSpaceId,
+        target_space: &DockSpaceId,
+        retired_floating: Option<&DockFloatingId>,
+        bounds: DockLayoutRect,
+        z_order: i32,
+    ) -> GraphRevision;
+
     fn apply_move_floating_root_to_edge(
         &mut self,
         floating: &DockFloatingId,
@@ -715,6 +787,17 @@ impl GraphReadView for CanonicalDockGraph {
             space: space.clone(),
             has_main_root: state.root.is_some(),
             floating_roots: state.floating_roots.clone(),
+            floating_z_orders: state
+                .floating_roots
+                .iter()
+                .map(|floating| {
+                    let root = self
+                        .floating_roots()
+                        .get(floating)
+                        .expect("validated space must reference an existing floating root");
+                    (floating.clone(), root.z_order)
+                })
+                .collect(),
             central_group,
             keep_central_alive_when_empty: state.central.keep_alive_when_empty,
             passthrough_when_empty: state.central.passthrough_when_empty,
@@ -744,6 +827,14 @@ pub(crate) enum GraphPrepareError {
         source_group: DockGroupId,
         new_group: DockGroupId,
     },
+    #[error("floating root {floating} already exists")]
+    FloatingAlreadyExists { floating: DockFloatingId },
+    #[error("new floating root id cannot be empty")]
+    EmptyFloatingId,
+    #[error("floating bounds must be finite with positive width and height")]
+    InvalidFloatingBounds,
+    #[error("dock space {space} has exhausted floating z-order values")]
+    FloatingZOrderExhausted { space: DockSpaceId },
     #[error("new group {group} contains duplicate item {item}")]
     DuplicateNewGroupItem {
         group: DockGroupId,
