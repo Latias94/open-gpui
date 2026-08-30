@@ -6,7 +6,9 @@ use crate::{
         DockspaceAdapterContract, DockspaceAdapterStepSupport, DockspaceDragTerminal,
         DockspaceProgressState, DockspaceReceiptExpectation,
     },
-    graph_assembly::{AssemblyNodeId, CanonicalGraphError, DockGraphAssembly},
+    graph_assembly::{
+        AssemblyNodeId, CanonicalDockGraph, CanonicalGraphError, CanonicalNode, DockGraphAssembly,
+    },
 };
 use open_gpui_ui_core::normalize_split_fractions;
 use serde::{Deserialize, Serialize};
@@ -304,6 +306,23 @@ pub(crate) enum DockspaceScenarioBuildError {
     },
     #[error("dockspace scenario {scenario} cannot observe missing graph node {node:?}")]
     MissingObservedNode { scenario: String, node: DockNodeId },
+    #[error("dockspace scenario {scenario} cannot observe missing canonical space {space}")]
+    MissingObservedCanonicalSpace {
+        scenario: String,
+        space: DockSpaceId,
+    },
+    #[error(
+        "dockspace scenario {scenario} cannot observe missing canonical floating root {floating}"
+    )]
+    MissingObservedCanonicalFloating {
+        scenario: String,
+        floating: DockFloatingId,
+    },
+    #[error("dockspace scenario {scenario} cannot observe missing canonical node {node:?}")]
+    MissingObservedCanonicalNode {
+        scenario: String,
+        node: crate::CanonicalNodeId,
+    },
     #[error("dockspace scenario {scenario} central item {item} is not in the dock-space root")]
     MissingCentralItem { scenario: String, item: DockItemId },
     #[error("dockspace scenario {scenario} step {step} has no terminal checkpoint")]
@@ -574,6 +593,57 @@ impl DockspaceScenario {
             .collect()
     }
 
+    pub(crate) fn observe_canonical_spaces(
+        &self,
+        graph: &CanonicalDockGraph,
+    ) -> Result<Vec<DockspaceTopologySpace>, DockspaceScenarioBuildError> {
+        self.spaces
+            .iter()
+            .map(|declared| {
+                let state = graph.space(&declared.id).ok_or_else(|| {
+                    DockspaceScenarioBuildError::MissingObservedCanonicalSpace {
+                        scenario: self.id.clone(),
+                        space: declared.id.clone(),
+                    }
+                })?;
+                let root = state
+                    .root
+                    .map(|root| self.observe_canonical_node(graph, root))
+                    .transpose()?;
+                let floatings = state
+                    .floating_roots
+                    .iter()
+                    .map(|floating_id| {
+                        let floating =
+                            graph.floating_roots().get(floating_id).ok_or_else(|| {
+                                DockspaceScenarioBuildError::MissingObservedCanonicalFloating {
+                                    scenario: self.id.clone(),
+                                    floating: floating_id.clone(),
+                                }
+                            })?;
+                        Ok(DockspaceFloatingSpec {
+                            floating_key: None,
+                            root: self.observe_canonical_node(graph, floating.root)?,
+                            bounds: floating.bounds,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, DockspaceScenarioBuildError>>()?;
+                let central_item = state
+                    .central
+                    .node
+                    .and_then(|node| self.first_item_in_canonical_node(graph, node));
+                Ok(DockspaceTopologySpace {
+                    id: declared.id.clone(),
+                    root,
+                    floatings,
+                    keep_central_when_empty: state.central.keep_alive_when_empty,
+                    passthrough_when_empty: state.central.passthrough_when_empty,
+                    central_item,
+                })
+            })
+            .collect()
+    }
+
     fn observe_node(
         &self,
         graph: &DockGraph,
@@ -617,6 +687,106 @@ impl DockspaceScenario {
                 .iter()
                 .find_map(|child| self.first_item_in_node(graph, *child)),
             DockNode::Floating { child } => self.first_item_in_node(graph, *child),
+        }
+    }
+
+    fn observe_canonical_node(
+        &self,
+        graph: &CanonicalDockGraph,
+        node: crate::CanonicalNodeId,
+    ) -> Result<DockspaceTopologyNode, DockspaceScenarioBuildError> {
+        let Some(value) = graph.node(node) else {
+            return Err(DockspaceScenarioBuildError::MissingObservedCanonicalNode {
+                scenario: self.id.clone(),
+                node,
+            });
+        };
+        match value {
+            CanonicalNode::Group { group, .. } => {
+                let state = graph.group(group).ok_or_else(|| {
+                    DockspaceScenarioBuildError::MissingObservedCanonicalNode {
+                        scenario: self.id.clone(),
+                        node,
+                    }
+                })?;
+                Ok(DockspaceTopologyNode::Tabs {
+                    node_key: None,
+                    group_key: None,
+                    items: state.items.clone(),
+                    selected: Some(state.selected.clone()),
+                })
+            }
+            CanonicalNode::Branch { axis, .. } => {
+                let mut children = Vec::new();
+                let mut fractions = Vec::new();
+                self.flatten_canonical_branch(
+                    graph,
+                    node,
+                    *axis,
+                    1.0,
+                    &mut children,
+                    &mut fractions,
+                )?;
+                normalize_split_fractions(&mut fractions);
+                Ok(DockspaceTopologyNode::Split {
+                    node_key: None,
+                    axis: *axis,
+                    children,
+                    fractions,
+                })
+            }
+        }
+    }
+
+    fn flatten_canonical_branch(
+        &self,
+        graph: &CanonicalDockGraph,
+        node: crate::CanonicalNodeId,
+        axis: SplitAxis,
+        weight: f32,
+        children: &mut Vec<DockspaceTopologyNode>,
+        fractions: &mut Vec<f32>,
+    ) -> Result<(), DockspaceScenarioBuildError> {
+        let Some(CanonicalNode::Branch {
+            axis: branch_axis,
+            first,
+            second,
+            ratio,
+            ..
+        }) = graph.node(node)
+        else {
+            children.push(self.observe_canonical_node(graph, node)?);
+            fractions.push(weight);
+            return Ok(());
+        };
+        if *branch_axis != axis {
+            children.push(self.observe_canonical_node(graph, node)?);
+            fractions.push(weight);
+            return Ok(());
+        }
+        self.flatten_canonical_branch(graph, *first, axis, weight * *ratio, children, fractions)?;
+        self.flatten_canonical_branch(
+            graph,
+            *second,
+            axis,
+            weight * (1.0 - *ratio),
+            children,
+            fractions,
+        )
+    }
+
+    fn first_item_in_canonical_node(
+        &self,
+        graph: &CanonicalDockGraph,
+        node: crate::CanonicalNodeId,
+    ) -> Option<DockItemId> {
+        match graph.node(node)? {
+            CanonicalNode::Group { group, .. } => {
+                graph.group(group).map(|group| group.selected.clone())
+            }
+            CanonicalNode::Branch { first, second, .. } => self
+                .first_item_in_canonical_node(graph, *first)
+                .or_else(|| self.first_item_in_canonical_node(graph, *second)),
         }
     }
 

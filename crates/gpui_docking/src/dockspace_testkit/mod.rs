@@ -3,6 +3,7 @@
 pub(crate) mod assertions;
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) mod benchmarks;
+pub(crate) mod canonical_headless;
 pub(crate) mod contract;
 pub(crate) mod fixtures;
 #[cfg(test)]
@@ -17,6 +18,8 @@ pub(crate) use assertions::{
     assert_layout_roundtrip_preserves_space_items, assert_root_horizontal_split,
     assert_space_items, assert_unique_items,
 };
+#[cfg(test)]
+pub(crate) use canonical_headless::CanonicalDockspaceHeadlessRunner;
 pub(crate) use contract::{DockspaceAdapterStepSupport, DockspaceAdapterTag};
 #[cfg(test)]
 pub(crate) use fixtures::load_builtin_scenario_fixtures;

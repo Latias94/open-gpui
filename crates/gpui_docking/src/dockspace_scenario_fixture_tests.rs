@@ -7,10 +7,11 @@ use crate::dockspace_testkit::topology::DockspaceCheckpointPhase;
 use crate::{
     DockActionOutcome, DockGraph, DockItemId, DockNode, DockSpaceId,
     dockspace_testkit::{
-        DockspaceAdapterStepSupport, DockspaceAdapterTag, DockspaceCheckpointAssertionError,
-        DockspaceHeadlessRunner, DockspaceOracleKind, DockspaceScenario, DockspaceTopologyNode,
-        assert_headless_checkpoint, assert_layout_roundtrip_preserves_space_items,
-        assert_unique_items, benchmarks::DockspaceBenchmarkCase, load_builtin_scenario_fixtures,
+        CanonicalDockspaceHeadlessRunner, DockspaceAdapterStepSupport, DockspaceAdapterTag,
+        DockspaceCheckpointAssertionError, DockspaceHeadlessRunner, DockspaceOracleKind,
+        DockspaceScenario, DockspaceTopologyNode, assert_headless_checkpoint,
+        assert_layout_roundtrip_preserves_space_items, assert_unique_items,
+        benchmarks::DockspaceBenchmarkCase, load_builtin_scenario_fixtures,
     },
 };
 use std::collections::BTreeSet;
@@ -159,6 +160,66 @@ fn dockspace_scenario_checkpoints_are_independent_headless_observations() {
             });
             assert_headless_checkpoint(scenario, checkpoint, runner.graph(), outcome, &pre_state)
                 .unwrap_or_else(|error| panic!("{error}"));
+        }
+    }
+}
+
+#[test]
+fn canonical_headless_runner_replays_binary_kernel_fixture_checkpoints() {
+    let scenarios =
+        load_builtin_scenario_fixtures().expect("builtin dockspace fixtures should parse");
+    let supported_scenarios = [
+        "tabs_split_float_merge",
+        "three_viewport_rehome",
+        "empty_space_split_collapse_roundtrip",
+        "tab_reorder_roundtrip",
+        "three_dockspace_rehome_cycle",
+        "whole_group_cross_space_rehome",
+    ];
+
+    for scenario_id in supported_scenarios {
+        let scenario = scenario_by_id(&scenarios, scenario_id);
+        let mut runner =
+            CanonicalDockspaceHeadlessRunner::from_scenario(scenario).unwrap_or_else(|error| {
+                panic!("canonical scenario {scenario_id} should build: {error}")
+            });
+        let terminal_checkpoints = scenario.terminal_checkpoints().unwrap_or_else(|error| {
+            panic!("scenario {scenario_id} should have terminal checkpoints: {error}")
+        });
+        for (step, checkpoint) in scenario.steps.iter().zip(terminal_checkpoints) {
+            let pre_state = scenario
+                .observe_canonical_spaces(runner.graph())
+                .unwrap_or_else(|error| {
+                    panic!("canonical scenario {scenario_id} pre-state should observe: {error}")
+                });
+            let outcome = runner.run_step(step).unwrap_or_else(|error| {
+                panic!(
+                    "canonical scenario {scenario_id} step {} should execute: {error}",
+                    step.id
+                )
+            });
+            let actual = scenario
+                .observe_canonical_spaces(runner.graph())
+                .unwrap_or_else(|error| {
+                    panic!("canonical scenario {scenario_id} post-state should observe: {error}")
+                });
+            assert_eq!(
+                serde_json::to_value(&actual).unwrap(),
+                serde_json::to_value(&checkpoint.spaces).unwrap(),
+                "canonical checkpoint mismatch for {scenario_id}/{}; pre-state={:?}",
+                step.id,
+                pre_state
+            );
+            let expected_changed = checkpoint
+                .facts
+                .terminal
+                .is_some_and(|terminal| terminal == DockspaceDragTerminal::Committed);
+            assert_eq!(
+                outcome.changed(),
+                expected_changed,
+                "canonical outcome mismatch for {scenario_id}/{}",
+                step.id
+            );
         }
     }
 }
