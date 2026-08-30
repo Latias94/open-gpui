@@ -603,7 +603,7 @@ fn move_group_to_edge_relinks_a_same_space_sibling_without_replacing_leaf_ids() 
 }
 
 #[test]
-fn move_group_to_center_merges_tabs_and_retires_the_source_leaf() {
+fn move_group_to_center_merges_tabs_and_preserves_the_source_group_identity() {
     let mut runtime = runtime();
     let editor = DockGroupId::from("editor");
     let inspector = DockGroupId::from("inspector");
@@ -630,17 +630,17 @@ fn move_group_to_center_merges_tabs_and_retires_the_source_leaf() {
     };
 
     assert_eq!(receipt.after().topology(), receipt.before().topology() + 1);
-    assert!(runtime.graph().group(&editor).is_none());
-    let target = runtime
+    assert!(runtime.graph().group(&inspector).is_none());
+    let moved = runtime
         .graph()
-        .group(&inspector)
-        .expect("target group should remain present");
+        .group(&editor)
+        .expect("whole-group payload identity should remain present");
     assert_eq!(
-        target.items,
+        moved.items,
         vec![item("C"), item("D"), item("A"), item("B")]
     );
-    assert_eq!(target.selected, item("A"));
-    assert_eq!(target.mru, vec![item("A"), item("C")]);
+    assert_eq!(moved.selected, item("A"));
+    assert_eq!(moved.mru, vec![item("A"), item("C")]);
     assert_eq!(
         runtime
             .graph()
@@ -651,7 +651,11 @@ fn move_group_to_center_merges_tabs_and_retires_the_source_leaf() {
     assert_eq!(runtime.graph().nodes().len(), 1);
     assert_eq!(
         runtime.graph().index().group_for_item(&item("A")),
-        Some(&inspector)
+        Some(&editor)
+    );
+    assert_eq!(
+        runtime.graph().index().group_for_item(&item("C")),
+        Some(&editor)
     );
     runtime
         .graph()
@@ -698,10 +702,14 @@ fn move_group_to_center_preserves_the_remaining_source_space_across_dockspaces()
             .and_then(|space| space.root),
         Some(detached_target_node)
     );
-    assert!(runtime.graph().group(&editor).is_none());
+    assert!(runtime.graph().group(&detached_target).is_none());
     assert_eq!(
-        runtime.graph().group(&detached_target).unwrap().items,
+        runtime.graph().group(&editor).unwrap().items,
         vec![item("X"), item("A"), item("B")]
+    );
+    assert_eq!(
+        runtime.graph().index().node_for_group(&editor),
+        Some(detached_target_node)
     );
     runtime
         .graph()
@@ -728,9 +736,9 @@ fn move_group_to_center_rehomes_item_ownership_into_a_floating_target() {
         GraphCommitOutcome::Committed(_)
     ));
 
-    assert!(runtime.graph().group(&source).is_none());
+    assert!(runtime.graph().group(&target).is_none());
     assert_eq!(
-        runtime.graph().group(&target).unwrap().items,
+        runtime.graph().group(&source).unwrap().items,
         vec![item("T"), item("S")]
     );
     assert_eq!(
@@ -763,9 +771,9 @@ fn move_group_to_center_retires_a_single_group_floating_source() {
     ));
 
     assert!(runtime.graph().floating_roots().get(&floating).is_none());
-    assert!(runtime.graph().group(&source).is_none());
+    assert!(runtime.graph().group(&target).is_none());
     assert_eq!(
-        runtime.graph().group(&target).unwrap().items,
+        runtime.graph().group(&source).unwrap().items,
         vec![item("T"), item("S")]
     );
     assert!(

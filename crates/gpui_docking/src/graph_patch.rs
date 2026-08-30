@@ -307,7 +307,7 @@ pub(crate) enum GraphPatchOperation {
         insert_before: bool,
         ratio: GraphSplitRatio,
     },
-    /// Merges every source tab into the target group and retires the source group leaf.
+    /// Merges every target tab into the moved source group and preserves its durable identity.
     MoveGroupToCenter {
         source_group: DockGroupId,
         target_group: DockGroupId,

@@ -443,7 +443,11 @@ impl CanonicalDockGraph {
         true
     }
 
-    /// Merges one complete source group into a target group and retires the source leaf.
+    /// Merges a target group into a complete source payload and preserves the source identity.
+    ///
+    /// The target structural leaf remains at the destination and is rebound to the source group.
+    /// Structural leaves are replaceable, while a whole-group payload carries durable content
+    /// identity across the move.
     pub(crate) fn apply_move_group_to_center_for_commit(
         &mut self,
         source_group: &DockGroupId,
@@ -480,14 +484,16 @@ impl CanonicalDockGraph {
             return false;
         }
 
-        let source_state = self
-            .groups
-            .remove(source_group)
-            .expect("validated source group must remain present");
         let target_state = self
             .groups
-            .get_mut(target_group)
+            .remove(target_group)
             .expect("validated target group must remain present");
+        let source_state = self
+            .groups
+            .get_mut(source_group)
+            .expect("validated source group must remain present");
+        let source_items = source_state.items.clone();
+        let target_items = target_state.items.clone();
         let mut merged_mru =
             Vec::with_capacity(source_state.mru.len() + target_state.mru.len() + 2);
         let mut seen = BTreeSet::new();
@@ -500,18 +506,28 @@ impl CanonicalDockGraph {
                 merged_mru.push(candidate.clone());
             }
         }
-        target_state
-            .items
-            .extend(source_state.items.iter().cloned());
-        target_state.selected = source_state.selected.clone();
-        target_state.mru = merged_mru;
+        let mut merged_items = target_items.clone();
+        merged_items.extend(source_items.iter().cloned());
+        source_state.items = merged_items;
+        source_state.mru = merged_mru;
+
+        let CanonicalNode::Group { group, .. } = self
+            .nodes
+            .get_mut(target_node)
+            .expect("validated target node must remain present")
+        else {
+            unreachable!("validated target group must reference a group leaf");
+        };
+        *group = source_group.clone();
 
         self.nodes.remove(source_node);
-        self.index.merge_group_into(
+        self.index.merge_target_group_into_source_at_target_leaf(
             source_node,
             source_group,
-            &source_state.items,
+            &source_items,
+            target_node,
             target_group,
+            &target_items,
             &target_owner,
         );
         self.version = version;

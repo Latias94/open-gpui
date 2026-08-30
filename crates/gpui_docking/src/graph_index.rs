@@ -218,6 +218,38 @@ impl CanonicalGraphIndex {
         }
     }
 
+    /// Preserves a moved payload group while retiring the target group's content identity.
+    ///
+    /// The target structural leaf remains in place because structural identities are replaceable;
+    /// its durable group binding changes to the source group carried by the payload.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn merge_target_group_into_source_at_target_leaf(
+        &mut self,
+        source_node: CanonicalNodeId,
+        source_group: &DockGroupId,
+        source_items: &[DockItemId],
+        target_node: CanonicalNodeId,
+        target_group: &DockGroupId,
+        target_items: &[DockItemId],
+        target_owner: &CanonicalNodeOwner,
+    ) {
+        let removed_source = self.group_node.remove(source_group);
+        debug_assert_eq!(removed_source, Some(source_node));
+        let removed_target = self.group_node.remove(target_group);
+        debug_assert_eq!(removed_target, Some(target_node));
+        self.parent_by_node.remove(&source_node);
+        self.owner_by_node.remove(&source_node);
+        let replaced = self.group_node.insert(source_group.clone(), target_node);
+        debug_assert!(replaced.is_none());
+
+        for item in source_items {
+            self.move_item_to_group(item, source_group, source_group, target_owner);
+        }
+        for item in target_items {
+            self.move_item_to_group(item, target_group, source_group, target_owner);
+        }
+    }
+
     /// Rebinds one item to an existing target group and its current root owner.
     pub(crate) fn move_item_to_group(
         &mut self,
