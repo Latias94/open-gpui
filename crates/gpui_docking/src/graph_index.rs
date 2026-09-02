@@ -5,7 +5,7 @@ use crate::graph_assembly::{
 };
 use crate::{CanonicalNodeId, DockFloatingId, DockGroupId, DockItemId, DockSpaceId};
 use slotmap::{SecondaryMap, SlotMap};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, TryReserveError};
 
 /// The root authority that owns a canonical structural node.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,6 +36,53 @@ pub(crate) struct CanonicalGraphIndex {
 }
 
 impl CanonicalGraphIndex {
+    pub(crate) fn try_reserve_for_graph_growth(
+        &mut self,
+        node_capacity: usize,
+        additional_groups: usize,
+        additional_items: usize,
+        additional_floating_items: usize,
+    ) -> Result<(), TryReserveError> {
+        self.parent_by_node.try_set_capacity(node_capacity)?;
+        self.owner_by_node.try_set_capacity(node_capacity)?;
+        self.group_node.try_reserve(additional_groups)?;
+        self.item_group.try_reserve(additional_items)?;
+        self.floating_by_item
+            .try_reserve(additional_floating_items)?;
+        Ok(())
+    }
+
+    pub(crate) fn has_capacity_for_graph_growth(
+        &self,
+        required_node_key_capacity: usize,
+        additional_groups: usize,
+        additional_items: usize,
+        additional_floating_items: usize,
+    ) -> bool {
+        fn has_headroom(len: usize, additional: usize, capacity: usize) -> bool {
+            len.checked_add(additional)
+                .is_some_and(|required| required <= capacity)
+        }
+
+        self.parent_by_node.capacity() >= required_node_key_capacity
+            && self.owner_by_node.capacity() >= required_node_key_capacity
+            && has_headroom(
+                self.group_node.len(),
+                additional_groups,
+                self.group_node.capacity(),
+            )
+            && has_headroom(
+                self.item_group.len(),
+                additional_items,
+                self.item_group.capacity(),
+            )
+            && has_headroom(
+                self.floating_by_item.len(),
+                additional_floating_items,
+                self.floating_by_item.capacity(),
+            )
+    }
+
     pub(crate) fn build(graph: &CanonicalDockGraph) -> Result<Self, CanonicalGraphError> {
         let mut index = Self::default();
         let mut visited = BTreeSet::new();
@@ -321,16 +368,15 @@ impl CanonicalGraphIndex {
         self.floating_by_item.remove(item);
     }
 
-    /// Reassigns ownership for a moved subtree and updates floating item membership locally.
-    pub(crate) fn update_owner_subtree(
+    /// Reassigns ownership for a prepared node set and updates floating item membership locally.
+    pub(crate) fn update_owner_nodes(
         &mut self,
         nodes: &SlotMap<CanonicalNodeId, CanonicalNode>,
         groups: &HashMap<DockGroupId, CanonicalGroup>,
-        root: CanonicalNodeId,
+        owner_nodes: impl IntoIterator<Item = CanonicalNodeId>,
         owner: CanonicalNodeOwner,
     ) {
-        let mut pending = vec![root];
-        while let Some(node) = pending.pop() {
+        for node in owner_nodes {
             self.owner_by_node.insert(node, owner.clone());
             match nodes.get(node).expect("owned subtree node must exist") {
                 CanonicalNode::Group { group, .. } => {
@@ -348,10 +394,7 @@ impl CanonicalGraphIndex {
                         }
                     }
                 }
-                CanonicalNode::Branch { first, second, .. } => {
-                    pending.push(*first);
-                    pending.push(*second);
-                }
+                CanonicalNode::Branch { .. } => {}
             }
         }
     }

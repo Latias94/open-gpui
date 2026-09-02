@@ -2,12 +2,17 @@
 
 use crate::binary_layout_policy::{StructuralIdentityRemap, plan_sibling_promotion};
 use crate::graph_index::{CanonicalGraphIndex, CanonicalNodeOwner};
-use crate::graph_patch::GraphCommitEffects;
+use crate::graph_patch::{
+    GraphCapacityProof, GraphCommitEffects, GraphCommitId, GraphGroupCapacityRequirement,
+    GraphPatchOperation, GraphPrepareError, GraphPreparedMutation, GraphRevision,
+    GraphSpaceCapacityRequirement, GraphSupersededReason,
+};
 use crate::{
     CanonicalGraphAuthority, CanonicalGraphVersion, CanonicalNodeId, DockFloatingId, DockGroupId,
     DockItemId, DockLayoutRect, DockSpaceId, SplitAxis,
 };
 use slotmap::SlotMap;
+use smallvec::SmallVec;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use thiserror::Error;
 
@@ -100,6 +105,78 @@ struct CanonicalLeafDetach {
     effects: GraphCommitEffects,
 }
 
+#[derive(Debug)]
+struct CanonicalGroupCapacityRequest {
+    group: DockGroupId,
+    additional_items: usize,
+    additional_mru: usize,
+}
+
+#[derive(Debug)]
+struct CanonicalSpaceCapacityRequest {
+    space: DockSpaceId,
+    additional_floating_roots: usize,
+}
+
+#[derive(Debug, Default)]
+struct CanonicalGraphCapacityPlan {
+    additional_nodes: usize,
+    additional_groups: usize,
+    additional_floatings: usize,
+    additional_group_index: usize,
+    additional_item_index: usize,
+    additional_floating_item_index: usize,
+    groups: SmallVec<[CanonicalGroupCapacityRequest; 3]>,
+    spaces: SmallVec<[CanonicalSpaceCapacityRequest; 2]>,
+}
+
+impl CanonicalGraphCapacityPlan {
+    fn reserve_group_vectors(
+        &mut self,
+        group: DockGroupId,
+        additional_items: usize,
+        additional_mru: usize,
+    ) {
+        if let Some(request) = self
+            .groups
+            .iter_mut()
+            .find(|request| request.group == group)
+        {
+            request.additional_items = request.additional_items.max(additional_items);
+            request.additional_mru = request.additional_mru.max(additional_mru);
+            return;
+        }
+        self.groups.push(CanonicalGroupCapacityRequest {
+            group,
+            additional_items,
+            additional_mru,
+        });
+        debug_assert!(!self.groups.spilled());
+    }
+
+    fn reserve_space_floatings(&mut self, space: DockSpaceId, additional: usize) {
+        if let Some(request) = self
+            .spaces
+            .iter_mut()
+            .find(|request| request.space == space)
+        {
+            request.additional_floating_roots = request.additional_floating_roots.max(additional);
+            return;
+        }
+        self.spaces.push(CanonicalSpaceCapacityRequest {
+            space,
+            additional_floating_roots: additional,
+        });
+        debug_assert!(!self.spaces.spilled());
+    }
+}
+
+fn is_prepared_single_item_group(group: &CanonicalGroup, item: &DockItemId) -> bool {
+    group.items.as_slice() == std::slice::from_ref(item)
+        && group.selected == *item
+        && group.mru.as_slice() == std::slice::from_ref(item)
+}
+
 impl CanonicalLeafDetach {
     fn remap_node(&self, node: CanonicalNodeId) -> CanonicalNodeId {
         match self.remap {
@@ -177,6 +254,452 @@ impl CanonicalDockGraph {
         self.version == other.version
     }
 
+    pub(crate) fn try_reserve_for_patch(
+        &mut self,
+        commit_id: GraphCommitId,
+        operation: &GraphPatchOperation,
+        mutation: &GraphPreparedMutation,
+    ) -> Result<GraphCapacityProof, GraphPrepareError> {
+        let plan = self.capacity_plan(operation, mutation)?;
+        let additional_nodes = plan.additional_nodes;
+        let additional_groups = plan.additional_groups;
+        let additional_floatings = plan.additional_floatings;
+        let additional_group_index = plan.additional_group_index;
+        let additional_item_index = plan.additional_item_index;
+        let additional_floating_item_index = plan.additional_floating_item_index;
+
+        self.nodes
+            .try_reserve(additional_nodes)
+            .map_err(|_| GraphPrepareError::GraphCapacityExhausted)?;
+        self.groups
+            .try_reserve(additional_groups)
+            .map_err(|_| GraphPrepareError::GraphCapacityExhausted)?;
+        self.floating_roots
+            .try_reserve(additional_floatings)
+            .map_err(|_| GraphPrepareError::GraphCapacityExhausted)?;
+        self.index
+            .try_reserve_for_graph_growth(
+                self.nodes.capacity(),
+                additional_group_index,
+                additional_item_index,
+                additional_floating_item_index,
+            )
+            .map_err(|_| GraphPrepareError::GraphCapacityExhausted)?;
+
+        let mut group_vectors = SmallVec::new();
+        for request in plan.groups {
+            let group = self.groups.get_mut(&request.group).ok_or_else(|| {
+                GraphPrepareError::MissingGroup {
+                    group: request.group.clone(),
+                }
+            })?;
+            group
+                .items
+                .try_reserve(request.additional_items)
+                .map_err(|_| GraphPrepareError::GraphCapacityExhausted)?;
+            group
+                .mru
+                .try_reserve(request.additional_mru)
+                .map_err(|_| GraphPrepareError::GraphCapacityExhausted)?;
+            group_vectors.push(GraphGroupCapacityRequirement {
+                group: request.group,
+                additional_items: request.additional_items,
+                additional_mru: request.additional_mru,
+            });
+        }
+        debug_assert!(!group_vectors.spilled());
+
+        let mut space_vectors = SmallVec::new();
+        for request in plan.spaces {
+            let space = self.spaces.get_mut(&request.space).ok_or_else(|| {
+                GraphPrepareError::MissingSpace {
+                    space: request.space.clone(),
+                }
+            })?;
+            space
+                .floating_roots
+                .try_reserve(request.additional_floating_roots)
+                .map_err(|_| GraphPrepareError::GraphCapacityExhausted)?;
+            space_vectors.push(GraphSpaceCapacityRequirement {
+                space: request.space,
+                additional_floating_roots: request.additional_floating_roots,
+            });
+        }
+        debug_assert!(!space_vectors.spilled());
+
+        let revision = GraphRevision::from_version(self.version);
+        Ok(GraphCapacityProof::new(
+            commit_id,
+            revision.authority_epoch(),
+            revision.allocator(),
+            self.nodes.capacity(),
+            additional_nodes,
+            additional_groups,
+            additional_floatings,
+            additional_group_index,
+            additional_item_index,
+            additional_floating_item_index,
+            group_vectors,
+            space_vectors,
+        ))
+    }
+
+    pub(crate) fn validate_capacity_proof(
+        &self,
+        commit_id: GraphCommitId,
+        operation: &GraphPatchOperation,
+        mutation: &GraphPreparedMutation,
+        proof: &GraphCapacityProof,
+    ) -> Result<(), GraphSupersededReason> {
+        if proof.commit_id != commit_id {
+            return Err(GraphSupersededReason::TransactionOwnerChanged);
+        }
+        let revision = GraphRevision::from_version(self.version);
+        if proof.authority_epoch != revision.authority_epoch() {
+            return Err(GraphSupersededReason::AuthorityChanged);
+        }
+        if proof.allocator_revision != revision.allocator() {
+            return Err(GraphSupersededReason::AllocatorChanged);
+        }
+
+        let Ok(plan) = self.capacity_plan(operation, mutation) else {
+            return Err(GraphSupersededReason::CapacityProofMismatch);
+        };
+        let requirements_match = proof.required_node_key_capacity <= self.nodes.capacity()
+            && proof.additional_nodes == plan.additional_nodes
+            && proof.additional_groups == plan.additional_groups
+            && proof.additional_floatings == plan.additional_floatings
+            && proof.additional_group_index == plan.additional_group_index
+            && proof.additional_item_index == plan.additional_item_index
+            && proof.additional_floating_item_index == plan.additional_floating_item_index
+            && proof.group_vectors.len() == plan.groups.len()
+            && proof.space_vectors.len() == plan.spaces.len()
+            && proof
+                .group_vectors
+                .iter()
+                .zip(plan.groups.iter())
+                .all(|(proof, request)| {
+                    proof.group == request.group
+                        && proof.additional_items == request.additional_items
+                        && proof.additional_mru == request.additional_mru
+                })
+            && proof
+                .space_vectors
+                .iter()
+                .zip(plan.spaces.iter())
+                .all(|(proof, request)| {
+                    proof.space == request.space
+                        && proof.additional_floating_roots == request.additional_floating_roots
+                });
+        if !requirements_match {
+            return Err(GraphSupersededReason::CapacityProofMismatch);
+        }
+
+        fn has_headroom(len: usize, additional: usize, capacity: usize) -> bool {
+            len.checked_add(additional)
+                .is_some_and(|required| required <= capacity)
+        }
+
+        if !has_headroom(
+            self.nodes.len(),
+            proof.additional_nodes,
+            self.nodes.capacity(),
+        ) || !has_headroom(
+            self.groups.len(),
+            proof.additional_groups,
+            self.groups.capacity(),
+        ) || !has_headroom(
+            self.floating_roots.len(),
+            proof.additional_floatings,
+            self.floating_roots.capacity(),
+        ) || !self.index.has_capacity_for_graph_growth(
+            self.nodes.capacity(),
+            proof.additional_group_index,
+            proof.additional_item_index,
+            proof.additional_floating_item_index,
+        ) {
+            return Err(GraphSupersededReason::AllocatorChanged);
+        }
+        for requirement in &proof.group_vectors {
+            let Some(group) = self.groups.get(&requirement.group) else {
+                return Err(GraphSupersededReason::GroupMissing);
+            };
+            if !has_headroom(
+                group.items.len(),
+                requirement.additional_items,
+                group.items.capacity(),
+            ) || !has_headroom(
+                group.mru.len(),
+                requirement.additional_mru,
+                group.mru.capacity(),
+            ) {
+                return Err(GraphSupersededReason::AllocatorChanged);
+            }
+        }
+        for requirement in &proof.space_vectors {
+            let Some(space) = self.spaces.get(&requirement.space) else {
+                return Err(GraphSupersededReason::SpaceMissing);
+            };
+            if !has_headroom(
+                space.floating_roots.len(),
+                requirement.additional_floating_roots,
+                space.floating_roots.capacity(),
+            ) {
+                return Err(GraphSupersededReason::AllocatorChanged);
+            }
+        }
+        Ok(())
+    }
+
+    fn capacity_plan(
+        &self,
+        operation: &GraphPatchOperation,
+        mutation: &GraphPreparedMutation,
+    ) -> Result<CanonicalGraphCapacityPlan, GraphPrepareError> {
+        self.validate_prepared_mutation(operation, mutation)?;
+        let mut plan = CanonicalGraphCapacityPlan::default();
+        match operation {
+            GraphPatchOperation::SelectTab { group, .. } => {
+                self.require_group(group)?;
+                plan.reserve_group_vectors(group.clone(), 0, 1);
+            }
+            GraphPatchOperation::SplitGroup {
+                target_group,
+                items,
+                ..
+            } => {
+                plan.additional_nodes = 2;
+                plan.additional_groups = 1;
+                plan.additional_group_index = 1;
+                plan.additional_item_index = items.len();
+                if self.group_is_floating(target_group)? {
+                    plan.additional_floating_item_index = items.len();
+                }
+            }
+            GraphPatchOperation::MoveGroupToEdge {
+                source_group,
+                target_group,
+                ..
+            } => {
+                plan.additional_nodes = 2;
+                if !self.group_is_floating(source_group)? && self.group_is_floating(target_group)? {
+                    plan.additional_floating_item_index =
+                        self.require_group(source_group)?.items.len();
+                }
+            }
+            GraphPatchOperation::MoveGroupToCenter {
+                source_group,
+                target_group,
+                ..
+            } => {
+                let source = self.require_group(source_group)?;
+                let target = self.require_group(target_group)?;
+                plan.reserve_group_vectors(target_group.clone(), source.items.len(), 0);
+                plan.reserve_group_vectors(
+                    source_group.clone(),
+                    0,
+                    target.mru.len().saturating_add(2),
+                );
+                if !self.group_is_floating(source_group)? && self.group_is_floating(target_group)? {
+                    plan.additional_floating_item_index = source.items.len();
+                }
+            }
+            GraphPatchOperation::MoveGroupToEmptySpace { source_group, .. } => {
+                self.require_group(source_group)?;
+                plan.additional_nodes = 1;
+            }
+            GraphPatchOperation::MoveItemToGroup {
+                source_group,
+                target_group,
+                ..
+            } => {
+                self.require_group(source_group)?;
+                self.require_group(target_group)?;
+                if source_group == target_group {
+                    plan.reserve_group_vectors(source_group.clone(), 0, 1);
+                } else {
+                    plan.reserve_group_vectors(target_group.clone(), 1, 1);
+                    if !self.group_is_floating(source_group)?
+                        && self.group_is_floating(target_group)?
+                    {
+                        plan.additional_floating_item_index = 1;
+                    }
+                }
+            }
+            GraphPatchOperation::MoveItemToEdge {
+                source_group,
+                target_group,
+                ..
+            } => {
+                let source_len = self.require_group(source_group)?.items.len();
+                self.require_group(target_group)?;
+                plan.additional_nodes = 2;
+                if source_len > 1 {
+                    plan.additional_groups = 1;
+                    plan.additional_group_index = 1;
+                }
+                if !self.group_is_floating(source_group)? && self.group_is_floating(target_group)? {
+                    plan.additional_floating_item_index = 1;
+                }
+            }
+            GraphPatchOperation::MoveItemToEmptySpace { source_group, .. } => {
+                let source_len = self.require_group(source_group)?.items.len();
+                plan.additional_nodes = 1;
+                if source_len > 1 {
+                    plan.additional_groups = 1;
+                    plan.additional_group_index = 1;
+                }
+            }
+            GraphPatchOperation::FloatItemInWindow {
+                source_group,
+                target_space,
+                ..
+            } => {
+                let source_len = self.require_group(source_group)?.items.len();
+                plan.additional_nodes = 1;
+                plan.additional_floatings = 1;
+                if source_len > 1 {
+                    plan.additional_groups = 1;
+                    plan.additional_group_index = 1;
+                }
+                if !self.group_is_floating(source_group)? {
+                    plan.additional_floating_item_index = 1;
+                }
+                plan.reserve_space_floatings(target_space.clone(), 1);
+            }
+            GraphPatchOperation::MoveFloatingRootToEdge { target_group, .. } => {
+                self.require_group(target_group)?;
+                plan.additional_nodes = 1;
+            }
+        }
+        Ok(plan)
+    }
+
+    fn validate_prepared_mutation(
+        &self,
+        operation: &GraphPatchOperation,
+        mutation: &GraphPreparedMutation,
+    ) -> Result<(), GraphPrepareError> {
+        let valid = match (operation, mutation) {
+            (GraphPatchOperation::SelectTab { .. }, GraphPreparedMutation::SelectTab)
+            | (
+                GraphPatchOperation::MoveGroupToEdge { .. },
+                GraphPreparedMutation::MoveGroupToEdge,
+            )
+            | (
+                GraphPatchOperation::MoveGroupToCenter { .. },
+                GraphPreparedMutation::MoveGroupToCenter,
+            )
+            | (
+                GraphPatchOperation::MoveGroupToEmptySpace { .. },
+                GraphPreparedMutation::MoveGroupToEmptySpace,
+            )
+            | (
+                GraphPatchOperation::MoveItemToGroup { .. },
+                GraphPreparedMutation::MoveItemToGroup,
+            ) => true,
+            (
+                GraphPatchOperation::SplitGroup {
+                    items, selected, ..
+                },
+                GraphPreparedMutation::SplitGroup { new_group },
+            ) => {
+                new_group.items == *items
+                    && new_group.selected == *selected
+                    && new_group.mru.is_empty()
+            }
+            (
+                GraphPatchOperation::MoveItemToEdge {
+                    item, source_group, ..
+                },
+                GraphPreparedMutation::MoveItemToEdge { new_group },
+            )
+            | (
+                GraphPatchOperation::MoveItemToEmptySpace {
+                    item, source_group, ..
+                },
+                GraphPreparedMutation::MoveItemToEmptySpace { new_group },
+            )
+            | (
+                GraphPatchOperation::FloatItemInWindow {
+                    item, source_group, ..
+                },
+                GraphPreparedMutation::FloatItemInWindow { new_group },
+            ) => self.groups.get(source_group).is_some_and(|source| {
+                if source.items.len() == 1 {
+                    new_group.is_none()
+                } else {
+                    new_group
+                        .as_ref()
+                        .is_some_and(|group| is_prepared_single_item_group(group, item))
+                }
+            }),
+            (
+                GraphPatchOperation::MoveFloatingRootToEdge {
+                    floating,
+                    source_space,
+                    ..
+                },
+                GraphPreparedMutation::MoveFloatingRootToEdge { owner_nodes },
+            ) => self.floating_roots.get(floating).is_some_and(|root| {
+                let expected_count = self
+                    .nodes
+                    .keys()
+                    .filter(|node| {
+                        matches!(
+                            self.index.owner_for_node(*node),
+                            Some(CanonicalNodeOwner::Floating {
+                                space,
+                                floating: owner_floating,
+                            }) if space == source_space && owner_floating == floating
+                        )
+                    })
+                    .count();
+                root.space == *source_space
+                    && owner_nodes.first() == Some(&root.root)
+                    && owner_nodes.len() == expected_count
+                    && owner_nodes.iter().enumerate().all(|(index, node)| {
+                        !owner_nodes[..index].contains(node)
+                            && matches!(
+                                self.index.owner_for_node(*node),
+                                Some(CanonicalNodeOwner::Floating {
+                                    space,
+                                    floating: owner_floating,
+                                }) if space == source_space && owner_floating == floating
+                            )
+                    })
+            }),
+            _ => false,
+        };
+        valid
+            .then_some(())
+            .ok_or(GraphPrepareError::PreparedMutationMismatch)
+    }
+
+    fn require_group(&self, group: &DockGroupId) -> Result<&CanonicalGroup, GraphPrepareError> {
+        self.groups
+            .get(group)
+            .ok_or_else(|| GraphPrepareError::MissingGroup {
+                group: group.clone(),
+            })
+    }
+
+    fn group_is_floating(&self, group: &DockGroupId) -> Result<bool, GraphPrepareError> {
+        let node =
+            self.index
+                .node_for_group(group)
+                .ok_or_else(|| GraphPrepareError::MissingGroup {
+                    group: group.clone(),
+                })?;
+        let owner =
+            self.index
+                .owner_for_node(node)
+                .ok_or_else(|| GraphPrepareError::MissingGroup {
+                    group: group.clone(),
+                })?;
+        Ok(matches!(owner, CanonicalNodeOwner::Floating { .. }))
+    }
+
     /// Applies a selection/MRU update after the transaction boundary has revalidated its read set.
     ///
     /// This is intentionally the only production mutation entry point for the canonical group
@@ -207,8 +730,7 @@ impl CanonicalDockGraph {
         &mut self,
         target_group: &DockGroupId,
         new_group: &DockGroupId,
-        items: &[DockItemId],
-        selected: &DockItemId,
+        new_group_state: CanonicalGroup,
         axis: SplitAxis,
         insert_before: bool,
         ratio: f32,
@@ -229,8 +751,17 @@ impl CanonicalDockGraph {
         };
         if owner_space != space
             || self.groups.contains_key(new_group)
-            || items.is_empty()
-            || !items.contains(selected)
+            || new_group_state.items.is_empty()
+            || !new_group_state.items.contains(&new_group_state.selected)
+            || new_group_state
+                .mru
+                .iter()
+                .any(|item| !new_group_state.items.contains(item))
+            || new_group_state
+                .mru
+                .iter()
+                .enumerate()
+                .any(|(index, item)| new_group_state.mru[..index].contains(item))
             || !ratio.is_finite()
             || !(0.0..=1.0).contains(&ratio)
             || ratio <= 0.0
@@ -238,7 +769,8 @@ impl CanonicalDockGraph {
         {
             return None;
         }
-        if items
+        if new_group_state
+            .items
             .iter()
             .any(|item| self.index.group_for_item(item).is_some())
         {
@@ -252,14 +784,7 @@ impl CanonicalDockGraph {
             return None;
         }
 
-        self.groups.insert(
-            new_group.clone(),
-            CanonicalGroup {
-                items: items.to_vec(),
-                selected: selected.clone(),
-                mru: Vec::new(),
-            },
-        );
+        self.groups.insert(new_group.clone(), new_group_state);
         let new_leaf = self.nodes.insert(CanonicalNode::Group {
             group: new_group.clone(),
             size_ref: None,
@@ -380,26 +905,10 @@ impl CanonicalDockGraph {
         };
         let target_node = detach.remap_node(target_node);
 
-        let target_parent = match &target_owner {
-            CanonicalNodeOwner::Main(owner_space) => {
-                let root = self
-                    .spaces
-                    .get(owner_space)
-                    .and_then(|space| space.root)
-                    .expect("validated target main space must retain a root");
-                Self::find_reachable_parent(self, root, target_node, None)
-                    .expect("validated target group must remain reachable")
-            }
-            CanonicalNodeOwner::Floating { floating, .. } => {
-                let root = self
-                    .floating_roots
-                    .get(floating)
-                    .map(|floating| floating.root)
-                    .expect("validated target floating root must remain present");
-                Self::find_reachable_parent(self, root, target_node, None)
-                    .expect("validated target group must remain reachable")
-            }
-        };
+        let target_parent = self
+            .index
+            .parent_of(target_node)
+            .expect("validated target group must remain indexed");
         if let Some(parent) = target_parent {
             assert!(
                 matches!(
@@ -516,7 +1025,7 @@ impl CanonicalDockGraph {
         };
         let target_node = detach.remap_node(target_node);
 
-        let target_state = self
+        let mut target_state = self
             .groups
             .remove(target_group)
             .expect("validated target group must remain present");
@@ -524,24 +1033,36 @@ impl CanonicalDockGraph {
             .groups
             .get_mut(source_group)
             .expect("validated source group must remain present");
-        let source_items = source_state.items.clone();
-        let target_items = target_state.items.clone();
-        let mut merged_mru =
-            Vec::with_capacity(source_state.mru.len() + target_state.mru.len() + 2);
-        let mut seen = BTreeSet::new();
-        for candidate in std::iter::once(&source_state.selected)
-            .chain(source_state.mru.iter())
-            .chain(std::iter::once(&target_state.selected))
-            .chain(target_state.mru.iter())
-        {
-            if seen.insert(candidate.clone()) {
-                merged_mru.push(candidate.clone());
+        self.index.merge_target_group_into_source_at_target_leaf(
+            source_node,
+            source_group,
+            &source_state.items,
+            target_node,
+            target_group,
+            &target_state.items,
+            &target_owner,
+        );
+
+        debug_assert!(
+            target_state.items.capacity()
+                >= target_state
+                    .items
+                    .len()
+                    .saturating_add(source_state.items.len())
+        );
+        target_state.items.extend(source_state.items.drain(..));
+        source_state.items = target_state.items;
+
+        let source_selected = source_state.selected.clone();
+        source_state
+            .mru
+            .retain(|candidate| candidate != &source_selected);
+        source_state.mru.insert(0, source_selected);
+        for candidate in std::iter::once(target_state.selected).chain(target_state.mru) {
+            if !source_state.mru.contains(&candidate) {
+                source_state.mru.push(candidate);
             }
         }
-        let mut merged_items = target_items.clone();
-        merged_items.extend(source_items.iter().cloned());
-        source_state.items = merged_items;
-        source_state.mru = merged_mru;
 
         let CanonicalNode::Group { group, .. } = self
             .nodes
@@ -552,15 +1073,6 @@ impl CanonicalDockGraph {
         };
         *group = source_group.clone();
 
-        self.index.merge_target_group_into_source_at_target_leaf(
-            source_node,
-            source_group,
-            &source_items,
-            target_node,
-            target_group,
-            &target_items,
-            &target_owner,
-        );
         self.version = version;
         let mut effects = detach.effects;
         effects.record_retired_group(target_group.clone());
@@ -748,6 +1260,7 @@ impl CanonicalDockGraph {
         axis: SplitAxis,
         insert_before: bool,
         ratio: f32,
+        prepared_new_group: Option<CanonicalGroup>,
         version: CanonicalGraphVersion,
     ) -> Option<GraphCommitEffects> {
         if !ratio.is_finite() || !(0.0..=1.0).contains(&ratio) || ratio <= 0.0 || ratio >= 1.0 {
@@ -787,7 +1300,7 @@ impl CanonicalDockGraph {
         };
 
         if source_len == 1 {
-            if new_group != source_group {
+            if new_group != source_group || prepared_new_group.is_some() {
                 return None;
             }
             return self.apply_move_group_to_edge_for_commit(
@@ -802,6 +1315,12 @@ impl CanonicalDockGraph {
             );
         }
         if new_group == source_group || self.groups.contains_key(new_group) {
+            return None;
+        }
+        let Some(new_group_state) = prepared_new_group else {
+            return None;
+        };
+        if !is_prepared_single_item_group(&new_group_state, item) {
             return None;
         }
         let Some(target_parent) = self.index.parent_of(target_node) else {
@@ -836,8 +1355,7 @@ impl CanonicalDockGraph {
             .apply_split_group_for_commit(
                 target_group,
                 new_group,
-                std::slice::from_ref(item),
-                item,
+                new_group_state,
                 axis,
                 insert_before,
                 ratio,
@@ -845,11 +1363,6 @@ impl CanonicalDockGraph {
                 version,
             )
             .expect("validated item edge split must be applicable after local extraction");
-        self.groups
-            .get_mut(new_group)
-            .expect("item edge split inserted the destination group")
-            .mru
-            .push(item.clone());
         Some(effects)
     }
 
@@ -862,6 +1375,7 @@ impl CanonicalDockGraph {
         new_group: &DockGroupId,
         source_space: &DockSpaceId,
         target_space: &DockSpaceId,
+        prepared_new_group: Option<CanonicalGroup>,
         version: CanonicalGraphVersion,
     ) -> Option<GraphCommitEffects> {
         let Some(source_node) = self.index.node_for_group(source_group) else {
@@ -912,12 +1426,21 @@ impl CanonicalDockGraph {
             target_state.central.keep_alive_when_empty && target_state.central.node.is_none();
 
         if source_len == 1 {
+            if prepared_new_group.is_some() {
+                return None;
+            }
             return self.apply_move_group_to_empty_space_for_commit(
                 source_group,
                 source_space,
                 target_space,
                 version,
             );
+        }
+        let Some(new_group_state) = prepared_new_group else {
+            return None;
+        };
+        if !is_prepared_single_item_group(&new_group_state, item) {
+            return None;
         }
 
         let source = self
@@ -938,14 +1461,7 @@ impl CanonicalDockGraph {
             group: new_group.clone(),
             size_ref: None,
         });
-        self.groups.insert(
-            new_group.clone(),
-            CanonicalGroup {
-                items: vec![item.clone()],
-                selected: item.clone(),
-                mru: vec![item.clone()],
-            },
-        );
+        self.groups.insert(new_group.clone(), new_group_state);
         let target_state = self
             .spaces
             .get_mut(target_space)
@@ -984,6 +1500,7 @@ impl CanonicalDockGraph {
         retired_floating: Option<&DockFloatingId>,
         bounds: DockLayoutRect,
         z_order: i32,
+        prepared_new_group: Option<CanonicalGroup>,
         version: CanonicalGraphVersion,
     ) -> Option<GraphCommitEffects> {
         if !bounds.is_finite_with_non_negative_size()
@@ -1032,6 +1549,14 @@ impl CanonicalDockGraph {
         if (source_len == 1 && new_group != source_group)
             || (source_len > 1
                 && (new_group == source_group || self.groups.contains_key(new_group)))
+        {
+            return None;
+        }
+        if source_len == 1 && prepared_new_group.is_some()
+            || source_len > 1
+                && prepared_new_group
+                    .as_ref()
+                    .is_none_or(|group| !is_prepared_single_item_group(group, item))
         {
             return None;
         }
@@ -1091,11 +1616,7 @@ impl CanonicalDockGraph {
             });
             self.groups.insert(
                 new_group.clone(),
-                CanonicalGroup {
-                    items: vec![item.clone()],
-                    selected: item.clone(),
-                    mru: vec![item.clone()],
-                },
+                prepared_new_group.expect("validated multi-item extraction must carry a group"),
             );
             let mut effects = GraphCommitEffects::default();
             effects.record_created_group(new_group.clone());
@@ -1143,6 +1664,7 @@ impl CanonicalDockGraph {
         axis: SplitAxis,
         insert_before: bool,
         ratio: f32,
+        owner_nodes: Vec<CanonicalNodeId>,
         version: CanonicalGraphVersion,
     ) -> Option<GraphCommitEffects> {
         if !ratio.is_finite() || !(0.0..=1.0).contains(&ratio) || ratio <= 0.0 || ratio >= 1.0 {
@@ -1172,30 +1694,33 @@ impl CanonicalDockGraph {
         if target_owner_space != target_space {
             return None;
         }
-        if Self::find_reachable_parent(self, source_floating.root, target_node, None).is_some() {
+        if matches!(
+            &target_owner,
+            CanonicalNodeOwner::Floating {
+                floating: owner_floating,
+                ..
+            } if owner_floating == floating
+        ) {
+            return None;
+        }
+        if owner_nodes.first() != Some(&source_floating.root)
+            || owner_nodes.iter().any(|node| {
+                !matches!(
+                    self.index.owner_for_node(*node),
+                    Some(CanonicalNodeOwner::Floating {
+                        space,
+                        floating: owner_floating,
+                    }) if space == source_space && owner_floating == floating
+                )
+            })
+        {
             return None;
         }
 
-        let target_parent = match &target_owner {
-            CanonicalNodeOwner::Main(owner_space) => {
-                let root = self
-                    .spaces
-                    .get(owner_space)
-                    .and_then(|space| space.root)
-                    .expect("validated target main space must retain a root");
-                Self::find_reachable_parent(self, root, target_node, None)
-                    .expect("validated target group must remain reachable")
-            }
-            CanonicalNodeOwner::Floating { floating, .. } => {
-                let root = self
-                    .floating_roots
-                    .get(floating)
-                    .map(|floating| floating.root)
-                    .expect("validated target floating root must remain present");
-                Self::find_reachable_parent(self, root, target_node, None)
-                    .expect("validated target group must remain reachable")
-            }
-        };
+        let target_parent = self
+            .index
+            .parent_of(target_node)
+            .expect("validated target group must remain indexed");
 
         self.floating_roots.remove(floating);
         self.spaces
@@ -1255,12 +1780,8 @@ impl CanonicalDockGraph {
             .insert_branch(branch_id, target_parent, target_owner.clone());
         self.index.set_parent(target_node, Some(branch_id));
         self.index.set_parent(source_floating.root, Some(branch_id));
-        self.index.update_owner_subtree(
-            &self.nodes,
-            &self.groups,
-            source_floating.root,
-            target_owner,
-        );
+        self.index
+            .update_owner_nodes(&self.nodes, &self.groups, owner_nodes, target_owner);
         self.version = version;
         let mut effects = GraphCommitEffects::default();
         effects.record_created_node(branch_id);
@@ -1430,22 +1951,6 @@ impl CanonicalDockGraph {
             owner,
         );
         node
-    }
-
-    fn find_reachable_parent(
-        graph: &Self,
-        current: CanonicalNodeId,
-        target: CanonicalNodeId,
-        parent: Option<CanonicalNodeId>,
-    ) -> Option<Option<CanonicalNodeId>> {
-        if current == target {
-            return Some(parent);
-        }
-        let CanonicalNode::Branch { first, second, .. } = graph.nodes.get(current)? else {
-            return None;
-        };
-        Self::find_reachable_parent(graph, *first, target, Some(current))
-            .or_else(|| Self::find_reachable_parent(graph, *second, target, Some(current)))
     }
 
     #[cfg(test)]

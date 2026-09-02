@@ -1,11 +1,12 @@
 #![allow(dead_code)]
 
 use crate::binary_layout_policy::StructuralIdentityRemap;
-use crate::graph_assembly::CanonicalDockGraph;
+use crate::graph_assembly::{CanonicalDockGraph, CanonicalGroup};
 use crate::{
     CanonicalGraphVersion, CanonicalNodeId, DockFloatingId, DockGroupId, DockItemId,
     DockLayoutRect, DockSpaceId, SplitAxis,
 };
+use arrayvec::ArrayVec;
 use smallvec::SmallVec;
 use std::fmt;
 use std::sync::Arc;
@@ -218,6 +219,76 @@ impl GraphFloatingBounds {
             y: f32::from_bits(self.y),
             width: f32::from_bits(self.width),
             height: f32::from_bits(self.height),
+        }
+    }
+}
+
+/// Commit-time headroom required from one durable group's mutable vectors.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct GraphGroupCapacityRequirement {
+    pub(crate) group: DockGroupId,
+    pub(crate) additional_items: usize,
+    pub(crate) additional_mru: usize,
+}
+
+/// Commit-time headroom required from one dock-space floating-root list.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct GraphSpaceCapacityRequirement {
+    pub(crate) space: DockSpaceId,
+    pub(crate) additional_floating_roots: usize,
+}
+
+/// Proof that live canonical collections touched by a prepared operation have spare capacity.
+///
+/// Allocator revision and the ordinary read set provide identity/liveness checks. The additional
+/// counts prove remaining headroom against current lengths, while `required_node_key_capacity`
+/// proves that the secondary indexes can address every slot the reserved node map may allocate.
+/// Owned scratch and new payload values live in the sealed mutation carried by the patch.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct GraphCapacityProof {
+    pub(crate) commit_id: GraphCommitId,
+    pub(crate) authority_epoch: u64,
+    pub(crate) allocator_revision: u64,
+    pub(crate) required_node_key_capacity: usize,
+    pub(crate) additional_nodes: usize,
+    pub(crate) additional_groups: usize,
+    pub(crate) additional_floatings: usize,
+    pub(crate) additional_group_index: usize,
+    pub(crate) additional_item_index: usize,
+    pub(crate) additional_floating_item_index: usize,
+    pub(crate) group_vectors: SmallVec<[GraphGroupCapacityRequirement; 3]>,
+    pub(crate) space_vectors: SmallVec<[GraphSpaceCapacityRequirement; 2]>,
+}
+
+impl GraphCapacityProof {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new(
+        commit_id: GraphCommitId,
+        authority_epoch: u64,
+        allocator_revision: u64,
+        required_node_key_capacity: usize,
+        additional_nodes: usize,
+        additional_groups: usize,
+        additional_floatings: usize,
+        additional_group_index: usize,
+        additional_item_index: usize,
+        additional_floating_item_index: usize,
+        group_vectors: SmallVec<[GraphGroupCapacityRequirement; 3]>,
+        space_vectors: SmallVec<[GraphSpaceCapacityRequirement; 2]>,
+    ) -> Self {
+        Self {
+            commit_id,
+            authority_epoch,
+            allocator_revision,
+            required_node_key_capacity,
+            additional_nodes,
+            additional_groups,
+            additional_floatings,
+            additional_group_index,
+            additional_item_index,
+            additional_floating_item_index,
+            group_vectors,
+            space_vectors,
         }
     }
 }
@@ -456,6 +527,70 @@ pub(crate) enum GraphPatchOperation {
     },
 }
 
+/// Allocation-complete mutation payload paired with one symbolic operation.
+///
+/// The semantic operation is retained in receipts. This linear value owns every payload or
+/// traversal buffer that could otherwise allocate after the canonical graph has received its
+/// first write.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum GraphPreparedMutation {
+    SelectTab,
+    SplitGroup { new_group: CanonicalGroup },
+    MoveGroupToEdge,
+    MoveGroupToCenter,
+    MoveGroupToEmptySpace,
+    MoveItemToGroup,
+    MoveItemToEdge { new_group: Option<CanonicalGroup> },
+    MoveItemToEmptySpace { new_group: Option<CanonicalGroup> },
+    FloatItemInWindow { new_group: Option<CanonicalGroup> },
+    MoveFloatingRootToEdge { owner_nodes: Vec<CanonicalNodeId> },
+}
+
+impl GraphPreparedMutation {
+    pub(crate) fn matches_operation(&self, operation: &GraphPatchOperation) -> bool {
+        matches!(
+            (operation, self),
+            (GraphPatchOperation::SelectTab { .. }, Self::SelectTab)
+                | (
+                    GraphPatchOperation::SplitGroup { .. },
+                    Self::SplitGroup { .. }
+                )
+                | (
+                    GraphPatchOperation::MoveGroupToEdge { .. },
+                    Self::MoveGroupToEdge
+                )
+                | (
+                    GraphPatchOperation::MoveGroupToCenter { .. },
+                    Self::MoveGroupToCenter
+                )
+                | (
+                    GraphPatchOperation::MoveGroupToEmptySpace { .. },
+                    Self::MoveGroupToEmptySpace
+                )
+                | (
+                    GraphPatchOperation::MoveItemToGroup { .. },
+                    Self::MoveItemToGroup
+                )
+                | (
+                    GraphPatchOperation::MoveItemToEdge { .. },
+                    Self::MoveItemToEdge { .. }
+                )
+                | (
+                    GraphPatchOperation::MoveItemToEmptySpace { .. },
+                    Self::MoveItemToEmptySpace { .. }
+                )
+                | (
+                    GraphPatchOperation::FloatItemInWindow { .. },
+                    Self::FloatItemInWindow { .. }
+                )
+                | (
+                    GraphPatchOperation::MoveFloatingRootToEdge { .. },
+                    Self::MoveFloatingRootToEdge { .. }
+                )
+        )
+    }
+}
+
 /// A local symbolic patch and its declared read set.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct GraphPatch {
@@ -490,14 +625,23 @@ impl GraphPatch {
 pub(crate) struct PreparedGraphPatch {
     commit_id: GraphCommitId,
     patch: GraphPatch,
+    mutation: GraphPreparedMutation,
+    capacity_proof: Option<GraphCapacityProof>,
     receipt_reservation: Box<GraphReceiptReservation>,
 }
 
 impl PreparedGraphPatch {
-    pub(crate) fn new(commit_id: GraphCommitId, patch: GraphPatch) -> Self {
+    pub(crate) fn new(
+        commit_id: GraphCommitId,
+        patch: GraphPatch,
+        mutation: GraphPreparedMutation,
+    ) -> Self {
+        debug_assert!(mutation.matches_operation(patch.operation()));
         Self {
             commit_id,
             patch,
+            mutation,
+            capacity_proof: None,
             receipt_reservation: Box::new(GraphReceiptReservation::new(commit_id)),
         }
     }
@@ -514,14 +658,39 @@ impl PreparedGraphPatch {
         self.patch.read_set()
     }
 
+    pub(crate) fn mutation(&self) -> &GraphPreparedMutation {
+        &self.mutation
+    }
+
+    pub(crate) fn with_capacity_proof(mut self, proof: GraphCapacityProof) -> Self {
+        debug_assert!(self.capacity_proof.is_none());
+        debug_assert_eq!(proof.commit_id, self.commit_id);
+        self.capacity_proof = Some(proof);
+        self
+    }
+
+    pub(crate) fn capacity_proof(&self) -> Option<&GraphCapacityProof> {
+        self.capacity_proof.as_ref()
+    }
+
     pub(crate) fn has_receipt_reservation_for(&self, commit_id: GraphCommitId) -> bool {
         self.receipt_reservation.commit_id() == commit_id
     }
 
     pub(crate) fn into_commit_parts(
         self,
-    ) -> (Arc<GraphPatchOperation>, Box<GraphReceiptReservation>) {
-        (self.patch.operation, self.receipt_reservation)
+    ) -> (
+        Arc<GraphPatchOperation>,
+        GraphPreparedMutation,
+        Option<GraphCapacityProof>,
+        Box<GraphReceiptReservation>,
+    ) {
+        (
+            self.patch.operation,
+            self.mutation,
+            self.capacity_proof,
+            self.receipt_reservation,
+        )
     }
 }
 
@@ -561,6 +730,8 @@ impl GraphNoOpReceipt {
 pub(crate) enum GraphSupersededReason {
     AuthorityChanged,
     TransactionOwnerChanged,
+    CapacityProofMissing,
+    CapacityProofMismatch,
     AllocatorChanged,
     TopologyChanged,
     SelectionChanged,
@@ -652,17 +823,17 @@ impl GraphReceiptReservation {
 
 /// Identity-level effects emitted by one canonical graph commit.
 ///
-/// Each operation has a small fixed structural footprint. Inline storage keeps receipt cloning and
-/// installation allocation-free for every currently supported patch kind.
+/// Each operation has a small fixed structural footprint. Fixed-capacity storage keeps receipt
+/// cloning and installation allocation-free for every currently supported patch kind.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct GraphCommitEffects {
-    created_nodes: SmallVec<[CanonicalNodeId; 4]>,
-    retired_nodes: SmallVec<[CanonicalNodeId; 4]>,
-    identity_remaps: SmallVec<[StructuralIdentityRemap; 2]>,
-    created_groups: SmallVec<[DockGroupId; 2]>,
-    retired_groups: SmallVec<[DockGroupId; 2]>,
-    created_floatings: SmallVec<[DockFloatingId; 2]>,
-    retired_floatings: SmallVec<[DockFloatingId; 2]>,
+    created_nodes: ArrayVec<CanonicalNodeId, 4>,
+    retired_nodes: ArrayVec<CanonicalNodeId, 4>,
+    identity_remaps: ArrayVec<StructuralIdentityRemap, 2>,
+    created_groups: ArrayVec<DockGroupId, 2>,
+    retired_groups: ArrayVec<DockGroupId, 2>,
+    created_floatings: ArrayVec<DockFloatingId, 2>,
+    retired_floatings: ArrayVec<DockFloatingId, 2>,
 }
 
 impl GraphCommitEffects {
@@ -836,6 +1007,36 @@ pub(crate) trait GraphReadView {
 
     fn read_group(&self, group: &DockGroupId) -> Option<GraphGroupRead>;
 
+    fn validate_group_read(
+        &self,
+        expected: &GraphGroupRead,
+        selection_sensitive: bool,
+        mru_sensitive: bool,
+    ) -> Result<(), GraphSupersededReason> {
+        let Some(group) = self.read_group(&expected.group) else {
+            return Err(GraphSupersededReason::GroupMissing);
+        };
+        if group.group != expected.group {
+            return Err(GraphSupersededReason::GroupIdentityChanged);
+        }
+        if group.space != expected.space
+            || group.floating != expected.floating
+            || group.is_owner_root != expected.is_owner_root
+        {
+            return Err(GraphSupersededReason::GroupOwnerChanged);
+        }
+        if group.items != expected.items {
+            return Err(GraphSupersededReason::GroupMembershipChanged);
+        }
+        if selection_sensitive && group.selected != expected.selected {
+            return Err(GraphSupersededReason::GroupSelectionChanged);
+        }
+        if mru_sensitive && group.mru != expected.mru {
+            return Err(GraphSupersededReason::GroupSelectionChanged);
+        }
+        Ok(())
+    }
+
     fn read_item_group(&self, item: &DockItemId) -> Option<DockGroupId> {
         let _ = item;
         None
@@ -846,9 +1047,40 @@ pub(crate) trait GraphReadView {
         None
     }
 
+    fn read_floating_subtree_nodes(
+        &self,
+        floating: &DockFloatingId,
+    ) -> Option<Vec<CanonicalNodeId>> {
+        let _ = floating;
+        None
+    }
+
+    fn validate_floating_read(
+        &self,
+        expected: &GraphFloatingRootRead,
+    ) -> Result<(), GraphSupersededReason> {
+        let Some(floating) = self.read_floating_root(&expected.floating) else {
+            return Err(GraphSupersededReason::FloatingMissing);
+        };
+        if floating.space != expected.space {
+            return Err(GraphSupersededReason::FloatingOwnerChanged);
+        }
+        Ok(())
+    }
+
     fn read_space(&self, space: &DockSpaceId) -> Option<GraphSpaceRead> {
         let _ = space;
         None
+    }
+
+    fn validate_space_read(&self, expected: &GraphSpaceRead) -> Result<(), GraphSupersededReason> {
+        let Some(space) = self.read_space(&expected.space) else {
+            return Err(GraphSupersededReason::SpaceMissing);
+        };
+        if &space != expected {
+            return Err(GraphSupersededReason::SpaceTopologyChanged);
+        }
+        Ok(())
     }
 }
 
@@ -858,101 +1090,18 @@ pub(crate) trait GraphReadView {
 /// and read-set revalidation; once either method is called, the target has promised that the local
 /// write is structurally valid.
 pub(crate) trait GraphPatchTarget: GraphReadView {
-    fn apply_select_tab(&mut self, group: &DockGroupId, item: &DockItemId) -> GraphAppliedPatch;
+    fn validate_capacity_proof(
+        &self,
+        commit_id: GraphCommitId,
+        operation: &GraphPatchOperation,
+        mutation: &GraphPreparedMutation,
+        proof: Option<&GraphCapacityProof>,
+    ) -> Result<(), GraphSupersededReason>;
 
-    fn apply_split_group(
+    fn apply_prepared_patch(
         &mut self,
-        target_group: &DockGroupId,
-        new_group: &DockGroupId,
-        items: &[DockItemId],
-        selected: &DockItemId,
-        axis: SplitAxis,
-        insert_before: bool,
-        ratio: f32,
-        space: &DockSpaceId,
-    ) -> GraphAppliedPatch;
-
-    fn apply_move_group_to_edge(
-        &mut self,
-        source_group: &DockGroupId,
-        target_group: &DockGroupId,
-        source_space: &DockSpaceId,
-        target_space: &DockSpaceId,
-        axis: SplitAxis,
-        insert_before: bool,
-        ratio: f32,
-    ) -> GraphAppliedPatch;
-
-    fn apply_move_group_to_center(
-        &mut self,
-        source_group: &DockGroupId,
-        target_group: &DockGroupId,
-        source_space: &DockSpaceId,
-        target_space: &DockSpaceId,
-    ) -> GraphAppliedPatch;
-
-    fn apply_move_group_to_empty_space(
-        &mut self,
-        source_group: &DockGroupId,
-        source_space: &DockSpaceId,
-        target_space: &DockSpaceId,
-    ) -> GraphAppliedPatch;
-
-    fn apply_move_item_to_group(
-        &mut self,
-        item: &DockItemId,
-        source_group: &DockGroupId,
-        target_group: &DockGroupId,
-        source_space: &DockSpaceId,
-        target_space: &DockSpaceId,
-        insert_index: Option<usize>,
-    ) -> GraphAppliedPatch;
-
-    fn apply_move_item_to_edge(
-        &mut self,
-        item: &DockItemId,
-        source_group: &DockGroupId,
-        new_group: &DockGroupId,
-        target_group: &DockGroupId,
-        source_space: &DockSpaceId,
-        target_space: &DockSpaceId,
-        axis: SplitAxis,
-        insert_before: bool,
-        ratio: f32,
-    ) -> GraphAppliedPatch;
-
-    fn apply_move_item_to_empty_space(
-        &mut self,
-        item: &DockItemId,
-        source_group: &DockGroupId,
-        new_group: &DockGroupId,
-        source_space: &DockSpaceId,
-        target_space: &DockSpaceId,
-    ) -> GraphAppliedPatch;
-
-    #[allow(clippy::too_many_arguments)]
-    fn apply_float_item_in_window(
-        &mut self,
-        item: &DockItemId,
-        source_group: &DockGroupId,
-        new_group: &DockGroupId,
-        floating: &DockFloatingId,
-        source_space: &DockSpaceId,
-        target_space: &DockSpaceId,
-        retired_floating: Option<&DockFloatingId>,
-        bounds: DockLayoutRect,
-        z_order: i32,
-    ) -> GraphAppliedPatch;
-
-    fn apply_move_floating_root_to_edge(
-        &mut self,
-        floating: &DockFloatingId,
-        source_space: &DockSpaceId,
-        target_group: &DockGroupId,
-        target_space: &DockSpaceId,
-        axis: SplitAxis,
-        insert_before: bool,
-        ratio: f32,
+        operation: &GraphPatchOperation,
+        mutation: GraphPreparedMutation,
     ) -> GraphAppliedPatch;
 }
 
@@ -982,6 +1131,52 @@ impl GraphReadView for CanonicalDockGraph {
         })
     }
 
+    fn validate_group_read(
+        &self,
+        expected: &GraphGroupRead,
+        selection_sensitive: bool,
+        mru_sensitive: bool,
+    ) -> Result<(), GraphSupersededReason> {
+        let Some(value) = self.group(&expected.group) else {
+            return Err(GraphSupersededReason::GroupMissing);
+        };
+        let Some(node) = self.index().node_for_group(&expected.group) else {
+            return Err(GraphSupersededReason::GroupMissing);
+        };
+        if !matches!(
+            self.node(node),
+            Some(crate::graph_assembly::CanonicalNode::Group { group, .. })
+                if group == &expected.group
+        ) {
+            return Err(GraphSupersededReason::GroupIdentityChanged);
+        }
+        let Some(owner) = self.index().owner_for_node(node) else {
+            return Err(GraphSupersededReason::GroupMissing);
+        };
+        let (space, floating) = match owner {
+            crate::graph_index::CanonicalNodeOwner::Main(space) => (space, None),
+            crate::graph_index::CanonicalNodeOwner::Floating { space, floating } => {
+                (space, Some(floating))
+            }
+        };
+        if space != &expected.space
+            || floating != expected.floating.as_ref()
+            || (self.index().parent_of(node) == Some(None)) != expected.is_owner_root
+        {
+            return Err(GraphSupersededReason::GroupOwnerChanged);
+        }
+        if value.items != expected.items {
+            return Err(GraphSupersededReason::GroupMembershipChanged);
+        }
+        if selection_sensitive && value.selected != expected.selected {
+            return Err(GraphSupersededReason::GroupSelectionChanged);
+        }
+        if mru_sensitive && value.mru != expected.mru {
+            return Err(GraphSupersededReason::GroupSelectionChanged);
+        }
+        Ok(())
+    }
+
     fn read_item_group(&self, item: &DockItemId) -> Option<DockGroupId> {
         self.index().group_for_item(item).cloned()
     }
@@ -993,6 +1188,39 @@ impl GraphReadView for CanonicalDockGraph {
                 floating: floating.clone(),
                 space: root.space.clone(),
             })
+    }
+
+    fn read_floating_subtree_nodes(
+        &self,
+        floating: &DockFloatingId,
+    ) -> Option<Vec<CanonicalNodeId>> {
+        let root = self.floating_roots().get(floating)?.root;
+        let mut nodes = Vec::new();
+        let mut pending = vec![root];
+        while let Some(node) = pending.pop() {
+            nodes.push(node);
+            match self.node(node)? {
+                crate::graph_assembly::CanonicalNode::Group { .. } => {}
+                crate::graph_assembly::CanonicalNode::Branch { first, second, .. } => {
+                    pending.push(*second);
+                    pending.push(*first);
+                }
+            }
+        }
+        Some(nodes)
+    }
+
+    fn validate_floating_read(
+        &self,
+        expected: &GraphFloatingRootRead,
+    ) -> Result<(), GraphSupersededReason> {
+        let Some(floating) = self.floating_roots().get(&expected.floating) else {
+            return Err(GraphSupersededReason::FloatingMissing);
+        };
+        if floating.space != expected.space {
+            return Err(GraphSupersededReason::FloatingOwnerChanged);
+        }
+        Ok(())
     }
 
     fn read_space(&self, space: &DockSpaceId) -> Option<GraphSpaceRead> {
@@ -1020,6 +1248,38 @@ impl GraphReadView for CanonicalDockGraph {
             keep_central_alive_when_empty: state.central.keep_alive_when_empty,
             passthrough_when_empty: state.central.passthrough_when_empty,
         })
+    }
+
+    fn validate_space_read(&self, expected: &GraphSpaceRead) -> Result<(), GraphSupersededReason> {
+        let Some(state) = self.space(&expected.space) else {
+            return Err(GraphSupersededReason::SpaceMissing);
+        };
+        let central_group = state.central.node.and_then(|node| match self.node(node) {
+            Some(crate::graph_assembly::CanonicalNode::Group { group, .. }) => Some(group),
+            Some(crate::graph_assembly::CanonicalNode::Branch { .. }) | None => None,
+        });
+        if state.root.is_some() != expected.has_main_root
+            || state.floating_roots != expected.floating_roots
+            || central_group != expected.central_group.as_ref()
+            || state.central.keep_alive_when_empty != expected.keep_central_alive_when_empty
+            || state.central.passthrough_when_empty != expected.passthrough_when_empty
+            || state.floating_roots.len() != expected.floating_z_orders.len()
+        {
+            return Err(GraphSupersededReason::SpaceTopologyChanged);
+        }
+        for (floating, (expected_floating, expected_z_order)) in state
+            .floating_roots
+            .iter()
+            .zip(expected.floating_z_orders.iter())
+        {
+            let Some(root) = self.floating_roots().get(floating) else {
+                return Err(GraphSupersededReason::SpaceTopologyChanged);
+            };
+            if floating != expected_floating || root.z_order != *expected_z_order {
+                return Err(GraphSupersededReason::SpaceTopologyChanged);
+            }
+        }
+        Ok(())
     }
 }
 
@@ -1082,6 +1342,8 @@ pub(crate) enum GraphPrepareError {
         floating: DockFloatingId,
         group: DockGroupId,
     },
+    #[error("floating root {floating} subtree is unavailable for sealed commit preparation")]
+    FloatingSubtreeUnavailable { floating: DockFloatingId },
     #[error("dock space {space} does not exist")]
     MissingSpace { space: DockSpaceId },
     #[error("dock space {space} is not empty")]
@@ -1092,6 +1354,10 @@ pub(crate) enum GraphPrepareError {
     CommitIdExhausted,
     #[error("graph receipt capacity is exhausted")]
     CommitReceiptCapacityExhausted,
+    #[error("canonical graph capacity reservation is exhausted")]
+    GraphCapacityExhausted,
+    #[error("prepared mutation does not match its symbolic graph operation")]
+    PreparedMutationMismatch,
 }
 
 impl GraphReadSet {
@@ -1117,43 +1383,17 @@ impl GraphReadSet {
         }
 
         for expected in self.groups() {
-            let Some(group) = target.read_group(&expected.group) else {
-                return Err(GraphSupersededReason::GroupMissing);
-            };
-            if group.group != expected.group {
-                return Err(GraphSupersededReason::GroupIdentityChanged);
-            }
-            if group.space != expected.space
-                || group.floating != expected.floating
-                || group.is_owner_root != expected.is_owner_root
-            {
-                return Err(GraphSupersededReason::GroupOwnerChanged);
-            }
-            if group.items != expected.items {
-                return Err(GraphSupersededReason::GroupMembershipChanged);
-            }
-            if self.group_selection_sensitive && group.selected != expected.selected {
-                return Err(GraphSupersededReason::GroupSelectionChanged);
-            }
-            if self.group_mru_sensitive && group.mru != expected.mru {
-                return Err(GraphSupersededReason::GroupSelectionChanged);
-            }
+            target.validate_group_read(
+                expected,
+                self.group_selection_sensitive,
+                self.group_mru_sensitive,
+            )?;
         }
         for expected in self.floating_roots() {
-            let Some(floating) = target.read_floating_root(&expected.floating) else {
-                return Err(GraphSupersededReason::FloatingMissing);
-            };
-            if floating.space != expected.space {
-                return Err(GraphSupersededReason::FloatingOwnerChanged);
-            }
+            target.validate_floating_read(expected)?;
         }
         for expected in self.spaces() {
-            let Some(space) = target.read_space(&expected.space) else {
-                return Err(GraphSupersededReason::SpaceMissing);
-            };
-            if &space != expected {
-                return Err(GraphSupersededReason::SpaceTopologyChanged);
-            }
+            target.validate_space_read(expected)?;
         }
         Ok(actual)
     }

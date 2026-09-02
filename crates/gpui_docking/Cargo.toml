@@ -34,6 +34,7 @@ required-features = ["test-support"]
 test-support = ["open_gpui/test-support"]
 
 [dependencies]
+arrayvec.workspace = true
 open_gpui.workspace = true
 open_gpui_motion.workspace = true
 open_gpui_ui_core.workspace = true

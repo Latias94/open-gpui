@@ -5,7 +5,7 @@ use crate::graph_patch::{
 };
 use crate::graph_transaction::GraphTransactionEngine;
 use crate::ids::CanonicalGraphAuthority;
-use crate::{DockGroupId, DockItemId, DockSpaceId};
+use crate::{DockGroupId, DockItemId};
 use std::collections::BTreeMap;
 
 fn item(id: &str) -> DockItemId {
@@ -90,7 +90,28 @@ impl GraphReadView for SelectionTarget {
 }
 
 impl GraphPatchTarget for SelectionTarget {
-    fn apply_select_tab(&mut self, group: &DockGroupId, item: &DockItemId) -> GraphAppliedPatch {
+    fn validate_capacity_proof(
+        &self,
+        _commit_id: crate::graph_patch::GraphCommitId,
+        _operation: &GraphPatchOperation,
+        _mutation: &crate::graph_patch::GraphPreparedMutation,
+        _proof: Option<&crate::graph_patch::GraphCapacityProof>,
+    ) -> Result<(), GraphSupersededReason> {
+        Ok(())
+    }
+
+    fn apply_prepared_patch(
+        &mut self,
+        operation: &GraphPatchOperation,
+        mutation: crate::graph_patch::GraphPreparedMutation,
+    ) -> GraphAppliedPatch {
+        let (
+            GraphPatchOperation::SelectTab { group, item },
+            crate::graph_patch::GraphPreparedMutation::SelectTab,
+        ) = (operation, mutation)
+        else {
+            panic!("selection target does not support structural patches")
+        };
         let Some(group_state) = self.groups.get_mut(group) else {
             return GraphAppliedPatch::new(self.revision, GraphCommitEffects::default());
         };
@@ -100,118 +121,6 @@ impl GraphPatchTarget for SelectionTarget {
         self.applied += 1;
         self.revision = self.revision.with_selection(self.revision.selection() + 1);
         GraphAppliedPatch::new(self.revision, GraphCommitEffects::default())
-    }
-
-    fn apply_split_group(
-        &mut self,
-        _target_group: &DockGroupId,
-        _new_group: &DockGroupId,
-        _items: &[DockItemId],
-        _selected: &DockItemId,
-        _axis: crate::SplitAxis,
-        _insert_before: bool,
-        _ratio: f32,
-        _space: &crate::DockSpaceId,
-    ) -> GraphAppliedPatch {
-        panic!("selection target does not support structural patches")
-    }
-
-    fn apply_move_group_to_edge(
-        &mut self,
-        _source_group: &DockGroupId,
-        _target_group: &DockGroupId,
-        _source_space: &DockSpaceId,
-        _target_space: &DockSpaceId,
-        _axis: crate::SplitAxis,
-        _insert_before: bool,
-        _ratio: f32,
-    ) -> GraphAppliedPatch {
-        panic!("selection target does not support structural patches")
-    }
-
-    fn apply_move_group_to_center(
-        &mut self,
-        _source_group: &DockGroupId,
-        _target_group: &DockGroupId,
-        _source_space: &DockSpaceId,
-        _target_space: &DockSpaceId,
-    ) -> GraphAppliedPatch {
-        panic!("selection target does not support structural patches")
-    }
-
-    fn apply_move_group_to_empty_space(
-        &mut self,
-        _source_group: &DockGroupId,
-        _source_space: &DockSpaceId,
-        _target_space: &DockSpaceId,
-    ) -> GraphAppliedPatch {
-        panic!("selection target does not support structural patches")
-    }
-
-    fn apply_move_item_to_group(
-        &mut self,
-        _item: &DockItemId,
-        _source_group: &DockGroupId,
-        _target_group: &DockGroupId,
-        _source_space: &DockSpaceId,
-        _target_space: &DockSpaceId,
-        _insert_index: Option<usize>,
-    ) -> GraphAppliedPatch {
-        panic!("selection target does not support structural patches")
-    }
-
-    fn apply_move_item_to_edge(
-        &mut self,
-        _item: &DockItemId,
-        _source_group: &DockGroupId,
-        _new_group: &DockGroupId,
-        _target_group: &DockGroupId,
-        _source_space: &DockSpaceId,
-        _target_space: &DockSpaceId,
-        _axis: crate::SplitAxis,
-        _insert_before: bool,
-        _ratio: f32,
-    ) -> GraphAppliedPatch {
-        panic!("selection target does not support structural patches")
-    }
-
-    fn apply_move_item_to_empty_space(
-        &mut self,
-        _item: &DockItemId,
-        _source_group: &DockGroupId,
-        _new_group: &DockGroupId,
-        _source_space: &DockSpaceId,
-        _target_space: &DockSpaceId,
-    ) -> GraphAppliedPatch {
-        panic!("selection target does not support structural patches")
-    }
-
-    fn apply_float_item_in_window(
-        &mut self,
-        _item: &DockItemId,
-        _source_group: &DockGroupId,
-        _new_group: &DockGroupId,
-        _floating: &crate::DockFloatingId,
-        _source_space: &DockSpaceId,
-        _target_space: &DockSpaceId,
-        _retired_floating: Option<&crate::DockFloatingId>,
-        _bounds: crate::DockLayoutRect,
-        _z_order: i32,
-    ) -> GraphAppliedPatch {
-        panic!("selection target does not support structural patches")
-    }
-
-    fn apply_move_floating_root_to_edge(
-        &mut self,
-        _floating: &crate::DockFloatingId,
-        _source_space: &DockSpaceId,
-        _target_group: &DockGroupId,
-        _target_space: &DockSpaceId,
-        _axis: crate::SplitAxis,
-        _insert_before: bool,
-        _ratio: f32,
-    ) -> GraphAppliedPatch {
-        panic!("selection target does not support structural patches")
     }
 }
 
@@ -243,6 +152,59 @@ fn prepare_is_read_only_and_captures_only_the_touched_group() {
         GraphPatchOperation::SelectTab { group, item: selected_item }
             if group == &DockGroupId::from("editor") && selected_item == &item("B")
     ));
+}
+
+#[test]
+fn releasing_the_latest_unpublished_preparation_reuses_its_generation() {
+    let graph = canonical_graph();
+    let mut engine = GraphTransactionEngine::new();
+    let prepared = match engine.prepare_select_tab(&graph, "editor", "B").unwrap() {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("selection should change"),
+    };
+    let released_commit_id = prepared.commit_id();
+
+    assert!(engine.release_latest_prepared_slot(prepared));
+
+    let replacement = match engine.prepare_select_tab(&graph, "editor", "B").unwrap() {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("selection should still change"),
+    };
+    assert_eq!(replacement.commit_id(), released_commit_id);
+}
+
+#[test]
+fn capacity_proof_revalidates_remaining_headroom() {
+    let mut graph = canonical_graph();
+    let mut engine = GraphTransactionEngine::new();
+    let prepared = match engine.prepare_select_tab(&graph, "editor", "B").unwrap() {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("selection should change"),
+    };
+    let proof = graph
+        .try_reserve_for_patch(
+            prepared.commit_id(),
+            prepared.operation(),
+            prepared.mutation(),
+        )
+        .expect("selection headroom should reserve");
+
+    let group = graph
+        .group_mut_for_test(&DockGroupId::from("editor"))
+        .expect("editor group should exist");
+    while group.mru.len() < group.mru.capacity() {
+        group.mru.push(item("capacity-padding"));
+    }
+
+    assert_eq!(
+        graph.validate_capacity_proof(
+            prepared.commit_id(),
+            prepared.operation(),
+            prepared.mutation(),
+            &proof,
+        ),
+        Err(GraphSupersededReason::AllocatorChanged)
+    );
 }
 
 #[test]

@@ -1,10 +1,11 @@
 #![allow(dead_code)]
 
+use crate::graph_assembly::CanonicalGroup;
 use crate::graph_patch::{
     GraphCommitId, GraphCommitOutcome, GraphCommitReceipt, GraphFloatingBounds, GraphNoOpReceipt,
     GraphPatch, GraphPatchOperation, GraphPatchTarget, GraphPrepareError, GraphPrepareOutcome,
-    GraphReadSet, GraphReadView, GraphReceiptReservation, GraphRevision, GraphSplitRatio,
-    GraphSupersededReceipt,
+    GraphPreparedMutation, GraphReadSet, GraphReadView, GraphReceiptReservation, GraphRevision,
+    GraphSplitRatio, GraphSupersededReceipt,
 };
 use crate::{DockFloatingId, DockGroupId, DockItemId, DockLayoutRect, DockSpaceId, SplitAxis};
 use std::collections::BTreeSet;
@@ -108,6 +109,34 @@ impl GraphTransactionEngine {
         self.receipts.get(slot).is_some()
     }
 
+    /// Releases a preparation that failed before its commit id became observable to the caller.
+    pub(crate) fn release_latest_prepared_slot(
+        &mut self,
+        prepared: crate::graph_patch::PreparedGraphPatch,
+    ) -> bool {
+        let commit_id = prepared.commit_id();
+        if commit_id.transaction_epoch() != self.transaction_epoch
+            || commit_id.generation() != self.next_generation
+        {
+            return false;
+        }
+        let Some(slot) = commit_id
+            .generation()
+            .checked_sub(1)
+            .and_then(|slot| usize::try_from(slot).ok())
+        else {
+            return false;
+        };
+        if slot.checked_add(1) != Some(self.receipts.len())
+            || self.receipts.get(slot).is_none_or(Option::is_some)
+        {
+            return false;
+        }
+        self.receipts.pop();
+        self.next_generation -= 1;
+        true
+    }
+
     /// Prepares a selection change after validating the target group and item.
     pub(crate) fn prepare_select_tab<T: GraphReadView>(
         &mut self,
@@ -137,6 +166,7 @@ impl GraphTransactionEngine {
             crate::graph_patch::PreparedGraphPatch::new(
                 commit_id,
                 GraphPatch::new(operation, read_set),
+                GraphPreparedMutation::SelectTab,
             ),
         ))
     }
@@ -199,6 +229,13 @@ impl GraphTransactionEngine {
         }
         let ratio = GraphSplitRatio::new(ratio).ok_or(GraphPrepareError::InvalidSplitRatio)?;
 
+        let mutation = GraphPreparedMutation::SplitGroup {
+            new_group: CanonicalGroup {
+                items: items.clone(),
+                selected: selected.clone(),
+                mru: Vec::new(),
+            },
+        };
         let operation = GraphPatchOperation::SplitGroup {
             target_group,
             new_group,
@@ -216,6 +253,7 @@ impl GraphTransactionEngine {
             crate::graph_patch::PreparedGraphPatch::new(
                 commit_id,
                 GraphPatch::new(operation, read_set),
+                mutation,
             ),
         ))
     }
@@ -278,6 +316,7 @@ impl GraphTransactionEngine {
             crate::graph_patch::PreparedGraphPatch::new(
                 commit_id,
                 GraphPatch::new(operation, read_set),
+                GraphPreparedMutation::MoveGroupToEdge,
             ),
         ))
     }
@@ -338,6 +377,7 @@ impl GraphTransactionEngine {
             crate::graph_patch::PreparedGraphPatch::new(
                 commit_id,
                 GraphPatch::new(operation, read_set),
+                GraphPreparedMutation::MoveGroupToCenter,
             ),
         ))
     }
@@ -397,6 +437,7 @@ impl GraphTransactionEngine {
             crate::graph_patch::PreparedGraphPatch::new(
                 commit_id,
                 GraphPatch::new(operation, read_set),
+                GraphPreparedMutation::MoveGroupToEmptySpace,
             ),
         ))
     }
@@ -482,6 +523,7 @@ impl GraphTransactionEngine {
             crate::graph_patch::PreparedGraphPatch::new(
                 commit_id,
                 GraphPatch::new(operation, read_set),
+                GraphPreparedMutation::MoveItemToGroup,
             ),
         ))
     }
@@ -552,6 +594,13 @@ impl GraphTransactionEngine {
             });
         }
 
+        let mutation = GraphPreparedMutation::MoveItemToEdge {
+            new_group: (source.items.len() > 1).then(|| CanonicalGroup {
+                items: vec![item.clone()],
+                selected: item.clone(),
+                mru: vec![item.clone()],
+            }),
+        };
         let operation = GraphPatchOperation::MoveItemToEdge {
             item,
             source_group: source_group.clone(),
@@ -583,6 +632,7 @@ impl GraphTransactionEngine {
             crate::graph_patch::PreparedGraphPatch::new(
                 commit_id,
                 GraphPatch::new(operation, read_set),
+                mutation,
             ),
         ))
     }
@@ -660,6 +710,13 @@ impl GraphTransactionEngine {
         }
 
         let source_state_sensitive = source.items.len() > 1;
+        let mutation = GraphPreparedMutation::MoveItemToEmptySpace {
+            new_group: source_state_sensitive.then(|| CanonicalGroup {
+                items: vec![item.clone()],
+                selected: item.clone(),
+                mru: vec![item.clone()],
+            }),
+        };
         let operation = GraphPatchOperation::MoveItemToEmptySpace {
             item,
             source_group,
@@ -678,6 +735,7 @@ impl GraphTransactionEngine {
             crate::graph_patch::PreparedGraphPatch::new(
                 commit_id,
                 GraphPatch::new(operation, read_set),
+                mutation,
             ),
         ))
     }
@@ -759,6 +817,13 @@ impl GraphTransactionEngine {
             })?;
 
         let source_state_sensitive = source.items.len() > 1;
+        let mutation = GraphPreparedMutation::FloatItemInWindow {
+            new_group: source_state_sensitive.then(|| CanonicalGroup {
+                items: vec![item.clone()],
+                selected: item.clone(),
+                mru: vec![item.clone()],
+            }),
+        };
         let operation = GraphPatchOperation::FloatItemInWindow {
             item,
             source_group,
@@ -781,6 +846,7 @@ impl GraphTransactionEngine {
             crate::graph_patch::PreparedGraphPatch::new(
                 commit_id,
                 GraphPatch::new(operation, read_set),
+                mutation,
             ),
         ))
     }
@@ -830,6 +896,12 @@ impl GraphTransactionEngine {
             });
         }
         let ratio = GraphSplitRatio::new(ratio).ok_or(GraphPrepareError::InvalidSplitRatio)?;
+        let owner_nodes = view
+            .read_floating_subtree_nodes(&floating)
+            .filter(|nodes| !nodes.is_empty())
+            .ok_or_else(|| GraphPrepareError::FloatingSubtreeUnavailable {
+                floating: floating.clone(),
+            })?;
         let operation = GraphPatchOperation::MoveFloatingRootToEdge {
             floating,
             source_space,
@@ -846,15 +918,16 @@ impl GraphTransactionEngine {
             crate::graph_patch::PreparedGraphPatch::new(
                 commit_id,
                 GraphPatch::new(operation, read_set),
+                GraphPreparedMutation::MoveFloatingRootToEdge { owner_nodes },
             ),
         ))
     }
 
     /// Commits a prepared patch or returns a typed stale/replay observation.
     ///
-    /// Every business check happens before [`GraphPatchTarget::apply_select_tab`]. The target
+    /// Every business check happens before [`GraphPatchTarget::apply_prepared_patch`]. The target
     /// method is deliberately infallible, so this method has no business-error branch after the
-    /// patch has passed its read set.
+    /// patch has passed its read set and sealed-capacity proof.
     pub(crate) fn commit<T: GraphPatchTarget>(
         &mut self,
         target: &mut T,
@@ -882,150 +955,23 @@ impl GraphTransactionEngine {
                 reason,
             ));
         }
+        if let Err(reason) = target.validate_capacity_proof(
+            commit_id,
+            prepared.operation(),
+            prepared.mutation(),
+            prepared.capacity_proof(),
+        ) {
+            return GraphCommitOutcome::Superseded(GraphSupersededReceipt::new(
+                commit_id,
+                prepared.read_set().base_revision(),
+                before,
+                reason,
+            ));
+        }
 
-        let (operation, mut receipt_reservation) = prepared.into_commit_parts();
-        let applied = match operation.as_ref() {
-            GraphPatchOperation::SelectTab { group, item } => target.apply_select_tab(group, item),
-            GraphPatchOperation::SplitGroup {
-                target_group,
-                new_group,
-                items,
-                selected,
-                axis,
-                insert_before,
-                ratio,
-                space,
-            } => target.apply_split_group(
-                target_group,
-                new_group,
-                items,
-                selected,
-                *axis,
-                *insert_before,
-                ratio.get(),
-                space,
-            ),
-            GraphPatchOperation::MoveGroupToEdge {
-                source_group,
-                target_group,
-                source_space,
-                target_space,
-                axis,
-                insert_before,
-                ratio,
-            } => target.apply_move_group_to_edge(
-                source_group,
-                target_group,
-                source_space,
-                target_space,
-                *axis,
-                *insert_before,
-                ratio.get(),
-            ),
-            GraphPatchOperation::MoveGroupToCenter {
-                source_group,
-                target_group,
-                source_space,
-                target_space,
-            } => target.apply_move_group_to_center(
-                source_group,
-                target_group,
-                source_space,
-                target_space,
-            ),
-            GraphPatchOperation::MoveGroupToEmptySpace {
-                source_group,
-                source_space,
-                target_space,
-            } => target.apply_move_group_to_empty_space(source_group, source_space, target_space),
-            GraphPatchOperation::MoveItemToGroup {
-                item,
-                source_group,
-                target_group,
-                source_space,
-                target_space,
-                insert_index,
-            } => target.apply_move_item_to_group(
-                item,
-                source_group,
-                target_group,
-                source_space,
-                target_space,
-                *insert_index,
-            ),
-            GraphPatchOperation::MoveItemToEdge {
-                item,
-                source_group,
-                new_group,
-                target_group,
-                source_space,
-                target_space,
-                axis,
-                insert_before,
-                ratio,
-            } => target.apply_move_item_to_edge(
-                item,
-                source_group,
-                new_group,
-                target_group,
-                source_space,
-                target_space,
-                *axis,
-                *insert_before,
-                ratio.get(),
-            ),
-            GraphPatchOperation::MoveItemToEmptySpace {
-                item,
-                source_group,
-                new_group,
-                source_space,
-                target_space,
-            } => target.apply_move_item_to_empty_space(
-                item,
-                source_group,
-                new_group,
-                source_space,
-                target_space,
-            ),
-            GraphPatchOperation::FloatItemInWindow {
-                item,
-                source_group,
-                new_group,
-                floating,
-                source_space,
-                target_space,
-                retired_floating,
-                bounds,
-                z_order,
-            } => target.apply_float_item_in_window(
-                item,
-                source_group,
-                new_group,
-                floating,
-                source_space,
-                target_space,
-                retired_floating.as_ref(),
-                bounds.get(),
-                *z_order,
-            ),
-            GraphPatchOperation::MoveFloatingRootToEdge {
-                floating,
-                source_space,
-                target_group,
-                target_space,
-                axis,
-                insert_before,
-                ratio,
-            } => target.apply_move_floating_root_to_edge(
-                floating,
-                source_space,
-                target_group,
-                target_space,
-                *axis,
-                *insert_before,
-                ratio.get(),
-            ),
-        };
+        let (operation, mutation, _capacity_proof, mut receipt_reservation) =
+            prepared.into_commit_parts();
+        let applied = target.apply_prepared_patch(operation.as_ref(), mutation);
         let after = applied.after();
         let receipt =
             GraphCommitReceipt::new(commit_id, before, after, operation, applied.into_effects());

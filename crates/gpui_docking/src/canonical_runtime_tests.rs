@@ -233,6 +233,74 @@ fn floating_bounds() -> DockLayoutRect {
 }
 
 #[test]
+fn runtime_preparation_seals_live_collection_capacity_to_the_commit_id() {
+    let mut runtime = runtime();
+    let nodes_before = runtime.graph().nodes().len();
+    let groups_before = runtime.graph().groups().len();
+    let prepared = match runtime
+        .prepare_split_group(
+            "main",
+            "editor",
+            "explorer",
+            [item("E"), item("F")],
+            "E",
+            SplitAxis::Vertical,
+            true,
+            0.25,
+        )
+        .expect("edge split should prepare")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("edge split must produce a structural patch"),
+    };
+
+    let proof = prepared
+        .capacity_proof()
+        .expect("canonical runtime must seal capacity before returning a patch");
+    assert_eq!(proof.commit_id, prepared.commit_id());
+    assert_eq!(proof.authority_epoch, runtime.authority_epoch());
+    assert_eq!(
+        proof.allocator_revision,
+        runtime.graph_revision().allocator()
+    );
+    assert!(proof.required_node_key_capacity >= nodes_before + 2);
+    assert_eq!(proof.additional_nodes, 2);
+    assert_eq!(proof.additional_groups, 1);
+    assert_eq!(proof.additional_item_index, 2);
+    assert!(runtime.graph().groups().capacity() >= groups_before + 1);
+}
+
+#[test]
+fn canonical_commit_rejects_an_unsealed_patch_before_the_first_write() {
+    let mut runtime = runtime();
+    let before = runtime.graph_revision();
+    let prepared = match runtime
+        .prepare_unsealed_select_tab_for_test("editor", "B")
+        .expect("unsealed test preparation should succeed")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("selection should create a patch"),
+    };
+    assert!(prepared.capacity_proof().is_none());
+
+    assert!(matches!(
+        runtime.commit(prepared),
+        GraphCommitOutcome::Superseded(receipt)
+            if receipt.reason() == &GraphSupersededReason::CapacityProofMissing
+    ));
+    assert_eq!(runtime.graph_revision(), before);
+    assert_eq!(
+        runtime
+            .graph()
+            .group(&DockGroupId::from("editor"))
+            .expect("editor group should remain present")
+            .selected,
+        item("A")
+    );
+    assert_eq!(runtime.receipt_count(), 0);
+}
+
+#[test]
 fn real_runtime_commits_selection_and_mru_without_a_graph_copy() {
     let mut runtime = runtime();
     let prepared = match runtime

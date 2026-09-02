@@ -4184,6 +4184,7 @@ dependencies = [
 name = "open-gpui-docking"
 version = "0.2.0"
 dependencies = [
+ "arrayvec",
  "log",
  "open-gpui",
  "open-gpui-motion",
