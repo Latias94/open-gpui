@@ -7,8 +7,8 @@ use crate::graph_patch::{
 };
 use crate::graph_transaction::GraphTransactionEngine;
 use crate::{
-    CanonicalGraphAuthority, CanonicalGraphVersion, DockFloatingId, DockGroupId, DockItemId,
-    DockLayoutRect, DockSpaceId, SplitAxis,
+    CanonicalGraphAuthority, CanonicalGraphRevisionChange, CanonicalGraphVersion, DockFloatingId,
+    DockGroupId, DockItemId, DockLayoutRect, DockSpaceId, SplitAxis,
 };
 use thiserror::Error;
 
@@ -84,6 +84,17 @@ impl CanonicalGraphRuntime {
         let result = self
             .transactions
             .prepare_select_tab(&self.graph, group, item);
+        self.seal_prepare_outcome(result)
+    }
+
+    pub(crate) fn prepare_close_item(
+        &mut self,
+        space: impl Into<DockSpaceId>,
+        item: impl Into<DockItemId>,
+    ) -> Result<GraphPrepareOutcome, GraphPrepareError> {
+        let result = self
+            .transactions
+            .prepare_close_item(&self.graph, space, item);
         self.seal_prepare_outcome(result)
     }
 
@@ -463,9 +474,28 @@ impl GraphPatchTarget for CanonicalGraphCommitTarget<'_> {
         mutation: GraphPreparedMutation,
     ) -> GraphAppliedPatch {
         match (operation, mutation) {
-            (GraphPatchOperation::SelectTab { group, item }, GraphPreparedMutation::SelectTab) => {
-                self.apply_select_tab(group, item)
-            }
+            (
+                GraphPatchOperation::SelectTab { group, item },
+                GraphPreparedMutation::SelectTab {
+                    selection_changed,
+                    interaction_changed,
+                },
+            ) => self.apply_select_tab(group, item, selection_changed, interaction_changed),
+            (
+                GraphPatchOperation::CloseItem { group, item, space },
+                GraphPreparedMutation::CloseItem {
+                    next_selected,
+                    selection_changed,
+                    interaction_changed,
+                },
+            ) => self.apply_close_item(
+                group,
+                item,
+                space,
+                next_selected,
+                selection_changed,
+                interaction_changed,
+            ),
             (
                 GraphPatchOperation::SplitGroup {
                     target_group,
@@ -640,7 +670,13 @@ impl GraphPatchTarget for CanonicalGraphCommitTarget<'_> {
 }
 
 impl CanonicalGraphCommitTarget<'_> {
-    fn apply_select_tab(&mut self, group: &DockGroupId, item: &DockItemId) -> GraphAppliedPatch {
+    fn apply_select_tab(
+        &mut self,
+        group: &DockGroupId,
+        item: &DockItemId,
+        selection_changed: bool,
+        interaction_changed: bool,
+    ) -> GraphAppliedPatch {
         debug_assert!(
             self.graph
                 .group(group)
@@ -648,15 +684,45 @@ impl CanonicalGraphCommitTarget<'_> {
             "prepared selection patch must prove group membership before commit"
         );
 
+        let change =
+            CanonicalGraphRevisionChange::new(false, false, selection_changed, interaction_changed);
         let next_version: CanonicalGraphVersion = self
             .authority
-            .next_selection_change()
-            .expect("canonical graph selection revision exhausted");
+            .next_change(change)
+            .expect("canonical graph revision exhausted");
         let effects = self
             .graph
             .apply_selection_for_commit(group, item, next_version)
             .expect("validated selection patch must be applicable");
-        let recorded = self.authority.record_selection_change();
+        let recorded = self.authority.record_change(change);
+        debug_assert_eq!(recorded, next_version);
+        GraphAppliedPatch::new(GraphRevision::from_version(self.graph.version()), effects)
+    }
+
+    fn apply_close_item(
+        &mut self,
+        group: &DockGroupId,
+        item: &DockItemId,
+        space: &DockSpaceId,
+        next_selected: Option<DockItemId>,
+        selection_changed: bool,
+        interaction_changed: bool,
+    ) -> GraphAppliedPatch {
+        let change = CanonicalGraphRevisionChange::new(
+            true,
+            next_selected.is_none(),
+            selection_changed,
+            interaction_changed,
+        );
+        let next_version = self
+            .authority
+            .next_change(change)
+            .expect("canonical graph revision exhausted");
+        let effects = self
+            .graph
+            .apply_close_item_for_commit(group, item, space, next_selected, next_version)
+            .expect("validated close-item patch must be applicable");
+        let recorded = self.authority.record_change(change);
         debug_assert_eq!(recorded, next_version);
         GraphAppliedPatch::new(GraphRevision::from_version(self.graph.version()), effects)
     }

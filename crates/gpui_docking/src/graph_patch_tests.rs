@@ -62,7 +62,10 @@ impl SelectionTarget {
         group_state.selected = item.clone();
         group_state.mru.retain(|entry| entry != item);
         group_state.mru.insert(0, item.clone());
-        self.revision = self.revision.with_selection(self.revision.selection() + 1);
+        self.revision = self
+            .revision
+            .with_selection(self.revision.selection() + 1)
+            .with_interaction(self.revision.interaction() + 1);
     }
 
     fn change_topology(&mut self) {
@@ -107,7 +110,10 @@ impl GraphPatchTarget for SelectionTarget {
     ) -> GraphAppliedPatch {
         let (
             GraphPatchOperation::SelectTab { group, item },
-            crate::graph_patch::GraphPreparedMutation::SelectTab,
+            crate::graph_patch::GraphPreparedMutation::SelectTab {
+                selection_changed,
+                interaction_changed,
+            },
         ) = (operation, mutation)
         else {
             panic!("selection target does not support structural patches")
@@ -119,7 +125,14 @@ impl GraphPatchTarget for SelectionTarget {
         group_state.mru.retain(|entry| entry != item);
         group_state.mru.insert(0, item.clone());
         self.applied += 1;
-        self.revision = self.revision.with_selection(self.revision.selection() + 1);
+        if selection_changed {
+            self.revision = self.revision.with_selection(self.revision.selection() + 1);
+        }
+        if interaction_changed {
+            self.revision = self
+                .revision
+                .with_interaction(self.revision.interaction() + 1);
+        }
         GraphAppliedPatch::new(self.revision, GraphCommitEffects::default())
     }
 }

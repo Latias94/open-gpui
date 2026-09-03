@@ -340,8 +340,8 @@ pub(crate) use graph::{
 pub(crate) use host::DockHostOptions;
 pub(crate) use host::{DockHost, DockHostWindowBinding};
 pub(crate) use ids::{
-    CanonicalGraphAuthority, CanonicalGraphVersion, CanonicalNodeId, DockFloatingId, DockGroupId,
-    DockNodeId,
+    CanonicalGraphAuthority, CanonicalGraphRevisionChange, CanonicalGraphVersion, CanonicalNodeId,
+    DockFloatingId, DockGroupId, DockNodeId,
 };
 pub use ids::{DockClassId, DockItemId, DockSpaceId};
 pub use layout::{DOCK_LAYOUT_VERSION, DockLayout, DockLayoutRect, DockLayoutValidationError};

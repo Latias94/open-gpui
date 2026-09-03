@@ -76,22 +76,11 @@ impl CanonicalGraphAuthority {
     }
 
     pub(crate) fn next_topology_change(&self) -> Option<CanonicalGraphVersion> {
-        Some(CanonicalGraphVersion {
-            authority_epoch: self.authority_epoch,
-            topology_revision: self.topology_revision.checked_add(1)?,
-            allocator_revision: self.allocator_revision.checked_add(1)?,
-            selection_revision: self.selection_revision,
-            interaction_revision: self.interaction_revision,
-        })
+        self.next_change(CanonicalGraphRevisionChange::topology())
     }
 
     pub(crate) fn record_topology_change(&mut self) -> CanonicalGraphVersion {
-        let next = self
-            .next_topology_change()
-            .expect("canonical graph topology revision exhausted");
-        self.topology_revision = next.topology_revision;
-        self.allocator_revision = next.allocator_revision;
-        next
+        self.record_change(CanonicalGraphRevisionChange::topology())
     }
 
     pub(crate) fn current(&self) -> CanonicalGraphVersion {
@@ -105,30 +94,78 @@ impl CanonicalGraphAuthority {
     }
 
     pub(crate) fn record_selection_change(&mut self) -> CanonicalGraphVersion {
-        self.next_selection_change()
-            .map(|next| {
-                self.selection_revision = next.selection_revision;
-                next
-            })
-            .expect("canonical graph selection revision exhausted")
+        self.record_change(CanonicalGraphRevisionChange::selection())
     }
 
-    pub(crate) fn next_selection_change(&self) -> Option<CanonicalGraphVersion> {
+    pub(crate) fn next_change(
+        &self,
+        change: CanonicalGraphRevisionChange,
+    ) -> Option<CanonicalGraphVersion> {
         Some(CanonicalGraphVersion {
             authority_epoch: self.authority_epoch,
-            topology_revision: self.topology_revision,
-            allocator_revision: self.allocator_revision,
-            selection_revision: self.selection_revision.checked_add(1)?,
-            interaction_revision: self.interaction_revision,
+            topology_revision: increment_revision(self.topology_revision, change.topology)?,
+            allocator_revision: increment_revision(self.allocator_revision, change.allocator)?,
+            selection_revision: increment_revision(self.selection_revision, change.selection)?,
+            interaction_revision: increment_revision(
+                self.interaction_revision,
+                change.interaction,
+            )?,
         })
     }
 
-    pub(crate) fn record_interaction_change(&mut self) -> CanonicalGraphVersion {
-        self.interaction_revision = self
-            .interaction_revision
-            .checked_add(1)
-            .expect("canonical graph interaction revision exhausted");
-        self.current()
+    pub(crate) fn record_change(
+        &mut self,
+        change: CanonicalGraphRevisionChange,
+    ) -> CanonicalGraphVersion {
+        let next = self
+            .next_change(change)
+            .expect("canonical graph revision exhausted");
+        self.topology_revision = next.topology_revision;
+        self.allocator_revision = next.allocator_revision;
+        self.selection_revision = next.selection_revision;
+        self.interaction_revision = next.interaction_revision;
+        next
+    }
+}
+
+fn increment_revision(current: u64, changed: bool) -> Option<u64> {
+    if changed {
+        current.checked_add(1)
+    } else {
+        Some(current)
+    }
+}
+
+/// Describes which independent canonical revision domains a committed mutation advances.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CanonicalGraphRevisionChange {
+    topology: bool,
+    allocator: bool,
+    selection: bool,
+    interaction: bool,
+}
+
+impl CanonicalGraphRevisionChange {
+    pub(crate) const fn new(
+        topology: bool,
+        allocator: bool,
+        selection: bool,
+        interaction: bool,
+    ) -> Self {
+        Self {
+            topology,
+            allocator,
+            selection,
+            interaction,
+        }
+    }
+
+    pub(crate) const fn topology() -> Self {
+        Self::new(true, true, false, false)
+    }
+
+    pub(crate) const fn selection() -> Self {
+        Self::new(false, false, true, false)
     }
 }
 

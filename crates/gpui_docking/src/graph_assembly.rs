@@ -5,7 +5,8 @@ use crate::graph_index::{CanonicalGraphIndex, CanonicalNodeOwner};
 use crate::graph_patch::{
     GraphCapacityProof, GraphCommitEffects, GraphCommitId, GraphGroupCapacityRequirement,
     GraphPatchOperation, GraphPrepareError, GraphPreparedMutation, GraphRevision,
-    GraphSpaceCapacityRequirement, GraphSupersededReason,
+    GraphSpaceCapacityRequirement, GraphSupersededReason, mru_changes_after_select,
+    selected_item_after_close,
 };
 use crate::{
     CanonicalGraphAuthority, CanonicalGraphVersion, CanonicalNodeId, DockFloatingId, DockGroupId,
@@ -463,6 +464,9 @@ impl CanonicalDockGraph {
                 self.require_group(group)?;
                 plan.reserve_group_vectors(group.clone(), 0, 1);
             }
+            GraphPatchOperation::CloseItem { group, .. } => {
+                self.require_group(group)?;
+            }
             GraphPatchOperation::SplitGroup {
                 target_group,
                 items,
@@ -581,8 +585,18 @@ impl CanonicalDockGraph {
         mutation: &GraphPreparedMutation,
     ) -> Result<(), GraphPrepareError> {
         let valid = match (operation, mutation) {
-            (GraphPatchOperation::SelectTab { .. }, GraphPreparedMutation::SelectTab)
-            | (
+            (
+                GraphPatchOperation::SelectTab { group, item },
+                GraphPreparedMutation::SelectTab {
+                    selection_changed,
+                    interaction_changed,
+                },
+            ) => self.groups.get(group).is_some_and(|state| {
+                state.items.contains(item)
+                    && *selection_changed == (state.selected != *item)
+                    && *interaction_changed == mru_changes_after_select(&state.mru, item)
+            }),
+            (
                 GraphPatchOperation::MoveGroupToEdge { .. },
                 GraphPreparedMutation::MoveGroupToEdge,
             )
@@ -598,6 +612,21 @@ impl CanonicalDockGraph {
                 GraphPatchOperation::MoveItemToGroup { .. },
                 GraphPreparedMutation::MoveItemToGroup,
             ) => true,
+            (
+                GraphPatchOperation::CloseItem { group, item, .. },
+                GraphPreparedMutation::CloseItem {
+                    next_selected,
+                    selection_changed,
+                    interaction_changed,
+                },
+            ) => self.groups.get(group).is_some_and(|state| {
+                let expected_next =
+                    selected_item_after_close(&state.items, &state.selected, &state.mru, item);
+                state.items.contains(item)
+                    && expected_next.as_ref() == next_selected.as_ref()
+                    && *selection_changed == (expected_next.as_ref() != Some(&state.selected))
+                    && *interaction_changed == state.mru.contains(item)
+            }),
             (
                 GraphPatchOperation::SplitGroup {
                     items, selected, ..
@@ -723,6 +752,63 @@ impl CanonicalDockGraph {
         group_state.selected = item.clone();
         self.version = version;
         Some(GraphCommitEffects::default())
+    }
+
+    /// Closes one item and locally collapses its leaf when the durable group becomes empty.
+    pub(crate) fn apply_close_item_for_commit(
+        &mut self,
+        group: &DockGroupId,
+        item: &DockItemId,
+        space: &DockSpaceId,
+        next_selected: Option<DockItemId>,
+        version: CanonicalGraphVersion,
+    ) -> Option<GraphCommitEffects> {
+        let source_node = self.index.node_for_group(group)?;
+        let source_owner = self.index.owner_for_node(source_node)?.clone();
+        let owner_space = match &source_owner {
+            CanonicalNodeOwner::Main(owner_space)
+            | CanonicalNodeOwner::Floating {
+                space: owner_space, ..
+            } => owner_space,
+        };
+        if owner_space != space {
+            return None;
+        }
+        let source = self.groups.get(group)?;
+        let source_index = source
+            .items
+            .iter()
+            .position(|candidate| candidate == item)?;
+        let expected_next =
+            selected_item_after_close(&source.items, &source.selected, &source.mru, item);
+        if expected_next != next_selected {
+            return None;
+        }
+
+        let effects = if source.items.len() == 1 {
+            let detach = self.detach_group_leaf_for_commit(source_node, &source_owner)?;
+            self.index.remove_item_membership(item, group);
+            self.groups
+                .remove(group)
+                .expect("validated closed group must remain present");
+            let mut effects = detach.effects;
+            effects.record_retired_group(group.clone());
+            effects
+        } else {
+            let next_selected =
+                next_selected.expect("validated non-empty close must retain one selected item");
+            let source = self
+                .groups
+                .get_mut(group)
+                .expect("validated closed group must remain present");
+            source.items.remove(source_index);
+            source.mru.retain(|candidate| candidate != item);
+            source.selected = next_selected;
+            self.index.remove_item_membership(item, group);
+            GraphCommitEffects::default()
+        };
+        self.version = version;
+        Some(effects)
     }
 
     /// Inserts a new group beside an existing group and rewires only its local parent/root path.

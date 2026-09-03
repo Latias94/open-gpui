@@ -2,8 +2,8 @@ use crate::detached_tree::PreparedDetach;
 use crate::graph_assembly::{CanonicalGraphError, CanonicalNode, DockGraphAssembly};
 use crate::payload_ref::{DockPayloadKind, DockPayloadRefError};
 use crate::{
-    CanonicalGraphAuthority, CanonicalGraphVersion, DockFloatingId, DockGroupId, DockItemId,
-    DockLayoutRect, DockSpaceId, SplitAxis,
+    CanonicalGraphAuthority, CanonicalGraphRevisionChange, CanonicalGraphVersion, DockFloatingId,
+    DockGroupId, DockItemId, DockLayoutRect, DockSpaceId, SplitAxis,
 };
 
 fn item(id: &str) -> DockItemId {
@@ -206,6 +206,30 @@ fn failed_publication_does_not_consume_authority_revision() {
     assert_eq!(after_selection.allocator_revision(), 1);
     let after_topology = authority.record_topology_change();
     assert_eq!(after_topology.allocator_revision(), 2);
+}
+
+#[test]
+fn authority_advances_only_declared_revision_domains() {
+    let mut authority = CanonicalGraphAuthority::new();
+    let before = authority.current();
+    let change = CanonicalGraphRevisionChange::new(true, false, true, true);
+    let expected = authority
+        .next_change(change)
+        .expect("declared revision domains should have headroom");
+
+    assert_eq!(expected.topology_revision(), before.topology_revision() + 1);
+    assert_eq!(expected.allocator_revision(), before.allocator_revision());
+    assert_eq!(
+        expected.selection_revision(),
+        before.selection_revision() + 1
+    );
+    assert_eq!(
+        expected.interaction_revision(),
+        before.interaction_revision() + 1
+    );
+    assert_eq!(authority.current(), before);
+    assert_eq!(authority.record_change(change), expected);
+    assert_eq!(authority.current(), expected);
 }
 
 #[test]

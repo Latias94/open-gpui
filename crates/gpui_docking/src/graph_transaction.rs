@@ -5,7 +5,7 @@ use crate::graph_patch::{
     GraphCommitId, GraphCommitOutcome, GraphCommitReceipt, GraphFloatingBounds, GraphNoOpReceipt,
     GraphPatch, GraphPatchOperation, GraphPatchTarget, GraphPrepareError, GraphPrepareOutcome,
     GraphPreparedMutation, GraphReadSet, GraphReadView, GraphReceiptReservation, GraphRevision,
-    GraphSplitRatio, GraphSupersededReceipt,
+    GraphSplitRatio, GraphSupersededReceipt, mru_changes_after_select, selected_item_after_close,
 };
 use crate::{DockFloatingId, DockGroupId, DockItemId, DockLayoutRect, DockSpaceId, SplitAxis};
 use std::collections::BTreeSet;
@@ -160,13 +160,68 @@ impl GraphTransactionEngine {
             item: item.clone(),
         };
         let revision = view.graph_revision();
+        let selection_changed = current.selected != item;
+        let interaction_changed = mru_changes_after_select(&current.mru, &item);
+        if !selection_changed && !interaction_changed {
+            return Ok(GraphPrepareOutcome::NoOp(GraphNoOpReceipt::new(
+                revision, operation,
+            )));
+        }
         let commit_id = self.reserve_commit_id(revision)?;
         let read_set = GraphReadSet::for_select_tab(revision, current);
         Ok(GraphPrepareOutcome::Prepared(
             crate::graph_patch::PreparedGraphPatch::new(
                 commit_id,
                 GraphPatch::new(operation, read_set),
-                GraphPreparedMutation::SelectTab,
+                GraphPreparedMutation::SelectTab {
+                    selection_changed,
+                    interaction_changed,
+                },
+            ),
+        ))
+    }
+
+    /// Prepares closing one item, including its deterministic durable selection successor.
+    pub(crate) fn prepare_close_item<T: GraphReadView>(
+        &mut self,
+        view: &T,
+        space: impl Into<DockSpaceId>,
+        item: impl Into<DockItemId>,
+    ) -> Result<GraphPrepareOutcome, GraphPrepareError> {
+        let space = space.into();
+        let item = item.into();
+        let group = view
+            .read_item_group(&item)
+            .ok_or_else(|| GraphPrepareError::MissingItem { item: item.clone() })?;
+        let current = view
+            .read_group(&group)
+            .ok_or_else(|| GraphPrepareError::MissingGroup {
+                group: group.clone(),
+            })?;
+        if current.space != space {
+            return Err(GraphPrepareError::GroupOutsideSpace { group, space });
+        }
+        if !current.items.contains(&item) {
+            return Err(GraphPrepareError::ItemNotInGroup { group, item });
+        }
+
+        let next_selected =
+            selected_item_after_close(&current.items, &current.selected, &current.mru, &item);
+        let selection_changed = next_selected.as_ref() != Some(&current.selected);
+        let interaction_changed = current.mru.contains(&item);
+        let operation = GraphPatchOperation::CloseItem { group, item, space };
+        let revision = view.graph_revision();
+        let commit_id = self.reserve_commit_id(revision)?;
+        let read_set = GraphReadSet::for_group_state_sensitive_operation(revision, [current]);
+        Ok(GraphPrepareOutcome::Prepared(
+            crate::graph_patch::PreparedGraphPatch::new(
+                commit_id,
+                GraphPatch::new(operation, read_set),
+                GraphPreparedMutation::CloseItem {
+                    next_selected,
+                    selection_changed,
+                    interaction_changed,
+                },
             ),
         ))
     }

@@ -233,6 +233,575 @@ fn floating_bounds() -> DockLayoutRect {
 }
 
 #[test]
+fn close_selected_item_uses_the_next_mru_item_without_replacing_the_group_leaf() {
+    let mut runtime = three_tab_runtime();
+    let group = DockGroupId::from("editor");
+    let leaf = runtime
+        .graph()
+        .index()
+        .node_for_group(&group)
+        .expect("editor group should have a canonical leaf");
+
+    for selected in ["B", "C"] {
+        let prepared = match runtime
+            .prepare_select_tab(group.clone(), selected)
+            .expect("tab selection should prepare")
+        {
+            GraphPrepareOutcome::Prepared(prepared) => prepared,
+            GraphPrepareOutcome::NoOp(_) => panic!("selection should change"),
+        };
+        assert!(matches!(
+            runtime.commit(prepared),
+            GraphCommitOutcome::Committed(_)
+        ));
+    }
+
+    let prepared = match runtime
+        .prepare_close_item("main", "C")
+        .expect("selected item close should prepare")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("closing a present item must change the graph"),
+    };
+    assert!(matches!(
+        prepared.operation(),
+        GraphPatchOperation::CloseItem {
+            group: closed_group,
+            item: closed_item,
+            ..
+        } if closed_group == &group && closed_item == &item("C")
+    ));
+    let receipt = match runtime.commit(prepared) {
+        GraphCommitOutcome::Committed(receipt) => receipt,
+        other => panic!("close should commit, got {other:?}"),
+    };
+
+    let state = runtime
+        .graph()
+        .group(&group)
+        .expect("editor group should remain after closing one tab");
+    assert_eq!(state.items, vec![item("A"), item("B")]);
+    assert_eq!(state.selected, item("B"));
+    assert_eq!(state.mru, vec![item("B")]);
+    assert_eq!(runtime.graph().index().node_for_group(&group), Some(leaf));
+    assert!(receipt.effects().retired_nodes().is_empty());
+    assert!(receipt.effects().retired_groups().is_empty());
+    assert_eq!(receipt.after().topology(), receipt.before().topology() + 1);
+    assert_eq!(receipt.after().allocator(), receipt.before().allocator());
+    assert_eq!(
+        receipt.after().selection(),
+        receipt.before().selection() + 1
+    );
+    assert_eq!(
+        receipt.after().interaction(),
+        receipt.before().interaction() + 1
+    );
+    runtime
+        .graph()
+        .validate()
+        .expect("close commit should preserve canonical graph invariants");
+}
+
+#[test]
+fn close_item_preserves_a_surviving_selection_and_falls_back_without_mru() {
+    let mut runtime = three_tab_runtime();
+    let prepared = match runtime
+        .prepare_close_item("main", "B")
+        .expect("non-selected item close should prepare")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("closing a present item must change the graph"),
+    };
+    assert!(matches!(
+        runtime.commit(prepared),
+        GraphCommitOutcome::Committed(_)
+    ));
+    let group = runtime
+        .graph()
+        .group(&DockGroupId::from("editor"))
+        .expect("editor group should remain after closing one tab");
+    assert_eq!(group.items, vec![item("A"), item("C")]);
+    assert_eq!(group.selected, item("A"));
+    assert!(group.mru.is_empty());
+
+    let mut runtime = three_tab_runtime();
+    let prepared_select = match runtime
+        .prepare_select_tab("editor", "B")
+        .expect("tab selection should prepare")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("selection should change"),
+    };
+    assert!(matches!(
+        runtime.commit(prepared_select),
+        GraphCommitOutcome::Committed(_)
+    ));
+    let prepared_close = match runtime
+        .prepare_close_item("main", "B")
+        .expect("selected item close should prepare")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("closing a present item must change the graph"),
+    };
+    assert!(matches!(
+        runtime.commit(prepared_close),
+        GraphCommitOutcome::Committed(_)
+    ));
+    let group = runtime
+        .graph()
+        .group(&DockGroupId::from("editor"))
+        .expect("editor group should remain after closing one tab");
+    assert_eq!(group.items, vec![item("A"), item("C")]);
+    assert_eq!(group.selected, item("A"));
+    assert!(group.mru.is_empty());
+    runtime
+        .graph()
+        .validate()
+        .expect("close commits should preserve canonical graph invariants");
+}
+
+#[test]
+fn close_non_selected_mru_item_advances_only_topology_and_interaction() {
+    let mut runtime = three_tab_runtime();
+    for selected in ["B", "C"] {
+        let prepared = match runtime
+            .prepare_select_tab("editor", selected)
+            .expect("tab selection should prepare")
+        {
+            GraphPrepareOutcome::Prepared(prepared) => prepared,
+            GraphPrepareOutcome::NoOp(_) => panic!("selection should change"),
+        };
+        assert!(matches!(
+            runtime.commit(prepared),
+            GraphCommitOutcome::Committed(_)
+        ));
+    }
+
+    let prepared = match runtime
+        .prepare_close_item("main", "B")
+        .expect("non-selected MRU item close should prepare")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("closing a present item must change the graph"),
+    };
+    let receipt = match runtime.commit(prepared) {
+        GraphCommitOutcome::Committed(receipt) => receipt,
+        other => panic!("close should commit, got {other:?}"),
+    };
+
+    let group = runtime
+        .graph()
+        .group(&DockGroupId::from("editor"))
+        .expect("editor group should remain after closing one tab");
+    assert_eq!(group.items, vec![item("A"), item("C")]);
+    assert_eq!(group.selected, item("C"));
+    assert_eq!(group.mru, vec![item("C")]);
+    assert_eq!(receipt.after().topology(), receipt.before().topology() + 1);
+    assert_eq!(receipt.after().allocator(), receipt.before().allocator());
+    assert_eq!(receipt.after().selection(), receipt.before().selection());
+    assert_eq!(
+        receipt.after().interaction(),
+        receipt.before().interaction() + 1
+    );
+}
+
+#[test]
+fn close_last_group_item_promotes_the_sibling_and_rebinds_central_policy() {
+    let mut assembly = DockGraphAssembly::new();
+    assembly
+        .add_space("main")
+        .expect("test dockspace should be accepted");
+    let central = assembly
+        .add_group("central", [item("A")], item("A"))
+        .expect("central test group should be accepted");
+    let sibling = assembly
+        .add_group("sibling", [item("B")], item("B"))
+        .expect("sibling test group should be accepted");
+    let root = assembly
+        .add_branch(SplitAxis::Horizontal, central, sibling, 0.5)
+        .expect("test branch should be accepted");
+    assembly
+        .set_root("main", root)
+        .expect("test root should be accepted");
+    assembly
+        .set_central_node("main", Some(central), true, false)
+        .expect("central policy should be accepted");
+    let mut runtime = CanonicalGraphRuntime::from_assembly(assembly)
+        .expect("test assembly should build a canonical runtime");
+    let central_group = DockGroupId::from("central");
+    let sibling_group = DockGroupId::from("sibling");
+    let central_leaf = runtime
+        .graph()
+        .index()
+        .node_for_group(&central_group)
+        .expect("central group should have a canonical leaf");
+    let sibling_leaf = runtime
+        .graph()
+        .index()
+        .node_for_group(&sibling_group)
+        .expect("sibling group should have a canonical leaf");
+    let root = runtime
+        .graph()
+        .space(&DockSpaceId::from("main"))
+        .and_then(|space| space.root)
+        .expect("main space should have a root");
+
+    let prepared = match runtime
+        .prepare_close_item("main", "A")
+        .expect("last central item close should prepare")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("closing a present item must change the graph"),
+    };
+    let receipt = match runtime.commit(prepared) {
+        GraphCommitOutcome::Committed(receipt) => receipt,
+        other => panic!("close should commit, got {other:?}"),
+    };
+
+    let space = runtime
+        .graph()
+        .space(&DockSpaceId::from("main"))
+        .expect("main space should remain after local collapse");
+    assert_eq!(space.root, Some(root));
+    assert_eq!(space.central.node, Some(root));
+    assert!(runtime.graph().group(&central_group).is_none());
+    assert!(runtime.graph().index().group_for_item(&item("A")).is_none());
+    assert_eq!(
+        runtime.graph().index().node_for_group(&sibling_group),
+        Some(root)
+    );
+    assert!(matches!(
+        runtime.graph().node(root),
+        Some(CanonicalNode::Group { group, .. }) if group == &sibling_group
+    ));
+    assert!(receipt.effects().retired_nodes().contains(&central_leaf));
+    assert!(receipt.effects().retired_nodes().contains(&sibling_leaf));
+    assert!(receipt.effects().retired_groups().contains(&central_group));
+    assert!(
+        receipt
+            .effects()
+            .identity_remaps()
+            .iter()
+            .any(|remap| remap.from == sibling_leaf && remap.to == root)
+    );
+    assert_eq!(receipt.after().topology(), receipt.before().topology() + 1);
+    assert_eq!(
+        receipt.after().allocator(),
+        receipt.before().allocator() + 1
+    );
+    assert_eq!(
+        receipt.after().selection(),
+        receipt.before().selection() + 1
+    );
+    assert_eq!(
+        receipt.after().interaction(),
+        receipt.before().interaction()
+    );
+    runtime
+        .graph()
+        .validate()
+        .expect("local collapse should preserve canonical graph invariants");
+}
+
+#[test]
+fn close_only_main_group_clears_root_and_central_authority() {
+    let mut assembly = DockGraphAssembly::new();
+    assembly
+        .add_space("main")
+        .expect("test dockspace should be accepted");
+    let leaf = assembly
+        .add_group("editor", [item("A")], item("A"))
+        .expect("test group should be accepted");
+    assembly
+        .set_root("main", leaf)
+        .expect("test root should be accepted");
+    assembly
+        .set_central_node("main", Some(leaf), true, false)
+        .expect("central policy should be accepted");
+    let mut runtime = CanonicalGraphRuntime::from_assembly(assembly)
+        .expect("test assembly should build a canonical runtime");
+    let group = DockGroupId::from("editor");
+    let prepared_mru = match runtime
+        .prepare_select_tab(group.clone(), "A")
+        .expect("current tab MRU update should prepare")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("empty MRU should require an interaction update"),
+    };
+    assert!(matches!(
+        runtime.commit(prepared_mru),
+        GraphCommitOutcome::Committed(_)
+    ));
+    let leaf = runtime
+        .graph()
+        .index()
+        .node_for_group(&group)
+        .expect("editor group should have a canonical leaf");
+
+    let prepared = match runtime
+        .prepare_close_item("main", "A")
+        .expect("last main item close should prepare")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("closing a present item must change the graph"),
+    };
+    let receipt = match runtime.commit(prepared) {
+        GraphCommitOutcome::Committed(receipt) => receipt,
+        other => panic!("close should commit, got {other:?}"),
+    };
+
+    let space = runtime
+        .graph()
+        .space(&DockSpaceId::from("main"))
+        .expect("main space should remain after closing its root group");
+    assert_eq!(space.root, None);
+    assert_eq!(space.central.node, None);
+    assert!(runtime.graph().group(&group).is_none());
+    assert!(runtime.graph().node(leaf).is_none());
+    assert!(runtime.graph().index().group_for_item(&item("A")).is_none());
+    assert!(receipt.effects().retired_nodes().contains(&leaf));
+    assert!(receipt.effects().retired_groups().contains(&group));
+    assert_eq!(receipt.after().topology(), receipt.before().topology() + 1);
+    assert_eq!(
+        receipt.after().allocator(),
+        receipt.before().allocator() + 1
+    );
+    assert_eq!(
+        receipt.after().selection(),
+        receipt.before().selection() + 1
+    );
+    assert_eq!(
+        receipt.after().interaction(),
+        receipt.before().interaction() + 1
+    );
+    runtime
+        .graph()
+        .validate()
+        .expect("empty main space should remain canonical");
+}
+
+#[test]
+fn close_floating_subtree_leaf_promotes_sibling_without_retiring_floating_authority() {
+    let mut assembly = DockGraphAssembly::new();
+    assembly
+        .add_space("main")
+        .expect("test dockspace should be accepted");
+    let closing = assembly
+        .add_group("closing", [item("A")], item("A"))
+        .expect("closing test group should be accepted");
+    let surviving = assembly
+        .add_group("surviving", [item("B")], item("B"))
+        .expect("surviving test group should be accepted");
+    let floating_root = assembly
+        .add_branch(SplitAxis::Horizontal, closing, surviving, 0.5)
+        .expect("floating test branch should be accepted");
+    assembly
+        .add_floating_root(
+            "floating-source",
+            "main",
+            floating_root,
+            floating_bounds(),
+            0,
+        )
+        .expect("floating root should be accepted");
+    let mut runtime = CanonicalGraphRuntime::from_assembly(assembly)
+        .expect("test assembly should build a canonical runtime");
+    let floating = crate::DockFloatingId::from("floating-source");
+    let closing_group = DockGroupId::from("closing");
+    let surviving_group = DockGroupId::from("surviving");
+    let closing_leaf = runtime
+        .graph()
+        .index()
+        .node_for_group(&closing_group)
+        .expect("closing group should have a canonical leaf");
+    let surviving_leaf = runtime
+        .graph()
+        .index()
+        .node_for_group(&surviving_group)
+        .expect("surviving group should have a canonical leaf");
+    let floating_root = runtime
+        .graph()
+        .floating_roots()
+        .get(&floating)
+        .expect("floating authority should exist")
+        .root;
+
+    let prepared = match runtime
+        .prepare_close_item("main", "A")
+        .expect("floating subtree item close should prepare")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("closing a present item must change the graph"),
+    };
+    let receipt = match runtime.commit(prepared) {
+        GraphCommitOutcome::Committed(receipt) => receipt,
+        other => panic!("close should commit, got {other:?}"),
+    };
+
+    let floating_state = runtime
+        .graph()
+        .floating_roots()
+        .get(&floating)
+        .expect("floating authority should survive local subtree collapse");
+    assert_eq!(floating_state.root, floating_root);
+    assert!(receipt.effects().retired_floatings().is_empty());
+    assert!(runtime.graph().group(&closing_group).is_none());
+    assert_eq!(
+        runtime.graph().index().node_for_group(&surviving_group),
+        Some(floating_root)
+    );
+    assert!(matches!(
+        runtime.graph().node(floating_root),
+        Some(CanonicalNode::Group { group, .. }) if group == &surviving_group
+    ));
+    assert!(receipt.effects().retired_nodes().contains(&closing_leaf));
+    assert!(receipt.effects().retired_nodes().contains(&surviving_leaf));
+    assert!(receipt.effects().retired_groups().contains(&closing_group));
+    assert!(
+        receipt
+            .effects()
+            .identity_remaps()
+            .iter()
+            .any(|remap| remap.from == surviving_leaf && remap.to == floating_root)
+    );
+    assert_eq!(receipt.after().topology(), receipt.before().topology() + 1);
+    assert_eq!(
+        receipt.after().allocator(),
+        receipt.before().allocator() + 1
+    );
+    assert_eq!(
+        receipt.after().selection(),
+        receipt.before().selection() + 1
+    );
+    assert_eq!(
+        receipt.after().interaction(),
+        receipt.before().interaction()
+    );
+    runtime
+        .graph()
+        .validate()
+        .expect("floating subtree collapse should preserve canonical invariants");
+}
+
+#[test]
+fn close_last_floating_item_retires_the_floating_authority() {
+    let mut runtime = floating_only_runtime(false);
+    let floating = crate::DockFloatingId::from("floating-source");
+    let group = DockGroupId::from("source");
+    let leaf = runtime
+        .graph()
+        .index()
+        .node_for_group(&group)
+        .expect("floating group should have a canonical leaf");
+
+    let prepared = match runtime
+        .prepare_close_item("main", "S")
+        .expect("last floating item close should prepare")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("closing a present item must change the graph"),
+    };
+    let receipt = match runtime.commit(prepared) {
+        GraphCommitOutcome::Committed(receipt) => receipt,
+        other => panic!("close should commit, got {other:?}"),
+    };
+
+    assert!(runtime.graph().floating_roots().get(&floating).is_none());
+    assert!(runtime.graph().group(&group).is_none());
+    assert!(runtime.graph().node(leaf).is_none());
+    assert!(runtime.graph().index().group_for_item(&item("S")).is_none());
+    assert!(
+        runtime
+            .graph()
+            .space(&DockSpaceId::from("main"))
+            .expect("main space should remain after retiring the floating root")
+            .floating_roots
+            .is_empty()
+    );
+    assert!(receipt.effects().retired_nodes().contains(&leaf));
+    assert!(receipt.effects().retired_groups().contains(&group));
+    assert!(receipt.effects().retired_floatings().contains(&floating));
+    assert_eq!(receipt.after().topology(), receipt.before().topology() + 1);
+    assert_eq!(
+        receipt.after().allocator(),
+        receipt.before().allocator() + 1
+    );
+    assert_eq!(
+        receipt.after().selection(),
+        receipt.before().selection() + 1
+    );
+    assert_eq!(
+        receipt.after().interaction(),
+        receipt.before().interaction()
+    );
+    runtime
+        .graph()
+        .validate()
+        .expect("floating retirement should preserve canonical graph invariants");
+}
+
+#[test]
+fn close_item_rejects_missing_or_wrong_space_before_reserving_a_commit() {
+    let mut runtime = three_tab_runtime();
+
+    assert_eq!(
+        runtime.prepare_close_item("main", "missing"),
+        Err(GraphPrepareError::MissingItem {
+            item: item("missing")
+        })
+    );
+    assert_eq!(runtime.receipt_count(), 0);
+    assert_eq!(
+        runtime.prepare_close_item("detached", "A"),
+        Err(GraphPrepareError::GroupOutsideSpace {
+            group: DockGroupId::from("editor"),
+            space: DockSpaceId::from("detached"),
+        })
+    );
+    assert_eq!(runtime.receipt_count(), 0);
+}
+
+#[test]
+fn close_item_stale_group_state_is_rejected_without_an_extra_write() {
+    let mut runtime = three_tab_runtime();
+    let prepared_close = match runtime
+        .prepare_close_item("main", "B")
+        .expect("item close should prepare")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("closing a present item must change the graph"),
+    };
+    let prepared_select = match runtime
+        .prepare_select_tab("editor", "C")
+        .expect("competing tab selection should prepare")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("selection should change"),
+    };
+    assert!(matches!(
+        runtime.commit(prepared_select),
+        GraphCommitOutcome::Committed(_)
+    ));
+
+    assert!(matches!(
+        runtime.commit(prepared_close),
+        GraphCommitOutcome::Superseded(receipt)
+            if receipt.reason() == &GraphSupersededReason::GroupSelectionChanged
+    ));
+    let group = runtime
+        .graph()
+        .group(&DockGroupId::from("editor"))
+        .expect("superseded close must preserve the editor group");
+    assert_eq!(group.items, vec![item("A"), item("B"), item("C")]);
+    assert_eq!(group.selected, item("C"));
+    assert_eq!(group.mru, vec![item("C")]);
+    runtime
+        .graph()
+        .validate()
+        .expect("superseded close should leave a valid canonical graph");
+}
+
+#[test]
 fn runtime_preparation_seals_live_collection_capacity_to_the_commit_id() {
     let mut runtime = runtime();
     let nodes_before = runtime.graph().nodes().len();
@@ -311,15 +880,26 @@ fn real_runtime_commits_selection_and_mru_without_a_graph_copy() {
         GraphPrepareOutcome::NoOp(_) => panic!("selection should create a runtime patch"),
     };
 
-    let outcome = runtime.commit(prepared);
-    assert!(matches!(outcome, GraphCommitOutcome::Committed(_)));
+    let receipt = match runtime.commit(prepared) {
+        GraphCommitOutcome::Committed(receipt) => receipt,
+        other => panic!("selection should commit, got {other:?}"),
+    };
     let group = runtime
         .graph()
         .group(&"editor".into())
         .expect("editor group should remain present");
     assert_eq!(group.selected, item("B"));
     assert_eq!(group.mru, vec![item("B")]);
-    assert_eq!(runtime.graph_revision().selection(), 1);
+    assert_eq!(receipt.after().topology(), receipt.before().topology());
+    assert_eq!(receipt.after().allocator(), receipt.before().allocator());
+    assert_eq!(
+        receipt.after().selection(),
+        receipt.before().selection() + 1
+    );
+    assert_eq!(
+        receipt.after().interaction(),
+        receipt.before().interaction() + 1
+    );
     assert_eq!(runtime.receipt_count(), 1);
 }
 
@@ -333,16 +913,29 @@ fn current_tab_selection_is_a_real_mru_commit() {
         GraphPrepareOutcome::Prepared(prepared) => prepared,
         GraphPrepareOutcome::NoOp(_) => panic!("current selection still records MRU usage"),
     };
-    assert!(matches!(
-        runtime.commit(prepared),
-        GraphCommitOutcome::Committed(_)
-    ));
+    let receipt = match runtime.commit(prepared) {
+        GraphCommitOutcome::Committed(receipt) => receipt,
+        other => panic!("MRU update should commit, got {other:?}"),
+    };
     let group = runtime
         .graph()
         .group(&"editor".into())
         .expect("editor group should remain present");
     assert_eq!(group.selected, item("A"));
     assert_eq!(group.mru, vec![item("A")]);
+    assert_eq!(receipt.after().topology(), receipt.before().topology());
+    assert_eq!(receipt.after().allocator(), receipt.before().allocator());
+    assert_eq!(receipt.after().selection(), receipt.before().selection());
+    assert_eq!(
+        receipt.after().interaction(),
+        receipt.before().interaction() + 1
+    );
+
+    let second = runtime
+        .prepare_select_tab("editor", "A")
+        .expect("reselecting the current front MRU item should be valid");
+    assert!(matches!(second, GraphPrepareOutcome::NoOp(_)));
+    assert_eq!(runtime.receipt_count(), 1);
 }
 
 #[test]

@@ -223,6 +223,30 @@ impl GraphFloatingBounds {
     }
 }
 
+/// Resolves durable selection after closing one item from a non-empty group.
+pub(crate) fn selected_item_after_close(
+    items: &[DockItemId],
+    selected: &DockItemId,
+    mru: &[DockItemId],
+    closing: &DockItemId,
+) -> Option<DockItemId> {
+    if !items.contains(closing) || items.len() <= 1 {
+        return None;
+    }
+    if selected != closing && items.contains(selected) {
+        return Some(selected.clone());
+    }
+    mru.iter()
+        .find(|candidate| *candidate != closing && items.contains(candidate))
+        .or_else(|| items.iter().find(|candidate| *candidate != closing))
+        .cloned()
+}
+
+/// Returns whether selecting an item would change the transient MRU ordering.
+pub(crate) fn mru_changes_after_select(mru: &[DockItemId], item: &DockItemId) -> bool {
+    mru.first() != Some(item) || mru.iter().skip(1).any(|candidate| candidate == item)
+}
+
 /// Commit-time headroom required from one durable group's mutable vectors.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct GraphGroupCapacityRequirement {
@@ -440,6 +464,12 @@ pub(crate) enum GraphPatchOperation {
         group: DockGroupId,
         item: DockItemId,
     },
+    /// Closes one item and retires its durable group when it becomes empty.
+    CloseItem {
+        group: DockGroupId,
+        item: DockItemId,
+        space: DockSpaceId,
+    },
     /// Inserts a newly created group beside an existing group in its current root.
     SplitGroup {
         target_group: DockGroupId,
@@ -534,59 +564,74 @@ pub(crate) enum GraphPatchOperation {
 /// first write.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum GraphPreparedMutation {
-    SelectTab,
-    SplitGroup { new_group: CanonicalGroup },
+    SelectTab {
+        selection_changed: bool,
+        interaction_changed: bool,
+    },
+    CloseItem {
+        next_selected: Option<DockItemId>,
+        selection_changed: bool,
+        interaction_changed: bool,
+    },
+    SplitGroup {
+        new_group: CanonicalGroup,
+    },
     MoveGroupToEdge,
     MoveGroupToCenter,
     MoveGroupToEmptySpace,
     MoveItemToGroup,
-    MoveItemToEdge { new_group: Option<CanonicalGroup> },
-    MoveItemToEmptySpace { new_group: Option<CanonicalGroup> },
-    FloatItemInWindow { new_group: Option<CanonicalGroup> },
-    MoveFloatingRootToEdge { owner_nodes: Vec<CanonicalNodeId> },
+    MoveItemToEdge {
+        new_group: Option<CanonicalGroup>,
+    },
+    MoveItemToEmptySpace {
+        new_group: Option<CanonicalGroup>,
+    },
+    FloatItemInWindow {
+        new_group: Option<CanonicalGroup>,
+    },
+    MoveFloatingRootToEdge {
+        owner_nodes: Vec<CanonicalNodeId>,
+    },
 }
 
 impl GraphPreparedMutation {
     pub(crate) fn matches_operation(&self, operation: &GraphPatchOperation) -> bool {
         matches!(
             (operation, self),
-            (GraphPatchOperation::SelectTab { .. }, Self::SelectTab)
-                | (
-                    GraphPatchOperation::SplitGroup { .. },
-                    Self::SplitGroup { .. }
-                )
-                | (
-                    GraphPatchOperation::MoveGroupToEdge { .. },
-                    Self::MoveGroupToEdge
-                )
-                | (
-                    GraphPatchOperation::MoveGroupToCenter { .. },
-                    Self::MoveGroupToCenter
-                )
-                | (
-                    GraphPatchOperation::MoveGroupToEmptySpace { .. },
-                    Self::MoveGroupToEmptySpace
-                )
-                | (
-                    GraphPatchOperation::MoveItemToGroup { .. },
-                    Self::MoveItemToGroup
-                )
-                | (
-                    GraphPatchOperation::MoveItemToEdge { .. },
-                    Self::MoveItemToEdge { .. }
-                )
-                | (
-                    GraphPatchOperation::MoveItemToEmptySpace { .. },
-                    Self::MoveItemToEmptySpace { .. }
-                )
-                | (
-                    GraphPatchOperation::FloatItemInWindow { .. },
-                    Self::FloatItemInWindow { .. }
-                )
-                | (
-                    GraphPatchOperation::MoveFloatingRootToEdge { .. },
-                    Self::MoveFloatingRootToEdge { .. }
-                )
+            (
+                GraphPatchOperation::SelectTab { .. },
+                Self::SelectTab { .. }
+            ) | (
+                GraphPatchOperation::CloseItem { .. },
+                Self::CloseItem { .. }
+            ) | (
+                GraphPatchOperation::SplitGroup { .. },
+                Self::SplitGroup { .. }
+            ) | (
+                GraphPatchOperation::MoveGroupToEdge { .. },
+                Self::MoveGroupToEdge
+            ) | (
+                GraphPatchOperation::MoveGroupToCenter { .. },
+                Self::MoveGroupToCenter
+            ) | (
+                GraphPatchOperation::MoveGroupToEmptySpace { .. },
+                Self::MoveGroupToEmptySpace
+            ) | (
+                GraphPatchOperation::MoveItemToGroup { .. },
+                Self::MoveItemToGroup
+            ) | (
+                GraphPatchOperation::MoveItemToEdge { .. },
+                Self::MoveItemToEdge { .. }
+            ) | (
+                GraphPatchOperation::MoveItemToEmptySpace { .. },
+                Self::MoveItemToEmptySpace { .. }
+            ) | (
+                GraphPatchOperation::FloatItemInWindow { .. },
+                Self::FloatItemInWindow { .. }
+            ) | (
+                GraphPatchOperation::MoveFloatingRootToEdge { .. },
+                Self::MoveFloatingRootToEdge { .. }
+            )
         )
     }
 }
