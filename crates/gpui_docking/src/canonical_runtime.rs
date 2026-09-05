@@ -262,6 +262,29 @@ impl CanonicalGraphRuntime {
         self.seal_prepare_outcome(result)
     }
 
+    pub(crate) fn prepare_set_floating_bounds(
+        &mut self,
+        space: impl Into<DockSpaceId>,
+        floating: impl Into<DockFloatingId>,
+        bounds: DockLayoutRect,
+    ) -> Result<GraphPrepareOutcome, GraphPrepareError> {
+        let result =
+            self.transactions
+                .prepare_set_floating_bounds(&self.graph, space, floating, bounds);
+        self.seal_prepare_outcome(result)
+    }
+
+    pub(crate) fn prepare_raise_floating(
+        &mut self,
+        space: impl Into<DockSpaceId>,
+        floating: impl Into<DockFloatingId>,
+    ) -> Result<GraphPrepareOutcome, GraphPrepareError> {
+        let result = self
+            .transactions
+            .prepare_raise_floating(&self.graph, space, floating);
+        self.seal_prepare_outcome(result)
+    }
+
     pub(crate) fn prepare_move_floating_root_to_edge(
         &mut self,
         floating: impl Into<DockFloatingId>,
@@ -644,6 +667,22 @@ impl GraphPatchTarget for CanonicalGraphCommitTarget<'_> {
                 state,
             ),
             (
+                GraphPatchOperation::SetFloatingBounds {
+                    floating,
+                    space,
+                    bounds,
+                },
+                GraphPreparedMutation::SetFloatingBounds,
+            ) => self.apply_set_floating_bounds(floating, space, bounds.get()),
+            (
+                GraphPatchOperation::RaiseFloating {
+                    floating,
+                    space,
+                    z_order,
+                },
+                GraphPreparedMutation::RaiseFloating,
+            ) => self.apply_raise_floating(floating, space, *z_order),
+            (
                 GraphPatchOperation::MoveFloatingRootToEdge {
                     floating,
                     source_space,
@@ -722,6 +761,46 @@ impl CanonicalGraphCommitTarget<'_> {
             .graph
             .apply_close_item_for_commit(group, item, space, next_selected, next_version)
             .expect("validated close-item patch must be applicable");
+        let recorded = self.authority.record_change(change);
+        debug_assert_eq!(recorded, next_version);
+        GraphAppliedPatch::new(GraphRevision::from_version(self.graph.version()), effects)
+    }
+
+    fn apply_set_floating_bounds(
+        &mut self,
+        floating: &DockFloatingId,
+        space: &DockSpaceId,
+        bounds: DockLayoutRect,
+    ) -> GraphAppliedPatch {
+        let change = CanonicalGraphRevisionChange::durable_topology();
+        let next_version = self
+            .authority
+            .next_change(change)
+            .expect("canonical graph revision exhausted");
+        let effects = self
+            .graph
+            .apply_set_floating_bounds_for_commit(floating, space, bounds, next_version)
+            .expect("validated floating bounds patch must be applicable");
+        let recorded = self.authority.record_change(change);
+        debug_assert_eq!(recorded, next_version);
+        GraphAppliedPatch::new(GraphRevision::from_version(self.graph.version()), effects)
+    }
+
+    fn apply_raise_floating(
+        &mut self,
+        floating: &DockFloatingId,
+        space: &DockSpaceId,
+        z_order: i32,
+    ) -> GraphAppliedPatch {
+        let change = CanonicalGraphRevisionChange::durable_topology();
+        let next_version = self
+            .authority
+            .next_change(change)
+            .expect("canonical graph revision exhausted");
+        let effects = self
+            .graph
+            .apply_raise_floating_for_commit(floating, space, z_order, next_version)
+            .expect("validated floating raise patch must be applicable");
         let recorded = self.authority.record_change(change);
         debug_assert_eq!(recorded, next_version);
         GraphAppliedPatch::new(GraphRevision::from_version(self.graph.version()), effects)

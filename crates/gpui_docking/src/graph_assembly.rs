@@ -3,9 +3,9 @@
 use crate::binary_layout_policy::{StructuralIdentityRemap, plan_sibling_promotion};
 use crate::graph_index::{CanonicalGraphIndex, CanonicalNodeOwner};
 use crate::graph_patch::{
-    GraphCapacityProof, GraphCommitEffects, GraphCommitId, GraphGroupCapacityRequirement,
-    GraphPatchOperation, GraphPrepareError, GraphPreparedMutation, GraphRevision,
-    GraphSpaceCapacityRequirement, GraphSupersededReason, mru_changes_after_select,
+    GraphCapacityProof, GraphCommitEffects, GraphCommitId, GraphFloatingBounds,
+    GraphGroupCapacityRequirement, GraphPatchOperation, GraphPrepareError, GraphPreparedMutation,
+    GraphRevision, GraphSpaceCapacityRequirement, GraphSupersededReason, mru_changes_after_select,
     selected_item_after_close,
 };
 use crate::{
@@ -571,6 +571,29 @@ impl CanonicalDockGraph {
                 }
                 plan.reserve_space_floatings(target_space.clone(), 1);
             }
+            GraphPatchOperation::SetFloatingBounds {
+                floating, space, ..
+            }
+            | GraphPatchOperation::RaiseFloating {
+                floating, space, ..
+            } => {
+                let root = self.floating_roots.get(floating).ok_or_else(|| {
+                    GraphPrepareError::MissingFloating {
+                        floating: floating.clone(),
+                    }
+                })?;
+                if root.space != *space {
+                    return Err(GraphPrepareError::FloatingOutsideSpace {
+                        floating: floating.clone(),
+                        space: space.clone(),
+                    });
+                }
+                if !self.spaces.contains_key(space) {
+                    return Err(GraphPrepareError::MissingSpace {
+                        space: space.clone(),
+                    });
+                }
+            }
             GraphPatchOperation::MoveFloatingRootToEdge { target_group, .. } => {
                 self.require_group(target_group)?;
                 plan.additional_nodes = 1;
@@ -627,6 +650,47 @@ impl CanonicalDockGraph {
                     && *selection_changed == (expected_next.as_ref() != Some(&state.selected))
                     && *interaction_changed == state.mru.contains(item)
             }),
+            (
+                GraphPatchOperation::SetFloatingBounds {
+                    floating,
+                    space,
+                    bounds,
+                },
+                GraphPreparedMutation::SetFloatingBounds,
+            ) => self.floating_roots.get(floating).is_some_and(|root| {
+                root.space == *space
+                    && GraphFloatingBounds::new(root.bounds)
+                        .is_some_and(|current| current != *bounds)
+            }),
+            (
+                GraphPatchOperation::RaiseFloating {
+                    floating,
+                    space,
+                    z_order,
+                },
+                GraphPreparedMutation::RaiseFloating,
+            ) => self
+                .floating_roots
+                .get(floating)
+                .zip(self.spaces.get(space))
+                .is_some_and(|(root, space_state)| {
+                    let expected_z_order = space_state
+                        .floating_roots
+                        .iter()
+                        .filter_map(|candidate| self.floating_roots.get(candidate))
+                        .map(|candidate| candidate.z_order)
+                        .max()
+                        .and_then(|max| max.checked_add(1));
+                    root.space == *space
+                        && space_state
+                            .floating_roots
+                            .iter()
+                            .position(|candidate| candidate == floating)
+                            .is_some_and(|index| {
+                                index + 1 < space_state.floating_roots.len()
+                                    && expected_z_order == Some(*z_order)
+                            })
+                }),
             (
                 GraphPatchOperation::SplitGroup {
                     items, selected, ..
@@ -809,6 +873,66 @@ impl CanonicalDockGraph {
         };
         self.version = version;
         Some(effects)
+    }
+
+    /// Updates one floating root's durable bounds after the read set is revalidated.
+    pub(crate) fn apply_set_floating_bounds_for_commit(
+        &mut self,
+        floating: &DockFloatingId,
+        space: &DockSpaceId,
+        bounds: DockLayoutRect,
+        version: CanonicalGraphVersion,
+    ) -> Option<GraphCommitEffects> {
+        let root = self.floating_roots.get_mut(floating)?;
+        if root.space != *space
+            || GraphFloatingBounds::new(bounds).is_none()
+            || root.bounds == bounds
+        {
+            return None;
+        }
+        root.bounds = bounds;
+        self.version = version;
+        Some(GraphCommitEffects::default())
+    }
+
+    /// Raises one floating root while preserving the canonical z-order list.
+    pub(crate) fn apply_raise_floating_for_commit(
+        &mut self,
+        floating: &DockFloatingId,
+        space: &DockSpaceId,
+        z_order: i32,
+        version: CanonicalGraphVersion,
+    ) -> Option<GraphCommitEffects> {
+        let root = self.floating_roots.get(floating)?;
+        if root.space != *space {
+            return None;
+        }
+        let space_state = self.spaces.get_mut(space)?;
+        let index = space_state
+            .floating_roots
+            .iter()
+            .position(|candidate| candidate == floating)?;
+        if index + 1 == space_state.floating_roots.len() {
+            return None;
+        }
+        let expected_z_order = space_state
+            .floating_roots
+            .iter()
+            .filter_map(|candidate| self.floating_roots.get(candidate))
+            .map(|candidate| candidate.z_order)
+            .max()?
+            .checked_add(1)?;
+        if expected_z_order != z_order {
+            return None;
+        }
+        self.floating_roots
+            .get_mut(floating)
+            .expect("validated floating root must remain present")
+            .z_order = z_order;
+        let entry = space_state.floating_roots.remove(index);
+        space_state.floating_roots.push(entry);
+        self.version = version;
+        Some(GraphCommitEffects::default())
     }
 
     /// Inserts a new group beside an existing group and rewires only its local parent/root path.

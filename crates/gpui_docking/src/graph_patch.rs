@@ -152,6 +152,8 @@ pub(crate) struct GraphGroupRead {
 pub(crate) struct GraphFloatingRootRead {
     pub(crate) floating: DockFloatingId,
     pub(crate) space: DockSpaceId,
+    pub(crate) bounds: GraphFloatingBounds,
+    pub(crate) z_order: i32,
 }
 
 /// Small immutable dock-space fact captured by a prepared structural operation.
@@ -344,7 +346,7 @@ impl GraphReadDomains {
 pub(crate) struct GraphReadSet {
     base_revision: GraphRevision,
     domains: GraphReadDomains,
-    group: GraphGroupRead,
+    group: Option<GraphGroupRead>,
     additional_groups: Vec<GraphGroupRead>,
     floating_roots: Vec<GraphFloatingRootRead>,
     spaces: Vec<GraphSpaceRead>,
@@ -357,7 +359,7 @@ impl GraphReadSet {
         Self {
             base_revision,
             domains: GraphReadDomains::select_tab(),
-            group,
+            group: Some(group),
             additional_groups: Vec::new(),
             floating_roots: Vec::new(),
             spaces: Vec::new(),
@@ -382,7 +384,7 @@ impl GraphReadSet {
                 selection: false,
                 interaction: false,
             },
-            group,
+            group: Some(group),
             additional_groups: groups.collect(),
             floating_roots: Vec::new(),
             spaces: Vec::new(),
@@ -398,6 +400,37 @@ impl GraphReadSet {
     ) -> Self {
         let mut read_set = Self::for_groups(base_revision, groups);
         read_set.floating_roots.push(floating);
+        read_set
+    }
+
+    pub(crate) fn for_floating(
+        base_revision: GraphRevision,
+        floating: GraphFloatingRootRead,
+    ) -> Self {
+        Self {
+            base_revision,
+            domains: GraphReadDomains {
+                topology: true,
+                allocator: false,
+                selection: false,
+                interaction: false,
+            },
+            group: None,
+            additional_groups: Vec::new(),
+            floating_roots: vec![floating],
+            spaces: Vec::new(),
+            group_selection_sensitive: false,
+            group_mru_sensitive: false,
+        }
+    }
+
+    pub(crate) fn for_floating_and_space(
+        base_revision: GraphRevision,
+        floating: GraphFloatingRootRead,
+        space: GraphSpaceRead,
+    ) -> Self {
+        let mut read_set = Self::for_floating(base_revision, floating);
+        read_set.spaces.push(space);
         read_set
     }
 
@@ -439,12 +472,12 @@ impl GraphReadSet {
         self.domains
     }
 
-    pub(crate) fn group(&self) -> &GraphGroupRead {
-        &self.group
+    pub(crate) fn group(&self) -> Option<&GraphGroupRead> {
+        self.group.as_ref()
     }
 
     pub(crate) fn groups(&self) -> impl Iterator<Item = &GraphGroupRead> {
-        std::iter::once(&self.group).chain(self.additional_groups.iter())
+        self.group.iter().chain(self.additional_groups.iter())
     }
 
     pub(crate) fn floating_roots(&self) -> impl Iterator<Item = &GraphFloatingRootRead> {
@@ -545,6 +578,18 @@ pub(crate) enum GraphPatchOperation {
         bounds: GraphFloatingBounds,
         z_order: i32,
     },
+    /// Updates the durable bounds of one floating root without changing its subtree.
+    SetFloatingBounds {
+        floating: DockFloatingId,
+        space: DockSpaceId,
+        bounds: GraphFloatingBounds,
+    },
+    /// Raises one floating root above the other roots in its dock space.
+    RaiseFloating {
+        floating: DockFloatingId,
+        space: DockSpaceId,
+        z_order: i32,
+    },
     /// Moves one complete floating root beside a target group and retires its floating chrome.
     MoveFloatingRootToEdge {
         floating: DockFloatingId,
@@ -589,6 +634,8 @@ pub(crate) enum GraphPreparedMutation {
     FloatItemInWindow {
         new_group: Option<CanonicalGroup>,
     },
+    SetFloatingBounds,
+    RaiseFloating,
     MoveFloatingRootToEdge {
         owner_nodes: Vec<CanonicalNodeId>,
     },
@@ -628,6 +675,12 @@ impl GraphPreparedMutation {
             ) | (
                 GraphPatchOperation::FloatItemInWindow { .. },
                 Self::FloatItemInWindow { .. }
+            ) | (
+                GraphPatchOperation::SetFloatingBounds { .. },
+                Self::SetFloatingBounds
+            ) | (
+                GraphPatchOperation::RaiseFloating { .. },
+                Self::RaiseFloating
             ) | (
                 GraphPatchOperation::MoveFloatingRootToEdge { .. },
                 Self::MoveFloatingRootToEdge { .. }
@@ -1110,6 +1163,9 @@ pub(crate) trait GraphReadView {
         if floating.space != expected.space {
             return Err(GraphSupersededReason::FloatingOwnerChanged);
         }
+        if floating.bounds != expected.bounds || floating.z_order != expected.z_order {
+            return Err(GraphSupersededReason::FloatingOwnerChanged);
+        }
         Ok(())
     }
 
@@ -1232,6 +1288,9 @@ impl GraphReadView for CanonicalDockGraph {
             .map(|root| GraphFloatingRootRead {
                 floating: floating.clone(),
                 space: root.space.clone(),
+                bounds: GraphFloatingBounds::new(root.bounds)
+                    .expect("validated floating root bounds must be finite and positive"),
+                z_order: root.z_order,
             })
     }
 
@@ -1263,6 +1322,11 @@ impl GraphReadView for CanonicalDockGraph {
             return Err(GraphSupersededReason::FloatingMissing);
         };
         if floating.space != expected.space {
+            return Err(GraphSupersededReason::FloatingOwnerChanged);
+        }
+        if GraphFloatingBounds::new(floating.bounds) != Some(expected.bounds)
+            || floating.z_order != expected.z_order
+        {
             return Err(GraphSupersededReason::FloatingOwnerChanged);
         }
         Ok(())

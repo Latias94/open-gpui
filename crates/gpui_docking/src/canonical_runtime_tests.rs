@@ -2189,6 +2189,289 @@ fn refloating_a_singleton_excludes_its_retired_root_from_z_order() {
 }
 
 #[test]
+fn set_floating_bounds_commits_as_durable_topology_without_allocator_churn() {
+    let mut runtime = floating_only_runtime(false);
+    let next_bounds = DockLayoutRect {
+        x: 80.0,
+        y: 90.0,
+        width: 640.0,
+        height: 480.0,
+    };
+    let before = runtime.graph().version();
+    let prepared = match runtime
+        .prepare_set_floating_bounds("main", "floating-source", next_bounds)
+        .expect("floating bounds update should prepare")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("different floating bounds must commit"),
+    };
+    assert!(matches!(
+        prepared.operation(),
+        GraphPatchOperation::SetFloatingBounds { bounds, .. } if bounds.get() == next_bounds
+    ));
+    let receipt = match runtime.commit(prepared) {
+        GraphCommitOutcome::Committed(receipt) => receipt,
+        other => panic!("floating bounds update should commit, got {other:?}"),
+    };
+
+    assert_eq!(
+        runtime.graph().floating_roots()[&crate::DockFloatingId::from("floating-source")].bounds,
+        next_bounds
+    );
+    assert_eq!(receipt.after().topology(), before.topology_revision() + 1);
+    assert_eq!(receipt.after().allocator(), before.allocator_revision());
+    assert_eq!(receipt.after().selection(), before.selection_revision());
+    assert_eq!(receipt.after().interaction(), before.interaction_revision());
+    runtime
+        .graph()
+        .validate()
+        .expect("floating bounds update should preserve canonical state");
+}
+
+#[test]
+fn setting_identical_floating_bounds_is_a_canonical_noop() {
+    let mut runtime = floating_only_runtime(false);
+    let before = runtime.graph().version();
+    let outcome = runtime
+        .prepare_set_floating_bounds(
+            "main",
+            "floating-source",
+            DockLayoutRect {
+                x: 10.0,
+                y: 10.0,
+                width: 320.0,
+                height: 240.0,
+            },
+        )
+        .expect("identical floating bounds should be accepted");
+    assert!(matches!(outcome, GraphPrepareOutcome::NoOp(_)));
+    assert_eq!(runtime.graph().version(), before);
+    assert_eq!(runtime.receipt_count(), 0);
+}
+
+#[test]
+fn floating_metadata_prepare_rejects_invalid_authority_and_bounds_before_reserving() {
+    let mut runtime = floating_only_runtime(false);
+    assert_eq!(
+        runtime
+            .prepare_set_floating_bounds(
+                "main",
+                "missing",
+                DockLayoutRect {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 200.0,
+                    height: 120.0,
+                },
+            )
+            .expect_err("missing floating root must fail during prepare"),
+        GraphPrepareError::MissingFloating {
+            floating: crate::DockFloatingId::from("missing")
+        }
+    );
+    assert_eq!(
+        runtime
+            .prepare_raise_floating("other", "floating-source")
+            .expect_err("wrong floating space must fail during prepare"),
+        GraphPrepareError::FloatingOutsideSpace {
+            floating: crate::DockFloatingId::from("floating-source"),
+            space: DockSpaceId::from("other")
+        }
+    );
+    assert_eq!(
+        runtime
+            .prepare_set_floating_bounds(
+                "main",
+                "floating-source",
+                DockLayoutRect {
+                    width: 0.0,
+                    ..floating_bounds()
+                },
+            )
+            .expect_err("non-positive bounds must fail during prepare"),
+        GraphPrepareError::InvalidFloatingBounds
+    );
+    assert_eq!(runtime.receipt_count(), 0);
+}
+
+#[test]
+fn floating_raise_rejects_z_order_overflow_before_reserving() {
+    let mut assembly = DockGraphAssembly::new();
+    assembly
+        .add_space("main")
+        .expect("test space should be valid");
+    let source = assembly
+        .add_group("source", [item("S")], item("S"))
+        .expect("source group should be valid");
+    let other = assembly
+        .add_group("other", [item("O")], item("O"))
+        .expect("other group should be valid");
+    assembly
+        .add_floating_root(
+            "floating-source",
+            "main",
+            source,
+            DockLayoutRect {
+                x: 0.0,
+                y: 0.0,
+                width: 200.0,
+                height: 120.0,
+            },
+            i32::MAX - 1,
+        )
+        .expect("source floating root should be valid");
+    assembly
+        .add_floating_root(
+            "floating-other",
+            "main",
+            other,
+            DockLayoutRect {
+                x: 20.0,
+                y: 20.0,
+                width: 200.0,
+                height: 120.0,
+            },
+            i32::MAX,
+        )
+        .expect("top floating root should be valid");
+    let mut runtime =
+        CanonicalGraphRuntime::from_assembly(assembly).expect("overflow fixture should publish");
+
+    assert_eq!(
+        runtime
+            .prepare_raise_floating("main", "floating-source")
+            .expect_err("raising beyond i32::MAX must fail during prepare"),
+        GraphPrepareError::FloatingZOrderExhausted {
+            space: DockSpaceId::from("main")
+        }
+    );
+    assert_eq!(runtime.receipt_count(), 0);
+}
+
+#[test]
+fn floating_bounds_patch_survives_an_interleaved_interaction_only_commit() {
+    let mut runtime = floating_only_runtime(false);
+    let prepared_bounds = match runtime
+        .prepare_set_floating_bounds(
+            "main",
+            "floating-source",
+            DockLayoutRect {
+                x: 100.0,
+                y: 100.0,
+                width: 500.0,
+                height: 400.0,
+            },
+        )
+        .expect("floating bounds update should prepare")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("different floating bounds must prepare"),
+    };
+    let prepared_selection = match runtime
+        .prepare_select_tab("source", "S")
+        .expect("current floating tab MRU update should prepare")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("empty MRU should require an interaction update"),
+    };
+    assert!(matches!(
+        runtime.commit(prepared_selection),
+        GraphCommitOutcome::Committed(_)
+    ));
+    assert!(matches!(
+        runtime.commit(prepared_bounds),
+        GraphCommitOutcome::Committed(_)
+    ));
+}
+
+#[test]
+fn raising_floating_root_reorders_z_order_without_allocator_churn() {
+    let mut runtime = floating_only_runtime(true);
+    let before = runtime.graph().version();
+    let prepared = match runtime
+        .prepare_raise_floating("main", "floating-source")
+        .expect("floating raise should prepare")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("the lower floating root must be raisable"),
+    };
+    assert!(matches!(
+        prepared.operation(),
+        GraphPatchOperation::RaiseFloating { z_order: 3, .. }
+    ));
+    let receipt = match runtime.commit(prepared) {
+        GraphCommitOutcome::Committed(receipt) => receipt,
+        other => panic!("floating raise should commit, got {other:?}"),
+    };
+
+    let space = runtime
+        .graph()
+        .space(&DockSpaceId::from("main"))
+        .expect("main space should remain present");
+    assert_eq!(
+        space.floating_roots,
+        vec![
+            crate::DockFloatingId::from("floating-other"),
+            crate::DockFloatingId::from("floating-source")
+        ]
+    );
+    assert_eq!(
+        runtime.graph().floating_roots()[&crate::DockFloatingId::from("floating-source")].z_order,
+        3
+    );
+    assert_eq!(receipt.after().topology(), before.topology_revision() + 1);
+    assert_eq!(receipt.after().allocator(), before.allocator_revision());
+    assert_eq!(receipt.after().selection(), before.selection_revision());
+    assert_eq!(receipt.after().interaction(), before.interaction_revision());
+
+    let outcome = runtime
+        .prepare_raise_floating("main", "floating-source")
+        .expect("raising the top floating root should be accepted");
+    assert!(matches!(outcome, GraphPrepareOutcome::NoOp(_)));
+    runtime
+        .graph()
+        .validate()
+        .expect("floating raise should preserve canonical z-order");
+}
+
+#[test]
+fn floating_bounds_patch_is_superseded_by_a_declared_topology_change() {
+    let mut runtime = floating_only_runtime(true);
+    let prepared = match runtime
+        .prepare_set_floating_bounds(
+            "main",
+            "floating-source",
+            DockLayoutRect {
+                x: 100.0,
+                y: 100.0,
+                width: 500.0,
+                height: 400.0,
+            },
+        )
+        .expect("floating bounds update should prepare")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("different floating bounds must prepare"),
+    };
+    let raise = match runtime
+        .prepare_raise_floating("main", "floating-source")
+        .expect("source floating root should prepare for raise")
+    {
+        GraphPrepareOutcome::Prepared(prepared) => prepared,
+        GraphPrepareOutcome::NoOp(_) => panic!("the source floating root should not start on top"),
+    };
+    assert!(matches!(
+        runtime.commit(raise),
+        GraphCommitOutcome::Committed(_)
+    ));
+    assert!(matches!(
+        runtime.commit(prepared),
+        GraphCommitOutcome::Superseded(receipt)
+            if receipt.reason() == &GraphSupersededReason::TopologyChanged
+    ));
+}
+
+#[test]
 fn float_item_prepare_rejects_invalid_identity_bounds_and_floating_collisions() {
     let mut runtime = three_tab_runtime();
     assert!(matches!(

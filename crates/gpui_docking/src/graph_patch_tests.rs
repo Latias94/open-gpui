@@ -151,11 +151,19 @@ fn prepare_is_read_only_and_captures_only_the_touched_group() {
         item("A")
     );
     assert_eq!(
-        prepared.read_set().group().group,
+        prepared
+            .read_set()
+            .group()
+            .expect("selection read set should include a group")
+            .group,
         DockGroupId::from("editor")
     );
     assert_eq!(
-        prepared.read_set().group().items,
+        prepared
+            .read_set()
+            .group()
+            .expect("selection read set should include a group")
+            .items,
         vec![item("A"), item("B")]
     );
     assert!(prepared.read_set().domains().topology);

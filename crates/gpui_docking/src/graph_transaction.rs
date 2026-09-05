@@ -906,6 +906,103 @@ impl GraphTransactionEngine {
         ))
     }
 
+    /// Prepares a durable floating-root bounds update.
+    pub(crate) fn prepare_set_floating_bounds<T: GraphReadView>(
+        &mut self,
+        view: &T,
+        space: impl Into<DockSpaceId>,
+        floating: impl Into<DockFloatingId>,
+        bounds: DockLayoutRect,
+    ) -> Result<GraphPrepareOutcome, GraphPrepareError> {
+        let space = space.into();
+        let floating = floating.into();
+        let current = view.read_floating_root(&floating).ok_or_else(|| {
+            GraphPrepareError::MissingFloating {
+                floating: floating.clone(),
+            }
+        })?;
+        if current.space != space {
+            return Err(GraphPrepareError::FloatingOutsideSpace { floating, space });
+        }
+        let bounds =
+            GraphFloatingBounds::new(bounds).ok_or(GraphPrepareError::InvalidFloatingBounds)?;
+        let operation = GraphPatchOperation::SetFloatingBounds {
+            floating,
+            space,
+            bounds,
+        };
+        let revision = view.graph_revision();
+        if current.bounds == bounds {
+            return Ok(GraphPrepareOutcome::NoOp(GraphNoOpReceipt::new(
+                revision, operation,
+            )));
+        }
+        let commit_id = self.reserve_commit_id(revision)?;
+        Ok(GraphPrepareOutcome::Prepared(
+            crate::graph_patch::PreparedGraphPatch::new(
+                commit_id,
+                GraphPatch::new(operation, GraphReadSet::for_floating(revision, current)),
+                GraphPreparedMutation::SetFloatingBounds,
+            ),
+        ))
+    }
+
+    /// Prepares raising a floating root above every other root in its dock space.
+    pub(crate) fn prepare_raise_floating<T: GraphReadView>(
+        &mut self,
+        view: &T,
+        space: impl Into<DockSpaceId>,
+        floating: impl Into<DockFloatingId>,
+    ) -> Result<GraphPrepareOutcome, GraphPrepareError> {
+        let space = space.into();
+        let floating = floating.into();
+        let current = view.read_floating_root(&floating).ok_or_else(|| {
+            GraphPrepareError::MissingFloating {
+                floating: floating.clone(),
+            }
+        })?;
+        if current.space != space {
+            return Err(GraphPrepareError::FloatingOutsideSpace { floating, space });
+        }
+        let target = view
+            .read_space(&space)
+            .ok_or_else(|| GraphPrepareError::MissingSpace {
+                space: space.clone(),
+            })?;
+        let is_top = target.floating_roots.last() == Some(&floating);
+        let z_order = if is_top {
+            current.z_order
+        } else {
+            target
+                .next_floating_z_order_excluding(None)
+                .ok_or_else(|| GraphPrepareError::FloatingZOrderExhausted {
+                    space: space.clone(),
+                })?
+        };
+        let operation = GraphPatchOperation::RaiseFloating {
+            floating,
+            space,
+            z_order,
+        };
+        let revision = view.graph_revision();
+        if is_top {
+            return Ok(GraphPrepareOutcome::NoOp(GraphNoOpReceipt::new(
+                revision, operation,
+            )));
+        }
+        let commit_id = self.reserve_commit_id(revision)?;
+        Ok(GraphPrepareOutcome::Prepared(
+            crate::graph_patch::PreparedGraphPatch::new(
+                commit_id,
+                GraphPatch::new(
+                    operation,
+                    GraphReadSet::for_floating_and_space(revision, current, target),
+                ),
+                GraphPreparedMutation::RaiseFloating,
+            ),
+        ))
+    }
+
     /// Prepares docking an entire floating root beside a target group.
     pub(crate) fn prepare_move_floating_root_to_edge<T: GraphReadView>(
         &mut self,

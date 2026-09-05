@@ -164,6 +164,10 @@ impl CanonicalGraphRevisionChange {
         Self::new(true, true, false, false)
     }
 
+    pub(crate) const fn durable_topology() -> Self {
+        Self::new(true, false, false, false)
+    }
+
     pub(crate) const fn selection() -> Self {
         Self::new(false, false, true, false)
     }
