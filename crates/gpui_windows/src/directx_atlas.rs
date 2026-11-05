@@ -18,6 +18,83 @@ use open_gpui::{
 
 pub(crate) struct DirectXAtlas(Mutex<DirectXAtlasState>);
 
+const MAX_ATLAS_DIMENSION: i32 = 16384;
+
+struct AtlasUpload {
+    size: Size<DevicePixels>,
+    bytes_per_pixel: u32,
+    row_pitch: u32,
+    required_bytes: usize,
+}
+
+impl AtlasUpload {
+    fn for_source(
+        size: Size<DevicePixels>,
+        bytes_per_pixel: u32,
+        byte_len: usize,
+    ) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            size.width.0 > 0
+                && size.height.0 > 0
+                && size.width.0 <= MAX_ATLAS_DIMENSION
+                && size.height.0 <= MAX_ATLAS_DIMENSION,
+            "atlas upload dimensions must be within 1..={MAX_ATLAS_DIMENSION}"
+        );
+        anyhow::ensure!(
+            matches!(bytes_per_pixel, 1 | 4),
+            "atlas upload pixel format must use one or four bytes"
+        );
+        let row_pitch = u32::try_from(size.width.0)?
+            .checked_mul(bytes_per_pixel)
+            .ok_or_else(|| anyhow::anyhow!("atlas upload row pitch overflow"))?;
+        let required_bytes = usize::try_from(row_pitch)?
+            .checked_mul(usize::try_from(size.height.0)?)
+            .ok_or_else(|| anyhow::anyhow!("atlas upload byte size overflow"))?;
+        anyhow::ensure!(
+            byte_len >= required_bytes,
+            "atlas upload source has {byte_len} bytes but requires {required_bytes}"
+        );
+        Ok(Self {
+            size,
+            bytes_per_pixel,
+            row_pitch,
+            required_bytes,
+        })
+    }
+
+    fn destination(
+        &self,
+        bounds: Bounds<DevicePixels>,
+        texture_size: Size<DevicePixels>,
+    ) -> anyhow::Result<D3D11_BOX> {
+        anyhow::ensure!(
+            bounds.size == self.size,
+            "atlas upload destination size differs from its source"
+        );
+        let left = u32::try_from(bounds.origin.x.0)?;
+        let top = u32::try_from(bounds.origin.y.0)?;
+        let right = left
+            .checked_add(u32::try_from(self.size.width.0)?)
+            .ok_or_else(|| anyhow::anyhow!("atlas upload horizontal bounds overflow"))?;
+        let bottom = top
+            .checked_add(u32::try_from(self.size.height.0)?)
+            .ok_or_else(|| anyhow::anyhow!("atlas upload vertical bounds overflow"))?;
+        anyhow::ensure!(
+            right <= u32::try_from(texture_size.width.0)?
+                && bottom <= u32::try_from(texture_size.height.0)?,
+            "atlas upload destination exceeds its texture"
+        );
+        Ok(D3D11_BOX {
+            left,
+            top,
+            front: 0,
+            right,
+            bottom,
+            back: 1,
+        })
+    }
+}
+
 struct DirectXAtlasState {
     epoch: AtlasTextureLeaseEpoch,
     next_texture_generation: u32,
@@ -86,21 +163,7 @@ impl PlatformAtlas for DirectXAtlas {
             Option<(Size<DevicePixels>, std::borrow::Cow<'a, [u8]>)>,
         >,
     ) -> anyhow::Result<Option<AtlasTile>> {
-        let mut lock = self.0.lock();
-        if let Some(tile) = lock.tiles_by_key.get(key) {
-            Ok(Some(*tile))
-        } else {
-            let Some((size, bytes)) = build()? else {
-                return Ok(None);
-            };
-            let tile = lock
-                .allocate(size, key.texture_kind())
-                .ok_or_else(|| anyhow::anyhow!("failed to allocate"))?;
-            let texture = lock.texture(tile.texture_instance());
-            texture.upload(&lock.device_context, tile.bounds, &bytes);
-            lock.tiles_by_key.insert(key.clone(), tile);
-            Ok(Some(tile))
-        }
+        Ok(self.0.lock().get_or_insert(key, build)?.tile)
     }
 
     fn get_or_insert_with_diagnostics<'a>(
@@ -110,45 +173,7 @@ impl PlatformAtlas for DirectXAtlas {
             Option<(Size<DevicePixels>, std::borrow::Cow<'a, [u8]>)>,
         >,
     ) -> anyhow::Result<AtlasAccess> {
-        let mut lock = self.0.lock();
-        if let Some(tile) = lock.tiles_by_key.get(key) {
-            Ok(AtlasAccess {
-                tile: Some(*tile),
-                diagnostic: AtlasAccessDiagnostic::new(
-                    key,
-                    AtlasAccessOutcome::Hit,
-                    Some(*tile),
-                    Some(tile.bounds.size),
-                ),
-            })
-        } else {
-            let Some((size, bytes)) = build()? else {
-                return Ok(AtlasAccess {
-                    tile: None,
-                    diagnostic: AtlasAccessDiagnostic::new(
-                        key,
-                        AtlasAccessOutcome::Unavailable,
-                        None,
-                        None,
-                    ),
-                });
-            };
-            let tile = lock
-                .allocate(size, key.texture_kind())
-                .ok_or_else(|| anyhow::anyhow!("failed to allocate"))?;
-            let texture = lock.texture(tile.texture_instance());
-            texture.upload(&lock.device_context, tile.bounds, &bytes);
-            lock.tiles_by_key.insert(key.clone(), tile);
-            Ok(AtlasAccess {
-                tile: Some(tile),
-                diagnostic: AtlasAccessDiagnostic::new(
-                    key,
-                    AtlasAccessOutcome::Inserted,
-                    Some(tile),
-                    Some(size),
-                ),
-            })
-        }
+        self.0.lock().get_or_insert(key, build)
     }
 
     fn remove(&self, key: &AtlasKey) {
@@ -291,6 +316,80 @@ impl PlatformAtlas for DirectXAtlas {
 }
 
 impl DirectXAtlasState {
+    fn get_or_insert<'a>(
+        &mut self,
+        key: &AtlasKey,
+        build: &mut dyn FnMut() -> anyhow::Result<
+            Option<(Size<DevicePixels>, std::borrow::Cow<'a, [u8]>)>,
+        >,
+    ) -> anyhow::Result<AtlasAccess> {
+        if let Some(tile) = self.tiles_by_key.get(key) {
+            return Ok(AtlasAccess {
+                tile: Some(*tile),
+                diagnostic: AtlasAccessDiagnostic::new(
+                    key,
+                    AtlasAccessOutcome::Hit,
+                    Some(*tile),
+                    Some(tile.bounds.size),
+                ),
+            });
+        }
+        let Some((size, bytes)) = build()? else {
+            return Ok(AtlasAccess {
+                tile: None,
+                diagnostic: AtlasAccessDiagnostic::new(
+                    key,
+                    AtlasAccessOutcome::Unavailable,
+                    None,
+                    None,
+                ),
+            });
+        };
+        let kind = key.texture_kind();
+        let bytes_per_pixel = match kind {
+            AtlasTextureKind::Monochrome => 1,
+            AtlasTextureKind::Polychrome | AtlasTextureKind::Subpixel => 4,
+        };
+        let upload = AtlasUpload::for_source(size, bytes_per_pixel, bytes.len())?;
+        let tile = self
+            .allocate(size, kind)
+            .ok_or_else(|| anyhow::anyhow!("failed to allocate atlas tile"))?;
+        if let Err(error) = self.texture(tile.texture_instance()).upload(
+            &self.device_context,
+            tile.bounds,
+            &bytes,
+            upload,
+        ) {
+            self.cancel_unpublished_allocation(tile);
+            return Err(error);
+        }
+        self.tiles_by_key.insert(key.clone(), tile);
+        Ok(AtlasAccess {
+            tile: Some(tile),
+            diagnostic: AtlasAccessDiagnostic::new(
+                key,
+                AtlasAccessOutcome::Inserted,
+                Some(tile),
+                Some(size),
+            ),
+        })
+    }
+
+    fn cancel_unpublished_allocation(&mut self, tile: AtlasTile) {
+        let textures = self.texture_list_mut(tile.texture_id.kind);
+        let slot = &mut textures.textures[tile.texture_id.index as usize];
+        let resident = slot
+            .as_mut()
+            .expect("an unpublished allocation must retain its texture");
+        assert_eq!(resident.id, tile.texture_instance());
+        resident.allocator.deallocate(tile.tile_id.into());
+        resident.decrement_ref_count();
+        if resident.is_unreferenced() {
+            slot.take();
+            textures.free_list.push(tile.texture_id.index as usize);
+        }
+    }
+
     fn texture_list(&self, kind: AtlasTextureKind) -> &AtlasTextureList<DirectXAtlasTexture> {
         match kind {
             AtlasTextureKind::Monochrome => &self.monochrome_textures,
@@ -396,8 +495,8 @@ impl DirectXAtlasState {
         // Max texture size for DirectX. See:
         // https://learn.microsoft.com/en-us/windows/win32/direct3d11/overviews-direct3d-11-resources-limits
         const MAX_ATLAS_SIZE: Size<DevicePixels> = Size {
-            width: DevicePixels(16384),
-            height: DevicePixels(16384),
+            width: DevicePixels(MAX_ATLAS_DIMENSION),
+            height: DevicePixels(MAX_ATLAS_DIMENSION),
         };
         let size = min_size.min(&MAX_ATLAS_SIZE).max(&DEFAULT_ATLAS_SIZE);
         let pixel_format;
@@ -445,6 +544,13 @@ impl DirectXAtlasState {
         }
         let texture = texture.unwrap();
 
+        let view = unsafe {
+            let mut view = None;
+            self.device
+                .CreateShaderResourceView(&texture, None, Some(&mut view))
+                .ok()?;
+            [view]
+        };
         let texture_list = match kind {
             AtlasTextureKind::Monochrome => &mut self.monochrome_textures,
             AtlasTextureKind::Polychrome => &mut self.polychrome_textures,
@@ -459,13 +565,6 @@ impl DirectXAtlasState {
         let texture_id = AtlasTextureId {
             index: index.unwrap_or(texture_list.textures.len()) as u32,
             kind,
-        };
-        let view = unsafe {
-            let mut view = None;
-            self.device
-                .CreateShaderResourceView(&texture, None, Some(&mut view))
-                .ok()?;
-            [view]
         };
         let atlas_texture = DirectXAtlasTexture {
             id: AtlasTextureInstanceId {
@@ -517,24 +616,35 @@ impl DirectXAtlasTexture {
         device_context: &ID3D11DeviceContext,
         bounds: Bounds<DevicePixels>,
         bytes: &[u8],
-    ) {
+        upload: AtlasUpload,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            upload.bytes_per_pixel == self.bytes_per_pixel,
+            "atlas upload pixel format differs from its texture"
+        );
+        anyhow::ensure!(
+            bytes.len() >= upload.required_bytes,
+            "atlas upload source changed after admission"
+        );
+        let texture_size = self.allocator.size();
+        let destination = upload.destination(
+            bounds,
+            Size {
+                width: DevicePixels(texture_size.width),
+                height: DevicePixels(texture_size.height),
+            },
+        )?;
         unsafe {
             device_context.UpdateSubresource(
                 &self.texture,
                 0,
-                Some(&D3D11_BOX {
-                    left: bounds.left().0 as u32,
-                    top: bounds.top().0 as u32,
-                    front: 0,
-                    right: bounds.right().0 as u32,
-                    bottom: bounds.bottom().0 as u32,
-                    back: 1,
-                }),
+                Some(&destination),
                 bytes.as_ptr() as _,
-                bounds.size.width.to_bytes(self.bytes_per_pixel as u8),
+                upload.row_pitch,
                 0,
             );
         }
+        Ok(())
     }
 
     fn decrement_ref_count(&mut self) {
@@ -565,3 +675,8 @@ fn etagere_point_to_device(value: etagere::Point) -> Point<DevicePixels> {
         y: DevicePixels::from(value.y),
     }
 }
+
+#[cfg(test)]
+mod admission_tests;
+#[cfg(test)]
+mod upload_tests;

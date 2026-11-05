@@ -434,6 +434,83 @@ cargo nextest run --locked -p open-gpui --lib --test-threads=1 --no-fail-fast --
 cargo nextest run --locked -p open-gpui-windows --all-features --lib -E 'test(direct_write::layout_tests::) or test(native_text_layout_tests::)' --test-threads=1 --no-fail-fast --no-tests fail
 ```
 
+## Native Atlas Upload And Color Readback
+
+The successor to `0861f8d52b1` reconciles the remaining native resource changes from
+`89e8a4b9ec7e0fa8a49987a3c1dbf29343dc6999` against fixed target
+`635026fabc38440fce5e1767d125026a17b12012`. The earlier text-layout unit adopted mutable
+DirectWrite callback provenance and nullable arrays; this unit owns source/destination upload
+admission and mapped color-glyph staging release.
+
+Both DirectXAtlas insertion APIs now share one private path. Checked source dimensions, one- or
+four-byte pixel stride, row pitch and complete byte length are admitted before allocation. The
+destination size and checked box must fit the actual resident texture before UpdateSubresource.
+Malformed input returns an error without publishing a key or consuming an allocation/generation.
+A later destination/format refusal cancels only its unpublished allocation; existing published
+regions and exact-instance visual leases retain their previous lifetime rules. Texture and shader
+view creation precede free-slot/generation reservation. Successful parameter admission and an
+issued upload call establish neither GPU completion nor presentation.
+
+The existing color-raster owner now validates BGRA dimensions and checked byte/row spans,
+allocates output before Map, and pairs a successful Map with RAII Unmap on return, error and
+Rust unwind. Copying respects native RowPitch; the existing straight-alpha conversion follows
+the released map. Review also found that the new blended glyph target had no defined initial
+contents. It is now cleared to transparent before drawing. The actual Segoe UI Emoji path
+checks visible pixels, repeated identical BGRA bytes and every pixel of an expanded transparent
+border. This is an output control; without poisoning the native target it does not promise a
+deterministic missing-clear red baseline.
+
+The baseline's two insertion paths passed unchecked source pointers to the native driver. The
+fixed upstream target adds a short-buffer early return inside a void upload function but its
+caller still publishes a successful tile. That skip policy was not copied. Source inspection
+establishes the original missing check; executing an unsafe short-source upload is not required
+for a red baseline. Pure tests exercise exact/short/extra bytes, invalid and maximum dimensions
+without giant allocations, and final destination bounds.
+
+For the separate mapped-readback defect, the existing row-copy body was extracted without
+fixing its missing Unmap. The safe WARP/debug-layer baseline passed three atlas admission cases
+and failed repeated readback on the first iteration
+(`db4d3ca5-c7c6-46c4-991b-389841fbd5af`): remapping returned a stored native debug error while
+the test required an empty queue. The source data was complete, and output pixels matched before
+the remap check. Both WARP and the debug layer are required by this regression; initialization
+failure fails the test instead of being treated as a successful skip.
+
+The focused resource cohort passes 13/13 after transparent initialization
+(`6b183591-44d9-4f3c-bad6-8c5e929ade80`). It includes three pure admission cases, eight real
+WARP atlas cases and two color-readback cases. Both insertion APIs are exercised for all three
+texture kinds, including short-source refusal, valid same-key retry, cache hits, atomic texture
+leases, rollback of an unpublished allocation and old leased-region preservation after key
+removal. Multi-row readback compares exact source bytes at nonzero atlas origins. The repeated
+color-map test also exercises post-map error and unwind cleanup. The padded consumer fixture
+first required the fork's supported DevicePixels addition API; no pixel assertion was removed.
+
+Core's affected retained-resource/cache/deferred cohort passes 54/54
+(`ff9c8e65-8bef-4dee-8192-a6c8d2ffd3d3`). A first complete Windows run passed 186/186 with four
+existing interactive cases skipped (`7fe95317-17df-43d6-a6ae-9cc55b3ac103`); it preceded the
+transparent initialization correction. The final complete Windows library passes 186/186
+with the same four skipped cases after that correction
+(`8ead5c2b-1f4f-48bd-b1eb-a4639ccb5fbb`). It retains the existing real HWND text/cache paint,
+Submitted-frame and exact retirement trajectories. All ran on Windows 11/Rust 1.95.0 with one
+build job, serial tests and the shared target.
+
+Locked workspace all-target and independently locked consumer all-target/all-feature
+compilation pass, including the actual WGPU renderer. The previous text-layout unit's 2,964
+affected UI/component/docking/Canvas tests were not rerun for this Windows-only resource change;
+the affected Core 54 and complete Windows 186 own this unit's executed runtime coverage.
+Core/Windows all-target/all-feature Clippy passes with `-D clippy::correctness`; existing
+non-denied test and docking warnings remain. Independent review finds no remaining P1/P2.
+Root/consumer formatting, import-boundary, document-link, release-document and public-API checks
+pass. The declared Rust 1.92 floor and dependency graph remain unchanged; this unit executes
+Rust 1.95.0 rather than qualifying that compiler floor.
+
+WARP/debug-layer initialization failures fail these tests. Unmap cleanup covers ordinary errors
+and Rust unwind, not process abort or native exception termination. Cancelling an unpublished
+bucket allocation preserves existing keys, leases and pixels but does not guarantee immediate
+recovery of every shared bucket's reserved space. UpdateSubresource provides no HRESULT; an
+Inserted result means parameter admission and an issued update, not asynchronous GPU success.
+These results are atlas/color-glyph resource readback, not screen compositing, complete native
+input, frame-time measurements, non-Windows backend execution or Nara renderer integration.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:

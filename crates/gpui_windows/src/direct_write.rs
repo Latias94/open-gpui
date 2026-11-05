@@ -163,6 +163,94 @@ impl GPUState {
     }
 }
 
+struct MappedColorReadback<'a> {
+    device_context: &'a ID3D11DeviceContext,
+    staging_texture: &'a ID3D11Texture2D,
+    data: D3D11_MAPPED_SUBRESOURCE,
+}
+
+impl<'a> MappedColorReadback<'a> {
+    fn new(
+        device_context: &'a ID3D11DeviceContext,
+        staging_texture: &'a ID3D11Texture2D,
+    ) -> Result<Self> {
+        let mut data = D3D11_MAPPED_SUBRESOURCE::default();
+        unsafe { device_context.Map(staging_texture, 0, D3D11_MAP_READ, 0, Some(&mut data)) }?;
+        Ok(Self {
+            device_context,
+            staging_texture,
+            data,
+        })
+    }
+}
+
+impl Drop for MappedColorReadback<'_> {
+    fn drop(&mut self) {
+        unsafe { self.device_context.Unmap(self.staging_texture, 0) };
+    }
+}
+
+fn readback_color_texture(
+    device_context: &ID3D11DeviceContext,
+    staging_texture: &ID3D11Texture2D,
+    bitmap_size: Size<DevicePixels>,
+) -> Result<Vec<u8>> {
+    let width = usize::try_from(bitmap_size.width.0)?;
+    let height = usize::try_from(bitmap_size.height.0)?;
+    anyhow::ensure!(
+        width > 0 && height > 0,
+        "color readback dimensions must be positive"
+    );
+    let mut desc = D3D11_TEXTURE2D_DESC::default();
+    unsafe { staging_texture.GetDesc(&mut desc) };
+    anyhow::ensure!(
+        desc.Format == DXGI_FORMAT_B8G8R8A8_UNORM,
+        "color readback requires a BGRA8 texture"
+    );
+    anyhow::ensure!(
+        width <= usize::try_from(desc.Width)? && height <= usize::try_from(desc.Height)?,
+        "color readback dimensions exceed the staging texture"
+    );
+    let row_bytes = width
+        .checked_mul(4)
+        .context("color readback row size overflow")?;
+    let byte_count = row_bytes
+        .checked_mul(height)
+        .context("color readback byte size overflow")?;
+    let mut rasterized = Vec::new();
+    rasterized
+        .try_reserve_exact(byte_count)
+        .context("allocating color readback output")?;
+    rasterized.resize(byte_count, 0u8);
+
+    let mapped = MappedColorReadback::new(device_context, staging_texture)?;
+    let row_pitch = usize::try_from(mapped.data.RowPitch)?;
+    anyhow::ensure!(
+        !mapped.data.pData.is_null() && row_pitch >= row_bytes,
+        "color readback returned invalid mapped rows"
+    );
+    let source_len = row_pitch
+        .checked_mul(height - 1)
+        .and_then(|offset| offset.checked_add(row_bytes))
+        .context("color readback mapped span overflow")?;
+    anyhow::ensure!(
+        source_len <= isize::MAX as usize,
+        "color readback mapped span exceeds the addressable range"
+    );
+
+    for (row, destination) in rasterized.chunks_exact_mut(row_bytes).enumerate() {
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                mapped.data.pData.cast::<u8>().add(row * row_pitch),
+                destination.as_mut_ptr(),
+                row_bytes,
+            )
+        };
+    }
+
+    Ok(rasterized)
+}
+
 impl DirectWriteTextSystem {
     pub(crate) fn new(directx_devices: &DirectXDevices) -> Result<Self> {
         let factory: IDWriteFactory5 = unsafe { DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)? };
@@ -1150,6 +1238,14 @@ impl DirectWriteState {
         };
 
         let device_context = &gpu_state.device_context;
+        unsafe {
+            device_context.ClearRenderTargetView(
+                render_target_view
+                    .as_ref()
+                    .context("color glyph render-target view missing")?,
+                &[0.0; 4],
+            )
+        };
         unsafe { device_context.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP) };
         unsafe { device_context.VSSetShader(&gpu_state.vertex_shader, None) };
         unsafe { device_context.PSSetShader(&gpu_state.pixel_shader, None) };
@@ -1212,34 +1308,7 @@ impl DirectWriteState {
 
         unsafe { device_context.CopyResource(&staging_texture, &render_target_texture) };
 
-        let mapped_data = {
-            let mut mapped_data = D3D11_MAPPED_SUBRESOURCE::default();
-            unsafe {
-                device_context.Map(
-                    &staging_texture,
-                    0,
-                    D3D11_MAP_READ,
-                    0,
-                    Some(&mut mapped_data),
-                )
-            }?;
-            mapped_data
-        };
-        let mut rasterized =
-            vec![0u8; (bitmap_size.width.0 as u32 * bitmap_size.height.0 as u32 * 4) as usize];
-
-        for y in 0..bitmap_size.height.0 as usize {
-            let width = bitmap_size.width.0 as usize;
-            unsafe {
-                std::ptr::copy_nonoverlapping::<u8>(
-                    (mapped_data.pData as *const u8).byte_add(mapped_data.RowPitch as usize * y),
-                    rasterized
-                        .as_mut_ptr()
-                        .byte_add(width * y * std::mem::size_of::<u32>()),
-                    width * std::mem::size_of::<u32>(),
-                )
-            };
-        }
+        let mut rasterized = readback_color_texture(device_context, &staging_texture, bitmap_size)?;
 
         // Convert from premultiplied to straight alpha
         for chunk in rasterized.chunks_exact_mut(4) {
@@ -2033,6 +2102,9 @@ fn is_line_separator(character: char) -> bool {
 
 #[cfg(test)]
 mod layout_tests;
+
+#[cfg(test)]
+mod readback_tests;
 
 #[cfg(test)]
 mod tests {

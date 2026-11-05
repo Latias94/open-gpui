@@ -41,8 +41,12 @@ default/explicit DirectWrite font features and wrapped hit-test error semantics.
 [qualification](../verification.md#native-text-layout-and-wrapped-hit-testing) records red
 regressions, final Core 877, affected consumers 2,964 and selected Windows 173, including actual
 native text paint/submission and exact retirement. Four existing interactive cases remain skipped.
-Continue with pending-input/blur and the queued native upload/mapping safety corrections before
-substantial game-engine Editor adaptation.
+The native upload/mapping successor now shares checked atlas admission across both insertion
+APIs, publishes only after upload admission and releases color staging maps through the existing
+raster owner. Color targets are cleared to transparent before blending. Its
+[qualification](../verification.md#native-atlas-upload-and-color-readback) owns the WARP pixel,
+debug-layer, lease/refusal and actual color-emoji evidence. Continue with pending-input/blur
+before substantial game-engine Editor adaptation.
 Reproduce each remaining defect, integrate the owning fix, preserve fork contracts, run focused
 and affected regression cohorts serially, and record actual results. Source review and dependency-
 consumer checks do not qualify the remaining initial port or a complete framework refresh.
@@ -125,6 +129,39 @@ at blur entry or copy upstream frame timing over the fork's provisional-focus au
 PendingInputStatus/pause APIs, InputPreference event fields and FocusMap queue optimization are
 separate final-target differences, not prerequisites established by these fixes. They require
 their own coherent API/consumer disposition rather than a new focus/input owner or scanner.
+
+### Native Upload And Mapped-Readback Safety
+
+Reconcile the remaining `89e8a4b9ec` changes through the existing DirectXAtlas and DirectWrite
+raster owners. Atlas source dimensions, pixel stride and complete row-byte length must pass
+checked admission before allocation; final destination bounds must fit the resident texture
+before UpdateSubresource. Both insertion APIs use the same private path. Malformed input returns
+an error without key publication, allocation or instance-generation consumption. A later refusal
+releases only the unpublished allocation, retaining existing keys, regions and visual leases.
+Creating a native shader view must succeed before reserving a free slot or generation. An
+admitted upload call does not establish GPU completion or presentation.
+
+Preserve the fork's retained old-region policy after ordinary key removal. The target's void
+upload early-return cannot substitute for a failure result because its caller still publishes
+success. Qualify exact/short/extra byte lengths, invalid/max dimensions without giant buffers,
+final box bounds, both insertion APIs, same-key valid retry and existing leased content. WARP
+tests must read multi-row patterns at nonzero atlas origins for all three texture kinds, using
+native RowPitch rather than assuming packed staging rows. Device creation failure is a failed
+qualification, not a skipped success.
+
+Color glyph staging readback pairs every successful Map with Unmap before conversion or return.
+Extract the existing row-copy owner to reproduce its missing release safely on a repeated read
+of the same staging resource; do not execute an unchecked short-source GPU upload just to make
+the atlas baseline fail. Allocate output before mapping and retain lexical/RAII cleanup through
+post-map error and unwind. Keep existing alpha conversion, UI-thread ownership, device/submission
+and resource-lifetime authorities unchanged. Preserve lease/candidate-refusal, native text paint
+and teardown regressions alongside the focused WARP evidence.
+
+Clear newly created color render targets to transparent before blending so uncovered and
+semitransparent pixels do not depend on undefined initial contents. Qualify transparent padded
+borders through the real color-emoji raster path while retaining its visible-content and repeated
+byte-equality controls. This output check does not establish a deterministic missing-clear red
+baseline without a poisoned initial target.
 
 After those units, compare a coherent text/framework refresh, including dependency/toolchain
 changes, before expanding the Editor component implementation. A game-engine rendering adapter

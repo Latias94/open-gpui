@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-06T00:51:00+08:00
+timestamp: 2026-11-06T01:20:00+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -48,6 +48,10 @@ verified_by:
   and wrapped hit-test error semantics. Its final Core 877, affected consumers 2,964 and Windows
   173 pass, with the same four interactive cases skipped. A new native text trajectory checks
   full source, actual shape/paint, a notified newer Submitted frame and exact release. The
+  native-resource successor now validates atlas sources before allocation and destinations
+  before upload, preserving both insertion APIs and exact leased regions. Color staging reads
+  release their map on return/error/unwind, and blended glyph targets begin transparent. Its
+  verification record owns the WARP/debug-layer and actual emoji pixel evidence. The
   remaining initial correctness unit is pending-input/blur; broader text/layout/API refresh and
   engine-specific Editor adaptation remain incomplete.
 - A game-engine Editor is the selecting consumer. Framework maintenance and rendering-adapter
@@ -78,10 +82,10 @@ historical scope and is not current branch or CI qualification.
 
 # Next Action
 
-- Continue with pending-input/blur and the queued native upload/mapping safety corrections.
+- Continue with pending-input/blur.
   The current plan records upstream recognition/interception/IME and dropped-focus prerequisites,
-  admitted versus refused focus transitions and exact-window close controls. Atlas admission must
-  reject malformed bytes before publishing a tile; preserve existing exact-instance leases.
+  admitted versus refused focus transitions and exact-window close controls. Preserve the native
+  upload successor's source/destination admission and exact-instance leases.
   Preserve the cache successor's admitted read/opacity publication and bounded convergence,
   including the explicit non-view/external-group notification limits. Preserve the arena successor's
   AppCell native delivery, candidate-frame rules and explicit post-borrow command authority. Qualify touchpad
