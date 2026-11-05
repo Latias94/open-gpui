@@ -1,14 +1,45 @@
 use super::*;
 use crate::native_test_observation::NativeWindowTestMessageDisposition;
 use open_gpui::{
-    Entity, FontId, GlyphId, Pixels, ShapedLine, SharedString, TextAlign, TextRun, TextSystem,
-    WindowHandle, WindowInitialPresentationStatus, font,
+    Entity, Font, FontId, GlyphId, Pixels, PlatformTextSystem, ShapedLine, SharedString, TextAlign,
+    TextRun, TextSystem, WindowHandle, WindowInitialPresentationStatus, font,
 };
-use std::borrow::Cow;
+use std::{borrow::Cow, sync::Weak};
 
 const LILEX: &[u8] = include_bytes!("../../../tests/fixtures/fonts/Lilex-Regular.ttf");
+const LILEX_BOLD: &[u8] = include_bytes!("../../../tests/fixtures/fonts/Lilex-Bold.ttf");
 const IBM_PLEX: &[u8] = include_bytes!("../../../tests/fixtures/fonts/IBMPlexSans-Regular.ttf");
 const SOURCE: &str = "mi\té\t𐐀\u{2028}中\u{2029}z\t";
+
+#[derive(Clone, Copy)]
+enum NativeFontInstallationScenario {
+    MissingFamily,
+    AdditionalBold,
+}
+
+impl NativeFontInstallationScenario {
+    fn requested_font(self) -> Font {
+        match self {
+            Self::MissingFamily => font("Lilex"),
+            Self::AdditionalBold => font("Lilex").bold(),
+        }
+    }
+
+    fn font_bytes(self) -> &'static [u8] {
+        match self {
+            Self::MissingFamily => LILEX,
+            Self::AdditionalBold => LILEX_BOLD,
+        }
+    }
+
+    /// The fixed Zed fixtures' `glyf` bounds for `m`, in 1,000-unit design space.
+    fn installed_m_bounds(self) -> Bounds<f32> {
+        match self {
+            Self::MissingFamily => Bounds::new(point(54., 0.), size(492., 528.)),
+            Self::AdditionalBold => Bounds::new(point(30., 0.), size(540., 528.)),
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 struct NativeFontInstallationPaint {
@@ -23,6 +54,8 @@ struct NativeFontInstallationPaint {
 
 struct NativeFontInstallationChild {
     source: SharedString,
+    requested_font: Font,
+    text_system: Weak<TextSystem>,
     retained: Option<ShapedLine>,
     paints: Rc<RefCell<Vec<NativeFontInstallationPaint>>>,
 }
@@ -30,10 +63,19 @@ struct NativeFontInstallationChild {
 impl Render for NativeFontInstallationChild {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         let source = self.source.clone();
+        let requested_font = self.requested_font.clone();
+        let text_system = self.text_system.clone();
         let retained = self.retained.clone();
         let paints = self.paints.clone();
         canvas(
             move |_, window, cx| {
+                let text_system = text_system
+                    .upgrade()
+                    .expect("the native child's original application TextSystem must stay alive");
+                assert!(
+                    Arc::ptr_eq(cx.text_system(), &text_system),
+                    "the native child must retain its application's exact TextSystem identity",
+                );
                 let window_text_system: &Arc<TextSystem> = window.text_system().as_ref();
                 assert!(
                     Arc::ptr_eq(window_text_system, cx.text_system()),
@@ -42,7 +84,7 @@ impl Render for NativeFontInstallationChild {
                 let runs = [
                     TextRun {
                         len: 1,
-                        font: font("Lilex"),
+                        font: requested_font.clone(),
                         color: white(),
                         ..Default::default()
                     },
@@ -53,7 +95,7 @@ impl Render for NativeFontInstallationChild {
                         ..Default::default()
                     },
                 ];
-                let resolved_font = window.text_system().resolve_font(&font("Lilex"));
+                let resolved_font = window.text_system().resolve_font(&requested_font);
                 let shaped = window
                     .text_system()
                     .shape_line(source, px(16.), &runs, None);
@@ -241,8 +283,40 @@ fn glyph_at_byte(shaped: &ShapedLine, index: usize) -> (FontId, GlyphId) {
         .expect("the native ASCII control must have its own shaped glyph")
 }
 
+fn assert_lilex_m_metrics(
+    text_system: &dyn PlatformTextSystem,
+    font_id: FontId,
+    glyph_id: GlyphId,
+    expected_bounds: Bounds<f32>,
+) {
+    assert_eq!(text_system.font_metrics(font_id).units_per_em, 1000);
+    assert_eq!(glyph_id, GlyphId(281));
+    assert_eq!(text_system.glyph_for_char(font_id, 'm'), Some(glyph_id));
+    assert_eq!(
+        text_system
+            .advance(font_id, glyph_id)
+            .expect("the selected Lilex face must expose its real monospace advance"),
+        size(600., 0.),
+    );
+    assert_eq!(
+        text_system
+            .typographic_bounds(font_id, glyph_id)
+            .expect("the selected Lilex face must expose its actual fixture outline bounds"),
+        expected_bounds,
+    );
+}
+
 #[test]
 fn native_font_installation_replaces_fallback_after_child_notify_and_preserves_old_glyphs() {
+    run_native_font_installation(NativeFontInstallationScenario::MissingFamily);
+}
+
+#[test]
+fn native_font_installation_reselects_bold_after_child_notify_and_preserves_old_glyphs() {
+    run_native_font_installation(NativeFontInstallationScenario::AdditionalBold);
+}
+
+fn run_native_font_installation(scenario: NativeFontInstallationScenario) {
     discard_stale_quit_messages();
     let (_observation_guard, observation) = begin_native_window_test_observation();
     let observation_cursor = observation.cursor();
@@ -269,7 +343,13 @@ fn native_font_installation_replaces_fallback_after_child_notify_and_preserves_o
         platform_text_system.font_id(&font("Lilex")).is_err(),
         "the IBM Plex fixture must leave Lilex unavailable before its own installation",
     );
-    let fallback_font = text_system.resolve_font(&font("Lilex"));
+    if matches!(scenario, NativeFontInstallationScenario::AdditionalBold) {
+        text_system.add_fonts(vec![Cow::Borrowed(LILEX)]).expect(
+            "the native Bold prerequisite must install only the private Lilex Regular face",
+        );
+    }
+    let requested_font = scenario.requested_font();
+    let previous_font = text_system.resolve_font(&requested_font);
     let control_font = platform_text_system
         .font_id(&font("IBM Plex Sans"))
         .expect("the application's IBM Plex installation must reach its DirectWrite backend");
@@ -283,6 +363,8 @@ fn native_font_installation_replaces_fallback_after_child_notify_and_preserves_o
     let (child, window) = app.update_for_test(|cx| {
         let child = cx.new(|_| NativeFontInstallationChild {
             source: SOURCE.into(),
+            requested_font: requested_font.clone(),
+            text_system: Arc::downgrade(&text_system),
             retained: None,
             paints: paints.clone(),
         });
@@ -351,15 +433,35 @@ fn native_font_installation_replaces_fallback_after_child_notify_and_preserves_o
         &mut app,
         window,
         &paints,
-        fallback_font,
+        previous_font,
         false,
         0,
     );
     assert_eq!(initial_paint.result, Ok(()));
     assert!(initial_paint.retained_result.is_none());
     assert_native_font_layout(&initial_paint.shaped, initial_paint.canvas_bounds);
-    assert_eq!(glyph_at_byte(&initial_paint.shaped, 0).0, fallback_font);
+    assert_eq!(glyph_at_byte(&initial_paint.shaped, 0).0, previous_font);
     assert_eq!(glyph_at_byte(&initial_paint.shaped, 1).0, control_font);
+    if matches!(scenario, NativeFontInstallationScenario::AdditionalBold) {
+        assert_eq!(
+            platform_text_system.font_id(&requested_font).expect(
+                "a Bold request must already resolve from the private Regular installation"
+            ),
+            previous_font,
+        );
+        let regular_font = platform_text_system
+            .font_id(&font("Lilex"))
+            .expect("the private collection must expose the original Regular face");
+        assert_ne!(previous_font, regular_font);
+        assert_lilex_m_metrics(
+            platform_text_system.as_ref(),
+            regular_font,
+            platform_text_system
+                .glyph_for_char(regular_font, 'm')
+                .expect("Regular must contain m"),
+            NativeFontInstallationScenario::MissingFamily.installed_m_bounds(),
+        );
+    }
     let old_glyphs = [0, 1].map(|index| {
         let (font_id, glyph_id) = glyph_at_byte(&initial_paint.shaped, index);
         (
@@ -375,37 +477,43 @@ fn native_font_installation_replaces_fallback_after_child_notify_and_preserves_o
     });
 
     text_system
-        .add_fonts(vec![Cow::Borrowed(LILEX)])
-        .expect("the existing application TextSystem must install the checked-in Lilex bytes");
-    let installed_font = platform_text_system
-        .font_id(&font("Lilex"))
-        .expect("Lilex must be directly selectable after the application installs its bytes");
-    assert_ne!(installed_font, fallback_font);
-    assert_eq!(text_system.resolve_font(&font("Lilex")), installed_font);
+        .add_fonts(vec![Cow::Borrowed(scenario.font_bytes())])
+        .expect("the existing application TextSystem must install the checked-in Lilex face bytes");
+    let installed_font = platform_text_system.font_id(&requested_font).expect(
+        "the requested Lilex face must be selectable after the application installs its bytes",
+    );
+    assert_ne!(installed_font, previous_font);
+    assert_eq!(text_system.resolve_font(&requested_font), installed_font);
     assert_eq!(
         text_system.resolve_font(&font("IBM Plex Sans")),
         control_font
     );
-    for (font_id, glyph_id, advance, bounds) in old_glyphs {
-        assert_eq!(
-            platform_text_system
-                .advance(font_id, glyph_id)
-                .expect("font collection replacement must preserve the old glyph's font identity"),
-            advance,
-        );
-        assert_eq!(
-            platform_text_system
-                .typographic_bounds(font_id, glyph_id)
-                .expect("font collection replacement must preserve the old glyph's native face"),
-            bounds,
-        );
-    }
+    let assert_old_glyphs = || {
+        for (font_id, glyph_id, advance, bounds) in old_glyphs {
+            assert_eq!(
+                platform_text_system.advance(font_id, glyph_id).expect(
+                    "font collection replacement must preserve the old glyph's font identity"
+                ),
+                advance,
+            );
+            assert_eq!(
+                platform_text_system
+                    .typographic_bounds(font_id, glyph_id)
+                    .expect(
+                        "font collection replacement must preserve the old glyph's native face"
+                    ),
+                bounds,
+            );
+        }
+    };
+    assert_old_glyphs();
 
     let paints_before = paints.borrow().len();
     let frame_requests_before = frame_requests.get();
     app.update_for_test(|cx| {
         child.update(cx, |child, cx| {
             assert_eq!(child.source.as_ref(), SOURCE);
+            assert_eq!(child.requested_font, requested_font);
             child.retained = Some(initial_paint.shaped.clone());
             cx.notify();
         });
@@ -425,16 +533,24 @@ fn native_font_installation_replaces_fallback_after_child_notify_and_preserves_o
     assert_eq!(changed_paint.retained_result, Some(Ok(())));
     assert_native_font_layout(&changed_paint.shaped, changed_paint.canvas_bounds);
     assert_eq!(initial_paint.shaped.text, changed_paint.shaped.text);
+    assert!(!Arc::ptr_eq(&*initial_paint.shaped, &*changed_paint.shaped));
     assert_eq!(glyph_at_byte(&changed_paint.shaped, 0).0, installed_font);
     assert_eq!(glyph_at_byte(&changed_paint.shaped, 1).0, control_font);
+    assert_lilex_m_metrics(
+        platform_text_system.as_ref(),
+        installed_font,
+        glyph_at_byte(&changed_paint.shaped, 0).1,
+        scenario.installed_m_bounds(),
+    );
     let retained = changed_paint
         .retained
         .as_ref()
         .expect("the accepted installation frame must also paint the original shaped line");
     assert_native_font_layout(retained, changed_paint.canvas_bounds);
     assert!(Arc::ptr_eq(&**retained, &*initial_paint.shaped));
-    assert_eq!(glyph_at_byte(retained, 0).0, fallback_font);
+    assert_eq!(glyph_at_byte(retained, 0).0, previous_font);
     assert_eq!(glyph_at_byte(retained, 1).0, control_font);
+    assert_old_glyphs();
     drop(child);
 
     assert!(platform.raw_window_handles.read().contains(&registration));

@@ -265,13 +265,18 @@ request; neither establishes a timing or memory-budget improvement. The current 
 uses Cosmic directly. Do not add an unregistered wrapper or claim the fixed target's later
 Canvas fallback scanning layer, which remains in the Web platform-closure unit.
 
-### Native Font Reselection Follow-Up (Queued)
+### Native Font Reselection Successor
 
-The missing-family installation trajectory does not cover adding a weight/style to an
-already matched native family or changing its fallback selection. DirectWrite's existing
-`font_to_font_id` and CoreText's selection/family caches retain their backend policy after
-installation. Reconcile those owners before promising complete native runtime reselection;
-core descriptor invalidation alone is insufficient.
+The successor to `ed2a55383f4` implements DirectWrite selection generations, same-face identity
+reuse, named private fallback and exact native callback face retention. Its
+[qualification](../verification.md#native-font-reselection-and-retained-faces) records the
+original and corrected red baselines, the cold-cache synthetic-face failure and actual native
+submission/release evidence. The fixed target has the same DirectWrite gaps; these are owning
+corrections discovered during the comparison. CoreText source and five deterministic tests
+are also prepared, with macOS compilation/execution explicitly unqualified.
+The corrected focused cohort passes 9/9 and complete Windows passes 197/197 with four existing
+interactive cases skipped. The earlier 194/195 run retains the remaining second-shaping defect
+and its correction, rather than being replaced by the narrower initial six-case pass.
 
 Use a deterministic regular-then-bold fixture and an already requested descriptor, plus an
 installed fallback-family case. Verify the newly selected face after explicit redraw while
@@ -280,6 +285,14 @@ native release. Reconcile successful and failed installation semantics without a
 batch-atomic rollback or clearing loaded font records. macOS source adaptation and execution
 retain separate evidence. This is a concrete native font consumer, not a new global font,
 asset-fetching or redraw authority.
+
+DirectWrite can synthesize Bold from Regular before installation; effective weight alone
+cannot prove reselection. Preserve simulation flags, exact fixture outlines and actual old
+metrics in the tests. An unknown callback face must retain its actual native identity and
+simulation rather than resolve family/weight/style again. Unchanged descriptor selections
+retain their loaded IDs across multiple successful installations, with actual ligature controls
+for independent feature configurations. The remaining Mac native qualification, general text/
+layout/API refresh, OS input, numeric costs and engine integration keep their existing scope.
 
 ## Maintained Baseline Before Engine Adaptation
 

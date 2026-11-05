@@ -3,32 +3,38 @@ use cocoa::appkit::CGFloat;
 use core_foundation::{
     array::{CFArray, CFArrayRef},
     attributed_string::CFMutableAttributedString,
-    base::{CFRange, CFType, TCFType},
+    base::{CFRange, CFType, TCFType, kCFAllocatorDefault, kCFAllocatorNull},
+    data::{CFData, CFDataCreateWithBytesNoCopy},
+    dictionary::CFDictionary,
     number::CFNumber,
-    string::CFString,
+    string::{CFString, CFStringRef},
 };
+use core_foundation_sys::locale::CFLocaleCopyPreferredLanguages;
 use core_graphics::{
     base::{CGGlyph, kCGImageAlphaPremultipliedLast},
     color_space::CGColorSpace,
     context::{CGContext, CGTextDrawingMode},
     display::CGPoint,
+    geometry::CGAffineTransform,
 };
 use core_text::{
-    font::CTFont,
+    font::{CTFont, CTFontRef, cascade_list_for_languages},
     font_collection::CTFontCollectionRef,
     font_descriptor::{
-        CTFontDescriptor, kCTFontSlantTrait, kCTFontSymbolicTrait, kCTFontWeightTrait,
-        kCTFontWidthTrait,
+        CTFontDescriptor, CTFontDescriptorRef, kCTFontCascadeListAttribute,
+        kCTFontFeatureSettingsAttribute, kCTFontSlantTrait, kCTFontSymbolicTrait,
+        kCTFontWeightTrait, kCTFontWidthTrait,
     },
     line::CTLine,
     string_attributes::kCTFontAttributeName,
 };
 use font_kit::{
+    family_handle::FamilyHandle,
     font::Font as FontKitFont,
     handle::Handle,
     hinting::HintingOptions,
     metrics::Metrics,
-    properties::{Style as FontkitStyle, Weight as FontkitWeight},
+    properties::{Properties as FontkitProperties, Style as FontkitStyle, Weight as FontkitWeight},
     source::SystemSource,
     sources::mem::MemSource,
 };
@@ -38,7 +44,7 @@ use open_gpui::{
     RenderGlyphParams, Result, Rgba, SUBPIXEL_VARIANTS_X, ShapedGlyph, ShapedRun, SharedString,
     Size, TextRenderingMode, point, px, size, swap_rgba_pa_to_bgra,
 };
-use open_gpui_collections::HashMap;
+use open_gpui_collections::{HashMap, HashSet};
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use pathfinder_geometry::{
     rect::{RectF, RectI},
@@ -48,10 +54,21 @@ use pathfinder_geometry::{
 use smallvec::SmallVec;
 use std::{borrow::Cow, char, convert::TryFrom, sync::Arc, sync::OnceLock};
 
-use crate::open_type::apply_features_and_fallbacks;
-
 #[allow(non_upper_case_globals)]
 const kCGImageAlphaOnly: u32 = 7;
+
+#[link(name = "CoreText", kind = "framework")]
+unsafe extern "C" {
+    static kCTFontOpenTypeFeatureTag: CFStringRef;
+    static kCTFontOpenTypeFeatureValue: CFStringRef;
+
+    fn CTFontCreateCopyWithAttributes(
+        font: CTFontRef,
+        size: CGFloat,
+        matrix: *const CGAffineTransform,
+        attributes: CTFontDescriptorRef,
+    ) -> CTFontRef;
+}
 
 /// macOS text system using CoreText for font shaping.
 pub struct MacTextSystem(RwLock<MacTextSystemState>);
@@ -68,7 +85,7 @@ struct MacTextSystemState {
     system_source: SystemSource,
     fonts: Vec<FontKitFont>,
     font_selections: HashMap<Font, FontId>,
-    font_ids_by_postscript_name: HashMap<String, FontId>,
+    font_ids_by_postscript_name: HashMap<String, SmallVec<[FontId; 4]>>,
     font_ids_by_font_key: HashMap<FontKey, SmallVec<[FontId; 4]>>,
     postscript_names_by_font_id: HashMap<FontId, String>,
 }
@@ -258,18 +275,115 @@ impl MacTextSystemState {
             .into_iter()
             .map(|bytes| match bytes {
                 Cow::Borrowed(embedded_font) => {
-                    let data_provider = unsafe {
-                        core_graphics::data_provider::CGDataProvider::from_slice(embedded_font)
+                    let data = unsafe {
+                        CFData::wrap_under_create_rule(CFDataCreateWithBytesNoCopy(
+                            kCFAllocatorDefault,
+                            embedded_font.as_ptr(),
+                            embedded_font.len().try_into()?,
+                            kCFAllocatorNull,
+                        ))
                     };
-                    let font = core_graphics::font::CGFont::from_data_provider(data_provider)
-                        .map_err(|()| anyhow!("Could not load an embedded font."))?;
-                    let font = font_kit::loaders::core_text::Font::from_core_graphics_font(font);
+                    let descriptor =
+                        core_text::font_manager::create_font_descriptor_with_data(data)
+                            .map_err(|()| anyhow!("Could not load an embedded font."))?;
+                    let native_font = core_text::font::new_from_descriptor(&descriptor, 16.0);
+                    let font = unsafe { FontKitFont::from_native_font(&native_font) };
                     Ok(Handle::from_native(&font))
                 }
-                Cow::Owned(bytes) => Ok(Handle::from_memory(Arc::new(bytes), 0)),
+                Cow::Owned(bytes) => {
+                    let font = FontKitFont::from_bytes(Arc::new(bytes), 0)?;
+                    Ok(Handle::from_native(&font))
+                }
             })
             .collect::<Result<Vec<_>>>()?;
-        self.memory_source.add_fonts(fonts.into_iter())?;
+        for font in fonts {
+            self.memory_source.add_font(font)?;
+            self.font_selections.clear();
+            self.font_ids_by_font_key.clear();
+        }
+        Ok(())
+    }
+
+    fn apply_features_and_fallbacks(
+        &self,
+        font: &mut FontKitFont,
+        features: &FontFeatures,
+        fallbacks: Option<&FontFallbacks>,
+    ) -> Result<()> {
+        let feature_tag = unsafe { CFString::wrap_under_get_rule(kCTFontOpenTypeFeatureTag) };
+        let feature_value = unsafe { CFString::wrap_under_get_rule(kCTFontOpenTypeFeatureValue) };
+        let features = features
+            .tag_value_list()
+            .iter()
+            .map(|(tag, value)| {
+                CFDictionary::from_CFType_pairs(&[
+                    (feature_tag.clone(), CFString::new(tag).as_CFType()),
+                    (
+                        feature_value.clone(),
+                        CFNumber::from(*value as i32).as_CFType(),
+                    ),
+                ])
+            })
+            .collect::<Vec<_>>();
+        let mut attributes = vec![(
+            unsafe { CFString::wrap_under_get_rule(kCTFontFeatureSettingsAttribute) },
+            CFArray::from_CFTypes(&features).as_CFType(),
+        )];
+        let native_font = font.native_font();
+
+        if let Some(fallbacks) = fallbacks
+            && !fallbacks.fallback_list().is_empty()
+        {
+            let properties = font.properties();
+            let mut descriptors = Vec::new();
+            for family in fallbacks.fallback_list() {
+                let family = open_gpui::font_name_with_fallbacks(family, ".AppleSystemUIFont");
+                let fallback = self
+                    .memory_source
+                    .select_family_by_name(family)
+                    .ok()
+                    .and_then(|family| select_fallback_from_family(family, &properties))
+                    .or_else(|| {
+                        self.system_source
+                            .select_family_by_name(family)
+                            .ok()
+                            .and_then(|family| select_fallback_from_family(family, &properties))
+                    });
+                if let Some(fallback) = fallback {
+                    descriptors.push(fallback.native_font().copy_descriptor());
+                }
+            }
+            let preferred_languages: CFArray<CFString> =
+                unsafe { CFArray::wrap_under_create_rule(CFLocaleCopyPreferredLanguages()) };
+            let system_fallbacks = cascade_list_for_languages(&native_font, &preferred_languages);
+            descriptors.extend(
+                system_fallbacks
+                    .iter()
+                    .filter(|descriptor| descriptor.font_path().is_some())
+                    .map(|descriptor| descriptor.clone()),
+            );
+            attributes.push((
+                unsafe { CFString::wrap_under_get_rule(kCTFontCascadeListAttribute) },
+                CFArray::from_CFTypes(&descriptors).as_CFType(),
+            ));
+        }
+
+        let descriptor = core_text::font_descriptor::new_from_attributes(
+            &CFDictionary::from_CFType_pairs(&attributes),
+        );
+        let configured = unsafe {
+            CTFontCreateCopyWithAttributes(
+                native_font.as_concrete_TypeRef(),
+                0.0,
+                std::ptr::null(),
+                descriptor.as_concrete_TypeRef(),
+            )
+        };
+        if configured.is_null() {
+            anyhow::bail!("Could not configure font {:?}", font.postscript_name());
+        }
+        let configured = unsafe { CTFont::wrap_under_create_rule(configured) };
+        *font = unsafe { FontKitFont::from_native_font(&configured) };
         Ok(())
     }
 
@@ -282,6 +396,7 @@ impl MacTextSystemState {
         let name = open_gpui::font_name_with_fallbacks(name, ".AppleSystemUIFont");
 
         let mut font_ids = SmallVec::new();
+        let mut postscript_names_seen = HashSet::default();
         let family = self
             .memory_source
             .select_family_by_name(name)
@@ -289,7 +404,6 @@ impl MacTextSystemState {
         for font in family.fonts() {
             let mut font = font.load()?;
 
-            apply_features_and_fallbacks(&mut font, features, fallbacks)?;
             // This block contains a precautionary fix to guard against loading fonts
             // that might cause panics due to `.unwrap()`s up the chain.
             {
@@ -317,43 +431,18 @@ impl MacTextSystemState {
                 }
             }
 
-            // We've seen a number of panics in production caused by calling font.properties()
-            // which unwraps a downcast to CFNumber. This is an attempt to avoid the panic,
-            // and to try and identify the incalcitrant font.
-            let traits = font.native_font().all_traits();
-            if unsafe {
-                !(traits
-                    .get(kCTFontSymbolicTrait)
-                    .downcast::<CFNumber>()
-                    .is_some()
-                    && traits
-                        .get(kCTFontWidthTrait)
-                        .downcast::<CFNumber>()
-                        .is_some()
-                    && traits
-                        .get(kCTFontWeightTrait)
-                        .downcast::<CFNumber>()
-                        .is_some()
-                    && traits
-                        .get(kCTFontSlantTrait)
-                        .downcast::<CFNumber>()
-                        .is_some())
-            } {
-                log::error!(
-                    "Failed to read traits for font {:?}",
-                    font.postscript_name().unwrap()
-                );
+            if !font_has_valid_traits(&font) {
                 continue;
             }
 
-            let font_id = FontId(self.fonts.len());
-            font_ids.push(font_id);
-            let postscript_name = font.postscript_name().unwrap();
-            self.font_ids_by_postscript_name
-                .insert(postscript_name.clone(), font_id);
-            self.postscript_names_by_font_id
-                .insert(font_id, postscript_name);
-            self.fonts.push(font);
+            let Some(postscript_name) = font.postscript_name() else {
+                continue;
+            };
+            if !postscript_names_seen.insert(postscript_name) {
+                continue;
+            }
+            self.apply_features_and_fallbacks(&mut font, features, fallbacks)?;
+            font_ids.push(self.id_for_native_font(font.native_font()));
         }
         Ok(font_ids)
     }
@@ -369,21 +458,29 @@ impl MacTextSystemState {
     }
 
     fn id_for_native_font(&mut self, requested_font: CTFont) -> FontId {
+        let requested_font = requested_font.clone_with_font_size(16.0);
         let postscript_name = requested_font.postscript_name();
-        if let Some(font_id) = self.font_ids_by_postscript_name.get(&postscript_name) {
-            *font_id
-        } else {
-            let font_id = FontId(self.fonts.len());
-            self.font_ids_by_postscript_name
-                .insert(postscript_name.clone(), font_id);
-            self.postscript_names_by_font_id
-                .insert(font_id, postscript_name);
-            self.fonts
-                .push(font_kit::font::Font::from_core_graphics_font(
-                    requested_font.copy_to_CGFont(),
-                ));
-            font_id
+        let attributes = requested_font.copy_descriptor().attributes().as_CFType();
+        if let Some(font_ids) = self.font_ids_by_postscript_name.get(&postscript_name)
+            && let Some(font_id) = font_ids.iter().copied().find(|font_id| {
+                let font = self.fonts[font_id.0].native_font();
+                font == requested_font
+                    && font.copy_descriptor().attributes().as_CFType() == attributes
+            })
+        {
+            return font_id;
         }
+
+        let font_id = FontId(self.fonts.len());
+        self.fonts
+            .push(unsafe { FontKitFont::from_native_font(&requested_font) });
+        self.font_ids_by_postscript_name
+            .entry(postscript_name.clone())
+            .or_default()
+            .push(font_id);
+        self.postscript_names_by_font_id
+            .insert(font_id, postscript_name);
+        font_id
     }
 
     fn is_emoji(&self, font_id: FontId) -> bool {
@@ -634,6 +731,57 @@ impl<'a> StringIndexConverter<'a> {
     }
 }
 
+/// Rejects missing or invalid traits before font-kit reads their numeric properties.
+fn font_has_valid_traits(font: &FontKitFont) -> bool {
+    let traits = font.native_font().all_traits();
+    let valid = unsafe {
+        [
+            kCTFontSymbolicTrait,
+            kCTFontWidthTrait,
+            kCTFontWeightTrait,
+            kCTFontSlantTrait,
+        ]
+        .into_iter()
+        .all(|key| {
+            traits
+                .find(key)
+                .and_then(|value| value.downcast::<CFNumber>())
+                .is_some()
+        })
+    };
+    if !valid {
+        log::error!(
+            "Failed to read traits for font {:?}",
+            font.postscript_name()
+        );
+    }
+    valid
+}
+
+fn select_fallback_from_family(
+    family: FamilyHandle,
+    properties: &FontkitProperties,
+) -> Option<FontKitFont> {
+    let mut fonts = Vec::new();
+    let mut candidates = Vec::new();
+    for handle in family.fonts() {
+        let font = match handle.load() {
+            Ok(font) => font,
+            Err(error) => {
+                log::warn!("Error loading fallback font: {error:?}");
+                continue;
+            }
+        };
+        if !font_has_valid_traits(&font) {
+            continue;
+        }
+        candidates.push(font.properties());
+        fonts.push(font);
+    }
+    let index = font_kit::matching::find_best_match(&candidates, properties).ok()?;
+    Some(fonts.swap_remove(index))
+}
+
 fn font_kit_metrics_to_metrics(metrics: Metrics) -> FontMetrics {
     FontMetrics {
         units_per_em: metrics.units_per_em,
@@ -739,6 +887,9 @@ mod lenient_font_attributes {
         }
     }
 }
+
+#[cfg(test)]
+mod font_installation_tests;
 
 #[cfg(test)]
 mod tests {

@@ -50,8 +50,13 @@ after a successful backend installation. Existing loaded FontIds remain usable; 
 reuse for a reselected descriptor depends on the backend. Notify each affected text view or
 refresh its Window explicitly. Installing font bytes does not arrange a redraw, and notifying
 only the parent of a clean cached view does not rebuild that child.
-Native backend caches for already matched descriptors keep their existing selection policy;
-this update does not qualify reselection after adding another weight/style to that family.
+DirectWrite reselects already matched descriptors after a successful private collection update.
+Installing a real weight replaces a previously synthesized face; unchanged faces keep their
+FontIds and refresh collection/fallback metadata. Old glyph IDs, metrics and retained layouts
+remain usable. Named fallback can resolve privately installed faces before system fallback.
+Native callback faces retain their actual simulations instead of being reselected by name.
+The corresponding CoreText source and regression tests are present, with macOS compilation
+and execution still requiring their owning platform qualification.
 The public `HeadlessAppContext::text_system` and `TestAppContext::text_system` accessors share
 their App's exact TextSystem, including descriptor caches, installation generation and reporter.
 

@@ -75,9 +75,16 @@ struct DirectWriteState {
     system_font_collection: IDWriteFontCollection1,
     custom_font_collection: IDWriteFontCollection1,
     fonts: Vec<FontInfo>,
-    font_to_font_id: HashMap<Font, FontId>,
-    font_info_cache: HashMap<usize, FontId>,
+    font_to_font_id: HashMap<Font, FontSelection>,
+    collection_generation: u64,
+    font_info_cache: HashMap<usize, (FontId, IDWriteFontFace3)>,
     layout_line_scratch: Vec<u16>,
+}
+
+#[derive(Clone, Copy)]
+struct FontSelection {
+    font_id: FontId,
+    collection_generation: u64,
 }
 
 impl GPUState {
@@ -263,7 +270,7 @@ impl DirectWriteTextSystem {
         let mut locale = [0u16; LOCALE_NAME_MAX_LENGTH as usize];
         unsafe { GetUserDefaultLocaleName(&mut locale) };
         let locale = HSTRING::from_wide(&locale);
-        let text_renderer = TextRendererWrapper::new(locale.clone());
+        let text_renderer = TextRendererWrapper::new();
 
         let gpu_state = GPUState::new(directx_devices)?;
 
@@ -301,6 +308,7 @@ impl DirectWriteTextSystem {
                 custom_font_collection,
                 fonts: Vec::new(),
                 font_to_font_id: HashMap::default(),
+                collection_generation: 0,
                 font_info_cache: HashMap::default(),
                 layout_line_scratch: Vec::new(),
             }),
@@ -323,8 +331,8 @@ impl PlatformTextSystem for DirectWriteTextSystem {
 
     fn font_id(&self, font: &Font) -> Result<FontId> {
         let lock = self.state.upgradable_read();
-        if let Some(font_id) = lock.font_to_font_id.get(font) {
-            Ok(*font_id)
+        if let Some(font_id) = lock.cached_font(font) {
+            Ok(font_id)
         } else {
             RwLockUpgradableReadGuard::upgrade(lock)
                 .select_and_cache_font(&self.components, font)
@@ -390,6 +398,13 @@ impl PlatformTextSystem for DirectWriteTextSystem {
 }
 
 impl DirectWriteState {
+    fn cached_font(&self, font: &Font) -> Option<FontId> {
+        self.font_to_font_id
+            .get(font)
+            .filter(|selection| selection.collection_generation == self.collection_generation)
+            .map(|selection| selection.font_id)
+    }
+
     fn select_and_cache_font(
         &mut self,
         components: &DirectWriteComponents,
@@ -403,15 +418,32 @@ impl DirectWriteState {
                         font,
                         font_collection,
                         &components.factory,
-                        &this.system_font_collection,
+                        &[&this.custom_font_collection, &this.system_font_collection],
                         &components.system_ui_font_name,
                     )
                 })?;
 
-            let font_id = FontId(this.fonts.len());
+            let font_id = this.font_to_font_id.get(font).and_then(|selection| {
+                let previous = &this.fonts[selection.font_id.0].font_face;
+                let same_face = previous == &info.font_face
+                    || unsafe {
+                        previous
+                            .cast::<IDWriteFontFace5>()
+                            .ok()
+                            .is_some_and(|previous| previous.Equals(&info.font_face).as_bool())
+                    };
+                same_face.then_some(selection.font_id)
+            });
+            let font_id = font_id.unwrap_or(FontId(this.fonts.len()));
             let font_face_key = info.font_face.cast::<IUnknown>().unwrap().as_raw().addr();
-            this.fonts.push(info);
-            this.font_info_cache.insert(font_face_key, font_id);
+            let retained_face = info.font_face.clone();
+            if font_id.0 == this.fonts.len() {
+                this.fonts.push(info);
+            } else {
+                this.fonts[font_id.0] = info;
+            }
+            this.font_info_cache
+                .insert(font_face_key, (font_id, retained_face));
             Some(font_id)
         };
 
@@ -428,12 +460,57 @@ impl DirectWriteState {
             .is_some();
             if font_collection_updated && let Some(collection) = collection {
                 self.system_font_collection = collection;
+                self.collection_generation = self.collection_generation.wrapping_add(1);
             }
             font_id = select_font(self, font);
         };
         let font_id = font_id?;
-        self.font_to_font_id.insert(font.clone(), font_id);
+        self.font_to_font_id.insert(
+            font.clone(),
+            FontSelection {
+                font_id,
+                collection_generation: self.collection_generation,
+            },
+        );
         Some(font_id)
+    }
+
+    fn cache_observed_font_face(
+        &mut self,
+        components: &DirectWriteComponents,
+        font_face: &IDWriteFontFace3,
+    ) -> windows::core::Result<FontId> {
+        let font = font_face_to_font(font_face, &components.locale).ok_or_else(|| {
+            Error::new(DWRITE_E_NOFONT, "Failed to describe the native font face")
+        })?;
+        let collection = unsafe {
+            let builder = components.factory.CreateFontSetBuilder()?;
+            let reference = font_face.GetFontFaceReference()?;
+            let backing = components.factory.CreateFontFaceReference(
+                &reference.GetFontFile()?,
+                reference.GetFontFaceIndex(),
+                DWRITE_FONT_SIMULATIONS_NONE,
+            )?;
+            builder.AddFontFaceReference2(&backing)?;
+            components
+                .factory
+                .CreateFontCollectionFromFontSet(&builder.CreateFontSet()?)?
+        };
+        let info = FontInfo {
+            font_family_h: HSTRING::from(font.family.as_str()),
+            font_face: font_face.clone(),
+            features: unsafe { Self::generate_font_features(&components.factory, &font.features) }
+                .map_err(|error| Error::new(E_FAIL, format!("{error:#}")))?,
+            fallbacks: None,
+            font_collection: collection,
+        };
+        let font_id = FontId(self.fonts.len());
+        self.fonts.push(info);
+        self.font_info_cache.insert(
+            font_face.cast::<IUnknown>()?.as_raw().addr(),
+            (font_id, font_face.clone()),
+        );
+        Ok(font_id)
     }
 
     fn add_fonts(
@@ -470,6 +547,7 @@ impl DirectWriteState {
         let set = unsafe { components.builder.CreateFontSet()? };
         let collection = unsafe { components.factory.CreateFontCollectionFromFontSet(&set)? };
         self.custom_font_collection = collection;
+        self.collection_generation = self.collection_generation.wrapping_add(1);
 
         Ok(())
     }
@@ -477,7 +555,7 @@ impl DirectWriteState {
     fn generate_font_fallbacks(
         fallbacks: &FontFallbacks,
         factory: &IDWriteFactory5,
-        system_font_collection: &IDWriteFontCollection1,
+        collections: &[&IDWriteFontCollection1],
     ) -> Result<Option<IDWriteFontFallback>> {
         let fallback_list = fallbacks.fallback_list();
         if fallback_list.is_empty() {
@@ -485,46 +563,49 @@ impl DirectWriteState {
         }
         unsafe {
             let builder = factory.CreateFontFallbackBuilder()?;
-            let font_set = &system_font_collection.GetFontSet()?;
             let mut unicode_ranges = Vec::new();
             for family_name in fallback_list {
                 let family_name = HSTRING::from(family_name);
-                let Some(fonts) = font_set
-                    .GetMatchingFonts(
-                        &family_name,
-                        DWRITE_FONT_WEIGHT_NORMAL,
-                        DWRITE_FONT_STRETCH_NORMAL,
-                        DWRITE_FONT_STYLE_NORMAL,
-                    )
-                    .log_err()
-                else {
-                    continue;
-                };
-                let Ok(font_face) = fonts.GetFontFaceReference(0) else {
-                    continue;
-                };
-                let font = font_face.CreateFontFace()?;
-                let mut count = 0;
-                font.GetUnicodeRanges(None, &mut count).ok();
-                if count == 0 {
-                    continue;
+                for collection in collections {
+                    let font_set = collection.GetFontSet()?;
+                    let Some(fonts) = font_set
+                        .GetMatchingFonts(
+                            &family_name,
+                            DWRITE_FONT_WEIGHT_NORMAL,
+                            DWRITE_FONT_STRETCH_NORMAL,
+                            DWRITE_FONT_STYLE_NORMAL,
+                        )
+                        .log_err()
+                    else {
+                        continue;
+                    };
+                    let Ok(font_face) = fonts.GetFontFaceReference(0) else {
+                        continue;
+                    };
+                    let font = font_face.CreateFontFace()?;
+                    let mut count = 0;
+                    font.GetUnicodeRanges(None, &mut count).ok();
+                    if count == 0 {
+                        continue;
+                    }
+                    unicode_ranges.clear();
+                    unicode_ranges.resize_with(count as usize, DWRITE_UNICODE_RANGE::default);
+                    let Some(_) = font
+                        .GetUnicodeRanges(Some(&mut unicode_ranges), &mut count)
+                        .log_err()
+                    else {
+                        continue;
+                    };
+                    builder.AddMapping(
+                        &unicode_ranges,
+                        &[family_name.as_ptr()],
+                        *collection,
+                        None,
+                        None,
+                        1.0,
+                    )?;
+                    break;
                 }
-                unicode_ranges.clear();
-                unicode_ranges.resize_with(count as usize, DWRITE_UNICODE_RANGE::default);
-                let Some(_) = font
-                    .GetUnicodeRanges(Some(&mut unicode_ranges), &mut count)
-                    .log_err()
-                else {
-                    continue;
-                };
-                builder.AddMapping(
-                    &unicode_ranges,
-                    &[family_name.as_ptr()],
-                    None,
-                    None,
-                    None,
-                    1.0,
-                )?;
             }
             let system_fallbacks = factory.GetSystemFontFallback()?;
             builder.AddMappings(&system_fallbacks)?;
@@ -551,7 +632,7 @@ impl DirectWriteState {
         }: &Font,
         collection: &IDWriteFontCollection1,
         factory: &IDWriteFactory5,
-        system_font_collection: &IDWriteFontCollection1,
+        fallback_collections: &[&IDWriteFontCollection1],
         system_ui_font_name: &SharedString,
     ) -> Option<FontInfo> {
         const SYSTEM_UI_FONT_NAME: &str = ".SystemUIFont";
@@ -580,7 +661,7 @@ impl DirectWriteState {
                 let direct_write_features =
                     unsafe { Self::generate_font_features(factory, features).log_err()? };
                 let fallbacks = fallbacks.as_ref().and_then(|fallbacks| {
-                    Self::generate_font_fallbacks(fallbacks, factory, system_font_collection)
+                    Self::generate_font_fallbacks(fallbacks, factory, fallback_collections)
                         .log_err()
                         .flatten()
                 });
@@ -1478,22 +1559,13 @@ struct GlyphLayerTextureParams {
 struct TextRendererWrapper(IDWriteTextRenderer);
 
 impl TextRendererWrapper {
-    fn new(locale_str: HSTRING) -> Self {
-        let inner = TextRenderer::new(locale_str);
-        TextRendererWrapper(inner.into())
+    fn new() -> Self {
+        TextRendererWrapper(TextRenderer.into())
     }
 }
 
 #[implement(IDWriteTextRenderer)]
-struct TextRenderer {
-    locale: HSTRING,
-}
-
-impl TextRenderer {
-    fn new(locale: HSTRING) -> Self {
-        TextRenderer { locale }
-    }
-}
+struct TextRenderer;
 
 struct RendererContext<'t, 'a, 'b> {
     text_system: &'t mut DirectWriteState,
@@ -1634,30 +1706,17 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
             ));
         };
 
-        let font_face_key = font_face.cast::<IUnknown>().unwrap().as_raw().addr();
+        let font_face_key = font_face.cast::<IUnknown>()?.as_raw().addr();
         let font_id = context
             .text_system
             .font_info_cache
             .get(&font_face_key)
-            .copied()
-            // in some circumstances, we might be getting served a FontFace that we did not create ourselves
-            // so create a new font from it and cache it accordingly. The usual culprit here seems to be Segoe UI Symbol
+            .map(|(font_id, _)| *font_id)
             .map_or_else(
                 || {
-                    let font = font_face_to_font(font_face, &self.locale)
-                        .ok_or_else(|| Error::new(DWRITE_E_NOFONT, "Failed to create font"))?;
-                    let font_id = match context.text_system.font_to_font_id.get(&font) {
-                        Some(&font_id) => font_id,
-                        None => context
-                            .text_system
-                            .select_and_cache_font(context.components, &font)
-                            .ok_or_else(|| Error::new(DWRITE_E_NOFONT, "Failed to create font"))?,
-                    };
                     context
                         .text_system
-                        .font_info_cache
-                        .insert(font_face_key, font_id);
-                    windows::core::Result::Ok(font_id)
+                        .cache_observed_font_face(context.components, font_face)
                 },
                 Ok,
             )?;
@@ -2102,6 +2161,9 @@ fn is_line_separator(character: char) -> bool {
 
 #[cfg(test)]
 mod layout_tests;
+
+#[cfg(test)]
+mod font_installation_tests;
 
 #[cfg(test)]
 mod readback_tests;

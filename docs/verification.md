@@ -867,6 +867,104 @@ selection requires separate reconciliation. The native test qualifies a previous
 family, not that broader reselection workflow. OS IME/input, native accessibility, full platform execution, measured
 costs, complete upstream parity and Nara rendering integration remain outside this qualification.
 
+## Native Font Reselection And Retained Faces
+
+This successor to `ed2a55383f4` addresses already matched native families and privately installed
+fallbacks. The fixed Zed target remains `635026fabc38440fce5e1767d125026a17b12012`; its
+DirectWrite source retains the same descriptor-cache and system-only fallback gaps. This is an
+owning correction found during the framework comparison, not a claim that those fixes were
+already present upstream. The earlier missing-family trajectory did not qualify these paths.
+
+The first expanded five-case baseline runs one passing original native trajectory and four
+failures (`f522ebff-6576-4f9d-b914-4e41a7e5401b`). Three weight-fixture assumptions required
+correction: DirectWrite synthesizes Bold from Regular, reports weight 700 already, and gives
+the synthetic `m` a 620-unit advance rather than the real Regular/Bold fixtures' 600 units.
+The corrected baseline again passes the original native case and fails all four new paths
+(`dc83e89b-bb50-4989-a6c2-227015470f37`): private fallback is not selected, newly installed
+Bold remains simulated, successful retry retains that simulation, and the native Bold request
+retains its old FontId. Actual simulation flags and fixture outlines distinguish the faces.
+
+An independent review also identifies an unknown-face callback that reconstructs a descriptor
+from family/weight/style and can bind an old simulated run to a newer real Bold face. Its
+isolated cold-cache regression fails before the owning correction
+(`54edf648-aa57-475e-b6b6-834af7539847`). The test deliberately drops the auxiliary native-face
+cache and clears the selected descriptor to isolate this callback from the separate stale
+selection defect; it still shapes a real retained native font collection and compares actual
+simulation, glyph, advance and bounds. No fabricated native presentation receipt is used.
+
+DirectWrite selection now checks its private published-collection generation. A reselected
+unchanged native face keeps its FontId while its collection/fallback metadata refreshes;
+a changed actual face appends a record, leaving the old ID usable. Complete Font descriptors
+keep feature/fallback configuration separate. Private fallback mappings precede system ones
+and carry their actual collection. Auxiliary identity keys retain the native face whose
+IUnknown address they index, so releasing a temporary layout cannot leave a dangling identity
+key. Unknown callback faces are retained verbatim with a collection built from that actual
+face reference; they are never substituted by a current name-based selection.
+Successful system-collection refresh also advances the backend selection generation. This
+revalidation does not install OS fonts or provide a Core-level OS font-change watcher. Identity
+reuse keeps exact COM equality and otherwise requires native FontFace5 equality; an unsupported
+or unconfirmed comparison appends a record rather than merging its glyph identity.
+
+The Windows batch builder can retain valid fonts processed before a later invalid file, but
+its published collection and selection generation change only after successful collection
+publication. A failed batch keeps the prior visible selection; the next successful publication
+can include that builder's retained fonts. This is a concrete Windows recovery policy, not a
+cross-platform atomic-rollback guarantee.
+
+The first corrected focused cohort passes 6/6 (`4818c428-27a5-4ceb-840b-4e5d48ea86c9`),
+including both actual native installation trajectories, private Noto fallback/raster at scales
+1.0/1.5, failed-batch recovery and retained simulated callbacks. The native fixture shares one
+Render/shape/paint/Submitted/retirement path, checks the original App/Window TextSystem,
+explicit child notification, exact new generations and old-layout repaint. Real Lilex `m`
+outline bounds distinguish installed Regular/Bold. Submission is not glyph-pixel appearance
+or OS compositor evidence; private font bytes do not enter the OS font store.
+
+The expanded complete Windows run then passes 194/195 with four existing interactive cases
+skipped (`6ef63fd7-83d3-42cc-85d2-36e1db2555b6`). A second shape through an observed synthetic
+FontId exposes a real remaining defect: putting its simulated face reference directly into a
+new collection produces a later 600-unit advance instead of the original 620 units. The
+collection now uses that face's backing file/index without simulation, while the record keeps
+the exact observed face and its effective weight/style. DirectWrite reapplies the simulation
+when shaping from the isolated backing collection. The regression retains its second-shaping
+assertions and adds an actual previously unregistered synthetic face, so finding an already
+loaded record cannot stand in for the corrected native construction.
+
+The corrected focused cohort passes 9/9 (`57d4cde2-b931-4938-9af3-4c81c2b53600`). The final
+complete Windows library passes 197/197 with four existing interactive cases skipped
+(`dec391f9-e4c6-4fbd-bbdc-1207999faa5a`), retaining the actual glyph upload/readback,
+cached/deferred pixel, native input, candidate refusal/retry and exact retirement cohorts.
+The prior Core/WGPU 999 and component/consumer 2,964 results retain the earlier font unit's
+scope; those unchanged shared owners are not presented as newly executed by this native-only
+correction. No compiler/dependency version changes are required.
+
+```text
+cargo +1.95.0 nextest run --locked -p open-gpui-windows --all-features --lib -E 'test(direct_write::font_installation_tests::) or test(native_font_installation_tests::)' --test-threads=1 --no-fail-fast --no-tests fail
+cargo +1.95.0 nextest run --locked -p open-gpui-windows --all-features --lib --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+CoreText source now invalidates descriptor/family selection after installation, resolves private
+fallback descriptors and preserves configured native-font identity across feature/cascade and
+size changes. Its five new tests cover actual shaping/raster, additional weight, fallback,
+configuration identity and rejected-install retry. The former unused OpenType module is removed.
+This Windows host has not compiled or executed the macOS paths; source review, fixture checks
+and a passing Windows build cannot establish macOS qualification.
+The independent source review finds and corrects a definite typed-dictionary equality mismatch
+against locked CoreFoundation 0.10.0 without changing dependencies. Complete attributes compare
+through CFType. Shared `find/downcast` traits validation precedes font-kit properties for both
+primary and fallback candidates, retaining valid fallback fonts without `m`. Prepared mixed
+emoji shaping/raster tests cover 12/16/32px, actual glyph/source identities and old-layout raster;
+these remain unexecuted Mac tests. Nondefault variable-axis reconstruction, live OS font-change
+watching, measured costs, full platform parity and Nara rendering integration remain open.
+
+Final locked workspace all-target and independently locked consumer all-target/all-feature
+compilation pass on Windows 11/Rust 1.95.0 with one build job. Windows all-target/all-feature
+Clippy passes with `-D clippy::correctness`; existing nonblocking warnings remain. Root and
+independent-consumer formatting, import-boundary, public-document, release-document and API-tier
+checks pass. Independent Windows review and Mac source review, followed by the owning corrections
+and main integration review, leave no outstanding confirmed P1/P2 in the declared scope. The
+declared Rust 1.92 floor remains unchanged and unexecuted. Formatting/docs after the final
+197-case run do not change its native behavior; no Mac compilation credit is inferred.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:

@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-06T04:41:15+08:00
+timestamp: 2026-11-06T05:19:58+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -89,6 +89,14 @@ verified_by:
   other platforms, compiler-floor execution and measured costs remain open.
 - A game-engine Editor is the selecting consumer. Framework maintenance and rendering-adapter
   refactors are allowed; Nara document, ECS and history types do not enter the core framework.
+- The native-font successor now reselects already matched DirectWrite weights and named private
+  fallbacks after publication. Unchanged faces retain their loaded IDs; old simulated faces
+  remain valid, including through an unknown native callback. Native identity-cache entries
+  retain the faces they index. The original/corrected red baselines, intermediate 194/195
+  result, final focused 9/9 and complete Windows 197/197 are recorded in the verification
+  guide; four existing interactive cases remain skipped. CoreText source and deterministic
+  shaping/raster regressions are prepared; macOS compilation and execution remain unqualified.
+  This correction addresses gaps also present in the fixed Zed target.
 
 # Historical Main Integration
 
@@ -117,8 +125,10 @@ historical scope and is not current branch or CI qualification.
 
 - Continue the coherent framework refresh beyond the five initial correctness units. The candidate
   queue retains font/text/layout/API, image decoding, external-run-loop and platform differences.
-  Reconcile native selection after adding weights/styles to an already matched family through
-  its existing font records; the missing-family installation proof does not cover that workflow.
+  Qualify the prepared CoreText selection/cascade work on macOS and continue the remaining
+  Unicode wrapping, text/layout/API and platform differences. The DirectWrite successor now
+  has separate existing-family and installed-fallback evidence rather than borrowing the
+  missing-family installation proof.
   Preserve the implemented font generations, App-owned reporting, GPU flag representation and
   Windows transfer correction. Qualify the
   remaining compiler/dependency requirements
