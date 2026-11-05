@@ -76,7 +76,7 @@ impl LineLayout {
     /// closest_index_for_x returns the character boundary closest to the given x coordinate
     /// (e.g. to handle aligning up/down arrow keys)
     pub fn closest_index_for_x(&self, x: Pixels) -> usize {
-        let mut prev_index = 0;
+        let mut prev_index = None;
         let mut prev_x = px(0.);
 
         for run in self.runs.iter() {
@@ -85,20 +85,18 @@ impl LineLayout {
                     if glyph.position.x - x < x - prev_x {
                         return glyph.index;
                     } else {
-                        return prev_index;
+                        return prev_index.unwrap_or(0);
                     }
                 }
-                prev_index = glyph.index;
+                prev_index = Some(glyph.index);
                 prev_x = glyph.position.x;
             }
         }
 
-        if self.len == 1 {
-            if x > self.width / 2. {
-                return 1;
-            } else {
-                return 0;
-            }
+        if let Some(prev_index) = prev_index
+            && x - prev_x <= self.width - x
+        {
+            return prev_index;
         }
 
         self.len

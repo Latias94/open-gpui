@@ -186,3 +186,38 @@ fn wrapped_caret_positions_preserve_preceding_row_affinity() {
         None
     );
 }
+
+#[test]
+fn closest_index_in_the_final_glyph_uses_its_original_cluster_and_terminal_width() {
+    for (text, runs, last_index, last_x) in [
+        ("ab", vec![vec![(0, 0.)], vec![(1, 10.)]], 1, 10.),
+        ("aé", vec![vec![(0, 0.), (1, 10.)]], 1, 10.),
+        ("a🙂", vec![vec![(0, 0.)], vec![(1, 10.)]], 1, 10.),
+        ("fi", vec![vec![(0, 0.)]], 0, 0.),
+        ("é", vec![vec![(0, 0.)]], 0, 0.),
+        ("a", vec![vec![(0, 0.)]], 0, 0.),
+    ] {
+        let runs = runs.iter().map(Vec::as_slice).collect::<Vec<_>>();
+        let layout = unwrapped_layout(text, 20., &runs);
+        let middle = (last_x + 20.) / 2.;
+        for (x, expected) in [
+            (last_x, last_index),
+            ((last_x + middle) / 2., last_index),
+            (middle, last_index),
+            ((middle + 20.) / 2., text.len()),
+            (20., text.len()),
+            (21., text.len()),
+        ] {
+            assert_eq!(
+                layout.closest_index_for_x(px(x)),
+                expected,
+                "{text:?} at {x}"
+            );
+        }
+    }
+    assert_eq!(unwrapped_layout("", 0., &[]).closest_index_for_x(px(0.)), 0);
+    assert_eq!(
+        unwrapped_layout("unshaped", 0., &[]).closest_index_for_x(px(0.)),
+        "unshaped".len()
+    );
+}
