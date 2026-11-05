@@ -6869,11 +6869,14 @@ impl PlatformInputHandler {
         )
     }
 
-    #[allow(dead_code)]
+    /// Returns the handler's IME preference unless a chord is pending for the current focus.
     pub fn query_prefers_ime_for_printable_keys(&mut self) -> bool {
         self.native_callback(
             NativeInputHandlerOperation::PrefersImeForPrintableKeys,
-            |handler, window, cx| handler.prefers_ime_for_printable_keys(window, cx),
+            |handler, window, cx| {
+                !window.has_pending_keystrokes()
+                    && handler.prefers_ime_for_printable_keys(window, cx)
+            },
         )
     }
 }

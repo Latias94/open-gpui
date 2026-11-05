@@ -511,6 +511,133 @@ Inserted result means parameter admission and an issued update, not asynchronous
 These results are atlas/color-glyph resource readback, not screen compositing, complete native
 input, frame-time measurements, non-Windows backend execution or Nara renderer integration.
 
+## Pending Input, Modifier Recognition And Blur
+
+The successor to `f1850835fbb` adapts `bc7041c600`, `ba42ab9d98` and `f66ed399cd`, including
+the direct IME, multi-modifier and dropped-focus prerequisites `dc1e815e47`, `a8cae3bd77` and
+`e463c5ab74`, against fixed target `635026fabc38440fce5e1767d125026a17b12012`.
+The complete upstream scenarios and fork controls are registered in
+`window/pending_input_tests.rs`; this unit does not adopt target-only pending-status/pause APIs.
+
+The first registered baseline compiled and ran 20 cases: eight passed and twelve failed
+(`706f4d38-f906-4597-b2bb-0b4a2a0fef16`). Behavioral failures include absent standalone-modifier
+interception/observation, missing modifier timeout, false standalone synthesis after multiple
+modifiers, IME preference during a pending chord, and pending input retained after accepted blur.
+Refused focus candidates and suppressed/FocusStable mutations already passed their controls.
+One failure was a fixture prerequisite: closing the last window shuts down the test App, so
+opening its replacement requires a separate live keeper window. The fixture now retains that
+window without weakening exact retired-handle or no-replay assertions.
+
+Recognized keystrokes, including standalone modifier releases, now reach interceptors and
+observers independently of raw event type. Multi-modifier gestures disarm standalone synthesis;
+a later genuine modifier tap re-arms it. Modifier-only chord prefixes use the existing timeout,
+and an intercepted modifier leaves the prior chord and its original deadline intact.
+
+The existing focus owner now settles pending input on accepted exact/empty transitions and
+final focused-handle release, with one deferred notification only when state existed. Candidate
+clears stay staged until admission, including a sealed callback's promoted successor before
+prepaint starts. Refusal restores the original sequence and timer. Suppressed/FocusStable
+mutations remain forbidden; repeated empty blur can clear a global-context chord while further
+focus claims are disabled. The platform handler suppresses its IME-first preference only for
+the current focus's pending sequence, using the existing native callback lease.
+
+The first corrected run passed 19/20 (`ddb376ba-3c64-4c45-862f-44e52129ff08`). The remaining
+fixture removed a temporary control without notifying its retained view, so the old rendered
+element still held the focus handle. Removing it with the owning view notification retains the
+last-release/notification assertion. The next focused run passes 21/21
+(`bece25ab-741d-4870-b7d9-96ca2f56d55f`), including a second accepting text handler whose IME
+preference recovers after focus transfer, no old-prefix replay into either handler, and ordinary
+text delivery only to the new target. A second pending observer cannot execute after the first
+retires the window.
+
+Upstream regression behavior is adapted to the fork's existing candidate/focus/native-handler
+owners. The final target's TextInputStateChange event log has no fork counterpart; this unit
+tests actual handler admission, lease queries and cleanup rather than adding another public
+notification API. The fixture has no active marked-text composition and does not qualify the
+macOS Japanese IME's composition-first OS route. Final broad and native-consumer evidence
+is recorded below.
+
+The first complete Core run passes 898/898, but subsequent review identified a missing callback
+case. Extending the two-handler trajectory to move focus inside the timeout observer reproduces
+old-prefix text delivery after that callback (`c1069260-eda9-4188-8d92-765a4d7e91b4`). Ordinary
+pre-timeout focus transfer does not cover this. Revalidate the original focus/context after
+observer and replay-listener callbacks before admitting further actions or text. Review also
+requires same-focus context changes to restore IME preference and preserves the upstream
+singleton-modifier timeout condition: a modifier in the middle of an otherwise untimed chord
+must not introduce a timeout.
+
+Both additional controls fail before their fixes
+(`3c5cd0ec-9273-4aa6-89a0-651eb5e5ff0b`): same-focus context replacement still reports active
+pending input, and a modifier inside a longer chord unexpectedly owns a timer. The corrected
+active-pending/replay checks share the existing dispatch-context projection through a private
+borrowed iterator, without cloning each context merely to compare it. Replay retains the
+original focus/context and stops after a user callback changes either. The modifier condition
+matches the complete singleton pending slice; existing text/short-binding timeouts remain.
+
+A further review control catches an overly early replay guard: a timeout short action moves
+focus successfully but its recognized-keystroke report is lost
+(`53b71765-5300-456f-8b66-a4ff63674255`). Replay now preserves that completed-action report
+while the window remains live, then refuses further old-recipient input. A closed window still
+stops before observer delivery. The first native consumer passes
+(`ba55347f-9008-45bc-984a-a333b0f8c094`); it predates this last Core ordering correction.
+
+The final Core library passes 901/901 with no skipped cases
+(`488f7d36-c53f-4f88-ba0d-13429dfa2913`), including all 24 pending-input scenarios after the
+completed-action correction. Independent source/fixture review finds no remaining P1/P2 in this
+unit. The native consumer composes two real text handlers, production PlatformInput callbacks,
+leased IME-preference queries and targeted HWND WM_CHAR delivery. It checks accepted/nonempty
+renderer-Submitted generations, correct text recipient, old-handler release, deferred blur
+settlement, exact HWND/native retirement and platform/OLE/text-system teardown. Synthetic
+PlatformInput does not establish OS key translation, and WM_CHAR does not establish live IME
+composition. The timeout uses Core's fake clock rather than a native wall-clock wait.
+
+The affected UI core/components/docking/Canvas library and integration cohort passes
+2,964/2,964 across 25 binaries, with no skipped cases
+(`0653fd29-aded-4598-af49-043fc8674d4f`). The first complete Windows run passed 186 cases and
+failed the existing native cache matrix (`ac05f2f7-40f2-4200-9734-0c11c4f779fa`), with four
+interactive cases skipped. Its first ordinary-parent/child replay observed counters `(3,3,1)`
+instead of `(2,2,1)`. The new native input trajectory passed. An unchanged focused cache rerun
+passes (`d5ea70fa-dacc-4806-b69d-72081427f547`); no counter assertion was relaxed and no cache
+source was changed. The initial extra render/paint's trigger is not established by that rerun.
+A second unchanged complete run reproduces the same first-case counter mismatch
+(`bebc452e-1473-4011-a485-782d3f5119ad`), again passing the other 186 cases. That result was not
+accepted as a resolved intermittent failure. A diagnostic run with expensive refresh backtraces
+changed timing and failed the separate native mouse-leave control
+(`a5b1a3db-69b3-4a52-89d3-9d6b1fd240bc`); it is not qualification evidence. The lower-overhead
+cache-key/caller trace then reproduced the cache mismatch on replay 2
+(`fd30a26c-d614-4765-8c76-0f83b285978d`). Every key and resource check matched, dirty was false,
+and refreshing was true after native_hover_status_changed called Window::refresh. This is a
+legitimate whole-window invalidation entering the fixture's supposedly unchanged replay.
+
+The cache fixture now requests pointer-transparent, nonactivating creation and checks those
+three facts through native HWND readback. After initial show/follow-up it performs one explicit
+initialization refresh and requires a strictly newer accepted/nonempty Submitted generation,
+matching rendered generation and submitted diagnostics, before freezing its single baseline.
+All original replay, non-view model notification, explicit child invalidation and exact teardown
+assertions remain. No miss is retried or rebased. Temporary probes were removed; the production
+AnyView cache owner and Window refresh body retain their original code.
+The separate fixture correction is `fb196f8a9c876c2981c18d58b54c59966dce4084`.
+
+The final complete Windows library passes 187/187 with the same four existing interactive cases
+skipped (`3234e5f8-32bb-40bc-9984-e944f3e21300`), including the corrected native cache matrix
+and the new input consumer after the final Core ordering correction. These results run on
+Windows 11/Rust 1.95.0 with one build job, serial tests and the shared target. They establish no
+screen-pixel input latency, IME composition, touchpad timing, non-Windows execution, engine
+rendering integration or complete upstream-refresh qualification. The declared Rust 1.92 floor
+and dependency graph remain unchanged; that compiler floor is not executed by this unit.
+
+Locked workspace all-target and independently locked consumer all-target/all-feature checks
+pass, including the actual WGPU renderer. Core/Windows all-target/all-feature Clippy passes with
+`-D clippy::correctness`; existing non-denied test/docking warnings remain. Root/consumer
+formatting, import-boundary, document-link, release-document and public-API tier scans pass. Independent reviews of the
+input owner, upstream scenario mapping, native consumer and corrected cache fixture find no
+remaining P1/P2 within this unit.
+
+```sh
+cargo nextest run --locked -p open-gpui --lib -E 'test(window::pending_input_tests::)' --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --locked -p open-gpui-windows --all-features --lib -E 'test(native_pending_input_tests::)' --test-threads=1 --no-fail-fast --no-tests fail
+```
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:

@@ -94,6 +94,8 @@ mod frame_journal;
 mod frame_pump;
 mod input_dispatch;
 mod invalidator;
+#[cfg(test)]
+mod pending_input_tests;
 mod pointer_session;
 mod portal_anchor;
 mod prompts;
@@ -2253,7 +2255,7 @@ impl Drop for WindowStateInitializationGuard {
 #[derive(Clone, Debug, Default)]
 struct ModifierState {
     modifiers: Modifiers,
-    saw_keystroke: bool,
+    saw_other_input: bool,
 }
 
 /// Tracks input event timestamps to determine if input is arriving at a high rate.
@@ -5255,8 +5257,7 @@ impl Window {
         }
 
         self.focus = Some(focus);
-        self.clear_pending_keystrokes();
-        self.defer_pending_input_changed(cx);
+        self.clear_pending_keystrokes(cx);
         self.refresh_focus_authority();
     }
 
@@ -5358,8 +5359,7 @@ impl Window {
             .is_some()
         {
             self.next_frame.focus = Some(claim.target);
-            self.clear_pending_keystrokes();
-            self.defer_pending_input_changed(cx);
+            self.clear_pending_keystrokes(cx);
         } else {
             let fallback = claim.fallback.filter(|focus| {
                 self.next_frame
@@ -5370,8 +5370,7 @@ impl Window {
             self.focus = fallback;
             self.next_frame.focus = fallback;
             if fallback != claim.fallback {
-                self.clear_pending_keystrokes();
-                self.defer_pending_input_changed(cx);
+                self.clear_pending_keystrokes(cx);
             }
         }
     }
@@ -5466,18 +5465,19 @@ impl Window {
         (!committed).then_some(target)
     }
 
-    fn promote_pending_blur_claim(&mut self) {
+    fn promote_pending_blur_claim(&mut self, cx: &mut App) {
         if self.pending_blur_claim_generation != Some(self.next_frame.generation) {
             return;
         }
         self.provisional_focus_claim = None;
         self.focus = None;
         self.next_frame.focus = None;
+        self.clear_pending_keystrokes(cx);
     }
 
     /// Remove focus from all elements within this context's window.
     pub fn blur(&mut self, cx: &mut App) {
-        let _ = self.blur_impl(None);
+        let _ = self.blur_impl(None, cx);
         self.schedule_focus_claim_resolution_dispatch(cx);
     }
 
@@ -5508,13 +5508,18 @@ impl Window {
             callback,
         };
         self.record_candidate_focus_completion(&completion);
-        let _ = self.blur_impl(Some(completion));
+        let _ = self.blur_impl(Some(completion), cx);
         self.schedule_focus_claim_resolution_dispatch(cx);
         subscription
     }
 
-    fn blur_impl(&mut self, completion: Option<PendingFocusCompletion>) -> bool {
-        if !self.focus_mutations_enabled() {
+    fn blur_impl(&mut self, completion: Option<PendingFocusCompletion>, cx: &mut App) -> bool {
+        if !self.user_interaction_is_admitted()
+            || !self.subtree_presentation().is_interactive()
+            || self.prepaint_commit_phase.get() == Some(PrepaintCommitPhase::FocusStable)
+            || (!self.focus_enabled
+                && (self.focus.is_some() || !self.rendered_frame.focus_path().is_empty()))
+        {
             if let Some(completion) = completion {
                 self.queue_focus_claim_resolution(completion, FocusClaimOutcome::Rejected);
             }
@@ -5545,6 +5550,7 @@ impl Window {
                 )
             };
             if already_committed {
+                self.clear_pending_keystrokes(cx);
                 if let Some(completion) = completion {
                     self.queue_focus_claim_resolution(completion, FocusClaimOutcome::Committed);
                 }
@@ -5563,6 +5569,7 @@ impl Window {
 
         let candidate_frame_in_progress =
             self.next_frame.generation == self.rendered_frame.generation.saturating_add(1);
+        self.clear_pending_keystrokes(cx);
         if !candidate_frame_in_progress
             && self.focus.is_none()
             && self.rendered_frame.focus_path().is_empty()
@@ -5628,6 +5635,7 @@ impl Window {
         if self.focus == Some(dropped) {
             self.focus = None;
             self.pending_blur_claim_generation = None;
+            self.clear_pending_keystrokes(cx);
             changed = true;
         }
         if self.next_frame.focus == Some(dropped) {
@@ -5809,15 +5817,11 @@ impl Window {
 
     pub(crate) fn dispatch_keystroke_observers(
         &mut self,
-        event: &dyn Any,
-        action: Option<Box<dyn Action>>,
+        keystroke: &Keystroke,
+        action: Option<&dyn Action>,
         context_stack: Vec<KeyContext>,
         cx: &mut App,
     ) {
-        let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() else {
-            return;
-        };
-
         cx.keystroke_observers.clone().retain(&(), move |callback| {
             if !self.user_interaction_is_admitted() {
                 cx.stop_propagation();
@@ -5825,8 +5829,8 @@ impl Window {
             }
             let retain = (callback)(
                 &KeystrokeEvent {
-                    keystroke: key_down_event.keystroke.clone(),
-                    action: action.as_ref().map(|action| action.boxed_clone()),
+                    keystroke: keystroke.clone(),
+                    action: action.map(|action| action.boxed_clone()),
                     context_stack: context_stack.clone(),
                 },
                 self,
@@ -5839,14 +5843,10 @@ impl Window {
 
     pub(crate) fn dispatch_keystroke_interceptors(
         &mut self,
-        event: &dyn Any,
+        keystroke: &Keystroke,
         context_stack: Vec<KeyContext>,
         cx: &mut App,
     ) {
-        let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() else {
-            return;
-        };
-
         cx.keystroke_interceptors
             .clone()
             .retain(&(), move |callback| {
@@ -5856,7 +5856,7 @@ impl Window {
                 }
                 let retain = (callback)(
                     &KeystrokeEvent {
-                        keystroke: key_down_event.keystroke.clone(),
+                        keystroke: keystroke.clone(),
                         action: None,
                         context_stack: context_stack.clone(),
                     },
@@ -7595,7 +7595,7 @@ impl Window {
             CandidateFrameAttemptId(self.next_candidate_frame_attempt_id),
             self.next_frame.generation,
         ));
-        self.promote_pending_blur_claim();
+        self.promote_pending_blur_claim(cx);
 
         // Restore the previously-used input handler.
         // Place it back into a None slot (left by a previous .take()) so that
@@ -7765,14 +7765,8 @@ impl Window {
                 .is_none()
         }) {
             self.focus = None;
-            self.clear_pending_keystrokes();
+            self.clear_pending_keystrokes(cx);
             self.refresh();
-            let window = self.handle;
-            cx.defer(move |cx| {
-                window
-                    .update(cx, |_, window, cx| window.pending_input_changed(cx))
-                    .ok();
-            });
         }
 
         // Settle one-generation focus authority before cached publications replay. A rejected
@@ -12444,7 +12438,7 @@ impl Window {
         if let Some(event) = event.downcast_ref::<ModifiersChangedEvent>() {
             if event.modifiers.number_of_modifiers() == 0
                 && self.pending_modifier.modifiers.number_of_modifiers() == 1
-                && !self.pending_modifier.saw_keystroke
+                && !self.pending_modifier.saw_other_input
             {
                 let key = match self.pending_modifier.modifiers {
                     modifiers if modifiers.shift => Some("shift"),
@@ -12466,11 +12460,13 @@ impl Window {
             if self.pending_modifier.modifiers.number_of_modifiers() == 0
                 && event.modifiers.number_of_modifiers() == 1
             {
-                self.pending_modifier.saw_keystroke = false
+                self.pending_modifier.saw_other_input = false
+            } else if event.modifiers.number_of_modifiers() > 1 {
+                self.pending_modifier.saw_other_input = true
             }
             self.pending_modifier.modifiers = event.modifiers
         } else if let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() {
-            self.pending_modifier.saw_keystroke = true;
+            self.pending_modifier.saw_other_input = true;
             keystroke = Some(key_down_event.keystroke.clone());
             if key_down_event.keystroke.key_char.is_some()
                 && matches!(
@@ -12483,7 +12479,7 @@ impl Window {
         }
 
         let Some(keystroke) = keystroke else {
-            self.finish_dispatch_key_event(event, dispatch_path, self.context_stack(), cx);
+            self.finish_dispatch_key_event(event, None, dispatch_path, self.context_stack(), cx);
             return;
         };
 
@@ -12507,6 +12503,7 @@ impl Window {
         }
         if !cx.propagate_event {
             let current_context_stack = self.context_stack();
+            let replay_focus = self.focus;
             let to_replay = self.pending_input.take().and_then(|pending| {
                 (pending.focus == self.focus
                     && pending.context_stack.as_ref() == Some(&current_context_stack))
@@ -12518,23 +12515,30 @@ impl Window {
             });
             self.pending_input_changed(cx);
             if let Some(to_replay) = to_replay {
-                self.replay_pending_input(to_replay, cx);
+                self.replay_pending_input(to_replay, replay_focus, &current_context_stack, cx);
             }
             cx.stop_propagation();
             return;
         }
-        self.dispatch_keystroke_interceptors(event, self.context_stack(), cx);
+        self.dispatch_keystroke_interceptors(&keystroke, self.context_stack(), cx);
         if !self.user_interaction_is_admitted() {
             cx.stop_propagation();
             return;
         }
         if !cx.propagate_event {
-            self.finish_dispatch_key_event(event, dispatch_path, self.context_stack(), cx);
+            self.finish_dispatch_key_event(
+                event,
+                Some(&keystroke),
+                dispatch_path,
+                self.context_stack(),
+                cx,
+            );
             return;
         }
 
         let mut currently_pending = self.pending_input.take().unwrap_or_default();
         let current_context_stack = self.context_stack();
+        let current_focus = self.focus;
         if currently_pending.context_stack.is_some()
             && (currently_pending.focus != self.focus
                 || currently_pending
@@ -12547,13 +12551,20 @@ impl Window {
 
         let match_result = self.rendered_frame.dispatch_tree.dispatch_key(
             currently_pending.keystrokes,
-            keystroke,
+            keystroke.clone(),
             &dispatch_path,
         );
 
         if !match_result.to_replay.is_empty() {
-            self.replay_pending_input(match_result.to_replay, cx);
-            if !self.user_interaction_is_admitted() {
+            self.replay_pending_input(
+                match_result.to_replay,
+                current_focus,
+                &current_context_stack,
+                cx,
+            );
+            if !self.user_interaction_is_admitted()
+                || !self.pending_input_target_is_current(current_focus, &current_context_stack)
+            {
                 cx.stop_propagation();
                 return;
             }
@@ -12581,8 +12592,13 @@ impl Window {
                 return;
             }
 
-            currently_pending.needs_timeout |=
-                match_result.pending_has_binding || text_input_requires_timeout;
+            let standalone_modifier = matches!(
+                currently_pending.keystrokes.as_slice(),
+                [keystroke] if keystroke.is_modifier_key()
+            );
+            currently_pending.needs_timeout |= match_result.pending_has_binding
+                || text_input_requires_timeout
+                || standalone_modifier;
 
             if currently_pending.needs_timeout {
                 currently_pending.timer = Some(self.spawn(cx, async move |cx| {
@@ -12610,7 +12626,12 @@ impl Window {
                             .flush_dispatch(currently_pending.keystrokes, &dispatch_path);
 
                         window.pending_input_changed(cx);
-                        window.replay_pending_input(to_replay, cx)
+                        window.replay_pending_input(
+                            to_replay,
+                            currently_pending.focus,
+                            &current_context_stack,
+                            cx,
+                        )
                     })
                     .await
                     .log_err();
@@ -12649,8 +12670,8 @@ impl Window {
                 }
                 if !cx.propagate_event {
                     self.dispatch_keystroke_observers(
-                        event,
-                        Some(binding.action),
+                        &keystroke,
+                        Some(binding.action.as_ref()),
                         match_result.context_stack,
                         cx,
                     );
@@ -12660,13 +12681,20 @@ impl Window {
             }
         }
 
-        self.finish_dispatch_key_event(event, dispatch_path, match_result.context_stack, cx);
+        self.finish_dispatch_key_event(
+            event,
+            Some(&keystroke),
+            dispatch_path,
+            match_result.context_stack,
+            cx,
+        );
         self.pending_input_changed(cx);
     }
 
     fn finish_dispatch_key_event(
         &mut self,
         event: &dyn Any,
+        recognized_keystroke: Option<&Keystroke>,
         dispatch_path: SmallVec<[DispatchNodeId; 32]>,
         context_stack: Vec<KeyContext>,
         cx: &mut App,
@@ -12685,13 +12713,17 @@ impl Window {
             return;
         }
 
-        self.dispatch_keystroke_observers(event, None, context_stack, cx);
+        if let Some(keystroke) = recognized_keystroke {
+            self.dispatch_keystroke_observers(keystroke, None, context_stack, cx);
+        }
     }
 
     pub(crate) fn pending_input_changed(&mut self, cx: &mut App) {
         self.pending_input_observers
             .clone()
-            .retain(&(), |callback| callback(self, cx));
+            .retain(&(), |callback| {
+                self.removal_state != WindowRemovalState::Open || callback(self, cx)
+            });
     }
 
     fn dispatch_key_down_up_event(
@@ -12747,33 +12779,64 @@ impl Window {
 
     /// Determine whether a potential multi-stroke key binding is in progress on this window.
     pub fn has_pending_keystrokes(&self) -> bool {
-        self.pending_input.is_some()
+        self.active_pending_input().is_some()
     }
 
-    pub(crate) fn clear_pending_keystrokes(&mut self) {
-        if self.invalidator.is_building_frame() {
+    fn active_pending_input(&self) -> Option<&PendingInput> {
+        self.pending_input.as_ref().filter(|pending| {
+            pending
+                .context_stack
+                .as_deref()
+                .is_some_and(|context| self.pending_input_target_is_current(pending.focus, context))
+        })
+    }
+
+    fn pending_input_target_is_current(
+        &self,
+        focus: Option<FocusId>,
+        context: &[KeyContext],
+    ) -> bool {
+        self.focus == focus && self.context_stack_iter().eq(context.iter())
+    }
+
+    pub(crate) fn clear_pending_keystrokes(&mut self, cx: &mut App) {
+        if self.pending_input.is_none() {
+            return;
+        }
+        if self.candidate_frame_transaction.is_some() && !self.frame_focus_authority_sealed {
             self.candidate_pending_input_clear = true;
+            self.candidate_pending_input_notification = true;
         } else {
             self.pending_input.take();
+            self.defer_pending_input_changed(cx);
         }
     }
 
     /// Returns the currently pending input keystrokes that might result in a multi-stroke key binding.
     pub fn pending_input_keystrokes(&self) -> Option<&[Keystroke]> {
-        self.pending_input
-            .as_ref()
+        self.active_pending_input()
             .map(|pending_input| pending_input.keystrokes.as_slice())
     }
 
-    fn replay_pending_input(&mut self, replays: SmallVec<[Replay; 1]>, cx: &mut App) {
-        if !self.user_interaction_is_admitted() {
+    fn replay_pending_input(
+        &mut self,
+        replays: SmallVec<[Replay; 1]>,
+        focus: Option<FocusId>,
+        context: &[KeyContext],
+        cx: &mut App,
+    ) {
+        if !self.user_interaction_is_admitted()
+            || !self.pending_input_target_is_current(focus, context)
+        {
             return;
         }
         let node_id = self.focus_node_id_in_rendered_frame(self.focus);
         let dispatch_path = self.rendered_frame.dispatch_tree.dispatch_path(node_id);
 
         'replay: for replay in replays {
-            if !self.user_interaction_is_admitted() {
+            if !self.user_interaction_is_admitted()
+                || !self.pending_input_target_is_current(focus, context)
+            {
                 break;
             }
             let event = KeyDownEvent {
@@ -12791,18 +12854,25 @@ impl Window {
                 }
                 if !cx.propagate_event {
                     self.dispatch_keystroke_observers(
-                        &event,
-                        Some(binding.action),
+                        &replay.keystroke,
+                        Some(binding.action.as_ref()),
                         Vec::default(),
                         cx,
                     );
                     continue 'replay;
+                }
+                if !self.pending_input_target_is_current(focus, context) {
+                    cx.stop_propagation();
+                    break 'replay;
                 }
             }
 
             self.dispatch_key_down_up_event(&event, &dispatch_path, cx);
             if !self.interaction_dispatch_continues(cx) {
                 continue 'replay;
+            }
+            if !self.pending_input_target_is_current(focus, context) {
+                break;
             }
             if let Some(input) = replay.keystroke.key_char.as_ref().cloned()
                 && let Some(mut input_handler) = self.platform_window.take_input_handler()
@@ -13104,13 +13174,16 @@ impl Window {
 
     /// Returns the current context stack.
     pub fn context_stack(&self) -> Vec<KeyContext> {
+        self.context_stack_iter().cloned().collect()
+    }
+
+    fn context_stack_iter(&self) -> impl Iterator<Item = &KeyContext> {
         let node_id = self.focus_node_id_in_rendered_frame(self.focus);
         let dispatch_tree = &self.rendered_frame.dispatch_tree;
         dispatch_tree
             .dispatch_path(node_id)
-            .iter()
-            .filter_map(move |&node_id| dispatch_tree.node(node_id).context.clone())
-            .collect()
+            .into_iter()
+            .filter_map(move |node_id| dispatch_tree.node(node_id).context.as_ref())
     }
 
     /// Returns all available actions for the focused element.

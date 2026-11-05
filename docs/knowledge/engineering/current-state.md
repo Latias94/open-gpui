@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-06T01:20:00+08:00
+timestamp: 2026-11-06T02:31:00+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -52,8 +52,18 @@ verified_by:
   before upload, preserving both insertion APIs and exact leased regions. Color staging reads
   release their map on return/error/unwind, and blended glyph targets begin transparent. Its
   verification record owns the WARP/debug-layer and actual emoji pixel evidence. The
-  remaining initial correctness unit is pending-input/blur; broader text/layout/API refresh and
-  engine-specific Editor adaptation remain incomplete.
+  pending-input successor now shares recognized modifier interception/observation and singleton
+  timeout, settles accepted focus/blur/drop transitions once, and preserves refused-candidate
+  state and deadlines. Active pending/replay checks retain the original focus/context, including
+  callback changes, while completed live-window actions retain their observation. Final Core
+  901/901 and affected consumers 2,964/2,964 pass, including 24 focused scenarios. The native
+  two-handler consumer passes production callbacks, leased IME preference, WM_CHAR text and
+  exact HWND/platform teardown.
+  Final Windows 187/187 passes with four existing interactive cases skipped. A cache-fixture
+  correction isolates replay from observed native-hover refresh and establishes one exact
+  initialized submission before its baseline; original cache/model assertions remain. The
+  verification guide owns the earlier failures, actual commands and limits. These five
+  initial units do not complete the text/layout/API/platform refresh or engine adaptation.
 - A game-engine Editor is the selecting consumer. Framework maintenance and rendering-adapter
   refactors are allowed; Nara document, ECS and history types do not enter the core framework.
 
@@ -82,17 +92,18 @@ historical scope and is not current branch or CI qualification.
 
 # Next Action
 
-- Continue with pending-input/blur.
-  The current plan records upstream recognition/interception/IME and dropped-focus prerequisites,
-  admitted versus refused focus transitions and exact-window close controls. Preserve the native
-  upload successor's source/destination admission and exact-instance leases.
+- Continue the coherent framework refresh beyond the five initial correctness units. The candidate
+  queue retains GPU primitive representation, Windows color transfer, font/text/layout/API,
+  external-run-loop and platform differences. Qualify their compiler/dependency requirements
+  before broad engine adaptation; do not overwrite the fork or reapply already-covered fixes.
+  Preserve pending-input admission, context/recipient
+  validity and completed-action observation, together with the native upload successor's
+  source/destination admission and exact-instance leases.
   Preserve the cache successor's admitted read/opacity publication and bounded convergence,
   including the explicit non-view/external-group notification limits. Preserve the arena successor's
   AppCell native delivery, candidate-frame rules and explicit post-borrow command authority. Qualify touchpad
   scroll/inertia/pinch and response timing separately; source inspection or the new HWND/IME
   regression does not establish that input/performance parity.
-- Reconcile a coherent later text/framework refresh and its toolchain requirements before broad
-  engine adaptation. Do not overwrite the fork from Zed or reapply already-covered fixes.
 - Preserve and continue the canonical-docking plan; assess the actual renderer/Host seam through
   the engine consumer. Complete Editor/game-runtime selection remains consumer work rather than
   a premise that two permanent UI engines are required.

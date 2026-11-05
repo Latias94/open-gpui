@@ -57,6 +57,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Changed
 
+- Standalone modifier keys now reach keystroke interceptors and observers and use the normal chord timeout without timing out longer modifier-containing chords. Accepted focus/blur transitions settle pending input once; refused candidates preserve it. IME preference and replay validate the original focus and key context, including changes made by callbacks.
 - Windows atlas insertion rejects incomplete or malformed uploads before allocation and key publication, preserving existing leased content on refusal. Color glyph readback releases staging maps on every Rust return path and initializes blended targets to transparent.
 - Windows text shaping preserves native tab advances and Unicode separators on one logical baseline, and empty font-feature settings apply standard ligature feature defaults while explicit disabling still applies. Wrapped text hit testing returns the current row's end instead of panicking in a floating-point boundary gap.
 - Cached views retain entity dependencies read during paint and deferred work, without resubscribing released entities. Nested deferred menus keep stable replay indices, and inherited opacity invalidates cached output and continues through deferred children and window portals. Non-view dependency notification redraws the window; notify the owning view or refresh when cached content must rebuild.

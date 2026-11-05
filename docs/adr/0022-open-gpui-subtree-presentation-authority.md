@@ -81,6 +81,19 @@ that demand, and cached commit replay cannot synchronously drive an effect-loop 
 rejected late presentation candidate cannot consume a successful-focus transaction, and later
 platform activation cannot replay an already committed local event.
 
+Pending key sequences belong to one window, focus recipient and dispatch-context stack. An
+accepted focus replacement, empty-focus adoption or final focused-handle release clears that
+sequence and defers its notification until the current effect cycle ends. A refused candidate
+preserves the original sequence, timer deadline and notification state; sealed callbacks settle
+through their admitted successor. Repeated empty blur may clear a new global-context sequence
+even when further focus claims are disabled, but suppressed, FocusStable and quiesced callers
+cannot use it to mutate focus or input. Native text-handler queries suppress IME-first printable
+routing only while a sequence belongs to the current focus and context. Replay revalidates that recipient
+after observer and input-listener callbacks; neither a changed target nor a retired window may
+receive the remaining sequence.
+An action already completed in a live window still produces its keystroke-observer report even
+when that action changes focus; that report does not authorize remaining input delivery.
+
 Ordinary deferred descendants and cached journals inherit the resolved state. Coordinate-space
 portal resets do not reset presentation. A `WindowOverlayRuntime` layer is an independently owned
 window root only through its explicit registration boundary; its local state still combines with

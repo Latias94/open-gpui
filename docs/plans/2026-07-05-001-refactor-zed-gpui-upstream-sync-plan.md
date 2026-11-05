@@ -45,11 +45,16 @@ The native upload/mapping successor now shares checked atlas admission across bo
 APIs, publishes only after upload admission and releases color staging maps through the existing
 raster owner. Color targets are cleared to transparent before blending. Its
 [qualification](../verification.md#native-atlas-upload-and-color-readback) owns the WARP pixel,
-debug-layer, lease/refusal and actual color-emoji evidence. Continue with pending-input/blur
-before substantial game-engine Editor adaptation.
+debug-layer, lease/refusal and actual color-emoji evidence. The pending-input successor now
+ports recognized-modifier interception/observation, singleton timeout, IME preference and
+accepted focus/blur/drop settlement through the existing owners. Its
+[qualification](../verification.md#pending-input-modifier-recognition-and-blur) records the
+original failures, callback-retarget corrections, exact completed-action observation and native
+text-handler consumer. These five initial correctness units precede the wider coherent refresh
+and substantial game-engine Editor adaptation.
 Reproduce each remaining defect, integrate the owning fix, preserve fork contracts, run focused
 and affected regression cohorts serially, and record actual results. Source review and dependency-
-consumer checks do not qualify the remaining initial port or a complete framework refresh.
+consumer checks alone do not qualify a complete framework refresh.
 
 ### Cached-Dependency Adaptation Requirements
 
@@ -108,8 +113,8 @@ Source comparison maps `bc7041c600`, `ba42ab9d98` and `f66ed399cd` to the existi
 Window dispatch, pending-input and focus-commit owners. Include direct prerequisites
 `dc1e815e47835095748cbb036541992abd9ac826` for pending-chord IME preference,
 `a8cae3bd77f6e1c1dde98bb1dcebba0d254dbd71` for multi-modifier recognition, and
-`e463c5ab74e016f6a16e02a8b21925b98643f9c7` for dropped-focus settlement. This is source
-assessment; none of these fixes is executed by the text-layout qualification.
+`e463c5ab74e016f6a16e02a8b21925b98643f9c7` for dropped-focus settlement. These fixes have their
+own pending-input qualification; the earlier text-layout results do not cover them.
 
 Preserve both standalone-modifier timeout/recovery tests and all six interception/observation
 regressions: bound/unbound release, raw-listener suppression, pending short/long resolution,
@@ -125,6 +130,13 @@ FocusStable/suppression rules, interaction quiescence and exact-window deferred 
 Exercise close before notification/timeout and close inside observer/replay callbacks so later
 actions or text cannot target a retired/reused window. Do not clear pending state unconditionally
 at blur entry or copy upstream frame timing over the fork's provisional-focus authority.
+
+Treat context changes on the same focus as invalidating the old sequence's IME-first override.
+Retain the original replay recipient across pending observers and replay listeners; revalidate
+after callbacks before further action/raw-key/text delivery. Preserve a completed action's
+recognized-keystroke report while its window remains live even when that action changes focus.
+Only an entire singleton-modifier prefix introduces the modifier timeout; a modifier later in
+an otherwise untimed longer chord must not change its deadline policy.
 
 PendingInputStatus/pause APIs, InputPreference event fields and FocusMap queue optimization are
 separate final-target differences, not prerequisites established by these fixes. They require
@@ -169,6 +181,38 @@ is a legitimate framework extension; the existing D3D11 backend need not remain 
 Keep any concrete engine types above the core UI execution interface. The consuming engine owns
 its Editor/game-UI tradeoff and complete rendering/input/lifecycle acceptance; this plan adds no
 Nara document, ECS, history or GPU authority to Open GPUI.
+
+### GPU Record And Color-Transfer Successor (Queued)
+
+The next source audit maps `f2817700349` and `b9419ae7281` to the existing scene records and
+renderers. This is preparation, not implemented or executed qualification. Adopt an initialized
+four-byte PaddedBool32 for Underline.wavy and PolychromeSprite.grayscale, preserving the fork's
+clip, tile generation and transform layout. Update all record constructors and affected public
+struct-literal consumers, with an explicit migration note; author-facing style and paint inputs
+remain ordinary bool values. No new Serde/schema path should admit arbitrary u32 flag values.
+
+Reconcile `scene.rs`, its Window constructors, the existing DirectX sprite upload adapter and
+the HLSL/WGSL consumers together. The current DirectX adapter already widens the bool safely;
+after the shared record is correct, remove that duplicate type and per-frame conversion rather
+than keeping two layouts. Preserve the fork's current offsets instead of copying the target's
+different tile order. Assert the flag field's own four-byte width and complete 0/1/default value,
+not just aggregate record size: the old bool layout has the same total size. Keep the existing
+Underline 88-byte and PolychromeSprite 128-byte ABI checks across actual backends. Verify the
+macOS-generated scene header and Metal shader on macOS; Windows compilation cannot cover them.
+
+Correct Windows linear/sRGB power directions through its existing shader. Use actual scene
+render/readback with non-endpoint Oklab gradient samples and an independent CPU oracle, plus
+sRGB/solid/alpha controls; endpoints or a transfer-function round trip cannot catch both reversed
+directions. Existing Window capture and the Windows test-support render-to-image path provide
+the native readback seam. Atlas readback alone and WGPU pipeline creation alone do not qualify
+scene-shader pixels. Exercise grayscale/opacity, straight/wavy/strikethrough, transform/rounded
+clip and retained/deferred consumption with existing lease/refusal controls.
+
+Keep Windows debug runtime shader compilation and release FXC output separate, and do not impose
+Windows's approximate gamma oracle byte-for-byte on WGPU's different transfer implementation.
+No source prerequisite currently establishes a compiler-floor or dependency bump for this unit;
+qualify actual compiler and independent-consumer requirements rather than assuming them. Linux,
+macOS and browser execution remain separately qualified platform scope.
 
 ## Maintained Baseline Before Engine Adaptation
 
