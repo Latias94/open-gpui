@@ -61,12 +61,12 @@ use windows::Win32::{
             SIZE_MINIMIZED, SIZE_RESTORED, SPI_SETWORKAREA, SW_MINIMIZE, SW_SHOWMAXIMIZED,
             SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE,
             SWP_NOZORDER, SWP_SHOWWINDOW, SendMessageW, SetForegroundWindow, SetWindowPos,
-            ShowWindow, TranslateMessage, WA_ACTIVE, WINDOW_EX_STYLE, WINDOW_STYLE,
+            ShowWindow, TranslateMessage, WA_ACTIVE, WA_CLICKACTIVE, WINDOW_EX_STYLE, WINDOW_STYLE,
             WINDOWPLACEMENT, WM_ACTIVATE, WM_CLOSE, WM_GETOBJECT, WM_KEYDOWN, WM_KEYUP,
             WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_MOVE, WM_NCHITTEST,
-            WM_PAINT, WM_QUIT, WM_SETTINGCHANGE, WM_SIZE, WM_SYSKEYDOWN, WM_SYSKEYUP, WNDCLASSW,
-            WS_CAPTION, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT,
-            WS_POPUP, WS_VISIBLE,
+            WM_PAINT, WM_QUIT, WM_SETFOCUS, WM_SETTINGCHANGE, WM_SIZE, WM_SYSKEYDOWN, WM_SYSKEYUP,
+            WNDCLASSW, WS_CAPTION, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+            WS_EX_TRANSPARENT, WS_POPUP, WS_VISIBLE,
         },
     },
 };
@@ -1558,10 +1558,10 @@ fn asymmetric_activation_policy_preserves_click_and_programmatic_independence() 
             focus_on_click: false,
         },
     ] {
-        unsafe {
-            let _ = SetActiveWindow(owner_hwnd);
-        }
+        crate::native_test_foreground::acquire_foreground_window(owner_hwnd)
+            .expect("the asymmetric-policy owner should acquire native foreground authority");
         assert_eq!(unsafe { GetActiveWindow() }, owner_hwnd);
+        assert_eq!(unsafe { GetForegroundWindow() }, owner_hwnd);
         let transient_owner = app.update_for_test(|cx| {
             cx.transient_window_owner(owner.into())
                 .expect("the live owner should produce a transient-owner token")
@@ -1619,22 +1619,37 @@ fn asymmetric_activation_policy_preserves_click_and_programmatic_independence() 
             assert_eq!(unsafe { GetActiveWindow() }, owner_hwnd);
         }
 
-        unsafe {
-            let _ = SetActiveWindow(owner_hwnd);
-        }
-        let _ = app.update_for_test(|cx| {
+        crate::native_test_foreground::acquire_foreground_window(owner_hwnd)
+            .expect("programmatic activation should start from the foreground owner");
+        let activation_ticket = app.update_for_test(|cx| {
             child
                 .update(cx, |_, window, _| window.activate_window())
                 .expect("asymmetric-policy child should remain live")
         });
         platform.inner.run_foreground_task();
         if policy.accepts_activation {
-            pump_messages_until("asymmetric programmatic activation", || unsafe {
-                GetActiveWindow() == child_hwnd
-            });
+            pump_messages_until_with_delay(
+                "asymmetric programmatic activation",
+                Duration::from_millis(1),
+                || {
+                    activation_ticket.snapshot().status().is_terminal()
+                        && unsafe {
+                            GetActiveWindow() == child_hwnd && GetForegroundWindow() == child_hwnd
+                        }
+                },
+            );
+            assert_eq!(
+                activation_ticket.snapshot().status(),
+                WindowActivationStatus::Terminal(WindowActivationTerminal::Activated)
+            );
         } else {
             pump_messages_until_idle("rejected asymmetric programmatic activation");
             assert_eq!(unsafe { GetActiveWindow() }, owner_hwnd);
+            assert_eq!(unsafe { GetForegroundWindow() }, owner_hwnd);
+            assert_eq!(
+                activation_ticket.snapshot().status(),
+                WindowActivationStatus::Terminal(WindowActivationTerminal::Rejected)
+            );
         }
 
         app.update_for_test(|cx| {
@@ -1749,6 +1764,24 @@ fn rejected_activation_restores_a_non_click_activating_gpui_foreground_window() 
     pump_messages_until("activation rejection target presentation", || unsafe {
         IsWindowVisible(rejected_hwnd).as_bool()
     });
+    crate::native_test_foreground::acquire_foreground_window(restore_hwnd)
+        .expect("the restoration source should reacquire foreground before rejected activation");
+    let _ = unsafe { SetFocus(Some(restore_hwnd)) };
+    assert_eq!(
+        unsafe { GetForegroundWindow() },
+        restore_hwnd,
+        "rejected activation must start from the exact restoration foreground"
+    );
+    assert_eq!(
+        unsafe { GetActiveWindow() },
+        restore_hwnd,
+        "rejected activation must start from the exact restoration thread activation"
+    );
+    assert_eq!(
+        unsafe { GetFocus() },
+        restore_hwnd,
+        "rejected activation must start from the exact restoration keyboard focus"
+    );
     rejected_native_window.revoke_activation_admission_after_next_active_status_for_test();
 
     let rejected_ticket = app.update_for_test(|cx| {
@@ -6315,6 +6348,11 @@ fn real_hwnd_activation_terminal_is_exact_and_first_terminal_wins() {
     crate::native_test_scenario::native_test_confirm_scenario_behavior("activation-terminal");
     discard_stale_quit_messages();
     let (_native_observation_guard, native_observation) = begin_native_window_test_observation();
+    let mut native_phases = Vec::new();
+    let mut record_phase = |phase: &'static str| {
+        native_phases.push((phase, native_observation.cursor()));
+    };
+    record_phase("sentinel creation");
 
     let platform = Rc::new(
         WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
@@ -6350,8 +6388,10 @@ fn real_hwnd_activation_terminal_is_exact_and_first_terminal_wins() {
         "foreground activation sentinel initial presentation",
         || unsafe { IsWindowVisible(foreground_hwnd).as_bool() },
     );
+    record_phase("sentinel foreground helper");
     crate::native_test_foreground::acquire_foreground_window(foreground_hwnd)
         .expect("activation sentinel should acquire foreground authority");
+    record_phase("sentinel focus preparation");
     let _ = unsafe { SetFocus(Some(foreground_hwnd)) };
     pump_messages_until("foreground activation sentinel focus", || unsafe {
         GetForegroundWindow() == foreground_hwnd
@@ -6360,6 +6400,8 @@ fn real_hwnd_activation_terminal_is_exact_and_first_terminal_wins() {
     });
     pump_messages_until_idle("foreground activation sentinel follow-up");
 
+    record_phase("nonactivating target creation");
+    let creation_cursor = native_observation.cursor();
     let window = app
         .update_for_test(|cx| {
             cx.open_window(
@@ -6394,22 +6436,46 @@ fn real_hwnd_activation_terminal_is_exact_and_first_terminal_wins() {
         || unsafe { IsWindowVisible(hwnd).as_bool() },
     );
     pump_messages_until_idle("ordinary native activation target follow-up");
+    let creation_activation_events = native_observation
+        .events_after(creation_cursor)
+        .into_iter()
+        .filter(|event| {
+            let identity = event.window();
+            identity.window_id() == target_registration.window_id()
+                && identity.native_generation() == target_registration.generation()
+                && matches!(
+                    event.kind(),
+                    NativeWindowTestEventKind::WindowMessage {
+                        message: NativeWindowTestMessage::Other(message),
+                        wparam,
+                        ..
+                    } if message == WM_SETFOCUS
+                        || (message == WM_ACTIVATE
+                            && matches!(wparam as u32 & 0xffff, WA_ACTIVE | WA_CLICKACTIVE))
+                )
+        })
+        .collect::<Vec<_>>();
     assert_eq!(
         unsafe { GetForegroundWindow() },
         foreground_hwnd,
-        "ordinary detached HWND creation must not steal the foreground"
+        "ordinary detached HWND creation must not steal the foreground; target={hwnd:?}; activation_or_focus_events={creation_activation_events:x?}"
     );
     assert_eq!(
         unsafe { GetActiveWindow() },
         foreground_hwnd,
-        "ordinary detached HWND creation must not steal thread activation"
+        "ordinary detached HWND creation must not steal thread activation; target={hwnd:?}; activation_or_focus_events={creation_activation_events:x?}"
     );
     assert_eq!(
         unsafe { GetFocus() },
         foreground_hwnd,
-        "ordinary detached HWND creation must not steal keyboard focus"
+        "ordinary detached HWND creation must not steal keyboard focus; target={hwnd:?}; activation_or_focus_events={creation_activation_events:x?}"
+    );
+    assert!(
+        creation_activation_events.is_empty(),
+        "ordinary detached HWND creation must not activate or focus the exact target; target={hwnd:?}; activation_or_focus_events={creation_activation_events:x?}"
     );
 
+    record_phase("queued activation");
     let diagnostic_cursor = app.update_for_test(|cx| {
         cx.native_boundary_diagnostics(NativeBoundaryDiagnosticCursor::default())
             .cursor
@@ -6536,8 +6602,10 @@ fn real_hwnd_activation_terminal_is_exact_and_first_terminal_wins() {
             && diagnostic.disposition == NativeBoundaryDisposition::Delivered { input_result: None }
     }));
 
+    record_phase("sentinel helper before backend rejection");
     crate::native_test_foreground::acquire_foreground_window(foreground_hwnd)
         .expect("activation sentinel should reacquire foreground authority");
+    record_phase("sentinel focus before backend rejection");
     let _ = unsafe { SetFocus(Some(foreground_hwnd)) };
     pump_messages_until("activation sentinel reactivation", || unsafe {
         GetForegroundWindow() == foreground_hwnd
@@ -6555,6 +6623,7 @@ fn real_hwnd_activation_terminal_is_exact_and_first_terminal_wins() {
         admitted_activation_facts.accepts_activation,
         "the backend-rejection phase must retain an admitted activation policy"
     );
+    record_phase("backend rejection");
     native_window.reject_next_activation_command_for_test();
     let backend_rejected_observations = Rc::new(RefCell::new(Vec::new()));
     let backend_rejection_cursor = app.update_for_test(|cx| {
@@ -6626,9 +6695,11 @@ fn real_hwnd_activation_terminal_is_exact_and_first_terminal_wins() {
         cx.native_boundary_diagnostics(NativeBoundaryDiagnosticCursor::default())
             .cursor
     });
+    record_phase("target helper after backend rejection");
     crate::native_test_foreground::acquire_foreground_window(hwnd).expect(
         "the activation target should accept real native foreground after backend rejection",
     );
+    record_phase("target focus after backend rejection");
     let _ = unsafe { SetFocus(Some(hwnd)) };
     pump_messages_until(
         "positive native activation after backend rejection",
@@ -6662,8 +6733,10 @@ fn real_hwnd_activation_terminal_is_exact_and_first_terminal_wins() {
         );
     }
 
+    record_phase("sentinel helper before admitted activation");
     crate::native_test_foreground::acquire_foreground_window(foreground_hwnd)
         .expect("activation sentinel should own foreground before deterministic success");
+    record_phase("sentinel focus before admitted activation");
     let _ = unsafe { SetFocus(Some(foreground_hwnd)) };
     pump_messages_until("deterministic activation source focus", || unsafe {
         GetForegroundWindow() == foreground_hwnd
@@ -6672,6 +6745,7 @@ fn real_hwnd_activation_terminal_is_exact_and_first_terminal_wins() {
     });
     pump_messages_until_idle("deterministic activation source focus follow-up");
 
+    record_phase("admitted activation");
     let deterministic_activation_cursor = app.update_for_test(|cx| {
         cx.native_boundary_diagnostics(NativeBoundaryDiagnosticCursor::default())
             .cursor
@@ -6716,8 +6790,10 @@ fn real_hwnd_activation_terminal_is_exact_and_first_terminal_wins() {
         "an exact-focused admitted target must dispatch and complete readback without relying on the OS-rejection branch",
     );
 
+    record_phase("sentinel helper before policy rejection");
     crate::native_test_foreground::acquire_foreground_window(foreground_hwnd)
         .expect("activation sentinel should own foreground before policy rejection");
+    record_phase("sentinel focus before policy rejection");
     let _ = unsafe { SetFocus(Some(foreground_hwnd)) };
     pump_messages_until("pre-policy activation sentinel focus", || unsafe {
         GetForegroundWindow() == foreground_hwnd
@@ -6726,6 +6802,7 @@ fn real_hwnd_activation_terminal_is_exact_and_first_terminal_wins() {
     });
     pump_messages_until_idle("pre-policy activation sentinel focus follow-up");
 
+    record_phase("policy rejection");
     let nonprogrammatic_policy_ticket = app.update_for_test(|cx| {
         window
             .update(cx, |_, window, _| {
@@ -6796,8 +6873,10 @@ fn real_hwnd_activation_terminal_is_exact_and_first_terminal_wins() {
         cx.native_boundary_diagnostics(NativeBoundaryDiagnosticCursor::default())
             .cursor
     });
+    record_phase("target helper after policy rejection");
     crate::native_test_foreground::acquire_foreground_window(hwnd)
         .expect("the click-focusable activation target should accept real native foreground");
+    record_phase("target focus after policy rejection");
     let _ = unsafe { SetFocus(Some(hwnd)) };
     pump_messages_until(
         "real positive native activation after policy rejection",
@@ -6829,6 +6908,7 @@ fn real_hwnd_activation_terminal_is_exact_and_first_terminal_wins() {
         "a later exact native focus observation must not revive the superseded request"
     );
 
+    record_phase("activation policy restoration");
     let restored_policy_ticket = app.update_for_test(|cx| {
         window
             .update(cx, |_, window, _| {
@@ -6851,8 +6931,10 @@ fn real_hwnd_activation_terminal_is_exact_and_first_terminal_wins() {
     assert!(restored_policy.facts.accepts_activation);
     assert!(restored_policy.facts.focus_on_click);
 
+    record_phase("sentinel helper before target loss");
     crate::native_test_foreground::acquire_foreground_window(foreground_hwnd)
         .expect("activation sentinel should own foreground before target loss");
+    record_phase("sentinel focus before target loss");
     let _ = unsafe { SetFocus(Some(foreground_hwnd)) };
     pump_messages_until("pre-close sentinel focus", || unsafe {
         GetForegroundWindow() == foreground_hwnd
@@ -6861,6 +6943,7 @@ fn real_hwnd_activation_terminal_is_exact_and_first_terminal_wins() {
     });
     pump_messages_until_idle("pre-close sentinel focus follow-up");
 
+    record_phase("target loss");
     let target_loss_cursor = app.update_for_test(|cx| {
         cx.native_boundary_diagnostics(NativeBoundaryDiagnosticCursor::default())
             .cursor
@@ -6937,6 +7020,7 @@ fn real_hwnd_activation_terminal_is_exact_and_first_terminal_wins() {
         "later stale work must not overwrite or redeliver the WindowClosed terminal"
     );
 
+    record_phase("sentinel teardown");
     app.update_for_test(|cx| foreground.update(cx, |_, window, cx| window.remove_window(cx)))
         .expect("foreground activation sentinel should close");
     pump_messages_until("activation terminal test teardown", || {
@@ -6977,7 +7061,37 @@ fn real_hwnd_activation_terminal_is_exact_and_first_terminal_wins() {
                     } if keyboard_messages.contains(&message)
                 )
             }),
-            "the exact {window_name} WndProc stream must not contain synthesized keyboard input"
+            "the exact {window_name} WndProc stream must not contain synthesized keyboard input; keyboard_events={:?}",
+            exact_wndproc_events
+                .iter()
+                .filter_map(|event| match event.kind() {
+                    NativeWindowTestEventKind::WindowMessage {
+                        message: NativeWindowTestMessage::Other(message),
+                        wparam,
+                        lparam,
+                        extra_info,
+                        ..
+                    } if keyboard_messages.contains(&message) => {
+                        let phase = native_phases
+                            .iter()
+                            .rev()
+                            .find_map(|(phase, cursor)| {
+                                native_observation
+                                    .any_after(*cursor, |candidate| {
+                                        candidate.ordinal() == event.ordinal()
+                                    })
+                                    .then_some(*phase)
+                            })
+                            .unwrap_or("before phase tracking");
+                        Some(format!(
+                            "ordinal={} identity={:?} phase={phase} message={message:#06x} wParam={wparam:#x} lParam={lparam:#x} extra_info={extra_info:#x}",
+                            event.ordinal(),
+                            event.window(),
+                        ))
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
         );
     }
 }

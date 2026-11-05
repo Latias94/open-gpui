@@ -9197,6 +9197,7 @@ unsafe extern "system" fn window_procedure(
                 unsafe { &*ptr },
                 hwnd,
                 msg,
+                wparam,
                 lparam,
             )
         }

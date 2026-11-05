@@ -8,7 +8,7 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 use windows::Win32::{
-    Foundation::{HWND, LPARAM, POINT},
+    Foundation::{HWND, LPARAM, POINT, WPARAM},
     Graphics::Gdi::ClientToScreen,
     UI::{
         Controls::WM_MOUSELEAVE,
@@ -128,6 +128,8 @@ pub enum NativeWindowTestMessageDisposition {
 pub enum NativeWindowTestEventKind {
     WindowMessage {
         message: NativeWindowTestMessage,
+        wparam: usize,
+        lparam: isize,
         extra_info: isize,
         client_point: Option<NativeWindowTestPoint>,
         screen_point: Option<NativeWindowTestPoint>,
@@ -312,6 +314,8 @@ pub(crate) struct PendingNativeWindowMessageObservation {
     window: NativeWindowTestIdentity,
     recipient: HWND,
     message: NativeWindowTestMessage,
+    wparam: usize,
+    lparam: isize,
     extra_info: isize,
     client_point: Option<NativeWindowTestPoint>,
     screen_point: Option<NativeWindowTestPoint>,
@@ -325,6 +329,8 @@ impl PendingNativeWindowMessageObservation {
             window: self.window,
             kind: NativeWindowTestEventKind::WindowMessage {
                 message: self.message,
+                wparam: self.wparam,
+                lparam: self.lparam,
                 extra_info: self.extra_info,
                 client_point: self.client_point,
                 screen_point: self.screen_point,
@@ -340,6 +346,7 @@ pub(crate) fn begin_window_message_observation(
     window: &WindowsWindowInner,
     hwnd: HWND,
     message: u32,
+    wparam: WPARAM,
     lparam: LPARAM,
 ) -> Option<PendingNativeWindowMessageObservation> {
     observation_is_active().then(|| {
@@ -354,6 +361,8 @@ pub(crate) fn begin_window_message_observation(
             window: NativeWindowTestIdentity::from_registration(window.registration),
             recipient: hwnd,
             message,
+            wparam: wparam.0,
+            lparam: lparam.0,
             extra_info: unsafe { GetMessageExtraInfo() }.0,
             client_point,
             screen_point,
