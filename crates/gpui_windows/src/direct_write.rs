@@ -8,6 +8,7 @@ use ::open_gpui_util::{ResultExt, maybe};
 use anyhow::{Context, Result};
 use open_gpui_collections::HashMap;
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
+use smallvec::SmallVec;
 use windows::{
     Win32::{
         Foundation::*,
@@ -518,6 +519,71 @@ impl DirectWriteState {
         font_size: Pixels,
         font_runs: &[FontRun],
     ) -> Result<LineLayout> {
+        if !text.contains(is_line_separator) {
+            return self.layout_line_without_separators(components, text, font_size, font_runs);
+        }
+
+        let mut layout = LineLayout {
+            font_size,
+            len: text.len(),
+            ..Default::default()
+        };
+        let mut remaining_runs = font_runs;
+        let mut run_offset = 0;
+        let mut text_offset = 0;
+        let mut segment_runs = SmallVec::<[FontRun; 4]>::new();
+        for segment in text.split_inclusive(is_line_separator) {
+            segment_runs.clear();
+            let mut remaining_bytes = segment.len();
+            while remaining_bytes > 0 {
+                let Some(run) = remaining_runs.first() else {
+                    break;
+                };
+                let len = remaining_bytes.min(run.len - run_offset);
+                if len > 0 {
+                    segment_runs.push(FontRun {
+                        len,
+                        font_id: run.font_id,
+                    });
+                }
+                remaining_bytes -= len;
+                run_offset += len;
+                if run_offset == run.len {
+                    remaining_runs = &remaining_runs[1..];
+                    run_offset = 0;
+                }
+            }
+
+            let segment_layout =
+                self.layout_line_without_separators(components, segment, font_size, &segment_runs)?;
+            for mut run in segment_layout.runs {
+                for glyph in &mut run.glyphs {
+                    glyph.index += text_offset;
+                    glyph.position.x += layout.width;
+                }
+                if let Some(last) = layout.runs.last_mut()
+                    && last.font_id == run.font_id
+                {
+                    last.glyphs.append(&mut run.glyphs);
+                } else {
+                    layout.runs.push(run);
+                }
+            }
+            layout.width += segment_layout.width;
+            layout.ascent = layout.ascent.max(segment_layout.ascent);
+            layout.descent = layout.descent.max(segment_layout.descent);
+            text_offset += segment.len();
+        }
+        Ok(layout)
+    }
+
+    fn layout_line_without_separators(
+        &mut self,
+        components: &DirectWriteComponents,
+        text: &str,
+        font_size: Pixels,
+        font_runs: &[FontRun],
+    ) -> Result<LineLayout> {
         if font_runs.is_empty() {
             return Ok(LineLayout {
                 font_size,
@@ -608,15 +674,16 @@ impl DirectWriteState {
             }
 
             let mut runs = Vec::new();
-            let renderer_context = RendererContext {
+            let mut renderer_context = RendererContext {
                 text_system: self,
                 components,
                 index_converter: StringIndexConverter::new(text),
                 runs: &mut runs,
+                layout: &text_layout,
                 width: 0.0,
             };
             text_layout.Draw(
-                Some((&raw const renderer_context).cast::<c_void>()),
+                Some((&raw mut renderer_context).cast::<c_void>().cast_const()),
                 &components.text_renderer.0,
                 0.0,
                 0.0,
@@ -1364,6 +1431,7 @@ struct RendererContext<'t, 'a, 'b> {
     components: &'a DirectWriteComponents,
     index_converter: StringIndexConverter<'a>,
     runs: &'b mut Vec<ShapedRun>,
+    layout: &'b IDWriteTextLayout,
     width: f32,
 }
 
@@ -1472,10 +1540,18 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
     ) -> windows::core::Result<()> {
         let glyphrun = unsafe { &*glyphrun };
         let glyph_count = glyphrun.glyphCount as usize;
-        if glyph_count == 0 {
-            return Ok(());
-        }
         let desc = unsafe { &*glyphrundescription };
+        let text = if glyph_count == 0 {
+            Some(unsafe {
+                slice_from_nullable(
+                    desc.string.as_ptr(),
+                    desc.stringLength as usize,
+                    "DirectWrite returned a null run string",
+                )?
+            })
+        } else {
+            None
+        };
         let context = unsafe { &mut *(clientdrawingcontext.cast::<RendererContext>().cast_mut()) };
         let Some(font_face) = glyphrun.fontFace.as_ref() else {
             return Ok(());
@@ -1517,46 +1593,102 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
                 Ok,
             )?;
 
-        let color_font = unsafe { font_face.IsColorFont().as_bool() };
-
-        let glyph_ids = unsafe { std::slice::from_raw_parts(glyphrun.glyphIndices, glyph_count) };
-        let glyph_advances =
-            unsafe { std::slice::from_raw_parts(glyphrun.glyphAdvances, glyph_count) };
-        let glyph_offsets =
-            unsafe { std::slice::from_raw_parts(glyphrun.glyphOffsets, glyph_count) };
-        let cluster_map =
-            unsafe { std::slice::from_raw_parts(desc.clusterMap, desc.stringLength as usize) };
-
-        let cluster_analyzer = ClusterAnalyzer::new(cluster_map, glyph_count);
-        let mut utf16_idx = desc.textPosition as usize;
-        let mut glyph_idx = 0;
-        let mut glyphs = Vec::with_capacity(glyph_count);
-        for (cluster_utf16_len, cluster_glyph_count) in cluster_analyzer {
-            context.index_converter.advance_to_utf16_ix(utf16_idx);
-            utf16_idx += cluster_utf16_len;
-            for (cluster_glyph_idx, glyph_id) in glyph_ids
-                [glyph_idx..(glyph_idx + cluster_glyph_count)]
-                .iter()
-                .enumerate()
-            {
-                let id = GlyphId(*glyph_id as u32);
-                let is_emoji =
-                    color_font && is_color_glyph(font_face, id, &context.components.factory);
-                let this_glyph_idx = glyph_idx + cluster_glyph_idx;
+        if let Some(text) = text {
+            let mut glyphs = Vec::new();
+            for (offset, &character) in text.iter().enumerate() {
+                if character != u16::from(b'\t') {
+                    continue;
+                }
+                let position = desc.textPosition + offset as u32;
+                let mut x = 0.0;
+                let mut y = 0.0;
+                let mut metrics = DWRITE_HIT_TEST_METRICS::default();
+                let mut space = 0;
+                unsafe {
+                    context.layout.HitTestTextPosition(
+                        position,
+                        false,
+                        &mut x,
+                        &mut y,
+                        &mut metrics,
+                    )?;
+                    font_face.GetGlyphIndices(&u32::from(b' '), 1, &mut space)?;
+                }
+                context
+                    .index_converter
+                    .advance_to_utf16_ix(position as usize);
                 glyphs.push(ShapedGlyph {
-                    id,
-                    position: point(
-                        px(context.width + glyph_offsets[this_glyph_idx].advanceOffset),
-                        px(-glyph_offsets[this_glyph_idx].ascenderOffset),
-                    ),
+                    id: GlyphId(u32::from(space)),
+                    position: point(px(context.width), px(0.0)),
                     index: context.index_converter.utf8_ix,
-                    is_emoji,
+                    is_emoji: false,
                 });
-                context.width += glyph_advances[this_glyph_idx];
+                context.width += metrics.width;
             }
-            glyph_idx += cluster_glyph_count;
+            if !glyphs.is_empty() {
+                context.runs.push(ShapedRun { font_id, glyphs });
+            }
+        } else {
+            let color_font = unsafe { font_face.IsColorFont().as_bool() };
+            let glyph_ids = unsafe {
+                slice_from_nullable(
+                    glyphrun.glyphIndices,
+                    glyph_count,
+                    "DirectWrite returned a null glyph indices array",
+                )?
+            };
+            let glyph_advances = unsafe {
+                slice_from_nullable(
+                    glyphrun.glyphAdvances,
+                    glyph_count,
+                    "DirectWrite returned a null glyph advances array",
+                )?
+            };
+            let glyph_offsets = unsafe {
+                slice_from_nullable(
+                    glyphrun.glyphOffsets,
+                    glyph_count,
+                    "DirectWrite returned a null glyph offsets array",
+                )?
+            };
+            let cluster_map = unsafe {
+                slice_from_nullable(
+                    desc.clusterMap,
+                    desc.stringLength as usize,
+                    "DirectWrite returned a null cluster map",
+                )?
+            };
+            let cluster_analyzer = ClusterAnalyzer::new(cluster_map, glyph_count);
+            let mut utf16_idx = desc.textPosition as usize;
+            let mut glyph_idx = 0;
+            let mut glyphs = Vec::with_capacity(glyph_count);
+            for (cluster_utf16_len, cluster_glyph_count) in cluster_analyzer {
+                context.index_converter.advance_to_utf16_ix(utf16_idx);
+                utf16_idx += cluster_utf16_len;
+                for (cluster_glyph_idx, glyph_id) in glyph_ids
+                    [glyph_idx..(glyph_idx + cluster_glyph_count)]
+                    .iter()
+                    .enumerate()
+                {
+                    let id = GlyphId(*glyph_id as u32);
+                    let is_emoji =
+                        color_font && is_color_glyph(font_face, id, &context.components.factory);
+                    let this_glyph_idx = glyph_idx + cluster_glyph_idx;
+                    glyphs.push(ShapedGlyph {
+                        id,
+                        position: point(
+                            px(context.width + glyph_offsets[this_glyph_idx].advanceOffset),
+                            px(-glyph_offsets[this_glyph_idx].ascenderOffset),
+                        ),
+                        index: context.index_converter.utf8_ix,
+                        is_emoji,
+                    });
+                    context.width += glyph_advances[this_glyph_idx];
+                }
+                glyph_idx += cluster_glyph_count;
+            }
+            context.runs.push(ShapedRun { font_id, glyphs });
         }
-        context.runs.push(ShapedRun { font_id, glyphs });
         Ok(())
     }
 
@@ -1602,6 +1734,27 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
             E_NOTIMPL,
             "DrawInlineObject unimplemented",
         ))
+    }
+}
+
+/// Converts a native optional array while rejecting null pointers with a nonzero length.
+///
+/// # Safety
+///
+/// A non-null pointer must reference an aligned initialized array of `len` elements that
+/// remains valid for the returned lifetime.
+unsafe fn slice_from_nullable<'a, T>(
+    ptr: *const T,
+    len: usize,
+    null_error_message: &str,
+) -> windows::core::Result<&'a [T]> {
+    if ptr.is_null() {
+        if len != 0 {
+            return Err(Error::new(E_INVALIDARG, null_error_message));
+        }
+        Ok(&[])
+    } else {
+        Ok(unsafe { std::slice::from_raw_parts(ptr, len) })
     }
 }
 
@@ -1713,9 +1866,6 @@ fn apply_font_features(
     features: &FontFeatures,
 ) -> Result<()> {
     let tag_values = features.tag_value_list();
-    if tag_values.is_empty() {
-        return Ok(());
-    }
 
     // All of these features are enabled by default by DirectWrite.
     // If you want to (and can) peek into the source of DirectWrite
@@ -1876,6 +2026,13 @@ fn is_color_glyph(
 }
 
 const DEFAULT_LOCALE_NAME: PCWSTR = windows::core::w!("en-US");
+
+fn is_line_separator(character: char) -> bool {
+    matches!(character, '\u{2028}' | '\u{2029}')
+}
+
+#[cfg(test)]
+mod layout_tests;
 
 #[cfg(test)]
 mod tests {

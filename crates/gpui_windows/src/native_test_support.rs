@@ -76,6 +76,8 @@ use windows::core::{PCWSTR, w};
 mod native_cache_dependency_tests;
 #[path = "native_paint_tests.rs"]
 mod native_paint_tests;
+#[path = "native_text_layout_tests.rs"]
+mod native_text_layout_tests;
 #[path = "native_text_pool_tests.rs"]
 mod native_text_pool_tests;
 

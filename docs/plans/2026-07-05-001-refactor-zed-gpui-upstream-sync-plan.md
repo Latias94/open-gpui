@@ -36,10 +36,16 @@ the original failures, admitted/rejected-candidate controls, stationary-pointer 
 873 Core cases, 2,964 affected consumer cases and 165 selected Windows cases. Four existing
 interactive Windows cases remain skipped. The native cache regression proves actual submitted
 frames and retirement, while the existing non-view invalidation limitation remains explicit.
-Continue with text layout and pending-input/blur before substantial game-engine Editor adaptation.
+The text-layout successor now preserves native tab advances, single-baseline Unicode separators,
+default/explicit DirectWrite font features and wrapped hit-test error semantics. Its
+[qualification](../verification.md#native-text-layout-and-wrapped-hit-testing) records red
+regressions, final Core 877, affected consumers 2,964 and selected Windows 173, including actual
+native text paint/submission and exact retirement. Four existing interactive cases remain skipped.
+Continue with pending-input/blur and the queued native upload/mapping safety corrections before
+substantial game-engine Editor adaptation.
 Reproduce each remaining defect, integrate the owning fix, preserve fork contracts, run focused
 and affected regression cohorts serially, and record actual results. Source review and dependency-
-consumer checks do not qualify the two pending ports or a complete framework refresh.
+consumer checks do not qualify the remaining initial port or a complete framework refresh.
 
 ### Cached-Dependency Adaptation Requirements
 
@@ -62,6 +68,63 @@ hover changes discovered during paint, before closing this unit. Verify bounded 
 against the fork's candidate acceptance rather than assuming a follow-up frame is already a
 qualified same-frame result. Retain transform/clip/reveal and rejected-candidate controls; source
 comparison alone does not qualify cached execution.
+
+### Text-Layout Adaptation Requirements
+
+Port the complete behavior of `0294cfb58e`, `979cd3fdf0`, `ac6818fb2d` and `e71963a599`
+through the existing DirectWrite and LineLayout owners. Preserve the source string and native tab
+policy: zero-glyph tab runs use the native layout's hit-test advances and retain invisible glyph
+entries for byte/caret mapping. Do not replace tabs with spaces or choose a new cross-platform
+tab interval. Compare native metrics across fonts, sizes, split font runs, leading/trailing tabs,
+multi-byte text and the existing logical-order RTL controls.
+
+Keep Unicode U+2028/U+2029 on a single logical baseline by shaping native segments and rebasing
+their original byte indices and glyph positions. Retain source separators, font-run partitions,
+zero-width pieces and aggregate ascent/descent. Default empty font-feature configuration must
+apply DirectWrite's standard liga/clig/calt features while preserving explicit per-tag disabling.
+Use live native typography and layout results for these tests. Adapt the upstream cursor fixture
+through the fork's existing `ShapedLine::split_at`; adopting the later forward-cursor optimization
+is not required to preserve these piece/text/width assertions.
+
+Wrapped exact hit testing must return `Err` at the current wrapped row's end when floating-point
+rounding leaves a position inside that row but outside the unwrapped layout. Keep closest-index,
+UTF-8 byte boundaries, nonzero row origins and caret affinity unchanged. A constructed shaper
+output regression establishes this consumer boundary; it does not establish a particular native
+font's rounding behavior.
+
+Inspect `89e8a4b9ec` prerequisites when adapting DirectWrite callbacks. A mutable renderer context
+must originate from a mutable pointer; nullable native arrays must admit null only for zero
+length. Reconcile its remaining raster/atlas changes with the fork's admission and resource
+owners before calling that broader hardening commit covered. Preserve candidate rejection,
+font/style cache identity, native submission and teardown through the affected regression cohorts.
+
+### Pending-Input Adaptation Requirements
+
+Source comparison maps `bc7041c600`, `ba42ab9d98` and `f66ed399cd` to the existing Keystroke,
+Window dispatch, pending-input and focus-commit owners. Include direct prerequisites
+`dc1e815e47835095748cbb036541992abd9ac826` for pending-chord IME preference,
+`a8cae3bd77f6e1c1dde98bb1dcebba0d254dbd71` for multi-modifier recognition, and
+`e463c5ab74e016f6a16e02a8b21925b98643f9c7` for dropped-focus settlement. This is source
+assessment; none of these fixes is executed by the text-layout qualification.
+
+Preserve both standalone-modifier timeout/recovery tests and all six interception/observation
+regressions: bound/unbound release, raw-listener suppression, pending short/long resolution,
+combined shortcut release and consumed-modifier deadline preservation. Retain the complete
+pending InputHandler test, including IME preference recovery, completed chords and ordinary
+text replay. Distinguish multi-modifier gestures from a later genuine standalone modifier.
+
+Empty focus, repeated blur, disabled-focus blur and released current handles must settle pending
+input through their owning accepted transition. Successful sibling focus changes clear it;
+unbound/suppressed targets retain it. Refused focus/blur candidates keep both the original chord
+deadline and notification state until an admitted retry. Preserve sealed-callback deferred blur,
+FocusStable/suppression rules, interaction quiescence and exact-window deferred notification.
+Exercise close before notification/timeout and close inside observer/replay callbacks so later
+actions or text cannot target a retired/reused window. Do not clear pending state unconditionally
+at blur entry or copy upstream frame timing over the fork's provisional-focus authority.
+
+PendingInputStatus/pause APIs, InputPreference event fields and FocusMap queue optimization are
+separate final-target differences, not prerequisites established by these fixes. They require
+their own coherent API/consumer disposition rather than a new focus/input owner or scanner.
 
 After those units, compare a coherent text/framework refresh, including dependency/toolchain
 changes, before expanding the Editor component implementation. A game-engine rendering adapter

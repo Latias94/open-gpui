@@ -362,6 +362,78 @@ but does not dirty an otherwise clean cached view. Notify that view or explicitl
 its content must rebuild. These ownership/cache regressions establish no frame-time, allocation,
 font-generation, OS composition, engine View or complete upstream-refresh qualification.
 
+## Native Text Layout And Wrapped Hit Testing
+
+The successor to `7a1bf6d73d4` ports `0294cfb58e`, `979cd3fdf0`, `ac6818fb2d` and
+`e71963a599` against the fixed Zed target `635026fabc38440fce5e1767d125026a17b12012`.
+DirectWrite keeps its native tab policy and the original UTF-8 source. Zero-glyph tab drawing
+runs query native hit-test advances and retain invisible glyphs for caret/index mapping.
+U+2028/U+2029 native segments are rebased onto one logical baseline, retaining their source byte
+indices, font runs and aggregate vertical metrics. Empty feature configuration now applies
+liga/clig/calt defaults, while explicit per-tag disabling remains authoritative.
+
+Wrapped exact hit testing returns the current row's end in the floating-point gap where its
+unwrapped lookup returns `None`. The constructed shaper regression uses a trailing zero-width
+glyph two float steps beyond the unwrapped width; it reproduces the consuming boundary, not a
+specific native font's shaping process. Exact/closest distinctions, offset rows, UTF-8 byte
+indices and caret affinity retain their existing contracts.
+
+The first Core run passed two controls and reproduced two `unwrap()` panics
+(`abd96d72-a6cc-44db-9060-7feb3c1e4ac1`). After the owning fix, the four focused cases passed
+(`14e48768-4c45-4ba5-a3ca-623034408286`). The Windows fixture first required API adaptation:
+this fork constructs DirectWrite from its existing `DirectXDevices`, and its `ShapedLine::split_at`
+preserves the upstream fixture's piece/text/width assertions without adding the later cursor
+optimization. The corrected red baseline passed the explicit-disable control and failed default
+typography, tabs and both separator cases (`fbc5ba64-c7fc-497b-baa8-ef710f049cf2`). Default
+typography contained zero configured features instead of three; a standalone tab had no indexed
+caret glyph. No failing behavioral assertion was removed.
+
+The initial corrected Windows cohort passed 6/6
+(`8266f330-6bb1-4d68-87b5-ab758f613ace`), including nullable native-array controls. The callback
+array helper and mutable context pointer adapt relevant prerequisites from `89e8a4b9ec`; the
+pointer originates from a mutable binding and stays within synchronous native Draw. The remaining
+color staging-map and atlas upload changes are separately queued. In particular, skipping an
+upload while publishing a tile would violate the fork's admission/lease contract.
+
+Independent review found no P1/P2 in the Core or DirectWrite changes. It identified a coverage
+limit: equal-font TextRun fragments can coalesce before native shaping. A further distinct-font
+tab fixture therefore compares actual font identities, native hit positions and complete native
+width. Live typography checks establish configured feature tables, without claiming a particular
+font's final ligature glyph or screen pixels. Non-null native pointers still rely on the native
+length/alignment/lifetime contract; helper admission is not a replacement for that contract.
+
+The final Core library passed 877/877, with no skipped cases
+(`f2907a0c-0a38-46c6-a059-64df8cbab295`). The affected UI core/components/docking/Canvas
+library and integration cohort passed 2,964/2,964 across 25 binaries, with no skipped cases
+(`9d9eea36-f49a-4cee-9acd-d43109cb6417`). The final focused native cohort passed 8/8, including
+the distinct-font oracle and the new submitted-frame trajectory
+(`cd1bb896-419c-438b-99a0-ef742161d154`). The full Windows library then passed 173/173, with the
+same four existing interactive cases skipped (`4cd55b68-f23d-4433-8c33-46580e03c7e2`). All ran
+on Windows 11 with Rust 1.95.0, one build job and serial tests in the shared target.
+
+The new native fixture uses public Render/canvas, WindowTextSystem and ShapedLine paint through
+the platform's real shared DirectWrite/DirectX path. It retains the full source and actual paint
+result for text containing tabs, supplementary characters and both Unicode separators. The paint
+record is tied to the newer accepted/nonempty renderer-Submitted generation, current rendered
+generation and submitted diagnostics. A changed source followed by `cx.notify()` reaches a newer
+submitted generation without a forced-refresh substitute. VSync also requests frames; its request
+counter is activity evidence rather than independent proof of notification causality. Teardown
+checks the original HWND registration, one retirement ticket's ordered phases, platform window,
+OLE and text-system release.
+
+These receipts are not glyph/screen pixel readback, native keyboard/IME, full bidi/complex shaping,
+separator/tab policy generalization or a performance comparison. Locked workspace all-target and
+independently locked consumer all-target/all-feature checks passed, including the actual WGPU
+renderer. Core/Windows all-target Clippy passed with `-D clippy::correctness`; existing non-denied
+test/docking warnings remain. Root/consumer formatting, import boundary, public-document links,
+release documents and public API tier checks passed. The declared Rust 1.92 floor and dependency
+graph remain unchanged; this unit executes Rust 1.95.0 rather than qualifying that compiler floor.
+
+```sh
+cargo nextest run --locked -p open-gpui --lib --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --locked -p open-gpui-windows --all-features --lib -E 'test(direct_write::layout_tests::) or test(native_text_layout_tests::)' --test-threads=1 --no-fail-fast --no-tests fail
+```
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:

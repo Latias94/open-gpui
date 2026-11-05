@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-06T00:00:00+08:00
+timestamp: 2026-11-06T00:51:00+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -43,9 +43,13 @@ verified_by:
   opacity. Final Core 873, affected UI/component/docking/Canvas 2,964 and selected Windows 165
   pass; four existing interactive cases remain skipped. The native cache matrix proves actual
   submitted frames and exact retirement. The verification guide retains the initial failures,
-  activation-fixture corrections and notification/performance limits. Two initial correctness
-  units remain before the broader text/layout/API refresh and engine-specific Editor adaptation;
-  this is not a completed framework sync.
+  activation-fixture corrections and notification/performance limits. The text-layout successor
+  now preserves native tabs, single-baseline Unicode separators, default/explicit font features
+  and wrapped hit-test error semantics. Its final Core 877, affected consumers 2,964 and Windows
+  173 pass, with the same four interactive cases skipped. A new native text trajectory checks
+  full source, actual shape/paint, a notified newer Submitted frame and exact release. The
+  remaining initial correctness unit is pending-input/blur; broader text/layout/API refresh and
+  engine-specific Editor adaptation remain incomplete.
 - A game-engine Editor is the selecting consumer. Framework maintenance and rendering-adapter
   refactors are allowed; Nara document, ECS and history types do not enter the core framework.
 
@@ -74,7 +78,10 @@ historical scope and is not current branch or CI qualification.
 
 # Next Action
 
-- Continue with text layout and pending-input/blur through their owning regression cohorts.
+- Continue with pending-input/blur and the queued native upload/mapping safety corrections.
+  The current plan records upstream recognition/interception/IME and dropped-focus prerequisites,
+  admitted versus refused focus transitions and exact-window close controls. Atlas admission must
+  reject malformed bytes before publishing a tile; preserve existing exact-instance leases.
   Preserve the cache successor's admitted read/opacity publication and bounded convergence,
   including the explicit non-view/external-group notification limits. Preserve the arena successor's
   AppCell native delivery, candidate-frame rules and explicit post-borrow command authority. Qualify touchpad

@@ -303,7 +303,7 @@ impl WrappedLineLayout {
 
     fn _index_for_position(
         &self,
-        mut position: Point<Pixels>,
+        position: Point<Pixels>,
         line_height: Pixels,
         closest: bool,
     ) -> Result<usize, usize> {
@@ -350,10 +350,9 @@ impl WrappedLineLayout {
                     .unwrapped_layout
                     .closest_index_for_x(position_in_unwrapped_line.x))
             } else {
-                Ok(self
-                    .unwrapped_layout
+                self.unwrapped_layout
                     .index_for_x(position_in_unwrapped_line.x)
-                    .unwrap())
+                    .ok_or(wrapped_line_end_index)
             }
         }
     }
@@ -361,7 +360,7 @@ impl WrappedLineLayout {
     /// Returns the pixel position for the given byte index.
     pub fn position_for_index(&self, index: usize, line_height: Pixels) -> Option<Point<Pixels>> {
         let mut line_start_ix = 0;
-        let mut line_end_indices = self
+        let line_end_indices = self
             .wrap_boundaries
             .iter()
             .map(|wrap_boundary| {
@@ -978,6 +977,9 @@ impl AsCacheKeyRef for CacheKeyRef<'_> {
         *self
     }
 }
+
+#[cfg(test)]
+mod hit_test_tests;
 
 #[cfg(test)]
 mod tests {
