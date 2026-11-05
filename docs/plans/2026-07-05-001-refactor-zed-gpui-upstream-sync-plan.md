@@ -63,6 +63,29 @@ Keep any concrete engine types above the core UI execution interface. The consum
 its Editor/game-UI tradeoff and complete rendering/input/lifecycle acceptance; this plan adds no
 Nara document, ECS, history or GPU authority to Open GPUI.
 
+## Maintained Baseline Before Engine Adaptation
+
+Finish a bounded framework refresh against the recorded November 5 Zed revision before expanding
+Nara-specific UI implementation. The five correctness units are the first dependency-ordered
+part of that refresh, not its completion criterion. Follow them with the coherent text, input,
+layout and dependency/API comparison recorded in the candidate queue. Classify relevant framework
+differences as ported, already equivalent or intentionally divergent with a reason and verification
+scope. A newly observed upstream HEAD starts a later maintenance cycle rather than silently
+moving this cycle's target.
+
+Port complete mechanisms and their prerequisites within the extracted framework closure. Do not
+merge the Zed application or replace local framework files wholesale. Keep a local difference
+only when a concrete framework consumer or an Accepted contract requires it; remove obsolete
+fork mechanisms when the upstream owner can serve that consumer. Package renaming, independent
+dependencies and unfinished docking work remain explicit integration inputs.
+
+The exit record must identify the upstream target, resulting fork revision, remaining deliberate
+differences, actual compiler/dependency requirements, independent-consumer result and affected
+core/component/native regression results. Source parity is distinct from platform execution:
+unexecuted Linux/macOS, OS input and touchpad cases remain visible limits. Only after this record
+should the engine rendering adapter and complete Editor workflow comparison expand. The consuming
+engine still decides Editor/game execution from its own lifecycle and cost evidence.
+
 ## Goal Capsule
 
 | Field | Decision |

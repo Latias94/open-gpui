@@ -49,3 +49,14 @@ The first import copied the Apache-2.0 GPUI framework closure from Zed into this
   package strategy.
 - Import or fork `gpui-component` only after a native Open GPUI example builds and runs from this
   workspace.
+
+## November 5 Provenance Reconstruction
+
+The initial import commit is `c9571c486612f1bd9194faa028709e89e3f58b7e`; it did not record the
+exact Zed checkout SHA. A content comparison found Zed
+`6e9465a4288c332208643892e23b9d35d7be5c79` reproduces the imported closure apart from the five
+documented tracing/perf adaptations and license-file mode changes. Its parent has identical
+contents throughout that closure, so the original monorepo SHA remains unknown. Use this as a
+content-verified reconstruction anchor rather than an asserted source-history parent. The
+[current sync queue](zed-gpui-upstream-sync-candidates.md#fixed-revisions-and-provenance) owns the
+complete evidence, later comparison pins and fixed maintenance target.
