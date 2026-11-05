@@ -29,8 +29,8 @@ consumer lockfile, then review and commit it:
 cargo generate-lockfile --manifest-path tests/fixtures/dependency-consumer/Cargo.toml
 ```
 
-The regular fixture gate checks every target with all features, including the WGPU renderer,
-against that lockfile and reuses the repository's build directory with one build job:
+The regular fixture gate checks all application targets with all features, including the WGPU
+renderer, against that lockfile and reuses the repository's build directory with one build job:
 
 ```text
 cargo check --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --all-targets --all-features --jobs 1 --target-dir target

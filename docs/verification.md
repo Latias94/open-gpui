@@ -67,6 +67,8 @@ found no outstanding correctness findings in this dependency/consumer change. Th
 not qualify Linux/macOS compilation, the declared Rust 1.92 floor, OS input, a rendered engine
 View, the pending upstream correctness ports or the canonical-docking cutover.
 
+## Focused Product Gates
+
 The U11 authority-convergence focused gate is:
 
 ```powershell
