@@ -181,6 +181,7 @@ tokio-util = { version = "0.7.18", features = ["compat"] }
 tracing = "0.1.40"
 trybuild = "1.0"
 unicase = "2.6"
+unicode-bidi = "0.3.18"
 unicode-segmentation = "1.10"
 url = "2.2"
 uuid = { version = "1.1.2", features = ["v4", "v5", "v7", "serde"] }

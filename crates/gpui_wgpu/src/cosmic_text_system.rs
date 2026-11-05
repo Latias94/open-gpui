@@ -14,7 +14,7 @@ use open_gpui_collections::HashMap;
 use itertools::Itertools;
 use parking_lot::RwLock;
 use smallvec::SmallVec;
-use std::{borrow::Cow, sync::Arc};
+use std::{borrow::Cow, ops::Range, sync::Arc};
 use swash::{
     scale::{Render, ScaleContext, Source, StrikeWith},
     zeno::{Format, Vector},
@@ -496,6 +496,116 @@ impl CosmicTextSystemState {
 
     #[profiling::function]
     fn layout_line(&mut self, text: &str, font_size: Pixels, font_runs: &[FontRun]) -> LineLayout {
+        let mut missing_indices = Vec::new();
+        let layout = if contains_paragraph_separator(text) {
+            self.layout_line_with_separators(text, font_size, font_runs, &mut missing_indices)
+        } else {
+            self.layout_line_without_separators(text, font_size, font_runs, &mut missing_indices)
+        };
+        if let Some(sink) = &self.missing_glyph_sink {
+            sink.report(self.missing_glyphs(text, font_runs, missing_indices));
+        }
+        layout
+    }
+
+    fn layout_line_with_separators(
+        &mut self,
+        text: &str,
+        font_size: Pixels,
+        font_runs: &[FontRun],
+        missing_indices: &mut Vec<usize>,
+    ) -> LineLayout {
+        let mut layout = LineLayout {
+            font_size,
+            len: text.len(),
+            ..Default::default()
+        };
+        let mut paragraph_start = 0;
+        let mut font_runs = FontRunCursor::new(font_runs);
+        for (separator_start, separator) in text
+            .char_indices()
+            .filter(|(_, character)| is_paragraph_separator(*character))
+        {
+            let separator_end = separator_start + separator.len_utf8();
+            self.shape_segment(
+                text,
+                paragraph_start..separator_start,
+                font_size,
+                &mut font_runs,
+                &mut layout,
+                missing_indices,
+            );
+            self.shape_segment(
+                text,
+                separator_start..separator_end,
+                font_size,
+                &mut font_runs,
+                &mut layout,
+                missing_indices,
+            );
+            paragraph_start = separator_end;
+        }
+        self.shape_segment(
+            text,
+            paragraph_start..text.len(),
+            font_size,
+            &mut font_runs,
+            &mut layout,
+            missing_indices,
+        );
+        layout
+    }
+
+    fn shape_segment(
+        &mut self,
+        text: &str,
+        range: Range<usize>,
+        font_size: Pixels,
+        font_runs: &mut FontRunCursor<'_>,
+        layout: &mut LineLayout,
+        missing_indices: &mut Vec<usize>,
+    ) {
+        if range.is_empty() {
+            return;
+        }
+        let segment_runs = font_runs.take(range.len());
+        let missing_start = missing_indices.len();
+        let segment = self.layout_line_without_separators(
+            &text[range.clone()],
+            font_size,
+            &segment_runs,
+            missing_indices,
+        );
+        for index in &mut missing_indices[missing_start..] {
+            *index += range.start;
+        }
+        for mut run in segment.runs {
+            for glyph in &mut run.glyphs {
+                glyph.index += range.start;
+                glyph.position.x += layout.width;
+            }
+            if let Some(previous) = layout
+                .runs
+                .last_mut()
+                .filter(|previous| previous.font_id == run.font_id)
+            {
+                previous.glyphs.append(&mut run.glyphs);
+            } else {
+                layout.runs.push(run);
+            }
+        }
+        layout.width += segment.width;
+        layout.ascent = layout.ascent.max(segment.ascent);
+        layout.descent = layout.descent.max(segment.descent);
+    }
+
+    fn layout_line_without_separators(
+        &mut self,
+        text: &str,
+        font_size: Pixels,
+        font_runs: &[FontRun],
+        missing_indices: &mut Vec<usize>,
+    ) -> LineLayout {
         let mut attrs_list = AttrsList::new(&Attrs::new());
         let mut offs = 0;
         for run in font_runs {
@@ -604,17 +714,15 @@ impl CosmicTextSystemState {
             };
         };
 
-        let missing_glyphs = self.missing_glyph_sink.as_ref().map(|_| {
-            self.missing_glyphs(
-                text,
-                font_runs,
+        if self.missing_glyph_sink.is_some() {
+            missing_indices.extend(
                 layout
                     .glyphs
                     .iter()
                     .filter(|glyph| glyph.glyph_id == 0)
                     .map(|glyph| glyph.start),
-            )
-        });
+            );
+        }
 
         let mut runs: Vec<ShapedRun> = Vec::new();
         for glyph in &layout.glyphs {
@@ -660,10 +768,6 @@ impl CosmicTextSystemState {
                     glyphs: vec![shaped_glyph],
                 });
             }
-        }
-
-        if let Some((sink, missing_glyphs)) = self.missing_glyph_sink.as_ref().zip(missing_glyphs) {
-            sink.report(missing_glyphs);
         }
 
         LineLayout {
@@ -748,6 +852,56 @@ impl CosmicTextSystemState {
         } else {
             FallbackFontClass::Proportional
         }
+    }
+}
+
+fn is_paragraph_separator(character: char) -> bool {
+    unicode_bidi::bidi_class(character) == unicode_bidi::BidiClass::B
+}
+
+fn contains_paragraph_separator(text: &str) -> bool {
+    if text
+        .bytes()
+        .any(|byte| matches!(byte, b'\n' | b'\r' | 0x1c | 0x1d | 0x1e))
+    {
+        return true;
+    }
+    !text.is_ascii() && text.chars().any(is_paragraph_separator)
+}
+
+struct FontRunCursor<'a> {
+    remaining: &'a [FontRun],
+    offset: usize,
+}
+
+impl<'a> FontRunCursor<'a> {
+    fn new(remaining: &'a [FontRun]) -> Self {
+        Self {
+            remaining,
+            offset: 0,
+        }
+    }
+
+    fn take(&mut self, mut byte_len: usize) -> SmallVec<[FontRun; 4]> {
+        let mut clipped = SmallVec::new();
+        while let Some(run) = self.remaining.first() {
+            if self.offset == run.len {
+                self.remaining = &self.remaining[1..];
+                self.offset = 0;
+                continue;
+            }
+            if byte_len == 0 {
+                break;
+            }
+            let len = byte_len.min(run.len - self.offset);
+            clipped.push(FontRun {
+                len,
+                font_id: run.font_id,
+            });
+            byte_len -= len;
+            self.offset += len;
+        }
+        clipped
     }
 }
 
@@ -1121,6 +1275,9 @@ fn check_is_known_emoji_font(postscript_name: &str) -> bool {
 
 #[cfg(test)]
 mod font_installation_tests;
+
+#[cfg(test)]
+mod paragraph_tests;
 
 #[cfg(test)]
 mod tests {

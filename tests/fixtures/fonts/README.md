@@ -27,6 +27,31 @@ PostScript name. This fixture supports tests for retaining fallback faces withou
 | `NotoEmoji-Regular.ttf` | `crates/epaint_default_fonts/fonts/NotoEmoji-Regular.ttf` | `19b7badf4afe64dae28cd64fc506b95291bb8b03` |
 | `NotoEmoji-OFL.txt` | `crates/epaint_default_fonts/fonts/OFL.txt` | `d952d62c065f3f35fb83a173496e90b21525aef3` |
 
+The unmodified, static Noto Sans Hebrew Regular TTF and its accompanying license come directly
+from the official notofonts/noto-fonts revision
+[`ffebf8c1ee449e544955a7e813c54f9b73848eac`](https://github.com/notofonts/noto-fonts/tree/ffebf8c1ee449e544955a7e813c54f9b73848eac).
+Both files are byte-for-byte upstream copies; the font was not converted, subsetted, or rewritten.
+The font's internal metadata preserves `Copyright 2019 Google Inc. All Rights Reserved.` and
+declares the SIL Open Font License 1.1. The accompanying license preserves the complete upstream
+OFL text and `Copyright 2018 The Noto Project Authors (github.com/googlei18n/noto-fonts)` notice.
+Its family is `Noto Sans Hebrew`, style is `Regular`, PostScript name is
+`NotoSansHebrew-Regular`, and version is `3.000` (the upstream ttfautohint v1.8 build).
+
+| Fixture | Original notofonts/noto-fonts path | Git blob |
+| --- | --- | --- |
+| `NotoSansHebrew-Regular.ttf` | [`hinted/ttf/NotoSansHebrew/NotoSansHebrew-Regular.ttf`](https://raw.githubusercontent.com/notofonts/noto-fonts/ffebf8c1ee449e544955a7e813c54f9b73848eac/hinted/ttf/NotoSansHebrew/NotoSansHebrew-Regular.ttf) | `5b43c56fa688b0ff9302a82cbebb1dae1201cf7f` |
+| `NotoSansHebrew-OFL.txt` | [`LICENSE`](https://raw.githubusercontent.com/notofonts/noto-fonts/ffebf8c1ee449e544955a7e813c54f9b73848eac/LICENSE) | `c82d72e422e2d08c5ab439b6bac7c2177ea0c565` |
+
+This fixture supports Cosmic BiDi paragraph regressions with Hebrew letters and combining marks.
+Its cmap includes all Hebrew letters `U+05D0` through `U+05EA`, including Aleph (`U+05D0`) and
+Bet (`U+05D1`), and marks such as sheva (`U+05B0`), hiriq (`U+05B4`), patah (`U+05B7`),
+dagesh (`U+05BC`), and shin dot (`U+05C1`). Aleph and Bet have nonempty TrueType outlines and
+positive advances; the listed combining marks have nonempty outlines and zero advances.
+Space (`U+0020`) has a positive advance and no ink. The font contains `glyf`, `GDEF`, `GPOS`,
+and `GSUB` tables. It has no Latin `m` (`U+006D`), Latin `A` (`U+0041`), or digit `1` (`U+0031`).
+Use `IBM Plex Sans` as the primary family and explicitly configure `Noto Sans Hebrew` as its
+fallback so a primary-face Latin `m` requirement does not reject the Hebrew fixture.
+
 SHA-256:
 
 - `Lilex-Regular.ttf`: `8a467ad5a1941dc7c9cebaee34e3ed9364a73b48393034e363e4b528bd711d04`
@@ -34,6 +59,8 @@ SHA-256:
 - `IBMPlexSans-Regular.ttf`: `975dcda37d80f038dcd143c22e33ca2d97a0cc5a929aace1c749153b0fe1afa5`
 - `NotoEmoji-Regular.ttf`: `415dc6290378574135b64c808dc640c1df7531973290c4970c51fdeb849cb0c5`
 - `NotoEmoji-OFL.txt`: `6a73f9541c2de74158c0e7cf6b0a58ef774f5a780bf191f2d7ec9cc53efe2bf2`
+- `NotoSansHebrew-Regular.ttf`: `a7fa16fffb27bedb060a0866267c29e9859aeb9c21cc33f5b3aaf6eb062eca85`
+- `NotoSansHebrew-OFL.txt`: `0dab92d0544f7b233403f14b84a663bdbfa746982eda629e7f4f9ffe1b036feb`
 
 The Windows fallback-to-direct installation test requires that `Lilex` is absent from the OS font
 collection when the platform starts. It fails with an explicit prerequisite message if the family

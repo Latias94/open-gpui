@@ -294,6 +294,48 @@ retain their loaded IDs across multiple successful installations, with actual li
 for independent feature configurations. The remaining Mac native qualification, general text/
 layout/API refresh, OS input, numeric costs and engine integration keep their existing scope.
 
+### Cosmic Paragraph Shaping Successor
+
+The successor to `b803d542b67` adapts `c214057e086517920b214800725c5d16294ddf0d` against
+the same fixed target. Cosmic 0.19.0 asserts when one input line contains BiDi paragraphs with
+different directions. Split each `Bidi_Class=B` separator and its neighboring paragraphs for
+shaping, then restore original UTF-8 indices, horizontal offsets and aggregate metrics on one
+logical baseline. Keep the unmodified source and the existing public newline/wrapping policy.
+U+2028 is not `Bidi_Class=B` and retains the unchanged path. Do not infer full UAX #9 caret or
+complex-script parity from this bounded correction.
+
+Consume font runs with a monotone private cursor, preserving exact feature/fallback identities
+and zero-length boundaries without rescanning every earlier run for each segment. Original
+source validity remains the caller's contract. Collect missing raw indices before fallback
+output conversion, restore their original offsets and report once against the complete source;
+CRLF remains one grapheme rather than two segment reports. The [qualification](../verification.md#cosmic-paragraph-shaping-and-public-paint)
+records reproduced direction failures, the corrected separator-width oracle and the additional
+CRLF reporting regression.
+The public LTR consumer also exposes the fixed target's existing final-glyph closest-hit defect.
+Correct that Core terminal-distance comparison under its existing contract, retaining midpoint
+affinity, UTF-8 cluster indices and no-glyph behavior. Keep the public assertion and its red
+owner regression rather than narrowing the consumer to exact glyph origins.
+
+Use deterministic licensed Hebrew bytes for actual base/combining glyph and software raster
+evidence, keeping font priority separate from paragraph shaping. The existing no-Latin-`m`
+primary filter can omit that family from the explicit fallback chain; retained database faces
+still serve Cosmic's automatic fallback. This unit verifies the actual selected Hebrew face,
+not general configured-fallback priority. Keep that loader policy visible for the remaining
+font reconciliation rather than changing it implicitly.
+
+Exercise public `HeadlessAppContext`/Render/canvas/shape/paint, explicit notification, changed
+canvas layout bounds, repeated frames and different-size window reconstruction. TestPlatform
+acceptance/paint-raster observation and Swash raster are distinct from GPU/native presentation.
+Existing candidate refusal/retry, observer ownership and independent-consumer compilation retain their
+owners. Promote the already resolved `unicode-bidi` 0.3.18 to a direct WGPU dependency in both
+lockfiles without incidental package updates. Unicode wrapping, text layers, Rc ownership,
+Taffy/API migration, remaining platform execution and numeric costs keep their queued scope.
+The complete all-feature Core/WGPU/Windows plus public paragraph consumer passes 1,207/1,207
+(943/66/197/1 respectively), with four existing interactive Windows cases skipped. Existing
+native DirectWrite/rendering cohorts retain their own backend scope; they do not qualify
+native Cosmic output by association.
+Affected UI core/components/docking/Canvas passes 2,964/2,964 across 25 binaries with no skips.
+
 ## Maintained Baseline Before Engine Adaptation
 
 Finish a bounded framework refresh against the recorded November 5 Zed revision before expanding

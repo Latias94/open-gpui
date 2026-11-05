@@ -965,6 +965,110 @@ and main integration review, leave no outstanding confirmed P1/P2 in the declare
 declared Rust 1.92 floor remains unchanged and unexecuted. Formatting/docs after the final
 197-case run do not change its native behavior; no Mac compilation credit is inferred.
 
+## Cosmic Paragraph Shaping And Public Paint
+
+This successor to `b803d542b67` adapts upstream
+`c214057e086517920b214800725c5d16294ddf0d` against fixed target
+`635026fabc38440fce5e1767d125026a17b12012`. Cosmic 0.19.0 requires all BiDi paragraphs passed
+to one ShapeLine to share direction. The first four-case baseline fails all four
+(`2644c7d5-c95a-49cd-9b26-0eda22bc5ad0`): three direction assertions and a width-oracle failure
+later traced to the fixture's separator assumption. No source is rewritten or stripped to make
+these cases shape.
+
+The adapter shapes each `Bidi_Class=B` separator and neighboring paragraph separately, then
+restores absolute UTF-8 indices and horizontal positions while summing widths and maximum
+ascent/descent on one logical baseline. A private monotone FontRun cursor preserves original
+configuration and consumes zero-length boundaries without rescanning all previous runs per
+segment. The unchanged path covers text without paragraph separators, including U+2028.
+Existing `shape_text` newline/wrapping semantics and caller-owned valid run coverage remain.
+Promoting already resolved `unicode-bidi` 0.3.18 to a direct WGPU dependency changes only the
+workspace dependency declaration and package edges in the two lockfiles, not package versions.
+
+The first correction passes three of four (`34d7413e-ee18-4003-ab02-abf0fdb0db80`); the width
+fixture had incorrectly assumed separators have zero width under this font/shaper. It now
+compares independently shaped pieces including separators. The expanded cohort passes 8/8
+(`046c83f5-b536-4ee5-be7c-4ad37bc77205`), including all seven B-class controls in both direction
+orders, leading/trailing/repeated separators, CRLF, exact run/glyph/metric comparison, original
+source indices and real Hebrew bases/zero-advance marks with repeated raster at scales 1.0/1.5.
+
+A subsequent whole-grapheme reporting regression fails
+(`30a8d851-8d4e-4059-be9e-700676557f79`): splitting CRLF for shaping emits a standalone newline
+report even though the source has one CRLF grapheme. The raw missing indices are now collected
+at their original pre-output-conversion stage, rebased across segments and reported once using
+the full source and original FontRuns. This preserves complete clusters and source spacing
+classes, including glyphs that might later fail fallback-output conversion.
+
+The public focused run passes nine unit cases and fails its one public consumer
+(`e404813c-2184-4ab1-9d3a-dfb984f27826`). Its LTR control reveals an existing Core/fixed-target
+defect: `closest_index_for_x` always returns the line end after the last glyph origin, except
+for a one-byte line. A position in the final glyph's left quarter therefore returns byte 16
+instead of 15. The test assertion remains; the owning Core method must compare the final
+cluster origin with the terminal width, keeping left-affinity on midpoint ties, complete UTF-8
+cluster indices and empty-layout behavior. This does not qualify general visual RTL caret
+mapping or introduce a new text-position model.
+The isolated Core regression also fails before correction
+(`c783dd64-6595-4015-851a-9280446d392f`): `"ab"` at x=12.5 selects byte 2 instead of 1.
+It covers final ASCII, two-/four-byte characters, a ligature cluster, multiple font runs,
+midpoint affinity and empty/unshaped controls. This is an owning contract correction discovered
+by the paragraph consumer, not a behavior already fixed by the pinned upstream commit.
+That independent Core correction is `3d0714f44e206a14fda7d6d830c7a58ce06bc94a`; the paragraph
+integration follows it without claiming source parity with the whole fixed target.
+
+The next focused run passes ten of eleven (`2dcfc8cc-8215-4fe3-9eb2-7ea6760936ae`), including
+the Core correction and all paragraph/reporting cases. The consumer's glyph-atlas diagnostic
+assumption is invalid: glyph paint uses the plain atlas insertion API, while that diagnostic
+collection observes image paint. A public PlatformTextSystem delegate now records successful
+actual paint rasterizations; direct software-raster oracle calls use the original Cosmic backend
+and cannot inflate that observation. The accepted initial frame must rasterize actual Hebrew
+Aleph/Bet, and reconstruction under a new window atlas must trigger new raster work. Original
+source, layout, hit, notification, wrapping, reconstruction and shutdown assertions remain.
+The corrected public consumer passes 1/1 (`8f46966e-df64-4ed9-8b8b-80b306030121`), with an
+independent review of the observation seam finding no P1/P2. The earlier ten passing focused
+cases retain their source scope; the final complete cohort qualifies their combined source.
+The final all-feature Core/WGPU/Windows libraries plus public paragraph consumer pass
+1,207/1,207 (`0b561894-7883-47da-9f29-3f0a768af220`): Core 943, WGPU 66, public consumer 1 and
+Windows 197. Four existing interactive Windows cases remain skipped. This retains actual
+production WGSL pipeline creation, atlas lifetime/refusal, App observer/callback cleanup,
+cached/deferred native pixels, text/input and exact Windows release. The paragraph consumer
+itself remains headless/software raster; running the other native backend does not turn it
+into a native Cosmic rendering qualification.
+The affected UI core/components/docking/Canvas library/integration cohort passes 2,964/2,964
+across 25 binaries with no skipped cases (`e99f26f8-0455-44e8-81f8-c3c2f751c8fb`), retaining
+the actual text-field, virtualized collection, deferred overlay and docking consumers of the
+shared closest-hit contract.
+
+```text
+cargo +1.95.0 nextest run --locked -p open-gpui -p open-gpui-wgpu -p open-gpui-windows --all-features --lib --test paragraph_text --test-threads=1 --no-fail-fast --no-tests fail
+cargo +1.95.0 nextest run --locked -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-docking -p open-gpui-canvas --lib --tests --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+The [public consumer](../crates/gpui_wgpu/tests/paragraph_text.rs) uses the real Cosmic backend
+through public HeadlessAppContext, Render, canvas, shape and paint APIs. It compares explicit
+independent segment recipes, raw visual order, complete source/newline/run mapping, actual
+Hebrew glyph IDs and repeated software raster. Notification changes text size, canvas layout
+bounds change wrapping, repeated frames preserve output and different-size windows reconstruct
+under the same exact App TextSystem with one final shutdown. This is TestPlatform accepted paint
+and actual paint-raster evidence, not native HWND, GPU submission, compositor output or a backend
+resize acknowledgement.
+
+The [tracked Hebrew fixture](../tests/fixtures/fonts/README.md) is unmodified Noto Sans Hebrew
+Regular 3.000 from official notofonts revision `ffebf8c1ee449e544955a7e813c54f9b73848eac`, with
+its original OFL notice, source blob and SHA-256. It contains real Hebrew letters and marks but
+no Latin `m`. The existing primary-family filter can omit it from the explicit fallback chain;
+the retained database face still serves Cosmic's automatic fallback. The tests verify the
+selected face and glyphs, not general configured fallback priority. Full Unicode wrapping,
+complex-script/RTL caret coverage, fallback-policy reconciliation, measured costs, remaining
+platform execution and Nara engine integration remain separate work.
+
+Final locked workspace all-target and independently locked consumer all-target/all-feature
+checks pass on Windows 11/Rust 1.95.0 with one build job. Core/WGPU/Windows all-target/all-feature
+Clippy passes with `-D clippy::correctness`; existing nonblocking warnings remain. Root and
+independent-consumer formatting, import-boundary, public-document, release-document and API-tier
+checks pass. Independent production and public-observation reviews leave no outstanding P1/P2
+in this unit. The declared Rust 1.92 floor remains unchanged and unexecuted; native Linux/macOS,
+browser execution, measured costs and full framework parity remain unqualified. Documentation
+closure does not require repeating the already green product cohorts.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:

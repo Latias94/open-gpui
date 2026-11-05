@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-06T05:19:58+08:00
+timestamp: 2026-11-06T06:13:35+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -97,6 +97,16 @@ verified_by:
   guide; four existing interactive cases remain skipped. CoreText source and deterministic
   shaping/raster regressions are prepared; macOS compilation and execution remain unqualified.
   This correction addresses gaps also present in the fixed Zed target.
+- The Cosmic paragraph successor now shapes B-class segments independently, preserving complete
+  source/glyph geometry and FontRun configuration with a monotone private cursor. Missing indices
+  aggregate against the original source so CRLF stays one report. Actual licensed Hebrew bases/
+  marks raster at two scales. The public headless shape/paint consumer exposes and retains a
+  final-glyph closest-hit regression; the owning Core comparison is corrected. The verification
+  guide owns all red/intermediate/final results and the automatic-fallback, platform and cost limits.
+  Final all-feature Core/WGPU/Windows plus public paragraph consumer passes 1,207/1,207:
+  Core 943, WGPU 66, public consumer 1 and Windows 197, with four existing interactive cases
+  skipped. The actual Cosmic paragraph consumer remains headless/software raster evidence.
+  Affected UI core/components/docking/Canvas passes 2,964/2,964 across 25 binaries with no skips.
 
 # Historical Main Integration
 

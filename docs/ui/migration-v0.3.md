@@ -81,6 +81,25 @@ missing-grapheme detection, including the fork's current Web path. Windows and C
 the optional hook's default behavior and do not report missing glyphs through it. The target's
 later Web Canvas fallback layer remains a separate platform migration.
 
+## Cosmic Paragraph Separators
+
+Cosmic 0.19.0 receives each `Bidi_Class=B` paragraph and separator separately, avoiding its
+mixed-direction assertion. The merged line retains the original source, absolute UTF-8 glyph
+indices, horizontal placement and maximum ascent/descent. This does not add logical newlines:
+`WindowTextSystem::shape_text` keeps its existing newline and wrapping policy. U+2028 follows
+the unchanged nonparagraph path. Raw RTL visual order can contain descending source indices;
+the correction is not a general RTL caret or complex-script support claim.
+
+The shared closest-hit primitive also compares the final glyph cluster with the line's terminal
+width. The left half and exact midpoint retain that cluster's original byte index; the right
+half selects the line end. This applies to multi-byte/ligature clusters as well as one-byte
+text, retaining the existing empty-layout policy.
+
+Font-run features/fallback configuration survive segment slicing. Missing raw glyph indices
+are rebased and reported against the complete original source, preserving whole graphemes and
+source spacing class across segments. WGPU now directly depends on already resolved
+`unicode-bidi` 0.3.18; no compiler floor or other package versions change.
+
 ## Form Lifecycle Authority
 
 `FormStore` now derives `FormStatus` and submission eligibility from active validation plus its
