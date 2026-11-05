@@ -1320,7 +1320,7 @@ fn collect_named_files(
         if path.is_dir() {
             if matches!(
                 path.file_name().and_then(|name| name.to_str()),
-                Some(".git" | "target" | "repo-ref")
+                Some(".git" | ".context" | "target" | "repo-ref")
             ) {
                 continue;
             }
@@ -1404,6 +1404,41 @@ fn repo_relative_path(root: &Path, path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scenario_discovery_excludes_local_worktree_artifacts()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temporary = std::env::temp_dir().canonicalize()?;
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos();
+        let root = temporary.join(format!(
+            "open_gpui_scenario_discovery_{}_{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir(&root)?;
+        let root = root.canonicalize()?;
+        let owner = root.join("crates/consumer/tests");
+        let copied = root.join(".context/worktrees/iteration-001/crates/consumer/tests");
+        fs::create_dir_all(&owner)?;
+        fs::create_dir_all(&copied)?;
+        let artifact = owner.join("controls.scenarios.toml");
+        let local_artifact = copied.join("controls.scenarios.toml");
+        fs::write(&artifact, "schema = 1")?;
+        fs::write(&local_artifact, "schema = 1")?;
+
+        let mut paths = Vec::new();
+        let mut failures = Vec::new();
+        collect_named_files(&root, SCENARIO_ARTIFACT_SUFFIX, &mut paths, &mut failures);
+        assert!(failures.is_empty(), "{failures:?}");
+        assert_eq!(paths, vec![artifact]);
+        assert!(local_artifact.is_file());
+
+        assert_eq!(root.parent(), Some(temporary.as_path()));
+        fs::remove_dir_all(&root)?;
+        Ok(())
+    }
+
     fn native_manifest_fixture() -> NativeScenarioManifest {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
