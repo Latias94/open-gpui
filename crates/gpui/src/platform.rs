@@ -5569,6 +5569,8 @@ pub trait PlatformDispatcher: Send + Sync {
 #[expect(missing_docs)]
 pub trait PlatformTextSystem: Send + Sync {
     fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()>;
+    /// Installs an optional nonblocking missing-grapheme sink when the backend supports it.
+    fn set_missing_glyph_sink(&self, _sink: Option<Arc<dyn crate::MissingGlyphSink>>) {}
     /// Get all available font names.
     fn all_font_names(&self) -> Vec<String>;
     /// Get the font ID for a font descriptor.

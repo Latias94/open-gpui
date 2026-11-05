@@ -43,6 +43,39 @@ compiler padding is no longer part of an upload. Windows now uploads the shared 
 directly, without a second renderer-specific record conversion. No raw-u32 constructor or
 serialization compatibility path is provided.
 
+## Runtime Font Installation And Missing Glyphs
+
+`TextSystem::add_fonts` now invalidates its resolved descriptor results and window line layouts
+after a successful backend installation. Existing loaded FontIds remain usable; numeric ID
+reuse for a reselected descriptor depends on the backend. Notify each affected text view or
+refresh its Window explicitly. Installing font bytes does not arrange a redraw, and notifying
+only the parent of a clean cached view does not rebuild that child.
+Native backend caches for already matched descriptors keep their existing selection policy;
+this update does not qualify reselection after adding another weight/style to that family.
+The public `HeadlessAppContext::text_system` and `TestAppContext::text_system` accessors share
+their App's exact TextSystem, including descriptor caches, installation generation and reporter.
+
+Application code can register `App::on_missing_glyphs` and retain its Subscription. A report
+contains the complete unresolved grapheme plus its source run's proportional or monospace
+class. The callback runs on the foreground executor after shaping releases its locks. The
+application owns font selection, fetching, installation and redraw. A later registration replaces
+the previous callback; dropping an older subscription does not disable the replacement.
+Dropping the current subscription disables reporting and invalidates queued reports.
+
+Reporting uses a bounded nonblocking queue and bounded deduplication. Overflow may drop a
+report, which can be reported again on later shaping; there is no automatic retry. A font
+installation or subscription reset invalidates old-generation reports, including a ready batch
+waiting for an active App borrow to end. Current-generation queued reports go to the current
+callback. The receiving task belongs to the App and releases its captured state when the App
+is dropped. A panicking callback restores the callback slot before unwinding; this is not a
+promise to restart an async receiver task after a panic.
+
+Platform backends may implement `PlatformTextSystem::set_missing_glyph_sink`. Its sink only
+enqueues reports and must not invoke application callbacks while shaping. Cosmic supplies
+missing-grapheme detection, including the fork's current Web path. Windows and CoreText retain
+the optional hook's default behavior and do not report missing glyphs through it. The target's
+later Web Canvas fallback layer remains a separate platform migration.
+
 ## Form Lifecycle Authority
 
 `FormStore` now derives `FormStatus` and submission eligibility from active validation plus its

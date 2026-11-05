@@ -1,4 +1,4 @@
-use crate::{FontId, Pixels, SharedString, TextRun, TextSystem, px};
+use crate::{Font, FontId, Pixels, SharedString, TextRun, TextSystem, px};
 use open_gpui_collections::HashMap;
 use std::{borrow::Cow, iter, sync::Arc};
 
@@ -14,6 +14,8 @@ pub enum TruncateFrom {
 /// The GPUI line wrapper, used to wrap lines of text to a given width.
 pub struct LineWrapper {
     text_system: Arc<TextSystem>,
+    font: Font,
+    resolved_font_generation: usize,
     pub(crate) font_id: FontId,
     pub(crate) font_size: Pixels,
     char_widths: CharWidthCache,
@@ -21,6 +23,7 @@ pub struct LineWrapper {
 
 /// Cached character widths for one resolved font and size, independent of its TextSystem.
 pub(crate) struct CharWidthCache {
+    font_generation: Option<usize>,
     ascii: [Option<Pixels>; 128],
     other: HashMap<char, Pixels>,
 }
@@ -28,6 +31,7 @@ pub(crate) struct CharWidthCache {
 impl Default for CharWidthCache {
     fn default() -> Self {
         Self {
+            font_generation: None,
             ascii: [None; 128],
             other: HashMap::default(),
         }
@@ -39,13 +43,17 @@ impl LineWrapper {
     pub const MAX_INDENT: u32 = 256;
 
     pub(crate) fn new(
+        font: Font,
         font_id: FontId,
+        resolved_font_generation: usize,
         font_size: Pixels,
         text_system: Arc<TextSystem>,
         char_widths: CharWidthCache,
     ) -> Self {
         Self {
             text_system,
+            font,
+            resolved_font_generation,
             font_id,
             font_size,
             char_widths,
@@ -418,6 +426,18 @@ impl LineWrapper {
 
     #[inline(always)]
     fn width_for_char(&mut self, c: char) -> Pixels {
+        let generation = self.text_system.font_generation();
+        if self.resolved_font_generation != generation {
+            self.font_id = self.text_system.resolve_font(&self.font);
+            self.resolved_font_generation = generation;
+            self.char_widths = CharWidthCache::default();
+        }
+        if self.char_widths.font_generation != Some(generation) {
+            self.char_widths = CharWidthCache {
+                font_generation: Some(generation),
+                ..Default::default()
+            };
+        }
         if (c as u32) < 128 {
             if let Some(cached_width) = self.char_widths.ascii[c as usize] {
                 cached_width
@@ -559,7 +579,9 @@ mod tests {
         let cx = TestAppContext::build(dispatcher, None);
         let id = cx.text_system().resolve_font(&font(".OpenGpuiMono"));
         LineWrapper::new(
+            font(".OpenGpuiMono"),
             id,
+            cx.text_system().font_generation(),
             px(16.),
             cx.text_system().clone(),
             CharWidthCache::default(),

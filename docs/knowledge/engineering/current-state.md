@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-06T03:26:28+08:00
+timestamp: 2026-11-06T04:41:15+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -76,6 +76,17 @@ verified_by:
   the accepted generation, preserving accessibility/inspector bypass. The verification guide
   owns exact runs, scale 1.5 evidence and remaining macOS/header/Metal, WGPU scene-pixel,
   Linux/browser, native accessibility/mixed-DPI and measured-cost limits.
+- The font-installation successor now invalidates descriptor, line-layout and character-width
+  state after successful installation. Current/previous caches share one generation authority;
+  stale ranges, delayed wrapped results and rejected hash candidates retain their qualified
+  recovery rules. Public test/headless accessors share the App's exact TextSystem. App owns
+  bounded, replaceable missing-grapheme delivery and waits for borrow release before dispatch.
+  Cosmic preserves loaded face identity and fallback-only fonts, with retained source storage.
+  Final Core/WGPU 999, affected consumers 2,964 and Windows 189 pass; four existing interactive
+  Windows cases remain skipped. The verification guide owns the original failures, real Noto
+  fallback/software raster, new-family native installation and exact release evidence. Native
+  existing-family reselection, Windows/CoreText missing reporting, the later Web Canvas layer,
+  other platforms, compiler-floor execution and measured costs remain open.
 - A game-engine Editor is the selecting consumer. Framework maintenance and rendering-adapter
   refactors are allowed; Nara document, ECS and history types do not enter the core framework.
 
@@ -106,7 +117,10 @@ historical scope and is not current branch or CI qualification.
 
 - Continue the coherent framework refresh beyond the five initial correctness units. The candidate
   queue retains font/text/layout/API, image decoding, external-run-loop and platform differences.
-  Preserve the implemented GPU flag representation and Windows transfer correction. Qualify the
+  Reconcile native selection after adding weights/styles to an already matched family through
+  its existing font records; the missing-family installation proof does not cover that workflow.
+  Preserve the implemented font generations, App-owned reporting, GPU flag representation and
+  Windows transfer correction. Qualify the
   remaining compiler/dependency requirements
   before broad engine adaptation; do not overwrite the fork or reapply already-covered fixes.
   Preserve pending-input admission, context/recipient

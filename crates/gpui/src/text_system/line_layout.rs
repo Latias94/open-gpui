@@ -1,12 +1,15 @@
 use crate::{FontId, GlyphId, Pixels, PlatformTextSystem, Point, SharedString, Size, point, px};
 use open_gpui_collections::FxHashMap;
-use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
+use parking_lot::{Mutex, MutexGuard};
 use smallvec::SmallVec;
 use std::{
     borrow::Borrow,
     hash::{Hash, Hasher},
     ops::Range,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 use super::LineWrapper;
@@ -389,9 +392,16 @@ impl WrappedLineLayout {
 }
 
 pub(crate) struct LineLayoutCache {
-    previous_frame: Mutex<FrameCache>,
-    current_frame: RwLock<FrameCache>,
+    state: Mutex<LineLayoutCacheState>,
     platform_text_system: Arc<dyn PlatformTextSystem>,
+    font_generation: Arc<AtomicUsize>,
+}
+
+#[derive(Default)]
+struct LineLayoutCacheState {
+    previous_frame: FrameCache,
+    current_frame: FrameCache,
+    font_generation: usize,
 }
 
 #[derive(Default)]
@@ -415,6 +425,7 @@ struct FrameCache {
 
 #[derive(Clone, Default)]
 pub(crate) struct LineLayoutIndex {
+    font_generation: usize,
     lines_index: usize,
     wrapped_lines_index: usize,
     lines_by_hash_index: usize,
@@ -422,17 +433,26 @@ pub(crate) struct LineLayoutIndex {
 }
 
 impl LineLayoutCache {
-    pub fn new(platform_text_system: Arc<dyn PlatformTextSystem>) -> Self {
+    pub fn new(
+        platform_text_system: Arc<dyn PlatformTextSystem>,
+        font_generation: Arc<AtomicUsize>,
+    ) -> Self {
+        let generation = font_generation.load(Ordering::Acquire);
         Self {
-            previous_frame: Mutex::default(),
-            current_frame: RwLock::default(),
+            state: Mutex::new(LineLayoutCacheState {
+                font_generation: generation,
+                ..Default::default()
+            }),
             platform_text_system,
+            font_generation,
         }
     }
 
     pub fn layout_index(&self) -> LineLayoutIndex {
-        let frame = self.current_frame.read();
+        let state = self.state();
+        let frame = &state.current_frame;
         LineLayoutIndex {
+            font_generation: state.font_generation,
             lines_index: frame.used_lines.len(),
             wrapped_lines_index: frame.used_wrapped_lines.len(),
             lines_by_hash_index: frame.used_lines_by_hash.len(),
@@ -441,8 +461,16 @@ impl LineLayoutCache {
     }
 
     pub fn reuse_layouts(&self, range: Range<LineLayoutIndex>) {
-        let mut previous_frame = &mut *self.previous_frame.lock();
-        let mut current_frame = &mut *self.current_frame.write();
+        let mut state = self.state();
+        let generation = state.font_generation;
+        if range.start.font_generation != generation || range.end.font_generation != generation {
+            return;
+        }
+        let LineLayoutCacheState {
+            current_frame,
+            previous_frame,
+            ..
+        } = &mut *state;
 
         for key in &previous_frame.used_lines[range.start.lines_index..range.end.lines_index] {
             if let Some((key, line)) = previous_frame.lines.remove_entry(key) {
@@ -480,7 +508,11 @@ impl LineLayoutCache {
     }
 
     pub fn truncate_layouts(&self, index: LineLayoutIndex) {
-        let mut current_frame = &mut *self.current_frame.write();
+        let mut state = self.state();
+        if index.font_generation != state.font_generation {
+            return;
+        }
+        let current_frame = &mut state.current_frame;
         current_frame.used_lines.truncate(index.lines_index);
         current_frame
             .used_wrapped_lines
@@ -494,9 +526,13 @@ impl LineLayoutCache {
     }
 
     pub fn finish_frame(&self) {
-        let mut prev_frame = self.previous_frame.lock();
-        let mut curr_frame = self.current_frame.write();
-        std::mem::swap(&mut *prev_frame, &mut *curr_frame);
+        let mut state = self.state();
+        let LineLayoutCacheState {
+            current_frame: curr_frame,
+            previous_frame: prev_frame,
+            ..
+        } = &mut *state;
+        std::mem::swap(prev_frame, curr_frame);
         curr_frame.lines.clear();
         curr_frame.wrapped_lines.clear();
         curr_frame.used_lines.clear();
@@ -509,8 +545,12 @@ impl LineLayoutCache {
     }
 
     pub(crate) fn abort_frame(&self) {
-        let mut previous_frame = self.previous_frame.lock();
-        let mut current_frame = self.current_frame.write();
+        let mut state = self.state();
+        let LineLayoutCacheState {
+            current_frame,
+            previous_frame,
+            ..
+        } = &mut *state;
 
         // Layout lookup transfers reusable entries into the candidate cache. Put every candidate
         // entry back so rejecting a frame cannot hollow out the last committed cache.
@@ -537,6 +577,7 @@ impl LineLayoutCache {
         runs: &[FontRun],
         wrap_width: Option<Pixels>,
         max_lines: Option<usize>,
+        font_generation: usize,
     ) -> Arc<WrappedLineLayout>
     where
         Text: AsRef<str>,
@@ -550,23 +591,33 @@ impl LineLayoutCache {
             force_width: None,
         } as &dyn AsCacheKeyRef;
 
-        let current_frame = self.current_frame.upgradable_read();
-        if let Some(layout) = current_frame.wrapped_lines.get(key) {
+        let mut state = self.state();
+        if let Some(layout) = state
+            .current_frame
+            .wrapped_lines
+            .get(key)
+            .filter(|_| state.font_generation == font_generation)
+        {
             return layout.clone();
         }
 
-        let previous_frame_entry = self.previous_frame.lock().wrapped_lines.remove_entry(key);
+        let previous_frame_entry = if state.font_generation == font_generation {
+            state.previous_frame.wrapped_lines.remove_entry(key)
+        } else {
+            None
+        };
         if let Some((key, layout)) = previous_frame_entry {
-            let mut current_frame = RwLockUpgradableReadGuard::upgrade(current_frame);
+            let current_frame = &mut state.current_frame;
             current_frame
                 .wrapped_lines
                 .insert(key.clone(), layout.clone());
             current_frame.used_wrapped_lines.push(key);
             layout
         } else {
-            drop(current_frame);
+            drop(state);
             let text = SharedString::from(text);
-            let unwrapped_layout = self.layout_line::<&SharedString>(&text, font_size, runs, None);
+            let unwrapped_layout =
+                self.layout_line::<&SharedString>(&text, font_size, runs, None, font_generation);
             let wrap_boundaries = if let Some(wrap_width) = wrap_width {
                 unwrapped_layout.compute_wrap_boundaries(text.as_ref(), wrap_width, max_lines)
             } else {
@@ -585,13 +636,7 @@ impl LineLayoutCache {
                 force_width: None,
             });
 
-            let mut current_frame = self.current_frame.write();
-            current_frame
-                .wrapped_lines
-                .insert(key.clone(), layout.clone());
-            current_frame.used_wrapped_lines.push(key);
-
-            layout
+            self.publish_wrapped_layout(key, layout, font_generation)
         }
     }
 
@@ -601,6 +646,7 @@ impl LineLayoutCache {
         font_size: Pixels,
         runs: &[FontRun],
         force_width: Option<Pixels>,
+        font_generation: usize,
     ) -> Arc<LineLayout>
     where
         Text: AsRef<str>,
@@ -614,25 +660,23 @@ impl LineLayoutCache {
             force_width,
         } as &dyn AsCacheKeyRef;
 
-        let current_frame = self.current_frame.upgradable_read();
-        if let Some(layout) = current_frame.lines.get(key) {
+        let mut state = self.state();
+        if state.font_generation != font_generation {
+            drop(state);
+            return self.shape_layout(text.as_ref(), font_size, runs, force_width);
+        }
+        if let Some(layout) = state.current_frame.lines.get(key) {
             return layout.clone();
         }
 
-        let mut current_frame = RwLockUpgradableReadGuard::upgrade(current_frame);
-        if let Some((key, layout)) = self.previous_frame.lock().lines.remove_entry(key) {
+        if let Some((key, layout)) = state.previous_frame.lines.remove_entry(key) {
+            let current_frame = &mut state.current_frame;
             current_frame.lines.insert(key.clone(), layout.clone());
             current_frame.used_lines.push(key);
             layout
         } else {
             let text = SharedString::from(text);
-            let mut layout = self
-                .platform_text_system
-                .layout_line(&text, font_size, runs);
-
-            if let Some(force_width) = force_width {
-                apply_force_width_to_layout(&mut layout, force_width);
-            }
+            let layout = self.shape_layout(&text, font_size, runs, force_width);
 
             let key = Arc::new(CacheKey {
                 text,
@@ -641,7 +685,7 @@ impl LineLayoutCache {
                 wrap_width: None,
                 force_width,
             });
-            let layout = Arc::new(layout);
+            let current_frame = &mut state.current_frame;
             current_frame.lines.insert(key.clone(), layout.clone());
             current_frame.used_lines.push(key);
             layout
@@ -663,6 +707,7 @@ impl LineLayoutCache {
         font_size: Pixels,
         runs: &[FontRun],
         force_width: Option<Pixels>,
+        font_generation: usize,
     ) -> Option<Arc<LineLayout>> {
         let key_ref = HashedCacheKeyRef {
             text_hash,
@@ -673,8 +718,11 @@ impl LineLayoutCache {
             force_width,
         };
 
-        let current_frame = self.current_frame.read();
-        if let Some((_, layout)) = current_frame.lines_by_hash.iter().find(|(key, _)| {
+        let state = self.state();
+        if state.font_generation != font_generation {
+            return None;
+        }
+        if let Some((_, layout)) = state.current_frame.lines_by_hash.iter().find(|(key, _)| {
             HashedCacheKeyRef {
                 text_hash: key.text_hash,
                 text_len: key.text_len,
@@ -687,7 +735,7 @@ impl LineLayoutCache {
             return Some(layout.clone());
         }
 
-        let previous_frame = self.previous_frame.lock();
+        let previous_frame = &state.previous_frame;
         if let Some((_, layout)) = previous_frame.lines_by_hash.iter().find(|(key, _)| {
             HashedCacheKeyRef {
                 text_hash: key.text_hash,
@@ -720,6 +768,7 @@ impl LineLayoutCache {
         runs: &[FontRun],
         force_width: Option<Pixels>,
         materialize_text: impl FnOnce() -> SharedString,
+        font_generation: usize,
     ) -> Arc<LineLayout> {
         let key_ref = HashedCacheKeyRef {
             text_hash,
@@ -731,8 +780,12 @@ impl LineLayoutCache {
         };
 
         // Fast path: already cached (no allocation).
-        let current_frame = self.current_frame.upgradable_read();
-        if let Some((_, layout)) = current_frame.lines_by_hash.iter().find(|(key, _)| {
+        let mut state = self.state();
+        if state.font_generation != font_generation {
+            drop(state);
+            return self.shape_layout(&materialize_text(), font_size, runs, force_width);
+        }
+        if let Some((_, layout)) = state.current_frame.lines_by_hash.iter().find(|(key, _)| {
             HashedCacheKeyRef {
                 text_hash: key.text_hash,
                 text_len: key.text_len,
@@ -745,14 +798,16 @@ impl LineLayoutCache {
             return layout.clone();
         }
 
-        let mut current_frame = RwLockUpgradableReadGuard::upgrade(current_frame);
-
         // Try to reuse from previous frame without allocating; do a linear scan to find a matching key.
         // (We avoid `drain()` here because it would eagerly move all entries.)
-        let mut previous_frame = self.previous_frame.lock();
+        let LineLayoutCacheState {
+            current_frame,
+            previous_frame,
+            ..
+        } = &mut *state;
         if let Some(existing_key) = previous_frame
-            .used_lines_by_hash
-            .iter()
+            .lines_by_hash
+            .keys()
             .find(|key| {
                 HashedCacheKeyRef {
                     text_hash: key.text_hash,
@@ -775,13 +830,7 @@ impl LineLayoutCache {
         }
 
         let text = materialize_text();
-        let mut layout = self
-            .platform_text_system
-            .layout_line(&text, font_size, runs);
-
-        if let Some(force_width) = force_width {
-            apply_force_width_to_layout(&mut layout, force_width);
-        }
+        let layout = self.shape_layout(&text, font_size, runs, force_width);
 
         let key = Arc::new(HashedCacheKey {
             text_hash,
@@ -791,12 +840,54 @@ impl LineLayoutCache {
             wrap_width: None,
             force_width,
         });
-        let layout = Arc::new(layout);
         current_frame
             .lines_by_hash
             .insert(key.clone(), layout.clone());
         current_frame.used_lines_by_hash.push(key);
         layout
+    }
+
+    fn shape_layout(
+        &self,
+        text: &str,
+        font_size: Pixels,
+        runs: &[FontRun],
+        force_width: Option<Pixels>,
+    ) -> Arc<LineLayout> {
+        let mut layout = self.platform_text_system.layout_line(text, font_size, runs);
+        if let Some(width) = force_width {
+            apply_force_width_to_layout(&mut layout, width);
+        }
+        Arc::new(layout)
+    }
+
+    fn publish_wrapped_layout(
+        &self,
+        key: Arc<CacheKey>,
+        layout: Arc<WrappedLineLayout>,
+        font_generation: usize,
+    ) -> Arc<WrappedLineLayout> {
+        let mut state = self.state();
+        if state.font_generation == font_generation {
+            state
+                .current_frame
+                .wrapped_lines
+                .insert(key.clone(), layout.clone());
+            state.current_frame.used_wrapped_lines.push(key);
+        }
+        layout
+    }
+
+    fn state(&self) -> MutexGuard<'_, LineLayoutCacheState> {
+        let mut state = self.state.lock();
+        let generation = self.font_generation.load(Ordering::Acquire);
+        if state.font_generation != generation {
+            *state = LineLayoutCacheState {
+                font_generation: generation,
+                ..Default::default()
+            };
+        }
+        state
     }
 }
 
@@ -980,6 +1071,9 @@ impl AsCacheKeyRef for CacheKeyRef<'_> {
 
 #[cfg(test)]
 mod hit_test_tests;
+
+#[cfg(test)]
+mod font_generation_tests;
 
 #[cfg(test)]
 mod tests {

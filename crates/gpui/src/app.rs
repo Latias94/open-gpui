@@ -70,6 +70,7 @@ mod context;
 mod entity_map;
 #[cfg(any(test, feature = "test-support"))]
 mod headless_app_context;
+mod missing_glyphs;
 mod native_callback_diagnostics;
 mod native_captured_drag;
 mod native_event_ingress;
@@ -754,6 +755,8 @@ pub struct App {
     pub(crate) keystroke_observers: SubscriberSet<(), KeystrokeObserver>,
     pub(crate) keystroke_interceptors: SubscriberSet<(), KeystrokeObserver>,
     pub(crate) keyboard_layout_observers: SubscriberSet<(), Handler>,
+    missing_glyph_task: RefCell<Option<Task<()>>>,
+    missing_glyph_callback: Rc<missing_glyphs::MissingGlyphCallbackSlot>,
     pub(crate) thermal_state_observers: SubscriberSet<(), Handler>,
     pub(crate) release_listeners: SubscriberSet<EntityId, ReleaseListener>,
     pub(crate) global_observers: SubscriberSet<TypeId, Handler>,
@@ -936,6 +939,8 @@ impl App {
                 keystroke_observers: SubscriberSet::new(),
                 keystroke_interceptors: SubscriberSet::new(),
                 keyboard_layout_observers: SubscriberSet::new(),
+                missing_glyph_task: RefCell::new(None),
+                missing_glyph_callback: Rc::default(),
                 thermal_state_observers: SubscriberSet::new(),
                 global_observers: SubscriberSet::new(),
                 quit_observers: SubscriberSet::new(),

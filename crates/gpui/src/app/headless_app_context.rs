@@ -82,14 +82,14 @@ impl HeadlessAppContext {
         let platform = TestPlatform::with_platform(
             background_executor.clone(),
             foreground_executor.clone(),
-            platform_text_system.clone(),
+            platform_text_system,
             Some(renderer_factory),
         );
 
-        let text_system = Arc::new(TextSystem::new(platform_text_system));
         let http_client = open_gpui_http_client::FakeHttpClient::with_404_response();
         let app = App::new_app(platform, asset_source, http_client);
         app.borrow_mut().mode = GpuiMode::test();
+        let text_system = app.borrow().text_system().clone();
 
         Self {
             app,

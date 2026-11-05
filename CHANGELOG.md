@@ -58,6 +58,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Changed
 
+- Runtime font installation invalidates resolved descriptors, line layouts and character-width caches. Cosmic preserves existing face identities while refreshing fallback resolution, retains embedded font storage without copying it, and keeps fallback-only faces available after a primary-family lookup fails. Applications can observe complete missing graphemes through a replaceable, subscription-scoped callback on supported backends and explicitly redraw after installing fonts.
 - Windows Oklab gradients use corrected linear/sRGB transfer directions. GPU sprite and underline flags now have fully initialized four-byte storage shared by the native renderers; Windows uploads sprite records directly without a second layout conversion.
 - Standalone modifier keys now reach keystroke interceptors and observers and use the normal chord timeout without timing out longer modifier-containing chords. Accepted focus/blur transitions settle pending input once; refused candidates preserve it. IME preference and replay validate the original focus and key context, including changes made by callbacks.
 - Windows atlas insertion rejects incomplete or malformed uploads before allocation and key publication, preserving existing leased content on refusal. Color glyph readback releases staging maps on every Rust return path and initializes blended targets to transparent.

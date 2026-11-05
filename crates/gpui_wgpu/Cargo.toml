@@ -53,6 +53,7 @@ js-sys = "0.3.103"
 
 [dev-dependencies]
 criterion.workspace = true
+open_gpui = { workspace = true, features = ["test-support"] }
 
 [[bench]]
 name = "layout_line"

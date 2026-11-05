@@ -90,6 +90,8 @@ mod bring_into_view;
 mod cache_dependency_tests;
 #[cfg(test)]
 mod element_arena_tests;
+#[cfg(test)]
+mod font_installation_tests;
 mod frame_journal;
 mod frame_pump;
 mod input_dispatch;

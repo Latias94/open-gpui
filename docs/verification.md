@@ -740,6 +740,133 @@ cargo +1.95.0 nextest run --locked -p open-gpui-windows --all-features --lib -E 
 cargo +1.95.0 nextest run --locked --release --config 'profile.release.opt-level=0' --config 'profile.release.debug=0' --config 'profile.release.debug-assertions=false' -p open-gpui-windows --features test-support --lib -E 'test(native_scene_color_tests::)' --test-threads=1 --no-fail-fast --no-tests fail --success-output immediate
 ```
 
+## Runtime Font Installation And Missing-Glyph Reporting
+
+The successor to `871c012c96c` reconciles `9e6e14160c192f682c4d35f4e8d420cc0577ad5f`,
+`3389d87577312c126faa3bcbf79951babd6161d7`, `b7d50b95e8db53607438ef6f5c29d55b7b38f852`
+and `b68add5b37a125b3f9d6d04f23a2f93f8eaa57bb` against fixed Zed
+`635026fabc38440fce5e1767d125026a17b12012`. It explicitly includes the adjacent retained-font-
+source change `d0f797a38c751cff745108e458bbc5ec73c70738` and fallback-only face correction
+`d6358b2d3cd04de4d8f8f69610cccd2e390b6a3e`; they are not prerequisites inferred from dynamic
+installation. Font prewarming, available-name policy, glyph-raster reuse, Unicode wrapping,
+layered text, window-local Rc layout state and Taffy/API changes remain separately queued.
+
+The initial four-case Core baseline passes the failed-installation control and fails three
+regressions (`9e2b13f0-57d1-4cfd-8ecd-304493208196`): a successfully installed descriptor still
+resolves to its old fallback, a repeated layout retains the old Arc, and a resolved fallback
+is not retained as the requested descriptor's result. The new cache stores Direct/Fallback/
+Missing results, preserves direct-only reverse lookup and warns only for explicitly requested
+missing descriptors. Successful installation invalidates descriptor selection and advances
+the font generation. Existing loaded FontIds remain usable; a reselected descriptor's numeric
+identity is backend-specific. A backend error is not a promise of atomic rollback of an entire
+partially processed font batch.
+
+Window layout caches now keep both frames and their font generation under one private mutex.
+Range/index/reuse/truncate/finish/abort operations observe that same protected state. Window
+entry points capture generation before resolving FontRuns; stale resolved runs can finish
+without populating a newer cache. Wrapped results revalidate their generation when published
+after out-of-lock computation. Controlled threaded tests cover lock-delayed range operations
+and an old wrapped result published after a new-generation layout. The first test establishes
+ordering around the held cache lock, not a scheduler-specific instant at which a worker blocks.
+Character-width pools retain independent resolution and width-cache generations. Pooled and
+already borrowed wrappers re-resolve their requested Font and discard stale widths; returning
+a wrapper under its changed FontId does not rely on the old pool entry remaining present.
+
+Same-generation rejection returns transferred layouts to the previous cache. The public
+Window/HeadlessAppContext trajectory exercises actual atlas-lease refusal for ordinary,
+wrapped and hash layouts, checking unchanged committed revision, current-candidate Arc reuse
+on retry and no preinstallation Arc revival. Hash retry discovers restored map entries rather
+than relying on the committed frame's use-index vector. This is candidate-admission evidence,
+not a GPU device-fault injection.
+
+MissingGlyph retains whole graphemes and source proportional/monospace identity. Shaping only
+enqueues through the optional sink; a bounded 1,024-item queue and bounded receiver deduplication
+retain overflow retry and yield on duplicate-only work. Font installation or subscription
+reset invalidates queued generations. One App-owned receiver task invokes the current
+replaceable callback after shaping locks are released. Delivery waits for App borrow release
+without spinning and then rechecks quitting and batch generation. Tests cover replacement,
+old/current subscription drop, ready batches invalidated while waiting, callback/destructor
+reentry and exact App/callback/task release. Slot unwind tests prove restoration before panic
+propagation; they do not prove that a receiver task restarts after its callback panics.
+
+Cosmic clears family resolution after installation, preserving loaded database-face/configuration
+identity and refreshing fallback chains. Actual IBM Plex/Lilex tests cover fallback-to-direct,
+unchanged face Arc/glyph/metrics/advance/bounds, configuration partition, font-source pointer
+ownership and shaping through the App's real TextSystem. Missing-grapheme tests cover combining
+and ZWJ clusters, source classes, unordered/repeated indices and observer delivery. Replacing
+or disabling the backend sink drops its previous Arc outside the text-state lock; a destructor
+regression verifies reentrant font queries remain available. Retained font bytes avoid the
+borrowed-source copy, without establishing a measured memory or timing benefit.
+
+The [tracked font fixtures](../tests/fixtures/fonts/README.md) preserve unmodified font bytes,
+licenses and fixed Zed/egui provenance. An IBM-only control cannot shape the emoji in `A😀B`.
+Staged whitespace checking initially flags original trailing spaces in the Lilex/IBM licenses;
+a fixture-local Git attribute retains the exact upstream license blobs without changing them.
+After adding Noto Emoji, explicitly selecting it as primary still fails because it has no `m`;
+its database face remains available for actual IBM-run fallback. The regression checks exact
+source byte indices, the selected Noto face/glyph, absence of missing reports and visible,
+repeatable software glyph raster at scales 1.0 and 1.5. This is not native GPU or screen evidence.
+
+The first expanded Core/WGPU cohort runs 37 cases: 35 pass and two Window fixtures abort on a
+shutdown-generation assertion (`26ec48d4-80bb-4e1b-a982-f4fd328a9e23`). The fixtures had closed
+the last window and requested shutdown again before HeadlessAppContext's own shutdown. They
+now select Explicit quit mode and let the existing headless owner shut down once. A later Core
+correction cohort passes 36/36 (`ae969980-1286-4cc4-95e4-0b8238833625`), including App borrow
+waiting, cache epochs and width invalidation. The final focused cohort passes 51/51
+(`84a76c0b-c804-4a64-a5fa-23394c93146d`): 37 Core and 14 Cosmic cases, including the final
+wrapper-construction boundary, all three actual Window candidate caches, sink destruction and
+Noto fallback/raster controls. Complete all-feature Core/WGPU libraries pass 997/997 with no
+skipped cases (`25793f50-14c1-4adf-9e86-96416a46e824`): Core 940 and WGPU 57. These retain
+actual production WGSL pipeline creation and GPU atlas lifetime controls; the new Cosmic raster
+tests themselves execute software glyph rasterization.
+
+The public-context follow-up then removes an independently constructed TextSystem from both
+HeadlessAppContext and TestAppContext. Their `text_system()` accessors now share the actual
+App/Window owner, so installation through the public headless accessor invalidates the
+window's descriptors and layouts. An identity assertion plus an actual fallback/layout change
+covers that public workflow. Both focused accessor cases pass 2/2
+(`f63981f8-f14d-4ae0-b85f-1954e07cb557`). The complete all-feature Core/WGPU libraries then
+pass 999/999 with no skipped cases (`3faede22-f765-4b53-8ab9-2add1709c971`): Core 942 and
+WGPU 57. The preceding 997-case result keeps its pre-follow-up scope.
+Affected UI core/components/docking/Canvas passes 2,964/2,964 across 25 binaries with no skips
+(`6427bf6d-9d9e-4ff3-802f-b04dc1e6bfaa`). The same cohort's earlier 2,964/2,964 result
+(`6f5df537-9da8-4d36-b92c-d91b4f140f41`) predates the public-context correction; it is retained
+as an intermediate checkpoint rather than substituted for this final source result.
+
+The native installation trajectory passes 1/1 (`35a852ee-bbeb-4ad4-9ad0-b0ed6ad8c902`). It
+requires Lilex to be absent from the initial OS collection and fails explicitly otherwise.
+Font bytes enter only the application's private DirectWrite collection, not the OS font store.
+A public Render child shapes complete source with tabs, Unicode separators and multi-byte
+characters; after installation, explicit child notify produces a newer exact accepted/nonempty
+renderer-Submitted generation with the direct face. It paints the old retained layout again,
+preserves old ASCII glyph advance/bounds and completes exact HWND/platform/OLE/text-system
+retirement. The FontId change also changes the cache key: same-ID invalidation is established
+separately by Core/Cosmic controls. Paint success and submission are not glyph-pixel appearance
+or proof that every CJK/Deseret character has a nonzero glyph.
+The complete Windows library passes 189/189 with four existing interactive cases skipped
+(`db1b15f5-01fc-449a-b058-078ab6bce539`), retaining the atlas/refusal, cached/deferred scene,
+native text/input, submitted-generation and exact retirement cohorts. This run includes the
+public-context owner correction; later changes before final gates are formatting/docs only.
+
+Final locked workspace all-target and independently locked consumer all-target/all-feature
+checks pass on Windows 11 with Rust 1.95.0 and one build job. Core/Windows/WGPU all-target/
+all-feature Clippy passes with `-D clippy::correctness`; existing nonblocking warnings remain.
+Root and independent-consumer formatting, import-boundary, public-document, release-document
+and public-API-tier checks pass. Independent Core/App, Cosmic/native and public-context owner
+reviews leave no outstanding P1/P2 in this unit. The declared Rust 1.92 floor and dependency
+versions remain unchanged; Rust 1.92 execution is not part of this qualification.
+
+Windows/CoreText retain the default optional missing-glyph sink; this unit does not implement
+their reporting. The fork's current Web platform uses Cosmic directly. The fixed target's
+later Canvas fallback wrapper and post-fallback missing-index scan remain in the separate Web
+platform-closure migration. No unregistered wrapper was added. Applications own fetching and
+explicit text-view notification/Window refresh; clean cached children do not rebuild from a
+parent-only notification. Native selection caches for an already matched descriptor keep their
+existing backend policy; adding new weights/styles to that family or replacing native fallback
+selection requires separate reconciliation. The native test qualifies a previously missing
+family, not that broader reselection workflow. OS IME/input, native accessibility, full platform execution, measured
+costs, complete upstream parity and Nara rendering integration remain outside this qualification.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:

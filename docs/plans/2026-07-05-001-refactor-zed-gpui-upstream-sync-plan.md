@@ -214,6 +214,73 @@ transfer. Dependencies and the declared Rust 1.92 floor remain unchanged; Rust 1
 and independently locked consumption retain their own scope. Linux, macOS, browser, mixed-DPI
 migration and measured cost remain separately qualified work.
 
+### Font Resolution, Installation And Reporting Successor
+
+The successor to `871c012c96c` implements `9e6e14160c`, `3389d87577`, `b7d50b95e8` and
+`b68add5b37` against the same fixed target. Its
+[qualification](../verification.md#runtime-font-installation-and-missing-glyph-reporting) owns
+the original three failures and passing rejected-installation control, the final 999 Core/WGPU
+and 2,964 affected-consumer cases, native Windows 189 and the independently reviewed ownership
+corrections. Four existing interactive Windows cases remain skipped. Broader native font
+reselection and the full framework refresh remain open.
+
+Cache Direct/Fallback/Missing outcomes under the existing TextSystem owner, retain only direct
+reverse lookup, and warn for the explicitly requested descriptor rather than every absent
+fallback candidate. Successful installation clears descriptor resolution, resets missing-glyph
+deduplication and advances the font generation. Existing loaded FontIds must remain usable;
+backend-specific descriptor reselection need not return the same numeric ID on every platform.
+Cosmic must preserve loaded face identity while rebuilding its family/fallback resolution.
+
+Every ordinary, wrapped and actual hash-layout entry point observes the font generation.
+Current/previous caches and LineLayoutIndex ranges cannot replay or truncate another generation.
+Preserve `abort_frame`: same-generation candidate rejection restores transferred layouts, while
+installation prevents an old frame's layouts from returning through that recovery path. Use
+the existing atlas-lease refusal to qualify the real Window draw path, not only cache methods.
+
+Missing-glyph reporting is optional per backend. Core/Cosmic/Web retain complete grapheme
+clusters and proportional/monospace identity, a bounded nonblocking queue, bounded receiver
+deduplication, generation filtering and bounded duplicate-only polling. Default Windows/CoreText
+sinks remain unsupported; these changes make no all-platform missing-glyph claim. App owns one
+replaceable callback and its receiver task, with subscription replacement/drop, callback reentry,
+unwind restoration and App release controls. No application callback runs under shaper locks.
+
+Applications own font fetching and explicit redraw after installation. Use the App's actual
+TextSystem instance and notify the text view or refresh the Window; parent-only notification of
+a cached child is not font invalidation. HeadlessAppContext and TestAppContext must return that
+same App-owned TextSystem through their public accessors, rather than independent descriptor,
+generation and reporter caches sharing only the platform backend. Add tracked, licensed deterministic test fonts so
+complete source-checkout tests do not depend on ignored `repo-ref` assets. Qualify real Cosmic
+fallback-to-direct installation and a native Windows public Render/canvas/shape/paint trajectory
+with a newer exact Submitted frame and exact platform retirement. Keep native preconditions,
+OS input, other platforms, compiler-floor execution and measured costs explicit.
+
+Font prewarming, available-family name policy, glyph-raster reuse, Unicode wrapping, layered text,
+window-local Rc layout state and Taffy/API migration remain their separately queued units.
+Do not copy those unrelated final-target changes or report this unit as complete text refresh.
+The concrete Cosmic implementation also takes `d0f797a38c`'s retained font-source storage and
+`d6358b2d3c`'s fallback-face preservation. These are explicitly included adjacent mechanisms,
+not prerequisites of dynamic installation. Qualify actual source pointer ownership and a
+no-Latin-measurement-glyph face that remains available for fallback after a failed primary
+request; neither establishes a timing or memory-budget improvement. The current Web platform
+uses Cosmic directly. Do not add an unregistered wrapper or claim the fixed target's later
+Canvas fallback scanning layer, which remains in the Web platform-closure unit.
+
+### Native Font Reselection Follow-Up (Queued)
+
+The missing-family installation trajectory does not cover adding a weight/style to an
+already matched native family or changing its fallback selection. DirectWrite's existing
+`font_to_font_id` and CoreText's selection/family caches retain their backend policy after
+installation. Reconcile those owners before promising complete native runtime reselection;
+core descriptor invalidation alone is insufficient.
+
+Use a deterministic regular-then-bold fixture and an already requested descriptor, plus an
+installed fallback-family case. Verify the newly selected face after explicit redraw while
+retaining old FontId metrics and old-layout paint, existing candidate refusal/retry and exact
+native release. Reconcile successful and failed installation semantics without assuming
+batch-atomic rollback or clearing loaded font records. macOS source adaptation and execution
+retain separate evidence. This is a concrete native font consumer, not a new global font,
+asset-fetching or redraw authority.
+
 ## Maintained Baseline Before Engine Adaptation
 
 Finish a bounded framework refresh against the recorded November 5 Zed revision before expanding
