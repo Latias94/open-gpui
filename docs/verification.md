@@ -209,6 +209,159 @@ including the latter's WGPU 30.0.1 renderer. Core/Windows all-target Clippy pass
 remain. Import-boundary, public-document and release-document checks passed; no dependency or
 declared toolchain floor changed. The separate native factory correction is `432d079675`.
 
+## Cached Dependencies, Deferred Replay And Opacity
+
+The November 5 cache unit adapts upstream `5e982c6bdc`, `decd2399b1` and `8fa085e397` through
+the fork's existing EntityMap, view and frame journal owners. Per-callback read scopes replace
+whole-frame clone/difference recording. Draw guards isolate nested windows and restore the outer
+scope on normal exit and unwind; released generations are filtered through reference-count
+membership, including entities temporarily leased outside storage. Fresh and replayed deferred
+work retains its paint/prepaint reads. Subscription publication remains after candidate acceptance.
+
+Deferred prepaint now processes round indices in the original journal rather than temporarily
+moving its entries into separate vectors. The first focused run passed 18 of 20 cases and failed
+the two deferred-subscription regressions (`8d40c659-99d8-45e1-a053-fc579ed70b65`): replay
+reported `node 1 was not part of the reused subtree 3..4`. The imported per-round implementation
+recorded ranges against a transient vector, then replayed them against the combined journal. This
+is the same upstream defect corrected by `5e982c6bdc`; preserve its nested-popover regression as
+well as the complete ordinary/deferred parent/child subscription matrix. The corrected focused
+run passed 22/22 (`380fccfa-4379-4196-9da2-42ccec633c21`).
+
+Before the later stationary-pointer hover extension, the full Core library passed 864/864 with
+no skipped cases
+(`9ee81cc1-73e0-4be7-99dd-afe887e8706b`). It includes the added
+nested-menu replay/rebuild regression, exact nested-window read ownership on inner success,
+unwind, failed open and real atlas rejection, and committed D to candidate E dependency change.
+The refused candidate retains D without publishing E; accepted retry switches the actual tracked
+dependencies and window invalidators. The suite also retains the existing geometry, atlas,
+presentation, focus, reveal and portal controls. The additional upstream menu fixture initially
+needed adaptation from `Entity::cached` to this fork's existing `AnyView::cached` API.
+
+Ordinary deferred content and window portals retain logical inherited opacity. Exact accepted
+Scene primitives prove parent/child multiplication, changed parent alpha and unchanged cached
+render/paint counts. This is not offscreen group compositing. Cached keys compare opacity by
+bits; hover opacity discovered after prepaint requests a bounded follow-up rebuild and keeps the
+old key until rebuilding succeeds. Existing same-AABB rounded-clip changes still invalidate replay.
+
+The stationary-pointer extension first reproduced stale deferred opacity in all four direct/cached
+parent and ordinary-deferred/window-portal combinations
+(`76707405-ad53-41a2-89fe-409f9899dee6`). The accepted parent painted at the new alpha while
+deferred content retained its prepaint capture. Private opacity predictions now reconcile against
+the final admitted hit test without changing input-latched layout refinements. A first correction
+requested two callbacks instead of one (`f6b075bb-92e4-44f1-a8ee-f9bbea2795dc`); view notifications
+now coalesce through the existing Window animation owner. A subsequent full run passed 871/873
+(`b7a1c49c-915e-45c7-b948-293c94aa85c7`); its two new width-hover fixtures positioned
+an absolute root incorrectly. Both now use a real root container and assert the initial position,
+width and unhovered state before testing convergence.
+
+The corrected fixtures and extended acceptance cases then reproduced three remaining failures
+in a focused 10-case run (`b026d4dc-a0dd-4ac0-8482-7b675665d7ba`, seven passed). Fresh cached
+parents could record their paint alpha while retaining deferred captures from an earlier prepaint
+alpha; a refused Inert candidate could also reset an accepted opacity prediction. Fresh cached
+views now record geometry-valid rebuild requests in the existing candidate journal, and an
+admitted prediction change requests their rebuild together with its declaring view. Suppression
+resets commit with the candidate rather than modifying the prediction before acceptance.
+
+The resulting full Core library passed 873/873, with no skipped cases
+(`80f4ca3c-e6eb-4c18-86ef-d55fccb392eb`). The regressions exercise same-frame ancestor expansion
+with an explicit cached-parent notification, refused Inert candidates and retry without MouseMove,
+ordinary and group hover, unchanged reuse, width-only hover and mixed width/opacity hover. They
+assert actual admitted primitives, bounded follow-up callbacks and preserved layout latches.
+An expired group hitbox outside the cached view is treated as unknown; changes to that external
+group context still require notifying the owning view.
+
+Independent review found no remaining P1/P2 in these corrections. Prediction-driven follow-ups
+may rebuild other valid mismatched deferred views in the same candidate; this is not a precise
+ancestor dependency graph. Arbitrary custom paint-only opacity scopes do not gain a general
+prediction guarantee. The existing normal-commit boundary remains after atlas admission and
+before frame swap; scoped EntityMap unwind restoration does not establish atomic recovery from
+every possible draw or commit callback panic.
+
+The scoped and full framework commands are:
+
+```sh
+cargo nextest run --locked -p open-gpui --lib -E 'test(app::entity_map::access_tests::) or test(view::cache_tests::) or test(elements::deferred::tests::) or test(window::cache_dependency_tests::)' --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --locked -p open-gpui --lib --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+Before that extension, the affected UI core, components, docking and Canvas library/integration
+cohort passed
+2,964/2,964 across 25 binaries, with no skipped cases
+(`db313e6d-1398-4d78-9416-38b7a51bbec6`). Run it serially:
+
+```sh
+cargo nextest run --locked -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-docking -p open-gpui-canvas --lib --tests --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+After the complete hover and rejected-candidate corrections, that same cohort passed
+2,964/2,964 across 25 binaries, with no skipped cases
+(`89c1a547-d813-4042-8467-bae6561ebfdd`). This is the affected consumer result for the final
+runtime implementation, separate from the earlier pre-extension run.
+
+The new native regression uses a real Windows App/HWND, cached canvas and the complete
+ordinary/deferred parent/child matrix. Its test host starts the existing production VSync driver
+and pumps native messages; it does not enter the full `Application::run` lifecycle. Initialization
+waits for the exact registration's real WM_PAINT and completed initial presentation before taking
+the cache baseline. Each explicit root notification and subsequent model-only notification must
+reach a newer accepted, nonempty renderer-Submitted generation, while child render/paint counts
+stay unchanged. Explicit child notification then rebuilds and paints the changed value. Teardown
+checks the original HWND registration, ordered retirement and platform/OLE release. These receipts
+are not a screen-pixel readback or proof of exactly two total native redraws.
+
+The first native fixture run failed its first replay count check, observing `(2, 2, 1)` instead of
+`(1, 1, 1)` (`c1cabd00-7e18-4223-be54-32117b960304`). After adding the explicit initialization
+boundary, it timed out with no dispatched messages (`3049ec99-df57-4344-bfef-3229386b3632`).
+`update_for_test` does not call `Platform::run`, where the normal VSync driver starts, so the
+fixture now explicitly starts that production driver once. The first count failure alone does
+not establish which native initialization notification caused the extra rebuild. No assertion
+was removed, and no notification-stage forced refresh substitutes for the subscription proof.
+
+Earlier Windows cohorts retain their failures. Run `808cec66-8f4d-45f3-9770-8aa117f403f1`
+passed 164/165 selected cases, with four existing interactive cases skipped. The new cache
+regression passed; the existing asymmetric-activation test timed out. Diagnosis observed a
+terminal Rejected ticket while the owner was only thread-active and an external HWND held
+foreground. The fixture now prepares actual foreground before each scenario and asserts exact
+Activated/Rejected tickets as well as the native foreground result. It does not force the child
+foreground after the product action.
+
+A subsequent Windows run passed 163/165, with the same four skipped cases
+(`14ee36f5-63d6-48ff-8486-e8d9be789d42`). Cache and asymmetric activation passed, but the activation
+terminal test observed an external foreground during creation and the rejection-restoration test
+timed out. An unchanged focused run passed restoration and failed the terminal test's whole-span
+keyboard-message assertion (`9de22e75-369d-46c5-ac61-ace782b20456`). Those results do not establish
+who generated the keyboard messages or which later focus transition caused the earlier timeout.
+The test-only native observation now retains raw wParam/lParam and reports exact filtered message
+identity, ordinal and nearest test phase on failure. Creation also checks the exact target for
+positive WM_ACTIVATE/WM_SETFOCUS while preserving the global sentinel assertions. Restoration
+rechecks its exact foreground/active/focus prerequisite immediately before the rejected request.
+The original full-span keyboard predicate, activation tickets, terminal-once and exact restoration
+assertions remain; no production activation logic changed.
+
+With those fixture corrections and the final runtime implementation, the focused asymmetric,
+cache, activation-terminal and rejection-restoration cohort passed 4/4
+(`9d013ab1-d8be-42bd-826b-c37ef8b1786e`). The subsequent complete Windows library passed 165/165
+selected cases, with the same four existing interactive cases skipped
+(`d34ab2ff-52cf-42a9-a2e4-8a3c855df787`). Both commands enabled all features and ran one test at
+a time on Windows 11 with Rust 1.95.0 and one build job. A successful final run does not establish
+the source of the earlier keyboard messages or remove the need for a stable native desktop when
+qualifying foreground behavior.
+
+```sh
+cargo nextest run --locked -p open-gpui-windows --all-features --lib --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+Locked workspace all-target compilation and the independently locked consumer's all-target/
+all-feature check passed, including its actual WGPU renderer. Core/Windows all-target Clippy
+passed with `-D clippy::correctness`; existing non-denied test and docking warnings remain.
+Root/consumer formatting, import-boundary, public-document links, release documents and public
+API tier checks passed. No dependency or declared Rust 1.92 floor changed; execution used Rust
+1.95.0. Linux/macOS/Web target execution and the complete refresh's broad gate remain separate.
+
+Non-view notification remains the upstream documented limitation: it redraws subscribed windows
+but does not dirty an otherwise clean cached view. Notify that view or explicitly refresh when
+its content must rebuild. These ownership/cache regressions establish no frame-time, allocation,
+font-generation, OS composition, engine View or complete upstream-refresh qualification.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:

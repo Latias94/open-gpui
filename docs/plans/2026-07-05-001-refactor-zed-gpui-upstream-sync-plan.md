@@ -29,10 +29,17 @@ width caches. Its [lifetime record](../verification.md#textsystem-pool-lifetime)
 reproduced reference cycle, reuse/partition tests and complete headless/native reconstruction.
 The native consumer also exposed a separate stale WinRT UISettings factory after OLE apartment
 recreation; the platform owner now acquires that factory within the current query lifetime.
-Continue with cached-view dependencies before substantial game-engine Editor adaptation.
+The cached-dependency unit now isolates nested draw/callback reads, retains paint/deferred
+dependencies, preserves deferred journal indices and inherits logical opacity through portals.
+Its [qualification](../verification.md#cached-dependencies-deferred-replay-and-opacity) records
+the original failures, admitted/rejected-candidate controls, stationary-pointer convergence,
+873 Core cases, 2,964 affected consumer cases and 165 selected Windows cases. Four existing
+interactive Windows cases remain skipped. The native cache regression proves actual submitted
+frames and retirement, while the existing non-view invalidation limitation remains explicit.
+Continue with text layout and pending-input/blur before substantial game-engine Editor adaptation.
 Reproduce each remaining defect, integrate the owning fix, preserve fork contracts, run focused
 and affected regression cohorts serially, and record actual results. Source review and dependency-
-consumer checks do not qualify the three pending ports or a complete framework refresh.
+consumer checks do not qualify the two pending ports or a complete framework refresh.
 
 ### Cached-Dependency Adaptation Requirements
 

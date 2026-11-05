@@ -97,6 +97,8 @@ pub(crate) struct DeferredDraw {
     pub(super) accessibility_proxy_clip_owner: bool,
     pub(super) clip_stack: ClipStackSnapshot,
     pub(super) rem_size: Pixels,
+    pub(super) element_opacity: f32,
+    pub(super) accessed_entities: FxHashSet<EntityId>,
     pub(super) element: Option<AnyElement>,
     pub(super) absolute_offset: Point<Pixels>,
     pub(super) subtree_presentation: SubtreePresentation,
@@ -139,6 +141,7 @@ pub(crate) struct Frame {
     pub(crate) retained_visual_replays: Vec<TicketIdentity>,
     pub(crate) retained_visual_sources: FxHashMap<SourceId, CommittedSourceRecord>,
     pub(crate) prepaint_commits: Vec<FrameOutput<PrepaintCommit>>,
+    pub(super) opacity_rebuild_views: SmallVec<[FrameOutput<EntityId>; 4]>,
     pub(crate) window_control_hitboxes: Vec<(WindowControlArea, Hitbox)>,
     pub(crate) deferred_draws: Vec<DeferredDraw>,
     pub(crate) input_handlers: Vec<FrameOutput<Option<PlatformInputHandler>>>,
@@ -253,6 +256,7 @@ impl Frame {
             retained_visual_replays: Vec::new(),
             retained_visual_sources: FxHashMap::default(),
             prepaint_commits: Vec::new(),
+            opacity_rebuild_views: SmallVec::new(),
             window_control_hitboxes: Vec::new(),
             deferred_draws: Vec::new(),
             input_handlers: Vec::new(),
@@ -308,6 +312,7 @@ impl Frame {
         self.retained_visual_replays.clear();
         self.retained_visual_sources.clear();
         self.prepaint_commits.clear();
+        self.opacity_rebuild_views.clear();
         self.window_control_hitboxes.clear();
         self.deferred_draws.clear();
         self.tab_stops.clear();

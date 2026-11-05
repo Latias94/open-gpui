@@ -2586,6 +2586,7 @@ pub struct Interactivity {
     pub(crate) focus_visible_style: Option<Box<StyleRefinement>>,
     pub(crate) hover_style: Option<Box<StyleRefinement>>,
     pub(crate) group_hover_style: Option<GroupStyle>,
+    prepared_group_hover_hitbox: Option<Rc<Cell<Option<HitboxId>>>>,
     pub(crate) active_style: Option<Box<StyleRefinement>>,
     pub(crate) group_active_style: Option<GroupStyle>,
     pub(crate) drag_over_styles: Vec<(
@@ -2825,6 +2826,11 @@ impl Interactivity {
                     element_state.map(|element_state| element_state.unwrap_or_default());
                 let interactive = window.subtree_presentation().is_interactive();
                 if !interactive && let Some(element_state) = element_state.as_mut() {
+                    if let Some(prediction) = element_state.hover_opacity_prediction.clone() {
+                        window.record_prepaint_window_commit(move |_, _, _| {
+                            prediction.set(HoverOpacityPrediction::default());
+                        });
+                    }
                     clear_suppressed_interaction_state(
                         element_state,
                         self.hover_listener.as_ref(),
@@ -2880,6 +2886,14 @@ impl Interactivity {
                             None
                         };
 
+                        if interactive && let Some(element_state) = element_state.as_mut() {
+                            self.record_hover_opacity_prediction(
+                                hitbox.as_ref(),
+                                element_state,
+                                window,
+                            );
+                        }
+
                         if self.tooltip_builder.is_some()
                             && let Some(hitbox) = hitbox.as_ref()
                             && let Some(element_state) = element_state.as_mut()
@@ -2909,19 +2923,21 @@ impl Interactivity {
                         let callback = callback
                             .take()
                             .expect("interactivity prepaint callback must run at most once");
-                        if let Some(scroll_handle) = self.tracked_scroll_handle.as_ref()
-                            && (style.overflow.x == Overflow::Scroll
-                                || style.overflow.y == Overflow::Scroll)
-                        {
-                            window.with_scroll_handle_container(
-                                scroll_handle.clone(),
-                                scroll_viewport_bounds,
-                                style.overflow,
-                                |window| callback(&style, scroll_offset, hitbox, window, cx),
-                            )
-                        } else {
-                            callback(&style, scroll_offset, hitbox, window, cx)
-                        }
+                        window.with_element_opacity(style.opacity, |window| {
+                            if let Some(scroll_handle) = self.tracked_scroll_handle.as_ref()
+                                && (style.overflow.x == Overflow::Scroll
+                                    || style.overflow.y == Overflow::Scroll)
+                            {
+                                window.with_scroll_handle_container(
+                                    scroll_handle.clone(),
+                                    scroll_viewport_bounds,
+                                    style.overflow,
+                                    |window| callback(&style, scroll_offset, hitbox, window, cx),
+                                )
+                            } else {
+                                callback(&style, scroll_offset, hitbox, window, cx)
+                            }
+                        })
                     };
                     let (result, prepared_clip) = match overflow_clip {
                         Ok(Some(clip)) => {
@@ -2954,6 +2970,62 @@ impl Interactivity {
                 })
             },
         )
+    }
+
+    fn record_hover_opacity_prediction(
+        &mut self,
+        hitbox: Option<&Hitbox>,
+        element_state: &mut InteractiveElementState,
+        window: &mut Window,
+    ) {
+        let track_element = self
+            .hover_style
+            .as_ref()
+            .is_some_and(|style| style.opacity.is_some());
+        let track_group = self
+            .group_hover_style
+            .as_ref()
+            .is_some_and(|group| group.style.opacity.is_some());
+        if !track_element && !track_group {
+            return;
+        }
+        let Some(hover_state) = element_state.hover_state.clone() else {
+            return;
+        };
+        let prediction = element_state
+            .hover_opacity_prediction
+            .get_or_insert_with(Default::default)
+            .clone();
+        let hitbox = hitbox.map(|hitbox| hitbox.id);
+        let group_hitbox = track_group.then(|| Rc::new(Cell::new(None::<HitboxId>)));
+        self.prepared_group_hover_hitbox = group_hitbox.clone();
+        let view_id = window.current_view();
+        window.record_prepaint_window_commit(move |_, window, _| {
+            let element_hovered = hitbox.is_some_and(|hitbox| hitbox.is_hovered(window));
+            let group_hovered = group_hitbox.as_ref().and_then(|hitbox| match hitbox.get() {
+                None => Some(false),
+                Some(hitbox) if window.hover_style_hitbox_is_active(hitbox) => {
+                    Some(hitbox.is_hovered(window))
+                }
+                Some(_) => None,
+            });
+            let input = *hover_state.borrow();
+            let mut state = prediction.get();
+            let changed = (track_element
+                && state.element.unwrap_or(input.element) != element_hovered)
+                || group_hovered
+                    .is_some_and(|hovered| state.group.unwrap_or(input.group) != hovered);
+            if track_element {
+                state.element = Some(element_hovered);
+            }
+            if let Some(group_hovered) = group_hovered {
+                state.group = Some(group_hovered);
+            }
+            prediction.set(state);
+            if changed {
+                window.request_opacity_prediction_frame(view_id);
+            }
+        });
     }
 
     fn should_insert_hitbox(&self, style: &Style, window: &Window, cx: &App) -> bool {
@@ -3084,6 +3156,13 @@ impl Interactivity {
         f: impl FnOnce(&Style, &mut Window, &mut App),
     ) {
         self.hovered = hitbox.map(|hitbox| hitbox.is_hovered(window));
+        if let Some(group_hitbox) = &self.prepared_group_hover_hitbox {
+            group_hitbox.set(
+                self.group_hover_style
+                    .as_ref()
+                    .and_then(|group| GroupHitboxes::get(&group.group, cx)),
+            );
+        }
         window.with_optional_element_state::<InteractiveElementState, _>(
             global_id,
             |element_state, window| {
@@ -3417,6 +3496,9 @@ impl Interactivity {
                     .and_then(|state| state.hover_state.as_ref())
                     .cloned()
             });
+            let opacity_prediction = element_state
+                .as_ref()
+                .and_then(|state| state.hover_opacity_prediction.clone());
             let current_view = window.current_view();
 
             window.on_mouse_event(move |_: &MouseMoveEvent, phase, window, cx| {
@@ -3424,9 +3506,17 @@ impl Interactivity {
                 let was_hovered = hover_state
                     .as_ref()
                     .is_some_and(|state| state.borrow().element);
-                if phase == DispatchPhase::Capture && hovered != was_hovered {
+                let opacity_changed = opacity_prediction.as_ref().is_some_and(|prediction| {
+                    prediction.get().element.is_some_and(|old| old != hovered)
+                });
+                if phase == DispatchPhase::Capture && (hovered != was_hovered || opacity_changed) {
                     if let Some(hover_state) = &hover_state {
                         hover_state.borrow_mut().element = hovered;
+                        if let Some(prediction) = &opacity_prediction {
+                            let mut value = prediction.get();
+                            value.element = None;
+                            prediction.set(value);
+                        }
                         cx.notify(current_view);
                     }
                 }
@@ -3439,6 +3529,9 @@ impl Interactivity {
                     .as_ref()
                     .and_then(|element| element.hover_state.as_ref())
                     .cloned();
+                let opacity_prediction = element_state
+                    .as_ref()
+                    .and_then(|state| state.hover_opacity_prediction.clone());
                 let current_view = window.current_view();
 
                 window.on_mouse_event(move |_: &MouseMoveEvent, phase, window, cx| {
@@ -3446,9 +3539,22 @@ impl Interactivity {
                     let was_group_hovered = hover_state
                         .as_ref()
                         .is_some_and(|state| state.borrow().group);
-                    if phase == DispatchPhase::Capture && group_hovered != was_group_hovered {
+                    let opacity_changed = opacity_prediction.as_ref().is_some_and(|prediction| {
+                        prediction
+                            .get()
+                            .group
+                            .is_some_and(|old| old != group_hovered)
+                    });
+                    if phase == DispatchPhase::Capture
+                        && (group_hovered != was_group_hovered || opacity_changed)
+                    {
                         if let Some(hover_state) = &hover_state {
                             hover_state.borrow_mut().group = group_hovered;
+                        }
+                        if let Some(prediction) = &opacity_prediction {
+                            let mut value = prediction.get();
+                            value.group = None;
+                            prediction.set(value);
                         }
                         cx.notify(current_view);
                     }
@@ -4072,8 +4178,21 @@ impl Interactivity {
                         false
                     };
 
+                let opacity = style.opacity;
                 if is_group_hovered {
                     style.refine(&group_hover.style);
+                }
+                if hitbox.is_none()
+                    && let Some(hovered) = element_state
+                        .as_ref()
+                        .and_then(|state| state.hover_opacity_prediction.as_ref())
+                        .and_then(|prediction| prediction.get().group)
+                {
+                    style.opacity = if hovered {
+                        group_hover.style.opacity.or(opacity)
+                    } else {
+                        opacity
+                    };
                 }
             }
 
@@ -4090,8 +4209,21 @@ impl Interactivity {
                     false
                 };
 
+                let opacity = style.opacity;
                 if is_hovered {
                     style.refine(hover_style);
+                }
+                if hitbox.is_none()
+                    && let Some(hovered) = element_state
+                        .as_ref()
+                        .and_then(|state| state.hover_opacity_prediction.as_ref())
+                        .and_then(|prediction| prediction.get().element)
+                {
+                    style.opacity = if hovered {
+                        hover_style.opacity.or(opacity)
+                    } else {
+                        opacity
+                    };
                 }
             }
         }
@@ -4188,6 +4320,7 @@ pub struct InteractiveElementState {
     pub(crate) focus_handle: Option<FocusHandle>,
     pub(crate) clicked_state: Option<Rc<RefCell<ElementClickedState>>>,
     pub(crate) hover_state: Option<Rc<RefCell<ElementHoverState>>>,
+    hover_opacity_prediction: Option<Rc<Cell<HoverOpacityPrediction>>>,
     pub(crate) hover_listener_state: Option<Rc<RefCell<bool>>>,
     pub(crate) pending_mouse_down: Option<Rc<RefCell<Option<MouseDownEvent>>>>,
     pub(crate) scroll_handle: Option<ScrollHandle>,
@@ -4250,6 +4383,12 @@ pub struct ElementHoverState {
 
     /// True if this element is hovered, false otherwise
     pub element: bool,
+}
+
+#[derive(Clone, Copy, Default)]
+struct HoverOpacityPrediction {
+    element: Option<bool>,
+    group: Option<bool>,
 }
 
 pub(crate) enum ActiveTooltip {

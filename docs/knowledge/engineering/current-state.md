@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-05T21:13:00+08:00
+timestamp: 2026-11-06T00:00:00+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -38,8 +38,14 @@ verified_by:
   598 component integration cases and final 164 Windows cases pass; the verification guide retains
   an initial activation timeout and unchanged successful reruns. Public headless/native
   reconstruction also exposed and corrected stale WinRT settings factories after OLE apartment
-  recreation (`432d079675`). Three queued correctness units remain before major engine-specific
-  Editor adaptation; this is not a completed framework sync.
+  recreation (`432d079675`). The cached-dependency successor now isolates nested draw/callback
+  reads, retains paint/deferred subscriptions and fixes deferred journal positions and inherited
+  opacity. Final Core 873, affected UI/component/docking/Canvas 2,964 and selected Windows 165
+  pass; four existing interactive cases remain skipped. The native cache matrix proves actual
+  submitted frames and exact retirement. The verification guide retains the initial failures,
+  activation-fixture corrections and notification/performance limits. Two initial correctness
+  units remain before the broader text/layout/API refresh and engine-specific Editor adaptation;
+  this is not a completed framework sync.
 - A game-engine Editor is the selecting consumer. Framework maintenance and rendering-adapter
   refactors are allowed; Nara document, ECS and history types do not enter the core framework.
 
@@ -68,9 +74,9 @@ historical scope and is not current branch or CI qualification.
 
 # Next Action
 
-- Continue with cached-view dependencies, text layout and pending-input/blur through their owning
-  regression cohorts. The sync plan records nested-draw access-context isolation and the opacity
-  inheritance decisions required for the cached/deferred unit. Preserve the arena successor's
+- Continue with text layout and pending-input/blur through their owning regression cohorts.
+  Preserve the cache successor's admitted read/opacity publication and bounded convergence,
+  including the explicit non-view/external-group notification limits. Preserve the arena successor's
   AppCell native delivery, candidate-frame rules and explicit post-borrow command authority. Qualify touchpad
   scroll/inertia/pinch and response timing separately; source inspection or the new HWND/IME
   regression does not establish that input/performance parity.

@@ -16,6 +16,8 @@ struct AnyViewState {
     prepaint_range: Range<PrepaintStateIndex>,
     paint_range: Range<PaintIndex>,
     cache_key: ViewCacheKey,
+    /// Entities accessed in any phase of the last draw, restored on prepaint reuse
+    /// so the window remains subscribed even when paint callbacks are replayed.
     accessed_entities: FxHashSet<EntityId>,
 }
 
@@ -24,6 +26,7 @@ struct ViewCacheKey {
     bounds: Bounds<Pixels>,
     clip_stack: crate::geometry::ClipStackSnapshot,
     text_style: TextStyle,
+    opacity: f32,
     subtree_presentation: SubtreePresentation,
     subtree_transform: ResolvedSubtreeTransform,
 }
@@ -49,7 +52,14 @@ impl<V: Render> From<Entity<V>> for AnyView {
 impl AnyView {
     /// Indicate that this view should be cached when using it as an element.
     /// When using this method, the view's previous layout and paint will be recycled from the previous frame if [Context::notify] has not been called since it was rendered.
-    /// The one exception is when [Window::refresh] is called, in which case caching is ignored.
+    /// [`Window::refresh`] forces a rebuild. Inherited style, presentation, geometry and
+    /// resource validity also constrain reuse. Reads made during paint remain dependencies.
+    /// Notifying a non-view dependency redraws its windows; notify the owning view or
+    /// refresh the window when that dependency requires rebuilding cached content.
+    /// Hover-dependent opacity discovered after prepaint schedules a follow-up rebuild;
+    /// replay preserves the opacity of the recorded primitives until that rebuild succeeds.
+    /// Group context outside the retained style and geometry key requires notifying the
+    /// owning view when it changes; replay does not discover a replacement external group.
     pub fn cached(mut self, style: StyleRefinement) -> Self {
         self.cached_style = Some(style.into());
         self
@@ -154,6 +164,7 @@ impl Element for AnyView {
                 |element_state, window| {
                     let clip_stack = window.clip_stack();
                     let text_style = window.text_style();
+                    let opacity = window.element_opacity();
                     let subtree_presentation = window.subtree_presentation();
                     let subtree_transform = window.subtree_transform();
 
@@ -161,6 +172,7 @@ impl Element for AnyView {
                         && element_state.cache_key.bounds == bounds
                         && element_state.cache_key.clip_stack == clip_stack
                         && element_state.cache_key.text_style == text_style
+                        && element_state.cache_key.opacity.to_bits() == opacity.to_bits()
                         && element_state.cache_key.subtree_presentation == subtree_presentation
                         && element_state.cache_key.subtree_transform == subtree_transform
                         && window.can_reuse_paint(&element_state.paint_range)
@@ -205,6 +217,7 @@ impl Element for AnyView {
                                 bounds,
                                 clip_stack,
                                 text_style,
+                                opacity,
                                 subtree_presentation,
                                 subtree_transform,
                             },
@@ -235,14 +248,31 @@ impl Element for AnyView {
                             let mut element_state = element_state.unwrap();
 
                             let paint_start = window.paint_index();
+                            let opacity = window.element_opacity();
 
                             let paint_succeeded = if let Some(element) = element {
                                 let refreshing = mem::replace(&mut window.refreshing, true);
-                                element.paint(window, cx);
+                                let ((), accessed_entities) =
+                                    cx.detect_accessed_entities(|cx| element.paint(window, cx));
+                                element_state.accessed_entities.extend(accessed_entities);
                                 window.refreshing = refreshing;
+                                if element_state.cache_key.opacity.to_bits() != opacity.to_bits() {
+                                    window.record_opacity_rebuild_view(
+                                        self.entity_id(),
+                                        &element_state.prepaint_range,
+                                    );
+                                }
+                                element_state.cache_key.opacity = opacity;
                                 true
                             } else {
-                                window.reuse_paint(element_state.paint_range.clone())
+                                let reused = window.reuse_paint(element_state.paint_range.clone());
+                                if reused
+                                    && element_state.cache_key.opacity.to_bits()
+                                        != opacity.to_bits()
+                                {
+                                    window.request_animation_frame();
+                                }
+                                reused
                             };
 
                             if paint_succeeded {
@@ -342,3 +372,6 @@ impl Render for EmptyView {
         Empty
     }
 }
+
+#[cfg(test)]
+mod cache_tests;

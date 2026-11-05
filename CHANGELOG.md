@@ -57,6 +57,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Changed
 
+- Cached views retain entity dependencies read during paint and deferred work, without resubscribing released entities. Nested deferred menus keep stable replay indices, and inherited opacity invalidates cached output and continues through deferred children and window portals. Non-view dependency notification redraws the window; notify the owning view or refresh when cached content must rebuild.
 - TextSystem now pools independent character-width caches instead of wrappers that retain the owning TextSystem. Checked-out handles keep their text system alive; returning the last handle releases it with its backend when no other owner remains.
 - Windows appearance and scrollbar queries acquire a WinRT UISettings factory in the active apartment, preventing cached factory access violations after an embedded application closes and recreates its OLE apartment.
 - Library dependencies now accept compatible Taffy, WGPU, and Core Foundation patch versions chosen by consuming applications, while the workspace lockfile retains its tested versions. Fresh consumers use `spin` 0.12.3 instead of the withdrawn 0.10.0 release.

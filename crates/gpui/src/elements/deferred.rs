@@ -114,3 +114,6 @@ impl Deferred {
         self
     }
 }
+
+#[cfg(test)]
+mod tests;

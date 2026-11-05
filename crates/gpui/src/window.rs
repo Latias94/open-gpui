@@ -87,6 +87,8 @@ use uuid::Uuid;
 pub(crate) mod a11y;
 mod bring_into_view;
 #[cfg(test)]
+mod cache_dependency_tests;
+#[cfg(test)]
 mod element_arena_tests;
 mod frame_journal;
 mod frame_pump;
@@ -1833,6 +1835,8 @@ pub struct Window {
     pub(crate) next_tooltip_id: TooltipId,
     pub(crate) tooltip_bounds: Option<TooltipBounds>,
     next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>>,
+    requested_animation_views: Rc<RefCell<FxHashSet<EntityId>>>,
+    hover_style_hitboxes: RefCell<(u64, FxHashSet<HitboxId>)>,
     exact_frame_submission_present_callbacks: Vec<ExactFrameSubmissionPresentCallback>,
     pub(crate) dirty_views: FxHashSet<EntityId>,
     focus_listeners: SubscriberSet<(), AnyWindowFocusListener>,
@@ -3072,6 +3076,8 @@ impl Window {
             submitted_frame_diagnostics: None,
             atlas_remove_diagnostics: Vec::new(),
             next_frame_callbacks,
+            requested_animation_views: Default::default(),
+            hover_style_hitboxes: Default::default(),
             exact_frame_submission_present_callbacks: Vec::new(),
             next_hitbox_id: HitboxId(0),
             next_pointer_capture_id: PointerCaptureId(0),
@@ -5989,8 +5995,64 @@ impl Window {
     ///
     /// If called from within a view, it will notify that view on the next frame. Otherwise, it will refresh the entire window.
     pub fn request_animation_frame(&self) {
-        let entity = self.current_view();
-        self.on_next_frame(move |_, cx| cx.notify(entity));
+        self.request_view_animation_frame(self.current_view());
+    }
+
+    pub(crate) fn request_view_animation_frame(&self, entity: EntityId) {
+        let mut views = self.requested_animation_views.borrow_mut();
+        let schedule = views.is_empty();
+        views.insert(entity);
+        drop(views);
+        if schedule {
+            let views = self.requested_animation_views.clone();
+            self.on_next_frame(move |_, cx| {
+                let pending = views
+                    .borrow_mut()
+                    .drain()
+                    .collect::<SmallVec<[EntityId; 4]>>();
+                for entity in pending {
+                    cx.notify(entity);
+                }
+            });
+        }
+    }
+
+    pub(crate) fn hover_style_hitbox_is_active(&self, id: HitboxId) -> bool {
+        let mut hitboxes = self.hover_style_hitboxes.borrow_mut();
+        if hitboxes.0 != self.next_frame.generation {
+            hitboxes.0 = self.next_frame.generation;
+            hitboxes.1.clear();
+            hitboxes.1.extend(
+                self.next_frame
+                    .hitboxes
+                    .iter()
+                    .filter(|hitbox| hitbox.is_active())
+                    .map(|hitbox| hitbox.id),
+            );
+        }
+        hitboxes.1.contains(&id)
+    }
+
+    pub(crate) fn record_opacity_rebuild_view(
+        &mut self,
+        view: EntityId,
+        prepaint: &Range<PrepaintStateIndex>,
+    ) {
+        self.invalidator.debug_assert_paint();
+        if prepaint.start.deferred_draws_index != prepaint.end.deferred_draws_index {
+            self.next_frame
+                .opacity_rebuild_views
+                .push(FrameOutput::new(view, self.subtree_geometry_validity()));
+        }
+    }
+
+    pub(crate) fn request_opacity_prediction_frame(&mut self, view: EntityId) {
+        self.request_view_animation_frame(view);
+        for output in mem::take(&mut self.next_frame.opacity_rebuild_views) {
+            if output.is_valid() {
+                self.request_view_animation_frame(output.value);
+            }
+        }
     }
 
     /// Spawn the future returned by the given closure on the application thread pool.
@@ -7491,6 +7553,7 @@ impl Window {
     /// the contents of the new [`Scene`], use [`Self::present`].
     #[profiling::function]
     pub fn draw(&mut self, cx: &mut App) -> ArenaClearNeeded {
+        let _access_frame = cx.entities.frame_access_scope();
         // Set up the per-App arena for element allocation during this draw.
         // This ensures that multiple test Apps have isolated arenas.
         let arena_scope = ElementArenaScope::enter(&cx.element_arena);
@@ -7502,7 +7565,6 @@ impl Window {
         self.input_latency_tracker.record_frame_drawn();
 
         self.invalidate_entities();
-        cx.entities.clear_accessed();
         debug_assert!(self.rendered_entity_stack.is_empty());
         debug_assert!(self.subtree_presentation_stack.borrow().is_empty());
         debug_assert!(self.subtree_transform_stack.borrow().is_empty());
@@ -7717,6 +7779,8 @@ impl Window {
         // publication may observe that result, but it cannot renew the same request indefinitely.
         self.sealed_focus_retry_rejection = self.settle_focus_claim_for_candidate_generation();
         let prepaint_commit_plan = self.prepare_candidate_prepaint_commit_plan();
+        self.hover_style_hitboxes.get_mut().0 = 0;
+        self.mouse_hit_test = self.next_frame.hit_test(self.mouse_position);
 
         // Ordinary normal-phase commits may prepare accepted-frame publications and follow-up
         // focus work, but cross-frame publications remain private until the candidate is swapped.
@@ -7775,7 +7839,6 @@ impl Window {
             self.platform_window.a11y_tree_update(tree_update);
         }
         self.frame_focus_authority_sealed = false;
-        self.mouse_hit_test = self.rendered_frame.hit_test(self.mouse_position);
         self.commit_native_window_control_area(cx);
         let current_committed_focus_path = self.rendered_frame.focus_path();
         let previous_committed_focus = previous_committed_focus_path.last().copied();
@@ -7932,8 +7995,7 @@ impl Window {
     }
 
     fn record_entities_accessed(&mut self, cx: &mut App) {
-        let mut entities_ref = cx.entities.accessed_entities.get_mut();
-        let mut entities = mem::take(entities_ref.deref_mut());
+        let entities = cx.entities.take_accessed();
         let handle = self.handle;
         cx.record_entities_accessed(
             handle,
@@ -7941,8 +8003,7 @@ impl Window {
             self.invalidator.clone(),
             &entities,
         );
-        let mut entities_ref = cx.entities.accessed_entities.get_mut();
-        mem::swap(&mut entities, entities_ref.deref_mut());
+        cx.entities.restore_accessed(entities);
     }
 
     fn invalidate_entities(&mut self) {
@@ -8549,14 +8610,13 @@ impl Window {
     fn prepaint_deferred_draws(&mut self, cx: &mut App) {
         assert_eq!(self.element_id_stack.len(), 0);
 
-        let mut completed_draws = Vec::new();
-
         // Process deferred draws in multiple rounds to support nesting.
         // Each round processes all current deferred draws, which may produce new ones.
+        let mut round_start = 0;
         let mut depth = 0;
         loop {
-            let deferred_count = self.next_frame.deferred_draws.len();
-            if deferred_count == 0 {
+            let round_end = self.next_frame.deferred_draws.len();
+            if round_start == round_end {
                 break;
             }
             // Limit maximum nesting depth to prevent infinite loops.
@@ -8564,34 +8624,62 @@ impl Window {
             depth += 1;
 
             // Sort by priority for this round
-            let traversal_order = self.deferred_draw_traversal_order();
-            let mut deferred_draws = mem::take(&mut self.next_frame.deferred_draws);
+            let mut traversal_order = (round_start..round_end).collect::<SmallVec<[usize; 8]>>();
+            traversal_order.sort_by_key(|ix| self.next_frame.deferred_draws[*ix].priority);
 
             for deferred_draw_ix in traversal_order {
-                let deferred_draw = &mut deferred_draws[deferred_draw_ix];
-                let accessibility_tree_scope = deferred_draw.accessibility_tree_scope;
-                let subtree_presentation = deferred_draw.subtree_presentation;
-                let subtree_transform = deferred_draw.subtree_transform;
-                let subtree_geometry_validity = deferred_draw.subtree_geometry_validity.clone();
-                let scroll_ancestry = deferred_draw.scroll_ancestry.clone();
-                let accessibility_parent = deferred_draw.accessibility_parent.clone();
-                let accessibility_proxy_clip_owner = deferred_draw.accessibility_proxy_clip_owner;
-                self.element_id_stack
-                    .clone_from(&deferred_draw.element_id_stack);
-                self.text_style_stack
-                    .clone_from(&deferred_draw.text_style_stack);
-                self.next_frame
-                    .dispatch_tree
-                    .set_active_node(deferred_draw.parent_node);
+                let (
+                    mut element,
+                    accessibility_tree_scope,
+                    subtree_presentation,
+                    subtree_transform,
+                    subtree_geometry_validity,
+                    scroll_ancestry,
+                    accessibility_parent,
+                    accessibility_proxy_clip_owner,
+                    current_view,
+                    rem_size,
+                    absolute_offset,
+                    clip_stack,
+                    recorded_prepaint_range,
+                    element_opacity,
+                ) = {
+                    let draw = &mut self.next_frame.deferred_draws[deferred_draw_ix];
+                    self.element_id_stack.clone_from(&draw.element_id_stack);
+                    self.text_style_stack.clone_from(&draw.text_style_stack);
+                    self.next_frame
+                        .dispatch_tree
+                        .set_active_node(draw.parent_node);
+                    (
+                        draw.element.take(),
+                        draw.accessibility_tree_scope,
+                        draw.subtree_presentation,
+                        draw.subtree_transform,
+                        draw.subtree_geometry_validity.clone(),
+                        draw.scroll_ancestry.clone(),
+                        draw.accessibility_parent.clone(),
+                        draw.accessibility_proxy_clip_owner,
+                        draw.current_view,
+                        draw.rem_size,
+                        draw.absolute_offset,
+                        draw.clip_stack.clone(),
+                        draw.prepaint_range.clone(),
+                        draw.element_opacity,
+                    )
+                };
 
                 let prepaint_start = self.prepaint_index();
+                let previous_opacity = mem::replace(&mut self.element_opacity, element_opacity);
                 if subtree_geometry_validity
                     .as_ref()
                     .is_some_and(|validity| !validity.is_valid())
                 {
+                    self.next_frame.deferred_draws[deferred_draw_ix]
+                        .accessed_entities
+                        .clear();
                     // The owning transform scope already failed elsewhere in this frame.
-                } else if let Some(element) = deferred_draw.element.as_mut() {
-                    let result = self.with_scroll_ancestry(scroll_ancestry, |window| {
+                } else if let Some(element) = element.as_mut() {
+                    let (result, accessed_entities) = cx.detect_accessed_entities(|cx| self.with_scroll_ancestry(scroll_ancestry, |window| {
                         window.transact_subtree_geometry(
                             subtree_geometry_validity.clone(),
                             |window| {
@@ -8601,18 +8689,16 @@ impl Window {
                                         subtree_geometry_validity.clone(),
                                         |window| {
                                             window.with_rendered_view(
-                                                deferred_draw.current_view,
+                                                        current_view,
                                                 |window| {
                                                     window.with_rem_size(
-                                                        Some(deferred_draw.rem_size),
+                                                                Some(rem_size),
                                                         |window| {
                                                             window.with_absolute_element_offset(
-                                                                deferred_draw.absolute_offset,
+                                                                        absolute_offset,
                                                                 |window| {
                                                                     window.with_resolved_clip_stack(
-                                                                        deferred_draw
-                                                                            .clip_stack
-                                                                            .clone(),
+                                                                                clip_stack,
                                                                         |window| {
                                                                             window.with_accessibility_tree_scope(
                                                                                 accessibility_tree_scope,
@@ -8641,28 +8727,31 @@ impl Window {
                                 });
                             },
                         )
-                    });
+                    }));
+                    self.next_frame.deferred_draws[deferred_draw_ix].accessed_entities =
+                        accessed_entities;
                     if result.is_err()
                         && let Some(validity) = subtree_geometry_validity.as_ref()
                     {
                         self.record_subtree_geometry_scope_diagnostic(validity);
                     }
                 } else {
-                    self.reuse_prepaint(deferred_draw.prepaint_range.clone());
+                    cx.entities.extend_accessed(
+                        &self.next_frame.deferred_draws[deferred_draw_ix].accessed_entities,
+                    );
+                    self.reuse_prepaint(recorded_prepaint_range);
                 }
+                self.element_opacity = previous_opacity;
                 let prepaint_end = self.prepaint_index();
-                deferred_draw.prepaint_range = prepaint_start..prepaint_end;
+                let draw = &mut self.next_frame.deferred_draws[deferred_draw_ix];
+                draw.prepaint_range = prepaint_start..prepaint_end;
+                draw.element = element;
             }
-
-            // Save completed draws and continue with newly added ones
-            completed_draws.append(&mut deferred_draws);
 
             self.element_id_stack.clear();
             self.text_style_stack.clear();
+            round_start = round_end;
         }
-
-        // Restore all completed draws
-        self.next_frame.deferred_draws = completed_draws;
     }
 
     fn paint_deferred_draws(&mut self, cx: &mut App) {
@@ -8686,6 +8775,8 @@ impl Window {
 
             self.with_atlas_texture_lease_paint_scope(|window| {
                 let paint_start = window.paint_index();
+                let previous_opacity =
+                    mem::replace(&mut window.element_opacity, deferred_draw.element_opacity);
                 let clip_stack = deferred_draw.clip_stack.clone();
                 let subtree_presentation = deferred_draw.subtree_presentation;
                 let paint_succeeded = if deferred_draw
@@ -8696,24 +8787,30 @@ impl Window {
                     // The owning transform scope is layout-only for this frame.
                     true
                 } else if let Some(element) = deferred_draw.element.as_mut() {
-                    window.with_subtree_presentation(subtree_presentation, |window| {
-                        window.with_resolved_subtree_transform(
-                            deferred_draw.subtree_transform,
-                            deferred_draw.subtree_geometry_validity.clone(),
-                            |window| {
-                                window.with_rendered_view(deferred_draw.current_view, |window| {
-                                    window.with_resolved_clip_stack(clip_stack, |window| {
-                                        window.with_rem_size(
-                                            Some(deferred_draw.rem_size),
-                                            |window| {
-                                                element.paint(window, cx);
-                                            },
-                                        );
-                                    })
-                                })
-                            },
-                        );
+                    let ((), accessed_entities) = cx.detect_accessed_entities(|cx| {
+                        window.with_subtree_presentation(subtree_presentation, |window| {
+                            window.with_resolved_subtree_transform(
+                                deferred_draw.subtree_transform,
+                                deferred_draw.subtree_geometry_validity.clone(),
+                                |window| {
+                                    window.with_rendered_view(
+                                        deferred_draw.current_view,
+                                        |window| {
+                                            window.with_resolved_clip_stack(clip_stack, |window| {
+                                                window.with_rem_size(
+                                                    Some(deferred_draw.rem_size),
+                                                    |window| {
+                                                        element.paint(window, cx);
+                                                    },
+                                                );
+                                            })
+                                        },
+                                    )
+                                },
+                            );
+                        })
                     });
+                    deferred_draw.accessed_entities.extend(accessed_entities);
                     if let Some(validity) = deferred_draw.subtree_geometry_validity.as_ref() {
                         window.record_subtree_geometry_scope_diagnostic(validity);
                     }
@@ -8722,7 +8819,7 @@ impl Window {
                     let replayed = window.reuse_paint(deferred_draw.paint_range.clone());
                     if !replayed {
                         let view_id = deferred_draw.current_view;
-                        window.on_next_frame(move |_, cx| cx.notify(view_id));
+                        window.request_view_animation_frame(view_id);
                     }
                     replayed
                 };
@@ -8730,6 +8827,7 @@ impl Window {
                 if paint_succeeded {
                     deferred_draw.paint_range = paint_start..paint_end;
                 }
+                window.element_opacity = previous_opacity;
             });
         }
         self.next_frame.deferred_draws = deferred_draws;
@@ -8915,6 +9013,8 @@ impl Window {
                     accessibility_proxy_clip_owner: deferred_draw.accessibility_proxy_clip_owner,
                     clip_stack: deferred_draw.clip_stack.clone(),
                     rem_size: deferred_draw.rem_size,
+                    element_opacity: deferred_draw.element_opacity,
+                    accessed_entities: deferred_draw.accessed_entities.clone(),
                     priority: deferred_draw.priority,
                     element: None,
                     absolute_offset: deferred_draw.absolute_offset,
@@ -10667,6 +10767,8 @@ impl Window {
             accessibility_proxy_clip_owner,
             clip_stack,
             rem_size: self.rem_size(),
+            element_opacity: self.element_opacity(),
+            accessed_entities: FxHashSet::default(),
             priority,
             element: Some(element),
             absolute_offset,
@@ -14500,17 +14602,17 @@ mod cached_paint_atlas_tests {
         lease_attempts: usize,
     }
 
-    struct RejectOnceAtlas(Mutex<RejectOnceAtlasState>);
+    pub(super) struct RejectOnceAtlas(Mutex<RejectOnceAtlasState>);
 
     impl RejectOnceAtlas {
-        fn new() -> Self {
+        pub(super) fn new() -> Self {
             Self(Mutex::new(RejectOnceAtlasState {
                 fail_next_lease: false,
                 lease_attempts: 0,
             }))
         }
 
-        fn fail_next_lease(&self) {
+        pub(super) fn fail_next_lease(&self) {
             self.0.lock().fail_next_lease = true;
         }
 
@@ -14518,7 +14620,7 @@ mod cached_paint_atlas_tests {
             self.0.lock().lease_attempts
         }
 
-        fn tile(kind: AtlasTextureKind) -> AtlasTile {
+        pub(super) fn tile(kind: AtlasTextureKind) -> AtlasTile {
             AtlasTile {
                 texture_id: AtlasTextureId { index: 1, kind },
                 tile_id: TileId(1),

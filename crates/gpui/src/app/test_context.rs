@@ -1684,6 +1684,7 @@ impl VisualTestContext {
         E: Element,
     {
         self.update(|window, cx| {
+            let _access_frame = cx.entities.frame_access_scope();
             let arena_scope = ElementArenaScope::enter(&cx.element_arena);
 
             window.invalidator.set_phase(DrawPhase::Prepaint);

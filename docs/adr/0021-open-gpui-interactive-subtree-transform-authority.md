@@ -2,6 +2,7 @@
 
 **Status**: Accepted
 **Date**: 2026-07-18
+**Amended**: 2026-11-05 (deferred opacity inheritance and bounded cached-view repaint)
 
 ## Context
 
@@ -98,8 +99,25 @@ leaving a second partial authority.
 
 Ordinary deferred descendants capture the current mapping. `window_portal` is an explicit
 window-coordinate boundary: its anchor is projected before the content mapping resets. The reset
-does not bypass theme or presentation inheritance. Cached view replay is revalidated against the
-current transform fingerprint and replays every observable channel together.
+does not bypass theme or presentation inheritance. Ordinary deferred work and window portals
+also retain the resolved inherited element opacity as logical style context in both prepaint and
+paint. This multiplies primitive opacity; it does not introduce an offscreen group-compositing
+capability. Cached view replay is revalidated against the current transform fingerprint, exact
+clip stack, presentation and inherited opacity, and replays every observable channel together.
+Opacity discovered only after the current frame's hover hit test schedules a fresh follow-up
+rebuild while retaining the recorded primitive opacity until that rebuild succeeds. Repeated
+unchanged state must converge without requesting frames indefinitely; candidate acceptance and
+renderer submission retain their separate authorities.
+
+Prepaint opacity prediction is private state separate from input-latched hover and layout
+refinements. Valid frame commits reconcile only opacity-bearing element/group hover refinements,
+using the final candidate hit test after paint-time geometry validation. A refused candidate does
+not publish that prediction. Follow-up notifications share the Window's existing animation owner
+and coalesce by view identity. A derived active-hitbox membership cache is built once on demand
+for each admitted candidate; an expired external group ID is not evidence of hover exit.
+Group context outside an opt-in cached view's retained key still requires notifying that owning
+view when the context changes. This unit does not introduce automatic external-group dependency
+tracking or change layout hover behavior.
 
 ## Renderer And Motion Boundaries
 

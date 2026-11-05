@@ -11,7 +11,9 @@ use std::{
     fmt::{self, Display},
     hash::{Hash, Hasher},
     marker::PhantomData,
+    mem,
     num::NonZeroU64,
+    rc::Rc,
     sync::{
         Arc, Weak,
         atomic::{AtomicU64, AtomicUsize, Ordering::SeqCst},
@@ -20,6 +22,8 @@ use std::{
 };
 
 use super::Context;
+#[cfg(test)]
+mod access_tests;
 use crate::util::atomic_incr_if_not_zero;
 #[cfg(any(test, feature = "leak-detection"))]
 use open_gpui_collections::HashMap;
@@ -55,8 +59,95 @@ impl Display for EntityId {
 
 pub(crate) struct EntityMap {
     entities: SecondaryMap<EntityId, Box<dyn Any>>,
-    pub accessed_entities: RefCell<FxHashSet<EntityId>>,
+    accessed_entities: Rc<RefCell<EntityAccesses>>,
     ref_counts: Arc<RwLock<EntityRefCounts>>,
+}
+
+#[derive(Default)]
+struct EntityAccessFrame {
+    entities: FxHashSet<EntityId>,
+    scopes: Vec<FxHashSet<EntityId>>,
+}
+
+impl EntityAccessFrame {
+    fn innermost(&mut self) -> &mut FxHashSet<EntityId> {
+        self.scopes.last_mut().unwrap_or(&mut self.entities)
+    }
+}
+
+struct EntityAccesses {
+    frames: Vec<EntityAccessFrame>,
+    active_frame: usize,
+}
+
+impl EntityAccesses {
+    fn current(&mut self) -> &mut EntityAccessFrame {
+        &mut self.frames[self.active_frame]
+    }
+}
+
+/// Records one callback's reads and merges them into its enclosing scope on exit or unwind.
+pub(crate) struct EntityAccessScope {
+    accesses: Rc<RefCell<EntityAccesses>>,
+    frame: usize,
+    depth: usize,
+    active: bool,
+}
+
+impl EntityAccessScope {
+    pub(crate) fn finish(mut self) -> FxHashSet<EntityId> {
+        self.active = false;
+        self.end()
+    }
+
+    fn end(&self) -> FxHashSet<EntityId> {
+        let mut accesses = self.accesses.borrow_mut();
+        assert_eq!(
+            accesses.active_frame, self.frame,
+            "entity access frame escaped its draw"
+        );
+        let frame = accesses.current();
+        assert_eq!(
+            frame.scopes.len(),
+            self.depth,
+            "entity access scopes ended out of order"
+        );
+        let entities = frame
+            .scopes
+            .pop()
+            .expect("entity access scope must be active");
+        frame.innermost().extend(entities.iter().copied());
+        entities
+    }
+}
+
+impl Drop for EntityAccessScope {
+    fn drop(&mut self) {
+        if self.active {
+            self.end();
+        }
+    }
+}
+
+/// Isolates a nested window draw's reads and restores the enclosing draw on every exit path.
+pub(crate) struct EntityAccessFrameScope {
+    accesses: Rc<RefCell<EntityAccesses>>,
+    frame: usize,
+}
+
+impl Drop for EntityAccessFrameScope {
+    fn drop(&mut self) {
+        let mut accesses = self.accesses.borrow_mut();
+        assert_eq!(
+            accesses.active_frame, self.frame,
+            "entity access frames ended out of order"
+        );
+        assert!(
+            accesses.current().scopes.is_empty(),
+            "entity access scope escaped its frame"
+        );
+        accesses.active_frame -= 1;
+    }
 }
 
 #[doc(hidden)]
@@ -71,7 +162,10 @@ impl EntityMap {
     pub fn new() -> Self {
         Self {
             entities: SecondaryMap::new(),
-            accessed_entities: RefCell::new(FxHashSet::default()),
+            accessed_entities: Rc::new(RefCell::new(EntityAccesses {
+                frames: vec![EntityAccessFrame::default()],
+                active_frame: 0,
+            })),
             ref_counts: Arc::new(RwLock::new(EntityRefCounts {
                 counts: SlotMap::with_key(),
                 dropped_entity_ids: Vec::new(),
@@ -121,8 +215,11 @@ impl EntityMap {
     where
         T: 'static,
     {
-        let mut accessed_entities = self.accessed_entities.get_mut();
-        accessed_entities.insert(slot.entity_id);
+        self.accessed_entities
+            .borrow_mut()
+            .current()
+            .innermost()
+            .insert(slot.entity_id);
 
         let handle = slot.0;
         self.entities.insert(handle.entity_id, Box::new(entity));
@@ -133,8 +230,11 @@ impl EntityMap {
     #[track_caller]
     pub fn lease<T>(&mut self, pointer: &Entity<T>) -> Lease<T> {
         self.assert_valid_context(pointer);
-        let mut accessed_entities = self.accessed_entities.get_mut();
-        accessed_entities.insert(pointer.entity_id);
+        self.accessed_entities
+            .borrow_mut()
+            .current()
+            .innermost()
+            .insert(pointer.entity_id);
 
         let entity = Some(
             self.entities
@@ -155,8 +255,11 @@ impl EntityMap {
 
     pub fn read<T: 'static>(&self, entity: &Entity<T>) -> &T {
         self.assert_valid_context(entity);
-        let mut accessed_entities = self.accessed_entities.borrow_mut();
-        accessed_entities.insert(entity.entity_id);
+        self.accessed_entities
+            .borrow_mut()
+            .current()
+            .innermost()
+            .insert(entity.entity_id);
 
         self.entities
             .get(entity.entity_id)
@@ -172,19 +275,72 @@ impl EntityMap {
     }
 
     pub fn extend_accessed(&mut self, entities: &FxHashSet<EntityId>) {
+        let ref_counts = self.ref_counts.read();
         self.accessed_entities
-            .get_mut()
-            .extend(entities.iter().copied());
+            .borrow_mut()
+            .current()
+            .innermost()
+            .extend(
+                entities
+                    .iter()
+                    .copied()
+                    .filter(|id| ref_counts.counts.contains_key(*id)),
+            );
     }
 
-    pub fn clear_accessed(&mut self) {
-        self.accessed_entities.get_mut().clear();
+    pub fn access_scope(&self) -> EntityAccessScope {
+        let mut accesses = self.accessed_entities.borrow_mut();
+        let frame = accesses.active_frame;
+        accesses.current().scopes.push(FxHashSet::default());
+        EntityAccessScope {
+            accesses: self.accessed_entities.clone(),
+            frame,
+            depth: accesses.current().scopes.len(),
+            active: true,
+        }
+    }
+
+    pub fn frame_access_scope(&self) -> EntityAccessFrameScope {
+        let mut accesses = self.accessed_entities.borrow_mut();
+        if accesses.active_frame == 0 && accesses.current().scopes.is_empty() {
+            accesses.current().entities.clear();
+        }
+        accesses.active_frame += 1;
+        let frame = accesses.active_frame;
+        if frame == accesses.frames.len() {
+            accesses.frames.push(EntityAccessFrame::default());
+        }
+        let current = accesses.current();
+        assert!(
+            current.scopes.is_empty(),
+            "entity access scope survived a previous draw"
+        );
+        current.entities.clear();
+        EntityAccessFrameScope {
+            accesses: self.accessed_entities.clone(),
+            frame,
+        }
+    }
+
+    pub fn take_accessed(&mut self) -> FxHashSet<EntityId> {
+        let ref_counts = self.ref_counts.read();
+        let mut accesses = self.accessed_entities.borrow_mut();
+        let current = accesses.current();
+        assert!(current.scopes.is_empty(), "entity access scope left open");
+        current
+            .entities
+            .retain(|id| ref_counts.counts.contains_key(*id));
+        mem::take(&mut current.entities)
+    }
+
+    pub fn restore_accessed(&mut self, entities: FxHashSet<EntityId>) {
+        self.accessed_entities.borrow_mut().current().entities = entities;
     }
 
     pub fn take_dropped(&mut self) -> Vec<(EntityId, Box<dyn Any>)> {
         let mut ref_counts = &mut *self.ref_counts.write();
         let dropped_entity_ids = ref_counts.dropped_entity_ids.drain(..);
-        let mut accessed_entities = self.accessed_entities.get_mut();
+        let mut accessed_entities = self.accessed_entities.borrow_mut();
 
         dropped_entity_ids
             .filter_map(|entity_id| {
@@ -194,7 +350,12 @@ impl EntityMap {
                     0,
                     "dropped an entity that was referenced"
                 );
-                accessed_entities.remove(&entity_id);
+                for frame in &mut accessed_entities.frames {
+                    frame.entities.remove(&entity_id);
+                    for scope in &mut frame.scopes {
+                        scope.remove(&entity_id);
+                    }
+                }
                 // If the EntityId was allocated with `Context::reserve`,
                 // the entity may not have been inserted.
                 Some((entity_id, self.entities.remove(entity_id)?))
