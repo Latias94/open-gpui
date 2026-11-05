@@ -182,37 +182,37 @@ Keep any concrete engine types above the core UI execution interface. The consum
 its Editor/game-UI tradeoff and complete rendering/input/lifecycle acceptance; this plan adds no
 Nara document, ECS, history or GPU authority to Open GPUI.
 
-### GPU Record And Color-Transfer Successor (Queued)
+### GPU Record And Color-Transfer Successor
 
-The next source audit maps `f2817700349` and `b9419ae7281` to the existing scene records and
-renderers. This is preparation, not implemented or executed qualification. Adopt an initialized
-four-byte PaddedBool32 for Underline.wavy and PolychromeSprite.grayscale, preserving the fork's
-clip, tile generation and transform layout. Update all record constructors and affected public
-struct-literal consumers, with an explicit migration note; author-facing style and paint inputs
-remain ordinary bool values. No new Serde/schema path should admit arbitrary u32 flag values.
+The successor to `cde23d44ada` implements `f2817700349` and `b9419ae7281` through the existing
+scene, Window and renderer owners. Its
+[qualification](../verification.md#gpu-primitive-flags-and-windows-color-transfer) owns the safe
+layout red, native old-shader pixel red, corrected cohorts and execution-path limits. These
+results extend the maintained framework; they do not complete the wider refresh.
 
-Reconcile `scene.rs`, its Window constructors, the existing DirectX sprite upload adapter and
-the HLSL/WGSL consumers together. The current DirectX adapter already widens the bool safely;
-after the shared record is correct, remove that duplicate type and per-frame conversion rather
-than keeping two layouts. Preserve the fork's current offsets instead of copying the target's
-different tile order. Assert the flag field's own four-byte width and complete 0/1/default value,
-not just aggregate record size: the old bool layout has the same total size. Keep the existing
-Underline 88-byte and PolychromeSprite 128-byte ABI checks across actual backends. Verify the
-macOS-generated scene header and Metal shader on macOS; Windows compilation cannot cover them.
+PaddedBool32 provides private initialized four-byte zero/one storage for Underline.wavy and
+PolychromeSprite.grayscale. Constructors and public-record migration notes change together;
+author-facing style/paint APIs remain bool, with no raw-u32 or Serde compatibility path. The
+shared records retain the fork's clip, 40-byte tile generation and terminal transform layout.
+DirectX uploads the shared slice, removing its duplicate record and per-frame conversion.
+HLSL/WGSL consume the complete flag. Tests check field width, complete values and offsets in
+addition to the unchanged 88-byte underline and 128-byte sprite sizes. Metal source/ABI
+assertions are updated, but generated-header, shader and native execution on macOS remain open.
 
-Correct Windows linear/sRGB power directions through its existing shader. Use actual scene
-render/readback with non-endpoint Oklab gradient samples and an independent CPU oracle, plus
-sRGB/solid/alpha controls; endpoints or a transfer-function round trip cannot catch both reversed
-directions. Existing Window capture and the Windows test-support render-to-image path provide
-the native readback seam. Atlas readback alone and WGPU pipeline creation alone do not qualify
-scene-shader pixels. Exercise grayscale/opacity, straight/wavy/strikethrough, transform/rounded
-clip and retained/deferred consumption with existing lease/refusal controls.
+Windows now decodes with exponent 2.2 and encodes with its reciprocal. The real HWND/DirectX
+scene fixture uses an independent f64 Oklab oracle at non-endpoint physical pixel centers,
+sRGB/solid/alpha controls and a changed-color witness in a newer exact Submitted generation.
+The same trajectory checks alternating grayscale flags, opacity, straight/wavy/strikethrough,
+translated rounded clips and cached/deferred replay, followed by exact native/platform release.
+Draw-time cache mode is published through the existing accepted-frame transaction, preserving
+legitimate accessibility/inspector cache bypass without weakening pixel assertions.
 
-Keep Windows debug runtime shader compilation and release FXC output separate, and do not impose
-Windows's approximate gamma oracle byte-for-byte on WGPU's different transfer implementation.
-No source prerequisite currently establishes a compiler-floor or dependency bump for this unit;
-qualify actual compiler and independent-consumer requirements rather than assuming them. Linux,
-macOS and browser execution remain separately qualified platform scope.
+The verification record distinguishes debug runtime shader compilation from embedded FXC
+artifacts and shader optimization from Rust runtime performance. The Windows approximation is
+not a complete engine color-management policy or a byte-parity requirement for WGPU's piecewise
+transfer. Dependencies and the declared Rust 1.92 floor remain unchanged; Rust 1.95 execution
+and independently locked consumption retain their own scope. Linux, macOS, browser, mixed-DPI
+migration and measured cost remain separately qualified work.
 
 ## Maintained Baseline Before Engine Adaptation
 

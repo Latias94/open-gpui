@@ -29,6 +29,20 @@ existing post-borrow command authority. A custom backend keeps the hook's `None`
 it implements that operation; its dispatcher reports `Unsupported` for unsupported commands.
 Frame completion, candidate acceptance and renderer submission retain their separate meanings.
 
+## GPU Primitive Flags
+
+`PolychromeSprite::grayscale` and `Underline::wavy` now use `PaddedBool32`. When constructing
+renderer records directly, use `grayscale: is_grayscale.into()` and `wavy: is_wavy.into()` with
+bool inputs. The wrapper's private u32 storage is completely initialized and permits only zero
+and one through its public constructors; its default is false. Keep author-facing styles and
+`Window::paint_image` arguments as bool values.
+
+Custom renderers consume these fields as complete four-byte unsigned values. The shared records
+retain their existing clip, atlas-generation and transform offsets; the prior one-byte bool's
+compiler padding is no longer part of an upload. Windows now uploads the shared sprite records
+directly, without a second renderer-specific record conversion. No raw-u32 constructor or
+serialization compatibility path is provided.
+
 ## Form Lifecycle Authority
 
 `FormStore` now derives `FormStatus` and submission eligibility from active validation plus its

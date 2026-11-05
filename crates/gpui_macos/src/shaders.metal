@@ -3,6 +3,8 @@
 
 using namespace metal;
 
+static_assert(sizeof(PaddedBool32) == 4,
+              "PaddedBool32 must occupy a complete GPU uint slot");
 static_assert(sizeof(PrimitiveTransform) == 16,
               "PrimitiveTransform must match the Rust shader ABI");
 static_assert(sizeof(Quad) == 184, "Quad must match the Rust shader ABI");

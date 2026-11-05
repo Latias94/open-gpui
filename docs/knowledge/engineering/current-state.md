@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-06T02:31:00+08:00
+timestamp: 2026-11-06T03:26:28+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -64,6 +64,18 @@ verified_by:
   initialized submission before its baseline; original cache/model assertions remain. The
   verification guide owns the earlier failures, actual commands and limits. These five
   initial units do not complete the text/layout/API/platform refresh or engine adaptation.
+- The GPU-record/color-transfer successor now uses fully initialized PaddedBool32 fields and
+  direct shared-record DirectX upload, preserving clip/tile/transform ABI. Windows transfer
+  directions are corrected under the existing gamma-2.2 approximation. Safe field-width and
+  actual old-shader pixel regressions precede the fixes. Complete Core/WGPU 941, affected
+  consumers 2,964 and Windows 188 pass; four existing interactive Windows cases remain skipped.
+  The expanded native trajectory checks gradients, image flags/opacity, decorations, transformed
+  rounded clips, exact cached/deferred replay and native/platform release. Both debug runtime
+  shaders and non-debug FXC embedded bytes execute the pixel oracle. The latter uses unoptimized
+  Rust with FXC `/O3`, not a Rust performance qualification. Draw-time cache mode is bound to
+  the accepted generation, preserving accessibility/inspector bypass. The verification guide
+  owns exact runs, scale 1.5 evidence and remaining macOS/header/Metal, WGPU scene-pixel,
+  Linux/browser, native accessibility/mixed-DPI and measured-cost limits.
 - A game-engine Editor is the selecting consumer. Framework maintenance and rendering-adapter
   refactors are allowed; Nara document, ECS and history types do not enter the core framework.
 
@@ -93,8 +105,9 @@ historical scope and is not current branch or CI qualification.
 # Next Action
 
 - Continue the coherent framework refresh beyond the five initial correctness units. The candidate
-  queue retains GPU primitive representation, Windows color transfer, font/text/layout/API,
-  external-run-loop and platform differences. Qualify their compiler/dependency requirements
+  queue retains font/text/layout/API, image decoding, external-run-loop and platform differences.
+  Preserve the implemented GPU flag representation and Windows transfer correction. Qualify the
+  remaining compiler/dependency requirements
   before broad engine adaptation; do not overwrite the fork or reapply already-covered fixes.
   Preserve pending-input admission, context/recipient
   validity and completed-action observation, together with the native upload successor's

@@ -78,6 +78,8 @@ mod native_cache_dependency_tests;
 mod native_paint_tests;
 #[path = "native_pending_input_tests.rs"]
 mod native_pending_input_tests;
+#[path = "native_scene_color_tests.rs"]
+mod native_scene_color_tests;
 #[path = "native_text_layout_tests.rs"]
 mod native_text_layout_tests;
 #[path = "native_text_pool_tests.rs"]

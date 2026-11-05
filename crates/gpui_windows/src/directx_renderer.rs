@@ -95,7 +95,7 @@ struct DirectXRenderPipelines {
     underline_pipeline: PipelineState<Underline>,
     mono_sprites: PipelineState<MonochromeSprite>,
     subpixel_sprites: PipelineState<SubpixelSprite>,
-    poly_sprites: PipelineState<DirectXPolychromeSprite>,
+    poly_sprites: PipelineState<PolychromeSprite>,
 }
 
 struct DirectXGlobalElements {
@@ -573,15 +573,10 @@ impl DirectXRenderer {
         }
 
         if !scene.polychrome_sprites.is_empty() {
-            let sprites = scene
-                .polychrome_sprites
-                .iter()
-                .map(DirectXPolychromeSprite::from)
-                .collect::<Vec<_>>();
             self.pipelines.poly_sprites.update_buffer(
                 &devices.device,
                 &devices.device_context,
-                &sprites,
+                &scene.polychrome_sprites,
             )?;
         }
 
@@ -1458,37 +1453,6 @@ struct PathSprite {
     bounds: Bounds<ScaledPixels>,
 }
 
-#[derive(Clone, Copy)]
-#[repr(C)]
-struct DirectXPolychromeSprite {
-    order: DrawOrder,
-    pad: u32,
-    grayscale: u32,
-    opacity: f32,
-    bounds: Bounds<ScaledPixels>,
-    clip: ClipEnvelope,
-    corner_radii: Corners<ScaledPixels>,
-    tile: AtlasTile,
-    transform: PrimitiveTransform,
-}
-
-impl From<&PolychromeSprite> for DirectXPolychromeSprite {
-    fn from(sprite: &PolychromeSprite) -> Self {
-        // HLSL booleans occupy a full 32-bit slot; never upload Rust's one-byte bool plus padding.
-        Self {
-            order: sprite.order,
-            pad: sprite.pad,
-            grayscale: u32::from(sprite.grayscale),
-            opacity: sprite.opacity,
-            bounds: sprite.bounds,
-            clip: sprite.clip,
-            corner_radii: sprite.corner_radii,
-            tile: sprite.tile,
-            transform: sprite.renderer_transform(),
-        }
-    }
-}
-
 fn path_visual_bounds(path: &Path<ScaledPixels>) -> Result<Bounds<ScaledPixels>> {
     Ok(path
         .renderer_transform()
@@ -1509,8 +1473,7 @@ const _: () = {
     assert!(std::mem::size_of::<Underline>() == 88);
     assert!(std::mem::size_of::<MonochromeSprite>() == 120);
     assert!(std::mem::size_of::<SubpixelSprite>() == 120);
-    assert!(std::mem::offset_of!(DirectXPolychromeSprite, transform) == 112);
-    assert!(std::mem::size_of::<DirectXPolychromeSprite>() == 128);
+    assert!(std::mem::size_of::<PolychromeSprite>() == 128);
     assert!(112 + std::mem::size_of::<PrimitiveTransform>() == 128);
     assert!(std::mem::offset_of!(PathRasterizationSprite, transform) == 128);
     assert!(std::mem::size_of::<PathRasterizationSprite>() == 144);
@@ -1538,12 +1501,12 @@ const _: () = {
     assert!(std::mem::offset_of!(GlobalParams, is_bgr) == 32);
     assert!(std::mem::offset_of!(GlobalParams, clip_shape_count) == 36);
 
-    assert!(std::mem::offset_of!(DirectXPolychromeSprite, grayscale) == 8);
-    assert!(std::mem::offset_of!(DirectXPolychromeSprite, opacity) == 12);
-    assert!(std::mem::offset_of!(DirectXPolychromeSprite, bounds) == 16);
-    assert!(std::mem::offset_of!(DirectXPolychromeSprite, clip) == 32);
-    assert!(std::mem::offset_of!(DirectXPolychromeSprite, corner_radii) == 56);
-    assert!(std::mem::offset_of!(DirectXPolychromeSprite, tile) == 72);
+    assert!(std::mem::offset_of!(PolychromeSprite, grayscale) == 8);
+    assert!(std::mem::offset_of!(PolychromeSprite, opacity) == 12);
+    assert!(std::mem::offset_of!(PolychromeSprite, bounds) == 16);
+    assert!(std::mem::offset_of!(PolychromeSprite, clip) == 32);
+    assert!(std::mem::offset_of!(PolychromeSprite, corner_radii) == 56);
+    assert!(std::mem::offset_of!(PolychromeSprite, tile) == 72);
 };
 
 impl Drop for DirectXRenderer {

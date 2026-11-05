@@ -11014,7 +11014,7 @@ impl Window {
             clip: Default::default(),
             color: style.color.unwrap_or_default().opacity(element_opacity),
             thickness,
-            wavy: if style.wavy { 1 } else { 0 },
+            wavy: style.wavy.into(),
             transform,
         });
     }
@@ -11053,7 +11053,7 @@ impl Window {
             clip: Default::default(),
             thickness,
             color: style.color.unwrap_or_default().opacity(opacity),
-            wavy: 0,
+            wavy: false.into(),
             transform,
         });
     }
@@ -11232,7 +11232,7 @@ impl Window {
             self.insert_scene_primitive(PolychromeSprite {
                 order: 0,
                 pad: 0,
-                grayscale: false,
+                grayscale: false.into(),
                 bounds,
                 corner_radii: Default::default(),
                 clip: Default::default(),
@@ -11370,7 +11370,7 @@ impl Window {
         if !self.insert_scene_primitive(PolychromeSprite {
             order: 0,
             pad: 0,
-            grayscale,
+            grayscale: grayscale.into(),
             bounds,
             clip: Default::default(),
             corner_radii,
@@ -14503,7 +14503,7 @@ mod cached_paint_atlas_tests {
                             let _ = window.insert_scene_primitive(PolychromeSprite {
                                 order: 1,
                                 pad: 0,
-                                grayscale: false,
+                                grayscale: false.into(),
                                 opacity: 1.0,
                                 bounds,
                                 clip: Default::default(),

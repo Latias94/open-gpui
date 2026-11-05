@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Breaking Changes and Migration Notes
 
+- Renderer-record fields `PolychromeSprite::grayscale` and `Underline::wavy` now use `PaddedBool32`: construct them with bool `.into()` values. Author-facing style and paint APIs still accept bool; custom GPU consumers read a fully initialized four-byte unsigned value.
 - `ArenaClearNeeded::clear` now requires the same `&mut App` used by `Window::draw`: migrate `window.draw(cx).clear()` to `window.draw(cx).clear(cx)`. Nested draws defer cleanup until the enclosing draw ends, and clear tokens reject another App.
 - Windows command dispatchers must handle `PlatformWindowCommand::CompleteNativeFrame`. The native backend uses the existing post-borrow command queue for DirectManipulation and IME maintenance after a retained frame request; unsupported custom backends must report that outcome.
 - The UI framework authority-convergence changes are intentionally alias-free. Use the [Open GPUI v0.3 UI migration guide](docs/ui/migration-v0.3.md) for complete before/after examples and ownership rules.
@@ -57,6 +58,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Changed
 
+- Windows Oklab gradients use corrected linear/sRGB transfer directions. GPU sprite and underline flags now have fully initialized four-byte storage shared by the native renderers; Windows uploads sprite records directly without a second layout conversion.
 - Standalone modifier keys now reach keystroke interceptors and observers and use the normal chord timeout without timing out longer modifier-containing chords. Accepted focus/blur transitions settle pending input once; refused candidates preserve it. IME preference and replay validate the original focus and key context, including changes made by callbacks.
 - Windows atlas insertion rejects incomplete or malformed uploads before allocation and key publication, preserving existing leased content on refusal. Color glyph readback releases staging maps on every Rust return path and initializes blended targets to transparent.
 - Windows text shaping preserves native tab advances and Unicode separators on one logical baseline, and empty font-feature settings apply standard ligature feature defaults while explicit disabling still applies. Wrapped text hit testing returns the current row's end instead of panicking in a floating-point boundary gap.

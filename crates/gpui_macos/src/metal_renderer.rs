@@ -1925,12 +1925,19 @@ mod abi_layout_tests {
 
     #[test]
     fn transformed_primitive_fields_are_terminal_in_shader_abi() {
+        assert_eq!(size_of::<open_gpui::PaddedBool32>(), 4);
+        assert_eq!(align_of::<open_gpui::PaddedBool32>(), 4);
+        let _: fn(Underline) -> open_gpui::PaddedBool32 = |underline| underline.wavy;
+        let _: fn(PolychromeSprite) -> open_gpui::PaddedBool32 = |sprite| sprite.grayscale;
         assert_eq!(size_of::<Quad>(), 184);
         assert_eq!(size_of::<Shadow>(), 136);
         assert_eq!(size_of::<Underline>(), 88);
+        assert_eq!(offset_of!(Underline, wavy), 68);
         assert_eq!(size_of::<MonochromeSprite>(), 120);
         assert_eq!(size_of::<SubpixelSprite>(), 120);
         assert_eq!(size_of::<PolychromeSprite>(), 128);
+        assert_eq!(offset_of!(PolychromeSprite, grayscale), 8);
+        assert_eq!(offset_of!(PolychromeSprite, opacity), 12);
     }
 
     #[test]

@@ -638,6 +638,108 @@ cargo nextest run --locked -p open-gpui --lib -E 'test(window::pending_input_tes
 cargo nextest run --locked -p open-gpui-windows --all-features --lib -E 'test(native_pending_input_tests::)' --test-threads=1 --no-fail-fast --no-tests fail
 ```
 
+## GPU Primitive Flags And Windows Color Transfer
+
+The successor to `cde23d44ada` reconciles `f28177003499ec9c5052d1883fee62b148451c59` and
+`b9419ae72814157164b09592ab2466f9f4709f09` against fixed target
+`635026fabc38440fce5e1767d125026a17b12012`. The fork retains its existing clip envelopes,
+40-byte atlas tiles with exact texture generations, and terminal primitive transforms rather
+than copying the target's different record order.
+
+The first safe layout regression fails on the existing sprite field's width: one byte instead
+of four (`eccc7c75-1851-446f-8fdb-b0dba28206a7`). It does not read the old uninitialized
+padding or issue an unsafe old-record GPU upload. Aggregate record sizes alone would miss this
+defect: both old and corrected PolychromeSprite records are 128 bytes. The shared PaddedBool32
+now provides private transparent u32 storage with only bool construction and false default.
+Underline.wavy and PolychromeSprite.grayscale use it, while author-facing style/paint inputs
+remain bool. Complete zero/one bytes, field width, offsets and existing record sizes are checked.
+
+Windows previously widened the bool through its own DirectXPolychromeSprite. The corrected
+shared record removes that duplicate layout and per-frame vector conversion; DirectX uploads
+the shared slice. WGSL and HLSL consume the full unsigned flag without masking low bytes.
+This removes source-level work but establishes no measured performance gain. The existing
+native/retained/lease/clip contracts still govern record admission and presentation.
+
+The corrected Core/WGPU ABI cohort passes 7/7
+(`1f1e31c5-da4a-4b56-832f-4bd80decef76`). The native old-shader regression then fails on an
+actual Oklab black/white interior pixel: RGBA `[1,1,1,255]` instead of expected RGB `[99,99,99]`,
+with per-channel margin 6 (`297eb7a2-5bbc-4891-9339-eddf048c4660`). This is scene-shader pixel
+readback through a real HWND/DirectX consumer, not a transfer-function round trip or endpoint
+comparison. The fixture closes its exact HWND and releases platform/OLE/text-system owners
+before evaluating the pixel oracle, preserving teardown evidence on a behavioral failure.
+
+Windows now decodes sRGB with exponent 2.2 and encodes linear RGB with its reciprocal through
+the existing HLSL owner. This retains the backend's approximate gamma contract; it does not
+select a complete engine color-management policy or change WGPU/Metal transfer functions.
+The unchanged native gradient oracle passes after only those exponent changes
+(`8b036cd1-da76-4e4a-b2b1-ac3758699191`). It checks six Oklab/sRGB/alpha gradients at five
+interior physical pixel centers each, four solid/alpha controls and a notified color witness in
+a newer exact captured scene generation. Complete Core/WGPU library execution passes 941/941
+with no skipped cases (`99917b88-750f-481f-b70c-c350f73d726d`): Core 902 and WGPU 39, including
+real adapter/device atlas controls and production WGSL pipeline creation. The latter compiles
+the actual shader but is not WGPU scene-pixel readback.
+All 18 production HLSL entry points also compile with installed Windows SDK 10.0.26100.0 x64
+FXC `/O3`, using the same modules, profiles and output form as build.rs. That standalone check
+establishes shader compilation only. The same native trajectory also executes the production
+non-debug embedded artifacts and passes 1/1 (`7e8edfa3-bab2-4c24-b68f-d0cb21a74760`). This run
+uses the release profile with Rust opt-level 0, debug info 0 and debug assertions false; build.rs
+still invokes FXC `/O3`, and RawShaderBytes selects its embedded byte arrays. The fixture reports
+`embedded FXC true`. This qualifies those shader bytes through actual DirectX scene pixels and
+teardown, not optimized Rust performance or complete release acceptance.
+
+The expanded scene uses nine image instances with exact ImageId/frame-index diagnostics:
+alternating false/true/false/true grayscale at full and half opacity, plus a translated rounded
+clip. Independent source-color/weighted-grayscale samples retain opacity controls. Straight
+underlines, wavy underlines and strikethroughs are checked at both opacities, including wave
+centroid, ink fraction and peak color. Rounded corners, translated-away source and exterior
+pixels remain black. After an unchanged root notify, the entire RGBA image equals the initial
+capture; after changing only the root color, all consumer pixels still pass. Cached child render
+and all three canvas paint counts remain unchanged across both newer submitted frames.
+
+Actual cache mode is captured during root prepaint and published by a stable
+PrepaintPublicationId through the existing accepted-frame transaction. Capture requires its
+generation to equal the exact Submitted generation. This avoids confusing frame-end AccessKit
+activation with the mode used to draw that frame. When accessibility or inspector picking
+requires bypass, the test instead requires the child and all three canvases to rebuild; it does
+not disable that production policy or drop pixel assertions. The executed captures report
+scale 1.5 and cached replay true, with counts `(3,3,3,3)` unchanged on both notifications.
+They do not qualify a native accessibility-activation matrix, mixed-DPI migration or other
+monitor scales. Wave-height sampling retains native f32 scale precision at half-pixel ties.
+
+Affected UI core/components/docking/Canvas execution passes 2,964/2,964 with no skipped cases
+(`0a9c4ce7-9bfe-457e-834a-b3895c63dbe1`). The complete Windows library passes 188/188 with four
+existing interactive cases skipped (`b3ad10d3-03d5-4baf-b2e9-3e6437228a41`), preserving atlas
+admission/lease/refusal, native text/cache/input, exact submitted-frame and retirement controls.
+The final fixture-only cache-mode refinement passes its focused debug rerun 1/1
+(`05918ee8-3e14-41df-a1a8-359d34764fcd`), reporting `embedded FXC false`. No production semantics
+changed after the complete Core/WGPU and affected-consumer cohorts.
+
+Locked workspace all-target and independently locked consumer all-target/all-feature checks
+pass, including the consumer's actual WGPU renderer. Core/Windows/WGPU all-target/all-feature
+Clippy passes with `-D clippy::correctness`; existing non-denied test/docking warnings remain.
+Root and independent-consumer formatting, import boundary, public API tiers, public document
+links and release-document checks pass. The release inventory's field names were aligned with
+the changelog after its initial symbol-coverage refusal. Independent source/fixture review
+finds no outstanding P1/P2 after the draw-time accessibility-mode correction. The declared
+Rust 1.92 floor and dependency graph remain unchanged; this unit executes Rust 1.95.0 rather
+than qualifying that compiler floor.
+
+The macOS source includes flag-width/field-type/offset tests and a Metal PaddedBool32 size
+assertion. Its existing cbindgen owner still generates the scene header from the shared source.
+Generated-header correctness, Metal compilation and native pixels were not executed on Windows,
+including the runtime-shaders feature path. Linux and browser execution, OS compositor output,
+live keyboard/IME, frame-time/retained-byte measurements and Nara rendering integration remain
+outside this unit. Window capture rerenders the current scene to an offscreen target; matching
+submitted-generation metadata is not an OS screenshot. WGPU's successful production pipeline
+creation is still distinct from WGPU scene-pixel qualification.
+
+Focused reproduction commands, using one build job and the caller's shared target:
+
+```powershell
+cargo +1.95.0 nextest run --locked -p open-gpui-windows --all-features --lib -E 'test(native_scene_color_tests::)' --test-threads=1 --no-fail-fast --no-tests fail --success-output immediate
+cargo +1.95.0 nextest run --locked --release --config 'profile.release.opt-level=0' --config 'profile.release.debug=0' --config 'profile.release.debug-assertions=false' -p open-gpui-windows --features test-support --lib -E 'test(native_scene_color_tests::)' --test-threads=1 --no-fail-fast --no-tests fail --success-output immediate
+```
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:

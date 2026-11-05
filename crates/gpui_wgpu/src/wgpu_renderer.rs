@@ -2496,6 +2496,7 @@ impl RenderingParameters {
 #[cfg(test)]
 mod abi_layout_tests {
     use super::*;
+    use open_gpui::PaddedBool32;
     use std::mem::{align_of, offset_of, size_of};
 
     #[test]
@@ -2525,6 +2526,22 @@ mod abi_layout_tests {
             PrimitiveTransform::IDENTITY.components(),
             [1.0, 1.0, 0.0, 0.0]
         );
+    }
+
+    /// Transparent `u32` flags have no padding, so their complete upload bytes are initialized.
+    #[test]
+    fn primitive_flags_have_initialized_wgsl_u32_storage() {
+        assert_eq!(size_of::<PaddedBool32>(), size_of::<u32>());
+        assert_eq!(align_of::<PaddedBool32>(), align_of::<u32>());
+
+        for (flag, expected) in [
+            (PaddedBool32::default(), 0u32),
+            (PaddedBool32::from(false), 0),
+            (PaddedBool32::from(true), 1),
+        ] {
+            let bytes = unsafe { WgpuRenderer::instance_bytes(std::slice::from_ref(&flag)) };
+            assert_eq!(bytes, expected.to_ne_bytes());
+        }
     }
 
     #[test]
@@ -2561,7 +2578,9 @@ mod abi_layout_tests {
         assert_eq!(offset_of!(Shadow, clip), 40);
         assert_eq!(size_of::<Shadow>(), 136);
 
+        let _: fn(Underline) -> PaddedBool32 = |underline| underline.wavy;
         assert_eq!(offset_of!(Underline, clip), 24);
+        assert_eq!(offset_of!(Underline, wavy), 68);
         assert_eq!(size_of::<Underline>(), 88);
 
         assert_eq!(offset_of!(MonochromeSprite, clip), 24);
@@ -2570,6 +2589,9 @@ mod abi_layout_tests {
         assert_eq!(offset_of!(SubpixelSprite, clip), 24);
         assert_eq!(size_of::<SubpixelSprite>(), 120);
 
+        let _: fn(PolychromeSprite) -> PaddedBool32 = |sprite| sprite.grayscale;
+        assert_eq!(offset_of!(PolychromeSprite, grayscale), 8);
+        assert_eq!(offset_of!(PolychromeSprite, opacity), 12);
         assert_eq!(offset_of!(PolychromeSprite, clip), 32);
         assert_eq!(size_of::<PolychromeSprite>(), 128);
         for array_stride in [

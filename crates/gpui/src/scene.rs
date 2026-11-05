@@ -25,6 +25,19 @@ pub type PathVertex_ScaledPixels = PathVertex<ScaledPixels>;
 #[expect(missing_docs)]
 pub type DrawOrder = u32;
 
+/// A boolean with a fully initialized four-byte GPU storage representation.
+///
+/// Values are zero or one by construction. Shaders consume the complete value as a `u32`.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct PaddedBool32(u32);
+
+impl From<bool> for PaddedBool32 {
+    fn from(value: bool) -> Self {
+        Self(u32::from(value))
+    }
+}
+
 /// One exact window-space rounded-rectangle clip consumed by renderer shaders.
 #[derive(Default, Debug, Copy, Clone, PartialEq)]
 #[repr(C)]
@@ -1168,7 +1181,7 @@ pub struct Underline {
     pub clip: ClipEnvelope,
     pub color: Hsla,
     pub thickness: ScaledPixels,
-    pub wavy: u32,
+    pub wavy: PaddedBool32,
     pub(crate) transform: PrimitiveTransform,
 }
 
@@ -1267,7 +1280,7 @@ impl From<SubpixelSprite> for Primitive {
 pub struct PolychromeSprite {
     pub order: DrawOrder,
     pub pad: u32,
-    pub grayscale: bool,
+    pub grayscale: PaddedBool32,
     pub opacity: f32,
     pub bounds: Bounds<ScaledPixels>,
     pub clip: ClipEnvelope,
@@ -1480,6 +1493,64 @@ impl PathVertex<Pixels> {
 mod tests {
     use super::*;
     use crate::{SubtreeClip, SubtreeClipError, px, size};
+
+    #[test]
+    fn gpu_boolean_fields_occupy_initialized_four_byte_slots() {
+        assert_eq!(std::mem::size_of::<PaddedBool32>(), 4);
+        assert_eq!(std::mem::align_of::<PaddedBool32>(), 4);
+        for (value, expected) in [
+            (PaddedBool32::default(), 0u32),
+            (false.into(), 0),
+            (true.into(), 1),
+        ] {
+            assert_eq!(value.0, expected);
+            assert_eq!(value.0.to_ne_bytes(), expected.to_ne_bytes());
+        }
+        let sprite = PolychromeSprite {
+            order: 0,
+            pad: 0,
+            grayscale: false.into(),
+            opacity: 1.0,
+            bounds: scaled_bounds(0.0, 0.0, 16.0, 16.0),
+            clip: ClipEnvelope::default(),
+            corner_radii: Corners::default(),
+            tile: crate::AtlasTile {
+                tile_id: crate::TileId(0),
+                texture_id: crate::AtlasTextureId {
+                    index: 0,
+                    kind: crate::AtlasTextureKind::Polychrome,
+                },
+                padding: 0,
+                bounds: Bounds::new(Point::default(), Size::default()),
+                texture_generation: 1,
+                texture_generation_padding: 0,
+            },
+            transform: PrimitiveTransform::IDENTITY,
+        };
+        let underline = Underline {
+            order: 0,
+            pad: 0,
+            bounds: scaled_bounds(0.0, 0.0, 16.0, 4.0),
+            clip: ClipEnvelope::default(),
+            color: Hsla::default(),
+            thickness: ScaledPixels(1.0),
+            wavy: false.into(),
+            transform: PrimitiveTransform::IDENTITY,
+        };
+        assert_eq!(std::mem::size_of_val(&sprite.grayscale), 4);
+        assert_eq!(std::mem::size_of_val(&underline.wavy), 4);
+        assert_eq!(std::mem::size_of::<PolychromeSprite>(), 128);
+        assert_eq!(std::mem::offset_of!(PolychromeSprite, grayscale), 8);
+        assert_eq!(std::mem::offset_of!(PolychromeSprite, opacity), 12);
+        assert_eq!(std::mem::offset_of!(PolychromeSprite, bounds), 16);
+        assert_eq!(std::mem::offset_of!(PolychromeSprite, clip), 32);
+        assert_eq!(std::mem::offset_of!(PolychromeSprite, corner_radii), 56);
+        assert_eq!(std::mem::offset_of!(PolychromeSprite, tile), 72);
+        assert_eq!(std::mem::offset_of!(PolychromeSprite, transform), 112);
+        assert_eq!(std::mem::size_of::<Underline>(), 88);
+        assert_eq!(std::mem::offset_of!(Underline, wavy), 68);
+        assert_eq!(std::mem::offset_of!(Underline, transform), 72);
+    }
 
     fn scaled_bounds(x: f32, y: f32, width: f32, height: f32) -> Bounds<ScaledPixels> {
         Bounds::new(
