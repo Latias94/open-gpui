@@ -1,0 +1,30 @@
+[workspace]
+resolver = "2"
+
+[package]
+name = "open-gpui-dependency-consumer"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.92"
+publish = false
+
+[features]
+wgpu-renderer = ["dep:open_gpui_wgpu"]
+
+[dependencies]
+open_gpui = { package = "open-gpui", path = "../../../crates/gpui", default-features = false }
+open_gpui_platform = { package = "open-gpui-platform", path = "../../../crates/gpui_platform", default-features = false }
+open_gpui_ui_components = { package = "open-gpui-ui-components", path = "../../../crates/ui_components" }
+open_gpui_docking = { package = "open-gpui-docking", path = "../../../crates/gpui_docking" }
+open_gpui_wgpu = { package = "open-gpui-wgpu", path = "../../../crates/gpui_wgpu", default-features = false, optional = true }
+
+# Application-owned pins exercise compatible patch choices outside the library lockfile.
+taffy = "=0.10.0"
+wgpu = { version = "=30.0.1", default-features = false, features = ["std"] }
+
+[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
+open_gpui_platform = { package = "open-gpui-platform", path = "../../../crates/gpui_platform", default-features = false, features = ["x11", "wayland"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+open_gpui_platform = { package = "open-gpui-platform", path = "../../../crates/gpui_platform", default-features = false, features = ["font-kit"] }
+core-foundation = "=0.10.1"

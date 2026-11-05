@@ -31,6 +31,42 @@ The gate runs:
 On Windows, `xtask verify` sets `CARGO_BUILD_JOBS=1` only on the two DevTools all-features child
 processes. It does not mutate the parent shell environment.
 
+## Independent Dependency Consumer
+
+The separately locked [dependency consumer](../tests/fixtures/dependency-consumer/README.md)
+compiles the public framework, native platform, components and docking together with application-
+selected Taffy 0.10.0 and WGPU 30.0.1. Its optional `wgpu-renderer` feature also compiles the actual
+WGPU renderer under that selected patch. On macOS it additionally selects Core Foundation 0.10.1.
+The library accepts compatible versions; the application and workspace lockfiles retain their own
+resolved versions.
+
+Run from the repository root, reusing the ordinary target and one build job:
+
+```sh
+cargo check --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --all-targets --all-features --target-dir target -j 1
+```
+
+For a deliberately fresh dependency-resolution check, create a temporary copy of the consumer
+without its lockfile and point its path dependencies at this workspace. The original `spin`
+0.10.0 entry remains buildable in an existing lockfile but is withdrawn from fresh resolution;
+the current direct dependency uses 0.12.3. Do not regenerate the workspace lockfile just to make a
+consumer resolve, or replace its other tested package versions incidentally.
+
+This gate proves source consumption and public composition only. It launches no native window,
+requests no GPU, and does not qualify renderer sharing, OS text input, docking parity or a game-
+engine integration. The macOS-specific dependency is compiled only on its owning target.
+
+The November 5 maintenance successor to `89cb76ba` was checked on Windows 11 with Rust 1.95.0,
+one build job and the consumer's own lockfile. The all-target/all-feature consumer check passed,
+including the actual WGPU renderer with WGPU 30.0.1 and Taffy 0.10.0. The root lockfile retained
+WGPU 30.0.0 and Taffy 0.10.1; only its `spin` record and reference changed to 0.12.3. The selected
+core/components/docking library cohort passed all 2,590 cases, with no skipped selected cases
+(nextest `447739ea-48cb-4e78-a85f-5cb05769a64f`). The locked minimal docking example compiled;
+root/consumer formatting, import-boundary and public-document checks passed. Independent review
+found no outstanding correctness findings in this dependency/consumer change. These results do
+not qualify Linux/macOS compilation, the declared Rust 1.92 floor, OS input, a rendered engine
+View, the pending upstream correctness ports or the canonical-docking cutover.
+
 The U11 authority-convergence focused gate is:
 
 ```powershell

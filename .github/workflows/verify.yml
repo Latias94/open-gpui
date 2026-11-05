@@ -146,6 +146,9 @@ jobs:
       - name: Check native WGPU font-kit path
         run: cargo check -p open-gpui-wgpu --features font-kit --locked
 
+      - name: Check independent dependency consumer
+        run: cargo check --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --all-targets --all-features --target-dir target -j 1
+
       - name: Run native WGPU package tests
         if: matrix.name == 'windows'
         shell: pwsh

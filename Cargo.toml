@@ -41,6 +41,7 @@ members = [
 ]
 exclude = [
     "repo-ref/*",
+    "tests/fixtures/dependency-consumer",
 ]
 
 [workspace.package]
@@ -106,7 +107,7 @@ block2 = "0.6.2"
 bytes = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.6.1", features = ["derive"] }
-core-foundation = "=0.10.0"
+core-foundation = "0.10.0"
 core-foundation-sys = "0.8.6"
 criterion = { version = "0.5", features = ["html_reports"] }
 ctor = "1.0.6"
@@ -185,7 +186,7 @@ uuid = { version = "1.1.2", features = ["v4", "v5", "v7", "serde"] }
 walkdir = "2.5"
 wasm-bindgen = "0.2.126"
 web-time = "1.1.0"
-wgpu = "=30.0.0"
+wgpu = "30.0.0"
 which = "6.0.0"
 windows-core = "0.62"
 

@@ -55,6 +55,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Changed
 
+- Library dependencies now accept compatible Taffy, WGPU, and Core Foundation patch versions chosen by consuming applications, while the workspace lockfile retains its tested versions. Fresh consumers use `spin` 0.12.3 instead of the withdrawn 0.10.0 release.
 - `open-gpui-wgpu` now owns one private generation-bound surface lifecycle per native window. Zero extent suspends acquisition instead of configuring `1x1`, ordinary resize configures at a render-safe point without an unbounded shared-device wait, usable suboptimal frames present before reconfiguration, and unrecoverable surface loss publishes a renderer-neutral rejection for only that window.
 - `VirtualizedList` internals are split into descriptor, model, render-plan, runtime, render, style, and motion modules while keeping the public facade key-first.
 - `VirtualizedList` now has explicit async/infinite status rows for initial loading, prepend loading, append loading, exhausted, empty, error, and retry states; keyed measured reveal after prepends; presentation-only sticky section overlay metadata and rendering; and theme-backed `VirtualizedListColors`.
