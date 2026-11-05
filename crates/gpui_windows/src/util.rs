@@ -8,10 +8,12 @@ use windows::{
         ViewManagement::{UIColorType, UISettings},
     },
     Win32::{
-        Foundation::*, Graphics::Dwm::*, System::LibraryLoader::LoadLibraryA,
+        Foundation::*,
+        Graphics::Dwm::*,
+        System::{LibraryLoader::LoadLibraryA, WinRT::IActivationFactory},
         UI::WindowsAndMessaging::*,
     },
-    core::{BOOL, PCSTR},
+    core::{BOOL, Interface, PCSTR, factory},
 };
 
 use crate::*;
@@ -158,7 +160,7 @@ pub(crate) fn logical_point(x: f32, y: f32, scale_factor: f32) -> Point<Pixels> 
 // https://learn.microsoft.com/en-us/windows/apps/desktop/modernize/apply-windows-themes
 #[inline]
 pub(crate) fn system_appearance() -> Result<WindowAppearance> {
-    let ui_settings = UISettings::new()?;
+    let ui_settings = current_ui_settings()?;
     let foreground_color = ui_settings.GetColorValue(UIColorType::Foreground)?;
     // If the foreground is light, then is_color_light will evaluate to true,
     // meaning Dark mode is enabled.
@@ -167,6 +169,15 @@ pub(crate) fn system_appearance() -> Result<WindowAppearance> {
     } else {
         Ok(WindowAppearance::Light)
     }
+}
+
+/// Activates UISettings using a factory acquired in the caller's current COM apartment.
+///
+/// A process-cached WinRT factory can retain an invalid interface after the platform's
+/// OLE apartment is released and recreated. Each query releases its factory locally.
+pub(crate) fn current_ui_settings() -> Result<UISettings> {
+    let factory = factory::<UISettings, IActivationFactory>()?;
+    Ok(unsafe { factory.ActivateInstance() }?.cast()?)
 }
 
 #[inline(always)]
@@ -188,4 +199,34 @@ where
             .log_err();
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{current_ui_settings, system_appearance};
+    use anyhow::Result;
+    use open_gpui::WindowAppearance;
+    use windows::Win32::System::Ole::{OleInitialize, OleUninitialize};
+
+    struct OleApartment;
+
+    impl Drop for OleApartment {
+        fn drop(&mut self) {
+            unsafe { OleUninitialize() };
+        }
+    }
+
+    #[test]
+    fn system_appearance_survives_ole_apartment_recreation() -> Result<()> {
+        for _ in 0..3 {
+            unsafe { OleInitialize(None)? };
+            let _apartment = OleApartment;
+            assert!(matches!(
+                system_appearance()?,
+                WindowAppearance::Light | WindowAppearance::Dark
+            ));
+            let _ = current_ui_settings()?.AutoHideScrollBars()?;
+        }
+        Ok(())
+    }
 }

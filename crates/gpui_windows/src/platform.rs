@@ -19,7 +19,6 @@ use itertools::Itertools;
 use parking_lot::RwLock;
 use smallvec::SmallVec;
 use windows::{
-    UI::ViewManagement::UISettings,
     Win32::{
         Foundation::*,
         Graphics::{
@@ -3590,7 +3589,7 @@ fn load_icon() -> Result<HICON> {
 
 #[inline]
 fn should_auto_hide_scrollbars() -> Result<bool> {
-    let ui_settings = UISettings::new()?;
+    let ui_settings = current_ui_settings()?;
     Ok(ui_settings.AutoHideScrollBars()?)
 }
 
