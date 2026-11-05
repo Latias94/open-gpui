@@ -412,11 +412,8 @@ impl std::hash::Hasher for TypeIdHasher {
     #[inline]
     fn write(&mut self, bytes: &[u8]) {
         // TypeId should only hash its first 8 bytes
-        if let Some(bytes) = bytes.get(..8) {
-            bytes
-                .as_array()
-                .map(|&array| self.value = u64::from_ne_bytes(array))
-                .unwrap_or_else(|| unreachable!("slice was sliced to 8 bytes"));
+        if let Some(bytes) = bytes.first_chunk::<8>() {
+            self.value = u64::from_ne_bytes(*bytes);
         } else {
             debug_panic!(
                 "expected a 64-bit value, did you use this hasher with something other than a TypeId?"
@@ -427,6 +424,22 @@ impl std::hash::Hasher for TypeIdHasher {
     #[inline]
     fn finish(&self) -> u64 {
         self.value
+    }
+}
+
+#[test]
+fn type_id_hasher_uses_exactly_the_first_eight_bytes() {
+    use core::hash::Hasher;
+    let bytes = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99];
+    let expected = if cfg!(target_endian = "little") {
+        0x8877665544332211
+    } else {
+        0x1122334455667788
+    };
+    for len in [8, 9] {
+        let mut hasher = TypeIdHasher::default();
+        hasher.write(&bytes[..len]);
+        assert_eq!(hasher.finish(), expected);
     }
 }
 
