@@ -76,3 +76,42 @@ HEAD.
 
 - `cargo run -p xtask -- scan-import-boundary` passed before implementation started.
 - `git diff --check` passed after writing the plan.
+
+## November 5 Maintained-Framework Successor
+
+The owner is resuming development for a game-engine Editor consumer. The inspected development
+baseline is `89cb76ba1d59904d5c670f770aa8e30fe0346178` on
+`optimize/docking-graph-transaction`; its canonical-docking cutover is still in progress. The July
+queue above retains its original scope and is not a statement that the fork contains all later
+upstream work.
+
+The newly recorded Zed baseline is `635026fabc38440fce5e1767d125026a17b12012`, observed from the
+upstream remote on November 5. Source inspection first used the cached November 3
+`dd3437011469d5c2ec8c821a84cc999979625697` tree and checked the relevant latest blobs. These are
+source findings and proposed complete correction units, not executed regression or native results.
+Do not overwrite the working framework or docking files from the upstream tree.
+
+| Priority and owning unit | Confirmed difference from the development baseline | Upstream change and required verification |
+| --- | --- | --- |
+| First: element arena custody | App still stores the arena inline while TLS/raw-pointer scopes can outlive nested draw cleanup. Scope restoration alone does not defer clearing or establish allocation stability. | [`ec3d887507`](https://github.com/zed-industries/zed/commit/ec3d887507f272119d9fe146c685f0a941d0e798), [`2529740084`](https://github.com/zed-industries/zed/commit/2529740084edf8c736e9d316edbcf56d40c1cf0f). Migrate allocation ownership, nesting, `clear(cx)` callers and App identity together. Port arena deferred/immediate-clear and nested-window-during-draw regressions; qualify aliasing separately with Miri where available. |
+| TextSystem lifetime | The wrapper pool stores LineWrapper values that strongly retain the same TextSystem. | [`e4a3732b94`](https://github.com/zed-industries/zed/commit/e4a3732b94eb0881e1d954201ed41ffd2abf18f6). Pool CharWidthCache instead, preserve cache reuse and add `pooled_line_wrappers_do_not_retain_text_system` plus existing wrapping/truncation cases. |
+| Cached-view dependencies | Whole-frame entity-set differences miss earlier reads; paint/deferred accesses and inherited opacity are absent from the retained dependencies. | [`decd2399b1`](https://github.com/zed-industries/zed/commit/decd2399b180b64dea2a4182f9ac63545a45e7a3), [`8fa085e397`](https://github.com/zed-industries/zed/commit/8fa085e397fd106166eb055f74a6e9d5e674d02f). Adapt scoped accesses, released-entity filtering, deferred/paint replay and opacity with accessed-scope, deferred subscription and inherited-opacity regressions. Preserve the fork's additional presentation/transform/clip/reveal validity. |
+| Text layout correctness | DirectWrite drops zero-glyph advances and lacks the line-separator/default-feature behavior; wrapped hit testing can unwrap an out-of-line floating-point result. | [`0294cfb58e`](https://github.com/zed-industries/zed/commit/0294cfb58e8e24d12be7596f56bdb7a53e3dfd2f), [`979cd3fdf0`](https://github.com/zed-industries/zed/commit/979cd3fdf02ffa39131b33507cbd7375a68910fd), [`ac6818fb2d`](https://github.com/zed-industries/zed/commit/ac6818fb2de7aaec9ee00d4ff697e948c8b8f0a3), [`e71963a599`](https://github.com/zed-industries/zed/commit/e71963a599c64c213aca1c607e7418503a1e787d). Use native DirectWrite advances as the tab oracle, test both separator forms and default/explicitly-disabled ligatures, and retain the wrapped-line trailing-position regression. |
+| Pending input and blur | Standalone modifier keystrokes miss interception/timeout handling, and explicit empty-focus adoption lacks the same pending-input settlement as focus replacement. | [`bc7041c600`](https://github.com/zed-industries/zed/commit/bc7041c600e3da82713849f4d65aa4a3cac89f67), [`ba42ab9d98`](https://github.com/zed-industries/zed/commit/ba42ab9d9851f82a7d8f5ae40b941bf5c515fc10), [`f66ed399cd`](https://github.com/zed-industries/zed/commit/f66ed399cdde86092af8af3dc7b418abf45f37f8). Port recognized-keystroke and focus-commit behavior with standalone-modifier, observation suppression and pending-input focus/blur regressions, including refused candidate and closed-window controls. |
+
+Implement each row as a complete ownership/correctness change with focused tests and the affected
+presentation, focus, portal and docking regressions. Preserve the accepted contracts, while
+challenging implementation complexity when a deeper local module removes it. In particular,
+renderer-submitted semantics, cross-channel subtree suppression, native mutation generations and
+the existing docking transaction work must not disappear during an upstream update.
+
+Already-covered work is not new benefit: `ListState::rebase_pending_scroll` is connected locally,
+and the dedicated-task scheduler no longer has the earlier strong-reference-cycle shape. Record
+these equivalences instead of reapplying their July candidates.
+
+A subsequent coherent text refresh should assess resolved-font fallback caches together with
+font-generation and layout invalidation, UAX #14 line breaking, and text synchronization/API
+changes. The source baseline also advances Taffy from 0.10 to 0.15 and selects Rust 1.98.1. These
+are migration inputs, not a reason to copy the upstream manifest or silently change Open GPUI's
+declared Rust 1.92 floor. Validate the actual compiler/dependency requirement per owning change.
+Completing a few correctness ports does not qualify the complete upstream refresh.

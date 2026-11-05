@@ -10,6 +10,28 @@ execution: code
 
 # Zed GPUI Upstream Sync - Plan
 
+## November 5 Continuation
+
+The owner has resumed maintenance in `F:/SourceCodes/Rust/open-gpui`, whose inspected baseline is
+`89cb76ba` on `optimize/docking-graph-transaction`. Continue the existing framework and preserve
+that branch's unfinished canonical-docking work. The July units below retain their historical
+requirements; they are not proof of parity with current Zed.
+
+The [candidate queue](../imports/zed-gpui-upstream-sync-candidates.md#november-5-maintained-framework-successor)
+now records upstream `635026fabc38440fce5e1767d125026a17b12012` and five proposed complete
+correctness units: arena custody, TextSystem lifetime, cached-view dependencies, text layout and
+pending-input/blur. Begin with the arena owner before substantial game-engine Editor adaptation.
+Reproduce each defect, integrate the complete owning fix, preserve fork contracts, run focused
+and affected regression cohorts serially, and record actual results. Source review and the
+current dependency-consumer tests do not qualify these pending ports.
+
+After those units, compare a coherent text/framework refresh, including dependency/toolchain
+changes, before expanding the Editor component implementation. A game-engine rendering adapter
+is a legitimate framework extension; the existing D3D11 backend need not remain mandatory.
+Keep any concrete engine types above the core UI execution interface. The consuming engine owns
+its Editor/game-UI tradeoff and complete rendering/input/lifecycle acceptance; this plan adds no
+Nara document, ECS, history or GPU authority to Open GPUI.
+
 ## Goal Capsule
 
 | Field | Decision |

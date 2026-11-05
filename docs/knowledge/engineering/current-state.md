@@ -1,10 +1,12 @@
 ---
 type: Current State
-title: Open GPUI main integrated state
+title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-07-09T16:05:45+08:00
-git_branch: main
+timestamp: 2026-11-05T18:47:06+08:00
+git_branch: optimize/docking-graph-transaction
 related_plan:
+  - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
+  - ../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md
   - ../../plans/2026-07-09-002-refactor-v030-product-surface-hardening-plan.md
   - ../../plans/2026-07-09-003-refactor-devtools-runtime-ecosystem-plan.md
   - ../../plans/2026-07-08-003-refactor-runtime-docking-core-hardening-plan.md
@@ -16,13 +18,27 @@ verified_by:
 
 # Current State
 
-- Snapshot timestamp: 2026-07-09T16:05:45+08:00.
-- Branch: `main`.
-- Current head: `df6ae2f` on local `main` and `origin/main`.
-- Current work: v0.3 public-surface hardening, DevTools target/domain/event provider runtime, stateful GPUI DevTools inspector controller, gallery DevTools dogfood, and CI web-smoke hardening are integrated on `main`.
-- Blocked: none. Latest GitHub Actions for `df6ae2f` are green for `Verify`, `Publish Check`, and `Dependency Health`.
+- Authoritative development workspace: `F:/SourceCodes/Rust/open-gpui`, on
+  `optimize/docking-graph-transaction`. The inspected starting revision was
+  `89cb76ba1d59904d5c670f770aa8e30fe0346178`, with a clean initial worktree.
+- The older Nara `repo-ref/open-gpui` snapshot is 63 commits behind that baseline. It is reference
+  evidence, not the development workstream.
+- Canonical docking remains in progress under the August 21 plan. New prepared close/floating
+  operations do not establish the U4 production cutover; the legacy DockWorkspace/graph path still
+  exists. U4-U9 and native multiview acceptance remain open.
+- Maintenance now includes an independently locked framework/platform/component/docking consumer,
+  compatible dependency patch choices and replacement of withdrawn `spin` 0.10.0. Its README and
+  the verification guide define the compile-only scope.
+- The new upstream comparison baseline is Zed `635026fabc38440fce5e1767d125026a17b12012`, observed
+  on November 5. The existing sync queue records five pending correctness units before major
+  engine-specific Editor adaptation. Fetching or inspecting this revision is not a completed sync.
+- A game-engine Editor is the selecting consumer. Framework maintenance and rendering-adapter
+  refactors are allowed; Nara document, ECS and history types do not enter the core framework.
 
-# Integrated Summary
+# Historical Main Integration
+
+The previous snapshot recorded `df6ae2f` on July 9. The following integration summary retains that
+historical scope and is not current branch or CI qualification.
 
 - Runtime/docking/core hardening from `docs/plans/2026-07-08-003-refactor-runtime-docking-core-hardening-plan.md` is present on `main`.
 - v0.3 public-surface hardening from `docs/plans/2026-07-09-002-refactor-v030-product-surface-hardening-plan.md` is present on `main`.
@@ -33,6 +49,9 @@ verified_by:
 
 # Current Entry Points
 
+- Canonical docking plan: `../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md`.
+- Upstream successor: `../../imports/zed-gpui-upstream-sync-candidates.md#november-5-maintained-framework-successor`.
+- Dependency consumer: `../../../tests/fixtures/dependency-consumer/README.md`.
 - DevTools runtime plan: `../../plans/2026-07-09-003-refactor-devtools-runtime-ecosystem-plan.md`.
 - DevTools runtime verification: `verification/2026-07-09-devtools-runtime-ecosystem-provider-controller.md`.
 - DevTools inspector click dogfood: `verification/2026-07-09-devtools-inspector-click-dogfood.md`.
@@ -41,11 +60,21 @@ verified_by:
 
 # Next Action
 
-- For implementation work, prefer v0.3 release readiness and public documentation/API drift gates before adding another large feature surface.
-- For DevTools work, the next useful step is broader dogfood polish or browser-visible gallery inspection, not another provider abstraction layer.
+- Correct element-arena allocation, nested cleanup and App-bound clear authority first; preserve
+  the fork's native reentrancy and candidate-frame rules. Continue with TextSystem lifetime,
+  cached-view dependencies, text layout and pending-input/blur through their owning regression
+  cohorts. Complete source inspection is not implementation or Miri/native evidence.
+- Reconcile a coherent later text/framework refresh and its toolchain requirements before broad
+  engine adaptation. Do not overwrite the fork from Zed or reapply already-covered fixes.
+- Preserve and continue the canonical-docking plan; assess the actual renderer/Host seam through
+  the engine consumer. Complete Editor/game-runtime selection remains consumer work rather than
+  a premise that two permanent UI engines are required.
 
 # Citations
 
+- [Canonical docking plan](../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md)
+- [Upstream sync successor](../../imports/zed-gpui-upstream-sync-candidates.md#november-5-maintained-framework-successor)
+- [Independent dependency consumer](../../../tests/fixtures/dependency-consumer/README.md)
 - [Runtime/docking/core hardening plan](../../plans/2026-07-08-003-refactor-runtime-docking-core-hardening-plan.md)
 - [v0.3 public surface hardening plan](../../plans/2026-07-09-002-refactor-v030-product-surface-hardening-plan.md)
 - [DevTools runtime ecosystem plan](../../plans/2026-07-09-003-refactor-devtools-runtime-ecosystem-plan.md)
