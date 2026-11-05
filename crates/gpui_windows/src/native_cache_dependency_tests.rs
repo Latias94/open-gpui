@@ -85,8 +85,18 @@ fn wait_for_native_cache_submission(
 ) -> u64 {
     let mut submitted_generation = None;
     pump_messages_until_with_delay(description, Duration::from_millis(5), || {
-        let facts = app
-            .update_for_test(|cx| window.update(cx, |_, window, _| window.presentation_facts()))
+        let (facts, rendered_generation, diagnostics_generation) = app
+            .update_for_test(|cx| {
+                window.update(cx, |_, window, _| {
+                    (
+                        window.presentation_facts(),
+                        window.rendered_frame_revision(),
+                        window
+                            .submitted_frame_diagnostics_for_test()
+                            .map(|diagnostics| diagnostics.generation()),
+                    )
+                })
+            })
             .expect("the native cache window must remain open while awaiting submission");
         let Some(attempt) = facts.latest_present_attempt else {
             return false;
@@ -99,6 +109,8 @@ fn wait_for_native_cache_submission(
             && facts.frame_accepted_generation == Some(attempt.generation)
             && facts.present_submitted_generation == Some(attempt.generation)
             && facts.non_empty_presented_generation == Some(attempt.generation)
+            && rendered_generation == attempt.generation
+            && diagnostics_generation == Some(attempt.generation)
         {
             submitted_generation = Some(attempt.generation);
             true
@@ -142,6 +154,11 @@ fn native_cached_deferred_canvas_keeps_model_subscription_after_replay() {
                                 cx,
                             )),
                             focus_on_appearing: false,
+                            activation_policy: WindowActivationPolicy {
+                                accepts_activation: false,
+                                focus_on_click: false,
+                            },
+                            accepts_pointer_input: false,
                             show: true,
                             ..WindowOptions::default()
                         },
@@ -168,6 +185,12 @@ fn native_cached_deferred_canvas_keeps_model_subscription_after_replay() {
                 .window_from_hwnd(hwnd)
                 .expect("the cached canvas HWND must remain registered");
             assert_eq!(native_window.registration, registration, "{case}");
+            let native_facts = native_window
+                .observed_platform_facts_for_test()
+                .expect("native cache prerequisites must be observable from the HWND");
+            assert!(!native_facts.accepts_pointer_input, "{case}");
+            assert!(!native_facts.accepts_activation, "{case}");
+            assert!(!native_facts.focus_on_click, "{case}");
             let frame_requests = observe_frame_requests(&native_window);
             let initial_paint_cursor = observation.cursor();
             assert!(
@@ -198,6 +221,22 @@ fn native_cached_deferred_canvas_keeps_model_subscription_after_replay() {
                 window,
                 0,
                 &format!("{case}: initial native cache submission"),
+            );
+            pump_messages_until_idle(&format!("{case}: shown native cache follow-up"));
+            let before_initialization = app
+                .update_for_test(|cx| {
+                    window.update(cx, |_, window, _| {
+                        let generation = window.rendered_frame_revision();
+                        window.refresh();
+                        generation
+                    })
+                })
+                .expect("the native cache initialization must own its explicit refresh");
+            generation = wait_for_native_cache_submission(
+                &mut app,
+                window,
+                generation.max(before_initialization),
+                &format!("{case}: fully initialized native cache submission"),
             );
             assert!(counters.root_renders.get() > 0, "{case}");
             assert!(counters.child_renders.get() > 0, "{case}");
