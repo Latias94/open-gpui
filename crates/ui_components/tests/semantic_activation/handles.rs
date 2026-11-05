@@ -45,7 +45,7 @@ fn activation_handle_rejects_requests_from_another_window(cx: &mut open_gpui::Te
         })
         .expect("fresh handles should be observable as unavailable");
     cx.update_window(owner.clone().into(), |_, window, cx| {
-        window.draw(cx).clear()
+        window.draw(cx).clear(cx)
     })
     .expect("owner window should draw");
     foreign

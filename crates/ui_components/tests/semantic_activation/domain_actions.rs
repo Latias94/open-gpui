@@ -73,7 +73,7 @@ fn tag_remove_preserves_payload_and_routes_each_activation_source_once(
         disabled_handle: disabled_handle.clone(),
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let remove_bounds = cx
@@ -228,7 +228,7 @@ fn toast_action_is_domain_addressed_and_routes_each_activation_source_once(
         handle: handle.clone(),
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let action_bounds = cx
@@ -320,7 +320,7 @@ fn toast_dismiss_is_domain_addressed_and_routes_each_activation_source_once(
         handle: handle.clone(),
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let dismiss_bounds = cx
@@ -414,7 +414,7 @@ fn domain_affordances_without_handlers_do_not_declare_click(cx: &mut open_gpui::
         dismiss_handle: dismiss_handle.clone(),
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert!(cx.activate_accessibility());

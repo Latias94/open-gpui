@@ -468,7 +468,7 @@ impl InputHandler for SwitchingMarkedTextInputHandler {
         self.redraw_target
             .update(cx, |_, cx| cx.notify())
             .expect("the marked-text probe should remain alive during its callback");
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     }
 
     fn unmark_text(&mut self, _: &mut Window, _: &mut App) {}
@@ -1104,7 +1104,7 @@ fn pointer_capture_routes_current_frame_listeners_across_redraw_and_modality_ref
     let _ = cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
     cx.update_window_entity(&view, |_, _, cx| cx.notify());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let handle = cx.update_window_entity(&view, |view, _, _| view.handle);
 
     cx.update(|window, cx| {
@@ -1127,7 +1127,7 @@ fn pointer_capture_routes_current_frame_listeners_across_redraw_and_modality_ref
     // A redraw that reuses the view must carry its frame-scoped binding forward.
     cx.update(|window, cx| {
         window.refresh();
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     assert_eq!(
         cx.update(|window, _| window.captured_pointer().map(|capture| capture.handle())),
@@ -1152,7 +1152,7 @@ fn pointer_capture_routes_current_frame_listeners_across_redraw_and_modality_ref
 
     // Force a fresh render so the event records which current-frame listener handled it.
     cx.update_window_entity(&view, |_, _, cx| cx.notify());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let first_move_render = render_count.get();
     cx.update(|window, cx| {
         window.dispatch_event(
@@ -1167,7 +1167,7 @@ fn pointer_capture_routes_current_frame_listeners_across_redraw_and_modality_ref
     assert_eq!(events.borrow().last(), Some(&("move", first_move_render)));
 
     cx.update_window_entity(&view, |_, _, cx| cx.notify());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let second_move_render = render_count.get();
     assert!(second_move_render > first_move_render);
     cx.update(|window, cx| {
@@ -1226,7 +1226,7 @@ fn pointer_capture_separates_the_event_target_from_physical_hover(cx: &mut TestA
     });
     let _ = cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     cx.update(|window, cx| {
         window.dispatch_event(
@@ -1264,7 +1264,7 @@ fn pointer_capture_requires_a_pressed_button_and_rejects_competing_owners(cx: &m
     });
     let _ = cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let (first, second) = cx.update_window_entity(&view, |view, _, _| (view.first, view.second));
 
     assert_eq!(
@@ -1363,7 +1363,7 @@ fn stopping_an_active_drag_releases_its_source_pointer_capture(cx: &mut TestAppC
     });
     let _ = cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let source = cx.update_window_entity(&view, |view, _, _| view.first);
 
     cx.update(|window, cx| {
@@ -1413,12 +1413,12 @@ fn stopping_a_cross_window_drag_releases_capture_in_its_source_window(cx: &mut T
 
     cx.update_window(source_window, |_, window, cx| {
         let _ = window.activate_window();
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     })
     .expect("the source window should remain open");
     cx.run_until_parked();
     cx.update_window(source_window, |_, window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
         window.dispatch_event(mouse_down(MouseButton::Left, 10.0, 10.0), cx);
         window
             .capture_pointer(&source, MouseButton::Left)
@@ -1475,14 +1475,14 @@ fn standard_drag_targets_reject_drags_from_another_window(cx: &mut TestAppContex
 
     cx.update_window(source_window, |_, window, cx| {
         let _ = window.activate_window();
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     })
     .expect("the source window should remain open");
     cx.run_until_parked();
-    cx.update_window(target_window, |_, window, cx| window.draw(cx).clear())
+    cx.update_window(target_window, |_, window, cx| window.draw(cx).clear(cx))
         .expect("the target window should remain open");
     cx.update_window(source_window, |_, window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
         window.dispatch_event(mouse_down(MouseButton::Left, 10.0, 10.0), cx);
         window.dispatch_event(
             PlatformInput::MouseMove(MouseMoveEvent {
@@ -1502,7 +1502,7 @@ fn standard_drag_targets_reject_drags_from_another_window(cx: &mut TestAppContex
 
     cx.update_window(target_window, |_, window, cx| {
         window.refresh();
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
         window.dispatch_event(
             PlatformInput::MouseMove(MouseMoveEvent {
                 position: point(px(10.0), px(10.0)),
@@ -1561,12 +1561,12 @@ fn repeated_drop_listeners_receive_one_matching_drop_each(cx: &mut TestAppContex
 
     cx.update_window(window_handle, |_, window, cx| {
         let _ = window.activate_window();
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     })
     .expect("the drop target window should remain open");
     cx.run_until_parked();
     cx.update_window(window_handle, |_, window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
         cx.active_drag = Some(AnyDrag {
             window_id: window_handle.window_id(),
             source: None,
@@ -1608,14 +1608,14 @@ fn drag_source_in_custom_prompt_survives_its_first_drag_frame(cx: &mut TestAppCo
     let _response = cx
         .update_window(window_handle, |_, window, cx| {
             let _ = window.activate_window();
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
             window.prompt(PromptLevel::Info, "Drag prompt", None, &["OK"], cx)
         })
         .expect("the prompt window should remain open");
     cx.run_until_parked();
 
     cx.update_window(window_handle, |_, window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
         window.dispatch_event(mouse_down(MouseButton::Left, 10.0, 10.0), cx);
         window.dispatch_event(
             PlatformInput::MouseMove(MouseMoveEvent {
@@ -1651,7 +1651,7 @@ fn pointer_cancellation_is_unpreventable_and_clears_the_entire_session(cx: &mut 
     });
     let _ = cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let first = cx.update_window_entity(&view, |view, _, _| view.first);
     let events = Rc::new(RefCell::new(Vec::new()));
     let first_events = events.clone();
@@ -1736,7 +1736,7 @@ fn pointer_capture_releases_when_owner_is_absent_from_the_next_frame(cx: &mut Te
     let _ = cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
     cx.update_window_entity(&view, |_, _, cx| cx.notify());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let handle = cx.update_window_entity(&view, |view, _, _| view.handle);
     let _cancel_subscription = cx.update(|window, _| {
         let cancellations = cancellations.clone();
@@ -1773,8 +1773,8 @@ fn pointer_capture_releases_when_owner_is_absent_from_the_next_frame(cx: &mut Te
     visible.set(false);
     cx.update_window_entity(&view, |_, _, cx| cx.notify());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
+        window.draw(cx).clear(cx);
     });
     assert_eq!(
         cancellations.borrow().as_slice(),
@@ -1826,7 +1826,7 @@ fn completed_missing_owner_frame_revokes_before_a_later_rebind(cx: &mut TestAppC
     let _ = cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
     cx.update_window_entity(&view, |_, _, cx| cx.notify());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let _cancel_subscription = cx.update(|window, _| {
         let cancellations = cancellations.clone();
         window.intercept_window_mouse_events(move |event, _, _| {
@@ -1848,9 +1848,9 @@ fn completed_missing_owner_frame_revokes_before_a_later_rebind(cx: &mut TestAppC
         window.defer(cx, move |window, cx| {
             rebound_visible.set(true);
             rebound_view.update(cx, |_, cx| cx.notify());
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
         });
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert_eq!(
@@ -1882,7 +1882,7 @@ fn completed_missing_owner_frame_does_not_duplicate_cancellation_on_later_window
     let _ = cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
     cx.update_window_entity(&view, |_, _, cx| cx.notify());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let _cancel_subscription = cx.update(|window, _| {
         let cancellations = cancellations.clone();
         window.intercept_window_mouse_events(move |event, _, _| {
@@ -1899,8 +1899,8 @@ fn completed_missing_owner_frame_does_not_duplicate_cancellation_on_later_window
     cx.update_window_entity(&view, |_, _, cx| cx.notify());
     cx.update(|window, cx| {
         window.defer(cx, |window, cx| window.remove_window(cx));
-        window.draw(cx).clear();
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
+        window.draw(cx).clear(cx);
     });
 
     assert_eq!(
@@ -1931,7 +1931,7 @@ fn pointer_capture_supports_explicit_release_and_clears_on_window_deactivation(
     let _ = cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
     cx.update_window_entity(&view, |_, _, cx| cx.notify());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let handle = cx.update_window_entity(&view, |view, _, _| view.handle);
 
     let mouse_down = || {
@@ -1998,7 +1998,7 @@ fn pointer_capture_clears_when_the_window_is_removed(cx: &mut TestAppContext) {
     let _ = cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
     cx.update_window_entity(&view, |_, _, cx| cx.notify());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.update(|window, cx| {
         window.dispatch_event(
             PlatformInput::MouseDown(MouseDownEvent {
@@ -2040,7 +2040,7 @@ fn remove_window_from_input_callback_cancels_after_dispatch_before_removal(
     let _ = cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
     cx.update_window_entity(&view, |_, _, cx| cx.notify());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let handle = cx.update_window_entity(&view, |view, _, _| view.handle);
     let _subscription = cx.update(|window, _| {
         let lifecycle = lifecycle.clone();
@@ -2111,7 +2111,7 @@ fn remove_window_from_action_callback_cancels_after_dispatch_before_removal(
     let _ = cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
     cx.update_window_entity(&view, |_, _, cx| cx.notify());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.update_window_entity(&view, |view, window, cx| view.focus.focus(window, cx));
     let _subscription = cx.update(|window, _| {
         let lifecycle = lifecycle.clone();
@@ -2161,12 +2161,12 @@ fn simulated_marked_text_preserves_the_platform_input_handler_without_redraw(
     let _ = cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
     cx.update_window_entity(&view, |_, _, cx| cx.notify());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.update_window_entity(&view, |view, window, cx| {
         view.focus.focus(window, cx);
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     cx.simulate_marked_text(None, "first", None);
     cx.simulate_marked_text(None, "second", None);
@@ -2190,12 +2190,12 @@ fn platform_input_handler_root_barrier_drains_queued_window_command(cx: &mut Tes
         }
     });
     cx.update_window_entity(&view, |_, _, cx| cx.notify());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.update_window_entity(&view, |view, window, cx| {
         view.focus.focus(window, cx);
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let window_id = cx.window_handle().window_id();
     let diagnostic_cursor = cx.update(|_, app| {
         app.native_boundary_diagnostics(NativeBoundaryDiagnosticCursor::default())
@@ -2258,12 +2258,12 @@ fn platform_input_handler_drains_an_older_close_without_recursing_into_a_command
         }
     });
     cx.update_window_entity(&view, |_, _, cx| cx.notify());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.update_window_entity(&view, |view, window, cx| {
         view.focus.focus(window, cx);
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let source = cx.window_handle();
     let source_id = source.window_id();
     let source_window = cx.test_window(source);
@@ -2322,12 +2322,12 @@ fn platform_input_handler_can_run_before_a_later_platform_command(cx: &mut TestA
         }
     });
     cx.update_window_entity(&view, |_, _, cx| cx.notify());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.update_window_entity(&view, |view, window, cx| {
         view.focus.focus(window, cx);
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let source = cx.window_handle();
     let source_id = source.window_id();
     let source_window = cx.test_window(source);
@@ -2379,12 +2379,12 @@ fn retired_platform_input_handler_slot_records_one_typed_terminal_diagnostic(
         }
     });
     cx.update_window_entity(&view, |_, _, cx| cx.notify());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.update_window_entity(&view, |view, window, cx| {
         view.focus.focus(window, cx);
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let window_id = cx.window_handle().window_id();
     let input_handler_slot = cx
         .update(|window, _| window.platform_window.input_handler_slot_for_test())
@@ -2452,12 +2452,12 @@ fn simulated_marked_text_preserves_handler_installed_during_callback(cx: &mut Te
     let _ = cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
     cx.update_window_entity(&view, |_, _, cx| cx.notify());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.update_window_entity(&view, |view, window, cx| {
         view.first_focus.focus(window, cx);
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     cx.simulate_marked_text(None, "first", None);
     cx.simulate_marked_text(None, "second", None);
@@ -2482,12 +2482,12 @@ fn simulated_marked_text_returns_after_callback_removes_window(cx: &mut TestAppC
     let _ = cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
     cx.update_window_entity(&view, |_, _, cx| cx.notify());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.update_window_entity(&view, |view, window, cx| {
         view.focus.focus(window, cx);
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     cx.simulate_marked_text(None, "closing composition", None);
 
@@ -2516,12 +2516,12 @@ fn key_listener_close_skips_synthetic_text_input(cx: &mut TestAppContext) {
     let _ = cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
     cx.update_window_entity(&view, |_, _, cx| cx.notify());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.update_window_entity(&view, |view, window, cx| {
         view.focus.focus(window, cx);
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let _subscription = cx.update(|window, _| {
         let lifecycle = lifecycle.clone();
         window.intercept_window_mouse_events(move |event, window, cx| {
@@ -2567,12 +2567,12 @@ fn synthetic_text_handler_close_waits_for_handler_return(cx: &mut TestAppContext
     let _ = cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
     cx.update_window_entity(&view, |_, _, cx| cx.notify());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.update_window_entity(&view, |view, window, cx| {
         view.focus.focus(window, cx);
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let _subscription = cx.update(|window, _| {
         let lifecycle = lifecycle.clone();
         window.intercept_window_mouse_events(move |event, window, cx| {
@@ -2626,12 +2626,12 @@ fn platform_ime_insert_text_close_waits_for_callback_and_notifies_once(cx: &mut 
     let _ = cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
     cx.update_window_entity(&view, |_, _, cx| cx.notify());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.update_window_entity(&view, |view, window, cx| {
         view.focus.focus(window, cx);
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let _subscription = cx.update(|window, _| {
         let lifecycle = lifecycle.clone();
         window.intercept_window_mouse_events(move |event, window, cx| {
@@ -2685,7 +2685,7 @@ fn pointer_capture_binding_rejects_duplicate_handles_and_hitboxes(cx: &mut TestA
         }
     });
     cx.update_window_entity(&view, |_, _, cx| cx.notify());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let first = cx.update_window_entity(&view, |view, _, _| view.first);
 
     assert_eq!(
@@ -2724,7 +2724,7 @@ fn pointer_capture_handles_cannot_cross_windows(cx: &mut TestAppContext) {
         })
         .into();
 
-    cx.update_window(second_window, |_, window, cx| window.draw(cx).clear())
+    cx.update_window(second_window, |_, window, cx| window.draw(cx).clear(cx))
         .expect("the second window should remain open");
     assert!(matches!(
         *bind_error.borrow(),
@@ -2794,7 +2794,7 @@ fn pointer_cancel_listeners_are_isolated_unpreventable_and_replayed_from_cached_
             child: cx.new(|_| PointerCancelJournalProbe { renders, events }),
         }
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let initial_renders = renders.get();
 
     cx.update(|window, cx| {
@@ -2815,7 +2815,7 @@ fn pointer_cancel_listeners_are_isolated_unpreventable_and_replayed_from_cached_
     );
 
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     assert_eq!(
         renders.get(),
@@ -2855,12 +2855,12 @@ fn cached_listener_replay_and_capture_revocation_share_one_complete_cancel_dispa
             events,
         }
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let capture = cx.update_window_entity(&view, |view, _, _| view.capture);
     let _ = cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
         window.dispatch_event(mouse_down(MouseButton::Left, 10.0, 10.0), cx);
         window
             .capture_pointer(&capture, MouseButton::Left)
@@ -2872,7 +2872,7 @@ fn cached_listener_replay_and_capture_revocation_share_one_complete_cancel_dispa
         view.presentation = SubtreePresentation::Inert;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
 
     assert_eq!(
@@ -2914,7 +2914,7 @@ fn stale_drag_revocation_before_root_paint_preserves_cached_cancel_journal(
             events,
         }
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let capture = cx.update_window_entity(&view, |view, _, _| view.capture);
     let cached_renders = renders.get();
 
@@ -2934,7 +2934,7 @@ fn stale_drag_revocation_before_root_paint_preserves_cached_cancel_journal(
         cx.notify();
     });
 
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
 
     assert_eq!(
@@ -2966,7 +2966,7 @@ fn stateful_div_cancel_prevents_activation_even_when_cancel_propagation_is_stopp
         let activations = activations.clone();
         move |_, _| StatefulDivCancelProbe { activations }
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     cx.update(|window, cx| {
         window.dispatch_event(mouse_down(MouseButton::Left, 10.0, 10.0), cx);
@@ -2975,7 +2975,7 @@ fn stateful_div_cancel_prevents_activation_even_when_cancel_propagation_is_stopp
     assert_eq!(activations.get(), 1, "the control click should activate");
     activations.set(0);
     cx.update_window_entity(&view, |_, _, cx| cx.notify());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let _cancel_interceptor = cx.update(|window, _| {
         window.intercept_window_mouse_events(|event, window, cx| {
@@ -2990,7 +2990,7 @@ fn stateful_div_cancel_prevents_activation_even_when_cancel_propagation_is_stopp
         window.dispatch_event(pointer_cancel(), cx);
     });
     cx.update_window_entity(&view, |_, _, cx| cx.notify());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.update(|window, cx| window.dispatch_event(mouse_up(MouseButton::Left, 10.0, 10.0), cx));
 
     assert_eq!(
@@ -3007,11 +3007,11 @@ fn interactive_text_cancel_before_redraw_prevents_later_activation(cx: &mut Test
         let activations = activations.clone();
         move |_, _| InteractiveTextCancelProbe { activations }
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     cx.update(|window, cx| window.dispatch_event(mouse_down(MouseButton::Left, 2.0, 2.0), cx));
     cx.update_window_entity(&view, |_, _, cx| cx.notify());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.update(|window, cx| window.dispatch_event(mouse_up(MouseButton::Left, 2.0, 2.0), cx));
     assert_eq!(
         activations.get(),
@@ -3020,14 +3020,14 @@ fn interactive_text_cancel_before_redraw_prevents_later_activation(cx: &mut Test
     );
     activations.set(0);
     cx.update_window_entity(&view, |_, _, cx| cx.notify());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     cx.update(|window, cx| {
         window.dispatch_event(mouse_down(MouseButton::Left, 2.0, 2.0), cx);
         window.dispatch_event(pointer_cancel(), cx);
     });
     cx.update_window_entity(&view, |_, _, cx| cx.notify());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.update(|window, cx| window.dispatch_event(mouse_up(MouseButton::Left, 2.0, 2.0), cx));
 
     assert_eq!(
@@ -3052,7 +3052,7 @@ fn companion_button_up_routes_only_to_the_pointer_capture_owner(cx: &mut TestApp
     });
     let _ = cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let handle = cx.update_window_entity(&view, |view, _, _| view.handle);
 
     cx.update(|window, cx| {
@@ -3083,9 +3083,9 @@ fn active_drag_preview_and_pointer_events_are_isolated_to_its_window(cx: &mut Te
         .into();
     let preview_renders = Rc::new(Cell::new(0));
 
-    cx.update_window(first, |_, window, cx| window.draw(cx).clear())
+    cx.update_window(first, |_, window, cx| window.draw(cx).clear(cx))
         .expect("the drag-owning window should remain open");
-    cx.update_window(second, |_, window, cx| window.draw(cx).clear())
+    cx.update_window(second, |_, window, cx| window.draw(cx).clear(cx))
         .expect("the unrelated window should remain open");
     cx.update({
         let preview_renders = preview_renders.clone();
@@ -3108,7 +3108,7 @@ fn active_drag_preview_and_pointer_events_are_isolated_to_its_window(cx: &mut Te
 
     cx.update_window(second, |_, window, cx| {
         window.refresh();
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     })
     .expect("the unrelated window should be drawable");
     assert_eq!(
@@ -3119,7 +3119,7 @@ fn active_drag_preview_and_pointer_events_are_isolated_to_its_window(cx: &mut Te
 
     cx.update_window(first, |_, window, cx| {
         window.refresh();
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     })
     .expect("the drag-owning window should be drawable");
     assert_eq!(
@@ -3191,7 +3191,7 @@ fn open_native_captured_drag_start_invalidation_fixture(
     });
     cx.update_window(source, |_, window, cx| {
         let _ = window.activate_window();
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     })
     .expect("the drag source should remain open for its initial frame");
     cx.run_until_parked();
@@ -3263,7 +3263,7 @@ fn retry_native_captured_drag_start(
             !window.has_active_pointer_session(cx),
             "an interrupted drag start must settle its pointer session before retry"
         );
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     })
     .expect("the interrupted drag source should remain available for a clean retry");
 
@@ -3395,7 +3395,7 @@ fn native_captured_drag_start_activates_prepared_consumer_before_reentrant_cance
 
     cx.update_window(source, |_, window, cx| {
         let _ = window.activate_window();
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     })
     .expect("the source window should remain open");
     cx.run_until_parked();
@@ -3471,7 +3471,7 @@ fn exact_native_captured_drag_cancel_is_once_and_cannot_cancel_a_replacement_gen
 
     cx.update_window(source, |_, window, cx| {
         let _ = window.activate_window();
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     })
     .expect("the exact-cancel source should remain open");
     cx.run_until_parked();
@@ -3672,7 +3672,7 @@ fn exact_native_captured_drag_cancel_preserves_a_replacement_pointer_owner(
         .into();
     cx.update_window(source, |_, window, cx| {
         let _ = window.activate_window();
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     })
     .expect("the replacement-owner source should remain open");
     cx.run_until_parked();
@@ -3765,7 +3765,7 @@ fn exact_native_captured_drag_cancel_refreshes_source_after_removing_preview(
         .into();
     cx.update_window(source, |_, window, cx| {
         let _ = window.activate_window();
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     })
     .expect("the preview source should remain open");
     cx.run_until_parked();
@@ -3794,7 +3794,7 @@ fn exact_native_captured_drag_cancel_refreshes_source_after_removing_preview(
                     },
                 ));
                 window.refresh();
-                window.draw(app).clear();
+                window.draw(app).clear(app);
                 assert!(!window.invalidator.is_dirty());
                 generation
             }
@@ -3837,7 +3837,7 @@ fn app_shutdown_settles_the_active_native_drag_and_preserves_outbox_reuse(cx: &m
         .into();
     cx.update_window(first, |_, window, cx| {
         let _ = window.activate_window();
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
         let drag_view = cx.new(|_| Empty).into();
         cx.start_active_drag(AnyDrag {
             window_id: first.window_id(),
@@ -3901,7 +3901,7 @@ fn app_shutdown_settles_the_active_native_drag_and_preserves_outbox_reuse(cx: &m
         .into();
     cx.update_window(second, |_, window, cx| {
         let _ = window.activate_window();
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
         let drag_view = cx.new(|_| Empty).into();
         cx.start_active_drag(AnyDrag {
             window_id: second.window_id(),
@@ -3949,7 +3949,7 @@ fn start_native_capture_release_rejected_once(
         .into();
     cx.update_window(source, |_, window, cx| {
         let _ = window.activate_window();
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     })
     .expect("the release source should remain open");
     let platform_window = cx.test_window(source);
@@ -4077,7 +4077,7 @@ fn capture_release_rejection_waits_for_fresh_app_progress_before_retry(cx: &mut 
         .into();
     cx.update_window(source, |_, window, cx| {
         let _ = window.activate_window();
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     })
     .expect("the release source should remain open");
     let platform_window = cx.test_window(source);
@@ -4181,7 +4181,7 @@ fn capture_release_is_prepared_before_a_budget_delayed_first_dispatch(cx: &mut T
         .into();
     cx.update_window(source, |_, window, cx| {
         let _ = window.activate_window();
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     })
     .expect("the release source should remain open");
     let platform_window = cx.test_window(source);
@@ -4263,7 +4263,7 @@ fn repeated_capture_release_rejection_settles_failed_after_bounded_delayed_retri
         .into();
     cx.update_window(source, |_, window, cx| {
         let _ = window.activate_window();
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     })
     .expect("the release source should remain open");
     let platform_window = cx.test_window(source);
@@ -4384,7 +4384,7 @@ fn shutdown_continues_after_capture_release_retries_settle_failed(cx: &mut TestA
         .into();
     cx.update_window(source, |_, window, app| {
         let _ = window.activate_window();
-        window.draw(app).clear();
+        window.draw(app).clear(app);
     })
     .expect("the release source should remain open");
     let platform_window = cx.test_window(source);
@@ -4497,7 +4497,7 @@ fn dropping_app_with_pending_capture_release_retry_does_not_deadlock() {
         .into();
     cx.update_window(source, |_, window, app| {
         let _ = window.activate_window();
-        window.draw(app).clear();
+        window.draw(app).clear(app);
     })
     .expect("the release source should remain open");
     let platform_window = cx.test_window(source);
@@ -4552,7 +4552,7 @@ fn stale_delayed_capture_release_wake_cannot_retry_a_newer_rejection_epoch(
         .into();
     cx.update_window(source, |_, window, cx| {
         let _ = window.activate_window();
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     })
     .expect("the release source should remain open");
     let platform_window = cx.test_window(source);
@@ -4642,7 +4642,7 @@ fn captured_drag_release_barrier_attaches_to_the_exact_pending_cancellation(
         .into();
     cx.update_window(source, |_, window, cx| {
         let _ = window.activate_window();
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     })
     .expect("the release source should remain open");
     let platform_window = cx.test_window(source);
@@ -4954,7 +4954,7 @@ fn captured_drag_release_delivery_accepts_reentrant_continuation(cx: &mut TestAp
         .into();
     cx.update_window(source, |_, window, cx| {
         let _ = window.activate_window();
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     })
     .expect("the release source should remain open");
     let platform_window = cx.test_window(source);
@@ -5074,7 +5074,7 @@ fn source_close_preserves_the_exact_capture_barrier_until_native_terminal(cx: &m
         .into();
     cx.update_window(source, |_, window, app| {
         let _ = window.activate_window();
-        window.draw(app).clear();
+        window.draw(app).clear(app);
     })
     .expect("the source should remain open through its first frame");
     cx.run_until_parked();
@@ -5256,7 +5256,7 @@ fn native_quit_delivers_exact_cancel_before_registry_clear(cx: &mut TestAppConte
     });
     cx.update_window(source, |_, window, app| {
         let _ = window.activate_window();
-        window.draw(app).clear();
+        window.draw(app).clear(app);
     })
     .expect("the native-quit source should remain open");
     cx.run_until_parked();
@@ -5317,7 +5317,7 @@ fn native_closed_before_logical_pointer_teardown_does_not_strand_a_release_barri
         .into();
     cx.update_window(source, |_, window, app| {
         let _ = window.activate_window();
-        window.draw(app).clear();
+        window.draw(app).clear(app);
     })
     .expect("the source must present before it captures a pointer");
     cx.run_until_parked();
@@ -5379,7 +5379,7 @@ fn mouse_exit_is_hover_only_and_does_not_publish_captured_drag_movement(cx: &mut
 
     cx.update_window(source, |_, window, cx| {
         let _ = window.activate_window();
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
         let drag_view = cx.new(|_| Empty).into();
         cx.start_active_drag(AnyDrag {
             window_id: source.window_id(),
@@ -5459,7 +5459,7 @@ fn reentrant_pointer_cancel_waits_for_earlier_native_ingress_before_outbox_deliv
 
     cx.update_window(source, |_, window, cx| {
         let _ = window.activate_window();
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
         let drag_view = cx.new(|_| Empty).into();
         cx.start_active_drag(AnyDrag {
             window_id: source.window_id(),
@@ -5538,7 +5538,7 @@ fn captured_drag_outbox_waits_for_an_older_command_budget_before_deactivation(
 
     cx.update_window(source, |_, window, cx| {
         let _ = window.activate_window();
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
         let drag_view = cx.new(|_| Empty).into();
         cx.start_active_drag(AnyDrag {
             window_id: source.window_id(),
@@ -5619,7 +5619,7 @@ fn native_captured_mouse_up_is_locked_before_user_cleanup_and_delivered_post_bor
     });
 
     cx.update_window(source, |_, window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
         let drag_view = cx.new(|_| Empty).into();
         cx.start_active_drag(AnyDrag {
             window_id: source.window_id(),
@@ -5712,7 +5712,7 @@ fn panicking_native_captured_drag_consumer_settles_g1_and_delivers_g2(cx: &mut T
 
     cx.update_window(source, |_, window, cx| {
         let _ = window.activate_window();
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     })
     .expect("the source window should remain open");
     cx.run_until_parked();
@@ -5820,7 +5820,7 @@ fn panicking_pointer_cancel_listener_still_settles_g1_and_allows_g2(cx: &mut Tes
 
     cx.update_window(source, |_, window, cx| {
         let _ = window.activate_window();
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     })
     .expect("the source window should remain open");
     cx.run_until_parked();
@@ -5907,7 +5907,7 @@ fn pointer_panic_recovery_reserves_cancel_while_outer_app_borrow_is_busy(cx: &mu
     });
     cx.update_window(source, |_, window, cx| {
         let _ = window.activate_window();
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
         let drag_view = cx.new(|_| Empty).into();
         cx.start_active_drag(AnyDrag {
             window_id: source.window_id(),
@@ -6013,7 +6013,7 @@ fn pointer_panic_recovery_does_not_replace_a_locked_mouse_up_release(cx: &mut Te
     });
     cx.update_window(source, |_, window, cx| {
         let _ = window.activate_window();
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
         let drag_view = cx.new(|_| Empty).into();
         cx.start_active_drag(AnyDrag {
             window_id: source.window_id(),
@@ -6111,7 +6111,7 @@ fn native_window_update_provenance_does_not_leak_into_nested_target_updates(
         })
         .into();
 
-    cx.update_window(source, |_, window, cx| window.draw(cx).clear())
+    cx.update_window(source, |_, window, cx| window.draw(cx).clear(cx))
         .expect("the source window should remain open");
     let mut platform_window = cx.test_window(source);
     let _ = platform_window.simulate_input_result(PlatformInput::MouseMove(MouseMoveEvent {

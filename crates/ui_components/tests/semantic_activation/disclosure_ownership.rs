@@ -47,7 +47,7 @@ fn uncontrolled_disclosures_commit_without_requiring_callbacks(cx: &mut open_gpu
         accordion_handle: accordion_handle.clone(),
         collapsible_handle: collapsible_handle.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert!(cx.activate_accessibility());
     let update = cx
@@ -74,7 +74,7 @@ fn uncontrolled_disclosures_commit_without_requiring_callbacks(cx: &mut open_gpu
             );
         }
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let update = cx
         .latest_accessibility_tree_update()
         .expect("same-frame double activation should commit both transitions");
@@ -97,7 +97,7 @@ fn uncontrolled_disclosures_commit_without_requiring_callbacks(cx: &mut open_gpu
             ActivationRequestResult::Dispatched
         );
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let update = cx
         .latest_accessibility_tree_update()
         .expect("uncontrolled commits should reach the final tree");
@@ -120,7 +120,7 @@ fn uncontrolled_disclosures_commit_without_requiring_callbacks(cx: &mut open_gpu
             ActivationRequestResult::Dispatched
         );
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let update = cx
         .latest_accessibility_tree_update()
         .expect("second uncontrolled commits should reach the final tree");
@@ -171,7 +171,7 @@ fn uncontrolled_callback_reentry_observes_the_committed_runtime(
         reentered: reentered.clone(),
         handle: handle.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     cx.update(|window, cx| {
         assert_eq!(
@@ -182,7 +182,7 @@ fn uncontrolled_callback_reentry_observes_the_committed_runtime(
     assert_eq!(changes.borrow().as_slice(), &[true, false]);
     assert!(reentered.get());
 
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(cx.activate_accessibility());
     let update = cx
         .latest_accessibility_tree_update()

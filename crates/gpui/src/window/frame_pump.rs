@@ -56,6 +56,77 @@ impl PresentFacts {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        AnyView, AppContext as _, Context, Entity, IntoElement, ParentElement, Render,
+        RequestFrameOptions, StyleRefinement, Styled, TestAppContext, Window, div,
+    };
+    use std::{cell::Cell, rc::Rc};
+
+    struct CachedFrameChild(Rc<Cell<usize>>);
+
+    impl Render for CachedFrameChild {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            self.0.set(self.0.get() + 1);
+            div().size_full()
+        }
+    }
+
+    struct CachedFrameRoot(Entity<CachedFrameChild>);
+
+    impl Render for CachedFrameRoot {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size_full()
+                .child(AnyView::from(self.0.clone()).cached(StyleRefinement::default().size_full()))
+        }
+    }
+
+    #[test]
+    fn throttled_force_render_refreshes_cached_views_on_the_next_eligible_frame_once() {
+        let mut cx = TestAppContext::single();
+        let renders = Rc::new(Cell::new(0));
+        let (_, visual) = cx.add_window_view({
+            let renders = renders.clone();
+            move |_, cx| CachedFrameRoot(cx.new(|_| CachedFrameChild(renders)))
+        });
+        visual.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            let initial_renders = renders.get();
+            assert!(initial_renders > 0);
+            window.active.set(false);
+            window.last_frame_time.set(Some(Instant::now()));
+            window.native_frame_requested(
+                RequestFrameOptions {
+                    force_render: true,
+                    require_presentation: false,
+                },
+                cx,
+            );
+            assert_eq!(renders.get(), initial_renders);
+            assert!(window.deferred_force_render);
+
+            window.last_frame_time.set(None);
+            window.native_frame_requested(
+                RequestFrameOptions {
+                    force_render: false,
+                    require_presentation: false,
+                },
+                cx,
+            );
+            assert_eq!(renders.get(), initial_renders + 1);
+            assert!(!window.deferred_force_render);
+
+            window.last_frame_time.set(None);
+            window.native_frame_requested(
+                RequestFrameOptions {
+                    force_render: false,
+                    require_presentation: false,
+                },
+                cx,
+            );
+            assert_eq!(renders.get(), initial_renders + 1);
+        });
+    }
 
     #[test]
     fn frame_throttle_is_disabled_without_work() {

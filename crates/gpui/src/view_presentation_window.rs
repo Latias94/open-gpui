@@ -4371,7 +4371,7 @@ mod tests {
 
     fn draw_window(cx: &mut TestAppContext, window: AnyWindowHandle) -> u64 {
         cx.update_window(window, |_, window, cx| {
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
             window.rendered_frame_revision()
         })
         .expect("test presentation window should remain open")
@@ -4379,7 +4379,7 @@ mod tests {
 
     fn draw_headless_window(cx: &mut HeadlessAppContext, window: AnyWindowHandle) -> u64 {
         cx.update_window(window, |_, window, cx| {
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
             window.rendered_frame_revision()
         })
         .expect("test headless presentation window should remain open")
@@ -5384,7 +5384,7 @@ mod tests {
                     .unwrap();
                 let rejected_frame = cx
                     .update_window(source_window.into(), |_, window, cx| {
-                        window.draw(cx).clear();
+                        window.draw(cx).clear(cx);
                         window.rendered_frame_revision()
                     })
                     .unwrap();

@@ -446,6 +446,10 @@ impl NativePlatformCommand {
 
     pub(super) fn pending_diagnostic(&self, sequence: u64) -> NativeBoundaryDiagnostic {
         let (kind, generation) = match self.command {
+            #[cfg(target_os = "windows")]
+            PlatformWindowCommand::CompleteNativeFrame => {
+                (NativePlatformCommandKind::CompleteNativeFrame, None)
+            }
             PlatformWindowCommand::CompleteInitialPresentation { .. } => {
                 (NativePlatformCommandKind::CompleteInitialPresentation, None)
             }

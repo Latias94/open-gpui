@@ -4,6 +4,31 @@ Open GPUI v0.3 is an intentionally breaking, pre-release architecture release. R
 deleted rather than retained as aliases. This guide records each migration in the implementation
 unit that introduces it.
 
+## Element Arena Cleanup
+
+Pass the App that produced the frame when consuming its clear token:
+
+```rust
+window.draw(cx).clear(cx);
+
+let clear = window.draw(cx);
+window.present(cx);
+clear.clear(cx);
+```
+
+The token rejects another App, including after the original App is dropped. It retains only weak
+allocation identity. Each active draw holds the arena allocation and defers a nested clear until
+the enclosing draw ends. Existing references remain valid through a nested window's initial draw.
+Unwinding restores the previous arena and balances scope depth; a later successful clear releases
+the abandoned draw's elements. The renderer's candidate acceptance and presentation rules remain
+the authority over which frame becomes visible.
+
+On Windows, exhaustive `PlatformWindowCommand` dispatchers also handle `CompleteNativeFrame`.
+The supplied backend uses `native_frame_completed_command` to request maintenance through the
+existing post-borrow command authority. A custom backend keeps the hook's `None` default unless
+it implements that operation; its dispatcher reports `Unsupported` for unsupported commands.
+Frame completion, candidate acceptance and renderer submission retain their separate meanings.
+
 ## Form Lifecycle Authority
 
 `FormStore` now derives `FormStatus` and submission eligibility from active validation plus its
@@ -604,8 +629,9 @@ For custom platform backends:
   into `App` through a backend-specific side channel.
 - Implement `command_dispatcher()` with a weak reference to native window state. Dispatch only
   `PlatformWindowCommand::{CompleteInitialPresentation, RevealDeferredInitialPresentation,
-  Activate, ShowWindowMenu, StartWindowMove, StartWindowResize}` and return
-  `PlatformWindowCommandOutcome::Rejected` without side effects after that native state is gone.
+  Activate, ShowWindowMenu, StartWindowMove, StartWindowResize}` and Windows-only
+  `CompleteNativeFrame`, and return `PlatformWindowCommandOutcome::WindowClosed` without side
+  effects after that native state is gone. Report `Unsupported` for an unimplemented operation.
   Return `Accepted` only when the backend accepted the requested operation. A provisional reveal
   must validate the exact session and presentation generations, retain the same native window,
   avoid activation, preserve native hit transparency, and call

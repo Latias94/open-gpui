@@ -123,7 +123,7 @@ fn editor_adapter_inverse_projects_transformed_pointer_and_pixel_wheel_input(
             events,
         }
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let displayed_position = point(px(140.0), px(90.0));
     cx.simulate_mouse_down(displayed_position, MouseButton::Left, Modifiers::none());
@@ -174,7 +174,7 @@ fn labeled_canvas_reprepares_clip_tokens_for_each_paint_generation(cx: &mut Test
         }
     });
 
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let first_revision = cx.update(|window, _| window.rendered_frame_revision());
     let first_prepaint_count = prepaint_count.get();
     let first_paint_count = paint_count.get();
@@ -185,7 +185,7 @@ fn labeled_canvas_reprepares_clip_tokens_for_each_paint_generation(cx: &mut Test
         view.translated = true;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let second_revision = cx.update(|window, _| window.rendered_frame_revision());
 
     assert!(second_revision > first_revision);

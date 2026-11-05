@@ -106,7 +106,7 @@ fn large_canvas_benches(c: &mut Criterion) {
                 .update_window_entity(&view, |_, _, cx| cx.notify())
                 .expect("benchmark root view should remain live");
             let revision = window.update(|window, cx| {
-                window.draw(cx).clear();
+                window.draw(cx).clear(cx);
                 window.rendered_frame_revision()
             });
             black_box(revision);

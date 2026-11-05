@@ -84,7 +84,7 @@ fn table_virtual_focus_proxy_preserves_keyboard_claim_without_stealing_focus(
         activations: activations.clone(),
     });
     assert!(cx.activate_accessibility());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let initial = cx
         .latest_accessibility_tree_update()
@@ -112,7 +112,7 @@ fn table_virtual_focus_proxy_preserves_keyboard_claim_without_stealing_focus(
         delta: ScrollDelta::Pixels(point(px(0.0), px(-240.0))),
         ..Default::default()
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let offscreen = cx
         .latest_accessibility_tree_update()
@@ -141,7 +141,7 @@ fn table_virtual_focus_proxy_preserves_keyboard_claim_without_stealing_focus(
 
     cx.simulate_keystrokes("down");
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let row_one_selector = TableDebugSelector::row(
         "virtual-focus-table",
         &TableRowIdentity::source_instance("duplicate", "row-0001"),
@@ -160,7 +160,7 @@ fn table_virtual_focus_proxy_preserves_keyboard_claim_without_stealing_focus(
         delta: ScrollDelta::Pixels(point(px(0.0), px(-240.0))),
         ..Default::default()
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(cx.debug_selector_is_focused("table:virtual-focus-table:root"));
 
     cx.simulate_keystrokes("tab");
@@ -173,7 +173,7 @@ fn table_virtual_focus_proxy_preserves_keyboard_claim_without_stealing_focus(
         delta: ScrollDelta::Pixels(point(px(0.0), px(10_000.0))),
         ..Default::default()
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(cx.debug_selector_is_focused("virtual-focus-outside"));
     assert!(!cx.debug_selector_is_focused(&TableDebugSelector::row(
         "virtual-focus-table",
@@ -206,12 +206,12 @@ fn table_virtual_focus_proxy_preserves_keyboard_claim_without_stealing_focus(
         delta: ScrollDelta::Pixels(point(px(0.0), px(-240.0))),
         ..Default::default()
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(cx.debug_selector_is_focused("table:virtual-focus-table:root"));
 
     cx.simulate_keystrokes("end");
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(
         cx.debug_bounds(&TableDebugSelector::row(
             "virtual-focus-table",
@@ -239,7 +239,7 @@ fn table_virtual_focus_proxy_preserves_keyboard_claim_without_stealing_focus(
 
     cx.simulate_keystrokes("home");
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(cx.debug_selector_is_focused(&TableDebugSelector::row(
         "virtual-focus-table",
         &TableRowIdentity::source_instance("duplicate", "row-0000"),
@@ -247,7 +247,7 @@ fn table_virtual_focus_proxy_preserves_keyboard_claim_without_stealing_focus(
 
     cx.simulate_keystrokes("down");
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(cx.debug_selector_is_focused(&TableDebugSelector::row(
         "virtual-focus-table",
         &TableRowIdentity::source_instance("duplicate", "row-0001"),
@@ -255,7 +255,7 @@ fn table_virtual_focus_proxy_preserves_keyboard_claim_without_stealing_focus(
 
     cx.simulate_keystrokes("up");
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(cx.debug_selector_is_focused(&TableDebugSelector::row(
         "virtual-focus-table",
         &TableRowIdentity::source_instance("duplicate", "row-0000"),
@@ -305,7 +305,7 @@ fn table_virtual_focus_proxy_preserves_claim_from_cell_editor_descendant(
 
     cx.update(init_text_input);
     let (_, cx) = cx.add_window_view(|_, _| VirtualEditorFocusProbe);
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
 
     let focused_editor_selector =
@@ -328,7 +328,7 @@ fn table_virtual_focus_proxy_preserves_claim_from_cell_editor_descendant(
         delta: ScrollDelta::Pixels(point(px(0.0), px(-320.0))),
         ..Default::default()
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert!(
         cx.debug_bounds(&focused_editor_selector).is_none(),
@@ -341,7 +341,7 @@ fn table_virtual_focus_proxy_preserves_claim_from_cell_editor_descendant(
 
     cx.simulate_keystrokes("down");
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let expected_row = table_source_row_selector("virtual-editor-focus-table", "row-0002");
     let focused_selector = cx.focused_debug_selector();
     assert_eq!(focused_selector.as_deref(), Some(expected_row.as_str()));
@@ -379,7 +379,7 @@ fn table_virtual_focus_honors_pending_navigation_when_previous_row_remains_rende
 
     let (_, cx) = cx.add_window_view(|_, _| OverlappingVirtualWindowProbe);
     assert!(cx.activate_accessibility());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let pending_index = (1..20)
         .find(|index| {
@@ -413,7 +413,7 @@ fn table_virtual_focus_honors_pending_navigation_when_previous_row_remains_rende
 
     cx.simulate_keystrokes("down");
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert!(
         cx.debug_bounds(&previous_row).is_some(),

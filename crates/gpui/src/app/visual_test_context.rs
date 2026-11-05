@@ -212,7 +212,7 @@ impl VisualTestAppContext {
     #[cfg(any(test, feature = "test-support"))]
     pub fn draw_window(&mut self, window: AnyWindowHandle) -> Result<()> {
         self.update_window(window, |_, window, cx| {
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
         })
     }
 

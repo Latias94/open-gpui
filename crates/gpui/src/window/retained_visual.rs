@@ -1142,7 +1142,7 @@ mod tests {
             }
         });
 
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         assert!(
             cx.update(|window, _| window.rendered_frame.scene.has_primitives()),
             "the source frame should contain paint primitives"
@@ -1158,7 +1158,7 @@ mod tests {
             root.resource = None;
             cx.notify();
         });
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
 
         assert_eq!(*replay_error.borrow(), None);
         let replay_receipt = replay_receipt
@@ -1194,7 +1194,7 @@ mod tests {
             root.mode = ProbeMode::Empty;
             cx.notify();
         });
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         assert!(
             resource_weak.upgrade().is_none(),
             "the retained resource should release after both lease and replay frame retire"
@@ -1216,7 +1216,7 @@ mod tests {
                 replay_receipt: Rc::new(RefCell::new(None)),
             }
         });
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
 
         let first_ticket = cx.update(|window, _| {
             lease_committed(window, &source_id).expect("source should publish a committed visual")
@@ -1290,7 +1290,7 @@ mod tests {
                 replay_receipt,
             }
         });
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         let ticket = cx.update(|window, _| lease_committed(window, &source_id).unwrap());
 
         root.update(cx, |root, cx| {
@@ -1299,7 +1299,7 @@ mod tests {
         });
         cx.update(|window, cx| {
             window.scale_factor *= 2.0;
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
         });
         assert!(matches!(
             *replay_error.borrow(),
@@ -1325,7 +1325,7 @@ mod tests {
                 replay_receipt: Rc::new(RefCell::new(None)),
             }
         });
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         let ticket = cx.update(|window, _| lease_committed(window, &source_id).unwrap());
 
         assert_eq!(
@@ -1383,12 +1383,12 @@ mod tests {
             }
         });
 
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         let first_generation = cx.update(|window, _| window.rendered_frame.generation);
         let first_render_count = renders.get();
         assert!(first_render_count > 0);
 
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         let second_generation = cx.update(|window, _| window.rendered_frame.generation);
         assert!(second_generation > first_generation);
         assert_eq!(
@@ -1456,7 +1456,7 @@ mod tests {
             move |_, _| LateGeometryFailureSource { source_id }
         });
 
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         assert_eq!(
             cx.update(|window, _| lease_committed(window, &source_id)),
             Err(Invalidation::SubtreeGeometryUnavailable(source_id))
@@ -1622,7 +1622,7 @@ mod tests {
             }
         });
 
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         assert_eq!(
             remove_outcome.get(),
             Some(AtlasRemoveOutcome::TextureRetained)
@@ -1659,7 +1659,7 @@ mod tests {
             }
         });
 
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         assert_eq!(
             remove_outcome.get(),
             Some(AtlasRemoveOutcome::TextureRetained),
@@ -1694,7 +1694,7 @@ mod tests {
                 replay_error,
             }
         });
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
 
         let ticket = cx.update(|window, _| lease_committed(window, &source_id).unwrap());
         let texture = cx.update(|window, _| {
@@ -1715,7 +1715,7 @@ mod tests {
             root.image = None;
             cx.notify();
         });
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         assert_eq!(*replay_error.borrow(), None);
 
         cx.update(|window, _| release(window, &ticket).unwrap());
@@ -1732,7 +1732,7 @@ mod tests {
             root.mode = ProbeMode::Empty;
             cx.notify();
         });
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         assert!(matches!(
             cx.update(|window, _| {
                 window
@@ -1771,7 +1771,7 @@ mod tests {
             let source_id = source_id.clone();
             move |_, _| DuplicateSourceProbe { source_id }
         });
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
 
         assert_eq!(
             cx.update(|window, _| lease_committed(window, &source_id)),

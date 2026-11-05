@@ -1843,7 +1843,7 @@ mod test {
             captured_guard: captured_guard_for_view,
         });
 
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         assert!(captured_guard.borrow().is_some());
         assert_eq!(
             state.direct_scroll_revision(),
@@ -1863,7 +1863,7 @@ mod test {
             captured_guard: captured_guard_for_view,
         });
 
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         let guard = captured_guard
             .borrow_mut()
             .take()

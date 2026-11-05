@@ -256,7 +256,7 @@ fn tabs_vertical_tablist_scrolls_when_constrained(cx: &mut open_gpui::TestAppCon
 
     let (_, cx) = cx.add_window_view(|_, _| TestView);
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let tab_before = cx
@@ -280,7 +280,7 @@ fn tabs_vertical_tablist_scrolls_when_constrained(cx: &mut open_gpui::TestAppCon
         ..Default::default()
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let tab_after = cx
@@ -541,7 +541,7 @@ fn tabs_runtime_manual_keyboard_activation_preserves_selected_seed_and_payloads(
         selections: selections.clone(),
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert!(
@@ -554,7 +554,7 @@ fn tabs_runtime_manual_keyboard_activation_preserves_selected_seed_and_payloads(
         .expect("disabled Billing tab trigger should be rendered");
     cx.simulate_click(disabled_billing.center(), Default::default());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     assert!(
         selections.borrow().is_empty(),
@@ -570,7 +570,7 @@ fn tabs_runtime_manual_keyboard_activation_preserves_selected_seed_and_payloads(
         .expect("Overview tab trigger should be rendered");
     cx.simulate_click(overview.center(), Default::default());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     let after_click = selections.borrow().clone();
     assert_eq!(after_click.len(), 1);
@@ -584,7 +584,7 @@ fn tabs_runtime_manual_keyboard_activation_preserves_selected_seed_and_payloads(
 
     cx.simulate_keystrokes("right");
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     assert_eq!(
         selections.borrow().len(),
@@ -599,7 +599,7 @@ fn tabs_runtime_manual_keyboard_activation_preserves_selected_seed_and_payloads(
     cx.simulate_event(key_down("enter"));
     cx.simulate_event(key_up("enter"));
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     let after_enter = selections.borrow().clone();
     assert_eq!(after_enter.len(), 2);
@@ -615,7 +615,7 @@ fn tabs_runtime_manual_keyboard_activation_preserves_selected_seed_and_payloads(
     cx.simulate_event(key_down("enter"));
     cx.simulate_event(key_up("enter"));
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     let after_home = selections.borrow().clone();
     assert_eq!(after_home.len(), 3);
@@ -631,7 +631,7 @@ fn tabs_runtime_manual_keyboard_activation_preserves_selected_seed_and_payloads(
     cx.simulate_event(key_down("space"));
     cx.simulate_event(key_up("space"));
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     let after_space = selections.borrow().clone();
     assert_eq!(after_space.len(), 4);
@@ -677,7 +677,7 @@ fn toolbar_runtime_keyboard_navigation_skips_disabled_and_separator_items(
         selections: selections.clone(),
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let undo = cx
@@ -685,14 +685,14 @@ fn toolbar_runtime_keyboard_navigation_skips_disabled_and_separator_items(
         .expect("undo toolbar item should be rendered");
     cx.simulate_click(undo.center(), Default::default());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     cx.simulate_keystrokes("right");
     cx.simulate_event(key_down("space"));
     cx.simulate_event(key_up("space"));
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     let after_right = selections.borrow().clone();
     assert_eq!(after_right.len(), 2);
@@ -705,7 +705,7 @@ fn toolbar_runtime_keyboard_navigation_skips_disabled_and_separator_items(
     cx.simulate_event(key_down("space"));
     cx.simulate_event(key_up("space"));
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     let after_second_right = selections.borrow().clone();
     assert_eq!(after_second_right.len(), 3);
@@ -717,7 +717,7 @@ fn toolbar_runtime_keyboard_navigation_skips_disabled_and_separator_items(
     cx.simulate_event(key_down("enter"));
     cx.simulate_event(key_up("enter"));
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     let after_home = selections.borrow().clone();
     assert_eq!(after_home.len(), 4);
@@ -753,7 +753,7 @@ fn toggle_group_controlled_values_override_runtime_selection(cx: &mut open_gpui:
         changes: changes.clone(),
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let left = cx
@@ -761,7 +761,7 @@ fn toggle_group_controlled_values_override_runtime_selection(cx: &mut open_gpui:
         .expect("left toggle item should expose a stable debug selector");
     cx.simulate_click(left.center(), Default::default());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert_eq!(changes.borrow().as_slice(), &[vec!["left".to_string()]]);
@@ -771,7 +771,7 @@ fn toggle_group_controlled_values_override_runtime_selection(cx: &mut open_gpui:
         .expect("left toggle item should remain rendered after controlled redraw");
     cx.simulate_click(left.center(), Default::default());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert_eq!(
@@ -952,7 +952,7 @@ fn sidebar_long_navigation_scrolls_inside_shared_scroll_area(cx: &mut open_gpui:
 
     let (_, cx) = cx.add_window_view(|_, _| TestView);
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let item_before = cx
@@ -976,7 +976,7 @@ fn sidebar_long_navigation_scrolls_inside_shared_scroll_area(cx: &mut open_gpui:
         ..Default::default()
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let item_after = cx

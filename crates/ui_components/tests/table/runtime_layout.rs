@@ -30,7 +30,7 @@ fn table_runtime_resize_emits_controlled_sizing_change(cx: &mut open_gpui::TestA
     let _ = cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let handle = cx
@@ -60,7 +60,7 @@ fn table_runtime_resize_emits_controlled_sizing_change(cx: &mut open_gpui::TestA
     );
     cx.run_until_parked();
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let changes = changes.borrow();
@@ -124,7 +124,7 @@ fn table_runtime_header_drag_emits_controlled_column_order_change(
     let _ = cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let start = cx
@@ -156,7 +156,7 @@ fn table_runtime_header_drag_emits_controlled_column_order_change(
     cx.simulate_mouse_up(end, MouseButton::Left, Default::default());
     cx.run_until_parked();
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let changes = changes.borrow();
@@ -267,7 +267,7 @@ fn table_runtime_exposes_pinned_region_debug_selectors(cx: &mut open_gpui::TestA
 
     let (_, cx) = cx.add_window_view(|_, _| TestView);
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     for region in TableColumnRegion::ALL {
@@ -334,7 +334,7 @@ fn table_runtime_pinned_center_scrolls_without_moving_fixed_lanes(
 
     let (_, cx) = cx.add_window_view(|_, _| TestView);
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let header_center_before = cx
@@ -374,7 +374,7 @@ fn table_runtime_pinned_center_scrolls_without_moving_fixed_lanes(
         ..Default::default()
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let header_center_after = cx
@@ -447,10 +447,10 @@ fn table_runtime_center_column_window_mounts_only_rendered_center_cells(
 
     let (_, cx) = cx.add_window_view(|_, _| TestView);
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert!(
@@ -509,7 +509,7 @@ fn table_runtime_center_column_window_mounts_only_rendered_center_cells(
         ..Default::default()
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert!(
@@ -601,10 +601,10 @@ fn table_runtime_center_column_window_still_emits_sort_for_rendered_center_heade
         actions: actions.clone(),
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let body_center_viewport = cx
@@ -619,7 +619,7 @@ fn table_runtime_center_column_window_still_emits_sort_for_rendered_center_heade
         ..Default::default()
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let metric_05_header = cx
@@ -627,7 +627,7 @@ fn table_runtime_center_column_window_still_emits_sort_for_rendered_center_heade
         .expect("virtualized center header should render after horizontal scrolling");
     cx.simulate_click(metric_05_header.center(), Default::default());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let actions = actions.borrow();
@@ -710,10 +710,10 @@ fn table_runtime_center_column_window_keeps_row_virtualizer_independent(
 
     let (_, cx) = cx.add_window_view(|_, _| TestView);
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let body_center_viewport = cx
@@ -728,7 +728,7 @@ fn table_runtime_center_column_window_keeps_row_virtualizer_independent(
         ..Default::default()
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     assert!(
         cx.debug_bounds(&table_source_cell_selector(
@@ -753,7 +753,7 @@ fn table_runtime_center_column_window_keeps_row_virtualizer_independent(
         ..Default::default()
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert!(
@@ -845,7 +845,7 @@ fn table_runtime_pinned_body_scrolls_without_moving_parent(cx: &mut open_gpui::T
 
     let (_, cx) = cx.add_window_view(|_, _| TestView);
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let first_row_before = cx
@@ -887,7 +887,7 @@ fn table_runtime_pinned_body_scrolls_without_moving_parent(cx: &mut open_gpui::T
         ..Default::default()
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let parent_bottom_after = cx
@@ -988,7 +988,7 @@ fn table_runtime_row_pinning_keeps_bands_fixed_while_center_scrolls(
 
     let (_, cx) = cx.add_window_view(|_, _| TestView);
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert!(
@@ -1050,7 +1050,7 @@ fn table_runtime_row_pinning_keeps_bands_fixed_while_center_scrolls(
         ..Default::default()
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let top_name_after_horizontal = cx
@@ -1093,7 +1093,7 @@ fn table_runtime_row_pinning_keeps_bands_fixed_while_center_scrolls(
         ..Default::default()
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let top_row_after = cx
@@ -1178,7 +1178,7 @@ fn table_runtime_row_pinning_keyboard_navigation_scrolls_to_unrendered_center_ro
 
     let (_, cx) = cx.add_window_view(|_, _| TestView);
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let top_row_before = cx
@@ -1198,11 +1198,11 @@ fn table_runtime_row_pinning_keyboard_navigation_scrolls_to_unrendered_center_ro
 
     cx.simulate_click(top_row_before.center(), Default::default());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     cx.simulate_keystrokes("end");
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let top_row_after = cx
@@ -1257,7 +1257,7 @@ fn table_runtime_pinned_headers_still_sort_after_center_scroll(cx: &mut open_gpu
         actions: actions.clone(),
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let body_center_viewport = cx
@@ -1278,7 +1278,7 @@ fn table_runtime_pinned_headers_still_sort_after_center_scroll(cx: &mut open_gpu
         ..Default::default()
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert!(
@@ -1297,7 +1297,7 @@ fn table_runtime_pinned_headers_still_sort_after_center_scroll(cx: &mut open_gpu
     cx.simulate_click(score_header.center(), Default::default());
     cx.simulate_click(status_header.center(), Default::default());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let actions = actions.borrow();
@@ -1364,7 +1364,7 @@ fn table_runtime_pinned_header_drag_emits_controlled_column_order_change(
     let _ = cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let center_viewport = cx
@@ -1379,7 +1379,7 @@ fn table_runtime_pinned_header_drag_emits_controlled_column_order_change(
         ..Default::default()
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let score_before = cx
@@ -1410,7 +1410,7 @@ fn table_runtime_pinned_header_drag_emits_controlled_column_order_change(
     cx.simulate_mouse_up(drop_before.center(), MouseButton::Left, Default::default());
     cx.run_until_parked();
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let changes = changes.borrow();
@@ -1478,7 +1478,7 @@ fn table_runtime_pinned_resize_handles_emit_changes_for_center_and_pinned_column
     let _ = cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let team_handle_bounds = cx
@@ -1521,7 +1521,7 @@ fn table_runtime_pinned_resize_handles_emit_changes_for_center_and_pinned_column
     );
     cx.run_until_parked();
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     assert_eq!(changes.borrow().len(), 1);
     assert_eq!(changes.borrow()[0].column_id().as_str(), "team");
@@ -1551,7 +1551,7 @@ fn table_runtime_pinned_resize_handles_emit_changes_for_center_and_pinned_column
     );
     cx.run_until_parked();
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let changes = changes.borrow();
@@ -1613,7 +1613,7 @@ fn table_runtime_virtualized_body_scrolls_without_moving_parent(
 
     let (_, cx) = cx.add_window_view(|_, _| TestView);
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert!(
@@ -1639,7 +1639,7 @@ fn table_runtime_virtualized_body_scrolls_without_moving_parent(
         ..Default::default()
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let parent_bottom_after = cx
@@ -1686,7 +1686,7 @@ fn table_runtime_cache_invalidates_when_table_state_changes(cx: &mut open_gpui::
 
     let (view, cx) = cx.add_window_view(|_, _| TestView { descending: false });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert!(
@@ -1711,7 +1711,7 @@ fn table_runtime_cache_invalidates_when_table_state_changes(cx: &mut open_gpui::
         cx.notify();
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert!(
@@ -1763,7 +1763,7 @@ fn table_runtime_content_fit_widths_follow_visible_content(cx: &mut open_gpui::T
 
     let (view, cx) = cx.add_window_view(|_, _| TestView { long_value: false });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let status_header_before = cx
@@ -1784,7 +1784,7 @@ fn table_runtime_content_fit_widths_follow_visible_content(cx: &mut open_gpui::T
         cx.notify();
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let status_header_after = cx
@@ -1850,7 +1850,7 @@ fn table_runtime_measured_row_height_reflows_after_paint(cx: &mut open_gpui::Tes
 
     let (_, cx) = cx.add_window_view(move |_, _| TestView { state });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let row_a_after = cx

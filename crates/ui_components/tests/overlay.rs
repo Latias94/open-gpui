@@ -457,7 +457,7 @@ fn dialog_final_tree_projects_modal_disabled_and_exact_actions(cx: &mut open_gpu
         cx.notify();
     });
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let open_update = cx
         .latest_accessibility_tree_update()
@@ -477,7 +477,7 @@ fn dialog_final_tree_projects_modal_disabled_and_exact_actions(cx: &mut open_gpu
         cx.notify();
     });
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let disabled_update = cx
         .latest_accessibility_tree_update()
@@ -580,7 +580,7 @@ fn dialog_resolves_declared_live_target_and_unavailable_fallback(
         fallback_focus: cx.focus_handle(),
         preferred_available: true,
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
     assert!(
         cx.debug_selector_is_focused("dialog-test:preferred-target"),
@@ -591,14 +591,14 @@ fn dialog_resolves_declared_live_target_and_unavailable_fallback(
         view.preferred_available = false;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
     assert!(
         cx.debug_selector_is_focused("dialog-test:fallback-target"),
         "TargetOrFirstFocusable should skip an unavailable registered handle"
     );
 
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(cx.debug_selector_is_focused("dialog-test:fallback-target"));
 }
 
@@ -634,7 +634,7 @@ fn dialog_focus_target_sync_accepts_declared_id_rename(cx: &mut open_gpui::TestA
         focus: cx.focus_handle(),
         target_id: "before-rename",
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
     assert!(cx.debug_selector_is_focused("dialog-focus-sync:renamed-node"));
 
@@ -642,7 +642,7 @@ fn dialog_focus_target_sync_accepts_declared_id_rename(cx: &mut open_gpui::TestA
         view.target_id = "after-rename";
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
 
     assert!(cx.debug_selector_is_focused("dialog-focus-sync:renamed-node"));
@@ -699,7 +699,7 @@ fn dialog_focus_target_sync_atomically_swaps_handles_and_rearbitrates_focus(
         second_focus: cx.focus_handle(),
         swapped: false,
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
     assert!(cx.debug_selector_is_focused("dialog-focus-sync:first-node"));
 
@@ -707,7 +707,7 @@ fn dialog_focus_target_sync_atomically_swaps_handles_and_rearbitrates_focus(
         view.swapped = true;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
 
     assert!(
@@ -771,7 +771,7 @@ fn dialog_focus_target_sync_rearbitrates_when_focused_target_is_removed(
         fallback_focus: cx.focus_handle(),
         include_preferred: true,
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
     assert!(cx.debug_selector_is_focused("dialog-focus-sync:removed-node"));
 
@@ -779,7 +779,7 @@ fn dialog_focus_target_sync_rearbitrates_when_focused_target_is_removed(
         view.include_preferred = false;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
 
     assert!(
@@ -840,7 +840,7 @@ fn dialog_focus_target_sync_validates_retained_target_against_the_final_rendered
         fallback_focus: cx.focus_handle(),
         show_preferred: true,
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
     assert!(cx.debug_selector_is_focused("dialog-focus-sync:retained-preferred"));
 
@@ -848,7 +848,7 @@ fn dialog_focus_target_sync_validates_retained_target_against_the_final_rendered
         view.show_preferred = false;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
 
     assert!(
@@ -898,7 +898,7 @@ fn dialog_exact_focus_target_becoming_disabled_safely_clears_focus(
         preferred_focus: cx.focus_handle(),
         preferred_available: true,
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
     assert!(cx.debug_selector_is_focused("dialog-focus-sync:exact-preferred"));
 
@@ -906,7 +906,7 @@ fn dialog_exact_focus_target_becoming_disabled_safely_clears_focus(
         view.preferred_available = false;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
 
     assert_eq!(
@@ -947,7 +947,7 @@ fn dialog_runtime_respects_escape_policy_and_restores_trigger_focus(
         open_events: open_events.clone(),
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let trigger = cx
@@ -956,7 +956,7 @@ fn dialog_runtime_respects_escape_policy_and_restores_trigger_focus(
     cx.simulate_click(trigger.center(), Default::default());
     cx.run_until_parked();
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     assert!(
         cx.debug_selector_is_focused("dialog:runtime-dialog:surface"),
@@ -966,7 +966,7 @@ fn dialog_runtime_respects_escape_policy_and_restores_trigger_focus(
     cx.simulate_keystrokes("escape");
     cx.run_until_parked();
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     assert!(
         cx.debug_bounds("dialog:runtime-dialog:surface").is_some(),
@@ -975,12 +975,12 @@ fn dialog_runtime_respects_escape_policy_and_restores_trigger_focus(
 
     *escape_policy.borrow_mut() = EscapeKeyPolicy::Dismiss;
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     cx.simulate_keystrokes("escape");
     cx.run_until_parked();
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert!(
@@ -1048,7 +1048,7 @@ fn controlled_dialog_refusal_keeps_modal_focus_authority(cx: &mut open_gpui::Tes
         underlay_clicks: underlay_clicks.clone(),
         underlay_focus: cx.focus_handle(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let surface = cx
         .debug_bounds("dialog:controlled-dialog:surface")
@@ -1058,7 +1058,7 @@ fn controlled_dialog_refusal_keeps_modal_focus_authority(cx: &mut open_gpui::Tes
 
     cx.simulate_keystrokes("escape");
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert_eq!(open_intents.borrow().len(), 1);
     assert!(!open_intents.borrow()[0].desired_open());
@@ -1078,7 +1078,7 @@ fn controlled_dialog_refusal_keeps_modal_focus_authority(cx: &mut open_gpui::Tes
 
     cx.simulate_keystrokes("escape");
     cx.simulate_keystrokes("tab");
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_eq!(
         open_intents.borrow().len(),
         1,
@@ -1181,14 +1181,14 @@ fn presentation_inert_dialog_keeps_open_lifecycle_but_releases_modal_input_autho
         open_intents: open_intents.clone(),
         underlay_clicks: underlay_clicks.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(cx.debug_selector_is_focused("dialog:inert-dialog:surface"));
 
     cx.update_window_entity(&view, |view, _, cx| {
         view.presentation = SubtreePresentation::Inert;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
 
     let inert = cx.update(|window, cx| {
@@ -1223,7 +1223,7 @@ fn presentation_inert_dialog_keeps_open_lifecycle_but_releases_modal_input_autho
         view.presentation = SubtreePresentation::Visible;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
     assert!(
         !cx.debug_selector_is_focused("dialog:inert-dialog:surface"),
@@ -1280,7 +1280,7 @@ fn presentation_menu_unlinks_restores_trigger_and_reopens_in_a_new_generation(
         presentation: SubtreePresentation::Visible,
         open_intents: open_intents.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(cx.debug_bounds("menu:presentation-menu:content").is_some());
 
     let trigger = cx
@@ -1315,7 +1315,7 @@ fn presentation_menu_unlinks_restores_trigger_and_reopens_in_a_new_generation(
             view.presentation = presentation;
             cx.notify();
         });
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.run_until_parked();
 
         let snapshot = cx.update(|window, cx| {
@@ -1358,7 +1358,7 @@ fn presentation_menu_unlinks_restores_trigger_and_reopens_in_a_new_generation(
         view.presentation = SubtreePresentation::Visible;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
     assert!(
         cx.debug_selector_is_focused("menu:presentation-menu:content"),
@@ -1428,14 +1428,14 @@ fn overlay_fleet_can_switch_controlled_ownership_without_remounting(
         controlled: false,
         open: false,
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     cx.update_window_entity(&view, |view, _, cx| {
         view.controlled = true;
         view.open = true;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.simulate_keystrokes("escape");
 
     let requested = cx.update(|window, cx| {
@@ -1457,7 +1457,7 @@ fn overlay_fleet_can_switch_controlled_ownership_without_remounting(
         view.controlled = false;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let switched = cx.update(|window, cx| {
         WindowOverlayRuntime::for_window(window, cx)
@@ -1486,7 +1486,7 @@ fn overlay_fleet_can_switch_controlled_ownership_without_remounting(
         view.open = false;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 }
 
 #[open_gpui::test]
@@ -1592,19 +1592,19 @@ fn popover_menu_dialog_escape_is_lifo_and_restores_focus_through_real_components
         dialog_events: dialog_events.clone(),
         popover_inside_clicks: popover_inside_clicks.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let popover_trigger = cx
         .debug_bounds("popover:lifo-popover:trigger")
         .expect("popover trigger should render");
     cx.simulate_click(popover_trigger.center(), Default::default());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let menu_trigger = cx
         .debug_bounds("menu:lifo-menu:trigger")
         .expect("menu trigger should render inside the popover");
     cx.simulate_click(menu_trigger.center(), Default::default());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(cx.debug_selector_is_focused("menu:lifo-menu:content"));
 
     let dialog_trigger = cx
@@ -1612,10 +1612,10 @@ fn popover_menu_dialog_escape_is_lifo_and_restores_focus_through_real_components
         .expect("dialog trigger should render inside the menu");
     cx.simulate_click(dialog_trigger.center(), Default::default());
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.update(|window, cx| {
         window.drain_next_frame_callbacks_for_test(cx);
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     cx.run_until_parked();
     assert_eq!(
@@ -1684,7 +1684,7 @@ fn popover_menu_dialog_escape_is_lifo_and_restores_focus_through_real_components
 
     cx.simulate_click(dialog_trigger.center(), Default::default());
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(cx.debug_bounds("dialog:lifo-dialog:surface").is_none());
     assert!(cx.debug_bounds("menu:lifo-menu:content").is_some());
     assert!(cx.debug_bounds("popover:lifo-popover:content").is_some());
@@ -1695,7 +1695,7 @@ fn popover_menu_dialog_escape_is_lifo_and_restores_focus_through_real_components
         .expect("popover sibling should remain rendered outside the menu");
     cx.simulate_click(popover_inside.center(), Default::default());
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(cx.debug_bounds("menu:lifo-menu:content").is_none());
     assert!(cx.debug_bounds("popover:lifo-popover:content").is_some());
     assert!(
@@ -1713,7 +1713,7 @@ fn popover_menu_dialog_escape_is_lifo_and_restores_focus_through_real_components
         .expect("outside target should remain rendered below the overlay tree");
     cx.simulate_click(outside.center(), Default::default());
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(cx.debug_bounds("popover:lifo-popover:content").is_none());
     assert!(
         cx.debug_selector_is_focused("popover:lifo-popover:trigger"),
@@ -1721,21 +1721,21 @@ fn popover_menu_dialog_escape_is_lifo_and_restores_focus_through_real_components
     );
 
     cx.simulate_click(popover_trigger.center(), Default::default());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let menu_trigger = cx
         .debug_bounds("menu:lifo-menu:trigger")
         .expect("menu trigger should render after reopening the popover");
     cx.simulate_click(menu_trigger.center(), Default::default());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let dialog_trigger = cx
         .debug_bounds("dialog:lifo-dialog:trigger")
         .expect("dialog trigger should render after reopening the menu");
     cx.simulate_click(dialog_trigger.center(), Default::default());
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.update(|window, cx| {
         window.drain_next_frame_callbacks_for_test(cx);
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     cx.run_until_parked();
     assert!(cx.debug_bounds("dialog:lifo-dialog:surface").is_some());
@@ -1747,7 +1747,7 @@ fn popover_menu_dialog_escape_is_lifo_and_restores_focus_through_real_components
 
     cx.simulate_keystrokes("escape");
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(cx.debug_bounds("dialog:lifo-dialog:surface").is_none());
     assert!(cx.debug_bounds("menu:lifo-menu:content").is_some());
     assert!(
@@ -1757,7 +1757,7 @@ fn popover_menu_dialog_escape_is_lifo_and_restores_focus_through_real_components
 
     cx.simulate_keystrokes("escape");
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(cx.debug_bounds("menu:lifo-menu:content").is_none());
     assert!(
         cx.debug_selector_is_focused("menu:lifo-menu:trigger"),
@@ -1768,7 +1768,7 @@ fn popover_menu_dialog_escape_is_lifo_and_restores_focus_through_real_components
     cx.run_until_parked();
     cx.update(|window, cx| {
         window.drain_next_frame_callbacks_for_test(cx);
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     cx.update(|window, cx| {
         window.drain_next_frame_callbacks_for_test(cx);
@@ -1846,14 +1846,14 @@ fn alert_dialog_above_dialog_receives_escape_first_and_restores_focus_lifo(
         dialog_events: dialog_events.clone(),
         alert_events: alert_events.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let alert_trigger = cx
         .debug_bounds("alert-dialog:stacked-alert:trigger")
         .expect("alert trigger should render inside the dialog");
     cx.simulate_click(alert_trigger.center(), Default::default());
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(
         cx.debug_selector_is_focused("alert-dialog:stacked-alert:cancel"),
         "alert should own focus above the dialog; focused={:?}",
@@ -1864,7 +1864,7 @@ fn alert_dialog_above_dialog_receives_escape_first_and_restores_focus_lifo(
 
     cx.simulate_keystrokes("escape");
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert!(
         cx.debug_bounds("alert-dialog:stacked-alert:surface")
@@ -1887,7 +1887,7 @@ fn alert_dialog_above_dialog_receives_escape_first_and_restores_focus_lifo(
 
     cx.simulate_keystrokes("escape");
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert!(
         cx.debug_bounds("dialog:stacked-dialog:surface").is_none(),
@@ -1927,7 +1927,7 @@ fn alert_dialog_ignores_escape_by_default(cx: &mut open_gpui::TestAppContext) {
     let (_, cx) = cx.add_window_view(|_, _| TestView {
         open_events: open_events.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(
         cx.debug_bounds("alert-dialog:default-escape-policy:surface")
             .is_some()
@@ -1935,7 +1935,7 @@ fn alert_dialog_ignores_escape_by_default(cx: &mut open_gpui::TestAppContext) {
 
     cx.simulate_keystrokes("escape");
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert!(
         cx.debug_bounds("alert-dialog:default-escape-policy:surface")
@@ -1984,7 +1984,7 @@ fn alert_dialog_cancel_effect_may_synchronously_unmount_owner(cx: &mut open_gpui
                             cx.notify();
                         })
                         .expect("test view should remain mounted");
-                        window.draw(cx).clear();
+                        window.draw(cx).clear(cx);
                     }),
                 )
             } else {
@@ -1998,7 +1998,7 @@ fn alert_dialog_cancel_effect_may_synchronously_unmount_owner(cx: &mut open_gpui
         mounted: true,
         observed_phases: observed_phases.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let cancel = cx
         .debug_bounds("alert-dialog:cancel-unmount:cancel")
@@ -2066,7 +2066,7 @@ fn alert_dialog_action_effect_may_synchronously_replace_owner_overlay(
                             cx.notify();
                         })
                         .expect("test view should remain mounted");
-                        window.draw(cx).clear();
+                        window.draw(cx).clear(cx);
                     }),
                 )
             }
@@ -2078,7 +2078,7 @@ fn alert_dialog_action_effect_may_synchronously_replace_owner_overlay(
         replacement: false,
         observed_phases: observed_phases.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let action = cx
         .debug_bounds("alert-dialog:action-replace:action")
@@ -2150,7 +2150,7 @@ fn alert_dialog_action_effect_reopen_wins_over_closing_generation(
                     cx.notify();
                 })
                 .expect("test view should remain mounted");
-                window.draw(cx).clear();
+                window.draw(cx).clear(cx);
             });
             let alert = if self.controlled_reopen {
                 alert.open(true)
@@ -2166,7 +2166,7 @@ fn alert_dialog_action_effect_reopen_wins_over_closing_generation(
         controlled_reopen: false,
         observed_phases: observed_phases.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let action = cx
         .debug_bounds("alert-dialog:action-reopen:action")
@@ -2242,13 +2242,13 @@ fn popover_outside_pass_through_preserves_focus_when_surface_never_owned_it(
         outside_focus: cx.focus_handle(),
         outside_clicks: outside_clicks.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let trigger = cx
         .debug_bounds("popover:conditional-restore:trigger")
         .expect("popover trigger should render");
     cx.simulate_click(trigger.center(), Default::default());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(
         cx.debug_bounds("popover:conditional-restore:content")
             .is_some()
@@ -2261,7 +2261,7 @@ fn popover_outside_pass_through_preserves_focus_when_surface_never_owned_it(
         .expect("outside focus target should render");
     cx.simulate_click(outside.center(), Default::default());
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert!(
         cx.debug_bounds("popover:conditional-restore:content")
@@ -2342,7 +2342,7 @@ fn modal_dialog_trigger_coordinate_is_outside_the_surface_and_cannot_bypass_the_
     let (_, cx) = cx.add_window_view(|_, _| TestView {
         open_events: open_events.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let trigger = cx
         .debug_bounds("dialog:modal-trigger-barrier:trigger")
@@ -2354,7 +2354,7 @@ fn modal_dialog_trigger_coordinate_is_outside_the_surface_and_cannot_bypass_the_
     assert!(cx.debug_selector_is_focused("dialog:modal-trigger-barrier:surface"));
 
     cx.simulate_click(trigger.center(), Default::default());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let snapshot = cx.update(|window, cx| {
         WindowOverlayRuntime::for_window(window, cx)
             .snapshot(window, cx)
@@ -2482,10 +2482,10 @@ fn sheet_state_models_non_modal_and_explicit_dismiss_policy() {
 
 fn settle_sheet_overlay(cx: &mut open_gpui::VisualTestContext) {
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.update(|window, cx| {
         window.drain_next_frame_callbacks_for_test(cx);
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     cx.run_until_parked();
 }
@@ -2565,7 +2565,7 @@ fn modal_sheet_defaults_trap_focus_block_underlay_and_close_once(
         open_intents: open_intents.clone(),
         close_intents: close_intents.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let trigger = cx
         .debug_bounds("sheet:default-modal-sheet:trigger")
@@ -2886,7 +2886,7 @@ fn menu_final_tree_projects_structural_roles_disabled_state_and_exact_actions(
     let (_, cx) = cx.add_window_view(|_, _| MenuAccessibilityProbe);
     assert!(cx.activate_accessibility());
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let update = cx
         .latest_accessibility_tree_update()
@@ -2980,7 +2980,7 @@ fn menu_icon_trigger_keeps_accessible_menu_behavior_and_compacts_trigger(
 
     let (_, cx) = cx.add_window_view(|_, _| TestView);
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let text_trigger = cx
@@ -3465,7 +3465,7 @@ fn menu_runtime_keyboard_navigation_preserves_focused_value_after_rerender(
         item_selections: item_selections.clone(),
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let trigger = cx
@@ -3473,7 +3473,7 @@ fn menu_runtime_keyboard_navigation_preserves_focused_value_after_rerender(
         .expect("runtime menu trigger should render");
     cx.simulate_click(trigger.center(), Default::default());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert!(
@@ -3483,7 +3483,7 @@ fn menu_runtime_keyboard_navigation_preserves_focused_value_after_rerender(
 
     cx.simulate_keystrokes("down");
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     assert!(
         selections.borrow().is_empty(),
@@ -3492,7 +3492,7 @@ fn menu_runtime_keyboard_navigation_preserves_focused_value_after_rerender(
 
     cx.simulate_keystrokes("enter");
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let after_enter = selections.borrow().clone();
@@ -3553,16 +3553,16 @@ fn menu_selection_callback_focus_wins_over_the_older_close_restore(
         destination_focus: cx.focus_handle(),
         selections: selections.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let trigger = cx
         .debug_bounds("menu:selection-reentrant-menu:trigger")
         .expect("menu trigger should render");
     cx.simulate_click(trigger.center(), Default::default());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     cx.simulate_keystrokes("enter");
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_eq!(selections.get(), 1);
     assert!(
         cx.debug_bounds("menu:selection-reentrant-menu:content")
@@ -3600,12 +3600,12 @@ fn menu_tab_closes_the_active_root_instead_of_leaving_it_mounted(
     let (_, cx) = cx.add_window_view(|_, _| TestView {
         open_events: open_events.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let trigger = cx
         .debug_bounds("menu:tab-menu:trigger")
         .expect("menu trigger should render");
     cx.simulate_click(trigger.center(), Default::default());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(cx.debug_bounds("menu:tab-menu:content").is_some());
     assert!(
         cx.debug_selector_is_focused("menu:tab-menu:content"),
@@ -3614,7 +3614,7 @@ fn menu_tab_closes_the_active_root_instead_of_leaving_it_mounted(
 
     cx.simulate_keystrokes("tab");
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert_eq!(
         open_events.borrow().as_slice(),
@@ -3662,17 +3662,17 @@ fn menu_escape_closes_the_deepest_registered_branch_before_the_root(
     let (_, cx) = cx.add_window_view(|_, _| TestView {
         open_events: open_events.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let trigger = cx
         .debug_bounds("menu:layered-menu:trigger")
         .expect("menu trigger should render");
     cx.simulate_click(trigger.center(), Default::default());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.simulate_keystrokes("right");
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.simulate_keystrokes("right");
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let snapshot = cx.update(|window, cx| {
         WindowOverlayRuntime::for_window(window, cx)
@@ -3711,7 +3711,7 @@ fn menu_escape_closes_the_deepest_registered_branch_before_the_root(
 
     cx.simulate_keystrokes("escape");
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(cx.debug_bounds("menu:layered-menu:content").is_some());
     assert!(
         cx.debug_bounds("menu:layered-menu:item:0:sort/0:then/0:name")
@@ -3737,7 +3737,7 @@ fn menu_escape_closes_the_deepest_registered_branch_before_the_root(
 
     cx.simulate_keystrokes("escape");
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(cx.debug_bounds("menu:layered-menu:content").is_some());
     assert!(
         cx.debug_bounds("menu:layered-menu:item:0:sort/0:then")
@@ -3760,7 +3760,7 @@ fn menu_escape_closes_the_deepest_registered_branch_before_the_root(
 
     cx.simulate_keystrokes("escape");
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(cx.debug_bounds("menu:layered-menu:content").is_none());
     assert!(cx.debug_selector_is_focused("menu:layered-menu:trigger"));
     assert_eq!(open_events.borrow().as_slice(), &[true, false]);
@@ -3790,7 +3790,7 @@ fn controlled_menu_trigger_records_one_trigger_close_intent(cx: &mut open_gpui::
     let (_, cx) = cx.add_window_view(|_, _| TestView {
         open_intents: open_intents.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let trigger = cx
         .debug_bounds("menu:controlled-trigger-menu:trigger")
@@ -3823,7 +3823,7 @@ fn controlled_menu_trigger_records_one_trigger_close_intent(cx: &mut open_gpui::
     assert_eq!(open_intents.borrow()[0].reason(), DismissReason::Trigger);
     assert!(open_intents.borrow()[0].revision().is_some());
 
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let refused = cx.update(|window, cx| {
         WindowOverlayRuntime::for_window(window, cx)
             .snapshot(window, cx)
@@ -3837,7 +3837,7 @@ fn controlled_menu_trigger_records_one_trigger_close_intent(cx: &mut open_gpui::
     assert_eq!(refused_layer.phase(), OverlayLayerPhase::CloseRequested);
 
     cx.simulate_click(trigger.center(), Default::default());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let snapshot = cx.update(|window, cx| {
         WindowOverlayRuntime::for_window(window, cx)
@@ -3915,7 +3915,7 @@ fn menu_owner_unmount_allows_same_id_remount_without_pre_settling_cleanup(
         fallback_focus: cx.focus_handle(),
         fallback_lease: None,
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.update_window_entity(&view, |view, window, cx| {
         view.fallback_focus.focus(window, cx);
     });
@@ -3923,26 +3923,26 @@ fn menu_owner_unmount_allows_same_id_remount_without_pre_settling_cleanup(
         .debug_bounds("menu:remounted-menu:trigger")
         .expect("mounted menu trigger should render");
     cx.simulate_click(trigger.center(), Default::default());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.simulate_keystrokes("right");
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     cx.update_window_entity(&view, |view, _, cx| {
         view.mounted = false;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
 
     cx.update_window_entity(&view, |view, _, cx| {
         view.mounted = true;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
     cx.update(|window, cx| {
         window.drain_next_frame_callbacks_for_test(cx);
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     assert!(cx.debug_bounds("menu:remounted-menu:trigger").is_some());
     let remounted = cx.update(|window, cx| {
@@ -3961,9 +3961,9 @@ fn menu_owner_unmount_allows_same_id_remount_without_pre_settling_cleanup(
         .debug_bounds("menu:remounted-menu:trigger")
         .expect("remounted menu trigger should remain interactive");
     cx.simulate_click(trigger.center(), Default::default());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.simulate_keystrokes("right");
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(
         cx.debug_bounds("menu:remounted-menu:item:0:branch/0:child")
             .is_some(),
@@ -3975,7 +3975,7 @@ fn menu_owner_unmount_allows_same_id_remount_without_pre_settling_cleanup(
         cx.notify();
     });
     let accepted_generation = cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
         window.rendered_frame_revision()
     });
     assert!(
@@ -3995,12 +3995,12 @@ fn menu_owner_unmount_allows_same_id_remount_without_pre_settling_cleanup(
     cx.run_until_parked();
     cx.update(|window, cx| {
         window.drain_next_frame_callbacks_for_test(cx);
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     cx.run_until_parked();
     cx.update(|window, cx| {
         window.drain_next_frame_callbacks_for_test(cx);
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     cx.run_until_parked();
 
@@ -4071,7 +4071,7 @@ fn menu_submenu_outside_press_preserves_the_root_consumption_boundary(
         outside_policy: OutsidePressPolicy::DismissAndConsume,
         underlay_clicks: underlay_clicks.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let trigger = cx
         .debug_bounds("menu:outside-boundary-menu:trigger")
         .expect("menu trigger should render");
@@ -4080,15 +4080,15 @@ fn menu_submenu_outside_press_preserves_the_root_consumption_boundary(
         .expect("underlay target should render");
 
     cx.simulate_click(trigger.center(), Default::default());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.simulate_keystrokes("right");
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(
         cx.debug_bounds("menu:outside-boundary-menu:item:0:branch/0:child")
             .is_some()
     );
     cx.simulate_click(trigger.center(), Default::default());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(
         cx.debug_bounds("menu:outside-boundary-menu:content")
             .is_none(),
@@ -4096,11 +4096,11 @@ fn menu_submenu_outside_press_preserves_the_root_consumption_boundary(
     );
 
     cx.simulate_click(trigger.center(), Default::default());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.simulate_keystrokes("right");
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.simulate_click(underlay.center(), Default::default());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_eq!(underlay_clicks.get(), 0);
     assert!(
         cx.debug_bounds("menu:outside-boundary-menu:content")
@@ -4112,18 +4112,18 @@ fn menu_submenu_outside_press_preserves_the_root_consumption_boundary(
     );
 
     cx.simulate_click(trigger.center(), Default::default());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.update_window_entity(&view, |view, _, cx| {
         view.outside_policy = OutsidePressPolicy::DismissAndPassThrough;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.simulate_click(trigger.center(), Default::default());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.simulate_keystrokes("right");
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.simulate_click(underlay.center(), Default::default());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_eq!(
         underlay_clicks.get(),
         1,
@@ -4156,15 +4156,15 @@ fn dynamic_menu_branch_churn_releases_stale_registrations(cx: &mut open_gpui::Te
     }
 
     let (view, cx) = cx.add_window_view(|_, _| TestView { generation: 0 });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let trigger = cx
         .debug_bounds("menu:dynamic-branch-menu:trigger")
         .expect("dynamic menu trigger should render");
     cx.simulate_click(trigger.center(), Default::default());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.simulate_keystrokes("right");
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(
         cx.debug_selector_is_focused("menu:dynamic-branch-menu:panel:0:branch%2F0%2F%25"),
         "the original dynamic branch should own focus before it is removed"
@@ -4175,10 +4175,10 @@ fn dynamic_menu_branch_churn_releases_stale_registrations(cx: &mut open_gpui::Te
             view.generation = generation;
             cx.notify();
         });
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         let callbacks = cx.update(|window, cx| {
             let callbacks = window.drain_next_frame_callbacks_for_test(cx);
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
             callbacks
         });
         assert!(
@@ -4187,7 +4187,7 @@ fn dynamic_menu_branch_churn_releases_stale_registrations(cx: &mut open_gpui::Te
         );
         if generation == 1 {
             cx.run_until_parked();
-            cx.update(|window, cx| window.draw(cx).clear());
+            cx.update(|window, cx| window.draw(cx).clear(cx));
             assert!(
                 cx.debug_selector_is_focused("menu:dynamic-branch-menu:content"),
                 "removing the focused branch should restore the still-open root menu surface"
@@ -4248,7 +4248,7 @@ fn menu_branch_ids_do_not_collide_when_values_contain_path_delimiters(
     }
 
     let (view, cx) = cx.add_window_view(|_, _| TestView { nested: false });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let initial = cx.update(|window, cx| {
         WindowOverlayRuntime::for_window(window, cx)
             .snapshot(window, cx)
@@ -4265,7 +4265,7 @@ fn menu_branch_ids_do_not_collide_when_values_contain_path_delimiters(
         view.nested = true;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let transitional = cx.update(|window, cx| {
         WindowOverlayRuntime::for_window(window, cx)
@@ -4285,7 +4285,7 @@ fn menu_branch_ids_do_not_collide_when_values_contain_path_delimiters(
 
     cx.update(|window, cx| {
         window.drain_next_frame_callbacks_for_test(cx);
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     let settled = cx.update(|window, cx| {
         WindowOverlayRuntime::for_window(window, cx)
@@ -4340,7 +4340,7 @@ fn menu_runtime_keyboard_submenu_opens_and_selects_child(cx: &mut open_gpui::Tes
         selections: selections.clone(),
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let trigger = cx
@@ -4348,7 +4348,7 @@ fn menu_runtime_keyboard_submenu_opens_and_selects_child(cx: &mut open_gpui::Tes
         .expect("runtime submenu trigger should render");
     cx.simulate_click(trigger.center(), Default::default());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     assert!(
         cx.debug_bounds("menu:runtime-submenu:item:1:sort/0:name")
@@ -4358,7 +4358,7 @@ fn menu_runtime_keyboard_submenu_opens_and_selects_child(cx: &mut open_gpui::Tes
 
     cx.simulate_keystrokes("right");
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     assert!(
         cx.debug_bounds("menu:runtime-submenu:item:1:sort/0:name")
@@ -4368,7 +4368,7 @@ fn menu_runtime_keyboard_submenu_opens_and_selects_child(cx: &mut open_gpui::Tes
 
     cx.simulate_keystrokes("left");
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     assert!(
         cx.debug_bounds("menu:runtime-submenu:item:1:sort/0:name")
@@ -4378,7 +4378,7 @@ fn menu_runtime_keyboard_submenu_opens_and_selects_child(cx: &mut open_gpui::Tes
 
     cx.simulate_keystrokes("right");
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     assert!(
         cx.debug_bounds("menu:runtime-submenu:item:1:sort/0:name")
@@ -4388,7 +4388,7 @@ fn menu_runtime_keyboard_submenu_opens_and_selects_child(cx: &mut open_gpui::Tes
 
     cx.simulate_keystrokes("enter");
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let after_enter = selections.borrow().clone();
@@ -4421,7 +4421,7 @@ fn menu_runtime_hover_opens_submenu_and_preserves_child_focus(cx: &mut open_gpui
 
     let (_, cx) = cx.add_window_view(|_, _| TestView);
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let trigger = cx
@@ -4429,7 +4429,7 @@ fn menu_runtime_hover_opens_submenu_and_preserves_child_focus(cx: &mut open_gpui
         .expect("hover submenu trigger should render");
     cx.simulate_click(trigger.center(), Default::default());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     assert!(
         cx.debug_bounds("menu:hover-submenu:item:1:sort/0:name")
@@ -4443,7 +4443,7 @@ fn menu_runtime_hover_opens_submenu_and_preserves_child_focus(cx: &mut open_gpui
     cx.simulate_mouse_move(sort.center(), None, Default::default());
     cx.executor().advance_clock(Duration::from_millis(200));
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     assert!(
         cx.debug_bounds("menu:hover-submenu:item:1:sort/0:name")
@@ -4464,7 +4464,7 @@ fn menu_runtime_hover_opens_submenu_and_preserves_child_focus(cx: &mut open_gpui
     );
     cx.simulate_mouse_move(child.center(), None, Default::default());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     assert!(
         cx.debug_bounds("menu:hover-submenu:item:1:sort/0:name")
@@ -4477,7 +4477,7 @@ fn menu_runtime_hover_opens_submenu_and_preserves_child_focus(cx: &mut open_gpui
         .expect("next root item should render");
     cx.simulate_mouse_move(rename.center(), None, Default::default());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     assert!(
         cx.debug_bounds("menu:hover-submenu:item:1:sort/0:name")
@@ -4486,7 +4486,7 @@ fn menu_runtime_hover_opens_submenu_and_preserves_child_focus(cx: &mut open_gpui
     );
     cx.executor().advance_clock(Duration::from_millis(200));
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     assert!(
         cx.debug_bounds("menu:hover-submenu:item:1:sort/0:name")
@@ -4528,12 +4528,12 @@ fn menu_four_level_submenu_chain_uses_one_deferred_round_per_follower(
     }
 
     let (_, cx) = cx.add_window_view(|_, _| TestView);
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let trigger = cx
         .debug_bounds("menu:deep-portal-submenu:trigger")
         .expect("deep submenu trigger should render");
     cx.simulate_click(trigger.center(), Default::default());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     for selector in [
         "menu:deep-portal-submenu:item:0:one/0:two",
@@ -4542,7 +4542,7 @@ fn menu_four_level_submenu_chain_uses_one_deferred_round_per_follower(
         "menu:deep-portal-submenu:item:0:one/0:two/0:three/0:four/0:leaf",
     ] {
         cx.simulate_keystrokes("right");
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         assert!(
             cx.debug_bounds(selector).is_some(),
             "Right should render deep submenu target `{selector}`"
@@ -4588,7 +4588,7 @@ fn menu_runtime_hover_switches_between_submenu_branches(cx: &mut open_gpui::Test
 
     let (_, cx) = cx.add_window_view(|_, _| TestView);
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let trigger = cx
@@ -4596,7 +4596,7 @@ fn menu_runtime_hover_switches_between_submenu_branches(cx: &mut open_gpui::Test
         .expect("hover switch submenu trigger should render");
     cx.simulate_click(trigger.center(), Default::default());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let sort = cx
@@ -4605,7 +4605,7 @@ fn menu_runtime_hover_switches_between_submenu_branches(cx: &mut open_gpui::Test
     cx.simulate_mouse_move(sort.center(), None, Default::default());
     cx.executor().advance_clock(Duration::from_millis(200));
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     assert!(
         cx.debug_bounds("menu:hover-switch-submenu:item:1:sort/0:name")
@@ -4623,7 +4623,7 @@ fn menu_runtime_hover_switches_between_submenu_branches(cx: &mut open_gpui::Test
         .expect("group submenu trigger should render");
     cx.simulate_mouse_move(group.center(), None, Default::default());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     assert!(
         cx.debug_bounds("menu:hover-switch-submenu:item:1:sort/0:name")
@@ -4637,7 +4637,7 @@ fn menu_runtime_hover_switches_between_submenu_branches(cx: &mut open_gpui::Test
     );
     cx.executor().advance_clock(Duration::from_millis(200));
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     assert!(
         cx.debug_bounds("menu:hover-switch-submenu:item:2:group/0:kind")
@@ -4653,7 +4653,7 @@ fn menu_runtime_hover_switches_between_submenu_branches(cx: &mut open_gpui::Test
     cx.simulate_mouse_move(sort.center(), None, Default::default());
     cx.executor().advance_clock(Duration::from_millis(200));
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     assert!(
         cx.debug_bounds("menu:hover-switch-submenu:item:1:sort/0:name")
@@ -4675,7 +4675,7 @@ fn menu_runtime_hover_switches_between_submenu_branches(cx: &mut open_gpui::Test
         .expect("next root item should render");
     cx.simulate_mouse_move(rename.center(), None, Default::default());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     assert!(
         cx.debug_bounds("menu:hover-switch-submenu:item:1:sort/0:name")
@@ -4684,7 +4684,7 @@ fn menu_runtime_hover_switches_between_submenu_branches(cx: &mut open_gpui::Test
     );
     cx.executor().advance_clock(Duration::from_millis(200));
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     assert!(
         cx.debug_bounds("menu:hover-switch-submenu:item:1:sort/0:name")
@@ -4887,7 +4887,7 @@ fn context_menu_escape_closes_the_deepest_registered_branch_before_the_root(
     let (_, cx) = cx.add_window_view(|_, _| TestView {
         open_events: open_events.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let hotspot = cx
         .debug_bounds("context-menu:layered-context-menu:hotspot")
@@ -4895,11 +4895,11 @@ fn context_menu_escape_closes_the_deepest_registered_branch_before_the_root(
     cx.simulate_mouse_down(hotspot.center(), MouseButton::Right, Default::default());
     cx.simulate_mouse_up(hotspot.center(), MouseButton::Right, Default::default());
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.simulate_keystrokes("right");
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.simulate_keystrokes("right");
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let snapshot = cx.update(|window, cx| {
         WindowOverlayRuntime::for_window(window, cx)
@@ -4940,7 +4940,7 @@ fn context_menu_escape_closes_the_deepest_registered_branch_before_the_root(
 
     cx.simulate_keystrokes("escape");
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(
         cx.debug_bounds("context-menu:layered-context-menu:surface")
             .is_some()
@@ -4957,7 +4957,7 @@ fn context_menu_escape_closes_the_deepest_registered_branch_before_the_root(
 
     cx.simulate_keystrokes("escape");
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(
         cx.debug_bounds("context-menu:layered-context-menu:surface")
             .is_some()
@@ -4972,7 +4972,7 @@ fn context_menu_escape_closes_the_deepest_registered_branch_before_the_root(
 
     cx.simulate_keystrokes("escape");
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(
         cx.debug_bounds("context-menu:layered-context-menu:surface")
             .is_none()
@@ -5003,10 +5003,10 @@ fn context_menu_removed_submenu_does_not_reopen_when_the_same_path_returns(
     }
 
     let (view, cx) = cx.add_window_view(|_, _| TestView { show_branch: true });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     cx.simulate_keystrokes("right");
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(
         cx.debug_bounds("context-menu:dynamic-context-menu:item:0:branch/0:child")
             .is_some(),
@@ -5017,9 +5017,9 @@ fn context_menu_removed_submenu_does_not_reopen_when_the_same_path_returns(
         view.show_branch = false;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(
         cx.debug_bounds("context-menu:dynamic-context-menu:item:0:branch/0:child")
             .is_none(),
@@ -5030,7 +5030,7 @@ fn context_menu_removed_submenu_does_not_reopen_when_the_same_path_returns(
         view.show_branch = true;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(
         cx.debug_bounds("context-menu:dynamic-context-menu:item:0:branch/0:child")
             .is_none(),
@@ -5038,7 +5038,7 @@ fn context_menu_removed_submenu_does_not_reopen_when_the_same_path_returns(
     );
 
     cx.simulate_keystrokes("right");
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(
         cx.debug_bounds("context-menu:dynamic-context-menu:item:0:branch/0:child")
             .is_some(),
@@ -5073,10 +5073,10 @@ fn context_menu_disabling_an_open_submenu_never_restores_focus_to_its_trigger(
     let (view, cx) = cx.add_window_view(|_, _| TestView {
         branch_disabled: false,
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     cx.simulate_keystrokes("right");
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(
         cx.debug_bounds("context-menu:disabled-branch-context-menu:item:0:branch/0:child")
             .is_some(),
@@ -5087,9 +5087,9 @@ fn context_menu_disabling_an_open_submenu_never_restores_focus_to_its_trigger(
         view.branch_disabled = true;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert!(
         cx.debug_bounds("context-menu:disabled-branch-context-menu:item:0:branch/0:child")
@@ -5131,7 +5131,7 @@ fn context_menu_right_click_reanchors_one_root_and_left_click_dismisses(
     let (_, cx) = cx.add_window_view(|_, _| TestView {
         open_events: open_events.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let source = cx
         .debug_bounds("context-menu:reanchor-context-menu:root")
@@ -5147,7 +5147,7 @@ fn context_menu_right_click_reanchors_one_root_and_left_click_dismisses(
     cx.simulate_mouse_down(first_anchor, MouseButton::Right, Default::default());
     cx.simulate_mouse_up(first_anchor, MouseButton::Right, Default::default());
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let first_surface = cx
         .debug_bounds("context-menu:reanchor-context-menu:surface")
         .expect("first right click should open the context menu");
@@ -5169,7 +5169,7 @@ fn context_menu_right_click_reanchors_one_root_and_left_click_dismisses(
     cx.simulate_mouse_down(second_anchor, MouseButton::Right, Default::default());
     cx.simulate_mouse_up(second_anchor, MouseButton::Right, Default::default());
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let second_surface = cx
         .debug_bounds("context-menu:reanchor-context-menu:surface")
         .expect("second right click should keep the context menu open");
@@ -5193,7 +5193,7 @@ fn context_menu_right_click_reanchors_one_root_and_left_click_dismisses(
 
     cx.simulate_click(second_anchor, Default::default());
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(
         cx.debug_bounds("context-menu:reanchor-context-menu:surface")
             .is_none(),
@@ -5232,9 +5232,9 @@ fn controlled_context_menu_escape_refusal_keeps_runtime_authority(
         open: true,
         open_intents: open_intents.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     cx.simulate_keystrokes("escape escape");
     let refused = cx.update(|window, cx| {
@@ -5275,7 +5275,7 @@ fn controlled_context_menu_escape_refusal_keeps_runtime_authority(
     cx.simulate_mouse_down(reanchor, MouseButton::Right, Default::default());
     cx.simulate_mouse_up(reanchor, MouseButton::Right, Default::default());
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let surface_after = cx
         .debug_bounds("context-menu:controlled-context-menu:surface")
         .expect("controlled ContextMenu should remain open while reanchoring");
@@ -5302,7 +5302,7 @@ fn controlled_context_menu_escape_refusal_keeps_runtime_authority(
         view.open = false;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
     let committed = cx.update(|window, cx| {
         WindowOverlayRuntime::for_window(window, cx)
@@ -5365,7 +5365,7 @@ fn controlled_context_menu_rejected_open_does_not_seed_uncontrolled_ownership(
         open: false,
         open_intents: open_intents.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let source = cx
         .debug_bounds("context-menu:rejected-open-context-menu:root")
@@ -5385,7 +5385,7 @@ fn controlled_context_menu_rejected_open_does_not_seed_uncontrolled_ownership(
     assert!(open_intents.borrow()[0].revision().is_some());
 
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert!(
         cx.debug_bounds("context-menu:rejected-open-context-menu:surface")
@@ -5451,7 +5451,7 @@ fn context_menu_submenu_outside_press_preserves_root_consumption_boundary(
     let (_, cx) = cx.add_window_view(|_, _| TestView {
         underlay_clicks: underlay_clicks.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let source = cx
         .debug_bounds("context-menu:outside-context-menu:root")
         .expect("context menu source should render");
@@ -5462,9 +5462,9 @@ fn context_menu_submenu_outside_press_preserves_root_consumption_boundary(
 
     cx.simulate_mouse_down(anchor, MouseButton::Right, Default::default());
     cx.simulate_mouse_up(anchor, MouseButton::Right, Default::default());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.simulate_keystrokes("right");
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(
         cx.debug_bounds("context-menu:outside-context-menu:item:0:branch/0:child")
             .is_some()
@@ -5472,7 +5472,7 @@ fn context_menu_submenu_outside_press_preserves_root_consumption_boundary(
 
     cx.simulate_click(underlay.center(), Default::default());
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_eq!(underlay_clicks.get(), 0);
     assert!(
         cx.debug_bounds("context-menu:outside-context-menu:surface")
@@ -5486,7 +5486,7 @@ fn context_menu_submenu_outside_press_preserves_root_consumption_boundary(
 
     cx.simulate_click(underlay.center(), Default::default());
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_eq!(underlay_clicks.get(), 0);
     assert!(
         cx.debug_bounds("context-menu:outside-context-menu:surface")
@@ -5540,7 +5540,7 @@ fn context_menu_runtime_keyboard_navigation_preserves_focused_value_after_rerend
         open_events: open_events.clone(),
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let hotspot = cx
@@ -5550,7 +5550,7 @@ fn context_menu_runtime_keyboard_navigation_preserves_focused_value_after_rerend
     cx.simulate_mouse_up(hotspot.center(), MouseButton::Right, Default::default());
     cx.run_until_parked();
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert!(
@@ -5561,7 +5561,7 @@ fn context_menu_runtime_keyboard_navigation_preserves_focused_value_after_rerend
 
     cx.simulate_keystrokes("down");
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     assert!(
         selections.borrow().is_empty(),
@@ -5570,7 +5570,7 @@ fn context_menu_runtime_keyboard_navigation_preserves_focused_value_after_rerend
 
     cx.simulate_keystrokes("enter");
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let after_enter = selections.borrow().clone();
@@ -5654,7 +5654,7 @@ fn context_menu_mouse_selection_runs_handlers_before_close_observers_and_preserv
         trace: trace.clone(),
         destination_focus: cx.focus_handle(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let source = cx
         .debug_bounds("context-menu:selection-context-menu:root")
@@ -5662,14 +5662,14 @@ fn context_menu_mouse_selection_runs_handlers_before_close_observers_and_preserv
     let anchor = point(source.right() - px(4.0), source.bottom() - px(4.0));
     cx.simulate_mouse_down(anchor, MouseButton::Right, Default::default());
     cx.simulate_mouse_up(anchor, MouseButton::Right, Default::default());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let item = cx
         .debug_bounds("context-menu:selection-context-menu:item:0:open")
         .expect("context menu action should render");
     cx.simulate_click(item.center(), Default::default());
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert_eq!(
         trace.borrow().as_slice(),
@@ -5702,7 +5702,7 @@ fn context_menu_runtime_long_menu_scroll_stays_inside_surface(cx: &mut open_gpui
 
     let (_, cx) = cx.add_window_view(|_, _| TestView);
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let surface_before = cx
@@ -5721,7 +5721,7 @@ fn context_menu_runtime_long_menu_scroll_stays_inside_surface(cx: &mut open_gpui
         ..Default::default()
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let surface_after = cx
@@ -5779,7 +5779,7 @@ fn tooltip_and_hover_card_register_passive_window_layers_without_focus_authority
     let (_, cx) = cx.add_window_view(|window, _| TestView {
         tooltip_anchor: window.new_portal_anchor(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let snapshot = cx.update(|window, cx| {
         WindowOverlayRuntime::for_window(window, cx)
@@ -5884,7 +5884,7 @@ fn portal_anchor_drives_multiple_tooltips_across_transform_unlink_and_reopen(
         first_intents: view_first_intents,
         second_intents: view_second_intents,
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let target_before = cx.debug_bounds("portal-tooltip-target").unwrap_or_else(|| {
         panic!(
@@ -5916,7 +5916,7 @@ fn portal_anchor_drives_multiple_tooltips_across_transform_unlink_and_reopen(
         view.translation_x = 96.0;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let target_after = cx
         .debug_bounds("portal-tooltip-target")
         .expect("translated target should remain rendered");
@@ -5946,7 +5946,7 @@ fn portal_anchor_drives_multiple_tooltips_across_transform_unlink_and_reopen(
         view.presentation = SubtreePresentation::Hidden;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(
         cx.debug_bounds("tooltip:portal-tooltip-a:content")
             .is_none()
@@ -5977,7 +5977,7 @@ fn portal_anchor_drives_multiple_tooltips_across_transform_unlink_and_reopen(
         *second_intents.borrow(),
         vec![(false, DismissReason::AnchorUnlinked)]
     );
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_eq!(first_intents.borrow().len(), 1);
     assert_eq!(second_intents.borrow().len(), 1);
 
@@ -5986,7 +5986,7 @@ fn portal_anchor_drives_multiple_tooltips_across_transform_unlink_and_reopen(
         cx.notify();
     });
     for _ in 0..3 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.run_until_parked();
     }
     assert!(
@@ -6061,20 +6061,20 @@ fn controlled_anchor_unlink_clears_pending_after_owner_commits_closed(
         owner_open: view_owner_open,
         intents: view_intents,
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     cx.update_window_entity(&view, |view, _, cx| {
         view.target_mounted = false;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(!owner_open.get());
     assert_eq!(
         *intents.borrow(),
         vec![(false, DismissReason::AnchorUnlinked)]
     );
     cx.update_window_entity(&view, |_, _, cx| cx.notify());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let committed = cx.update(|window, cx| {
         WindowOverlayRuntime::for_window(window, cx)
             .snapshot(window, cx)
@@ -6136,7 +6136,7 @@ fn window_point_and_full_window_overlays_ignore_ancestor_transform(
     }
 
     let (view, cx) = cx.add_window_view(|_, _| TestView { translation_x: 0.0 });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let selectors = [
         "context-menu:window-point-context:surface",
         "dialog:window-portal-dialog:surface",
@@ -6151,7 +6151,7 @@ fn window_point_and_full_window_overlays_ignore_ancestor_transform(
         view.translation_x = 128.0;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let after = selectors.map(|selector| {
         cx.debug_bounds(selector)
             .unwrap_or_else(|| panic!("missing translated window-space overlay `{selector}`"))
@@ -6179,7 +6179,7 @@ fn presentation_hidden_and_disabled_tooltips_do_not_build_deferred_surfaces(
     }
 
     let (_, cx) = cx.add_window_view(|_, _| TestView);
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let snapshot = cx.update(|window, cx| {
         WindowOverlayRuntime::for_window(window, cx)
@@ -6234,7 +6234,7 @@ fn standalone_tooltip_can_bind_its_stable_anchor_after_an_initial_closed_frame(
         anchor: window.new_portal_anchor(),
         open: false,
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(
         cx.debug_bounds("tooltip:late-bound-tooltip:content")
             .is_none()
@@ -6244,7 +6244,7 @@ fn standalone_tooltip_can_bind_its_stable_anchor_after_an_initial_closed_frame(
         view.open = true;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(
         cx.debug_bounds("tooltip:late-bound-tooltip:content")
             .is_some()
@@ -6254,7 +6254,7 @@ fn standalone_tooltip_can_bind_its_stable_anchor_after_an_initial_closed_frame(
         view.open = false;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(
         cx.debug_bounds("tooltip:late-bound-tooltip:content")
             .is_none()
@@ -6317,14 +6317,14 @@ fn hover_card_is_transparent_to_outside_press_arbitration(cx: &mut open_gpui::Te
         hover_card_events: hover_card_events.clone(),
         underlay_clicks: underlay_clicks.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let underlay = cx
         .debug_bounds("passive-overlay-test:underlay")
         .expect("outside-press underlay should render");
     cx.simulate_click(underlay.center(), Default::default());
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert_eq!(popover_events.borrow().as_slice(), &[false]);
     assert!(
@@ -6362,14 +6362,14 @@ fn native_text_tooltip_registers_its_visible_window_layer(cx: &mut open_gpui::Te
     }
 
     let (_, cx) = cx.add_window_view(|_, _| TestView);
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let trigger = cx
         .debug_bounds("native-tooltip-test:text-trigger")
         .expect("native tooltip trigger should render");
 
     cx.simulate_mouse_move(trigger.center(), None, Default::default());
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let snapshot = cx.update(|window, cx| {
         WindowOverlayRuntime::for_window(window, cx)
@@ -6409,14 +6409,14 @@ fn native_action_tooltip_registers_its_visible_window_layer(cx: &mut open_gpui::
     }
 
     let (_, cx) = cx.add_window_view(|_, _| TestView);
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let trigger = cx
         .debug_bounds("native-tooltip-test:action-trigger")
         .expect("native action tooltip trigger should render");
 
     cx.simulate_mouse_move(trigger.center(), None, Default::default());
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let snapshot = cx.update(|window, cx| {
         WindowOverlayRuntime::for_window(window, cx)

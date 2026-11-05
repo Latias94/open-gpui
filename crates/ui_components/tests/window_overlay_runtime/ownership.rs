@@ -41,9 +41,9 @@ fn window_teardown_cancels_local_capture_and_rejects_stale_runtime_work(
         })
         .expect("closing window should remain open during setup");
     cx.run_until_parked();
-    cx.update_window(closing_any, |_, window, cx| window.draw(cx).clear())
+    cx.update_window(closing_any, |_, window, cx| window.draw(cx).clear(cx))
         .expect("closing window should draw its capture target");
-    cx.update_window(surviving_any, |_, window, cx| window.draw(cx).clear())
+    cx.update_window(surviving_any, |_, window, cx| window.draw(cx).clear(cx))
         .expect("surviving window should draw and accept focus");
     surviving_window
         .update(cx, |probe, window, cx| {
@@ -139,9 +139,9 @@ fn identical_layer_ids_and_input_are_isolated_between_windows(cx: &mut open_gpui
         })
         .expect("second window should remain open");
 
-    cx.update_window(first_any, |_, window, cx| window.draw(cx).clear())
+    cx.update_window(first_any, |_, window, cx| window.draw(cx).clear(cx))
         .expect("first window should remain open");
-    cx.update_window(second_any, |_, window, cx| window.draw(cx).clear())
+    cx.update_window(second_any, |_, window, cx| window.draw(cx).clear(cx))
         .expect("second window should remain open");
     cx.simulate_keystrokes(first_any, "escape");
 
@@ -191,7 +191,7 @@ fn overlay_surface_from_another_window_cannot_project_parentage_or_commit_geomet
             (probe.runtime.clone(), binding)
         })
         .expect("first window should remain open");
-    cx.update_window(first_any, |_, window, cx| window.draw(cx).clear())
+    cx.update_window(first_any, |_, window, cx| window.draw(cx).clear(cx))
         .expect("first window should draw without a local surface");
 
     let second_window = cx.add_window({
@@ -200,7 +200,7 @@ fn overlay_surface_from_another_window_cannot_project_parentage_or_commit_geomet
         move |_, _| ForeignOverlaySurfaceProbe { runtime, binding }
     });
     let second_any = second_window.clone().into();
-    cx.update_window(second_any, |_, window, cx| window.draw(cx).clear())
+    cx.update_window(second_any, |_, window, cx| window.draw(cx).clear(cx))
         .expect("foreign surface window should draw without mutating its owner runtime");
 
     let mut first_visual = open_gpui::VisualTestContext::from_window(first_any, cx);

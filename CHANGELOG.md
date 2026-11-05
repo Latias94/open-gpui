@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Breaking Changes and Migration Notes
 
+- `ArenaClearNeeded::clear` now requires the same `&mut App` used by `Window::draw`: migrate `window.draw(cx).clear()` to `window.draw(cx).clear(cx)`. Nested draws defer cleanup until the enclosing draw ends, and clear tokens reject another App.
+- Windows command dispatchers must handle `PlatformWindowCommand::CompleteNativeFrame`. The native backend uses the existing post-borrow command queue for DirectManipulation and IME maintenance after a retained frame request; unsupported custom backends must report that outcome.
 - The UI framework authority-convergence changes are intentionally alias-free. Use the [Open GPUI v0.3 UI migration guide](docs/ui/migration-v0.3.md) for complete before/after examples and ownership rules.
 - `open-gpui-form` now uses store-bound validation and submission tickets: `FormStore` is no longer `Clone`, async completion and submit completion return typed outcomes, ticketless finish APIs are removed, and active validation participates in derived form status and submission eligibility.
 - `open-gpui` pointer capture is now explicitly window- and owner-scoped: retain and bind a `PointerCaptureHandle`, pass the initiating button to `Window::capture_pointer`, release through the same handle, use the routed-event-target query separately from physical hover, and replace `Window::remove_window()` with `Window::remove_window(cx)`.

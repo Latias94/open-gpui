@@ -2,7 +2,7 @@
 
 **Status**: Accepted
 **Date**: 2026-07-25
-**Amended**: 2026-07-28 (U25 appearance, activation, ownership, and presentation authority); 2026-08-18 (synchronous mutation terminal pairing)
+**Amended**: 2026-07-28 (U25 appearance, activation, ownership, and presentation authority); 2026-08-18 (synchronous mutation terminal pairing); 2026-11-05 (post-borrow Windows frame maintenance and retained forced refresh)
 
 ## Context
 
@@ -285,8 +285,9 @@ synchronous authorities. There is no asynchronous open-window outbox.
 ### Pump-sensitive platform commands
 
 Framework and component code may request only this closed command set across the outer application
-borrow: `CompleteInitialPresentation { activate }`, `Activate`,
-`ShowWindowMenu(Point<Pixels>)`, `StartWindowMove`, and `StartWindowResize(ResizeEdge)`. The
+borrow: `CompleteInitialPresentation { activate }`, `RevealDeferredInitialPresentation`,
+`Activate`, `ShowWindowMenu(Point<Pixels>)`, `StartWindowMove`, and
+`StartWindowResize(ResizeEdge)`, plus Windows-only `CompleteNativeFrame`. The
 envelope carries its own FIFO sequence, full `WindowId`, and a dispatcher that weakly references
 native state. `PlatformWindow` has no direct activation operation that can bypass this boundary.
 
@@ -297,13 +298,22 @@ older ingress barriers have settled. A callback pumped by the dispatcher then en
 Commands for a rolled-back or closed full `WindowId` are dropped before dispatch.
 
 Every dispatcher returns the synchronous terminal
-`PlatformWindowCommandOutcome::{Accepted, Rejected}`. Queue admission is not success: each attempt
-receives its own terminal diagnostic, and a missing weak native target is `Rejected`. Only an
+`PlatformWindowCommandOutcome::{Accepted, Rejected, Unsupported, WindowClosed}`. Queue admission
+is not success: each attempt receives its own terminal diagnostic, and a missing weak native
+target is `WindowClosed`. Only an
 accepted `CompleteInitialPresentation` publishes `InitialPresentationCompleted`. A rejected
 initial-presentation attempt retains the backend's hidden/show intent and receives exactly one
 bounded retry, for two attempts total; a second rejection leaves the window unpresented, publishes
 `InitialPresentationFailed`, and records `WindowInitialPresentationStatus::Rejected`. Other
 rejected commands are terminal and are never retried.
+
+On Windows, the paint entry validates its update region before retaining the frame request.
+After that request is evaluated, `Window::complete_frame` obtains the backend's optional
+`native_frame_completed_command` and enqueues it through the same authority. The supplied backend
+uses `CompleteNativeFrame` for DirectManipulation and IME maintenance, which can synchronously
+invoke App-owned input handlers. Its dispatcher revalidates the exact native registration around
+those calls. This command cannot publish initial-presentation completion, accept a UI candidate,
+acknowledge renderer submission or create an independent frame scheduler.
 
 No generic `Box<dyn FnOnce(&mut App)>`, arbitrary native closure, executor task, or callback outbox
 may cross this boundary. Model, controller, and Dock operations instead return typed effects;
@@ -324,6 +334,8 @@ Adjacent frame callbacks may coalesce, but the merged envelope preserves the str
 `force_render` and `require_presentation` flags. A close barrier makes the request stale and
 forbids a later draw. On Windows, validating a paint region cannot be the only record of a callback
 that did not reach the accepted path.
+Window-level throttling also retains an effective forced refresh until the next eligible frame.
+An already accepted initial scene retains priority for presentation retry over another forced draw.
 
 Owning-platform CI both checks and tests each native backend package. Windows integration tests
 exercise every advertised live domain against native readback, inject a frame-change failure after

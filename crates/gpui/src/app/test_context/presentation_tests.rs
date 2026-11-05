@@ -429,7 +429,7 @@ fn draw_focus_followup_frame(cx: &mut TestAppContext, window: AnyWindowHandle) {
             window.refresh_pending_for_test(),
             "a sealed focus request must leave one candidate frame pending"
         );
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     })
     .unwrap();
     cx.run_until_parked();
@@ -2112,7 +2112,7 @@ fn focus_phase_window_refresh_schedules_one_generic_followup_frame(cx: &mut Test
             window.refresh_pending_for_test(),
             "a raw refresh during Focus dispatch must remain pending for the next platform frame"
         );
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     })
     .unwrap();
     cx.run_until_parked();
@@ -2700,7 +2700,7 @@ fn presentation_revocation_precedes_same_frame_publication_commit(cx: &mut TestA
         .unwrap();
     cx.run_until_parked();
     cx.update_window(window, |_, window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
         focus.focus(window, cx);
         window.dispatch_event(
             PlatformInput::MouseDown(MouseDownEvent {
@@ -2723,7 +2723,7 @@ fn presentation_revocation_precedes_same_frame_publication_commit(cx: &mut TestA
         view.attempt_reacquire = true;
         cx.notify();
     });
-    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear(cx))
         .unwrap();
 
     let observations = observations.borrow();
@@ -4272,7 +4272,7 @@ fn hidden_cached_child_reconciles_hover_and_scroll_without_replaying_on_restore(
     cx.run_until_parked();
 
     let first_render_count = renders.get();
-    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear(cx))
         .unwrap();
     assert_eq!(
         renders.get(),
@@ -4390,7 +4390,7 @@ fn changing_drag_source_to_inert_cancels_the_owned_pointer_session_once(cx: &mut
         .unwrap();
     cx.update_window(window, |_, window, cx| {
         let _ = window.activate_window();
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     })
     .unwrap();
     cx.run_until_parked();
@@ -4472,7 +4472,7 @@ fn changing_drag_source_to_inert_cancels_the_owned_pointer_session_once(cx: &mut
         view.presentation = SubtreePresentation::Inert;
         cx.notify();
     });
-    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear(cx))
         .unwrap();
     assert!(
         cx.update_window(window, |_, window, _| window.captured_pointer().is_none())

@@ -547,7 +547,7 @@ fn uncontrolled_registration(
 
 fn draw(cx: &mut open_gpui::VisualTestContext) {
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 }
 
 fn settle_focus_claims(cx: &mut open_gpui::VisualTestContext) {
@@ -556,7 +556,7 @@ fn settle_focus_claims(cx: &mut open_gpui::VisualTestContext) {
         cx.run_until_parked();
         let callbacks = cx.update(|window, cx| {
             let callbacks = window.drain_next_frame_callbacks_for_test(cx);
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
             callbacks
         });
         idle_frames = if callbacks == 0 { idle_frames + 1 } else { 0 };

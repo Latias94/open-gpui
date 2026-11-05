@@ -242,7 +242,7 @@ fn tree_runtime_expands_reveals_and_selects_items(cx: &mut open_gpui::TestAppCon
         toggles: toggles.clone(),
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert!(
@@ -262,7 +262,7 @@ fn tree_runtime_expands_reveals_and_selects_items(cx: &mut open_gpui::TestAppCon
         Default::default(),
     );
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     assert!(
         cx.debug_selector_is_focused("tree:runtime-tree:item:paper"),
@@ -274,13 +274,13 @@ fn tree_runtime_expands_reveals_and_selects_items(cx: &mut open_gpui::TestAppCon
         .expect("paper row should be visible");
     cx.simulate_click(paper.center(), Default::default());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     selections.borrow_mut().clear();
 
     cx.simulate_keystrokes("right");
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert_eq!(
@@ -295,11 +295,11 @@ fn tree_runtime_expands_reveals_and_selects_items(cx: &mut open_gpui::TestAppCon
 
     cx.simulate_keystrokes("down");
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     cx.simulate_keystrokes("enter");
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert_eq!(selections.borrow().as_slice(), ["intro".to_owned()]);
@@ -341,7 +341,7 @@ fn tree_runtime_typeahead_focuses_visible_matching_row(cx: &mut open_gpui::TestA
         selections: selections.clone(),
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let root = cx
@@ -352,12 +352,12 @@ fn tree_runtime_typeahead_focuses_visible_matching_row(cx: &mut open_gpui::TestA
         Default::default(),
     );
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     cx.simulate_keystrokes("n o");
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert!(
@@ -418,7 +418,7 @@ fn tree_runtime_drag_move_emits_controlled_payload(cx: &mut open_gpui::TestAppCo
     let _ = cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let child = cx
@@ -426,7 +426,7 @@ fn tree_runtime_drag_move_emits_controlled_payload(cx: &mut open_gpui::TestAppCo
         .expect("expanded child row should render");
     cx.simulate_click(child.center(), Default::default());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     assert_eq!(
         selections.borrow().as_slice(),
@@ -458,7 +458,7 @@ fn tree_runtime_drag_move_emits_controlled_payload(cx: &mut open_gpui::TestAppCo
     cx.simulate_mouse_up(target, MouseButton::Left, Default::default());
     cx.run_until_parked();
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let moves = moves.borrow();
@@ -814,7 +814,7 @@ fn virtualized_list_runtime_reveals_active_row_and_emits_activation(
         activations: activations.clone(),
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let root = cx
@@ -822,7 +822,7 @@ fn virtualized_list_runtime_reveals_active_row_and_emits_activation(
         .expect("virtualized list root should render as a focusable target");
     cx.simulate_click(root.center(), Default::default());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     assert!(
         cx.debug_selector_is_focused("virtualized-list:runtime-list:root"),
@@ -834,7 +834,7 @@ fn virtualized_list_runtime_reveals_active_row_and_emits_activation(
         .expect("row 0 should render before keyboard navigation");
     cx.simulate_click(row_0.center(), Default::default());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     activations.borrow_mut().clear();
 
@@ -843,10 +843,10 @@ fn virtualized_list_runtime_reveals_active_row_and_emits_activation(
         .expect("row 4 should be present in the overscan window before PageDown");
     cx.simulate_keystrokes("pagedown");
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     let queued_callbacks = cx.update(|window, cx| window.drain_next_frame_callbacks_for_test(cx));
     assert!(
@@ -854,7 +854,7 @@ fn virtualized_list_runtime_reveals_active_row_and_emits_activation(
         "the active-row reveal should submit after materializing and capturing its guard"
     );
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let row_4_after = cx
@@ -867,7 +867,7 @@ fn virtualized_list_runtime_reveals_active_row_and_emits_activation(
 
     cx.simulate_keystrokes("enter");
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert_eq!(activations.borrow().as_slice(), &[4]);
@@ -912,15 +912,15 @@ fn virtualized_list_runtime_materializes_then_uses_host_scroll_handle_for_final_
         scroll_handle: scroll_handle.clone(),
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     let queued_callbacks = cx.update(|window, cx| window.drain_next_frame_callbacks_for_test(cx));
     assert!(queued_callbacks > 0);
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert_eq!(scroll_handle.offset().y, px(-280.0));
@@ -967,18 +967,18 @@ fn virtualized_list_builder_retries_the_same_key_after_data_arrives(
         loaded: false,
         scroll_handle: scroll_handle.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_eq!(scroll_handle.offset().y, px(0.0));
 
     view.update(cx, |view, cx| {
         view.loaded = true;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let queued_callbacks = cx.update(|window, cx| window.drain_next_frame_callbacks_for_test(cx));
     assert!(queued_callbacks > 0);
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert_eq!(scroll_handle.offset().y, px(-280.0));
 }
@@ -1025,7 +1025,7 @@ fn virtualized_list_builder_retries_after_a_ready_target_temporarily_disappears(
         target_present: true,
         scroll_handle: scroll_handle.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_eq!(
         scroll_handle.offset().y,
         px(-196.0),
@@ -1036,20 +1036,20 @@ fn virtualized_list_builder_retries_after_a_ready_target_temporarily_disappears(
         view.target_present = false;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     view.update(cx, |view, cx| {
         view.target_present = true;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let queued_callbacks = cx.update(|window, cx| window.drain_next_frame_callbacks_for_test(cx));
     assert!(
         queued_callbacks > 0,
         "the restored ready target should submit its retained Builder reveal"
     );
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
 
     assert_eq!(
@@ -1101,8 +1101,8 @@ fn virtualized_list_builder_retries_after_an_in_flight_target_temporarily_unlink
         target_present: true,
         scroll_handle: scroll_handle.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let queued_callbacks = cx.update(|window, cx| window.drain_next_frame_callbacks_for_test(cx));
     assert!(
         queued_callbacks > 0,
@@ -1113,21 +1113,21 @@ fn virtualized_list_builder_retries_after_an_in_flight_target_temporarily_unlink
         view.target_present = false;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
 
     view.update(cx, |view, cx| {
         view.target_present = true;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let queued_callbacks = cx.update(|window, cx| window.drain_next_frame_callbacks_for_test(cx));
     assert!(
         queued_callbacks > 0,
         "the restored Builder target should submit a fresh physical reveal"
     );
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
 
     assert_eq!(
@@ -1179,20 +1179,20 @@ fn virtualized_list_re_materializes_a_ready_key_after_reorder(cx: &mut open_gpui
         reordered: false,
         scroll_handle: scroll_handle.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_eq!(scroll_handle.offset().y, px(-196.0));
 
     view.update(cx, |view, cx| {
         view.reordered = true;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_eq!(scroll_handle.offset().y, px(-2156.0));
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let queued_callbacks = cx.update(|window, cx| window.drain_next_frame_callbacks_for_test(cx));
     assert!(queued_callbacks > 0);
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert_eq!(scroll_handle.offset().y, px(-2240.0));
 }
@@ -1239,15 +1239,15 @@ fn virtualized_list_cancels_a_ready_reveal_when_its_key_becomes_duplicate(
         duplicate_target: false,
         scroll_handle: scroll_handle.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_eq!(scroll_handle.offset().y, px(-196.0));
 
     view.update(cx, |view, cx| {
         view.duplicate_target = true;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert_eq!(
         scroll_handle.offset().y,
@@ -1301,15 +1301,15 @@ fn virtualized_list_cancels_a_ready_reveal_when_its_key_becomes_disabled(
         disable_target: false,
         scroll_handle: scroll_handle.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_eq!(scroll_handle.offset().y, px(-196.0));
 
     view.update(cx, |view, cx| {
         view.disable_target = true;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert_eq!(
         scroll_handle.offset().y,
@@ -1356,8 +1356,8 @@ fn virtualized_list_user_scroll_does_not_reissue_an_in_flight_builder_reveal(
     let (_, cx) = cx.add_window_view(|_, _| TestView {
         scroll_handle: scroll_handle.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let queued_callbacks = cx.update(|window, cx| window.drain_next_frame_callbacks_for_test(cx));
     assert!(queued_callbacks > 0, "physical reveal should be in flight");
 
@@ -1372,11 +1372,11 @@ fn virtualized_list_user_scroll_does_not_reissue_an_in_flight_builder_reveal(
     for _ in 0..4 {
         cx.update(|window, cx| {
             window.drain_next_frame_callbacks_for_test(cx);
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
         });
     }
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert_eq!(
         scroll_handle.offset().y,
@@ -1429,8 +1429,8 @@ fn virtualized_list_wheel_between_materialization_and_window_request_cancels_rev
     let (_, cx) = cx.add_window_view(|_, _| TestView {
         scroll_handle: scroll_handle.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let viewport = cx
         .debug_bounds("scroll-area:virtualized-list:queued-interrupt-list:viewport")
@@ -1450,7 +1450,7 @@ fn virtualized_list_wheel_between_materialization_and_window_request_cancels_rev
     for _ in 0..4 {
         cx.update(|window, cx| {
             window.drain_next_frame_callbacks_for_test(cx);
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
         });
     }
 
@@ -1546,7 +1546,7 @@ fn virtualized_list_ancestor_wheel_between_materialization_and_window_request_ca
         inner_scroll_handle: inner_scroll_handle.clone(),
         list_scroll_handle,
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(
         cx.debug_bounds("virtualized-list:ancestor-interrupt-list:row:item-0080")
             .is_some(),
@@ -1581,7 +1581,7 @@ fn virtualized_list_ancestor_wheel_between_materialization_and_window_request_ca
     for _ in 0..4 {
         cx.update(|window, cx| {
             window.drain_next_frame_callbacks_for_test(cx);
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
         });
     }
 
@@ -1659,8 +1659,8 @@ fn virtualized_list_superseded_in_flight_request_does_not_retry_after_reorder(
         scroll_handle: scroll_handle.clone(),
         competing_target: window.new_reveal_target(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let queued_callbacks = cx.update(|window, cx| window.drain_next_frame_callbacks_for_test(cx));
     assert!(
         queued_callbacks > 0,
@@ -1685,11 +1685,11 @@ fn virtualized_list_superseded_in_flight_request_does_not_retry_after_reorder(
     for _ in 0..4 {
         cx.update(|window, cx| {
             window.drain_next_frame_callbacks_for_test(cx);
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
         });
     }
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert!(
         cx.debug_bounds("virtualized-list:superseded-retry-list:row:item-0080")
@@ -1742,8 +1742,8 @@ fn virtualized_list_reorder_and_wheel_during_an_in_flight_request_does_not_retry
         reordered: false,
         scroll_handle: scroll_handle.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let queued_callbacks = cx.update(|window, cx| window.drain_next_frame_callbacks_for_test(cx));
     assert!(
         queued_callbacks > 0,
@@ -1767,11 +1767,11 @@ fn virtualized_list_reorder_and_wheel_during_an_in_flight_request_does_not_retry
     for _ in 0..4 {
         cx.update(|window, cx| {
             window.drain_next_frame_callbacks_for_test(cx);
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
         });
     }
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert_eq!(
         scroll_handle.offset().y,
@@ -1846,7 +1846,7 @@ fn virtualized_list_runtime_nested_action_click_does_not_activate_row(
         nested_actions: nested_actions.clone(),
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let row_action = cx
@@ -1854,7 +1854,7 @@ fn virtualized_list_runtime_nested_action_click_does_not_activate_row(
         .expect("nested row action should render inside the item row");
     cx.simulate_click(row_action.center(), Modifiers::none());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert_eq!(nested_actions.borrow().as_slice(), &["alpha".to_owned()]);
@@ -1904,7 +1904,7 @@ fn virtualized_list_runtime_renders_sticky_overlay_as_inert_presentation(
         activations: activations.clone(),
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let root = cx
@@ -1912,12 +1912,12 @@ fn virtualized_list_runtime_renders_sticky_overlay_as_inert_presentation(
         .expect("sticky list root should render");
     cx.simulate_click(root.center(), Modifiers::none());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     cx.simulate_keystrokes("pagedown");
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let overlay = cx
@@ -1935,7 +1935,7 @@ fn virtualized_list_runtime_renders_sticky_overlay_as_inert_presentation(
 
     cx.simulate_click(overlay.center(), Modifiers::none());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert!(
@@ -1996,7 +1996,7 @@ fn virtualized_list_runtime_typeahead_reveals_without_selection(
         selection_changes: selection_changes.clone(),
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let root = cx
@@ -2006,7 +2006,7 @@ fn virtualized_list_runtime_typeahead_reveals_without_selection(
     selection_changes.borrow_mut().clear();
     cx.simulate_keystrokes("z");
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert!(
@@ -2057,12 +2057,12 @@ fn virtualized_list_typeahead_wheel_before_draw_cancels_materialization(
     let (_, cx) = cx.add_window_view(|_, _| TestView {
         scroll_handle: scroll_handle.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let root = cx
         .debug_bounds("virtualized-list:typeahead-wheel-list:root")
         .expect("the virtualized list root should render");
     cx.simulate_click(root.center(), Modifiers::none());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let viewport = cx
         .debug_bounds("scroll-area:virtualized-list:typeahead-wheel-list:viewport")
@@ -2087,7 +2087,7 @@ fn virtualized_list_typeahead_wheel_before_draw_cancels_materialization(
     );
 
     for _ in 0..3 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.run_until_parked();
     }
 
@@ -2147,7 +2147,7 @@ fn virtualized_list_runtime_shift_navigation_replaces_range_selection(
         selection_changes: selection_changes.clone(),
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let row_0 = cx
@@ -2155,13 +2155,13 @@ fn virtualized_list_runtime_shift_navigation_replaces_range_selection(
         .expect("row 0 should render");
     cx.simulate_click(row_0.center(), Modifiers::none());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     selection_changes.borrow_mut().clear();
 
     cx.simulate_keystrokes("shift-down");
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert_eq!(
@@ -2227,7 +2227,7 @@ fn virtualized_list_runtime_shift_click_replaces_range_selection(
         activations: activations.clone(),
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let row_0 = cx
@@ -2235,7 +2235,7 @@ fn virtualized_list_runtime_shift_click_replaces_range_selection(
         .expect("row 0 should render");
     cx.simulate_click(row_0.center(), Modifiers::none());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     selection_changes.borrow_mut().clear();
     activations.borrow_mut().clear();
@@ -2251,7 +2251,7 @@ fn virtualized_list_runtime_shift_click_replaces_range_selection(
         },
     );
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert_eq!(
@@ -2318,7 +2318,7 @@ fn virtualized_list_runtime_shift_space_applies_active_range_selection(
         selection_changes: selection_changes.clone(),
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let root = cx
@@ -2329,7 +2329,7 @@ fn virtualized_list_runtime_shift_space_applies_active_range_selection(
 
     cx.simulate_keystrokes("shift-space");
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert_eq!(
@@ -2368,7 +2368,7 @@ fn scroll_area_default_handle_survives_reconstructed_component_values(
 
     let (_, cx) = cx.add_window_view(|_, _| TestView);
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let before = cx
@@ -2381,7 +2381,7 @@ fn scroll_area_default_handle_survives_reconstructed_component_values(
         ..Default::default()
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let after = cx
@@ -2427,7 +2427,7 @@ fn scroll_area_reset_key_resets_default_runtime_handle(cx: &mut open_gpui::TestA
         reset_key: "overview".to_string(),
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let initial = cx
@@ -2440,7 +2440,7 @@ fn scroll_area_reset_key_resets_default_runtime_handle(cx: &mut open_gpui::TestA
         ..Default::default()
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let scrolled = cx
@@ -2456,7 +2456,7 @@ fn scroll_area_reset_key_resets_default_runtime_handle(cx: &mut open_gpui::TestA
         cx.notify();
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let reset = cx
@@ -2524,7 +2524,7 @@ fn scroll_area_runtime_scrolls_horizontal_and_two_axis_content(cx: &mut open_gpu
 
     let (_, cx) = cx.add_window_view(|_, _| TestView);
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let horizontal_before = cx
@@ -2545,7 +2545,7 @@ fn scroll_area_runtime_scrolls_horizontal_and_two_axis_content(cx: &mut open_gpu
         ..Default::default()
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let horizontal_after = cx
@@ -2570,7 +2570,7 @@ fn scroll_area_runtime_scrolls_horizontal_and_two_axis_content(cx: &mut open_gpu
         ..Default::default()
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let grid_after_y = cx
@@ -2651,7 +2651,7 @@ fn scroll_area_nested_scroll_keeps_parent_static(cx: &mut open_gpui::TestAppCont
 
     let (_, cx) = cx.add_window_view(|_, _| TestView);
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let lane_before = cx
@@ -2670,7 +2670,7 @@ fn scroll_area_nested_scroll_keeps_parent_static(cx: &mut open_gpui::TestAppCont
         ..Default::default()
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let lane_after = cx
@@ -2734,7 +2734,7 @@ fn splitter_runtime_drag_resizes_horizontal_and_vertical_panels(
     let _ = cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let left_before = cx
@@ -2796,7 +2796,7 @@ fn splitter_runtime_drag_resizes_horizontal_and_vertical_panels(
     );
     cx.run_until_parked();
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let left_after = cx

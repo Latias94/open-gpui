@@ -17,7 +17,7 @@ use open_gpui_ui_core::{Sizable, ui_px};
 
 fn draw(cx: &mut VisualTestContext) {
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 }
 

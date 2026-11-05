@@ -667,7 +667,7 @@ fn live_source_projection_republishes_accepted_route_scene(cx: &mut TestAppConte
     begin_native_live_undock_with_released_source(&mut fixture, cx);
     fixture
         .source_visual
-        .update(|window, cx| window.draw(cx).clear());
+        .update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
 
     let projected = fixture
@@ -805,7 +805,7 @@ fn revealed_live_destination_keeps_inert_source_route_ready(cx: &mut TestAppCont
 
     fixture
         .source_visual
-        .update(|window, cx| window.draw(cx).clear());
+        .update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
 
     let projected = fixture
@@ -875,12 +875,12 @@ fn reveal_observing_advances_the_exact_destination_frame_on_cached_refresh(
 
     destination_visual.update(|window, cx| {
         window.refresh();
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     let second = current_frame(cx);
     destination_visual.update(|window, cx| {
         window.refresh();
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     let third = current_frame(cx);
 
@@ -1273,7 +1273,7 @@ fn live_source_semantic_focus_proxy_is_unique_stable_and_restores_exact_focus(
 
     fixture
         .source_visual
-        .update(|window, cx| window.draw(cx).clear());
+        .update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
     assert!(cx.deactivate_accessibility(fixture.source_window));
     assert!(cx.activate_accessibility(fixture.source_window));

@@ -745,7 +745,7 @@ fn application_reveal_commits_both_physical_axes(cx: &mut TestAppContext) {
         scroll: ScrollHandle::new(),
         target_presentation: SubtreePresentation::Visible,
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let (target, scroll) =
         cx.update_window_entity(&view, |view, _, _| (view.target, view.scroll.clone()));
 
@@ -762,9 +762,9 @@ fn application_reveal_commits_both_physical_axes(cx: &mut TestAppContext) {
             .1
     });
 
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_eq!(scroll.offset(), point(px(-140.0), px(-140.0)));
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
     assert_eq!(
         *outcome.borrow(),
@@ -786,7 +786,7 @@ fn nested_reveal_commits_inner_before_outer(cx: &mut TestAppContext) {
             commits,
         }
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let (target, outer, inner) = cx.update_window_entity(&view, |view, _, _| {
         (view.target, view.outer.clone(), view.inner.clone())
     });
@@ -798,9 +798,9 @@ fn nested_reveal_commits_inner_before_outer(cx: &mut TestAppContext) {
     });
     assert_eq!(inner.offset(), point(px(-140.0), px(-140.0)));
     assert_eq!(outer.offset(), point(px(0.0), px(0.0)));
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_ne!(outer.offset(), point(px(0.0), px(0.0)));
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let commits = commits.borrow();
     assert_eq!(commits.len(), 2);
     assert_eq!(commits[0].0, "inner");
@@ -823,7 +823,7 @@ fn deferred_guard_rejects_an_ancestor_direct_scroll_before_submission(cx: &mut T
             captured_guard,
         }
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let (outer, inner) =
         cx.update_window_entity(&view, |view, _, _| (view.outer.clone(), view.inner.clone()));
     let guard = captured_guard
@@ -856,7 +856,7 @@ fn deferred_guard_captures_before_target_binds_and_submits_after_binding(cx: &mu
             captured_guard,
         }
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let guard = captured_guard
         .borrow_mut()
         .take()
@@ -866,7 +866,7 @@ fn deferred_guard_captures_before_target_binds_and_submits_after_binding(cx: &mu
         view.target_is_mounted = true;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let submitted = cx.update(|window, cx| {
         window.try_bring_into_view_with_guard_and_completion(guard, cx, |_, _, _| {})
@@ -892,7 +892,7 @@ fn deferred_guard_rejects_a_changed_scroll_axis_before_submission(cx: &mut TestA
             captured_guard,
         }
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let outer = cx.update_window_entity(&view, |view, _, _| view.outer.clone());
     let guard = captured_guard
         .borrow_mut()
@@ -903,7 +903,7 @@ fn deferred_guard_rejects_a_changed_scroll_axis_before_submission(cx: &mut TestA
         view.outer_all_axes = true;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     outer.set_offset(point(px(-25.0), px(0.0)));
 
     let submitted = cx.update(|window, cx| {
@@ -929,7 +929,7 @@ fn deferred_guard_preserves_a_direct_scroll_on_an_unrequested_axis(cx: &mut Test
             captured_guard,
         }
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let outer = cx.update_window_entity(&view, |view, _, _| view.outer.clone());
     let guard = captured_guard
         .borrow_mut()
@@ -956,7 +956,7 @@ fn nested_reveal_continues_outward_across_non_uniform_transforms(cx: &mut TestAp
         outer: ScrollHandle::new(),
         inner: ScrollHandle::new(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let (target, outer, inner) = cx.update_window_entity(&view, |view, _, _| {
         (view.target, view.outer.clone(), view.inner.clone())
     });
@@ -973,7 +973,7 @@ fn nested_reveal_continues_outward_across_non_uniform_transforms(cx: &mut TestAp
             .1
     });
     for _ in 0..5 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
     }
     cx.run_until_parked();
 
@@ -1002,7 +1002,7 @@ fn disjoint_scroll_chains_advance_independently(cx: &mut TestAppContext) {
         left_scroll: ScrollHandle::new(),
         right_scroll: ScrollHandle::new(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let (left_target, right_target, left_scroll, right_scroll) =
         cx.update_window_entity(&view, |view, _, _| {
             (
@@ -1036,8 +1036,8 @@ fn disjoint_scroll_chains_advance_independently(cx: &mut TestAppContext) {
             .1;
         (left, right)
     });
-    cx.update(|window, cx| window.draw(cx).clear());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
 
     assert_eq!(left_scroll.offset(), point(px(-140.0), px(-140.0)));
@@ -1060,7 +1060,7 @@ fn newer_request_supersedes_an_older_request_on_the_same_chain(cx: &mut TestAppC
         second_target: window.new_reveal_target(),
         scroll: ScrollHandle::new(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let (first_target, second_target, scroll) = cx.update_window_entity(&view, |view, _, _| {
         (view.first_target, view.second_target, view.scroll.clone())
     });
@@ -1119,7 +1119,7 @@ fn already_visible_and_no_progress_are_distinct_terminal_outcomes(cx: &mut TestA
         target_width: px(20.0),
         target_height: px(20.0),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let (visible_target, visible_scroll) = cx.update_window_entity(&visible_view, |view, _, _| {
         (view.target, view.scroll.clone())
     });
@@ -1156,7 +1156,7 @@ fn already_visible_and_no_progress_are_distinct_terminal_outcomes(cx: &mut TestA
         target_width: px(20.0),
         target_height: px(20.0),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let blocked_target = cx.update_window_entity(&blocked_view, |view, _, _| view.target);
     let no_progress_observed = no_progress_outcome.clone();
     let _blocked_subscription = cx.update(|window, cx| {
@@ -1193,7 +1193,7 @@ fn target_unmount_and_window_close_cancel_with_exact_reasons(cx: &mut TestAppCon
         target_width: px(20.0),
         target_height: px(20.0),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let target = cx.update_window_entity(&view, |view, _, _| view.target);
     let unlinked_observed = unlinked_outcome.clone();
     let _unlinked_subscription = cx.update(|window, cx| {
@@ -1232,7 +1232,7 @@ fn target_unmount_and_window_close_cancel_with_exact_reasons(cx: &mut TestAppCon
         target_width: px(20.0),
         target_height: px(20.0),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let closed_target = cx.update_window_entity(&closed_view, |view, _, _| view.target);
     let closed_observed = closed_outcome.clone();
     let _closed_subscription = cx.update(|window, cx| {
@@ -1266,7 +1266,7 @@ fn reduced_motion_finishes_immediately_and_window_portals_reset_scroll_ancestry(
         scroll: ScrollHandle::new(),
         target_presentation: SubtreePresentation::Visible,
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let (target, scroll) =
         cx.update_window_entity(&view, |view, _, _| (view.target, view.scroll.clone()));
     let transition = MotionTransition::duration(
@@ -1292,7 +1292,7 @@ fn reduced_motion_finishes_immediately_and_window_portals_reset_scroll_ancestry(
         target: window.new_reveal_target(),
         scroll: ScrollHandle::new(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let (portal_target, portal_scroll) = cx.update_window_entity(&portal_view, |view, _, _| {
         (view.target, view.scroll.clone())
     });
@@ -1324,7 +1324,7 @@ fn reveal_uses_the_effective_overflow_clip_inside_a_visible_border(cx: &mut Test
         target: window.new_reveal_target(),
         scroll: ScrollHandle::new(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let (target, scroll) =
         cx.update_window_entity(&view, |view, _, _| (view.target, view.scroll.clone()));
     cx.update(|window, cx| {
@@ -1345,7 +1345,7 @@ fn direct_scroll_before_commit_cancels_reveal_without_overwriting_it(cx: &mut Te
         scroll: ScrollHandle::new(),
         target_presentation: SubtreePresentation::Visible,
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let (target, scroll) =
         cx.update_window_entity(&view, |view, _, _| (view.target, view.scroll.clone()));
 
@@ -1362,7 +1362,7 @@ fn direct_scroll_before_commit_cancels_reveal_without_overwriting_it(cx: &mut Te
             .1
     });
     scroll.set_offset(point(px(-15.0), px(-25.0)));
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
 
     assert_eq!(scroll.offset(), point(px(-15.0), px(-25.0)));
@@ -1382,7 +1382,7 @@ fn direct_scroll_on_a_preserved_axis_does_not_cancel_the_requested_axis(cx: &mut
         scroll: ScrollHandle::new(),
         target_presentation: SubtreePresentation::Visible,
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let (target, scroll) =
         cx.update_window_entity(&view, |view, _, _| (view.target, view.scroll.clone()));
 
@@ -1401,8 +1401,8 @@ fn direct_scroll_on_a_preserved_axis_does_not_cancel_the_requested_axis(cx: &mut
         subscription
     });
 
-    cx.update(|window, cx| window.draw(cx).clear());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
 
     assert_eq!(scroll.offset(), point(px(-30.0), px(-140.0)));
@@ -1422,7 +1422,7 @@ fn suppressed_target_and_wrong_window_fail_closed(cx: &mut TestAppContext) {
         scroll: ScrollHandle::new(),
         target_presentation: SubtreePresentation::Inert,
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let target = cx.update_window_entity(&view, |view, _, _| view.target);
     let observed = outcome.clone();
     let _subscription = cx.update(|window, cx| {
@@ -1436,7 +1436,7 @@ fn suppressed_target_and_wrong_window_fail_closed(cx: &mut TestAppContext) {
             .expect("the target belongs to this window")
             .1
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
     assert_eq!(
         *outcome.borrow(),
@@ -1462,7 +1462,7 @@ fn only_the_winning_focus_claim_reveals(cx: &mut TestAppContext) {
         visible_focus: cx.focus_handle(),
         offscreen_focus: cx.focus_handle(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let (scroll, visible, offscreen) = cx.update_window_entity(&view, |view, _, _| {
         (
             view.scroll.clone(),
@@ -1488,7 +1488,7 @@ fn focus_without_scroll_ancestry_does_not_allocate_reveal_authority(cx: &mut Tes
     let (view, cx) = cx.add_window_view(|_, cx| PlainFocusView {
         focus: cx.focus_handle(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let focus = cx.update_window_entity(&view, |view, _, _| view.focus.clone());
     let before = cx.update(|window, _| window.bring_into_view_authority_generation());
 
@@ -1508,7 +1508,7 @@ fn guarded_focus_reveal_uses_an_uninterrupted_committed_scroll_fence(cx: &mut Te
         scroll_chain_anchor: window.new_reveal_target(),
         offscreen_focus: cx.focus_handle(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let (scroll, anchor, focus) = cx.update_window_entity(&view, |view, _, _| {
         (
             view.scroll.clone(),
@@ -1528,7 +1528,7 @@ fn guarded_focus_reveal_uses_an_uninterrupted_committed_scroll_fence(cx: &mut Te
             .focus_with_completion_and_scroll_fence(&focus, fence, cx, |_, _, _| {})
             .detach();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
 
     assert_eq!(scroll.offset(), point(px(-140.0), px(-140.0)));
@@ -1541,7 +1541,7 @@ fn guarded_focus_reveal_preserves_intervening_direct_scroll(cx: &mut TestAppCont
         scroll_chain_anchor: window.new_reveal_target(),
         offscreen_focus: cx.focus_handle(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let (scroll, anchor, focus) = cx.update_window_entity(&view, |view, _, _| {
         (
             view.scroll.clone(),
@@ -1562,7 +1562,7 @@ fn guarded_focus_reveal_preserves_intervening_direct_scroll(cx: &mut TestAppCont
             .detach();
     });
     scroll.set_offset(point(px(-20.0), px(-20.0)));
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
 
     assert_eq!(scroll.offset(), point(px(-20.0), px(-20.0)));
@@ -1578,7 +1578,7 @@ fn stale_focus_reveal_stops_after_focus_moves_to_a_disjoint_chain(cx: &mut TestA
         right_inner: ScrollHandle::new(),
         right_focus: cx.focus_handle(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let (left_outer, left_inner, left_focus, right_inner, right_focus) =
         cx.update_window_entity(&view, |view, _, _| {
             (
@@ -1592,13 +1592,13 @@ fn stale_focus_reveal_stops_after_focus_moves_to_a_disjoint_chain(cx: &mut TestA
 
     cx.update(|window, cx| {
         left_focus.focus(window, cx);
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
         right_focus.focus(window, cx);
     });
     assert_ne!(left_inner.offset(), point(px(0.0), px(0.0)));
     assert_eq!(left_outer.offset(), point(px(0.0), px(0.0)));
 
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert_eq!(
         left_outer.offset(),
@@ -1618,7 +1618,7 @@ fn committed_focus_listener_application_reveal_supersedes_automatic_focus_reveal
         focus: cx.focus_handle(),
         application_target: window.new_reveal_target(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let (scroll, focus, application_target) = cx.update_window_entity(&view, |view, _, _| {
         (
             view.scroll.clone(),
@@ -1644,8 +1644,8 @@ fn committed_focus_listener_application_reveal_supersedes_automatic_focus_reveal
     });
 
     cx.update(|window, cx| focus.focus(window, cx));
-    cx.update(|window, cx| window.draw(cx).clear());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
 
     assert_eq!(scroll.offset(), point(px(0.0), px(0.0)));
@@ -1665,7 +1665,7 @@ fn committed_focus_listener_direct_scroll_cancels_automatic_focus_reveal(cx: &mu
         focus: cx.focus_handle(),
         application_target: window.new_reveal_target(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let (scroll, focus) = cx.update_window_entity(&view, |view, _, _| {
         (view.scroll.clone(), view.focus.clone())
     });
@@ -1677,8 +1677,8 @@ fn committed_focus_listener_direct_scroll_cancels_automatic_focus_reveal(cx: &mu
     });
 
     cx.update(|window, cx| focus.focus(window, cx));
-    cx.update(|window, cx| window.draw(cx).clear());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert_eq!(scroll.offset(), point(px(-20.0), px(-20.0)));
     drop(listener);
@@ -1744,8 +1744,8 @@ fn stale_accesskit_reveal_is_cancelled_after_activation_generation_aba(cx: &mut 
         window.set_accessibility_active_for_test(false);
         window.set_accessibility_active_for_test(true);
     });
-    cx.update(|window, cx| window.draw(cx).clear());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert_eq!(scroll.offset(), point(px(0.0), px(0.0)));
 }
@@ -1787,7 +1787,7 @@ fn stale_accesskit_reveal_is_cancelled_when_node_leaves_the_published_tree(
             cx.notify();
         });
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let update = cx.latest_accessibility_tree_update().unwrap();
     assert!(
         update
@@ -1796,7 +1796,7 @@ fn stale_accesskit_reveal_is_cancelled_when_node_leaves_the_published_tree(
             .all(|(_, node)| node.label() != Some("Stale accessibility reveal target")),
         "the delayed request target must be absent from the current published tree"
     );
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert_eq!(scroll.offset(), point(px(0.0), px(0.0)));
 }
@@ -1809,7 +1809,7 @@ fn direct_scroll_cancels_an_in_flight_motion_sample(cx: &mut TestAppContext) {
         scroll: ScrollHandle::new(),
         target_presentation: SubtreePresentation::Visible,
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let (target, scroll) =
         cx.update_window_entity(&view, |view, _, _| (view.target, view.scroll.clone()));
     let transition = MotionTransition::duration(
@@ -1832,15 +1832,15 @@ fn direct_scroll_cancels_an_in_flight_motion_sample(cx: &mut TestAppContext) {
             .1
     });
 
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_eq!(scroll.offset(), point(px(0.0), px(0.0)));
     cx.background_executor
         .advance_clock(Duration::from_millis(50));
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_eq!(scroll.offset(), point(px(-70.0), px(-70.0)));
 
     scroll.set_offset(point(px(-60.0), px(-60.0)));
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
     assert_eq!(
         *outcome.borrow(),
@@ -1851,7 +1851,7 @@ fn direct_scroll_cancels_an_in_flight_motion_sample(cx: &mut TestAppContext) {
 
     cx.background_executor
         .advance_clock(Duration::from_millis(100));
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_eq!(scroll.offset(), point(px(-60.0), px(-60.0)));
 }
 
@@ -1864,7 +1864,7 @@ fn nearest_reveal_quantizes_fractional_clipping_away_from_zero(cx: &mut TestAppC
         target_left: px(90.0),
         target_width: px(10.0),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let (target, scroll) =
         cx.update_window_entity(&view, |view, _, _| (view.target, view.scroll.clone()));
 
@@ -1877,7 +1877,7 @@ fn nearest_reveal_quantizes_fractional_clipping_away_from_zero(cx: &mut TestAppC
             )
             .unwrap();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert_eq!(
         scroll.offset().x,
@@ -1898,7 +1898,7 @@ fn nearest_reveal_reports_no_progress_for_fractional_clipping_at_saturation(
         target_left: px(90.0),
         target_width: px(10.0),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let target = cx.update_window_entity(&view, |view, _, _| view.target);
     let observed = outcome.clone();
     let _subscription = cx.update(|window, cx| {
@@ -1912,7 +1912,7 @@ fn nearest_reveal_reports_no_progress_for_fractional_clipping_at_saturation(
             .unwrap()
             .1
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
 
     assert_eq!(
@@ -1935,7 +1935,7 @@ fn nearest_reveal_terminates_when_no_device_pixel_can_fit_an_equal_width_target(
         target_left: px(0.0),
         target_width: px(100.0),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let (target, scroll) =
         cx.update_window_entity(&view, |view, _, _| (view.target, view.scroll.clone()));
     let observed = outcome.clone();
@@ -1952,7 +1952,7 @@ fn nearest_reveal_terminates_when_no_device_pixel_can_fit_an_equal_width_target(
     });
 
     for _ in 0..4 {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.run_until_parked();
     }
 

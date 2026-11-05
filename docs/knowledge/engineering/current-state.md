@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-05T18:47:06+08:00
+timestamp: 2026-11-05T20:17:00+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -30,8 +30,11 @@ verified_by:
   compatible dependency patch choices and replacement of withdrawn `spin` 0.10.0. Its README and
   the verification guide define the compile-only scope.
 - The new upstream comparison baseline is Zed `635026fabc38440fce5e1767d125026a17b12012`, observed
-  on November 5. The existing sync queue records five pending correctness units before major
-  engine-specific Editor adaptation. Fetching or inspecting this revision is not a completed sync.
+  on November 5. The arena successor now has separate allocation, nested cleanup, App-bound clear
+  tokens and post-borrow Windows frame maintenance. The verification guide records 2,984 library
+  tests, 162 Windows cases (four interactive cases skipped), both allocator Miri models and the
+  outstanding DirectManipulation timing comparison. Four queued correctness units remain before
+  major engine-specific Editor adaptation; this is not a completed framework sync.
 - A game-engine Editor is the selecting consumer. Framework maintenance and rendering-adapter
   refactors are allowed; Nara document, ECS and history types do not enter the core framework.
 
@@ -60,10 +63,11 @@ historical scope and is not current branch or CI qualification.
 
 # Next Action
 
-- Correct element-arena allocation, nested cleanup and App-bound clear authority first; preserve
-  the fork's native reentrancy and candidate-frame rules. Continue with TextSystem lifetime,
-  cached-view dependencies, text layout and pending-input/blur through their owning regression
-  cohorts. Complete source inspection is not implementation or Miri/native evidence.
+- Continue with TextSystem lifetime, then cached-view dependencies, text layout and pending-input/
+  blur through their owning regression cohorts. Preserve the arena successor's AppCell native
+  delivery, candidate-frame rules and explicit post-borrow command authority. Qualify touchpad
+  scroll/inertia/pinch and response timing separately; source inspection or the new HWND/IME
+  regression does not establish that input/performance parity.
 - Reconcile a coherent later text/framework refresh and its toolchain requirements before broad
   engine adaptation. Do not overwrite the fork from Zed or reapply already-covered fixes.
 - Preserve and continue the canonical-docking plan; assess the actual renderer/Host seam through

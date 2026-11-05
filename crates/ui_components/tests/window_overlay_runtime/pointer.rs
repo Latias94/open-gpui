@@ -847,8 +847,8 @@ fn runtime_surface_replays_inside_bounds_when_gpui_reuses_cached_prepaint(
     assert!(renders.get() > 0, "cached surface should render once");
     let surface = rect(240.0, 96.0, 180.0, 28.0);
     let fresh_renders = renders.get();
-    cx.update(|window, cx| window.draw(cx).clear());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_eq!(
         renders.get(),
         fresh_renders,

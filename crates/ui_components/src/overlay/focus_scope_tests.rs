@@ -316,14 +316,14 @@ impl Render for FocusScopeProbe {
 
 fn draw(cx: &mut open_gpui::VisualTestContext) {
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 }
 
 fn settle_focus_claims_after_render(cx: &mut open_gpui::VisualTestContext) {
     cx.run_until_parked();
     cx.update(|window, cx| {
         window.drain_next_frame_callbacks_for_test(cx);
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     cx.update(|window, cx| {
         window.drain_next_frame_callbacks_for_test(cx);
@@ -617,9 +617,9 @@ fn identical_scope_ids_are_isolated_between_windows(cx: &mut open_gpui::TestAppC
     let first_any = first_window.clone().into();
     let second_any = second_window.clone().into();
 
-    cx.update_window(first_any, |_, window, cx| window.draw(cx).clear())
+    cx.update_window(first_any, |_, window, cx| window.draw(cx).clear(cx))
         .expect("first window should remain open");
-    cx.update_window(second_any, |_, window, cx| window.draw(cx).clear())
+    cx.update_window(second_any, |_, window, cx| window.draw(cx).clear(cx))
         .expect("second window should remain open");
     first_window
         .update(cx, |view, window, cx| {

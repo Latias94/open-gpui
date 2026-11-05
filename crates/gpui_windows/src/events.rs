@@ -1716,11 +1716,11 @@ impl WindowsWindowInner {
         }
     }
 
-    fn update_ime_enabled(&self, handle: HWND) {
+    fn update_ime_enabled(&self, handle: HWND, authority: &RegisteredWindowAuthority) {
         let ime_enabled = self
             .with_input_handler(|input_handler| input_handler.query_accepts_text_input())
             .unwrap_or(false);
-        if ime_enabled == self.state.ime_enabled.get() {
+        if !authority.is_current() || ime_enabled == self.state.ime_enabled.get() {
             return;
         }
         self.state.ime_enabled.set(ime_enabled);
@@ -1735,9 +1735,11 @@ impl WindowsWindowInner {
                         .ok()
                         .log_err();
                 }
-                ImmAssociateContextEx(handle, HIMC::default(), 0)
-                    .ok()
-                    .log_err();
+                if authority.is_current() {
+                    ImmAssociateContextEx(handle, HIMC::default(), 0)
+                        .ok()
+                        .log_err();
+                }
             }
         }
     }
@@ -2343,26 +2345,47 @@ impl WindowsWindowInner {
         None
     }
 
+    /// Validates nested paints immediately and retains their frame request in core ingress.
+    /// App-dependent maintenance runs through `CompleteNativeFrame` after the frame borrow ends.
     #[inline]
     fn draw_window(&self, handle: HWND, force_render: bool) -> Option<isize> {
-        with_windows_shared_callback(&self.state.callbacks.request_frame, |request_frame| {
-            self.state.direct_manipulation.update();
-
-            let events = self.state.direct_manipulation.drain_events();
-            for event in events {
-                let _ = self.dispatch_input(event);
-            }
-
-            request_frame(RequestFrameOptions {
-                require_presentation: false,
-                force_render,
+        unsafe { ValidateRect(Some(handle), None).ok().log_err() };
+        let _ =
+            with_windows_shared_callback(&self.state.callbacks.request_frame, |request_frame| {
+                request_frame(RequestFrameOptions {
+                    require_presentation: false,
+                    force_render,
+                });
             });
 
-            self.update_ime_enabled(handle);
-            unsafe { ValidateRect(Some(handle), None).ok().log_err() };
-        })?;
-
         Some(0)
+    }
+
+    pub(crate) fn complete_native_frame(self: &Rc<Self>) -> PlatformWindowCommandOutcome {
+        let Ok(authority) = RegisteredWindowAuthority::capture(self) else {
+            return PlatformWindowCommandOutcome::WindowClosed;
+        };
+        if self.presentation_shutdown_claimed() {
+            return PlatformWindowCommandOutcome::Rejected;
+        }
+
+        self.state.direct_manipulation.update();
+        if !authority.is_current() {
+            return PlatformWindowCommandOutcome::WindowClosed;
+        }
+        for event in self.state.direct_manipulation.drain_events() {
+            let _ = self.dispatch_input(event);
+            if !authority.is_current() {
+                return PlatformWindowCommandOutcome::WindowClosed;
+            }
+        }
+
+        self.update_ime_enabled(self.hwnd, &authority);
+        if authority.is_current() {
+            PlatformWindowCommandOutcome::Accepted
+        } else {
+            PlatformWindowCommandOutcome::WindowClosed
+        }
     }
 
     #[inline]

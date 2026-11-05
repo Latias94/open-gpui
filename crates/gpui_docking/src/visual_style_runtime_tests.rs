@@ -85,7 +85,7 @@ fn resolved_style(host: &Entity<DockHost>, visual: &VisualTestContext) -> DockVi
 }
 
 fn draw(visual: &mut VisualTestContext) {
-    visual.update(|window, cx| window.draw(cx).clear());
+    visual.update(|window, cx| window.draw(cx).clear(cx));
 }
 
 fn start_tab_drag(

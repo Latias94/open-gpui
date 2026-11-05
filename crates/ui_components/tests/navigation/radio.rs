@@ -67,7 +67,7 @@ fn radio_group_runtime_keyboard_navigation_skips_disabled_items_and_payloads(
         selections: selections.clone(),
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert!(
@@ -80,7 +80,7 @@ fn radio_group_runtime_keyboard_navigation_skips_disabled_items_and_payloads(
         .expect("disabled Team radio item should be rendered");
     cx.simulate_click(disabled_team.center(), Default::default());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     assert!(
         selections.borrow().is_empty(),
@@ -92,7 +92,7 @@ fn radio_group_runtime_keyboard_navigation_skips_disabled_items_and_payloads(
         .expect("Enterprise radio item should be rendered");
     cx.simulate_click(enterprise.center(), Default::default());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     let after_click = selections.borrow().clone();
     assert_eq!(after_click.len(), 1);
@@ -102,7 +102,7 @@ fn radio_group_runtime_keyboard_navigation_skips_disabled_items_and_payloads(
 
     cx.simulate_keystrokes("left");
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     let after_left = selections.borrow().clone();
     assert_eq!(after_left.len(), 2);
@@ -142,7 +142,7 @@ fn radio_group_runtime_keyboard_navigation_skips_disabled_items_and_payloads(
 
     cx.simulate_keystrokes("right");
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     let after_right = selections.borrow().clone();
     assert_eq!(after_right.len(), 3);
@@ -202,7 +202,7 @@ fn radio_group_controlled_selection_emits_intent_without_committing_owner_state(
         selected: selected.clone(),
         observations: observations.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let enterprise = cx
         .debug_bounds("radio-group:controlled-radio:item:enterprise")
@@ -214,7 +214,7 @@ fn radio_group_controlled_selection_emits_intent_without_committing_owner_state(
     );
     assert_eq!(selected.borrow().as_str(), "personal");
 
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let enterprise = cx
         .debug_bounds("radio-group:controlled-radio:item:enterprise")
         .expect("controlled Enterprise radio item should remain rendered");
@@ -229,7 +229,7 @@ fn radio_group_controlled_selection_emits_intent_without_committing_owner_state(
     );
 
     *selected.borrow_mut() = "enterprise".to_owned();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let enterprise = cx
         .debug_bounds("radio-group:controlled-radio:item:enterprise")
         .expect("committed Enterprise radio item should remain rendered");
@@ -268,7 +268,7 @@ fn radio_group_read_only_semantics_preserve_focus_without_activation(
     let (_, cx) = cx.add_window_view(|_, _| TestView {
         selections: selections.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert!(cx.activate_accessibility());
     let update = cx
@@ -489,7 +489,7 @@ fn radio_group_programmatic_handles_follow_item_lifecycle_and_gate(
         disabled_handle: disabled_handle.clone(),
         removed_handle: removed_handle.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let enterprise = cx
         .debug_bounds("radio-group:programmatic-radio:item:enterprise")
@@ -519,7 +519,7 @@ fn radio_group_programmatic_handles_follow_item_lifecycle_and_gate(
 
     *selected.borrow_mut() = Some("removed".to_owned());
     *show_removed.borrow_mut() = false;
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.update(|window, cx| {
         assert_eq!(
             removed_handle.request(window, cx),
@@ -534,7 +534,7 @@ fn radio_group_programmatic_handles_follow_item_lifecycle_and_gate(
     assert_eq!(selections.borrow().len(), 3);
 
     *selected.borrow_mut() = Some("disabled".to_owned());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let enterprise = cx
         .debug_bounds("radio-group:programmatic-radio:item:enterprise")
         .expect("Enterprise radio item should remain enabled");

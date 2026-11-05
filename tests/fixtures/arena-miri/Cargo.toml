@@ -1,0 +1,14 @@
+[package]
+name = "open-gpui-element-arena-miri"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[lib]
+path = "../../../crates/gpui/src/arena.rs"
+doctest = false
+
+[dependencies]
+log = "0.4"

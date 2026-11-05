@@ -500,14 +500,14 @@ enum RegisteredWindowAuthorityStatus {
 }
 
 #[derive(Clone)]
-struct RegisteredWindowAuthority {
+pub(crate) struct RegisteredWindowAuthority {
     window: Rc<WindowsWindowInner>,
     registration: RegisteredWindow,
     registry: Arc<RegisteredWindows>,
 }
 
 impl RegisteredWindowAuthority {
-    fn capture(window: &Rc<WindowsWindowInner>) -> Result<Self> {
+    pub(crate) fn capture(window: &Rc<WindowsWindowInner>) -> Result<Self> {
         let registry = window
             .raw_window_handles
             .upgrade()
@@ -568,7 +568,7 @@ impl RegisteredWindowAuthority {
         RegisteredWindowAuthorityStatus::Current
     }
 
-    fn is_current(&self) -> bool {
+    pub(crate) fn is_current(&self) -> bool {
         self.status() == RegisteredWindowAuthorityStatus::Current
     }
 
@@ -7986,6 +7986,7 @@ impl PlatformWindow for WindowsWindow {
                 }
 
                 match command {
+                    PlatformWindowCommand::CompleteNativeFrame => window.complete_native_frame(),
                     PlatformWindowCommand::CompleteInitialPresentation { activate } => {
                         window.complete_initial_presentation(activate)
                     }
@@ -8438,6 +8439,10 @@ impl PlatformWindow for WindowsWindow {
             .callbacks
             .request_frame
             .set(Some(Rc::from(callback)));
+    }
+
+    fn native_frame_completed_command(&self) -> Option<PlatformWindowCommand> {
+        Some(PlatformWindowCommand::CompleteNativeFrame)
     }
 
     fn on_input(&self, callback: PlatformInputCallback) {

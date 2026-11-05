@@ -1474,14 +1474,14 @@ mod tests {
             }
         });
 
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.simulate_mouse_move(point(px(4.0), px(4.0)), None, Modifiers::none());
 
         cx.update_window_entity(&view, |view, _, cx| {
             view.translated = true;
             cx.notify();
         });
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
 
         cx.dispatcher.advance_clock(Duration::from_millis(500));
         cx.run_until_parked();
@@ -1503,14 +1503,14 @@ mod tests {
             }
         });
 
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.simulate_mouse_move(point(px(4.0), px(4.0)), None, Modifiers::none());
 
         cx.update_window_entity(&view, |view, _, cx| {
             view.presentation = SubtreePresentation::Inert;
             cx.notify();
         });
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.dispatcher.advance_clock(Duration::from_millis(500));
         cx.run_until_parked();
         assert_eq!(tooltip_builds.get(), 0);
@@ -1519,7 +1519,7 @@ mod tests {
             view.presentation = SubtreePresentation::Visible;
             cx.notify();
         });
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.dispatcher.advance_clock(Duration::from_millis(500));
         cx.run_until_parked();
         assert_eq!(
@@ -1545,11 +1545,11 @@ mod tests {
             }
         });
 
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.simulate_mouse_move(point(px(4.0), px(4.0)), None, Modifiers::none());
         cx.dispatcher.advance_clock(Duration::from_millis(500));
         cx.run_until_parked();
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         assert_eq!(tooltip_builds.get(), 1);
         assert!(cx.update(|window, _| window.tooltip_bounds.is_some()));
 
@@ -1557,14 +1557,14 @@ mod tests {
             view.presentation = SubtreePresentation::Hidden;
             cx.notify();
         });
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         assert!(cx.update(|window, _| window.tooltip_bounds.is_none()));
 
         cx.update_window_entity(&view, |view, _, cx| {
             view.presentation = SubtreePresentation::Visible;
             cx.notify();
         });
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         assert_eq!(tooltip_builds.get(), 1);
         assert!(
             cx.update(|window, _| window.tooltip_bounds.is_none()),
@@ -1574,7 +1574,7 @@ mod tests {
         cx.simulate_mouse_move(point(px(4.0), px(4.0)), None, Modifiers::none());
         cx.dispatcher.advance_clock(Duration::from_millis(500));
         cx.run_until_parked();
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         assert_eq!(tooltip_builds.get(), 2);
         assert!(cx.update(|window, _| window.tooltip_bounds.is_some()));
     }
@@ -1591,19 +1591,19 @@ mod tests {
         });
         let position = point(px(4.0), px(4.0));
 
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.simulate_mouse_down(position, MouseButton::Left, Modifiers::none());
 
         cx.update_window_entity(&view, |view, _, cx| {
             view.presentation = SubtreePresentation::Inert;
             cx.notify();
         });
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.update_window_entity(&view, |view, _, cx| {
             view.presentation = SubtreePresentation::Visible;
             cx.notify();
         });
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
 
         cx.simulate_mouse_up(position, MouseButton::Left, Modifiers::none());
         assert_eq!(
@@ -1629,7 +1629,7 @@ mod tests {
         });
         let position = point(px(4.0), px(4.0));
 
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         for presentation in [SubtreePresentation::Inert, SubtreePresentation::Hidden] {
             cx.simulate_mouse_move(position, None, Modifiers::none());
             assert!(events.borrow().last().is_some_and(Option::is_some));
@@ -1638,7 +1638,7 @@ mod tests {
                 view.presentation = presentation;
                 cx.notify();
             });
-            cx.update(|window, cx| window.draw(cx).clear());
+            cx.update(|window, cx| window.draw(cx).clear(cx));
             cx.run_until_parked();
             assert_eq!(events.borrow().last(), Some(&None));
 
@@ -1647,7 +1647,7 @@ mod tests {
                 view.presentation = SubtreePresentation::Visible;
                 cx.notify();
             });
-            cx.update(|window, cx| window.draw(cx).clear());
+            cx.update(|window, cx| window.draw(cx).clear(cx));
             cx.run_until_parked();
             assert_eq!(
                 events.borrow().len(),

@@ -652,6 +652,8 @@ impl TestWindow {
                 self.0.lock().activation_count += 1;
                 self.activate_for_test();
             }
+            #[cfg(target_os = "windows")]
+            PlatformWindowCommand::CompleteNativeFrame => {}
             PlatformWindowCommand::ShowWindowMenu(_)
             | PlatformWindowCommand::StartWindowMove
             | PlatformWindowCommand::StartWindowResize(_) => {}

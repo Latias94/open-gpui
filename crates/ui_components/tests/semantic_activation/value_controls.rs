@@ -52,7 +52,7 @@ fn read_only_checkbox_and_toggle_block_every_activation_source(cx: &mut open_gpu
         checkbox_handle: checkbox_handle.clone(),
         toggle_handle: toggle_handle.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let checkbox_state = Checkbox::new("read-only-checkbox-state")
         .read_only(true)
@@ -207,7 +207,7 @@ fn value_controls_use_space_only_emit_one_intent_and_honor_read_only(
         read_only_activation_handle: read_only_activation_handle.clone(),
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert!(cx.activate_accessibility());

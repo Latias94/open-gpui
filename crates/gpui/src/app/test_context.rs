@@ -1684,7 +1684,7 @@ impl VisualTestContext {
         E: Element,
     {
         self.update(|window, cx| {
-            let _arena_scope = ElementArenaScope::enter(&cx.element_arena);
+            let arena_scope = ElementArenaScope::enter(&cx.element_arena);
 
             window.invalidator.set_phase(DrawPhase::Prepaint);
             let mut element = Drawable::new(f(window, cx));
@@ -1699,7 +1699,7 @@ impl VisualTestContext {
             window.refresh();
 
             drop(element);
-            cx.element_arena.borrow_mut().clear();
+            arena_scope.exit().clear(cx);
 
             (request_layout_state, prepaint_state)
         })
@@ -2197,14 +2197,14 @@ mod tests {
         });
 
         cx.update(|window, cx| {
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
             assert!(
                 window.refresh_pending_for_test(),
                 "a commit-side refresh must schedule the frame that publishes its state"
             );
         });
         let renders_before_followup = renders.get();
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         assert!(
             renders.get() > renders_before_followup,
             "a commit-side refresh must bypass cached journals on the followup frame"
@@ -2237,13 +2237,13 @@ mod tests {
             }
         });
 
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         commits.borrow_mut().clear();
         let fresh_renders = renders.get();
         let fresh_prepaints = prepaints.get();
 
         let second_revision = cx.update(|window, cx| {
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
             window.rendered_frame_revision()
         });
         assert_eq!(renders.get(), fresh_renders);
@@ -2253,7 +2253,7 @@ mod tests {
         assert_eq!(discarded_resources.get(), 1);
 
         let third_revision = cx.update(|window, cx| {
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
             window.rendered_frame_revision()
         });
         assert_eq!(renders.get(), fresh_renders);
@@ -2406,7 +2406,7 @@ mod tests {
                 key_subscription: None,
             }
         });
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.update_window_entity(&view, |view, window, _cx| {
             let consume = view.consume.clone();
             let events = view.events.clone();
@@ -2514,7 +2514,7 @@ mod tests {
         });
         let _ = cx.update(|window, _| window.activate_window());
         cx.run_until_parked();
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.update_window_entity(&view, |view, window, _cx| {
             let consume = view.consume.clone();
             let events = view.events.clone();
@@ -2600,7 +2600,7 @@ mod tests {
                 key_subscription: None,
             }
         });
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.update_window_entity(&view, |view, window, _cx| {
             let events = view.events.clone();
             let reentered = reentered.clone();
@@ -2651,7 +2651,7 @@ mod tests {
                 key_subscription: None,
             }
         });
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.update_window_entity(&view, |view, window, _cx| {
             let events = view.events.clone();
             view.mouse_subscription = Some(window.intercept_window_mouse_events(
@@ -2702,7 +2702,7 @@ mod tests {
                 key_subscription: None,
             }
         });
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.update_window_entity(&view, |view, window, cx| {
             view.focus.focus(window, cx);
             let consume = view.consume.clone();
@@ -2763,7 +2763,7 @@ mod tests {
                 key_subscription: None,
             }
         });
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.update_window_entity(&view, |view, window, cx| {
             view.focus.focus(window, cx);
             let events = view.events.clone();
@@ -2819,7 +2819,7 @@ mod tests {
                 key_subscription: None,
             }
         });
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.update_window_entity(&view, |view, window, cx| {
             view.focus.focus(window, cx);
             let events = view.events.clone();
@@ -2870,7 +2870,7 @@ mod tests {
                 key_subscription: None,
             }
         });
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.update_window_entity(&view, |view, window, cx| {
             view.focus.focus(window, cx);
             let events = view.events.clone();
@@ -2915,7 +2915,7 @@ mod tests {
         let (_view, cx) = cx.add_window_view(|_, _| InputDispatchProbe);
 
         cx.update(|window, cx| {
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
         });
         cx.clear_last_input_dispatch();
         assert_eq!(cx.last_input_dispatch(), None);
@@ -3165,7 +3165,7 @@ mod tests {
             .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
             .into();
         cx.update_window(window, |_, window, cx| {
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
         })
         .unwrap();
 
@@ -3210,11 +3210,11 @@ mod tests {
         cx.run_until_parked();
 
         cx.update_window(hovered, |_, window, cx| {
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
         })
         .unwrap();
         cx.update_window(active, |_, window, cx| {
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
         })
         .unwrap();
 
@@ -3231,7 +3231,7 @@ mod tests {
 
         cx.set_platform_hovered_window(Some(window_handle));
         cx.update_window(window_handle, |_, window, cx| {
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
         })
         .unwrap();
         assert_eq!(cx.platform_cursor_style(), CursorStyle::ResizeColumn);
@@ -3271,13 +3271,13 @@ mod tests {
         });
 
         cx.update_window(hovered, |_, window, cx| {
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
         })
         .unwrap();
         assert_eq!(cx.platform_cursor_style(), CursorStyle::ClosedHand);
 
         cx.update_window(background, |_, window, cx| {
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
         })
         .unwrap();
         assert_eq!(
@@ -3295,14 +3295,14 @@ mod tests {
         });
 
         cx.update(|window, cx| {
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
         });
         assert_eq!(cx.focused_debug_selector(), None);
         assert!(!cx.debug_selector_is_focused("focus-debug:first"));
 
         cx.update_window_entity(&view, |view, window, cx| view.first.focus(window, cx));
         cx.update(|window, cx| {
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
         });
         assert_eq!(
             cx.focused_debug_selector().as_deref(),
@@ -3313,7 +3313,7 @@ mod tests {
 
         cx.update_window_entity(&view, |view, window, cx| view.second.focus(window, cx));
         cx.update(|window, cx| {
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
         });
         assert_eq!(
             cx.focused_debug_selector().as_deref(),

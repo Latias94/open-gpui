@@ -3957,6 +3957,8 @@ pub enum ResizeEdge {
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PlatformWindowCommand {
+    #[cfg(target_os = "windows")]
+    CompleteNativeFrame,
     CompleteInitialPresentation {
         activate: bool,
     },
@@ -5413,6 +5415,11 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     /// presented by GPUI.
     fn draw(&self, scene: &Scene) -> PlatformWindowPresentOutcome;
     fn completed_frame(&self) {}
+    /// Returns native frame maintenance to execute after releasing the application borrow.
+    #[doc(hidden)]
+    fn native_frame_completed_command(&self) -> Option<PlatformWindowCommand> {
+        None
+    }
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
     fn is_subpixel_rendering_supported(&self) -> bool;
 

@@ -230,7 +230,7 @@ fn framework_adapters_project_effective_presentation_from_an_official_overlay(
     let (view, cx) = cx.add_window_view(|_, _| PresentedOfficialOverlayProbe {
         presentation: SubtreePresentation::Visible,
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.update_window_entity(&view, |probe, _, cx| {
         probe.presentation = SubtreePresentation::Inert;
         cx.notify();
@@ -335,13 +335,13 @@ fn framework_focus_snapshot_reads_the_rendered_window_authority(
     let (view, cx) = cx.add_window_view(|_, cx| WindowFocusProjectionProbe {
         focus: cx.focus_handle(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.update_window_entity(&view, |probe, window, cx| {
         probe.focus.focus(window, cx);
     });
     let _ = cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let (window_active, snapshot) = cx.update(|window, cx| {
         (
@@ -375,12 +375,12 @@ fn framework_focus_snapshot_does_not_claim_keyboard_focus_for_an_inactive_window
     let (view, cx) = cx.add_window_view(|_, cx| WindowFocusProjectionProbe {
         focus: cx.focus_handle(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.update_window_entity(&view, |probe, window, cx| {
         probe.focus.focus(window, cx);
     });
     let _ = cx.update(|window, _| window.activate_window());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.deactivate_window();
 
     let (logical_focus_retained, snapshot) = cx.update(|window, cx| {

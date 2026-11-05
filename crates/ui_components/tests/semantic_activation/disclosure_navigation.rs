@@ -59,7 +59,7 @@ fn accordion_item_routes_every_activation_source_to_one_controlled_intent(
         billing_handle: billing_handle.clone(),
         disabled_handle: disabled_handle.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert!(cx.activate_accessibility());
     let update = cx
@@ -116,7 +116,7 @@ fn accordion_item_routes_every_activation_source_to_one_controlled_intent(
     );
     drop(changes);
 
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let update = cx
         .latest_accessibility_tree_update()
         .expect("controlled accordion redraw should preserve owner state");
@@ -170,7 +170,7 @@ fn collapsible_emits_controlled_open_intent_and_blocks_disabled_activation(
         handle: handle.clone(),
         disabled_handle: disabled_handle.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert!(cx.activate_accessibility());
     let update = cx
@@ -217,7 +217,7 @@ fn collapsible_emits_controlled_open_intent_and_blocks_disabled_activation(
     assert_eq!(changes.borrow().as_slice(), &[true, true, true, true]);
     assert!(disabled_changes.borrow().is_empty());
 
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let update = cx
         .latest_accessibility_tree_update()
         .expect("controlled redraw should publish the current owner state");
@@ -272,7 +272,7 @@ fn breadcrumb_accepts_enter_rejects_space_and_preserves_domain_addressing(
         disabled_handle: disabled_handle.clone(),
         current_handle: current_handle.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert!(cx.activate_accessibility());
     let update = cx

@@ -768,7 +768,9 @@ pub struct App {
 
     /// Per-App element arena. This isolates element allocations between different
     /// App instances (important for tests where multiple Apps run concurrently).
-    pub(crate) element_arena: RefCell<Arena>,
+    /// Kept in its own allocation so TLS arena access does not alias the App's
+    /// fields while rendering holds an exclusive App borrow.
+    pub(crate) element_arena: Rc<RefCell<Arena>>,
     /// Per-App event arena.
     pub(crate) event_arena: Arena,
 
@@ -961,7 +963,7 @@ impl App {
 
                 #[cfg(any(test, feature = "test-support", debug_assertions))]
                 name: None,
-                element_arena: RefCell::new(Arena::new(1024 * 1024)),
+                element_arena: Rc::new(RefCell::new(Arena::new(1024 * 1024))),
                 event_arena: Arena::new(1024 * 1024),
 
                 #[cfg(any(test, feature = "leak-detection"))]
@@ -1674,11 +1676,11 @@ impl App {
                     // where DispatchTree::root_node_id asserts on empty nodes
                     let clear = rollback.window_mut().draw(reservation.app_mut());
                     if let Err(error) = reservation.validate() {
-                        clear.clear();
+                        clear.clear(reservation.app_mut());
                         return Err(WindowOpenError::from_reservation(error));
                     }
                     if !rollback.window_mut().creation_can_commit() {
-                        clear.clear();
+                        clear.clear(reservation.app_mut());
                         return Err(WindowOpenError::new(
                             WindowOpenFailureStage::ClosedDuringInitialDraw,
                             anyhow!("window closed during its initial draw"),
@@ -1690,7 +1692,7 @@ impl App {
                     let initial_presentation = rollback
                         .window_mut()
                         .prepare_initial_presentation(reservation.app_mut());
-                    clear.clear();
+                    clear.clear(reservation.app_mut());
                     reservation
                         .validate()
                         .map_err(WindowOpenError::from_reservation)?;
@@ -2067,7 +2069,7 @@ impl App {
                         })
                         .collect::<Vec<_>>()
                     {
-                        self.update_window(window, |_, window, cx| window.draw(cx).clear())
+                        self.update_window(window, |_, window, cx| window.draw(cx).clear(cx))
                             .unwrap();
                     }
                 }

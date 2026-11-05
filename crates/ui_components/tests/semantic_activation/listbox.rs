@@ -64,7 +64,7 @@ fn listbox_routes_every_activation_entry_through_one_selection_transaction(
         disabled_handle: disabled_handle.clone(),
         duplicate_handle: duplicate_handle.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert!(cx.activate_accessibility());
     let initial = cx
@@ -136,7 +136,7 @@ fn listbox_routes_every_activation_entry_through_one_selection_transaction(
     assert!(modified_down.propagated());
     assert!(!modified_down.default_prevented());
     assert!(modified_up.propagated());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(cx.debug_selector_is_focused("listbox:semantic-listbox:option:beta"));
 
     assert!(cx.dispatch_accessibility_action(action_request(accesskit::Action::Click, beta_node,)));
@@ -198,7 +198,7 @@ fn controlled_listbox_emits_intent_without_mutating_owner_selection(
         selections: selections.clone(),
         beta_handle: beta_handle.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(cx.activate_accessibility());
 
     cx.update(|window, cx| {
@@ -206,7 +206,7 @@ fn controlled_listbox_emits_intent_without_mutating_owner_selection(
             beta_handle.request(window, cx),
             ActivationRequestResult::Dispatched
         );
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert_eq!(selections.borrow().len(), 1);
@@ -247,7 +247,7 @@ fn disabled_listbox_blocks_every_activation_entry_and_preserves_semantics(
         activations: activations.clone(),
         handle: handle.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert!(cx.activate_accessibility());
     let update = cx
@@ -304,7 +304,7 @@ fn listbox_activation_runtime_is_isolated_by_component_instance(
     let (view, cx) = cx.add_window_view(|_, _| Probe {
         activations: activations.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let enabled = cx
         .debug_bounds("listbox:enabled-instance-listbox:option:shared")
@@ -319,7 +319,7 @@ fn listbox_activation_runtime_is_isolated_by_component_instance(
 
     view.update(cx, |_, cx| cx.notify());
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let up = cx.simulate_event_with_dispatch_snapshot(key_up("enter", Modifiers::none()));
     assert!(up.propagation_stopped());
@@ -344,7 +344,7 @@ fn uncontrolled_listbox_retains_selection_across_disabled_projection(
     }
 
     let (view, cx) = cx.add_window_view(|_, _| Probe { disabled: false });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(cx.activate_accessibility());
     let initial = cx
         .latest_accessibility_tree_update()
@@ -356,7 +356,7 @@ fn uncontrolled_listbox_retains_selection_across_disabled_projection(
         cx.notify();
     });
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let disabled = cx
         .latest_accessibility_tree_update()
         .expect("disabled listbox should publish");
@@ -367,7 +367,7 @@ fn uncontrolled_listbox_retains_selection_across_disabled_projection(
         cx.notify();
     });
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let reenabled = cx
         .latest_accessibility_tree_update()
         .expect("re-enabled listbox should publish");
@@ -402,7 +402,7 @@ fn controlled_listbox_mirrors_owner_selection_while_disabled(cx: &mut open_gpui:
         controlled: true,
         selected_value: "alpha".to_owned(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(cx.activate_accessibility());
     let initial = cx
         .latest_accessibility_tree_update()
@@ -416,7 +416,7 @@ fn controlled_listbox_mirrors_owner_selection_while_disabled(cx: &mut open_gpui:
         cx.notify();
     });
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let disabled = cx
         .latest_accessibility_tree_update()
         .expect("disabled controlled listbox should publish");
@@ -428,14 +428,14 @@ fn controlled_listbox_mirrors_owner_selection_while_disabled(cx: &mut open_gpui:
         cx.notify();
     });
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     view.update(cx, |probe, cx| {
         probe.disabled = false;
         cx.notify();
     });
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let released = cx
         .latest_accessibility_tree_update()
         .expect("re-enabled uncontrolled listbox should publish");
@@ -490,7 +490,7 @@ fn controlled_listbox_retains_unresolved_owner_selection_on_release(
         controlled: true,
         shape: OptionShape::Missing,
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(cx.activate_accessibility());
 
     view.update(cx, |probe, cx| {
@@ -498,7 +498,7 @@ fn controlled_listbox_retains_unresolved_owner_selection_on_release(
         cx.notify();
     });
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let disabled = cx
         .latest_accessibility_tree_update()
         .expect("disabled owner target should publish");
@@ -509,7 +509,7 @@ fn controlled_listbox_retains_unresolved_owner_selection_on_release(
         cx.notify();
     });
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let duplicate = cx
         .latest_accessibility_tree_update()
         .expect("duplicate owner target should publish");
@@ -521,14 +521,14 @@ fn controlled_listbox_retains_unresolved_owner_selection_on_release(
         cx.notify();
     });
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     view.update(cx, |probe, cx| {
         probe.shape = OptionShape::Unique;
         cx.notify();
     });
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let resolved = cx
         .latest_accessibility_tree_update()
         .expect("resolved owner target should publish");

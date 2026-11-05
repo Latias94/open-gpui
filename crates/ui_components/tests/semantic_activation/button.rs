@@ -167,7 +167,7 @@ fn button_routes_pointer_keyboard_and_accessibility_through_one_typed_activation
         show_disabled_control: true,
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let button_bounds = cx
@@ -278,7 +278,7 @@ fn button_routes_pointer_keyboard_and_accessibility_through_one_typed_activation
     assert_eq!(activations.borrow().len(), 1, "key-down must not activate");
     view.update(cx, |_, cx| cx.notify());
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let enter_up = cx.simulate_event_with_dispatch_snapshot(key_up("enter", Modifiers::none()));
     assert!(enter_up.propagation_stopped());
@@ -380,7 +380,7 @@ fn button_routes_pointer_keyboard_and_accessibility_through_one_typed_activation
         cx.notify();
     });
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let enabled_bounds = cx
         .debug_bounds("button:disabled-semantic-activation-button:root")
         .expect("enabled Button should retain its stable root selector");
@@ -409,7 +409,7 @@ fn button_routes_pointer_keyboard_and_accessibility_through_one_typed_activation
         cx.notify();
     });
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
     cx.update(|window, cx| {
         assert_eq!(
@@ -438,7 +438,7 @@ fn pointer_activation_survives_same_gate_owner_rerender(cx: &mut open_gpui::Test
     let (view, cx) = cx.add_window_view(|_, _| Probe {
         activations: activations.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let bounds = cx
         .debug_bounds("button:pointer-rerender-button:root")
@@ -446,7 +446,7 @@ fn pointer_activation_survives_same_gate_owner_rerender(cx: &mut open_gpui::Test
     cx.simulate_mouse_down(bounds.center(), MouseButton::Left, Modifiers::none());
     view.update(cx, |_, cx| cx.notify());
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let bounds = cx
         .debug_bounds("button:pointer-rerender-button:root")
         .expect("Button should retain its root selector after rerender");
@@ -544,7 +544,7 @@ fn activation_handle_publishes_only_from_accepted_frames(cx: &mut open_gpui::Tes
             }
         }
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let committed_generation = cx.update(|window, _| window.rendered_frame_revision());
     cx.update(|window, cx| {
         assert_eq!(
@@ -561,7 +561,7 @@ fn activation_handle_publishes_only_from_accepted_frames(cx: &mut open_gpui::Tes
             view.control = Control::Second;
             cx.notify();
         });
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
         assert_eq!(
             window.rendered_frame_revision(),
             committed_generation,
@@ -578,7 +578,7 @@ fn activation_handle_publishes_only_from_accepted_frames(cx: &mut open_gpui::Tes
             "the rejected candidate must not publish the second dispatcher"
         );
 
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
         assert_eq!(window.rendered_frame_revision(), committed_generation + 1);
         assert_eq!(
             handle.request(window, cx),
@@ -664,7 +664,7 @@ fn atlas_rejected_candidate_preserves_armed_pointer_runtime(cx: &mut open_gpui::
             }
         }
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert!(cx.activate_accessibility());
     let update = cx
@@ -687,7 +687,7 @@ fn atlas_rejected_candidate_preserves_armed_pointer_runtime(cx: &mut open_gpui::
             view.use_second_image = true;
             cx.notify();
         });
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
         assert_eq!(
             window.rendered_frame_revision(),
             committed_generation,
@@ -771,7 +771,7 @@ fn activation_handle_publication_survives_cached_journal_replay(
         }
     });
 
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_eq!(renders.get(), 1);
     cx.update(|window, cx| {
         assert_eq!(
@@ -786,7 +786,7 @@ fn activation_handle_publication_survives_cached_journal_replay(
         cx.notify();
     });
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_eq!(
         renders.get(),
         1,
@@ -868,7 +868,7 @@ fn reused_activation_handle_keeps_the_last_interactive_publication(
         }
     });
 
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.update(|window, cx| {
         assert_eq!(
             handle.request(window, cx),
@@ -974,7 +974,7 @@ fn accepted_handle_replacement_is_visible_to_focus_stable_callbacks(
             activations,
         }
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     observation_stage.set(1);
     view.update(cx, |view, cx| {
@@ -1040,7 +1040,7 @@ fn presentation_suppression_unbinds_programmatic_activation_and_clears_armed_inp
         handle: handle.clone(),
         activations: activations.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let bounds = cx
         .debug_bounds("button:presentation-activation-button:root")
         .expect("visible button should expose its root bounds");

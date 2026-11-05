@@ -72,6 +72,9 @@ use windows::Win32::{
 };
 use windows::core::{PCWSTR, w};
 
+#[path = "native_paint_tests.rs"]
+mod native_paint_tests;
+
 const MAX_MESSAGE_PUMP_ATTEMPTS: usize = 512;
 const MAX_STALE_QUIT_MESSAGES: usize = 16;
 const NATIVE_INTERACTIVE_INPUT_CANARY: usize = 0x4f47_5049;

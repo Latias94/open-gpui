@@ -214,7 +214,7 @@ fn table_virtual_windows_recycle_without_reusing_semantic_identity(
 
     let (_, cx) = cx.add_window_view(|_, _| VirtualTableA11yProbe);
     assert!(cx.activate_accessibility());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let initial = cx
         .latest_accessibility_tree_update()
@@ -245,7 +245,7 @@ fn table_virtual_windows_recycle_without_reusing_semantic_identity(
         delta: ScrollDelta::Pixels(point(px(-440.0), px(0.0))),
         ..Default::default()
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let horizontal = cx
         .latest_accessibility_tree_update()
@@ -282,7 +282,7 @@ fn table_virtual_windows_recycle_without_reusing_semantic_identity(
         delta: ScrollDelta::Pixels(point(px(0.0), px(-240.0))),
         ..Default::default()
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let vertical = cx
         .latest_accessibility_tree_update()
@@ -320,7 +320,7 @@ fn table_virtual_windows_recycle_without_reusing_semantic_identity(
         delta: ScrollDelta::Pixels(point(px(10_000.0), px(0.0))),
         ..Default::default()
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let vertical_return_cell = cx
         .debug_bounds(&table_source_cell_selector(
@@ -334,7 +334,7 @@ fn table_virtual_windows_recycle_without_reusing_semantic_identity(
         delta: ScrollDelta::Pixels(point(px(0.0), px(10_000.0))),
         ..Default::default()
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let returned = cx
         .latest_accessibility_tree_update()

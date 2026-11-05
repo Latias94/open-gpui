@@ -23,23 +23,21 @@ struct Chunk {
     start: *mut u8,
     end: *mut u8,
     offset: *mut u8,
+    layout: alloc::Layout,
 }
 
 impl Drop for Chunk {
     fn drop(&mut self) {
         unsafe {
-            let chunk_size = self.end.offset_from_unsigned(self.start);
-            // SAFETY: This succeeded during allocation.
-            let layout = alloc::Layout::from_size_align_unchecked(chunk_size, 1);
-            alloc::dealloc(self.start, layout);
+            alloc::dealloc(self.start, self.layout);
         }
     }
 }
 
 impl Chunk {
-    fn new(chunk_size: NonZeroUsize) -> Self {
+    fn new(chunk_size: NonZeroUsize, alignment: usize) -> Self {
         // this only fails if chunk_size is unreasonably huge
-        let layout = alloc::Layout::from_size_align(chunk_size.get(), 1).unwrap();
+        let layout = alloc::Layout::from_size_align(chunk_size.get(), alignment).unwrap();
         let start = unsafe { alloc::alloc(layout) };
         if start.is_null() {
             handle_alloc_error(layout);
@@ -49,15 +47,20 @@ impl Chunk {
             start,
             end,
             offset: start,
+            layout,
         }
     }
 
     fn allocate(&mut self, layout: alloc::Layout) -> Option<NonNull<u8>> {
-        let aligned = unsafe { self.offset.add(self.offset.align_offset(layout.align())) };
-        let next = unsafe { aligned.add(layout.size()) };
+        let aligned_addr = self
+            .offset
+            .addr()
+            .checked_add(self.offset.align_offset(layout.align()))?;
+        let next_addr = aligned_addr.checked_add(layout.size())?;
 
-        if next <= self.end {
-            self.offset = next;
+        if next_addr <= self.end.addr() {
+            let aligned = self.offset.with_addr(aligned_addr);
+            self.offset = self.offset.with_addr(next_addr);
             NonNull::new(aligned)
         } else {
             None
@@ -75,11 +78,12 @@ pub struct Arena {
     valid: Rc<Cell<bool>>,
     current_chunk_index: usize,
     chunk_size: NonZeroUsize,
+    scope_depth: usize,
 }
 
 impl Drop for Arena {
     fn drop(&mut self) {
-        self.clear();
+        self.force_clear();
     }
 }
 
@@ -87,11 +91,12 @@ impl Arena {
     pub fn new(chunk_size: usize) -> Self {
         let chunk_size = NonZeroUsize::try_from(chunk_size).unwrap();
         Self {
-            chunks: vec![Chunk::new(chunk_size)],
+            chunks: vec![Chunk::new(chunk_size, std::mem::align_of::<usize>())],
             elements: Vec::new(),
             valid: Rc::new(Cell::new(true)),
             current_chunk_index: 0,
             chunk_size,
+            scope_depth: 0,
         }
     }
 
@@ -99,7 +104,40 @@ impl Arena {
         self.chunks.len() * self.chunk_size.get()
     }
 
+    /// Keeps allocations live until this scope and all enclosing scopes have ended.
+    pub(crate) fn begin_scope(&mut self) {
+        self.scope_depth = self
+            .scope_depth
+            .checked_add(1)
+            .expect("Arena scope depth exhausted");
+    }
+
+    /// Ends a scope without clearing its allocations.
+    ///
+    /// Panics if no matching scope is active.
+    pub(crate) fn end_scope(&mut self) {
+        self.scope_depth = self
+            .scope_depth
+            .checked_sub(1)
+            .expect("Arena::end_scope called without a matching begin_scope");
+    }
+
+    /// Drops allocations and resets storage unless an enclosing scope is still active.
+    ///
+    /// A nested draw's clear is deferred to the enclosing draw's clear, preserving
+    /// elements and references that the enclosing draw is still using.
     pub fn clear(&mut self) {
+        if self.scope_depth == 0 {
+            self.force_clear();
+        } else {
+            log::debug!(
+                "deferring arena clear; {} enclosing scope(s) still active",
+                self.scope_depth
+            );
+        }
+    }
+
+    fn force_clear(&mut self) {
         self.valid.set(false);
         self.valid = Rc::new(Cell::new(true));
         self.elements.clear();
@@ -124,27 +162,26 @@ impl Arena {
         }
 
         let layout = alloc::Layout::new::<T>();
-        let mut current_chunk = &mut self.chunks[self.current_chunk_index];
-        let ptr = if let Some(ptr) = current_chunk.allocate(layout) {
-            ptr.as_ptr()
-        } else {
+        assert!(
+            layout.size() <= self.chunk_size.get(),
+            "Arena chunk_size of {} is too small to allocate {} bytes",
+            self.chunk_size,
+            layout.size()
+        );
+        let ptr = loop {
+            if let Some(ptr) = self.chunks[self.current_chunk_index].allocate(layout) {
+                break ptr.as_ptr();
+            }
             self.current_chunk_index += 1;
             if self.current_chunk_index >= self.chunks.len() {
-                self.chunks.push(Chunk::new(self.chunk_size));
+                self.chunks.push(Chunk::new(
+                    self.chunk_size,
+                    layout.align().max(std::mem::align_of::<usize>()),
+                ));
                 assert_eq!(self.current_chunk_index, self.chunks.len() - 1);
                 log::trace!(
                     "increased element arena capacity to {}kb",
                     self.capacity() / 1024,
-                );
-            }
-            current_chunk = &mut self.chunks[self.current_chunk_index];
-            if let Some(ptr) = current_chunk.allocate(layout) {
-                ptr.as_ptr()
-            } else {
-                panic!(
-                    "Arena chunk_size of {} is too small to allocate {} bytes",
-                    self.chunk_size,
-                    layout.size()
                 );
             }
         };
@@ -285,5 +322,120 @@ mod tests {
 
         arena.clear();
         let _read_value = *value;
+    }
+
+    #[test]
+    fn test_clear_deferred_while_scope_active() {
+        struct DropCounter(Rc<Cell<usize>>);
+        impl Drop for DropCounter {
+            fn drop(&mut self) {
+                self.0.set(self.0.get() + 1);
+            }
+        }
+
+        let drops = Rc::new(Cell::new(0));
+        let mut arena = Arena::new(1024);
+        arena.begin_scope();
+        let mut outer = arena.alloc(|| 42u64);
+        arena.alloc(|| DropCounter(drops.clone()));
+        let outer_reference = &mut *outer;
+
+        arena.begin_scope();
+        let inner = arena.alloc(|| 7u64);
+        arena.alloc(|| DropCounter(drops.clone()));
+        arena.end_scope();
+        arena.clear();
+
+        *outer_reference += 1;
+        assert_eq!(*outer, 43);
+        assert_eq!(*inner, 7);
+        assert_eq!(drops.get(), 0);
+
+        arena.end_scope();
+        arena.clear();
+        assert_eq!(drops.get(), 2);
+        assert!(!outer.valid.get());
+        assert!(!inner.valid.get());
+        assert_eq!(*arena.alloc(|| 99u64), 99);
+    }
+
+    #[test]
+    fn test_clear_without_scope_is_immediate() {
+        let mut arena = Arena::new(1024);
+        let value = arena.alloc(|| 1u64);
+        assert_eq!(*value, 1);
+        arena.clear();
+        assert!(!value.valid.get());
+    }
+
+    #[test]
+    #[should_panic(expected = "Arena::end_scope called without a matching begin_scope")]
+    fn test_unbalanced_end_scope_panics() {
+        let mut arena = Arena::new(1024);
+        arena.begin_scope();
+        arena.end_scope();
+        arena.end_scope();
+    }
+
+    #[test]
+    fn test_drop_invalidates_allocations_even_with_unfinished_scope() {
+        let mut arena = Arena::new(1024);
+        arena.begin_scope();
+        let value = arena.alloc(|| 1u64);
+        drop(arena);
+        assert!(!value.valid.get());
+    }
+
+    #[test]
+    fn test_chunk_spill_does_not_advance_the_full_chunk() {
+        let mut chunk = Chunk::new(NonZeroUsize::new(8).unwrap(), 8);
+        assert!(chunk.allocate(alloc::Layout::new::<[u8; 8]>()).is_some());
+        assert_eq!(chunk.offset, chunk.end);
+        assert!(chunk.allocate(alloc::Layout::new::<u64>()).is_none());
+        assert_eq!(chunk.offset, chunk.end);
+        chunk.reset();
+        assert!(chunk.allocate(alloc::Layout::new::<u8>()).is_some());
+    }
+
+    #[test]
+    fn test_overaligned_values_survive_spill_and_reuse() {
+        #[repr(align(256))]
+        struct Aligned(u64);
+
+        let mut arena = Arena::new(256);
+        let byte = arena.alloc(|| 1u8);
+        let first = arena.alloc(|| Aligned(42));
+        let second = arena.alloc(|| Aligned(7));
+        assert_eq!(*byte, 1);
+        assert_eq!(first.0, 42);
+        assert_eq!(second.0, 7);
+        assert_eq!(first.ptr.align_offset(256), 0);
+        assert_eq!(second.ptr.align_offset(256), 0);
+        let capacity = arena.capacity();
+
+        arena.clear();
+        arena.alloc(|| 1u8);
+        let first = arena.alloc(|| Aligned(99));
+        let second = arena.alloc(|| Aligned(100));
+        assert_eq!(first.0, 99);
+        assert_eq!(second.0, 100);
+        assert_eq!(arena.capacity(), capacity);
+
+        let mut arena = Arena::new(256);
+        for index in 0u8..8 {
+            arena.alloc(|| [index; 256]);
+        }
+        arena.clear();
+        for index in 0..8 {
+            let value = arena.alloc(|| Aligned(index));
+            assert_eq!(value.0, index);
+            assert_eq!(value.ptr.align_offset(256), 0);
+        }
+        let capacity = arena.capacity();
+        arena.clear();
+        for index in 0..8 {
+            assert_eq!(arena.alloc(|| Aligned(index)).0, index);
+        }
+        assert_eq!(arena.capacity(), capacity);
     }
 }

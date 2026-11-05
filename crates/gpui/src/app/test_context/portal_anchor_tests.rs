@@ -32,7 +32,7 @@ fn deferred_depth_limit_accepts_a_chain_that_finishes_on_the_tenth_round(cx: &mu
     }
 
     let (_, cx) = cx.add_window_view(|_, _| TenRoundDeferredView);
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(cx.debug_bounds("ten-round-deferred-leaf").is_some());
 }
 
@@ -655,14 +655,14 @@ fn portal_anchor_candidate_order_and_multiple_followers_are_explicit(cx: &mut Te
     });
 
     observations.borrow_mut().clear();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let handle = cx.update_window_entity(&view, |view, _, _| view.handle);
     assert_eq!(observations.borrow().as_slice(), &[None]);
     let first_committed =
         resolve_committed(cx, handle).expect("the completed target should commit");
 
     observations.borrow_mut().clear();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_eq!(
         observations.borrow().as_slice(),
         &[None],
@@ -678,7 +678,7 @@ fn portal_anchor_candidate_order_and_multiple_followers_are_explicit(cx: &mut Te
         cx.notify();
     });
     observations.borrow_mut().clear();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let observations = observations.borrow();
     assert_eq!(observations.len(), 2);
@@ -725,7 +725,7 @@ fn portal_anchor_dependent_cached_views_reresolve_after_target_unmount(cx: &mut 
     });
     let handle = cx.update_window_entity(&root, |root, _, _| root.handle);
 
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(resolve_committed(cx, handle).is_some());
     assert!(cx.debug_bounds("cached-portal-follower-surface").is_some());
     assert!(direct_observations.borrow().last().unwrap().is_some());
@@ -733,7 +733,7 @@ fn portal_anchor_dependent_cached_views_reresolve_after_target_unmount(cx: &mut 
         let prior_follower_renders = follower_renders.get();
         let prior_direct_renders = direct_renders.get();
         let prior_direct_observations = direct_observations.borrow().len();
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         assert!(resolve_committed(cx, handle).is_some());
         assert!(cx.debug_bounds("cached-portal-follower-surface").is_some());
         assert!(follower_renders.get() > prior_follower_renders);
@@ -749,7 +749,7 @@ fn portal_anchor_dependent_cached_views_reresolve_after_target_unmount(cx: &mut 
         root.target_present = false;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_eq!(resolve_committed(cx, handle), None);
     assert!(
         cx.debug_bounds("cached-portal-follower-surface").is_none(),
@@ -764,7 +764,7 @@ fn portal_anchor_dependent_cached_views_reresolve_after_target_unmount(cx: &mut 
         root.target_present = true;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(resolve_committed(cx, handle).is_some());
     assert!(cx.debug_bounds("cached-portal-follower-surface").is_some());
     assert!(direct_observations.borrow().last().unwrap().is_some());
@@ -802,7 +802,7 @@ fn cached_and_live_bindings_share_one_duplicate_authority(cx: &mut TestAppContex
 
         bind_errors.borrow_mut().clear();
         resolve_errors.borrow_mut().clear();
-        cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        cx.update_window(window, |_, window, cx| window.draw(cx).clear(cx))
             .expect("the duplicate replay window should remain open");
         let initial_renders = renders.get();
 
@@ -812,7 +812,7 @@ fn cached_and_live_bindings_share_one_duplicate_authority(cx: &mut TestAppContex
         });
         bind_errors.borrow_mut().clear();
         resolve_errors.borrow_mut().clear();
-        cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        cx.update_window(window, |_, window, cx| window.draw(cx).clear(cx))
             .expect("the duplicate replay window should remain open");
 
         assert_eq!(
@@ -855,7 +855,7 @@ fn completed_frames_unlink_hidden_or_absent_targets_and_allow_rebinding(cx: &mut
     });
     let handle = cx.update_window_entity(&view, |view, _, _| view.handle);
 
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let inert =
         resolve_committed(cx, handle).expect("an inert target remains geometrically linked");
     assert_eq!(inert.presentation(), SubtreePresentation::Inert);
@@ -865,7 +865,7 @@ fn completed_frames_unlink_hidden_or_absent_targets_and_allow_rebinding(cx: &mut
         cx.notify();
     });
     observations.borrow_mut().clear();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_eq!(observations.borrow().as_slice(), &[None]);
     assert_eq!(resolve_committed(cx, handle), None);
 
@@ -875,7 +875,7 @@ fn completed_frames_unlink_hidden_or_absent_targets_and_allow_rebinding(cx: &mut
         cx.notify();
     });
     observations.borrow_mut().clear();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_eq!(observations.borrow().as_slice(), &[None]);
     assert_eq!(resolve_committed(cx, handle), None);
 
@@ -884,7 +884,7 @@ fn completed_frames_unlink_hidden_or_absent_targets_and_allow_rebinding(cx: &mut
         cx.notify();
     });
     observations.borrow_mut().clear();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(observations.borrow()[0].is_some());
     assert!(resolve_committed(cx, handle).is_some());
 }
@@ -897,7 +897,7 @@ fn portal_anchor_captures_target_scopes_independent_of_wrapper_order(cx: &mut Te
     });
     let handle = cx.update_window_entity(&view, |view, _, _| view.handle);
 
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let inert = resolve_committed(cx, handle).expect("the inner-scoped target should commit");
     assert_eq!(inert.presentation(), SubtreePresentation::Inert);
     assert_eq!(
@@ -909,7 +909,7 @@ fn portal_anchor_captures_target_scopes_independent_of_wrapper_order(cx: &mut Te
         view.presentation = SubtreePresentation::Hidden;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_eq!(resolve_committed(cx, handle), None);
 }
 
@@ -928,7 +928,7 @@ fn duplicate_binding_is_typed_and_failed_transactions_restore_uniqueness(cx: &mu
         }
     });
     duplicate_results.borrow_mut().clear();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let duplicate_handle = cx.update_window_entity(&duplicate_view, |view, _, _| view.handle);
     assert_eq!(duplicate_results.borrow()[0], Ok(()));
     assert_eq!(
@@ -954,7 +954,7 @@ fn duplicate_binding_is_typed_and_failed_transactions_restore_uniqueness(cx: &mu
         })
         .into();
     rollback_results.borrow_mut().clear();
-    cx.update_window(rollback_window, |_, window, cx| window.draw(cx).clear())
+    cx.update_window(rollback_window, |_, window, cx| window.draw(cx).clear(cx))
         .expect("the rollback test window should remain open");
     assert_eq!(rollback_results.borrow().as_slice(), &[Ok(())]);
     assert!(rollback_resolved.borrow().is_some());
@@ -986,7 +986,7 @@ fn portal_anchor_handles_cannot_cross_windows(cx: &mut TestAppContext) {
         })
         .into();
 
-    cx.update_window(second_window, |_, window, cx| window.draw(cx).clear())
+    cx.update_window(second_window, |_, window, cx| window.draw(cx).clear(cx))
         .expect("the second window should remain open");
     assert!(matches!(
         *bind_error.borrow(),
@@ -1020,7 +1020,7 @@ fn cached_anchor_journals_refresh_generation_and_rebuild_for_ancestor_facts(
     });
     let handle = cx.update_window_entity(&root, |root, _, _| root.handle);
 
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let first = resolve_committed(cx, handle).expect("the first cached anchor should commit");
     let first_renders = renders.get();
     assert_eq!(
@@ -1028,7 +1028,7 @@ fn cached_anchor_journals_refresh_generation_and_rebuild_for_ancestor_facts(
         point(px(100.0), px(50.0))
     );
 
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let replayed = resolve_committed(cx, handle).expect("the cached anchor should replay");
     assert_eq!(renders.get(), first_renders);
     assert!(replayed.frame_generation() > first.frame_generation());
@@ -1042,7 +1042,7 @@ fn cached_anchor_journals_refresh_generation_and_rebuild_for_ancestor_facts(
         root.translation_x = 200.0;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let translated = resolve_committed(cx, handle).expect("the translated anchor should commit");
     assert!(renders.get() > first_renders);
     assert_eq!(
@@ -1056,7 +1056,7 @@ fn cached_anchor_journals_refresh_generation_and_rebuild_for_ancestor_facts(
         root.clip_width = 40.0;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let constrained = resolve_committed(cx, handle).expect("the inert anchor should remain linked");
     assert!(renders.get() > translated_renders);
     assert_eq!(constrained.presentation(), SubtreePresentation::Inert);
@@ -1078,7 +1078,7 @@ fn outer_anchor_tracker_refreshes_cached_inner_target_scopes(cx: &mut TestAppCon
     });
     let handle = cx.update_window_entity(&root, |root, _, _| root.handle);
 
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let first = resolve_committed(cx, handle).expect("the cached inner target should commit");
     assert_eq!(first.presentation(), SubtreePresentation::Inert);
     assert_eq!(
@@ -1087,7 +1087,7 @@ fn outer_anchor_tracker_refreshes_cached_inner_target_scopes(cx: &mut TestAppCon
     );
     let first_renders = renders.get();
 
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let second = resolve_committed(cx, handle).expect("the cached inner target should stay linked");
     assert!(second.frame_generation() > first.frame_generation());
     assert_eq!(second.presentation(), first.presentation());
@@ -1117,7 +1117,7 @@ fn target_late_failure_suppresses_all_same_frame_followers(cx: &mut TestAppConte
 
     first_commits.set(0);
     second_commits.set(0);
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_eq!(first_commits.get(), 0);
     assert_eq!(second_commits.get(), 0);
     assert_eq!(resolve_committed(cx, handle), None);
@@ -1142,7 +1142,7 @@ fn follower_late_failure_does_not_invalidate_target_or_siblings(cx: &mut TestApp
 
     first_commits.set(0);
     second_commits.set(0);
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_eq!(first_commits.get(), 1);
     assert_eq!(second_commits.get(), 1);
     assert!(resolve_committed(cx, handle).is_some());
@@ -1165,7 +1165,7 @@ fn deferred_follower_waits_for_later_targets_and_resets_geometry_and_clip(cx: &m
 
     *observed.borrow_mut() = None;
     *surface_hitbox.borrow_mut() = None;
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let viewport_bounds =
         cx.update(|window, _| Bounds::new(point(px(0.0), px(0.0)), window.viewport_size()));
 

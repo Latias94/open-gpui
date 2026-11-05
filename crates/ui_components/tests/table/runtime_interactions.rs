@@ -25,7 +25,7 @@ fn table_runtime_header_click_emits_sort_action(cx: &mut open_gpui::TestAppConte
         actions: actions.clone(),
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let score_header = cx
@@ -33,7 +33,7 @@ fn table_runtime_header_click_emits_sort_action(cx: &mut open_gpui::TestAppConte
         .expect("score header should render as an interactive sort target");
     cx.simulate_click(score_header.center(), Default::default());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let actions = actions.borrow();
@@ -117,7 +117,7 @@ fn table_runtime_row_click_and_tree_toggle_emit_controlled_payloads(
         toggles: toggles.clone(),
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let row = cx
@@ -125,7 +125,7 @@ fn table_runtime_row_click_and_tree_toggle_emit_controlled_payloads(
         .expect("root row should render");
     cx.simulate_click(row.center(), Default::default());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert_eq!(
@@ -142,7 +142,7 @@ fn table_runtime_row_click_and_tree_toggle_emit_controlled_payloads(
         .expect("root tree toggle should render");
     cx.simulate_click(toggle.center(), Default::default());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert_eq!(activations.borrow().len(), 1);
@@ -158,7 +158,7 @@ fn table_runtime_row_click_and_tree_toggle_emit_controlled_payloads(
 
     cx.simulate_keystrokes("right");
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert_eq!(
@@ -248,7 +248,7 @@ fn table_runtime_row_click_selection_is_controlled_and_preserves_activation(
         selections: selections.clone(),
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let row = cx
@@ -259,7 +259,7 @@ fn table_runtime_row_click_selection_is_controlled_and_preserves_activation(
         .expect("selected row should render");
     cx.simulate_click(row.center(), Default::default());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert_eq!(activations.borrow().as_slice(), ["row-a"]);
@@ -321,7 +321,7 @@ fn table_runtime_duplicate_row_selection_emits_exact_controlled_identities(
         selections: selections.clone(),
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let first_identity = TableRowIdentity::source_instance("duplicate", "first");
@@ -334,7 +334,7 @@ fn table_runtime_duplicate_row_selection_emits_exact_controlled_identities(
     for _ in 0..2 {
         cx.simulate_click(first.center(), Default::default());
         cx.update(|window, cx| {
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
         });
     }
 
@@ -394,7 +394,7 @@ fn table_runtime_descendant_selection_emits_explicit_roots_and_commits_cleanly(
         selected_rows: vec![table_source_selection_identity("parent")],
         changes: changes.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let parent = cx
         .debug_bounds(&table_source_row_selector(
@@ -410,9 +410,9 @@ fn table_runtime_descendant_selection_emits_explicit_roots_and_commits_cleanly(
         .expect("inherited selected child row should render");
 
     cx.simulate_click(parent.center(), Default::default());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.simulate_click(child.center(), Default::default());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let changes_snapshot = changes.borrow().clone();
     assert_eq!(changes_snapshot.len(), 2);
@@ -428,7 +428,7 @@ fn table_runtime_descendant_selection_emits_explicit_roots_and_commits_cleanly(
         view.selected_rows = changes_snapshot[1].current_selection().to_vec();
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let child = cx
         .debug_bounds(&table_source_row_selector(
             "descendant-selection-runtime-table",
@@ -436,7 +436,7 @@ fn table_runtime_descendant_selection_emits_explicit_roots_and_commits_cleanly(
         ))
         .expect("child row should remain rendered after committing deselection");
     cx.simulate_click(child.center(), Default::default());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let changes = changes.borrow();
     let committed_child_change = changes.last().expect("child re-selection should emit");
@@ -481,7 +481,7 @@ fn table_runtime_explicit_control_selection_ignores_row_click(cx: &mut open_gpui
         selections: selections.clone(),
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let row = cx
@@ -492,7 +492,7 @@ fn table_runtime_explicit_control_selection_ignores_row_click(cx: &mut open_gpui
         .expect("selected row should render");
     cx.simulate_click(row.center(), Default::default());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert!(
@@ -557,7 +557,7 @@ fn table_runtime_unloaded_branch_toggle_emits_child_load_metadata(
         toggles: toggles.clone(),
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let toggle = cx
@@ -568,7 +568,7 @@ fn table_runtime_unloaded_branch_toggle_emits_child_load_metadata(
         .expect("remote branch tree toggle should render without loaded children");
     cx.simulate_click(toggle.center(), Default::default());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert_eq!(

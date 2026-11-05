@@ -294,7 +294,7 @@ fn avatar_renders_stable_debug_selector(cx: &mut open_gpui::TestAppContext) {
 
     let (_, cx) = cx.add_window_view(|_, _| TestView);
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert!(cx.debug_bounds("avatar:runtime-avatar:root").is_some());
@@ -548,7 +548,7 @@ fn low_state_primitives_render_stable_debug_selectors(cx: &mut open_gpui::TestAp
 
     let (_, cx) = cx.add_window_view(|_, _| TestView);
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     for selector in [
@@ -698,7 +698,7 @@ fn switch_runtime_click_emits_on_change_with_next_checked(cx: &mut open_gpui::Te
         changes: changes.clone(),
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let disabled_switch = cx
@@ -706,7 +706,7 @@ fn switch_runtime_click_emits_on_change_with_next_checked(cx: &mut open_gpui::Te
         .expect("disabled switch should expose a stable debug selector");
     cx.simulate_click(disabled_switch.center(), Default::default());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     assert!(
         changes.borrow().is_empty(),
@@ -718,7 +718,7 @@ fn switch_runtime_click_emits_on_change_with_next_checked(cx: &mut open_gpui::Te
         .expect("runtime switch should expose a stable debug selector");
     cx.simulate_click(runtime_switch.center(), Default::default());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     assert_eq!(*checked.borrow(), true);
     assert_eq!(changes.borrow().as_slice(), &[true]);
@@ -728,7 +728,7 @@ fn switch_runtime_click_emits_on_change_with_next_checked(cx: &mut open_gpui::Te
         .expect("runtime switch should remain rendered after controlled update");
     cx.simulate_click(runtime_switch.center(), Default::default());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     assert_eq!(*checked.borrow(), false);
     assert_eq!(changes.borrow().as_slice(), &[true, false]);

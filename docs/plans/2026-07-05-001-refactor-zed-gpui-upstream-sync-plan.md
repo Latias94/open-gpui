@@ -18,12 +18,16 @@ that branch's unfinished canonical-docking work. The July units below retain the
 requirements; they are not proof of parity with current Zed.
 
 The [candidate queue](../imports/zed-gpui-upstream-sync-candidates.md#november-5-maintained-framework-successor)
-now records upstream `635026fabc38440fce5e1767d125026a17b12012` and five proposed complete
+now records upstream `635026fabc38440fce5e1767d125026a17b12012` and five complete
 correctness units: arena custody, TextSystem lifetime, cached-view dependencies, text layout and
-pending-input/blur. Begin with the arena owner before substantial game-engine Editor adaptation.
-Reproduce each defect, integrate the complete owning fix, preserve fork contracts, run focused
-and affected regression cohorts serially, and record actual results. Source review and the
-current dependency-consumer tests do not qualify these pending ports.
+pending-input/blur. The arena unit is implemented with separate allocation, nested cleanup,
+App-bound tokens and the fork's native post-borrow maintenance; its
+[verification](../verification.md#element-arena-and-native-frame-maintenance) records allocator
+Miri, framework and Windows HWND evidence, including the remaining touchpad timing gap.
+Continue with TextSystem lifetime before substantial game-engine Editor adaptation. Reproduce
+each remaining defect, integrate the owning fix, preserve fork contracts, run focused and affected
+regression cohorts serially, and record actual results. Source review and dependency-consumer
+checks do not qualify the four pending ports or a complete framework refresh.
 
 After those units, compare a coherent text/framework refresh, including dependency/toolchain
 changes, before expanding the Editor component implementation. A game-engine rendering adapter

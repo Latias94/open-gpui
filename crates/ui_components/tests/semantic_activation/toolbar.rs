@@ -63,7 +63,7 @@ fn toolbar_action_routes_every_activation_source_through_one_transaction(
         disabled_handle: disabled_handle.clone(),
         duplicate_handle: duplicate_handle.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert!(cx.activate_accessibility());
     let initial = cx
@@ -237,7 +237,7 @@ fn toolbar_toggle_is_space_only_and_item_handler_overrides_toolbar_fallback(
         toolbar_activations: toolbar_activations.clone(),
         toggle_handle: toggle_handle.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert!(cx.activate_accessibility());
     let initial = cx
@@ -276,7 +276,7 @@ fn toolbar_toggle_is_space_only_and_item_handler_overrides_toolbar_fallback(
             toggle_handle.request(window, cx),
             ActivationRequestResult::Dispatched
         );
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     assert_eq!(item_activations.borrow().len(), 2);
     assert!(toolbar_activations.borrow().is_empty());
@@ -308,7 +308,7 @@ fn toolbar_accesskit_focus_adopts_the_roving_tab_stop_after_redraw(
     }
 
     let (_, cx) = cx.add_window_view(|_, _| Probe);
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(cx.activate_accessibility());
 
     let initial = cx
@@ -317,7 +317,7 @@ fn toolbar_accesskit_focus_adopts_the_roving_tab_stop_after_redraw(
     let beta = node_with_label(&initial, "Beta");
     assert!(cx.dispatch_accessibility_action(action_request(accesskit::Action::Focus, beta,)));
 
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(cx.debug_selector_is_focused("toolbar:focus-sync-toolbar:item:b"));
     assert_eq!(
         cx.latest_accessibility_tree_update()
@@ -328,7 +328,7 @@ fn toolbar_accesskit_focus_adopts_the_roving_tab_stop_after_redraw(
 
     cx.update(|window, cx| {
         window.focus_next(cx);
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     cx.run_until_parked();
 
@@ -382,7 +382,7 @@ fn toolbar_reentrant_activation_keeps_the_newest_focus_claim(cx: &mut open_gpui:
         first_handle: first_handle.clone(),
         second_handle: second_handle.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(cx.activate_accessibility());
     let initial = cx
         .latest_accessibility_tree_update()
@@ -394,7 +394,7 @@ fn toolbar_reentrant_activation_keeps_the_newest_focus_claim(cx: &mut open_gpui:
             first_handle.request(window, cx),
             ActivationRequestResult::Dispatched
         );
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert_eq!(trace.borrow().as_slice(), &["first", "second"]);
@@ -434,7 +434,7 @@ fn toolbar_kind_change_cancels_an_in_flight_activation(cx: &mut open_gpui::TestA
         toggle: false,
         activations: activations.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(cx.activate_accessibility());
     let initial = cx
         .latest_accessibility_tree_update()
@@ -451,7 +451,7 @@ fn toolbar_kind_change_cancels_an_in_flight_activation(cx: &mut open_gpui::TestA
         view.toggle = true;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let stale_up = cx.simulate_event_with_dispatch_snapshot(key_up("space", Modifiers::none()));
     assert!(stale_up.propagated());
@@ -488,7 +488,7 @@ fn toolbar_duplicate_identity_namespace_cannot_collide_with_reserved_looking_uni
     }
 
     let (_, cx) = cx.add_window_view(|_, _| Probe);
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert!(cx.activate_accessibility());
     let update = cx
@@ -548,7 +548,7 @@ fn toolbar_duplicate_reorder_invalidates_snapshot_local_identity(
     }
 
     let (view, cx) = cx.add_window_view(|_, _| Probe { reversed: false });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(cx.activate_accessibility());
     let initial = cx
         .latest_accessibility_tree_update()
@@ -565,7 +565,7 @@ fn toolbar_duplicate_reorder_invalidates_snapshot_local_identity(
         probe.reversed = true;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
 
     let reordered = cx
@@ -636,7 +636,7 @@ fn toolbar_unique_to_duplicate_redraw_transfers_focus_and_skips_duplicate_items(
         middle_handle: middle_handle.clone(),
         activations: activations.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert!(cx.activate_accessibility());
     let initial = cx
@@ -650,7 +650,7 @@ fn toolbar_unique_to_duplicate_redraw_transfers_focus_and_skips_duplicate_items(
             middle_handle.request(window, cx),
             ActivationRequestResult::Dispatched
         );
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     assert!(cx.debug_selector_is_focused("toolbar:duplicate-redraw-toolbar:item:middle-b"));
     assert_eq!(
@@ -668,7 +668,7 @@ fn toolbar_unique_to_duplicate_redraw_transfers_focus_and_skips_duplicate_items(
         view.duplicate_middle_values = true;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
 
     for prefix in [
@@ -705,7 +705,7 @@ fn toolbar_unique_to_duplicate_redraw_transfers_focus_and_skips_duplicate_items(
     let right_up = cx.simulate_event_with_dispatch_snapshot(key_up("right", Modifiers::none()));
     assert!(right_down.propagation_stopped());
     assert!(right_up.propagated());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert!(cx.debug_selector_is_focused("toolbar:duplicate-redraw-toolbar:item:right"));
     for prefix in [
@@ -790,7 +790,7 @@ fn toolbar_duplicate_redraw_does_not_steal_external_focus(cx: &mut open_gpui::Te
         middle_handle: middle_handle.clone(),
         outside_focus: cx.focus_handle(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert!(cx.activate_accessibility());
     let initial = cx
@@ -803,14 +803,14 @@ fn toolbar_duplicate_redraw_does_not_steal_external_focus(cx: &mut open_gpui::Te
             middle_handle.request(window, cx),
             ActivationRequestResult::Dispatched
         );
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     assert!(cx.debug_selector_is_focused("toolbar:external-focus-toolbar:item:middle-b"));
 
     cx.update(|window, cx| {
         let outside_focus = view.read(cx).outside_focus.clone();
         outside_focus.focus(window, cx);
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     cx.run_until_parked();
     assert!(cx.debug_selector_is_focused("toolbar-outside-focus"));
@@ -825,7 +825,7 @@ fn toolbar_duplicate_redraw_does_not_steal_external_focus(cx: &mut open_gpui::Te
         probe.duplicate_middle_value = true;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
 
     assert!(cx.debug_selector_is_focused("toolbar-outside-focus"));

@@ -280,11 +280,11 @@ mod tests {
             }
         });
 
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         let initial_renders = renders.get();
         let first = reported.borrow().last().cloned().unwrap();
 
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         assert_eq!(renders.get(), initial_renders);
         let replayed = reported.borrow().last().cloned().unwrap();
         assert!(replayed.frame_generation() > first.frame_generation());
@@ -294,7 +294,7 @@ mod tests {
             root.translated = true;
             cx.notify();
         });
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
 
         assert!(renders.get() > initial_renders);
         let translated = reported.borrow().last().cloned().unwrap();

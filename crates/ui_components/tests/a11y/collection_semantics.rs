@@ -521,7 +521,7 @@ fn virtualized_list_final_tree_distinguishes_rows_from_structural_content_and_re
     });
     cx.run_until_parked();
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     let recycled = cx
         .latest_accessibility_tree_update()
@@ -541,7 +541,7 @@ fn virtualized_list_final_tree_distinguishes_rows_from_structural_content_and_re
     });
     cx.run_until_parked();
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     let returned = cx
         .latest_accessibility_tree_update()
@@ -559,7 +559,7 @@ fn virtualized_list_final_tree_distinguishes_rows_from_structural_content_and_re
     });
     cx.run_until_parked();
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     let empty = cx
         .latest_accessibility_tree_update()
@@ -585,7 +585,7 @@ fn virtualized_list_final_tree_distinguishes_rows_from_structural_content_and_re
     });
     cx.run_until_parked();
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     let repopulated = cx
         .latest_accessibility_tree_update()

@@ -5239,7 +5239,7 @@ mod tests {
         cx.set_platform_window_physical_client_geometry(window, physical_bounds, scale_factor);
         cx.update(|window, cx| {
             let _ = window.activate_window();
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
         });
         cx.run_until_parked();
         cx.simulate_mouse_down(
@@ -5293,7 +5293,7 @@ mod tests {
         cx.set_platform_window_physical_client_geometry(window, Some(initial_bounds), 2.0);
         cx.update(|window, cx| {
             let _ = window.activate_window();
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
         });
         cx.run_until_parked();
 
@@ -5428,11 +5428,11 @@ mod tests {
             }
         });
 
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         assert_eq!(renders.get(), 1);
         assert_eq!(drops.get(), 0);
 
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         assert_eq!(renders.get(), 1, "the child should reuse cached prepaint");
         assert_eq!(
             drops.get(),
@@ -5444,7 +5444,7 @@ mod tests {
             root.show_child = false;
             cx.notify();
         });
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         assert_eq!(
             drops.get(),
             1,
@@ -5543,7 +5543,7 @@ mod tests {
         });
 
         cx.update(|window, cx| {
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
             window.focus_next(cx);
         });
         assert!(cx.debug_selector_is_focused("explicit-tab-stop:first"));
@@ -5575,7 +5575,7 @@ mod tests {
         });
 
         cx.update(|window, cx| {
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
             let first = view.read(cx).first.clone();
             first.focus(window, cx);
             let first_claim = window.focus_claim_revision();
@@ -5612,7 +5612,7 @@ mod tests {
         let (view, cx) = test_app.add_window_view(|_, cx| DroppedFocusProbe {
             focus: Some(cx.focus_handle()),
         });
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         let claim_revision = cx.update(|window, cx| {
             let focus = view
                 .read(cx)
@@ -5630,7 +5630,7 @@ mod tests {
         });
         cx.run_until_parked();
         cx.update(|window, cx| {
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
             assert!(window.focused(cx).is_none());
             assert_eq!(window.focus_claim_revision(), claim_revision);
         });
@@ -5703,7 +5703,7 @@ mod tests {
         });
 
         cx.update(|window, cx| {
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
             let scope = view.read(cx).scope.clone();
             assert!(window.focus_next_within(&scope, cx));
         });
@@ -5728,7 +5728,7 @@ mod tests {
             view.show_last = false;
             cx.notify();
         });
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.update_window_entity(&view, |view, window, cx| view.first.focus(window, cx));
         cx.update(|window, cx| {
             let (scope, last) = {
@@ -6085,7 +6085,7 @@ mod tests {
         });
 
         cx.update(|window, cx| {
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
         });
         events.borrow_mut().clear();
 
@@ -6117,7 +6117,7 @@ mod tests {
         assert_eq!(handle.offset().y, px(-24.));
 
         cx.update(|window, cx| {
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
         });
         let events = events.borrow();
         assert_eq!(events.first().map(String::as_str), Some("capture"));
@@ -6167,7 +6167,7 @@ mod tests {
         });
 
         cx.update(|window, cx| {
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
         });
         events.borrow_mut().clear();
 
@@ -6190,7 +6190,7 @@ mod tests {
         assert_eq!(handle.offset().y, px(0.));
 
         cx.update(|window, cx| {
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
         });
         assert_eq!(
             events.borrow().as_slice(),
@@ -6245,7 +6245,7 @@ mod tests {
         });
 
         cx.update(|window, cx| {
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
         });
 
         cx.simulate_event(MouseMoveEvent {
@@ -6331,7 +6331,7 @@ mod tests {
         });
 
         cx.update(|window, cx| {
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
         });
         let dispatch = dispatch_scroll_wheel_at_probe(cx);
 
@@ -6359,7 +6359,7 @@ mod tests {
         });
 
         cx.update(|window, cx| {
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
         });
         let dispatch = dispatch_scroll_wheel_at_probe(cx);
 
@@ -6396,7 +6396,7 @@ mod tests {
 
         test_app
             .update_window(any_window, |_, window, cx| {
-                window.draw(cx).clear();
+                window.draw(cx).clear(cx);
             })
             .unwrap();
 
@@ -6416,7 +6416,7 @@ mod tests {
 
         test_app
             .update_window(any_window, |_, window, cx| {
-                window.draw(cx).clear();
+                window.draw(cx).clear(cx);
             })
             .unwrap();
 
@@ -6552,7 +6552,7 @@ mod tests {
         let any_window = window.into();
 
         test_app
-            .update_window(any_window, |_, window, cx| window.draw(cx).clear())
+            .update_window(any_window, |_, window, cx| window.draw(cx).clear(cx))
             .unwrap();
         test_app
             .update_window(any_window, |_, window, cx| {
@@ -6586,7 +6586,7 @@ mod tests {
         test_app
             .update_window(any_window, |_, window, cx| {
                 window.refresh();
-                window.draw(cx).clear();
+                window.draw(cx).clear(cx);
             })
             .unwrap();
 

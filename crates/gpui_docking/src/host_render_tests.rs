@@ -222,7 +222,7 @@ fn transformed_host_keeps_layout_facts_and_advances_display_geometry_generation(
     });
     cx.run_until_parked();
     let mut visual = VisualTestContext::from_window(window.into(), cx);
-    visual.update(|window, cx| window.draw(cx).clear());
+    visual.update(|window, cx| window.draw(cx).clear(cx));
 
     let window_id = window.window_id();
     let tabs_selector = selector_for(&visual, &host, DockDebugRegion::Tabs { node: root })
@@ -270,7 +270,7 @@ fn transformed_host_keeps_layout_facts_and_advances_display_geometry_generation(
         })
         .expect("transformed DockHost fixture window should remain live");
     cx.run_until_parked();
-    visual.update(|window, cx| window.draw(cx).clear());
+    visual.update(|window, cx| window.draw(cx).clear(cx));
 
     let second_tabs_displayed = debug_bounds(&mut visual, &tabs_selector);
     let (second_tabs_layout, second_runtime_displayed, second_generation) =
@@ -304,7 +304,7 @@ fn transformed_host_keeps_layout_facts_and_advances_display_geometry_generation(
 
     visual.simulate_mouse_move(point(px(f32::MAX), px(f32::MAX)), None, Modifiers::none());
     host.update(cx, |_, cx| cx.notify());
-    visual.update(|window, cx| window.draw(cx).clear());
+    visual.update(|window, cx| window.draw(cx).clear(cx));
     host.update(cx, |host, _| {
         assert!(
             host.viewport_runtime()
@@ -318,7 +318,7 @@ fn transformed_host_keeps_layout_facts_and_advances_display_geometry_generation(
 
     visual.simulate_mouse_move(second_runtime_displayed.center(), None, Modifiers::none());
     host.update(cx, |_, cx| cx.notify());
-    visual.update(|window, cx| window.draw(cx).clear());
+    visual.update(|window, cx| window.draw(cx).clear(cx));
     host.update(cx, |host, _| {
         assert!(
             host.viewport_runtime()
@@ -337,7 +337,7 @@ fn transformed_host_keeps_layout_facts_and_advances_display_geometry_generation(
         })
         .expect("transformed DockHost fixture window should remain live");
     cx.run_until_parked();
-    visual.update(|window, cx| window.draw(cx).clear());
+    visual.update(|window, cx| window.draw(cx).clear(cx));
     host.update(cx, |host, _| {
         assert!(
             host.viewport_runtime()
@@ -356,7 +356,7 @@ fn transformed_host_keeps_layout_facts_and_advances_display_geometry_generation(
         })
         .expect("transformed DockHost fixture window should remain live");
     cx.run_until_parked();
-    visual.update(|window, cx| window.draw(cx).clear());
+    visual.update(|window, cx| window.draw(cx).clear(cx));
     let restored_generation = host.update(cx, |host, _| {
         assert!(
             host.viewport_runtime()
@@ -378,7 +378,7 @@ fn transformed_host_keeps_layout_facts_and_advances_display_geometry_generation(
         })
         .expect("cached DockHost fixture window should remain live");
     cx.run_until_parked();
-    visual.update(|window, cx| window.draw(cx).clear());
+    visual.update(|window, cx| window.draw(cx).clear(cx));
     host.update(cx, |host, _| {
         let runtime = host.viewport_runtime();
         assert_eq!(
@@ -400,7 +400,7 @@ fn transformed_host_keeps_layout_facts_and_advances_display_geometry_generation(
         })
         .expect("transformed DockHost fixture window should remain live");
     cx.run_until_parked();
-    visual.update(|window, cx| window.draw(cx).clear());
+    visual.update(|window, cx| window.draw(cx).clear(cx));
 
     host.update(cx, |host, _| {
         let runtime = host.viewport_runtime();
@@ -445,7 +445,7 @@ fn dock_host_presentation_suppresses_routes_and_republishes_fresh_geometry(
     });
     cx.run_until_parked();
     let mut visual = VisualTestContext::from_window(window.into(), cx);
-    visual.update(|window, cx| window.draw(cx).clear());
+    visual.update(|window, cx| window.draw(cx).clear(cx));
     visual.update(|window, _| {
         let _ = window.activate_window();
     });
@@ -497,7 +497,7 @@ fn dock_host_presentation_suppresses_routes_and_republishes_fresh_geometry(
         })
         .unwrap();
     cx.run_until_parked();
-    visual.update(|window, cx| window.draw(cx).clear());
+    visual.update(|window, cx| window.draw(cx).clear(cx));
     assert!(
         visual.debug_bounds(&host_selector).is_some(),
         "inert DockHost should remain painted and diagnosable"
@@ -527,7 +527,7 @@ fn dock_host_presentation_suppresses_routes_and_republishes_fresh_geometry(
         })
         .unwrap();
     cx.run_until_parked();
-    visual.update(|window, cx| window.draw(cx).clear());
+    visual.update(|window, cx| window.draw(cx).clear(cx));
 
     start_tab_drag(&mut visual, &host, root, "a");
     let source_tab = selector_for(
@@ -566,7 +566,7 @@ fn dock_host_presentation_suppresses_routes_and_republishes_fresh_geometry(
         })
         .unwrap();
     cx.run_until_parked();
-    visual.update(|window, cx| window.draw(cx).clear());
+    visual.update(|window, cx| window.draw(cx).clear(cx));
     visual.update(|window, cx| {
         assert!(window.captured_pointer().is_none());
         assert!(window.accepts_pointer_input());
@@ -589,7 +589,7 @@ fn dock_host_presentation_suppresses_routes_and_republishes_fresh_geometry(
         })
         .unwrap();
     cx.run_until_parked();
-    visual.update(|window, cx| window.draw(cx).clear());
+    visual.update(|window, cx| window.draw(cx).clear(cx));
     host.update(cx, |host, _| {
         assert!(
             host.viewport_runtime()
@@ -647,7 +647,7 @@ fn shutting_down_surface_host_remains_painted_but_rejects_tab_interaction(cx: &m
         .root(cx)
         .expect("the primary surface window should expose its DockHost root");
     let mut visual = VisualTestContext::from_window(anchor, cx);
-    visual.update(|window, cx| window.draw(cx).clear());
+    visual.update(|window, cx| window.draw(cx).clear(cx));
     let host_selector = selector_for(&visual, &host, DockDebugRegion::Host)
         .expect("the active surface host should publish its debug selector");
     let tab_b_selector = selector_for(
@@ -772,7 +772,7 @@ fn shutting_down_surface_host_remains_painted_but_rejects_tab_interaction(cx: &m
     cx.update(|_| {});
     cx.run_until_parked();
     assert!(cx.windows().contains(&anchor));
-    visual.update(|window, cx| window.draw(cx).clear());
+    visual.update(|window, cx| window.draw(cx).clear(cx));
     assert!(
         visual.debug_bounds(&host_selector).is_some(),
         "a shutting-down surface host should preserve its last paintable tree"
@@ -836,7 +836,7 @@ fn shutting_down_surface_host_remains_painted_but_rejects_tab_interaction(cx: &m
         .root(cx)
         .expect("the reopened surface window should expose its DockHost root");
     let mut g2_visual = VisualTestContext::from_window(g2_window, cx);
-    g2_visual.update(|window, cx| window.draw(cx).clear());
+    g2_visual.update(|window, cx| window.draw(cx).clear(cx));
     let g2_tab_b = selector_for(
         &g2_visual,
         &g2_host,

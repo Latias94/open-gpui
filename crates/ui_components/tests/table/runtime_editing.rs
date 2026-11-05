@@ -86,7 +86,7 @@ fn table_runtime_text_cell_edit_emits_change_without_row_interaction(
         selections: selections.clone(),
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert!(
@@ -128,7 +128,7 @@ fn table_runtime_text_cell_edit_emits_change_without_row_interaction(
     cx.simulate_keystrokes("space");
     cx.simulate_input("Prime");
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let edits = edits.borrow();
@@ -272,7 +272,7 @@ fn table_runtime_multiline_cell_edit_emits_newline_change_without_row_interactio
         selections: selections.clone(),
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert!(
@@ -305,7 +305,7 @@ fn table_runtime_multiline_cell_edit_emits_newline_change_without_row_interactio
     cx.simulate_keystrokes("enter");
     cx.simulate_input("Line 2");
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let edits = edits.borrow();
@@ -436,7 +436,7 @@ fn table_runtime_boolean_cell_edit_emits_toggle_change_without_row_interaction(
         selections: selections.clone(),
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert!(
@@ -476,7 +476,7 @@ fn table_runtime_boolean_cell_edit_emits_toggle_change_without_row_interaction(
         .expect("editable enabled checkbox should expose a stable debug selector");
     cx.simulate_click(checkbox.center(), Default::default());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let edits = edits.borrow();
@@ -602,7 +602,7 @@ fn table_runtime_select_cell_edit_emits_change_without_row_interaction(
         selections: selections.clone(),
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let trigger_selector =
@@ -613,7 +613,7 @@ fn table_runtime_select_cell_edit_emits_change_without_row_interaction(
         .expect("table select trigger should be rendered");
     cx.simulate_click(trigger.center(), Default::default());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert!(
@@ -628,7 +628,7 @@ fn table_runtime_select_cell_edit_emits_change_without_row_interaction(
     if cx.debug_bounds(content_selector).is_none() {
         cx.simulate_keystrokes("space");
         cx.update(|window, cx| {
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
         });
     }
 
@@ -649,7 +649,7 @@ fn table_runtime_select_cell_edit_emits_change_without_row_interaction(
         .expect("blocked option should be rendered in the table select popup");
     cx.simulate_click(blocked.center(), Default::default());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let edits = edits.borrow();

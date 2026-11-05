@@ -275,7 +275,7 @@ fn text_input_runtime_accepts_controller_backed_simulated_input(
         controller: controller.clone(),
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let input = cx
@@ -284,7 +284,7 @@ fn text_input_runtime_accepts_controller_backed_simulated_input(
     cx.simulate_click(input.center(), Default::default());
     cx.simulate_input("hello\nworld");
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     cx.update_entity(&controller, |controller, _| {
@@ -331,7 +331,7 @@ fn controlled_text_input_on_change_accepts_input_without_supplied_controller(
         changes: changes.clone(),
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let input = cx
@@ -340,7 +340,7 @@ fn controlled_text_input_on_change_accepts_input_without_supplied_controller(
     cx.simulate_click(input.center(), Default::default());
     cx.simulate_input("hello\nworld");
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert_eq!(value.borrow().as_str(), "hello world");
@@ -458,7 +458,7 @@ fn controlled_textarea_on_change_preserves_newline_input(cx: &mut open_gpui::Tes
         changes: changes.clone(),
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let input = cx
@@ -467,7 +467,7 @@ fn controlled_textarea_on_change_preserves_newline_input(cx: &mut open_gpui::Tes
     cx.simulate_click(input.center(), Default::default());
     cx.simulate_input("Line 1\nLine 2");
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert_eq!(value.borrow().as_str(), "Line 1\nLine 2");

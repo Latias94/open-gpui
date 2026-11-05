@@ -28,7 +28,7 @@ fn link_accepts_enter_rejects_space_and_preserves_typed_navigation_payload(
         activations: activations.clone(),
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let bounds = cx

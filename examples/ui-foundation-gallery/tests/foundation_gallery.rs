@@ -170,7 +170,7 @@ fn table_header_selector(table_id: &str, identity: &TableResolvedHeaderIdentity)
 
 fn redraw(cx: &mut VisualTestContext) {
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 }
 
@@ -333,7 +333,7 @@ impl<'a> StoryRuntimeProbe<'a> {
     fn drain_next_frame(&mut self) {
         self.cx.update(|window, cx| {
             window.drain_next_frame_callbacks_for_test(cx);
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
         });
         self.cx.run_until_parked();
     }

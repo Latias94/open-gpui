@@ -99,7 +99,7 @@ fn presentation_suppression_disables_modal_authority_without_replaying_focus(
     });
     let root = window.root(cx).unwrap();
     let any_window = window.into();
-    cx.update_window(any_window, |_, window, cx| window.draw(cx).clear())
+    cx.update_window(any_window, |_, window, cx| window.draw(cx).clear(cx))
         .unwrap();
     let runtime = {
         let child = cx.read(|cx| root.read(cx).child.clone());
@@ -510,7 +510,7 @@ impl Render for OpenChangeEffectProbe {
                         cx,
                         move |window, cx| match effect {
                             OpenChangeEffect::Redraw => {
-                                window.draw(cx).clear();
+                                window.draw(cx).clear(cx);
                             }
                             OpenChangeEffect::Commit | OpenChangeEffect::Supersede => {
                                 owner
@@ -519,7 +519,7 @@ impl Render for OpenChangeEffectProbe {
                                         cx.notify();
                                     })
                                     .expect("controlled effect owner should remain live");
-                                window.draw(cx).clear();
+                                window.draw(cx).clear(cx);
                                 if matches!(effect, OpenChangeEffect::Supersede) {
                                     effect_runtime
                                         .request_open_change(
@@ -925,7 +925,7 @@ fn run_controlled_open_effect(
     let window = cx
         .add_window(move |window, cx| OpenChangeEffectProbe::new(effect, probe_events, window, cx));
     let any_window = window.clone().into();
-    cx.update_window(any_window, |_, window, cx| window.draw(cx).clear())
+    cx.update_window(any_window, |_, window, cx| window.draw(cx).clear(cx))
         .expect("controlled effect window should draw");
 
     assert!(cx.activate_accessibility(any_window));
@@ -1602,7 +1602,7 @@ fn foreign_surface_does_not_project_parentage_into_child_window_runtime(
         })
         .expect("first window should remain open");
     let first_any = first_window.clone().into();
-    cx.update_window(first_any, |_, window, cx| window.draw(cx).clear())
+    cx.update_window(first_any, |_, window, cx| window.draw(cx).clear(cx))
         .expect("local surface window should draw");
 
     let (surface_runtime, surface_binding, local_parent) = first_window
@@ -1645,7 +1645,7 @@ fn foreign_surface_does_not_project_parentage_into_child_window_runtime(
         })
         .expect("second window should remain open");
     let second_any = second_window.clone().into();
-    cx.update_window(second_any, |_, window, cx| window.draw(cx).clear())
+    cx.update_window(second_any, |_, window, cx| window.draw(cx).clear(cx))
         .expect("foreign surface window should draw");
 
     let foreign_parent = second_window
@@ -1715,7 +1715,7 @@ fn inside_region_does_not_project_parentage_into_nested_children(
         })
         .expect("inside-region window should remain open");
     let any_window = window.clone().into();
-    cx.update_window(any_window, |_, window, cx| window.draw(cx).clear())
+    cx.update_window(any_window, |_, window, cx| window.draw(cx).clear(cx))
         .expect("inside-region window should draw");
 
     let nested_parent = window
@@ -1754,7 +1754,7 @@ fn rounded_inside_region_uses_exact_clip_for_outside_press(cx: &mut open_gpui::T
         })
         .expect("rounded inside-region window should remain open");
     let any_window = window.clone().into();
-    cx.update_window(any_window, |_, window, cx| window.draw(cx).clear())
+    cx.update_window(any_window, |_, window, cx| window.draw(cx).clear(cx))
         .expect("rounded inside-region window should draw");
 
     let (corner_decision, center_decision) = window

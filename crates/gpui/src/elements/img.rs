@@ -891,11 +891,11 @@ mod tests {
         let cx = cx.add_empty_window();
 
         let first = cx.update(|window, cx| {
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
             window.capture_frame()
         });
         let second = cx.update(|window, cx| {
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
             window.capture_frame()
         });
 
@@ -983,11 +983,11 @@ mod tests {
         });
 
         let first_frame_generation = cx.update(|window, cx| {
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
             window.rendered_frame_image_paint_diagnostics()[0].frame_generation
         });
         let second_frame_generation = cx.update(|window, cx| {
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
             window.rendered_frame_image_paint_diagnostics()[0].frame_generation
         });
 

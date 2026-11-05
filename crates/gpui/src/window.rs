@@ -86,6 +86,8 @@ use uuid::Uuid;
 
 pub(crate) mod a11y;
 mod bring_into_view;
+#[cfg(test)]
+mod element_arena_tests;
 mod frame_journal;
 mod frame_pump;
 mod input_dispatch;
@@ -315,21 +317,38 @@ pub(crate) fn with_element_arena<R>(f: impl FnOnce(&mut Arena) -> R) -> R {
     })
 }
 
-/// RAII guard that sets CURRENT_ELEMENT_ARENA for the duration of a draw operation.
-/// When dropped, restores the previous arena (supporting nested draws).
+/// Keeps the entered arena allocated and defers clearing until enclosing draws end.
+///
+/// Consuming the guard with [`Self::exit`] returns the clear token. Unwinding also
+/// restores TLS and balances the arena scope, leaving cleanup to the next draw.
 pub(crate) struct ElementArenaScope {
+    entered: Rc<RefCell<Arena>>,
     previous: Option<*const RefCell<Arena>>,
+    exited: bool,
 }
 
 impl ElementArenaScope {
     /// Enter a scope where element allocations use the given arena.
-    pub(crate) fn enter(arena: &RefCell<Arena>) -> Self {
+    pub(crate) fn enter(arena: &Rc<RefCell<Arena>>) -> Self {
+        arena.borrow_mut().begin_scope();
         let previous = CURRENT_ELEMENT_ARENA.with(|current| {
             let prev = current.get();
-            current.set(Some(arena as *const RefCell<Arena>));
+            current.set(Some(Rc::as_ptr(arena)));
             prev
         });
-        Self { previous }
+        Self {
+            entered: arena.clone(),
+            previous,
+            exited: false,
+        }
+    }
+
+    /// Ends this scope and returns a clear token for its captured arena.
+    pub(crate) fn exit(mut self) -> ArenaClearNeeded {
+        self.exited = true;
+        ArenaClearNeeded {
+            arena: Rc::downgrade(&self.entered),
+        }
     }
 }
 
@@ -338,29 +357,34 @@ impl Drop for ElementArenaScope {
         CURRENT_ELEMENT_ARENA.with(|current| {
             current.set(self.previous);
         });
+        self.entered.borrow_mut().end_scope();
+        if !self.exited && !std::thread::panicking() {
+            debug_assert!(false, "ElementArenaScope dropped without calling exit()");
+            log::error!(
+                "ElementArenaScope dropped without calling exit(); \
+                 the arena clear for this draw was never requested"
+            );
+        }
     }
 }
 
 /// Returned when the element arena has been used and so must be cleared before the next draw.
 #[must_use]
 pub struct ArenaClearNeeded {
-    arena: *const RefCell<Arena>,
+    arena: RcWeak<RefCell<Arena>>,
 }
 
 impl ArenaClearNeeded {
-    /// Create a new ArenaClearNeeded that will clear the given arena.
-    pub(crate) fn new(arena: &RefCell<Arena>) -> Self {
-        Self {
-            arena: arena as *const RefCell<Arena>,
-        }
-    }
-
-    /// Clear the element arena.
-    pub fn clear(self) {
-        // SAFETY: The arena pointer is valid because ArenaClearNeeded is created
-        // at the end of draw() and must be cleared before the next draw.
-        let arena_cell = unsafe { &*self.arena };
-        arena_cell.borrow_mut().clear();
+    /// Clears the arena of the App this draw ran against, or defers to an enclosing draw.
+    ///
+    /// Panics if passed a different App. The weak handle retains allocation identity
+    /// even after the original App is dropped; it never keeps arena contents alive.
+    pub fn clear(self, cx: &mut App) {
+        assert!(
+            std::ptr::eq(self.arena.as_ptr(), Rc::as_ptr(&cx.element_arena)),
+            "ArenaClearNeeded::clear called with a different App than the draw ran against"
+        );
+        cx.element_arena.borrow_mut().clear();
     }
 }
 
@@ -1839,6 +1863,7 @@ pub struct Window {
     /// Used to selectively enable VRR optimization only when input rate exceeds 60fps.
     pub(crate) input_rate_tracker: Rc<RefCell<InputRateTracker>>,
     last_frame_time: Cell<Option<Instant>>,
+    deferred_force_render: bool,
     #[cfg(feature = "input-latency-histogram")]
     input_latency_tracker: InputLatencyTracker,
     last_input_modality: InputModality,
@@ -3088,6 +3113,7 @@ impl Window {
             needs_present,
             input_rate_tracker,
             last_frame_time: Cell::new(None),
+            deferred_force_render: false,
             #[cfg(feature = "input-latency-histogram")]
             input_latency_tracker: InputLatencyTracker::new()?,
             last_input_modality: InputModality::Mouse,
@@ -7194,6 +7220,9 @@ impl Window {
 
     fn complete_frame(&self) {
         self.platform_window.completed_frame();
+        if let Some(command) = self.platform_window.native_frame_completed_command() {
+            self.platform_command_sink.enqueue(command);
+        }
     }
 
     pub(crate) fn native_frame_requested(
@@ -7211,9 +7240,10 @@ impl Window {
             self.fresh_initial_presentation_frame_is_required() || renderer_repaint_pending;
         // A force hint can outlive the recovery draw it requested. Once a suitable fresh scene is
         // already accepted, presenting that scene takes precedence over producing another one.
+        let requested_force_render =
+            mem::take(&mut self.deferred_force_render) | request_frame_options.force_render;
         let force_render = fresh_frame_required
-            || (request_frame_options.force_render
-                && !(initial_presentation_pending && !fresh_frame_required));
+            || (requested_force_render && !(initial_presentation_pending && !fresh_frame_required));
         let min_frame_interval = if initial_presentation_pending
             || renderer_repaint_pending
             || provisional_presentation_pending
@@ -7235,6 +7265,7 @@ impl Window {
         };
         let now = Instant::now();
         if frame_should_wait(now, self.last_frame_time.get(), min_frame_interval) {
+            self.deferred_force_render |= force_render;
             self.complete_frame();
             return;
         }
@@ -7269,7 +7300,7 @@ impl Window {
                 {
                     self.present(cx);
                 }
-                arena_clear_needed.clear();
+                arena_clear_needed.clear(cx);
             })
         } else if needs_present {
             if self.fresh_initial_presentation_is_pending()
@@ -7462,10 +7493,10 @@ impl Window {
     pub fn draw(&mut self, cx: &mut App) -> ArenaClearNeeded {
         // Set up the per-App arena for element allocation during this draw.
         // This ensures that multiple test Apps have isolated arenas.
-        let _arena_scope = ElementArenaScope::enter(&cx.element_arena);
+        let arena_scope = ElementArenaScope::enter(&cx.element_arena);
 
         if !self.begin_fresh_initial_presentation_attempt(cx) {
-            return ArenaClearNeeded::new(&cx.element_arena);
+            return arena_scope.exit();
         }
         #[cfg(feature = "input-latency-histogram")]
         self.input_latency_tracker.record_frame_drawn();
@@ -7599,7 +7630,7 @@ impl Window {
                 self.refreshing = true;
                 self.invalidator.set_dirty(true);
             }
-            return ArenaClearNeeded::new(&cx.element_arena);
+            return arena_scope.exit();
         }
         self.frame_focus_authority_sealed = true;
         debug_assert!(self.subtree_presentation_stack.borrow().is_empty());
@@ -7805,7 +7836,7 @@ impl Window {
         }
         self.needs_present.set(true);
         self.presentation_state.frame_accepted_generation = Some(self.rendered_frame.generation);
-        ArenaClearNeeded::new(&cx.element_arena)
+        arena_scope.exit()
     }
 
     fn select_frame_input_handler_after_composition_cleanup(
@@ -12296,7 +12327,7 @@ impl Window {
         }
 
         if self.invalidator.is_dirty() {
-            self.draw(cx).clear();
+            self.draw(cx).clear(cx);
             if !self.user_interaction_is_admitted() {
                 cx.stop_propagation();
                 return;
@@ -14790,7 +14821,7 @@ mod cached_paint_atlas_tests {
         });
         cx.simulate_resize(size(px(128.0), px(96.0)));
 
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         let (
             committed_generation,
             committed_scene_len,
@@ -14831,7 +14862,7 @@ mod cached_paint_atlas_tests {
         cx.update(|window, cx| {
             window.mark_view_dirty(root.entity_id());
             atlas.fail_next_lease();
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
             assert_eq!(window.rendered_frame.generation, committed_generation);
             assert_eq!(window.rendered_frame.scene.len(), committed_scene_len);
             assert_eq!(
@@ -14876,7 +14907,7 @@ mod cached_paint_atlas_tests {
             );
             assert_eq!(atlas.lease_attempts(), 1);
 
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
             assert_eq!(atlas.lease_attempts(), 2);
             assert_eq!(window.rendered_frame.generation, committed_generation + 1);
             if accessibility_active {
@@ -14963,7 +14994,7 @@ mod cached_paint_atlas_tests {
             }
         });
 
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         let (ticket, committed_generation) = cx.update(|window, _| {
             (
                 retained_visual::lease_committed(window, &source_id)
@@ -14983,7 +15014,7 @@ mod cached_paint_atlas_tests {
                 "the atlas failure must reject the candidate after retained replay succeeds"
             );
 
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
             assert_eq!(
                 window.rendered_frame.generation,
                 committed_generation + 1,
@@ -15054,7 +15085,7 @@ mod cached_paint_atlas_tests {
             }
         });
 
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         let ticket = cx.update(|window, _| {
             retained_visual::lease_committed(window, &source_id)
                 .expect("the committed cached source should be leasable")
@@ -15067,7 +15098,7 @@ mod cached_paint_atlas_tests {
             }));
             cx.notify();
         });
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         assert_eq!(cached_renders.get(), 1);
         assert!(
             cached_outcomes.borrow().first().is_some_and(Result::is_ok),
@@ -15079,7 +15110,7 @@ mod cached_paint_atlas_tests {
                 root.direct_ticket = Some(ticket);
                 cx.notify();
             });
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
         });
 
         assert_eq!(
@@ -15121,7 +15152,7 @@ mod cached_paint_atlas_tests {
             }
         });
 
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         let committed_generation = cx.update(|window, _| window.rendered_frame.generation);
         remaining_requests.set(2);
         atlas.fail_next_lease();
@@ -15129,7 +15160,7 @@ mod cached_paint_atlas_tests {
 
         cx.update(|window, cx| {
             assert_eq!(window.rendered_frame.generation, committed_generation);
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
             assert_eq!(window.rendered_frame.generation, committed_generation + 1);
         });
         test_app.run_until_parked();
@@ -15328,7 +15359,7 @@ mod cached_paint_atlas_tests {
             }
         });
 
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         assert_eq!(renders.get(), 1);
         cx.update(|window, _| {
             assert!(
@@ -15352,7 +15383,7 @@ mod cached_paint_atlas_tests {
             }
         });
 
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         assert_eq!(
             renders.get(),
             2,
@@ -15385,14 +15416,14 @@ mod cached_paint_atlas_tests {
             }
         });
 
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         assert_eq!(
             cx.update(|window, _| window.rendered_frame.atlas_texture_lease_entries.len()),
             1,
             "one cached paint scope must journal each atlas texture instance only once"
         );
 
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
         assert_eq!(
             cx.update(|window, _| window.rendered_frame.atlas_texture_lease_entries.len()),
             1,

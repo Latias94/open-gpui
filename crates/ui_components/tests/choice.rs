@@ -593,13 +593,13 @@ fn select_item_handler_replaces_public_fallback_without_bypassing_owner_transact
     let (_, cx) = cx.add_window_view(|_, _| Probe {
         events: events.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let trigger = cx
         .debug_bounds("select:item-handler-select:trigger")
         .expect("Select trigger should render");
     cx.simulate_click(trigger.center(), Modifiers::none());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let option_selector =
         required_nested_listbox_option_selector(cx, "item-handler-select", "alpha");
@@ -607,7 +607,7 @@ fn select_item_handler_replaces_public_fallback_without_bypassing_owner_transact
         .debug_bounds(&option_selector)
         .expect("Select option should render");
     cx.simulate_click(option.center(), Modifiers::none());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert_eq!(
         events.borrow().as_slice(),
@@ -680,7 +680,7 @@ fn listbox_runtime_click_and_keyboard_selection_skip_disabled_items(
         events: events.clone(),
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert!(
@@ -703,7 +703,7 @@ fn listbox_runtime_click_and_keyboard_selection_skip_disabled_items(
         .expect("disabled Bravo option should be rendered");
     cx.simulate_click(disabled_bravo.center(), Default::default());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     assert!(
         events.borrow().is_empty(),
@@ -715,7 +715,7 @@ fn listbox_runtime_click_and_keyboard_selection_skip_disabled_items(
         .expect("Delta option should be rendered");
     cx.simulate_click(delta.center(), Default::default());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     let after_delta_click = events.borrow().clone();
     assert_eq!(after_delta_click.len(), 1);
@@ -729,7 +729,7 @@ fn listbox_runtime_click_and_keyboard_selection_skip_disabled_items(
         .expect("Alpha option should be rendered");
     cx.simulate_click(alpha.center(), Default::default());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     let after_alpha_click = events.borrow().clone();
     assert_eq!(after_alpha_click.len(), 2);
@@ -739,7 +739,7 @@ fn listbox_runtime_click_and_keyboard_selection_skip_disabled_items(
 
     cx.simulate_keystrokes("down");
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     assert_eq!(
         events.borrow().len(),
@@ -751,7 +751,7 @@ fn listbox_runtime_click_and_keyboard_selection_skip_disabled_items(
     assert_eq!(events.borrow().len(), 2, "Enter activates on key-up");
     cx.simulate_event(key_up_event("enter"));
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     let after_enter = events.borrow().clone();
     assert_eq!(after_enter.len(), 3);
@@ -762,7 +762,7 @@ fn listbox_runtime_click_and_keyboard_selection_skip_disabled_items(
 
     cx.simulate_keystrokes("up");
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     assert_eq!(
         events.borrow().len(),
@@ -774,7 +774,7 @@ fn listbox_runtime_click_and_keyboard_selection_skip_disabled_items(
     assert_eq!(events.borrow().len(), 3, "Space activates on key-up");
     cx.simulate_event(key_up_event("space"));
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     let after_space = events.borrow().clone();
     assert_eq!(after_space.len(), 4);
@@ -963,7 +963,7 @@ fn select_runtime_click_and_keyboard_selection_close_popup_and_emit_payloads(
         events: events.clone(),
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let hidden = cx.update(|window, cx| {
@@ -988,7 +988,7 @@ fn select_runtime_click_and_keyboard_selection_close_popup_and_emit_payloads(
         .expect("select trigger should be rendered");
     cx.simulate_click(trigger.center(), Default::default());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     assert_eq!(
         events.borrow().clone(),
@@ -1022,7 +1022,7 @@ fn select_runtime_click_and_keyboard_selection_close_popup_and_emit_payloads(
         .expect("disabled Bravo option should be rendered in the popup listbox");
     cx.simulate_click(disabled_bravo.center(), Default::default());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     assert_eq!(
         events.borrow().clone(),
@@ -1036,7 +1036,7 @@ fn select_runtime_click_and_keyboard_selection_close_popup_and_emit_payloads(
         .expect("Alpha option should be rendered in the popup listbox");
     cx.simulate_click(alpha.center(), Default::default());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     assert_eq!(
         events.borrow().clone(),
@@ -1072,7 +1072,7 @@ fn select_runtime_click_and_keyboard_selection_close_popup_and_emit_payloads(
         .expect("select trigger should still be rendered after selection");
     cx.simulate_click(trigger.center(), Default::default());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     assert_eq!(
         events.borrow().clone(),
@@ -1095,7 +1095,7 @@ fn select_runtime_click_and_keyboard_selection_close_popup_and_emit_payloads(
         .expect("Alpha option should be rendered after reopening");
     cx.simulate_mouse_down(alpha.center(), MouseButton::Left, Default::default());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     assert_eq!(
         events.borrow().clone(),
@@ -1115,7 +1115,7 @@ fn select_runtime_click_and_keyboard_selection_close_popup_and_emit_payloads(
 
     cx.simulate_keystrokes("down");
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     assert_eq!(
         events.borrow().clone(),
@@ -1132,7 +1132,7 @@ fn select_runtime_click_and_keyboard_selection_close_popup_and_emit_payloads(
     assert_eq!(events.borrow().len(), 4, "Enter activates on key-up");
     cx.simulate_event(key_up_event("enter"));
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     assert_eq!(
         events.borrow().clone(),
@@ -1179,9 +1179,9 @@ fn controlled_select_escape_refusal_keeps_runtime_authority_until_owner_commit(
         open: true,
         open_intents: open_intents.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let controlled_alpha =
         required_nested_listbox_option_selector(cx, "controlled-select", "alpha");
@@ -1265,9 +1265,9 @@ fn controlled_select_escape_refusal_keeps_runtime_authority_until_owner_commit(
         view.open = false;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let committed = cx.update(|window, cx| {
         WindowOverlayRuntime::for_window(window, cx)
@@ -1306,7 +1306,7 @@ fn controlled_select_selection_refusal_preserves_surface_focus_and_callback_orde
                     select_events
                         .borrow_mut()
                         .push(format!("select:{}", selection.value()));
-                    window.draw(cx).clear();
+                    window.draw(cx).clear(cx);
                 })
                 .on_open_change(move |intent, _, _| {
                     open_events
@@ -1329,9 +1329,9 @@ fn controlled_select_selection_refusal_preserves_surface_focus_and_callback_orde
         selected_value: "alpha".to_owned(),
         events: events.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(cx.activate_accessibility());
 
     let bravo_selector =
@@ -1340,7 +1340,7 @@ fn controlled_select_selection_refusal_preserves_surface_focus_and_callback_orde
         .debug_bounds(&bravo_selector)
         .expect("controlled Select option should render");
     cx.simulate_click(bravo.center(), Default::default());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert_eq!(
         events.borrow().as_slice(),
@@ -1385,7 +1385,7 @@ fn controlled_select_selection_refusal_preserves_surface_focus_and_callback_orde
         view.selection_controlled = false;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let released_tree = cx
         .latest_accessibility_tree_update()
         .expect("released Select ownership should publish its adapter state");
@@ -1412,9 +1412,9 @@ fn controlled_select_selection_refusal_preserves_surface_focus_and_callback_orde
         view.open = false;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let snapshot = cx.update(|window, cx| {
         WindowOverlayRuntime::for_window(window, cx)
@@ -1450,7 +1450,7 @@ fn uncontrolled_select_reentrant_selection_draw_delivers_close_observer_once(
                 select_events
                     .borrow_mut()
                     .push(format!("select:{}", selection.value()));
-                window.draw(cx).clear();
+                window.draw(cx).clear(cx);
             })
             .on_open_change(move |intent, _, _| {
                 open_events
@@ -1464,13 +1464,13 @@ fn uncontrolled_select_reentrant_selection_draw_delivers_close_observer_once(
     let (_, cx) = cx.add_window_view(|_, _| TestView {
         events: events.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let trigger = cx
         .debug_bounds("select:reentrant-uncontrolled-select:trigger")
         .expect("uncontrolled Select trigger should render");
     cx.simulate_click(trigger.center(), Default::default());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let alpha_selector =
         required_nested_listbox_option_selector(cx, "reentrant-uncontrolled-select", "alpha");
@@ -1478,7 +1478,7 @@ fn uncontrolled_select_reentrant_selection_draw_delivers_close_observer_once(
         .debug_bounds(&alpha_selector)
         .expect("uncontrolled Select option should render");
     cx.simulate_click(alpha.center(), Default::default());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert_eq!(
         events.borrow().as_slice(),
@@ -1812,7 +1812,7 @@ fn combobox_uncontrolled_resolved_label_refreshes_without_overwriting_user_query
     cx.simulate_click(editor.center(), Default::default());
     cx.simulate_keystrokes("ctrl-a backspace");
     cx.simulate_input("query");
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     view.update(cx, |view, cx| {
         view.option_label = Some("Latest Alpha".to_owned());
@@ -1836,7 +1836,7 @@ fn combobox_uncontrolled_resolved_label_refreshes_without_overwriting_user_query
     cx.run_until_parked();
     cx.simulate_keystrokes("ctrl-a backspace");
     cx.simulate_input("Alpha");
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     view.update(cx, |view, cx| {
         view.option_label = Some("Alpha".to_owned());
@@ -1907,7 +1907,7 @@ fn combobox_uncontrolled_selection_consumes_pending_user_edit_revision(
         selections: selections.clone(),
     });
     assert!(cx.activate_accessibility());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let editor = cx
         .debug_bounds("text-input:pending-edit-combobox-input:root")
@@ -1921,7 +1921,7 @@ fn combobox_uncontrolled_selection_consumes_pending_user_edit_revision(
     cx.simulate_click(editor.center(), Default::default());
     cx.simulate_input("a");
     cx.simulate_click(bravo.center(), Default::default());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_eq!(selections.borrow().as_slice(), ["bravo"]);
     let selected = cx
         .latest_accessibility_tree_update()
@@ -2001,7 +2001,7 @@ fn combobox_runtime_filters_input_and_selects_filtered_option(cx: &mut open_gpui
         events: events.clone(),
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let hidden = cx.update(|window, cx| {
@@ -2022,7 +2022,7 @@ fn combobox_runtime_filters_input_and_selects_filtered_option(cx: &mut open_gpui
     cx.simulate_click(input.center(), Default::default());
     cx.simulate_input("re");
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert!(
@@ -2036,7 +2036,7 @@ fn combobox_runtime_filters_input_and_selects_filtered_option(cx: &mut open_gpui
         .expect("combobox toggle should be rendered");
     cx.simulate_click(toggle.center(), Default::default());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert_eq!(
@@ -2086,7 +2086,7 @@ fn combobox_runtime_filters_input_and_selects_filtered_option(cx: &mut open_gpui
         .expect("filtered Remix option should be rendered");
     cx.simulate_click(remix.center(), Default::default());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert_eq!(
@@ -2166,7 +2166,7 @@ fn combobox_runtime_keyboard_selects_filtered_option(cx: &mut open_gpui::TestApp
         events: events.clone(),
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let input = cx
@@ -2175,12 +2175,12 @@ fn combobox_runtime_keyboard_selects_filtered_option(cx: &mut open_gpui::TestApp
     cx.simulate_click(input.center(), Default::default());
     cx.simulate_input("re");
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     cx.simulate_keystrokes("down");
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert_eq!(
@@ -2199,7 +2199,7 @@ fn combobox_runtime_keyboard_selects_filtered_option(cx: &mut open_gpui::TestApp
 
     cx.simulate_keystrokes("enter");
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert_eq!(
@@ -2249,14 +2249,14 @@ fn combobox_runtime_preserves_active_seed_and_uses_event_time_navigation(
     let (_, cx) = cx.add_window_view(|_, _| TestView {
         selections: selections.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let input = cx
         .debug_bounds("text-input:event-time-combobox-input:root")
         .expect("Combobox editor should render");
     cx.simulate_click(input.center(), Modifiers::none());
 
     cx.simulate_event(key_down_event("down"));
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.simulate_event(key_down_event("down"));
     cx.simulate_event(key_down_event("enter"));
 
@@ -2295,7 +2295,7 @@ fn controlled_combobox_escape_refusal_keeps_editor_and_runtime_authority(
         open: true,
         open_events: open_events.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let editor = cx
         .debug_bounds("text-input:controlled-combobox-input:root")
@@ -2332,9 +2332,9 @@ fn controlled_combobox_escape_refusal_keeps_editor_and_runtime_authority(
         view.open = false;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let committed = cx.update(|window, cx| {
         WindowOverlayRuntime::for_window(window, cx)
@@ -2392,7 +2392,7 @@ fn controlled_combobox_selection_refusal_preserves_editor_and_callback_order(
         selected_value: "alpha".to_owned(),
         events: events.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(cx.activate_accessibility());
 
     let editor = cx
@@ -2401,14 +2401,14 @@ fn controlled_combobox_selection_refusal_preserves_editor_and_callback_order(
     cx.simulate_click(editor.center(), Default::default());
     cx.simulate_keystrokes("ctrl-a backspace");
     cx.simulate_input("br");
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let bravo_selector =
         required_nested_listbox_option_selector(cx, "controlled-selection-combobox", "bravo");
     let bravo = cx
         .debug_bounds(&bravo_selector)
         .expect("controlled Combobox option should render");
     cx.simulate_click(bravo.center(), Default::default());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert_eq!(
         events.borrow().as_slice(),
@@ -2452,9 +2452,9 @@ fn controlled_combobox_selection_refusal_preserves_editor_and_callback_order(
         view.open = false;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let snapshot = cx.update(|window, cx| {
         WindowOverlayRuntime::for_window(window, cx)
@@ -2544,7 +2544,7 @@ fn select_and_combobox_outside_press_close_through_window_runtime(
         events: events.clone(),
         outside_clicks: outside_clicks.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let outside = cx
         .debug_bounds("choice-test:outside")
@@ -2553,9 +2553,9 @@ fn select_and_combobox_outside_press_close_through_window_runtime(
         .debug_bounds("select:outside-select:trigger")
         .expect("Select trigger should render");
     cx.simulate_click(select_trigger.center(), Default::default());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.simulate_click(outside.center(), Default::default());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert_eq!(events.borrow().as_slice(), ["select:true", "select:false"]);
     assert_eq!(
@@ -2576,9 +2576,9 @@ fn select_and_combobox_outside_press_close_through_window_runtime(
         .debug_bounds("combobox:outside-combobox:toggle")
         .expect("Combobox toggle should render");
     cx.simulate_click(toggle.center(), Default::default());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.simulate_click(outside.center(), Default::default());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert_eq!(
         events.borrow().as_slice(),
@@ -2645,9 +2645,9 @@ fn select_and_combobox_inherit_their_rendered_overlay_parent(cx: &mut open_gpui:
 
     cx.update(init_text_input);
     let (_, cx) = cx.add_window_view(|_, _| TestView);
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let snapshot = cx.update(|window, cx| {
         WindowOverlayRuntime::for_window(window, cx)
@@ -4405,7 +4405,7 @@ fn command_runtime_disabled_and_ambiguous_rows_reject_pointer_and_accesskit(
     let (_, cx) = cx.add_window_view(|_, _| TestView {
         selections: selections.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(cx.activate_accessibility());
 
     let disabled_bounds = cx
@@ -4482,7 +4482,7 @@ fn uncontrolled_inline_command_selection_notifies_keyed_runtime(
 
     cx.update(init_text_input);
     let (_, cx) = cx.add_window_view(|_, _| TestView);
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(cx.activate_accessibility());
 
     let single_beta = cx
@@ -4549,7 +4549,7 @@ fn command_runtime_filters_input_and_selects_with_keyboard(cx: &mut open_gpui::T
         selections: selections.clone(),
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let snapshot = cx.update(|window, cx| {
@@ -4574,7 +4574,7 @@ fn command_runtime_filters_input_and_selects_with_keyboard(cx: &mut open_gpui::T
     cx.simulate_click(input.center(), Default::default());
     cx.simulate_input("file");
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert!(
@@ -4595,7 +4595,7 @@ fn command_runtime_filters_input_and_selects_with_keyboard(cx: &mut open_gpui::T
 
     cx.simulate_keystrokes("down");
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert!(
@@ -4605,7 +4605,7 @@ fn command_runtime_filters_input_and_selects_with_keyboard(cx: &mut open_gpui::T
 
     cx.simulate_keystrokes("enter");
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert_eq!(
@@ -4650,14 +4650,14 @@ fn command_runtime_preserves_active_seed_and_uses_event_time_navigation(
     let (_, cx) = cx.add_window_view(|_, _| TestView {
         selections: selections.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let input = cx
         .debug_bounds("text-input:event-time-command-input:root")
         .expect("Command editor should render");
     cx.simulate_click(input.center(), Modifiers::none());
 
     cx.simulate_event(key_down_event("down"));
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.simulate_event(key_down_event("down"));
     cx.simulate_event(key_down_event("enter"));
 
@@ -4705,7 +4705,7 @@ fn command_runtime_controlled_query_emits_sanitized_query_changes(
         changes: changes.clone(),
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let input = cx
@@ -4714,7 +4714,7 @@ fn command_runtime_controlled_query_emits_sanitized_query_changes(
     cx.simulate_click(input.center(), Default::default());
     cx.simulate_input("open\nfile");
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert_eq!(query.borrow().as_str(), "open file");
@@ -4784,7 +4784,7 @@ fn command_runtime_dialog_selects_and_dismisses_without_stale_modal_layer(
         events: events.clone(),
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let hidden = cx.update(|window, cx| {
@@ -4810,7 +4810,7 @@ fn command_runtime_dialog_selects_and_dismisses_without_stale_modal_layer(
         .expect("dialog command trigger should expose a stable debug selector");
     cx.simulate_click(trigger.center(), Default::default());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert_eq!(
@@ -4842,7 +4842,7 @@ fn command_runtime_dialog_selects_and_dismisses_without_stale_modal_layer(
     cx.simulate_click(input.center(), Default::default());
     cx.simulate_input("file");
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert!(
@@ -4863,7 +4863,7 @@ fn command_runtime_dialog_selects_and_dismisses_without_stale_modal_layer(
 
     cx.simulate_keystrokes("down");
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     assert_eq!(
         events.borrow().clone(),
@@ -4873,7 +4873,7 @@ fn command_runtime_dialog_selects_and_dismisses_without_stale_modal_layer(
 
     cx.simulate_keystrokes("enter");
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert_eq!(
@@ -4915,7 +4915,7 @@ fn command_runtime_dialog_selects_and_dismisses_without_stale_modal_layer(
         .expect("dialog command trigger should remain rendered after selection");
     cx.simulate_click(trigger.center(), Default::default());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     let input = cx
         .debug_bounds("text-input:dialog-runtime-command-input:root")
@@ -4923,7 +4923,7 @@ fn command_runtime_dialog_selects_and_dismisses_without_stale_modal_layer(
     cx.simulate_click(input.center(), Default::default());
     cx.simulate_keystrokes("escape");
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert_eq!(
@@ -4957,11 +4957,11 @@ fn command_runtime_dialog_selects_and_dismisses_without_stale_modal_layer(
         .expect("dialog command trigger should remain rendered after escape");
     cx.simulate_click(trigger.center(), Default::default());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     cx.simulate_click(point(px(4.0), px(4.0)), Default::default());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert_eq!(
@@ -5013,7 +5013,7 @@ fn command_runtime_dialog_to_inline_unregisters_the_window_layer(
 
     cx.update(init_text_input);
     let (view, cx) = cx.add_window_view(|_, _| TestView { dialog: true });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let dialog = cx.update(|window, cx| {
         WindowOverlayRuntime::for_window(window, cx)
@@ -5031,9 +5031,9 @@ fn command_runtime_dialog_to_inline_unregisters_the_window_layer(
         view.dialog = false;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let inline = cx.update(|window, cx| {
         WindowOverlayRuntime::for_window(window, cx)
@@ -5083,7 +5083,7 @@ fn controlled_command_selection_refusal_preserves_modal_editor_and_callback_orde
                     select_events
                         .borrow_mut()
                         .push(format!("select:{}", selection.value()));
-                    window.draw(cx).clear();
+                    window.draw(cx).clear(cx);
                 })
                 .on_open_change(move |intent, _, _| {
                     open_events
@@ -5107,9 +5107,9 @@ fn controlled_command_selection_refusal_preserves_modal_editor_and_callback_orde
         selected_value: "open-file".to_owned(),
         events: events.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(cx.activate_accessibility());
 
     let input = cx
@@ -5120,7 +5120,7 @@ fn controlled_command_selection_refusal_preserves_modal_editor_and_callback_orde
         .debug_bounds("listbox:controlled-command-listbox:option:close-window")
         .expect("controlled Command option should render");
     cx.simulate_click(close_window.center(), Default::default());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert_eq!(
         events.borrow().as_slice(),
@@ -5168,7 +5168,7 @@ fn controlled_command_selection_refusal_preserves_modal_editor_and_callback_orde
         view.selection_controlled = false;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let released_tree = cx
         .latest_accessibility_tree_update()
         .expect("released Command ownership should publish its adapter state");
@@ -5191,9 +5191,9 @@ fn controlled_command_selection_refusal_preserves_modal_editor_and_callback_orde
         view.open = false;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let snapshot = cx.update(|window, cx| {
         WindowOverlayRuntime::for_window(window, cx)
@@ -5265,7 +5265,7 @@ fn command_runtime_multi_select_toggles_chips_without_closing_dialog(
         changes: changes.clone(),
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let trigger = cx
@@ -5273,7 +5273,7 @@ fn command_runtime_multi_select_toggles_chips_without_closing_dialog(
         .expect("multi command trigger should expose a stable debug selector");
     cx.simulate_click(trigger.center(), Default::default());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert!(
@@ -5295,7 +5295,7 @@ fn command_runtime_multi_select_toggles_chips_without_closing_dialog(
         .expect("New File option should render");
     cx.simulate_click(new_file.center(), Default::default());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert!(
@@ -5330,7 +5330,7 @@ fn command_runtime_multi_select_toggles_chips_without_closing_dialog(
         view.selection_controlled = false;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(
         cx.debug_bounds("command:multi-runtime-command:selected-chip:new-file")
             .is_none(),
@@ -5342,12 +5342,12 @@ fn command_runtime_multi_select_toggles_chips_without_closing_dialog(
         view.selection_controlled = true;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let new_file = cx
         .debug_bounds("listbox:multi-runtime-command-listbox:option:new-file")
         .expect("New File option should remain rendered after ownership returns");
     cx.simulate_click(new_file.center(), Default::default());
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert_eq!(
         selected_values.borrow().as_slice(),
@@ -5371,7 +5371,7 @@ fn command_runtime_multi_select_toggles_chips_without_closing_dialog(
         .expect("disabled matching option should still render");
     cx.simulate_click(disabled.center(), Default::default());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert_eq!(
@@ -5391,7 +5391,7 @@ fn command_runtime_multi_select_toggles_chips_without_closing_dialog(
         .expect("Open File option should render");
     cx.simulate_click(open_file.center(), Default::default());
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert_eq!(
@@ -5472,7 +5472,7 @@ fn command_runtime_virtualized_results_scroll_inside_viewport_and_reveal_keyboar
         selections: selections.clone(),
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     assert!(cx.activate_accessibility());
 
@@ -5510,7 +5510,7 @@ fn command_runtime_virtualized_results_scroll_inside_viewport_and_reveal_keyboar
         ..Default::default()
     });
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let parent_bottom_after = cx
@@ -5548,7 +5548,7 @@ fn command_runtime_virtualized_results_scroll_inside_viewport_and_reveal_keyboar
     cx.simulate_click(input.center(), Default::default());
     cx.simulate_keystrokes("pagedown");
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
     assert!(
         cx.debug_bounds("command:virtualized-runtime-command:row:item-0007")
@@ -5558,7 +5558,7 @@ fn command_runtime_virtualized_results_scroll_inside_viewport_and_reveal_keyboar
 
     cx.simulate_keystrokes("enter");
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     assert_eq!(

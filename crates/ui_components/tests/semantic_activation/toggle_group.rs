@@ -47,7 +47,7 @@ fn controlled_toggle_group_routes_every_activation_source_without_hidden_selecti
         right_handle: right_handle.clone(),
         disabled_handle: disabled_handle.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert!(cx.activate_accessibility());
     let initial = cx
@@ -123,7 +123,7 @@ fn controlled_toggle_group_routes_every_activation_source_without_hidden_selecti
         ]
     );
 
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let controlled = cx
         .latest_accessibility_tree_update()
         .expect("controlled redraw should preserve caller-owned selection");
@@ -174,7 +174,7 @@ fn toggle_group_runtime_payload_matches_renderer_neutral_change_resolution(
         changes: changes.clone(),
         handle: handle.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     cx.update(|window, cx| {
         assert_eq!(
@@ -227,7 +227,7 @@ fn uncontrolled_toggle_group_commits_before_callback_reentry(cx: &mut open_gpui:
         left_handle: left_handle.clone(),
         right_handle: right_handle.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert!(cx.activate_accessibility());
     cx.update(|window, cx| {
@@ -249,7 +249,7 @@ fn uncontrolled_toggle_group_commits_before_callback_reentry(cx: &mut open_gpui:
         cx.debug_selector_is_focused("toggle-group:uncontrolled-semantic-toggle-group:item:right")
     );
 
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let update = cx
         .latest_accessibility_tree_update()
         .expect("uncontrolled reentrant commit should reach the final tree");
@@ -290,7 +290,7 @@ fn required_toggle_group_accepts_noop_activation_without_emitting_change(
         callback_count: callback_count.clone(),
         handle: handle.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert!(cx.activate_accessibility());
     let initial = cx
@@ -311,7 +311,7 @@ fn required_toggle_group_accepts_noop_activation_without_emitting_change(
     assert_eq!(callback_count.get(), 0);
     assert!(cx.debug_selector_is_focused("toggle-group:required-semantic-toggle-group:item:left"));
 
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let unchanged = cx
         .latest_accessibility_tree_update()
         .expect("required no-op activation should preserve the final tree");
@@ -360,7 +360,7 @@ fn toggle_group_roving_focus_skips_disabled_and_space_activates_on_key_up(
         changes: changes.clone(),
         prevent_navigation: prevent_navigation.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert!(cx.activate_accessibility());
     let initial = cx
@@ -410,7 +410,7 @@ fn toggle_group_roving_focus_skips_disabled_and_space_activates_on_key_up(
     assert!(space_up.default_prevented());
     assert_eq!(changes.borrow().as_slice(), &[vec!["right".to_owned()]]);
 
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let selected = cx
         .latest_accessibility_tree_update()
         .expect("Space activation should reach the final accessibility tree");

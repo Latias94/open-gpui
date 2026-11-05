@@ -1074,7 +1074,7 @@ fn nonuniform_transform_exposes_explicit_click_and_wheel_coordinate_spaces(
             wheel,
         }
     });
-    visual.update(|window, cx| window.draw(cx).clear());
+    visual.update(|window, cx| window.draw(cx).clear(cx));
 
     let displayed_point = point(px(140.0), px(100.0));
     visual.simulate_click(displayed_point, Modifiers::none());
@@ -1129,7 +1129,7 @@ fn nonuniform_transform_keeps_drag_preview_and_target_geometry_distinct(cx: &mut
     });
     let _ = visual.update(|window, _| window.activate_window());
     visual.run_until_parked();
-    visual.update(|window, cx| window.draw(cx).clear());
+    visual.update(|window, cx| window.draw(cx).clear(cx));
 
     let start = point(px(130.0), px(100.0));
     let activation = point(px(140.0), px(112.0));
@@ -1182,7 +1182,7 @@ fn pointer_capture_uses_the_latest_committed_transform_geometry(cx: &mut TestApp
     });
     let _ = cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     cx.simulate_mouse_down(
         point(px(130.0), px(90.0)),
@@ -1195,7 +1195,7 @@ fn pointer_capture_uses_the_latest_committed_transform_geometry(cx: &mut TestApp
         root.translated = true;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let moved = point(px(380.0), px(90.0));
     cx.simulate_mouse_move(moved, Some(MouseButton::Left), Modifiers::none());
@@ -1221,12 +1221,12 @@ fn cached_child_is_rebuilt_when_only_its_ancestor_transform_changes(cx: &mut Tes
         }
     });
 
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let initial_renders = renders.get();
     let initial_debug_bounds = cx
         .debug_bounds("cached-transform-child")
         .expect("cached child debug bounds");
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_eq!(renders.get(), initial_renders);
 
     cx.simulate_mouse_down(
@@ -1240,7 +1240,7 @@ fn cached_child_is_rebuilt_when_only_its_ancestor_transform_changes(cx: &mut Tes
         root.translated = true;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(renders.get() > initial_renders);
     assert_eq!(
         cx.debug_bounds("cached-transform-child")
@@ -1464,13 +1464,13 @@ fn paint_time_invalid_drag_source_schedules_preview_removal(cx: &mut TestAppCont
     let any_window = window.into();
     cx.update_window(any_window, |_, window, cx| {
         let _ = window.activate_window();
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     })
     .unwrap();
     cx.run_until_parked();
 
     cx.update_window(any_window, |_, window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
         window.dispatch_event(
             crate::PlatformInput::MouseDown(crate::MouseDownEvent {
                 button: MouseButton::Left,
@@ -1498,7 +1498,7 @@ fn paint_time_invalid_drag_source_schedules_preview_removal(cx: &mut TestAppCont
     cx.update_window(any_window, |_, window, cx| {
         assert!(cx.has_active_drag());
         window.refresh();
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
         assert!(!cx.has_active_drag());
         assert!(window.captured_pointer().is_none());
         let frame_facts = (
@@ -1663,11 +1663,11 @@ fn failed_prepaint_transaction_discards_cached_ranges_before_the_next_frame(
         }
     });
 
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let first_frame_renders = renders.get();
     assert!(first_frame_renders > 0);
 
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(
         renders.get() > first_frame_renders,
         "a failed frame must not publish a cached journal range"
@@ -1695,7 +1695,7 @@ fn cached_ancestor_never_revives_a_failed_transformed_descendant(cx: &mut TestAp
         assert_eq!(window.rendered_frame.subtree_transform_diagnostics.len(), 1);
     });
 
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_eq!(
         renders.get(),
         first_frame_renders,
@@ -1731,7 +1731,7 @@ fn transform_only_frame_updates_ime_from_the_new_committed_handler(cx: &mut Test
         root.focus.focus(window, cx);
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.update(|window, _| {
         window
             .platform_window
@@ -1744,7 +1744,7 @@ fn transform_only_frame_updates_ime_from_the_new_committed_handler(cx: &mut Test
         root.translated = true;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let history = cx.update(|window, _| {
         window

@@ -134,6 +134,8 @@ pub enum NativeInputHandlerOperation {
 #[doc(hidden)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NativePlatformCommandKind {
+    #[cfg(target_os = "windows")]
+    CompleteNativeFrame,
     CompleteInitialPresentation,
     RevealDeferredInitialPresentation,
     Activate,

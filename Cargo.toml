@@ -41,6 +41,7 @@ members = [
 ]
 exclude = [
     "repo-ref/*",
+    "tests/fixtures/arena-miri",
     "tests/fixtures/dependency-consumer",
 ]
 

@@ -73,7 +73,7 @@ fn assert_automatic_tabs_state(
     selected_panel: &str,
     hidden_panels: &[&str],
 ) {
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(cx.debug_selector_is_focused(&format!(
         "tabs:automatic-semantic-tabs:trigger:{selected_value}"
     )));
@@ -134,7 +134,7 @@ fn tabs_route_every_activation_source_to_controlled_selection_intent(
         details_handle: details_handle.clone(),
         disabled_handle: disabled_handle.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert!(cx.activate_accessibility());
     let initial = cx
@@ -207,7 +207,7 @@ fn tabs_route_every_activation_source_to_controlled_selection_intent(
         &["details", "details", "details", "details", "details"]
     );
 
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let controlled = cx
         .latest_accessibility_tree_update()
         .expect("controlled tabs redraw should preserve caller state");
@@ -251,7 +251,7 @@ fn controlled_tabs_preserve_empty_and_unknown_owner_state_after_rejected_intent(
         empty_details: empty_details.clone(),
         unknown_details: unknown_details.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert!(cx.activate_accessibility());
     let initial = cx
@@ -298,7 +298,7 @@ fn controlled_tabs_preserve_empty_and_unknown_owner_state_after_rejected_intent(
         &["controlled-empty:details", "controlled-unknown:details"]
     );
 
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let rejected = cx
         .latest_accessibility_tree_update()
         .expect("controlled tabs redraw should preserve rejected owner state");
@@ -395,7 +395,7 @@ fn uncontrolled_tabs_commit_before_callback_reentry(cx: &mut open_gpui::TestAppC
         details_handle: details_handle.clone(),
         history_handle: history_handle.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert!(cx.activate_accessibility());
     let initial = cx
@@ -413,7 +413,7 @@ fn uncontrolled_tabs_commit_before_callback_reentry(cx: &mut open_gpui::TestAppC
     assert!(reentered.get());
     assert!(cx.debug_selector_is_focused("tabs:uncontrolled-semantic-tabs:trigger:history"));
 
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     let update = cx
         .latest_accessibility_tree_update()
         .expect("uncontrolled reentrant commit should reach the final tree");
@@ -482,7 +482,7 @@ fn automatic_tabs_keydown_keeps_selection_focus_panel_and_callback_in_sync(
         selections: selections.clone(),
         prevent_navigation: prevent_navigation.clone(),
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     assert!(cx.activate_accessibility());
     let initial = cx

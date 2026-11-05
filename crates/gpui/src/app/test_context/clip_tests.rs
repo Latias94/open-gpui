@@ -535,7 +535,7 @@ fn public_subtree_clip_preserves_layout_and_clips_pointer_hits(cx: &mut TestAppC
             layout_bounds,
         }
     });
-    visual.update(|window, cx| window.draw(cx).clear());
+    visual.update(|window, cx| window.draw(cx).clear(cx));
 
     assert_eq!(
         *layout_bounds.borrow(),
@@ -1086,7 +1086,7 @@ fn virtualized_scroll_viewports_preserve_revealable_offscreen_accessibility_node
             ),
             _ => unreachable!(),
         }
-        cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        cx.update_window(window, |_, window, cx| window.draw(cx).clear(cx))
             .unwrap();
 
         let update = cx.latest_accessibility_tree_update(window).unwrap();

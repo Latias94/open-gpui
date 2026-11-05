@@ -653,14 +653,14 @@ fn components_gallery_smoke_select_table_cell_updates_sample_rows(
     cx.simulate_click(trigger.center(), Default::default());
     settle(cx);
     cx.update(|window, cx| {
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     if cx.debug_bounds(STATUS_CONTENT).is_none() {
         cx.simulate_keystrokes("space");
         settle(cx);
         cx.update(|window, cx| {
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
         });
     }
 

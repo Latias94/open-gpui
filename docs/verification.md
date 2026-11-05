@@ -67,6 +67,72 @@ found no outstanding correctness findings in this dependency/consumer change. Th
 not qualify Linux/macOS compilation, the declared Rust 1.92 floor, OS input, a rendered engine
 View, the pending upstream correctness ports or the canonical-docking cutover.
 
+## Element Arena And Native Frame Maintenance
+
+The November 5 arena correction follows upstream `ec3d887507` and `2529740084` while preserving
+this fork's AppCell-owned native event delivery and candidate-frame transactions. App holds its
+element arena in a separate `Rc` allocation. Draw scopes retain that allocation, restore TLS on
+unwind and defer nested clears. A clear token holds weak allocation identity and requires the
+original App; it does not dereference a raw captured App field or retain abandoned elements.
+All downstream draw/clear callers use the same captured App explicitly.
+
+The allocator also checks integer bounds before pointer adjustment and stores the exact allocation
+layout for deallocation. Miri exposed an existing assumption that an alignment-1 allocation could
+always fit an 8-byte value in an 8-byte chunk. New chunks request the needed alignment; reuse
+skips unsuitable existing chunks without moving live storage. The regression changes allocation
+order from low-alignment chunks to over-aligned values and proves stable repeated capacity.
+
+Run the focused framework gate serially:
+
+```sh
+cargo nextest run --locked -p open-gpui --lib -E 'test(arena::tests::) or test(window::element_arena_tests::) or test(window::frame_pump::tests::) or test(native_event_ingress::) or test(cached_paint_atlas_tests::)' --test-threads=1 --no-fail-fast
+```
+
+The [Miri fixture](../tests/fixtures/arena-miri/README.md) compiles the production allocator file
+directly, with its original tests and new deferred-clear/alignment tests. Run both default Stacked
+Borrows and `MIRIFLAGS=-Zmiri-tree-borrows` using nightly. This is allocator evidence, not Miri
+qualification of the complete App, TLS scope, Window, renderer or native callback graph. The
+ordinary framework gate separately exercises real nested `open_window`, held outer allocations,
+cross-App restoration, unwind, wrong-App token refusal and one-time forced cache refresh after
+throttling. Native HWND and OS IME qualification remain separate checks.
+
+The Windows native gate is:
+
+```sh
+cargo nextest run --locked -p open-gpui-windows --lib --test-threads=1 --no-fail-fast
+```
+
+`two_hwnd_reentrant_paint_defers_ime_until_native_frame_command` paints window A while sending
+two synchronous `WM_PAINT` messages to window B with a committed text handler. It proves immediate
+update-region validation, coalesced but retained requests, post-borrow IME query/command delivery,
+no invariant failure or caught native panic, and restored `WM_CHAR` input. The backend uses the
+existing native command queue and exact registration checks, rather than adding another draw
+coordinator. Initial-presentation completion and renderer submission retain their original owners.
+
+DirectManipulation sampling now occurs in that safe command after the frame draw. Changes from
+that sampling can appear in a later frame. Real touchpad scrolling, inertia, pinch and response
+latency have not been qualified by this HWND/IME test or by the state-only docking tests; retain
+that specific timing comparison before claiming input/performance parity. Full OS composition,
+interactive global-pointer tests, Linux/macOS behavior and the complete App/TLS Miri graph also
+remain outside this local result.
+
+Executed on Windows 11 with Rust 1.95.0, one build job and the shared ordinary target:
+
+| Gate | Actual result |
+| --- | --- |
+| Focused arena/frame-pump/native-ingress/atlas cohort | 42/42 passed; nextest `417e0ac1-b294-409f-be06-dd5c13ed25e7`. |
+| Core/components/docking/Canvas/DevTools library cohort | 2,984/2,984 passed with no skipped selected cases; nextest `606c3993-5108-4a41-bd76-9a34fa4677c2`. |
+| Component integration cohort | 598/598 passed across 18 integration binaries, no skipped selected cases; nextest `5dc812ad-ae15-4789-a3a5-daaa62790093`. The already-covered library binary was excluded. |
+| DevTools all-feature framework adapters | 10/10 passed; nextest `407828e0-5607-40cb-9aa1-88287f9d5bdc`. |
+| Gallery composition workflow | The U11 single-window convergence workflow passed; nextest `284f46d5-7852-4f89-a855-dc79befc646f`. This is a GPUI test-platform workflow, not an OS-native input claim. |
+| Workspace and independent source consumers | Locked workspace all-target compilation and the separately locked consumer's all-target/all-feature check passed, including its WGPU 30.0.1 renderer. Existing unfinished-docking and test-helper warnings remain; these are not warning-free or native-integration claims. |
+| Windows backend production library | Locked compilation passed. |
+| Windows backend library | 162/162 passed, four existing interactive tests skipped; nextest `cc0dfdf0-b5c0-4a1f-abee-6ee7a56470c0`. This includes the new dual-HWND paint regression. |
+| Production-file Miri fixture | 10/10 passed separately in Stacked Borrows and Tree Borrows, using `rustc 1.98.0-nightly (57d06900f 2026-05-27)`. No allocator source was copied into the fixture. |
+| Independent correctness review | No outstanding P1/P2 in arena custody, post-borrow frame maintenance or forced-refresh retention; the DirectManipulation timing gap above remains explicit. |
+| Correctness lint and formatting | Core/Windows all-target Clippy passed with `-D clippy::correctness`; root and direct-file Miri-fixture formatting checks passed. Existing non-denied warnings remain. |
+| Repository contract checks | Import boundary, public API tiers, public document links and release documentation passed. UI contract validation passed all 16 registered scenarios after local `.context` worktrees were excluded from discovery; its focused validator cohort passed 16/16 (`4d470a1c-07b8-44f7-ab27-e7b5f9005d09`). The filesystem regression preserves the local copy and admits only the current-workspace artifact. |
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:

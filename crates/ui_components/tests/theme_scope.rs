@@ -323,7 +323,7 @@ fn nested_scopes_restore_siblings_and_deferred_phases_keep_the_opening_snapshot(
     });
 
     observations.borrow_mut().clear();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let observations = observations.borrow();
     let expected = [
@@ -390,15 +390,15 @@ fn app_window_and_explicit_override_precedence_is_isolated_between_windows(
     cx.update_window(first, |_, window, cx| {
         set_window_theme(window, cx, LIGHT_THEME_ID)
             .expect("built-in window selection should resolve");
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     })
     .expect("first window should remain open");
     cx.update_window(second, |_, window, cx| {
         override_window_theme(window, cx, ThemeContext::high_contrast());
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     })
     .expect("second window should remain open");
-    cx.update_window(inherited, |_, window, cx| window.draw(cx).clear())
+    cx.update_window(inherited, |_, window, cx| window.draw(cx).clear(cx))
         .expect("inherited window should remain open");
 
     assert_eq!(
@@ -444,7 +444,7 @@ fn app_window_and_explicit_override_precedence_is_isolated_between_windows(
             move |_, _| WindowThemeProbe { observations }
         })
         .into();
-    cx.update_window(replacement, |_, window, cx| window.draw(cx).clear())
+    cx.update_window(replacement, |_, window, cx| window.draw(cx).clear(cx))
         .expect("replacement window should remain open");
     assert_eq!(
         replacement_observations.borrow().last().unwrap().mode,
@@ -463,7 +463,7 @@ fn unknown_and_noop_selections_preserve_context_without_refresh(
         let observations = observations.clone();
         move |_, _| WindowThemeProbe { observations }
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     observations.borrow_mut().clear();
 
     cx.update(|window, cx| {
@@ -522,7 +522,7 @@ fn unselected_invalid_and_metadata_only_registration_do_not_refresh_the_window(
         let observations = observations.clone();
         move |_, _| WindowThemeProbe { observations }
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     observations.borrow_mut().clear();
 
     cx.update(|_, cx| {
@@ -607,7 +607,7 @@ fn repeated_clear_window_theme_is_an_exact_noop(cx: &mut open_gpui::TestAppConte
     });
     cx.update(|window, cx| {
         set_window_theme(window, cx, LIGHT_THEME_ID).expect("explicit window theme should resolve");
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
     });
 
     let first_clear = cx.update(|window, cx| {
@@ -707,7 +707,7 @@ fn app_selection_is_visible_in_the_current_window_transaction(cx: &mut open_gpui
         let observations = observations.clone();
         move |_, _| WindowThemeProbe { observations }
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     observations.borrow_mut().clear();
 
     cx.update(|window, cx| {
@@ -748,7 +748,7 @@ fn a_missing_window_selection_retains_its_last_known_snapshot_until_the_id_retur
     });
     let selected_before = cx.update(|window, cx| {
         set_window_theme(window, cx, "brand").expect("brand window selection should resolve");
-        window.draw(cx).clear();
+        window.draw(cx).clear(cx);
         ThemeResolver::current(window, cx)
     });
     observations.borrow_mut().clear();
@@ -887,7 +887,7 @@ fn early_return_restores_the_parent_theme_for_the_following_sibling(
     });
 
     observations.borrow_mut().clear();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let observations = observations.borrow();
     assert!(observations.iter().any(|observation| {
@@ -1046,7 +1046,7 @@ fn changing_a_subtree_scope_invalidates_a_cached_child_view(cx: &mut open_gpui::
         view.context = changed_context;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let observations = observations.borrow();
     assert_eq!(observations.len(), 1);
@@ -1132,7 +1132,7 @@ fn official_deferred_overlay_freezes_theme_for_one_open_generation(
     });
 
     observations.borrow_mut().clear();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_only_observed_mode(&observations, ThemeMode::Dark);
 
     observations.borrow_mut().clear();
@@ -1140,21 +1140,21 @@ fn official_deferred_overlay_freezes_theme_for_one_open_generation(
         view.context = ThemeContext::high_contrast();
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_only_observed_mode(&observations, ThemeMode::Dark);
 
     view.update(cx, |view, cx| {
         view.open = false;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     observations.borrow_mut().clear();
     view.update(cx, |view, cx| {
         view.open = true;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_only_observed_mode(&observations, ThemeMode::HighContrast);
 }
 
@@ -1185,7 +1185,7 @@ fn deferred_overlay_freezes_non_color_scales_for_one_open_generation(
     });
 
     observations.borrow_mut().clear();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_only_observed_design(
         &observations,
         Density::Compact,
@@ -1198,7 +1198,7 @@ fn deferred_overlay_freezes_non_color_scales_for_one_open_generation(
         view.context = reopened_context;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_only_observed_design(
         &observations,
         Density::Compact,
@@ -1210,14 +1210,14 @@ fn deferred_overlay_freezes_non_color_scales_for_one_open_generation(
         view.open = false;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     observations.borrow_mut().clear();
     view.update(cx, |view, cx| {
         view.open = true;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_only_observed_design(
         &observations,
         Density::Spacious,
@@ -1351,7 +1351,7 @@ fn deferred_overlay_freezes_the_complete_palette_snapshot_for_one_open_generatio
     });
 
     observations.borrow_mut().clear();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_only_observed_palette(&observations, OPENING_COLOR);
 
     observations.borrow_mut().clear();
@@ -1359,21 +1359,21 @@ fn deferred_overlay_freezes_the_complete_palette_snapshot_for_one_open_generatio
         view.context = reopened_context.clone();
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_only_observed_palette(&observations, OPENING_COLOR);
 
     view.update(cx, |view, cx| {
         view.open = false;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     observations.borrow_mut().clear();
     view.update(cx, |view, cx| {
         view.open = true;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_only_observed_palette(&observations, REOPENED_COLOR);
 }
 
@@ -1509,7 +1509,7 @@ fn button_delayed_tooltip_freezes_scope_until_close_and_recaptures_on_reopen(
             observations,
         }
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let trigger = cx
         .debug_bounds("button:scoped-tooltip-button:root")
@@ -1519,10 +1519,10 @@ fn button_delayed_tooltip_freezes_scope_until_close_and_recaptures_on_reopen(
         view.context = reopened_context;
         cx.notify();
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.executor().advance_clock(Duration::from_millis(500));
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_observed_tooltip_design_phases(
         &observations,
         Density::Compact,
@@ -1532,7 +1532,7 @@ fn button_delayed_tooltip_freezes_scope_until_close_and_recaptures_on_reopen(
 
     cx.simulate_mouse_move(point(px(300.0), px(160.0)), None, Default::default());
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     observations.borrow_mut().clear();
     let trigger = cx
@@ -1541,7 +1541,7 @@ fn button_delayed_tooltip_freezes_scope_until_close_and_recaptures_on_reopen(
     cx.simulate_mouse_move(trigger.center(), None, Default::default());
     cx.executor().advance_clock(Duration::from_millis(500));
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_observed_tooltip_design_phases(
         &observations,
         Density::Spacious,
@@ -1563,7 +1563,7 @@ fn icon_button_delayed_tooltip_builder_and_view_share_the_opening_scope(
             observations,
         }
     });
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 
     let trigger = cx
         .debug_bounds("icon-button:scoped-tooltip-icon-button:root")
@@ -1571,6 +1571,6 @@ fn icon_button_delayed_tooltip_builder_and_view_share_the_opening_scope(
     cx.simulate_mouse_move(trigger.center(), None, Default::default());
     cx.executor().advance_clock(Duration::from_millis(500));
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_observed_tooltip_phases(&observations, ThemeMode::HighContrast);
 }
