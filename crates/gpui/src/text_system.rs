@@ -3,6 +3,8 @@ mod font_features;
 mod line;
 mod line_layout;
 mod line_wrapper;
+#[cfg(test)]
+mod line_wrapper_pool_tests;
 
 pub use font_fallbacks::*;
 pub use font_features::*;
@@ -53,7 +55,7 @@ pub struct TextSystem {
     font_ids_by_font: RwLock<FxHashMap<Font, Result<FontId>>>,
     font_metrics: RwLock<FxHashMap<FontId, FontMetrics>>,
     raster_bounds: RwLock<FxHashMap<RenderGlyphParams, Bounds<DevicePixels>>>,
-    wrapper_pool: Mutex<FxHashMap<FontIdWithSize, Vec<LineWrapper>>>,
+    wrapper_pool: Mutex<FxHashMap<FontIdWithSize, Vec<CharWidthCache>>>,
     font_runs_pool: Mutex<Vec<Vec<FontRun>>>,
     fallback_font_stack: SmallVec<[Font; 2]>,
 }
@@ -305,14 +307,15 @@ impl TextSystem {
 
     /// Returns a handle to a line wrapper, for the given font and font size.
     pub fn line_wrapper(self: &Arc<Self>, font: Font, font_size: Pixels) -> LineWrapperHandle {
-        let lock = &mut self.wrapper_pool.lock();
         let font_id = self.resolve_font(&font);
-        let wrappers = lock
+        let char_widths = self
+            .wrapper_pool
+            .lock()
             .entry(FontIdWithSize { font_id, font_size })
-            .or_default();
-        let wrapper = wrappers
+            .or_default()
             .pop()
-            .unwrap_or_else(|| LineWrapper::new(font_id, font_size, self.clone()));
+            .unwrap_or_default();
+        let wrapper = LineWrapper::new(font_id, font_size, self.clone(), char_widths);
 
         LineWrapperHandle {
             wrapper: Some(wrapper),
@@ -866,7 +869,7 @@ impl Drop for LineWrapperHandle {
                 font_size: wrapper.font_size,
             })
             .unwrap()
-            .push(wrapper);
+            .push(wrapper.into_char_widths());
     }
 }
 

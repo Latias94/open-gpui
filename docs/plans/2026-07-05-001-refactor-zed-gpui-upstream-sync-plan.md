@@ -24,10 +24,37 @@ pending-input/blur. The arena unit is implemented with separate allocation, nest
 App-bound tokens and the fork's native post-borrow maintenance; its
 [verification](../verification.md#element-arena-and-native-frame-maintenance) records allocator
 Miri, framework and Windows HWND evidence, including the remaining touchpad timing gap.
-Continue with TextSystem lifetime before substantial game-engine Editor adaptation. Reproduce
-each remaining defect, integrate the owning fix, preserve fork contracts, run focused and affected
-regression cohorts serially, and record actual results. Source review and dependency-consumer
-checks do not qualify the four pending ports or a complete framework refresh.
+The TextSystem unit now replaces pooled strong wrapper references with independent character
+width caches. Its [lifetime record](../verification.md#textsystem-pool-lifetime) includes the
+reproduced reference cycle, reuse/partition tests and complete headless/native reconstruction.
+The native consumer also exposed a separate stale WinRT UISettings factory after OLE apartment
+recreation; the platform owner now acquires that factory within the current query lifetime.
+Continue with cached-view dependencies before substantial game-engine Editor adaptation.
+Reproduce each remaining defect, integrate the owning fix, preserve fork contracts, run focused
+and affected regression cohorts serially, and record actual results. Source review and dependency-
+consumer checks do not qualify the three pending ports or a complete framework refresh.
+
+### Cached-Dependency Adaptation Requirements
+
+Port `decd2399b1` and `8fa085e397` through existing EntityMap, AnyView and deferred frame journals.
+Capture nested access scopes rather than diffing a whole-frame set; combine render/prepaint,
+paint and deferred reads, and filter released IDs through reference-count membership. An entity
+currently leased remains live even while absent from the storage map. Preserve candidate-frame
+commit timing for subscriptions, atlas reuse refusal, presentation/transform/clip validity and
+portal/reveal generation ownership.
+
+The fork permits opening a second window synchronously during paint. Isolate and restore the
+outer frame's access context on inner success, candidate rejection and unwind; copying an
+upstream frame reset would erase active outer scopes. Regress a cached canvas that reads entities
+before and after nested window creation, with exact per-window subscription ownership. Port the
+upstream accessed-scope, cached/deferred-subscription four-way matrix and inherited-opacity
+regressions without changing their promises about non-view entity notification.
+
+Reconcile opacity inheritance through ordinary deferred children and window portals, including
+hover changes discovered during paint, before closing this unit. Verify bounded convergence
+against the fork's candidate acceptance rather than assuming a follow-up frame is already a
+qualified same-frame result. Retain transform/clip/reveal and rejected-candidate controls; source
+comparison alone does not qualify cached execution.
 
 After those units, compare a coherent text/framework refresh, including dependency/toolchain
 changes, before expanding the Editor component implementation. A game-engine rendering adapter

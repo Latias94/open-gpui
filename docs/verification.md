@@ -133,6 +133,82 @@ Executed on Windows 11 with Rust 1.95.0, one build job and the shared ordinary t
 | Correctness lint and formatting | Core/Windows all-target Clippy passed with `-D clippy::correctness`; root and direct-file Miri-fixture formatting checks passed. Existing non-denied warnings remain. |
 | Repository contract checks | Import boundary, public API tiers, public document links and release documentation passed. UI contract validation passed all 16 registered scenarios after local `.context` worktrees were excluded from discovery; its focused validator cohort passed 16/16 (`4d470a1c-07b8-44f7-ab27-e7b5f9005d09`). The filesystem regression preserves the local copy and admits only the current-workspace artifact. |
 
+## TextSystem Pool Lifetime
+
+The November 5 TextSystem unit ports upstream `e4a3732b94` into the existing text owner. The pool
+previously retained complete LineWrapper values, each strongly referencing the TextSystem that
+owned the pool. Returning any measured wrapper therefore made both the TextSystem and its font
+backend survive their last external owner. The new pool stores only per-font/per-size character
+width caches. A live wrapper still owns its TextSystem; dropping it returns the cache without
+returning that strong reference. Font resolution and wrapper construction occur outside the pool
+mutex. Public wrapping/truncation APIs and cache partitioning retain their existing behavior.
+
+The focused gate is:
+
+```sh
+cargo nextest run --locked -p open-gpui --lib -E 'test(text_system::line_wrapper_pool_tests::) or test(text_system::line_wrapper::tests::)' --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+The lifetime regression first failed against the original pool (`4540ef73-8680-46e7-b93a-b2798e19d13c`).
+After the correction, the 20-case wrapper/lifetime cohort passed
+(`504174d7-ba19-4865-8150-445aa748fb64`). Counting-platform tests prove ASCII and Unicode width
+reuse without another platform layout, resolved-font and size separation, overlapping checked-out
+handles, last-handle lifetime and cache return after unwind. A public headless consumer renders
+ordinary text controls, closes its context and proves release through Weak handles over three
+reconstructions. These are ownership and work-reuse assertions, not process-memory or timing
+benchmarks. Font-generation invalidation and later line-breaking/layout corrections remain in
+their own upstream units.
+
+### Native Application Reconstruction
+
+`native_app_reconstruction_releases_wrapped_text_system_and_direct_write` creates a real Windows
+platform and App, measures mixed Unicode text with DirectWrite, paints a wrapped-text HWND,
+retires its exact native registration and drops the application. It proves TextSystem and backend
+Weak handles expire, then repeats the complete sequence three times in the same process.
+
+This complete consumer exposed an independent baseline native lifecycle fault: the second
+window creation aborted in the windows-core process-cached UISettings activation factory after
+the first OLE apartment was uninitialized. A debugger stack placed the fault in
+`IGenericFactory::ActivateInstance -> UISettings::new -> system_appearance`; a minimal test with
+only repeated OleInitialize/theme-query/OleUninitialize reproduced the same access violation
+(`9ad94219-22cb-46ba-8cb8-a0e6508ca680`). The native owner now acquires a fresh activation factory
+through the public windows-core `factory` function for both appearance and scrollbar queries.
+The factory and returned settings stay inside the current query's apartment lifetime; OLE retains
+its existing balanced ownership. The minimal and complete native regressions passed together
+(`be794f02-b89c-4101-ba61-9c7472aad346`); the final cohort also queries scrollbar preferences.
+The activation-query cost was not benchmarked by these lifetime tests.
+
+Run native lifecycle coverage separately:
+
+```sh
+cargo nextest run --locked -p open-gpui-windows --lib -E 'test(native_app_reconstruction_releases_wrapped_text_system_and_direct_write) or test(system_appearance_survives_ole_apartment_recreation)' --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+These assertions prove the exercised text and platform ownership can reconstruct in-process.
+They do not establish renderer-memory bounds, editor code hot reload, a general leak-free App,
+full OS composition, touchpad latency, Linux/macOS execution or Nara's engine-View integration.
+
+The complete Core/Windows library run `148d842a-52c0-46a9-8f08-799380429e1f` passed all 841 Core
+cases and 163 of 164 selected Windows cases, with four existing interactive cases skipped. The
+unchanged `asymmetric_activation_policy_preserves_click_and_programmatic_independence` timed out
+at its 512-message-pump bound. Its unchanged focused reruns passed separately
+(`755328c7-6405-4c64-9852-d5e7973eff9e`, `bc30d4ef-eee6-4648-a547-2c2e90b0fffd`). Retain the initial
+failure as a timing observation; the successful reruns do not establish its cause or convert
+that initial cohort into a first-run pass.
+
+The subsequent complete Windows library run passed 164/164 selected cases with the same four
+interactive cases skipped (`c000ab90-1774-49fe-be60-c2cd706b1415`), including the unchanged
+activation case, both new lifecycle regressions and the preceding dual-HWND paint regression.
+The component integration cohort separately passed 598/598 across 18 binaries, with no skipped
+selected cases (`3e28da72-1012-4f31-8c8b-22d2e53f0275`). These runs used Windows 11, Rust 1.95.0,
+one build job and the ordinary shared target. Independent correctness review found no outstanding
+P1/P2 in either the text-pool correction or the fresh-factory query owner.
+Locked workspace all-target and independent-consumer all-target/all-feature compilation passed,
+including the latter's WGPU 30.0.1 renderer. Core/Windows all-target Clippy passed with
+`-D clippy::correctness`, and root formatting passed. Existing non-denied test/docking warnings
+remain. Import-boundary, public-document and release-document checks passed; no dependency or
+declared toolchain floor changed. The separate native factory correction is `432d079675`.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:

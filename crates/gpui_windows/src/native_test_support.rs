@@ -74,6 +74,8 @@ use windows::core::{PCWSTR, w};
 
 #[path = "native_paint_tests.rs"]
 mod native_paint_tests;
+#[path = "native_text_pool_tests.rs"]
+mod native_text_pool_tests;
 
 const MAX_MESSAGE_PUMP_ATTEMPTS: usize = 512;
 const MAX_STALE_QUIT_MESSAGES: usize = 16;

@@ -57,6 +57,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Changed
 
+- TextSystem now pools independent character-width caches instead of wrappers that retain the owning TextSystem. Checked-out handles keep their text system alive; returning the last handle releases it with its backend when no other owner remains.
+- Windows appearance and scrollbar queries acquire a WinRT UISettings factory in the active apartment, preventing cached factory access violations after an embedded application closes and recreates its OLE apartment.
 - Library dependencies now accept compatible Taffy, WGPU, and Core Foundation patch versions chosen by consuming applications, while the workspace lockfile retains its tested versions. Fresh consumers use `spin` 0.12.3 instead of the withdrawn 0.10.0 release.
 - `open-gpui-wgpu` now owns one private generation-bound surface lifecycle per native window. Zero extent suspends acquisition instead of configuring `1x1`, ordinary resize configures at a render-safe point without an unbounded shared-device wait, usable suboptimal frames present before reconfiguration, and unrecoverable surface loss publishes a renderer-neutral rejection for only that window.
 - `VirtualizedList` internals are split into descriptor, model, render-plan, runtime, render, style, and motion modules while keeping the public facade key-first.

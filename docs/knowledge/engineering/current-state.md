@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-05T20:17:00+08:00
+timestamp: 2026-11-05T21:13:00+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -33,8 +33,13 @@ verified_by:
   on November 5. The arena successor now has separate allocation, nested cleanup, App-bound clear
   tokens and post-borrow Windows frame maintenance. The verification guide records 2,984 library
   tests, 162 Windows cases (four interactive cases skipped), both allocator Miri models and the
-  outstanding DirectManipulation timing comparison. Four queued correctness units remain before
-  major engine-specific Editor adaptation; this is not a completed framework sync.
+  outstanding DirectManipulation timing comparison. The TextSystem successor now pools independent
+  width caches, preserving reuse without retaining the owning text system. Its 841 Core cases,
+  598 component integration cases and final 164 Windows cases pass; the verification guide retains
+  an initial activation timeout and unchanged successful reruns. Public headless/native
+  reconstruction also exposed and corrected stale WinRT settings factories after OLE apartment
+  recreation (`432d079675`). Three queued correctness units remain before major engine-specific
+  Editor adaptation; this is not a completed framework sync.
 - A game-engine Editor is the selecting consumer. Framework maintenance and rendering-adapter
   refactors are allowed; Nara document, ECS and history types do not enter the core framework.
 
@@ -63,9 +68,10 @@ historical scope and is not current branch or CI qualification.
 
 # Next Action
 
-- Continue with TextSystem lifetime, then cached-view dependencies, text layout and pending-input/
-  blur through their owning regression cohorts. Preserve the arena successor's AppCell native
-  delivery, candidate-frame rules and explicit post-borrow command authority. Qualify touchpad
+- Continue with cached-view dependencies, text layout and pending-input/blur through their owning
+  regression cohorts. The sync plan records nested-draw access-context isolation and the opacity
+  inheritance decisions required for the cached/deferred unit. Preserve the arena successor's
+  AppCell native delivery, candidate-frame rules and explicit post-borrow command authority. Qualify touchpad
   scroll/inertia/pinch and response timing separately; source inspection or the new HWND/IME
   regression does not establish that input/performance parity.
 - Reconcile a coherent later text/framework refresh and its toolchain requirements before broad
