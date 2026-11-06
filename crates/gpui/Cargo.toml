@@ -38,7 +38,7 @@ screen-capture = [
     "scap",
 ]
 windows-manifest = ["dep:embed-resource"]
-input-latency-histogram = ["dep:hdrhistogram"]
+profiler = ["dep:hdrhistogram"]
 stacker = ["dep:stacksafe"]
 
 [lib]

@@ -59,6 +59,22 @@ impl BenchAppContext {
         self.benchmark_name
     }
 
+    /// Runs a Criterion measurement with scoped profiler tracing and returns its frame events.
+    ///
+    /// Create the app, window and input fixtures before this call. Events are collected once
+    /// after the measurement, avoiding per-iteration collector allocation. Nested measurements
+    /// keep tracing enabled until their final scope ends, including during unwind.
+    #[cfg(feature = "profiler")]
+    pub fn profile<R>(
+        &mut self,
+        measure: impl FnOnce(&mut Self) -> R,
+    ) -> (R, Vec<crate::FrameEvent>) {
+        let _scope = crate::profiler::trace_scope();
+        let mut collector = crate::FrameTimingCollector::new();
+        let result = measure(self);
+        (result, collector.collect_unseen())
+    }
+
     /// Returns the background executor used by this benchmark app.
     pub fn background_executor(&self) -> &BackgroundExecutor {
         &self.background_executor
@@ -383,5 +399,66 @@ impl VisualContext for BenchWindowContext {
         self.window.update(&mut self.cx, |_, window, cx| {
             entity.read(cx).focus_handle(cx).focus(window, cx)
         })
+    }
+}
+
+#[cfg(all(test, feature = "profiler"))]
+mod profiler_tests {
+    use super::*;
+    use crate::{FrameEvent, profiler};
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    #[test]
+    fn criterion_profiles_exclude_setup_and_keep_nested_scope_ownership() {
+        profiler::set_trace_enabled(false);
+        let mut app = BenchAppContext::new(Some("nested-profile"));
+        let mut window = app.add_empty_window();
+        window.update(|window, cx| window.draw(cx).clear(cx));
+        let (result, events) = app.profile(|app| {
+            assert!(profiler::trace_enabled());
+            let (nested, events) = app.profile(|_| {
+                window.update(|window, cx| window.draw(cx).clear(cx));
+                42
+            });
+            assert_eq!(nested, 42);
+            assert_eq!(
+                events
+                    .iter()
+                    .filter(|event| matches!(event, FrameEvent::Draw(_)))
+                    .count(),
+                1
+            );
+            assert!(profiler::trace_enabled());
+            window.update(|window, cx| window.draw(cx).clear(cx));
+            nested
+        });
+        assert_eq!(result, 42);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, FrameEvent::Draw(_)))
+                .count(),
+            2
+        );
+        assert!(!profiler::trace_enabled());
+        app.teardown();
+    }
+
+    #[test]
+    fn criterion_profile_unwind_preserves_manual_trace_setting() {
+        let mut app = BenchAppContext::new(Some("unwind-profile"));
+        profiler::set_trace_enabled(true);
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            app.profile::<()>(|_| panic!("injected benchmark failure"));
+        }));
+        assert!(result.is_err());
+        assert!(profiler::trace_enabled());
+        profiler::set_trace_enabled(false);
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            app.profile::<()>(|_| panic!("injected benchmark failure"));
+        }));
+        assert!(result.is_err());
+        assert!(!profiler::trace_enabled());
+        app.teardown();
     }
 }

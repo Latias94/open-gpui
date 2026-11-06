@@ -37,7 +37,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Check framework on minimum Rust
-        run: cargo +1.92.0 check --locked -p open-gpui -p open-gpui-wgpu -p open-gpui-windows --all-features --all-targets -j 1
+        run: cargo +1.92.0 check --locked -p open-gpui -p open-gpui-wgpu -p open-gpui-windows -p open-gpui-canvas --all-features --all-targets -j 1
 
       - name: Check independent consumer on minimum Rust
         run: cargo +1.92.0 check --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --all-targets --all-features --target-dir target -j 1
@@ -171,6 +171,26 @@ jobs:
 
       - name: Check independent dependency consumer
         run: cargo check --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --all-targets --all-features --target-dir target -j 1
+
+      - name: Test profiler-enabled core contracts
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: cargo nextest run --locked -p open-gpui --all-features --lib -E 'test(profiler) | test(draw_unwind)' -j 1 --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Test instrumentation-disabled core contracts
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: cargo nextest run --locked -p open-gpui --no-default-features --features test-support --lib -E 'test(profiler) | test(draw_unwind)' -j 1 --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Test profiler-enabled independent consumer
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --all-features --test profiler --target-dir target -j 1 --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Test instrumentation-disabled independent consumer
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test profiler --target-dir target -j 1 --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Run native WGPU package tests
         if: matrix.name == 'windows'

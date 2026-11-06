@@ -15,6 +15,7 @@ categories = ["gui", "data-structures"]
 
 [features]
 default = []
+profiler = ["open_gpui/profiler"]
 redb-store = []
 loro-crdt = []
 rkyv-snapshot = []

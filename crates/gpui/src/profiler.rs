@@ -1,12 +1,20 @@
+//! Profiling utilities for task, input, frame, and presentation performance tracking.
+
+#[cfg(feature = "profiler")]
+use hdrhistogram::Histogram;
+#[cfg(feature = "profiler")]
 use itertools::Itertools;
 use open_gpui_scheduler::{Instant, SpawnTime};
+#[cfg(feature = "profiler")]
+use smallvec::SmallVec;
+#[cfg(feature = "profiler")]
+use std::cell::LazyCell;
 use std::{
-    cell::LazyCell,
     collections::{HashMap, VecDeque},
     hash::{DefaultHasher, Hash, Hasher},
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicU64, Ordering},
     },
     thread::ThreadId,
     time::Duration,
@@ -14,20 +22,28 @@ use std::{
 
 mod actions;
 pub use actions::{ActionStatistics, ActionTiming, take_action_stats};
-pub(crate) use actions::{save_action_timing, update_running_action};
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "profiler")]
+use crate::{Action, App, PlatformWindowPresentOutcome, WindowId};
 use crate::{SharedString, TasksIncluded};
 
+#[cfg(feature = "profiler")]
 #[cold]
 #[inline(never)]
 fn cold_path() {}
 
 #[doc(hidden)]
+#[cfg(feature = "profiler")]
 pub fn get_all_timings(included: open_gpui::TasksIncluded) -> Vec<open_gpui::ThreadTaskTimings> {
-    let global_thread_timings = GLOBAL_THREAD_TIMINGS.lock();
-    ThreadTaskTimings::collect(&global_thread_timings, included)
+    ThreadTaskTimings::collect(upgraded_thread_timings(), included)
+}
+
+#[doc(hidden)]
+#[cfg(not(feature = "profiler"))]
+pub fn get_all_timings(_included: TasksIncluded) -> Vec<ThreadTaskTimings> {
+    Vec::new()
 }
 
 #[doc(hidden)]
@@ -36,9 +52,15 @@ pub fn get_current_thread_timings(included: TasksIncluded) -> open_gpui::ThreadT
 }
 
 #[doc(hidden)]
+#[cfg(feature = "profiler")]
 pub fn take_all_stats(included: TasksIncluded) -> Vec<open_gpui::ThreadTaskStatistics> {
-    let global_timings = GLOBAL_THREAD_TIMINGS.lock();
-    ThreadTaskStatistics::collect_and_reset(&global_timings, included)
+    ThreadTaskStatistics::collect_and_reset(upgraded_thread_timings(), included)
+}
+
+#[doc(hidden)]
+#[cfg(not(feature = "profiler"))]
+pub fn take_all_stats(_included: TasksIncluded) -> Vec<ThreadTaskStatistics> {
+    Vec::new()
 }
 
 #[doc(hidden)]
@@ -107,14 +129,14 @@ pub struct ThreadTaskTimings {
 }
 
 impl ThreadTaskTimings {
-    /// Convert global thread timings into their structured format.
-    pub fn collect(timings: &[GlobalThreadTimings], included: TasksIncluded) -> Vec<Self> {
+    /// Converts owned, upgraded thread handles after the global registry lock is released.
+    #[cfg(feature = "profiler")]
+    pub fn collect(
+        timings: Vec<(ThreadId, Arc<GuardedTaskTimings>)>,
+        included: TasksIncluded,
+    ) -> Vec<Self> {
         timings
-            .iter()
-            .filter_map(|t| match t.timings.upgrade() {
-                Some(timings) => Some((t.thread_id, timings)),
-                _ => None,
-            })
+            .into_iter()
             .map(|(thread_id, timings)| {
                 let timings = timings.lock();
                 let thread_name = timings.thread_name.clone();
@@ -146,6 +168,15 @@ impl ThreadTaskTimings {
             })
             .collect()
     }
+
+    /// Returns no captured timings when profiling is not compiled in.
+    #[cfg(not(feature = "profiler"))]
+    pub fn collect(
+        _timings: Vec<(ThreadId, Arc<GuardedTaskTimings>)>,
+        _included: TasksIncluded,
+    ) -> Vec<Self> {
+        Vec::new()
+    }
 }
 
 #[doc(hidden)]
@@ -157,16 +188,13 @@ pub struct ThreadTaskStatistics {
 }
 
 impl ThreadTaskStatistics {
+    #[cfg(feature = "profiler")]
     pub fn collect_and_reset(
-        timings: &[GlobalThreadTimings],
+        timings: Vec<(ThreadId, Arc<GuardedTaskTimings>)>,
         include_running: TasksIncluded,
     ) -> Vec<Self> {
         timings
-            .iter()
-            .filter_map(|t| match t.timings.upgrade() {
-                Some(timings) => Some((t.thread_id, timings)),
-                _ => None,
-            })
+            .into_iter()
             .map(|(thread_id, timings)| {
                 let mut timings = timings.lock();
                 let thread_name = timings.thread_name.clone();
@@ -197,6 +225,14 @@ impl ThreadTaskStatistics {
                 }
             })
             .collect()
+    }
+
+    #[cfg(not(feature = "profiler"))]
+    pub fn collect_and_reset(
+        _timings: Vec<(ThreadId, Arc<GuardedTaskTimings>)>,
+        _include_running: TasksIncluded,
+    ) -> Vec<Self> {
+        Vec::new()
     }
 }
 
@@ -345,7 +381,7 @@ impl ProfilingCollector {
             let buffer_len = thread.timings.len() as u64;
             let buffer_start = thread.total_pushed.saturating_sub(buffer_len);
 
-            let mut slice = if prev_cursor < buffer_start {
+            let slice = if prev_cursor < buffer_start {
                 // Cursor fell behind the buffer — some entries were evicted.
                 // Return everything still in the buffer.
                 thread.timings.as_slice()
@@ -381,6 +417,7 @@ impl ProfilingCollector {
 // Allow 16MiB of task timing entries.
 // VecDeque grows by doubling its capacity when full, so keep this a power of 2 to avoid wasting
 // memory.
+#[cfg(feature = "profiler")]
 const MAX_TASK_TIMINGS: usize = (16 * 1024 * 1024) / core::mem::size_of::<TaskTiming>();
 
 #[doc(hidden)]
@@ -442,6 +479,7 @@ impl Default for TaskStatistics {
 }
 
 impl TaskStatistics {
+    #[cfg(feature = "profiler")]
     #[inline(always)]
     fn add_yield_timing(&mut self, task: TaskTiming) {
         let yielded_after = task.poll_duration();
@@ -450,19 +488,20 @@ impl TaskStatistics {
             let to_replace = self
                 .longest_poll_times
                 .iter()
-                .position_min_by_key(|task| task.since_spawn())
+                .position_min_by_key(|task| task.poll_duration())
                 .expect("guarded by the comparison with nth_longest_yield_time");
             self.longest_poll_times[to_replace] = task;
 
             self.poll_time_to_beat = self
                 .longest_poll_times
                 .iter()
-                .map(|task| task.since_spawn())
+                .map(|task| task.poll_duration())
                 .min()
                 .expect("never empty");
         }
     }
 
+    #[cfg(feature = "profiler")]
     #[inline(always)]
     fn add_runtime(&mut self, task: TaskTiming) {
         let runtime = task.since_spawn();
@@ -489,6 +528,20 @@ impl TaskStatistics {
 pub static GLOBAL_THREAD_TIMINGS: spin::Mutex<Vec<GlobalThreadTimings>> =
     spin::Mutex::new(Vec::new());
 
+/// Upgrades live thread owners while holding only the global registry lock.
+///
+/// Returned owners must be read and dropped after releasing that lock: the last
+/// owner runs `ThreadTimings::drop`, which acquires the registry lock again.
+#[cfg(feature = "profiler")]
+fn upgraded_thread_timings() -> Vec<(ThreadId, Arc<GuardedTaskTimings>)> {
+    let global_thread_timings = GLOBAL_THREAD_TIMINGS.lock();
+    global_thread_timings
+        .iter()
+        .filter_map(|thread| Some((thread.thread_id, thread.timings.upgrade()?)))
+        .collect()
+}
+
+#[cfg(feature = "profiler")]
 thread_local! {
     #[doc(hidden)]
     pub static THREAD_TIMINGS: LazyCell<Arc<GuardedTaskTimings>> = LazyCell::new(|| {
@@ -533,6 +586,7 @@ impl ThreadTimings {
         }
     }
 
+    #[cfg(feature = "profiler")]
     pub fn update_running_task(
         &mut self,
         spawned: SpawnTime,
@@ -546,6 +600,10 @@ impl ThreadTimings {
         });
     }
 
+    #[cfg(not(feature = "profiler"))]
+    pub fn update_running_task(&mut self, _: SpawnTime, _: &'static std::panic::Location<'_>) {}
+
+    #[cfg(feature = "profiler")]
     pub fn save_task_timing(&mut self, ended: YieldTime) {
         let ActiveTiming {
             location,
@@ -575,8 +633,12 @@ impl ThreadTimings {
         }
     }
 
+    #[cfg(not(feature = "profiler"))]
+    pub fn save_task_timing(&mut self, _: YieldTime) {}
+
     // Running tasks are included in the reliability trace, which is written
     // whenever the foreground executor makes no progress for > n seconds
+    #[cfg(feature = "profiler")]
     pub fn get_thread_task_timings(&self, includes: TasksIncluded) -> ThreadTaskTimings {
         ThreadTaskTimings {
             thread_name: self.thread_name.clone(),
@@ -600,6 +662,11 @@ impl ThreadTimings {
             total_pushed: self.total_pushed,
         }
     }
+
+    #[cfg(not(feature = "profiler"))]
+    pub fn get_thread_task_timings(&self, _includes: TasksIncluded) -> ThreadTaskTimings {
+        empty_thread_task_timings()
+    }
 }
 
 impl Drop for ThreadTimings {
@@ -619,51 +686,863 @@ impl Drop for ThreadTimings {
 
 #[doc(hidden)]
 pub fn update_running_task(spawned: SpawnTime, location: &'static std::panic::Location<'_>) {
+    #[cfg(feature = "profiler")]
     THREAD_TIMINGS.with(|timings| {
         timings.lock().update_running_task(spawned, location);
     });
+    #[cfg(not(feature = "profiler"))]
+    let _ = (spawned, location);
 }
 
 #[doc(hidden)]
 pub fn save_task_timing() {
-    let yielded_at = YieldTime(Instant::now());
-    THREAD_TIMINGS.with(|timings| {
-        timings.lock().save_task_timing(yielded_at);
-    });
+    #[cfg(feature = "profiler")]
+    {
+        let yielded_at = YieldTime(Instant::now());
+        THREAD_TIMINGS.with(|timings| {
+            timings.lock().save_task_timing(yielded_at);
+        });
+    }
 }
 
 #[doc(hidden)]
 pub fn get_current_thread_task_timings(include_running: TasksIncluded) -> ThreadTaskTimings {
-    THREAD_TIMINGS.with(|timings| timings.lock().get_thread_task_timings(include_running))
+    #[cfg(feature = "profiler")]
+    {
+        THREAD_TIMINGS.with(|timings| timings.lock().get_thread_task_timings(include_running))
+    }
+    #[cfg(not(feature = "profiler"))]
+    {
+        let _ = include_running;
+        empty_thread_task_timings()
+    }
 }
 
-static PROFILER_ENABLED: AtomicBool = AtomicBool::new(false);
+#[cfg(not(feature = "profiler"))]
+fn empty_thread_task_timings() -> ThreadTaskTimings {
+    ThreadTaskTimings {
+        thread_name: None,
+        thread_id: std::thread::current().id(),
+        timings: Vec::new(),
+        stats: TaskStatistics::default(),
+        total_pushed: 0,
+    }
+}
 
-/// Enables or disables task timing trace collection at runtime.
+const TRACE_SETTING_ENABLED: u64 = 1 << 63;
+const TRACE_SCOPE_COUNT_MASK: u64 = TRACE_SETTING_ENABLED - 1;
+static TRACE_STATE: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(feature = "profiler")]
+static TRACE_LIFECYCLE_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+
+/// Enables or disables profiler trace collection at runtime.
 ///
-/// When transitioning from enabled to disabled, `add_task_timing` becomes a
-/// cheaper since only cheap statistics are gathered. The existing per-thread
-/// buffers for traces are cleared so stale data isn't reported after a later
-/// re-enable. Calls with the current value are a no-op.
+/// Returns whether the manual setting changed. Active trace-scope guards
+/// keep tracing enabled independently of this setting. When the final scope
+/// and manual setting are both disabled, task and frame trace buffers are
+/// cleared. Aggregate statistics remain available with the `profiler` feature.
+/// Without that feature this is a no-op returning `false`.
 pub fn set_trace_enabled(enabled: bool) -> bool {
-    if PROFILER_ENABLED.swap(enabled, Ordering::AcqRel) == enabled {
+    if !cfg!(feature = "profiler") {
         return false;
     }
+    #[cfg(feature = "profiler")]
+    let _lifecycle = TRACE_LIFECYCLE_LOCK.lock();
+    let mut state = TRACE_STATE.load(Ordering::Acquire);
+    loop {
+        if (state & TRACE_SETTING_ENABLED != 0) == enabled {
+            return false;
+        }
+        let next_state = if enabled {
+            state | TRACE_SETTING_ENABLED
+        } else {
+            state & TRACE_SCOPE_COUNT_MASK
+        };
+        match TRACE_STATE.compare_exchange_weak(
+            state,
+            next_state,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => {
+                if next_state == 0 {
+                    clear_trace_buffers();
+                }
+                return true;
+            }
+            Err(updated_state) => state = updated_state,
+        }
+    }
+}
 
-    if !enabled {
-        for global in GLOBAL_THREAD_TIMINGS.lock().iter() {
-            if let Some(timings) = global.timings.upgrade() {
-                let mut timings = timings.lock();
-                timings.timings.clear();
-                timings.timings.shrink_to_fit();
-                timings.total_pushed = 0;
+/// Keeps trace collection enabled until this guard is dropped.
+#[cfg(all(feature = "profiler", any(test, feature = "test-support")))]
+#[must_use]
+pub(crate) struct TraceGuard {
+    _private: (),
+}
+
+/// Starts a reference-counted trace scope, independent of the manual setting.
+#[cfg(all(feature = "profiler", any(test, feature = "test-support")))]
+pub(crate) fn trace_scope() -> TraceGuard {
+    let _lifecycle = TRACE_LIFECYCLE_LOCK.lock();
+    let incremented = TRACE_STATE.fetch_update(Ordering::AcqRel, Ordering::Acquire, |state| {
+        (state & TRACE_SCOPE_COUNT_MASK < TRACE_SCOPE_COUNT_MASK).then(|| state + 1)
+    });
+    assert!(incremented.is_ok(), "too many active profiler trace scopes");
+    TraceGuard { _private: () }
+}
+
+#[cfg(all(feature = "profiler", any(test, feature = "test-support")))]
+impl Drop for TraceGuard {
+    fn drop(&mut self) {
+        let _lifecycle = TRACE_LIFECYCLE_LOCK.lock();
+        let previous_state =
+            TRACE_STATE.fetch_update(Ordering::AcqRel, Ordering::Acquire, |state| {
+                (state & TRACE_SCOPE_COUNT_MASK > 0).then(|| state - 1)
+            });
+        match previous_state {
+            Ok(1) => clear_trace_buffers(),
+            Ok(_) => {}
+            Err(_) => debug_assert!(false, "profiler trace scope count underflowed"),
+        }
+    }
+}
+
+/// Returns whether profiler trace collection is enabled.
+pub fn trace_enabled() -> bool {
+    cfg!(feature = "profiler") && TRACE_STATE.load(Ordering::Relaxed) != 0
+}
+
+fn clear_trace_buffers() {
+    #[cfg(feature = "profiler")]
+    {
+        for (_, timings) in upgraded_thread_timings() {
+            let mut timings = timings.lock();
+            timings.timings.clear();
+            timings.timings.shrink_to_fit();
+        }
+        let mut frames = FRAME_TIMINGS.lock();
+        frames.timings.clear();
+        frames.timings.shrink_to_fit();
+    }
+}
+
+/// Timing for a single accepted window draw.
+#[cfg(feature = "profiler")]
+#[derive(Debug, Copy, Clone)]
+pub struct FrameTiming {
+    /// The window that was drawn.
+    pub window_id: WindowId,
+    /// The frame's first observed invalidation, when known.
+    pub dirty_at: Option<Instant>,
+    /// Number of invalidations coalesced into this frame.
+    pub invalidations: u64,
+    /// When the draw started.
+    pub draw_start: Instant,
+    /// When the draw finished.
+    pub draw_end: Instant,
+}
+
+#[cfg(feature = "profiler")]
+impl FrameTiming {
+    /// Time spent drawing the frame.
+    pub fn draw_duration(&self) -> Duration {
+        self.draw_end.duration_since(self.draw_start)
+    }
+
+    /// Time from the first observed invalidation to the end of the draw.
+    pub fn dirty_to_draw_duration(&self) -> Option<Duration> {
+        self.dirty_at
+            .map(|dirty_at| self.draw_end.duration_since(dirty_at))
+    }
+}
+
+/// Work spent submitting a newly drawn window frame to the platform.
+#[cfg(feature = "profiler")]
+#[derive(Debug, Copy, Clone)]
+pub struct PresentTiming {
+    /// The window whose frame was submitted.
+    pub window_id: WindowId,
+    /// When the platform submission began.
+    pub present_start: Instant,
+    /// When the platform submission completed.
+    pub present_end: Instant,
+    /// Interval since the preceding new frame's submission in an active animation.
+    pub animation_interval: Option<Duration>,
+}
+
+#[cfg(feature = "profiler")]
+impl PresentTiming {
+    /// Time spent submitting the frame to the platform.
+    pub fn present_duration(&self) -> Duration {
+        self.present_end.duration_since(self.present_start)
+    }
+}
+
+/// A frame event retained while profiler tracing is enabled.
+#[cfg(feature = "profiler")]
+#[derive(Debug, Copy, Clone)]
+pub enum FrameEvent {
+    /// An accepted window frame was drawn.
+    Draw(FrameTiming),
+    /// A newly drawn window frame was submitted.
+    Present(PresentTiming),
+}
+
+/// A point-in-time snapshot of a window's frame-duration histograms.
+#[cfg(feature = "profiler")]
+#[derive(Clone)]
+pub struct FrameDurationSnapshot {
+    /// Time from the first observed invalidation to submission completion, in nanoseconds.
+    pub dirty_to_present_histogram: Histogram<u64>,
+    /// Durations of accepted window draws, in nanoseconds.
+    pub draw_duration_histogram: Histogram<u64>,
+    /// Intervals between newly submitted animation frames, in nanoseconds.
+    pub present_interval_histogram: Histogram<u64>,
+}
+
+/// A point-in-time snapshot of input latency and actual window presentation diagnostics.
+#[cfg(feature = "profiler")]
+#[derive(Clone)]
+pub struct InputLatencySnapshot {
+    /// Input-to-submission-completion latency samples, in nanoseconds.
+    pub latency_histogram: Histogram<u64>,
+    /// Input events coalesced per submitted frame.
+    pub events_per_frame_histogram: Histogram<u64>,
+    /// Invalidating input events received during a draw and excluded from latency recording.
+    pub mid_draw_events_dropped: u64,
+    /// Recorded input events still waiting for a submitted frame.
+    pub pending_input_count: u64,
+    /// Accepted framework frames built during this measurement window.
+    pub drawn_frame_count: u64,
+    /// Frames handed to the platform presentation path.
+    pub present_attempt_count: u64,
+    /// Presentation attempts submitted to the platform renderer.
+    pub submitted_present_count: u64,
+    /// Presentation attempts deferred by the native surface.
+    pub deferred_present_count: u64,
+    /// Presentation attempts requiring a newer rendered frame.
+    pub repaint_required_present_count: u64,
+    /// Presentation attempts rejected by the renderer or native surface.
+    pub rejected_present_count: u64,
+    /// Redraw requests admitted by the window invalidator.
+    pub refresh_request_count: u64,
+    /// Admitted redraw requests that found the window already dirty.
+    pub coalesced_refresh_request_count: u64,
+    /// Redraw requests grouped by their direct caller's file and line.
+    pub refresh_callsites: Vec<InputLatencyRefreshCallsite>,
+}
+
+/// Input-latency diagnostics for one direct [`crate::Window::refresh`] caller.
+#[cfg(feature = "profiler")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InputLatencyRefreshCallsite {
+    /// Source file containing the redraw request.
+    pub file: &'static str,
+    /// Source line containing the redraw request.
+    pub line: u32,
+    /// Admitted redraw requests from this caller.
+    pub request_count: u64,
+    /// Requests from this caller that found the window already dirty.
+    pub coalesced_request_count: u64,
+}
+
+#[cfg(feature = "profiler")]
+enum WindowActivity {
+    Input {
+        started_at: Instant,
+        covering_draw: Option<(Instant, usize)>,
+        measurement_generation: u64,
+    },
+    Draw {
+        started_at: Instant,
+    },
+}
+
+#[cfg(feature = "profiler")]
+#[derive(Clone, Copy)]
+struct PendingFrame {
+    timing: FrameTiming,
+    first_input_at: Option<Instant>,
+    input_count: u64,
+}
+
+/// Captures the enclosing activity depth and accepted pending frame for one draw attempt.
+#[cfg(feature = "profiler")]
+#[must_use]
+pub(crate) struct DrawCheckpoint {
+    activity_depth: usize,
+    pending_frame: Option<PendingFrame>,
+    input_measurement_generation: u64,
+}
+
+/// Collects profiling information for one window.
+///
+/// Aggregate histograms and diagnostics are collected whenever the `profiler`
+/// feature is compiled in. Individual task, draw, and presentation records are
+/// retained only while tracing is enabled. Draw scopes must end after candidate
+/// acceptance or be canceled with [`Self::abort_draw`] on refusal or unwind.
+#[cfg(feature = "profiler")]
+pub struct WindowProfiler {
+    window_id: WindowId,
+    active_activities: SmallVec<[WindowActivity; 4]>,
+    dirty_to_present_histogram: Histogram<u64>,
+    draw_duration_histogram: Histogram<u64>,
+    present_interval_histogram: Histogram<u64>,
+    first_input_at: Option<Instant>,
+    input_after_draw_at: Option<Instant>,
+    pending_input_count: u64,
+    input_measurement_generation: u64,
+    input_latency_histogram: Histogram<u64>,
+    events_per_frame_histogram: Histogram<u64>,
+    mid_draw_events_dropped: u64,
+    last_present_at: Option<Instant>,
+    animating_at_last_present: bool,
+    pending_frame: Option<PendingFrame>,
+    drawn_frame_count: u64,
+    present_attempt_count: u64,
+    submitted_present_count: u64,
+    deferred_present_count: u64,
+    repaint_required_present_count: u64,
+    rejected_present_count: u64,
+    refresh_request_count: u64,
+    coalesced_refresh_request_count: u64,
+    refresh_callsites: Vec<InputLatencyRefreshCallsite>,
+}
+
+#[cfg(feature = "profiler")]
+impl WindowProfiler {
+    /// Creates a profiler for a window.
+    ///
+    /// Returns an error if any aggregate histogram cannot be created.
+    pub fn new(window_id: WindowId) -> anyhow::Result<Self> {
+        Ok(Self {
+            window_id,
+            active_activities: SmallVec::new(),
+            dirty_to_present_histogram: Histogram::new(3).map_err(|error| {
+                anyhow::anyhow!("Failed to create dirty-to-present histogram: {error}")
+            })?,
+            draw_duration_histogram: Histogram::new(3).map_err(|error| {
+                anyhow::anyhow!("Failed to create draw duration histogram: {error}")
+            })?,
+            present_interval_histogram: Histogram::new(3).map_err(|error| {
+                anyhow::anyhow!("Failed to create present interval histogram: {error}")
+            })?,
+            first_input_at: None,
+            input_after_draw_at: None,
+            pending_input_count: 0,
+            input_measurement_generation: 0,
+            input_latency_histogram: Histogram::new(3).map_err(|error| {
+                anyhow::anyhow!("Failed to create input latency histogram: {error}")
+            })?,
+            events_per_frame_histogram: Histogram::new(3).map_err(|error| {
+                anyhow::anyhow!("Failed to create events per frame histogram: {error}")
+            })?,
+            mid_draw_events_dropped: 0,
+            last_present_at: None,
+            animating_at_last_present: false,
+            pending_frame: None,
+            drawn_frame_count: 0,
+            present_attempt_count: 0,
+            submitted_present_count: 0,
+            deferred_present_count: 0,
+            repaint_required_present_count: 0,
+            rejected_present_count: 0,
+            refresh_request_count: 0,
+            coalesced_refresh_request_count: 0,
+            refresh_callsites: Vec::new(),
+        })
+    }
+
+    /// Records the beginning of an input dispatch.
+    ///
+    /// `kind` names the platform input variant. Aggregate measurements do not
+    /// retain individual input event names.
+    pub fn begin_input(&mut self, _kind: &'static str) {
+        self.active_activities.push(WindowActivity::Input {
+            started_at: Instant::now(),
+            covering_draw: None,
+            measurement_generation: self.input_measurement_generation,
+        });
+    }
+
+    /// Ends the current input dispatch, recording only input that invalidated the window.
+    ///
+    /// Input received inside a draw is excluded because it cannot affect that
+    /// draw. Nested input dispatches retain the earliest invalidating input.
+    pub fn end_input(&mut self, caused_invalidation: bool) {
+        self.finish_input(caused_invalidation, None);
+    }
+
+    pub(crate) fn end_input_dispatch(&mut self, before: usize, after: usize, completed: bool) {
+        self.finish_input(completed && after > before, Some((before, after)));
+    }
+
+    pub(crate) fn note_accepted_draw_covering_input(&mut self, invalidations: usize) {
+        let Some(frame) = self.pending_frame else {
+            return;
+        };
+        for activity in &mut self.active_activities {
+            if let WindowActivity::Input { covering_draw, .. } = activity {
+                *covering_draw = Some((frame.timing.draw_start, invalidations));
             }
         }
     }
-    true
+
+    fn finish_input(&mut self, caused_invalidation: bool, dispatch: Option<(usize, usize)>) {
+        let Some(WindowActivity::Input {
+            started_at,
+            covering_draw,
+            measurement_generation,
+        }) = self.active_activities.last()
+        else {
+            debug_assert!(false, "input activity must be the current window activity");
+            return;
+        };
+        let started_at = *started_at;
+        let covering_draw = *covering_draw;
+        let measurement_generation = *measurement_generation;
+        self.active_activities.pop();
+        if !caused_invalidation || measurement_generation != self.input_measurement_generation {
+            return;
+        }
+        if self
+            .active_activities
+            .iter()
+            .any(|activity| matches!(activity, WindowActivity::Draw { .. }))
+        {
+            self.mid_draw_events_dropped += 1;
+        } else {
+            self.first_input_at = Some(
+                self.first_input_at
+                    .map_or(started_at, |first| first.min(started_at)),
+            );
+            if let Some(frame) = self.pending_frame.as_mut() {
+                let covered = match (covering_draw, dispatch) {
+                    (Some((draw_start, covered_at)), Some((before, after))) => {
+                        draw_start == frame.timing.draw_start
+                            && covered_at > before
+                            && after == covered_at
+                    }
+                    _ => false,
+                };
+                if covered {
+                    frame.first_input_at = Some(
+                        frame
+                            .first_input_at
+                            .map_or(started_at, |first| first.min(started_at)),
+                    );
+                    frame.input_count += 1;
+                } else {
+                    self.input_after_draw_at = Some(
+                        self.input_after_draw_at
+                            .map_or(started_at, |first| first.min(started_at)),
+                    );
+                }
+            }
+            self.pending_input_count += 1;
+        }
+    }
+
+    /// Records the beginning of an action handler in the shared action aggregates.
+    pub fn begin_action_handler(&mut self, action: &(dyn Action + 'static), cx: &mut App) {
+        actions::update_running_action(action, cx);
+    }
+
+    /// Records the end of the current action handler.
+    pub fn end_action_handler(&mut self) {
+        actions::save_action_timing();
+    }
+
+    /// Begins a candidate draw without replacing the previous accepted pending frame.
+    pub fn begin_draw(&mut self) {
+        self.active_activities.push(WindowActivity::Draw {
+            started_at: Instant::now(),
+        });
+    }
+
+    /// Captures state before a draw attempt that may refuse or unwind before beginning a draw.
+    ///
+    /// The token must be consumed by this profiler's finish or abort method.
+    pub(crate) fn checkpoint_draw(&self) -> DrawCheckpoint {
+        DrawCheckpoint {
+            activity_depth: self.active_activities.len(),
+            pending_frame: self.pending_frame,
+            input_measurement_generation: self.input_measurement_generation,
+        }
+    }
+
+    /// Ends a draw begun after the checkpoint only when its candidate was accepted.
+    ///
+    /// Refusal or an attempt that never began a draw restores the checkpoint and
+    /// returns zero. An accepted attempt must first finish its nested activities.
+    pub(crate) fn finish_draw_checkpoint(
+        &mut self,
+        checkpoint: DrawCheckpoint,
+        dirty_at: Option<Instant>,
+        invalidations: u64,
+        accepted: bool,
+    ) -> Duration {
+        if !accepted || self.active_activities.len() <= checkpoint.activity_depth {
+            self.abort_draw_checkpoint(checkpoint);
+            return Duration::ZERO;
+        }
+        if !matches!(
+            self.active_activities.last(),
+            Some(WindowActivity::Draw { .. })
+        ) {
+            self.abort_draw_checkpoint(checkpoint);
+            debug_assert!(false, "accepted draw must finish its nested activities");
+            return Duration::ZERO;
+        }
+        let duration = self.end_draw(dirty_at, invalidations);
+        self.active_activities.truncate(checkpoint.activity_depth);
+        duration
+    }
+
+    /// Restores the accepted pending frame and enclosing activity depth after refusal or unwind.
+    /// Input measurements reset during the attempt remain cleared after rollback.
+    pub(crate) fn abort_draw_checkpoint(&mut self, checkpoint: DrawCheckpoint) {
+        self.active_activities.truncate(checkpoint.activity_depth);
+        self.pending_frame = checkpoint.pending_frame;
+        if checkpoint.input_measurement_generation != self.input_measurement_generation
+            && let Some(pending) = self.pending_frame.as_mut()
+        {
+            pending.first_input_at = None;
+            pending.input_count = 0;
+        }
+    }
+
+    /// Discards pending frame timing after a scene was accepted but its draw unwound.
+    ///
+    /// Input remains pending for a subsequent completed and accepted draw.
+    pub(crate) fn discard_pending_frame(&mut self) {
+        self.pending_frame = None;
+    }
+
+    /// Accepts the current draw and returns its duration.
+    ///
+    /// Call this only after the framework accepts the candidate frame. A refused
+    /// or unwinding candidate must instead call [`Self::abort_draw`]. An unmatched
+    /// end asserts in debug builds and leaves activities unchanged otherwise.
+    pub fn end_draw(&mut self, dirty_at: Option<Instant>, invalidations: u64) -> Duration {
+        let Some(WindowActivity::Draw {
+            started_at: draw_start,
+        }) = self.active_activities.last()
+        else {
+            debug_assert!(false, "draw activity must be the current window activity");
+            return Duration::ZERO;
+        };
+        let draw_start = *draw_start;
+        self.active_activities.pop();
+        let timing = FrameTiming {
+            window_id: self.window_id,
+            dirty_at,
+            invalidations,
+            draw_start,
+            draw_end: Instant::now(),
+        };
+        let duration = timing.draw_duration();
+        self.record_draw_timing(timing);
+        duration
+    }
+
+    /// Cancels the innermost draw and any unfinished activities nested inside it.
+    ///
+    /// This is safe to call from refusal or unwind cleanup, and is a no-op
+    /// without an active draw. It does not publish a draw event or change the
+    /// previous accepted pending frame, pending input, or aggregate histograms.
+    pub fn abort_draw(&mut self) {
+        if let Some(index) = self
+            .active_activities
+            .iter()
+            .rposition(|activity| matches!(activity, WindowActivity::Draw { .. }))
+        {
+            self.active_activities.truncate(index);
+        }
+    }
+
+    /// Records successful platform submission using the caller's actual timestamps.
+    ///
+    /// `present_end` is submission completion, not a display scanout timestamp.
+    /// Input latency ends at `present_end` and includes only the inputs covered
+    /// by the accepted draw. Later input remains pending for a subsequent draw.
+    /// All samples require a newly accepted pending draw; presenting an unchanged
+    /// scene does not complete input or add frame samples.
+    /// `next_frame_scheduled` sets animation state for the next new frame.
+    ///
+    /// This method does not increment presentation outcome counters. Window
+    /// integrations should call [`Self::record_present_outcome`] once per actual
+    /// attempt. The caller must supply ordered timestamps from the same clock.
+    /// Histogram recording failures are logged and do not change submission.
+    pub fn record_present(
+        &mut self,
+        present_start: Instant,
+        present_end: Instant,
+        window_active: bool,
+        next_frame_scheduled: bool,
+    ) {
+        let Some(pending) = self.pending_frame.take() else {
+            return;
+        };
+        if let Some(first_input_at) = pending.first_input_at {
+            record_duration(
+                &mut self.input_latency_histogram,
+                present_end.duration_since(first_input_at),
+            );
+        }
+        if pending.input_count > 0 {
+            if let Err(error) = self.events_per_frame_histogram.record(pending.input_count) {
+                log::error!("failed to record input events per frame: {error}");
+            }
+        }
+        self.pending_input_count = self.pending_input_count.saturating_sub(pending.input_count);
+        self.first_input_at = self.input_after_draw_at.take();
+        let frame = pending.timing;
+        let animation_interval = if self.animating_at_last_present && window_active {
+            self.last_present_at
+                .map(|last_present| present_end.duration_since(last_present))
+        } else {
+            None
+        };
+        if let Some(dirty_at) = frame.dirty_at {
+            record_duration(
+                &mut self.dirty_to_present_histogram,
+                present_end.duration_since(dirty_at),
+            );
+        }
+        if let Some(interval) = animation_interval {
+            record_duration(&mut self.present_interval_histogram, interval);
+        }
+        record_frame_event(FrameEvent::Present(PresentTiming {
+            window_id: self.window_id,
+            present_start,
+            present_end,
+            animation_interval,
+        }));
+        self.last_present_at = Some(present_end);
+        self.animating_at_last_present = next_frame_scheduled && window_active;
+    }
+
+    /// Records exactly one actual platform presentation outcome.
+    ///
+    /// Every call increments the attempt counter and its outcome counter. Only
+    /// [`PlatformWindowPresentOutcome::Submitted`] records successful timing
+    /// through [`Self::record_present`]. Deferred, repaint-required, and rejected
+    /// attempts retain pending input and the previous accepted pending frame.
+    /// The framework remains responsible for choosing which scene may be retried.
+    ///
+    /// Pass the actual start and end of the platform call, including refusal
+    /// paths, from the same monotonic clock used by the profiler. This method
+    /// returns no error and never changes the platform's outcome; failures to
+    /// record histogram samples are logged. Submission is not proof of scanout.
+    pub fn record_present_outcome(
+        &mut self,
+        outcome: PlatformWindowPresentOutcome,
+        present_start: Instant,
+        present_end: Instant,
+        window_active: bool,
+        next_frame_scheduled: bool,
+    ) {
+        self.present_attempt_count += 1;
+        match outcome {
+            PlatformWindowPresentOutcome::Submitted => {
+                self.submitted_present_count += 1;
+                self.record_present(
+                    present_start,
+                    present_end,
+                    window_active,
+                    next_frame_scheduled,
+                );
+            }
+            PlatformWindowPresentOutcome::Deferred => self.deferred_present_count += 1,
+            PlatformWindowPresentOutcome::RepaintRequired => {
+                self.repaint_required_present_count += 1;
+            }
+            PlatformWindowPresentOutcome::Rejected => self.rejected_present_count += 1,
+        }
+    }
+
+    /// Records an admitted redraw request with its exact direct caller's file and line.
+    pub fn record_refresh_request(
+        &mut self,
+        already_dirty: bool,
+        caller: &'static std::panic::Location<'static>,
+    ) {
+        self.refresh_request_count += 1;
+        self.coalesced_refresh_request_count += u64::from(already_dirty);
+        if let Some(callsite) = self
+            .refresh_callsites
+            .iter_mut()
+            .find(|callsite| callsite.file == caller.file() && callsite.line == caller.line())
+        {
+            callsite.request_count += 1;
+            callsite.coalesced_request_count += u64::from(already_dirty);
+        } else {
+            self.refresh_callsites.push(InputLatencyRefreshCallsite {
+                file: caller.file(),
+                line: caller.line(),
+                request_count: 1,
+                coalesced_request_count: u64::from(already_dirty),
+            });
+        }
+    }
+
+    /// Returns the current input histograms, pending inputs, and actual consumer diagnostics.
+    pub fn input_latency_snapshot(&self) -> InputLatencySnapshot {
+        InputLatencySnapshot {
+            latency_histogram: self.input_latency_histogram.clone(),
+            events_per_frame_histogram: self.events_per_frame_histogram.clone(),
+            mid_draw_events_dropped: self.mid_draw_events_dropped,
+            pending_input_count: self.pending_input_count,
+            drawn_frame_count: self.drawn_frame_count,
+            present_attempt_count: self.present_attempt_count,
+            submitted_present_count: self.submitted_present_count,
+            deferred_present_count: self.deferred_present_count,
+            repaint_required_present_count: self.repaint_required_present_count,
+            rejected_present_count: self.rejected_present_count,
+            refresh_request_count: self.refresh_request_count,
+            coalesced_refresh_request_count: self.coalesced_refresh_request_count,
+            refresh_callsites: self.refresh_callsites.clone(),
+        }
+    }
+
+    /// Returns the current accepted draw and successful presentation histograms.
+    pub fn frame_duration_snapshot(&self) -> FrameDurationSnapshot {
+        FrameDurationSnapshot {
+            dirty_to_present_histogram: self.dirty_to_present_histogram.clone(),
+            draw_duration_histogram: self.draw_duration_histogram.clone(),
+            present_interval_histogram: self.present_interval_histogram.clone(),
+        }
+    }
+
+    /// Clears recorded and pending input latency and all input snapshot diagnostics.
+    ///
+    /// Accepted pending frames, active scopes, frame histograms, and animation
+    /// continuity are preserved. Refresh callsite rows are cleared exactly.
+    pub fn reset_input_latency_measurements(&mut self) {
+        self.input_measurement_generation = self
+            .input_measurement_generation
+            .checked_add(1)
+            .expect("input measurement generation exhausted");
+        self.first_input_at = None;
+        self.input_after_draw_at = None;
+        self.pending_input_count = 0;
+        if let Some(pending) = self.pending_frame.as_mut() {
+            pending.first_input_at = None;
+            pending.input_count = 0;
+        }
+        self.input_latency_histogram.reset();
+        self.events_per_frame_histogram.reset();
+        self.mid_draw_events_dropped = 0;
+        self.drawn_frame_count = 0;
+        self.present_attempt_count = 0;
+        self.submitted_present_count = 0;
+        self.deferred_present_count = 0;
+        self.repaint_required_present_count = 0;
+        self.rejected_present_count = 0;
+        self.refresh_request_count = 0;
+        self.coalesced_refresh_request_count = 0;
+        self.refresh_callsites.clear();
+    }
+
+    fn record_draw_timing(&mut self, timing: FrameTiming) {
+        record_duration(&mut self.draw_duration_histogram, timing.draw_duration());
+        self.drawn_frame_count += 1;
+        self.pending_frame = Some(PendingFrame {
+            timing,
+            first_input_at: self.first_input_at,
+            input_count: self.pending_input_count,
+        });
+        self.input_after_draw_at = None;
+        record_frame_event(FrameEvent::Draw(timing));
+    }
 }
 
-/// Returns whether task timing tracing is enabled.
-pub fn trace_enabled() -> bool {
-    PROFILER_ENABLED.load(Ordering::Relaxed)
+#[cfg(feature = "profiler")]
+fn record_duration(histogram: &mut Histogram<u64>, duration: Duration) {
+    let nanos = u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX);
+    if let Err(error) = histogram.record(nanos) {
+        log::error!("failed to record profiler duration: {error}");
+    }
 }
+
+#[cfg(feature = "profiler")]
+const MAX_FRAME_TIMINGS: usize = (16 * 1024 * 1024) / core::mem::size_of::<FrameEvent>();
+
+#[cfg(feature = "profiler")]
+struct FrameTimings {
+    timings: VecDeque<FrameEvent>,
+    total_pushed: u64,
+}
+
+#[cfg(feature = "profiler")]
+static FRAME_TIMINGS: spin::Mutex<FrameTimings> = spin::Mutex::new(FrameTimings {
+    timings: VecDeque::new(),
+    total_pushed: 0,
+});
+
+/// Records a frame event only while profiler tracing is enabled.
+#[cfg(feature = "profiler")]
+pub fn record_frame_event(event: FrameEvent) {
+    if !trace_enabled() {
+        return;
+    }
+    cold_path();
+    let mut frames = FRAME_TIMINGS.lock();
+    if !trace_enabled() {
+        return;
+    }
+    if frames.timings.len() >= MAX_FRAME_TIMINGS {
+        frames.timings.pop_front();
+    }
+    frames.timings.push_back(event);
+    frames.total_pushed += 1;
+}
+
+/// Tracks unseen frame events in the bounded global trace buffer.
+#[cfg(feature = "profiler")]
+pub struct FrameTimingCollector {
+    cursor: u64,
+}
+
+#[cfg(feature = "profiler")]
+impl Default for FrameTimingCollector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(feature = "profiler")]
+impl FrameTimingCollector {
+    /// Creates a collector that sees only events recorded from this point onward.
+    pub fn new() -> Self {
+        Self {
+            cursor: FRAME_TIMINGS.lock().total_pushed,
+        }
+    }
+
+    /// Returns each retained event at most once, without consuming other collectors' events.
+    ///
+    /// Events evicted from the bounded buffer before collection are lost.
+    pub fn collect_unseen(&mut self) -> Vec<FrameEvent> {
+        let frames = FRAME_TIMINGS.lock();
+        let buffer_start = frames
+            .total_pushed
+            .saturating_sub(frames.timings.len() as u64);
+        let skip = self.cursor.saturating_sub(buffer_start) as usize;
+        let unseen = frames
+            .timings
+            .iter()
+            .skip(skip.min(frames.timings.len()))
+            .copied()
+            .collect();
+        self.cursor = frames.total_pushed;
+        unseen
+    }
+}
+
+#[cfg(test)]
+mod foundation_tests;

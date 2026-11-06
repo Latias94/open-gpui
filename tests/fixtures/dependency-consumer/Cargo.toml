@@ -9,6 +9,7 @@ rust-version = "1.92"
 publish = false
 
 [features]
+profiler = ["open_gpui/profiler"]
 wgpu-renderer = ["dep:open_gpui_wgpu"]
 
 [dependencies]

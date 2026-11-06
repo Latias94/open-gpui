@@ -5,6 +5,8 @@ use crate::MouseButton;
 #[cfg(target_os = "macos")]
 use crate::PlatformPixelBuffer;
 use crate::app::{AppCell, PlatformWindowCommandSink};
+#[cfg(feature = "profiler")]
+use crate::profiler;
 use crate::{
     Action, AnyElement, AnyEntity, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena,
     Asset, AsyncWindowContext, AtlasAccessDiagnostic, AtlasRemoveDiagnostic,
@@ -47,13 +49,11 @@ use crate::{
     },
     point,
     prelude::*,
-    profiler, px, rems, size, transparent_black,
+    px, rems, size, transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
 use derive_more::{Deref, DerefMut};
 use futures::channel::oneshot;
-#[cfg(feature = "input-latency-histogram")]
-use hdrhistogram::Histogram;
 use open_gpui_collections::{FxHashSet, TypeIdHashMap};
 use open_gpui_core_util::post_inc;
 use open_gpui_core_util::{ResultExt, measure};
@@ -91,6 +91,8 @@ mod bring_into_view;
 mod cache_dependency_tests;
 mod displays;
 #[cfg(test)]
+mod draw_unwind_tests;
+#[cfg(test)]
 mod element_arena_tests;
 #[cfg(test)]
 mod font_installation_tests;
@@ -102,6 +104,8 @@ mod invalidator;
 mod pending_input_tests;
 mod pointer_session;
 mod portal_anchor;
+#[cfg(all(test, feature = "profiler"))]
+mod profiler_tests;
 mod prompts;
 #[doc(hidden)]
 pub mod retained_visual;
@@ -1879,8 +1883,8 @@ pub struct Window {
     pub(crate) input_rate_tracker: Rc<RefCell<InputRateTracker>>,
     last_frame_time: Cell<Option<Instant>>,
     deferred_force_render: bool,
-    #[cfg(feature = "input-latency-histogram")]
-    input_latency_tracker: InputLatencyTracker,
+    #[cfg(feature = "profiler")]
+    window_profiler: profiler::WindowProfiler,
     last_input_modality: InputModality,
     pub(crate) refreshing: bool,
     pub(crate) activation_observers: SubscriberSet<(), AnyObserver>,
@@ -2051,6 +2055,16 @@ struct CandidateFrameAuthorityCheckpoint {
     requested_autoscroll: Option<AutoscrollIntent>,
     tooltip_bounds: Option<TooltipBounds>,
     focus_followup_requested: bool,
+}
+
+struct CandidateDrawContextCheckpoint {
+    element_ids: SmallVec<[ElementId; 32]>,
+    text_styles: Vec<TextStyleRefinement>,
+    rendered_entities: Vec<EntityId>,
+    offsets: Vec<Point<Pixels>>,
+    rem_sizes: SmallVec<[Pixels; 8]>,
+    image_caches: Vec<AnyImageCache>,
+    opacity: f32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2313,248 +2327,6 @@ impl InputRateTracker {
     fn prune_old_timestamps(&mut self, now: Instant) {
         self.timestamps
             .retain(|&t| now.duration_since(t) <= self.window);
-    }
-}
-
-/// A point-in-time snapshot of the input-latency histograms for a window,
-/// suitable for external formatting.
-#[cfg(feature = "input-latency-histogram")]
-pub struct InputLatencySnapshot {
-    /// Histogram of input-to-frame latency samples, in nanoseconds.
-    pub latency_histogram: Histogram<u64>,
-    /// Histogram of input events coalesced per rendered frame.
-    pub events_per_frame_histogram: Histogram<u64>,
-    /// Count of input events that arrived mid-draw and were excluded from
-    /// latency recording.
-    pub mid_draw_events_dropped: u64,
-    /// Count of recorded input events still waiting for a submitted frame.
-    pub pending_input_count: u64,
-    /// Count of framework frames built during this measurement window.
-    pub drawn_frame_count: u64,
-    /// Count of frames handed to the platform presentation path.
-    pub present_attempt_count: u64,
-    /// Count of presentation attempts submitted to the platform renderer.
-    pub submitted_present_count: u64,
-    /// Count of presentation attempts deferred by the native surface.
-    pub deferred_present_count: u64,
-    /// Count of presentation attempts requiring a newer rendered frame.
-    pub repaint_required_present_count: u64,
-    /// Count of presentation attempts rejected by the renderer or native surface.
-    pub rejected_present_count: u64,
-    /// Count of redraw requests admitted by the window invalidator.
-    pub refresh_request_count: u64,
-    /// Count of admitted redraw requests that found the window already dirty.
-    pub coalesced_refresh_request_count: u64,
-    /// Redraw requests grouped by their direct caller.
-    pub refresh_callsites: Vec<InputLatencyRefreshCallsite>,
-}
-
-/// Input-latency diagnostic for one direct [`Window::refresh`] caller.
-#[cfg(feature = "input-latency-histogram")]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct InputLatencyRefreshCallsite {
-    /// Source file containing the redraw request.
-    pub file: &'static str,
-    /// Source line containing the redraw request.
-    pub line: u32,
-    /// Number of admitted redraw requests from this caller.
-    pub request_count: u64,
-    /// Number of those requests that found the window already dirty.
-    pub coalesced_request_count: u64,
-}
-
-/// Records the time between when the first input event in a frame is dispatched
-/// and when the resulting frame is presented, capturing worst-case latency when
-/// multiple events are coalesced into a single frame.
-#[cfg(feature = "input-latency-histogram")]
-struct InputLatencyTracker {
-    /// Timestamp of the first unrendered input event in the current frame;
-    /// cleared when a frame is presented.
-    first_input_at: Option<Instant>,
-    /// Count of input events received since the last frame was presented.
-    pending_input_count: u64,
-    /// Histogram of input-to-frame latency samples, in nanoseconds.
-    latency_histogram: Histogram<u64>,
-    /// Histogram of input events coalesced per rendered frame.
-    events_per_frame_histogram: Histogram<u64>,
-    /// Count of input events that arrived mid-draw and were excluded from
-    /// latency recording because their effects won't appear until the next frame.
-    mid_draw_events_dropped: u64,
-    drawn_frame_count: u64,
-    present_attempt_count: u64,
-    submitted_present_count: u64,
-    deferred_present_count: u64,
-    repaint_required_present_count: u64,
-    rejected_present_count: u64,
-    refresh_request_count: u64,
-    coalesced_refresh_request_count: u64,
-    refresh_callsites: Vec<InputLatencyRefreshCallsite>,
-}
-
-#[cfg(feature = "input-latency-histogram")]
-impl InputLatencyTracker {
-    fn new() -> Result<Self> {
-        Ok(Self {
-            first_input_at: None,
-            pending_input_count: 0,
-            latency_histogram: Histogram::new(3)
-                .map_err(|e| anyhow!("Failed to create input latency histogram: {e}"))?,
-            events_per_frame_histogram: Histogram::new(3)
-                .map_err(|e| anyhow!("Failed to create events per frame histogram: {e}"))?,
-            mid_draw_events_dropped: 0,
-            drawn_frame_count: 0,
-            present_attempt_count: 0,
-            submitted_present_count: 0,
-            deferred_present_count: 0,
-            repaint_required_present_count: 0,
-            rejected_present_count: 0,
-            refresh_request_count: 0,
-            coalesced_refresh_request_count: 0,
-            refresh_callsites: Vec::new(),
-        })
-    }
-
-    /// Record that an input event was dispatched at the given time.
-    /// Only the first event's timestamp per frame is retained (worst-case latency).
-    fn record_input(&mut self, dispatch_time: Instant) {
-        self.first_input_at.get_or_insert(dispatch_time);
-        self.pending_input_count += 1;
-    }
-
-    /// Record that an input event arrived during a draw phase and was excluded
-    /// from latency tracking.
-    fn record_mid_draw_input(&mut self) {
-        self.mid_draw_events_dropped += 1;
-    }
-
-    fn record_frame_drawn(&mut self) {
-        self.drawn_frame_count += 1;
-    }
-
-    fn record_refresh_request(
-        &mut self,
-        already_dirty: bool,
-        caller: &'static std::panic::Location<'static>,
-    ) {
-        self.refresh_request_count += 1;
-        if already_dirty {
-            self.coalesced_refresh_request_count += 1;
-        }
-        if let Some(callsite) = self
-            .refresh_callsites
-            .iter_mut()
-            .find(|callsite| callsite.file == caller.file() && callsite.line == caller.line())
-        {
-            callsite.request_count += 1;
-            callsite.coalesced_request_count += u64::from(already_dirty);
-        } else {
-            self.refresh_callsites.push(InputLatencyRefreshCallsite {
-                file: caller.file(),
-                line: caller.line(),
-                request_count: 1,
-                coalesced_request_count: u64::from(already_dirty),
-            });
-        }
-    }
-
-    /// Record one platform presentation outcome, flushing input latency only
-    /// after the renderer accepted the frame.
-    fn record_present_outcome(&mut self, outcome: PlatformWindowPresentOutcome) {
-        self.present_attempt_count += 1;
-        match outcome {
-            PlatformWindowPresentOutcome::Submitted => {
-                self.submitted_present_count += 1;
-                if let Some(first_input_at) = self.first_input_at.take() {
-                    let latency_nanos = first_input_at.elapsed().as_nanos() as u64;
-                    self.latency_histogram.record(latency_nanos).ok();
-                }
-                if self.pending_input_count > 0 {
-                    self.events_per_frame_histogram
-                        .record(self.pending_input_count)
-                        .ok();
-                    self.pending_input_count = 0;
-                }
-            }
-            PlatformWindowPresentOutcome::Deferred => self.deferred_present_count += 1,
-            PlatformWindowPresentOutcome::RepaintRequired => {
-                self.repaint_required_present_count += 1;
-            }
-            PlatformWindowPresentOutcome::Rejected => self.rejected_present_count += 1,
-        }
-    }
-
-    fn snapshot(&self) -> InputLatencySnapshot {
-        InputLatencySnapshot {
-            latency_histogram: self.latency_histogram.clone(),
-            events_per_frame_histogram: self.events_per_frame_histogram.clone(),
-            mid_draw_events_dropped: self.mid_draw_events_dropped,
-            pending_input_count: self.pending_input_count,
-            drawn_frame_count: self.drawn_frame_count,
-            present_attempt_count: self.present_attempt_count,
-            submitted_present_count: self.submitted_present_count,
-            deferred_present_count: self.deferred_present_count,
-            repaint_required_present_count: self.repaint_required_present_count,
-            rejected_present_count: self.rejected_present_count,
-            refresh_request_count: self.refresh_request_count,
-            coalesced_refresh_request_count: self.coalesced_refresh_request_count,
-            refresh_callsites: self.refresh_callsites.clone(),
-        }
-    }
-
-    fn reset(&mut self) {
-        self.first_input_at = None;
-        self.pending_input_count = 0;
-        self.latency_histogram.reset();
-        self.events_per_frame_histogram.reset();
-        self.mid_draw_events_dropped = 0;
-        self.drawn_frame_count = 0;
-        self.present_attempt_count = 0;
-        self.submitted_present_count = 0;
-        self.deferred_present_count = 0;
-        self.repaint_required_present_count = 0;
-        self.rejected_present_count = 0;
-        self.refresh_request_count = 0;
-        self.coalesced_refresh_request_count = 0;
-        self.refresh_callsites.clear();
-    }
-}
-
-#[cfg(all(test, feature = "input-latency-histogram"))]
-mod input_latency_tracker_tests {
-    use super::InputLatencyTracker;
-
-    #[test]
-    fn reset_clears_recorded_and_pending_input_latency() {
-        let mut tracker = InputLatencyTracker::new().expect("latency tracker should initialize");
-        tracker.latency_histogram.record(42).unwrap();
-        tracker.events_per_frame_histogram.record(3).unwrap();
-        tracker.pending_input_count = 2;
-        tracker.mid_draw_events_dropped = 1;
-
-        tracker.drawn_frame_count = 5;
-        tracker.present_attempt_count = 4;
-        tracker.submitted_present_count = 1;
-        tracker.deferred_present_count = 1;
-        tracker.repaint_required_present_count = 1;
-        tracker.rejected_present_count = 1;
-        tracker.record_refresh_request(true, std::panic::Location::caller());
-
-        tracker.reset();
-
-        let snapshot = tracker.snapshot();
-        assert_eq!(snapshot.latency_histogram.len(), 0);
-        assert_eq!(snapshot.events_per_frame_histogram.len(), 0);
-        assert_eq!(snapshot.pending_input_count, 0);
-        assert_eq!(snapshot.mid_draw_events_dropped, 0);
-        assert_eq!(snapshot.drawn_frame_count, 0);
-        assert_eq!(snapshot.present_attempt_count, 0);
-        assert_eq!(snapshot.submitted_present_count, 0);
-        assert_eq!(snapshot.deferred_present_count, 0);
-        assert_eq!(snapshot.repaint_required_present_count, 0);
-        assert_eq!(snapshot.rejected_present_count, 0);
-        assert_eq!(snapshot.refresh_request_count, 0);
-        assert_eq!(snapshot.coalesced_refresh_request_count, 0);
-        assert!(snapshot.refresh_callsites.is_empty());
     }
 }
 
@@ -3144,8 +2916,8 @@ impl Window {
             input_rate_tracker,
             last_frame_time: Cell::new(None),
             deferred_force_render: false,
-            #[cfg(feature = "input-latency-histogram")]
-            input_latency_tracker: InputLatencyTracker::new()?,
+            #[cfg(feature = "profiler")]
+            window_profiler: profiler::WindowProfiler::new(handle.window_id())?,
             last_input_modality: InputModality::Mouse,
             refreshing: false,
             activation_observers: SubscriberSet::new(),
@@ -4401,8 +4173,8 @@ impl Window {
     #[track_caller]
     pub fn refresh(&mut self) {
         if self.invalidator.can_schedule_refresh() {
-            #[cfg(feature = "input-latency-histogram")]
-            self.input_latency_tracker.record_refresh_request(
+            #[cfg(feature = "profiler")]
+            self.window_profiler.record_refresh_request(
                 self.invalidator.is_dirty(),
                 std::panic::Location::caller(),
             );
@@ -7510,13 +7282,15 @@ impl Window {
         }
     }
 
-    fn rollback_candidate_frame_transfers(&mut self) {
+    fn rollback_candidate_frame_transfers(&mut self, unwound: bool) {
         for key in self.candidate_frame_transfers.element_states.drain(..) {
-            let state = self
-                .next_frame
-                .element_states
-                .remove(&key)
-                .expect("candidate element state transfer must remain available for rollback");
+            let Some(state) = self.next_frame.element_states.remove(&key) else {
+                assert!(
+                    unwound,
+                    "candidate element state transfer must remain available for rollback"
+                );
+                continue;
+            };
             assert!(
                 self.rendered_frame
                     .element_states
@@ -7562,6 +7336,63 @@ impl Window {
         }
     }
 
+    fn reject_candidate_frame(
+        &mut self,
+        authority_checkpoint: CandidateFrameAuthorityCheckpoint,
+        restored_input_handler_index: Option<usize>,
+        rendered_input_handlers_len: usize,
+        unwound: bool,
+        cx: &mut App,
+    ) -> CandidateFrameTransaction {
+        let rejected_attempt = self
+            .candidate_frame_transaction
+            .take()
+            .expect("a rejected candidate must own a frame transaction");
+        debug_assert!(!rejected_attempt.is_accepted());
+        let rejected_focus_resolutions =
+            self.focus_resolutions_for_rejected_candidate(&rejected_attempt, &authority_checkpoint);
+        self.refreshing = false;
+        self.invalidator.set_phase(DrawPhase::None);
+        self.layout_engine.as_mut().unwrap().clear();
+        self.text_system().abort_frame();
+        self.a11y.discard_candidate_frame();
+        self.rollback_candidate_frame_transfers(unwound);
+        self.next_frame.clear();
+        let notify_pending_input_changed =
+            self.restore_candidate_frame_authority(authority_checkpoint);
+        if notify_pending_input_changed {
+            if self.interaction_authority.is_admitted() {
+                self.defer_pending_input_changed(cx);
+            } else {
+                self.defer_pending_input_changed_after_interaction_quiescence(cx);
+            }
+        }
+        self.append_focus_claim_resolutions(rejected_focus_resolutions);
+        self.schedule_focus_claim_resolution_dispatch(cx);
+        self.candidate_accessibility_focus = None;
+        self.candidate_atlas_lease_failure = None;
+        self.mouse_hit_test = self.rendered_frame.hit_test(self.mouse_position);
+        if let Some(index) = restored_input_handler_index
+            && let Some(input_handler) = self.rendered_frame.input_handlers[index].value.take()
+        {
+            self.restore_input_handler_if_admitted(input_handler, cx);
+        }
+        self.rendered_frame
+            .input_handlers
+            .truncate(rendered_input_handlers_len);
+        rejected_attempt
+    }
+
+    fn restore_candidate_draw_context(&mut self, checkpoint: CandidateDrawContextCheckpoint) {
+        self.element_id_stack = checkpoint.element_ids;
+        self.text_style_stack = checkpoint.text_styles;
+        self.rendered_entity_stack = checkpoint.rendered_entities;
+        self.element_offset_stack = checkpoint.offsets;
+        self.rem_size_override_stack = checkpoint.rem_sizes;
+        self.image_cache_stack = checkpoint.image_caches;
+        self.element_opacity = checkpoint.opacity;
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn accept_visual_test_frame_transfers(&mut self) {
         // VisualTestContext paints an element directly into `next_frame` and then asks the
@@ -7574,6 +7405,46 @@ impl Window {
     /// the contents of the new [`Scene`], use [`Self::present`].
     #[profiling::function]
     pub fn draw(&mut self, cx: &mut App) -> ArenaClearNeeded {
+        #[cfg(feature = "profiler")]
+        {
+            let checkpoint = self.window_profiler.checkpoint_draw();
+            let frame_dirty = self.invalidator.take_frame_dirty();
+            let previous_generation = self.rendered_frame.generation;
+            let update_count_at_draw_start = self.invalidator.update_count();
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.draw_inner(cx))) {
+                Ok(clear) => {
+                    let accepted = self.rendered_frame.generation != previous_generation;
+                    self.window_profiler.finish_draw_checkpoint(
+                        checkpoint,
+                        frame_dirty.dirty_at,
+                        frame_dirty.invalidations,
+                        accepted,
+                    );
+                    if accepted {
+                        self.window_profiler
+                            .note_accepted_draw_covering_input(update_count_at_draw_start);
+                    }
+                    if !accepted {
+                        self.invalidator.restore_frame_dirty(frame_dirty);
+                    }
+                    clear
+                }
+                Err(panic) => {
+                    self.window_profiler.abort_draw_checkpoint(checkpoint);
+                    if self.rendered_frame.generation != previous_generation {
+                        self.window_profiler.discard_pending_frame();
+                    } else {
+                        self.invalidator.restore_frame_dirty(frame_dirty);
+                    }
+                    std::panic::resume_unwind(panic)
+                }
+            }
+        }
+        #[cfg(not(feature = "profiler"))]
+        self.draw_inner(cx)
+    }
+
+    fn draw_inner(&mut self, cx: &mut App) -> ArenaClearNeeded {
         let _access_frame = cx.entities.frame_access_scope();
         // Set up the per-App arena for element allocation during this draw.
         // This ensures that multiple test Apps have isolated arenas.
@@ -7582,8 +7453,8 @@ impl Window {
         if !self.begin_fresh_initial_presentation_attempt(cx) {
             return arena_scope.exit();
         }
-        #[cfg(feature = "input-latency-histogram")]
-        self.input_latency_tracker.record_frame_drawn();
+        #[cfg(feature = "profiler")]
+        self.window_profiler.begin_draw();
 
         self.invalidate_entities();
         debug_assert!(self.rendered_entity_stack.is_empty());
@@ -7644,7 +7515,16 @@ impl Window {
                     .push(FrameOutput::new(Some(input_handler), validity));
             }
         }
-        let (candidate_a11y_update, candidate_stale_pointer_owner) =
+        let draw_context = CandidateDrawContextCheckpoint {
+            element_ids: self.element_id_stack.clone(),
+            text_styles: self.text_style_stack.clone(),
+            rendered_entities: self.rendered_entity_stack.clone(),
+            offsets: self.element_offset_stack.clone(),
+            rem_sizes: self.rem_size_override_stack.clone(),
+            image_caches: self.image_cache_stack.clone(),
+            opacity: self.element_opacity,
+        };
+        let roots = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             if !cx.mode.skip_drawing() && self.presentation_is_allowed() {
                 if self.provisional_session_projects_destination_semantics() {
                     self.draw_roots(cx)
@@ -7659,48 +7539,38 @@ impl Window {
                     self.stale_pointer_session_owner_in_candidate_frame(cx)
                         .map(|owner| (owner, false)),
                 )
-            };
+            }
+        }));
+        let (candidate_a11y_update, candidate_stale_pointer_owner) = match roots {
+            Ok(roots) => roots,
+            Err(panic) => {
+                self.restore_candidate_draw_context(draw_context);
+                self.reject_candidate_frame(
+                    authority_checkpoint,
+                    restored_input_handler_index,
+                    rendered_input_handlers_len,
+                    true,
+                    cx,
+                );
+                self.refreshing = true;
+                self.invalidator.set_dirty(true);
+                std::panic::resume_unwind(panic);
+            }
+        };
         if let Some(error) = self.candidate_atlas_lease_failure.take() {
             let rejected_generation = self.next_frame.generation;
-            let rejected_attempt = self
-                .candidate_frame_transaction
-                .take()
-                .expect("an atlas-rejected candidate must own a frame transaction");
+            let rejected_attempt = self.reject_candidate_frame(
+                authority_checkpoint,
+                restored_input_handler_index,
+                rendered_input_handlers_len,
+                false,
+                cx,
+            );
             debug_assert_eq!(rejected_attempt.frame_generation, rejected_generation);
-            let rejected_focus_resolutions = self
-                .focus_resolutions_for_rejected_candidate(&rejected_attempt, &authority_checkpoint);
             self.last_atlas_frame_rejection = Some(AtlasFrameRejection {
                 generation: rejected_generation,
                 error,
             });
-            self.refreshing = false;
-            self.invalidator.set_phase(DrawPhase::None);
-            self.layout_engine.as_mut().unwrap().clear();
-            self.text_system().abort_frame();
-            self.a11y.discard_candidate_frame();
-            self.rollback_candidate_frame_transfers();
-            self.next_frame.clear();
-            let notify_pending_input_changed =
-                self.restore_candidate_frame_authority(authority_checkpoint);
-            if notify_pending_input_changed {
-                if self.interaction_authority.is_admitted() {
-                    self.defer_pending_input_changed(cx);
-                } else {
-                    self.defer_pending_input_changed_after_interaction_quiescence(cx);
-                }
-            }
-            self.append_focus_claim_resolutions(rejected_focus_resolutions);
-            self.schedule_focus_claim_resolution_dispatch(cx);
-            self.candidate_accessibility_focus = None;
-            self.mouse_hit_test = self.rendered_frame.hit_test(self.mouse_position);
-            if let Some(index) = restored_input_handler_index
-                && let Some(input_handler) = self.rendered_frame.input_handlers[index].value.take()
-            {
-                self.restore_input_handler_if_admitted(input_handler, cx);
-            }
-            self.rendered_frame
-                .input_handlers
-                .truncate(rendered_input_handlers_len);
             log::error!(
                 target: "open_gpui::atlas",
                 "rejected candidate attempt {:?} for frame generation {rejected_generation} after atlas lease failure: {error}",
@@ -7829,11 +7699,24 @@ impl Window {
 
         // Cross-frame publications now observe the frame that is actually visible. Focus-stable
         // commits remain ordered after every normal commit, including accepted publications.
-        self.commit_prepaint_publications(&prepaint_commit_plan, cx);
-        self.commit_prepaint_non_publications(
-            &prepaint_commit_plan,
-            PrepaintCommitPhase::FocusStable,
-            cx,
+        let mut completion_panic = None;
+        retain_first_window_cleanup_panic(
+            &mut completion_panic,
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                self.commit_prepaint_publications(&prepaint_commit_plan, cx);
+            })),
+            "accepted frame publications",
+        );
+        retain_first_window_cleanup_panic(
+            &mut completion_panic,
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                self.commit_prepaint_non_publications(
+                    &prepaint_commit_plan,
+                    PrepaintCommitPhase::FocusStable,
+                    cx,
+                );
+            })),
+            "accepted frame focus-stable commits",
         );
         self.sealed_focus_retry_rejection = None;
         let accepted_generation = self.rendered_frame.generation;
@@ -7844,17 +7727,33 @@ impl Window {
             .expect("an accepted candidate must own a frame transaction");
         debug_assert!(accepted_candidate.is_accepted());
         debug_assert_eq!(accepted_candidate.frame_generation, accepted_generation);
-        self.next_frame.clear();
-        if let Some((tree_update, activation_generation)) = candidate_a11y_update {
-            log::debug!(
-                "Sending a11y tree update: {} nodes",
-                tree_update.nodes.len()
-            );
-            self.a11y.publish(&tree_update, activation_generation);
-            self.platform_window.a11y_tree_update(tree_update);
-        }
+        retain_first_window_cleanup_panic(
+            &mut completion_panic,
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.next_frame.clear())),
+            "accepted frame previous-state release",
+        );
+        retain_first_window_cleanup_panic(
+            &mut completion_panic,
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                if let Some((tree_update, activation_generation)) = candidate_a11y_update {
+                    log::debug!(
+                        "Sending a11y tree update: {} nodes",
+                        tree_update.nodes.len()
+                    );
+                    self.a11y.publish(&tree_update, activation_generation);
+                    self.platform_window.a11y_tree_update(tree_update);
+                }
+            })),
+            "accepted frame accessibility publication",
+        );
         self.frame_focus_authority_sealed = false;
-        self.commit_native_window_control_area(cx);
+        retain_first_window_cleanup_panic(
+            &mut completion_panic,
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                self.commit_native_window_control_area(cx)
+            })),
+            "accepted frame native control area",
+        );
         let current_committed_focus_path = self.rendered_frame.focus_path();
         let previous_committed_focus = previous_committed_focus_path.last().copied();
         let current_committed_focus = current_committed_focus_path.last().copied();
@@ -7865,41 +7764,67 @@ impl Window {
         {
             self.enqueue_focus_bring_into_view(focus, focus_reveal_fence, cx);
         }
-        if previous_committed_focus_path != current_committed_focus_path
-            || previous_window_active != current_window_active
-        {
-            if !previous_committed_focus_path.is_empty() && current_committed_focus_path.is_empty()
+        let focus_notifications = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            if previous_committed_focus_path != current_committed_focus_path
+                || previous_window_active != current_window_active
             {
-                self.focus_lost_listeners
-                    .clone()
-                    .retain(&(), |listener| listener(self, cx));
-            }
+                if !previous_committed_focus_path.is_empty()
+                    && current_committed_focus_path.is_empty()
+                {
+                    self.focus_lost_listeners
+                        .clone()
+                        .retain(&(), |listener| listener(self, cx));
+                }
 
-            let event = WindowFocusEvent {
-                previous_focus_path: if previous_window_active {
-                    previous_committed_focus_path.clone()
-                } else {
-                    Default::default()
-                },
-                current_focus_path: if current_window_active {
-                    current_committed_focus_path.clone()
-                } else {
-                    Default::default()
-                },
-                previous_committed_focus_path,
-                current_committed_focus_path,
-            };
-            self.focus_listeners
-                .clone()
-                .retain(&(), |listener| listener(&event, self, cx));
-        }
-        self.advance_bring_into_view_requests(cx);
+                let event = WindowFocusEvent {
+                    previous_focus_path: if previous_window_active {
+                        previous_committed_focus_path.clone()
+                    } else {
+                        Default::default()
+                    },
+                    current_focus_path: if current_window_active {
+                        current_committed_focus_path.clone()
+                    } else {
+                        Default::default()
+                    },
+                    previous_committed_focus_path,
+                    current_committed_focus_path,
+                };
+                self.focus_listeners
+                    .clone()
+                    .retain(&(), |listener| listener(&event, self, cx));
+            }
+        }));
+        retain_first_window_cleanup_panic(
+            &mut completion_panic,
+            focus_notifications,
+            "accepted frame focus notification",
+        );
+        retain_first_window_cleanup_panic(
+            &mut completion_panic,
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                self.advance_bring_into_view_requests(cx)
+            })),
+            "accepted frame reveal requests",
+        );
         self.schedule_focus_claim_resolution_dispatch(cx);
 
-        self.update_ime_position_from_committed_handler(cx);
-        debug_assert!(self.rendered_entity_stack.is_empty());
+        retain_first_window_cleanup_panic(
+            &mut completion_panic,
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                self.update_ime_position_from_committed_handler(cx)
+            })),
+            "accepted frame IME position",
+        );
+        if completion_panic.is_none() {
+            debug_assert!(self.rendered_entity_stack.is_empty());
+        }
         self.record_entities_accessed(cx);
-        self.reset_cursor_style(cx);
+        retain_first_window_cleanup_panic(
+            &mut completion_panic,
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.reset_cursor_style(cx))),
+            "accepted frame cursor style",
+        );
         self.invalidator.set_phase(DrawPhase::None);
         let focus_followup_requested = mem::take(&mut self.focus_followup_requested);
         if focus_followup_requested && self.focus_followup_frame_needed() {
@@ -7914,6 +7839,10 @@ impl Window {
         }
         self.needs_present.set(true);
         self.presentation_state.frame_accepted_generation = Some(self.rendered_frame.generation);
+        if let Some(panic) = completion_panic {
+            self.restore_candidate_draw_context(draw_context);
+            std::panic::resume_unwind(panic);
+        }
         arena_scope.exit()
     }
 
@@ -8033,6 +7962,8 @@ impl Window {
     fn present(&mut self, cx: &mut App) -> PlatformWindowPresentOutcome {
         let generation = self.rendered_frame.generation;
         if self.renderer_repaint_is_pending() {
+            #[cfg(feature = "profiler")]
+            let present_start = Instant::now();
             if self.record_exact_frame_submission_present_outcome(
                 generation,
                 PlatformWindowPresentOutcome::RepaintRequired,
@@ -8042,18 +7973,33 @@ impl Window {
                 self.refresh();
             }
             self.needs_present.set(false);
-            #[cfg(feature = "input-latency-histogram")]
-            self.input_latency_tracker
-                .record_present_outcome(PlatformWindowPresentOutcome::RepaintRequired);
+            #[cfg(feature = "profiler")]
+            self.window_profiler.record_present_outcome(
+                PlatformWindowPresentOutcome::RepaintRequired,
+                present_start,
+                Instant::now(),
+                self.active.get(),
+                !self.next_frame_callbacks.borrow().is_empty(),
+            );
             profiling::finish_frame!();
             return PlatformWindowPresentOutcome::RepaintRequired;
         }
         let non_empty = self.rendered_frame.scene.has_primitives();
+        #[cfg(feature = "profiler")]
+        let present_start = Instant::now();
         let outcome = if self.presentation_is_allowed() {
             self.platform_window.draw(&self.rendered_frame.scene)
         } else {
             PlatformWindowPresentOutcome::Rejected
         };
+        #[cfg(feature = "profiler")]
+        self.window_profiler.record_present_outcome(
+            outcome,
+            present_start,
+            Instant::now(),
+            self.active.get(),
+            !self.next_frame_callbacks.borrow().is_empty(),
+        );
         self.presentation_state.latest_present_attempt = Some(WindowPresentAttemptFacts {
             generation,
             outcome,
@@ -8143,8 +8089,6 @@ impl Window {
             }
             self.needs_present.set(true);
         }
-        #[cfg(feature = "input-latency-histogram")]
-        self.input_latency_tracker.record_present_outcome(outcome);
         profiling::finish_frame!();
         outcome
     }
@@ -8219,15 +8163,21 @@ impl Window {
     }
 
     /// Returns a snapshot of the current input-latency histograms.
-    #[cfg(feature = "input-latency-histogram")]
-    pub fn input_latency_snapshot(&self) -> InputLatencySnapshot {
-        self.input_latency_tracker.snapshot()
+    #[cfg(feature = "profiler")]
+    pub fn input_latency_snapshot(&self) -> profiler::InputLatencySnapshot {
+        self.window_profiler.input_latency_snapshot()
     }
 
     /// Clears all input-to-submitted-frame latency samples for this window.
-    #[cfg(feature = "input-latency-histogram")]
+    #[cfg(feature = "profiler")]
     pub fn reset_input_latency_measurements(&mut self) {
-        self.input_latency_tracker.reset();
+        self.window_profiler.reset_input_latency_measurements();
+    }
+
+    /// Returns aggregate draw, dirty-to-present and animation-interval histograms.
+    #[cfg(feature = "profiler")]
+    pub fn frame_duration_snapshot(&self) -> profiler::FrameDurationSnapshot {
+        self.window_profiler.frame_duration_snapshot()
     }
 
     fn draw_roots(
@@ -8428,11 +8378,25 @@ impl Window {
         phase: PrepaintCommitPhase,
         cx: &mut App,
     ) {
+        let mut first_panic = None;
         for output in &plan.current_commits {
             if output.value.publication.is_some() || output.value.phase != phase {
                 continue;
             }
-            self.commit_prepaint_output(output, plan.target_revision, None, phase, cx);
+            if phase == PrepaintCommitPhase::FocusStable {
+                retain_first_window_cleanup_panic(
+                    &mut first_panic,
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        self.commit_prepaint_output(output, plan.target_revision, None, phase, cx);
+                    })),
+                    "accepted focus-stable output",
+                );
+            } else {
+                self.commit_prepaint_output(output, plan.target_revision, None, phase, cx);
+            }
+        }
+        if let Some(panic) = first_panic {
+            std::panic::resume_unwind(panic);
         }
     }
 
@@ -8449,6 +8413,7 @@ impl Window {
             .filter_map(|output| output.value.publication)
             .collect::<FxHashSet<_>>();
         let mut expired_publications = FxHashSet::default();
+        let mut first_panic = None;
         for output in &plan.previous_commits {
             let Some(publication) = output.value.publication else {
                 continue;
@@ -8460,13 +8425,19 @@ impl Window {
                 continue;
             }
             if let Some(discard) = output.value.discard.clone() {
-                self.run_prepaint_commit_callback(
-                    discard,
-                    plan.target_revision,
-                    Some(accepted_frame),
-                    PrepaintCommitPhase::Normal,
-                    SubtreePresentation::Hidden,
-                    cx,
+                retain_first_window_cleanup_panic(
+                    &mut first_panic,
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        self.run_prepaint_commit_callback(
+                            discard,
+                            plan.target_revision,
+                            Some(accepted_frame),
+                            PrepaintCommitPhase::Normal,
+                            SubtreePresentation::Hidden,
+                            cx,
+                        );
+                    })),
+                    "expired accepted publication",
                 );
             }
         }
@@ -8475,13 +8446,22 @@ impl Window {
             if output.value.publication.is_none() {
                 continue;
             }
-            self.commit_prepaint_output(
-                output,
-                plan.target_revision,
-                Some(accepted_frame),
-                PrepaintCommitPhase::Normal,
-                cx,
+            retain_first_window_cleanup_panic(
+                &mut first_panic,
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    self.commit_prepaint_output(
+                        output,
+                        plan.target_revision,
+                        Some(accepted_frame),
+                        PrepaintCommitPhase::Normal,
+                        cx,
+                    );
+                })),
+                "accepted publication output",
             );
+        }
+        if let Some(panic) = first_panic {
+            std::panic::resume_unwind(panic);
         }
     }
 
@@ -12355,26 +12335,38 @@ impl Window {
             };
         };
 
-        #[cfg(feature = "input-latency-histogram")]
-        let dispatch_time = Instant::now();
+        #[cfg(feature = "profiler")]
+        self.window_profiler.begin_input("platform_input");
         let update_count_before = self.invalidator.update_count();
-        let event = input_dispatch::prepare_platform_input(self, cx, event);
+        let dispatch = |window: &mut Window, cx: &mut App| {
+            let event = input_dispatch::prepare_platform_input(window, cx, event);
+            if let Some(any_mouse_event) = event.mouse_event() {
+                window.dispatch_mouse_event(any_mouse_event, cx);
+                window.commit_native_window_control_area(cx);
+            } else if let Some(any_key_event) = event.keyboard_event() {
+                window.dispatch_key_event(any_key_event, cx);
+            }
+        };
 
-        if let Some(any_mouse_event) = event.mouse_event() {
-            self.dispatch_mouse_event(any_mouse_event, cx);
-            self.commit_native_window_control_area(cx);
-        } else if let Some(any_key_event) = event.keyboard_event() {
-            self.dispatch_key_event(any_key_event, cx);
+        #[cfg(feature = "profiler")]
+        let dispatch =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| dispatch(self, cx)));
+        #[cfg(not(feature = "profiler"))]
+        dispatch(self, cx);
+
+        #[cfg(feature = "profiler")]
+        self.window_profiler.end_input_dispatch(
+            update_count_before,
+            self.invalidator.update_count(),
+            dispatch.is_ok(),
+        );
+        #[cfg(feature = "profiler")]
+        if let Err(panic) = dispatch {
+            std::panic::resume_unwind(panic);
         }
 
         if self.invalidator.update_count() > update_count_before {
             self.input_rate_tracker.borrow_mut().record_input();
-            #[cfg(feature = "input-latency-histogram")]
-            if self.invalidator.can_schedule_refresh() && !self.invalidator.is_focus_phase() {
-                self.input_latency_tracker.record_input(dispatch_time);
-            } else {
-                self.input_latency_tracker.record_mid_draw_input();
-            }
         }
 
         let result = DispatchEventResult {
@@ -13043,9 +13035,11 @@ impl Window {
             .remove(&action.as_any().type_id())
         {
             for listener in &global_listeners {
-                profiler::update_running_action(action, cx);
+                #[cfg(feature = "profiler")]
+                self.window_profiler.begin_action_handler(action, cx);
                 listener(action.as_any(), DispatchPhase::Capture, cx);
-                profiler::save_action_timing();
+                #[cfg(feature = "profiler")]
+                self.window_profiler.end_action_handler();
                 if !self.user_interaction_is_admitted() {
                     cx.stop_propagation();
                     break;
@@ -13079,9 +13073,11 @@ impl Window {
             {
                 let any_action = action.as_any();
                 if action_type == any_action.type_id() {
-                    profiler::update_running_action(action, cx);
+                    #[cfg(feature = "profiler")]
+                    self.window_profiler.begin_action_handler(action, cx);
                     listener(any_action, DispatchPhase::Capture, self, cx);
-                    profiler::save_action_timing();
+                    #[cfg(feature = "profiler")]
+                    self.window_profiler.end_action_handler();
 
                     if !self.interaction_dispatch_continues(cx) {
                         return;
@@ -13101,9 +13097,11 @@ impl Window {
                 let any_action = action.as_any();
                 if action_type == any_action.type_id() {
                     cx.propagate_event = false; // Actions stop propagation by default during the bubble phase
-                    profiler::update_running_action(action, cx);
+                    #[cfg(feature = "profiler")]
+                    self.window_profiler.begin_action_handler(action, cx);
                     listener(any_action, DispatchPhase::Bubble, self, cx);
-                    profiler::save_action_timing();
+                    #[cfg(feature = "profiler")]
+                    self.window_profiler.end_action_handler();
 
                     if !self.user_interaction_is_admitted() {
                         cx.stop_propagation();
@@ -13124,9 +13122,11 @@ impl Window {
             for listener in global_listeners.iter().rev() {
                 cx.propagate_event = false; // Actions stop propagation by default during the bubble phase
 
-                profiler::update_running_action(action, cx);
+                #[cfg(feature = "profiler")]
+                self.window_profiler.begin_action_handler(action, cx);
                 listener(action.as_any(), DispatchPhase::Bubble, cx);
-                profiler::save_action_timing();
+                #[cfg(feature = "profiler")]
+                self.window_profiler.end_action_handler();
                 if !self.user_interaction_is_admitted() {
                     cx.stop_propagation();
                     break;

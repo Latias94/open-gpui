@@ -101,16 +101,25 @@ fn large_canvas_benches(c: &mut Criterion) {
             })
             .expect("benchmark root view should remain live");
 
-        b.iter(|| {
-            window
-                .update_window_entity(&view, |_, _, cx| cx.notify())
-                .expect("benchmark root view should remain live");
-            let revision = window.update(|window, cx| {
-                window.draw(cx).clear(cx);
-                window.rendered_frame_revision()
+        let measure = |_: &mut BenchAppContext| {
+            b.iter(|| {
+                window
+                    .update_window_entity(&view, |_, _, cx| cx.notify())
+                    .expect("benchmark root view should remain live");
+                let revision = window.update(|window, cx| {
+                    window.draw(cx).clear(cx);
+                    window.rendered_frame_revision()
+                });
+                black_box(revision);
             });
-            black_box(revision);
-        });
+        };
+        #[cfg(feature = "profiler")]
+        black_box(app.profile(measure));
+        #[cfg(not(feature = "profiler"))]
+        {
+            let mut measure = measure;
+            measure(&mut app);
+        }
 
         app.teardown();
     });
@@ -134,17 +143,16 @@ fn labeled_kind_registry() -> CanvasKindRegistry {
 }
 
 fn labeled_grid_document(document: &CanvasDocument) -> CanvasDocument {
-    let mut document = document.clone();
-    let commands = document
-        .nodes()
-        .cloned()
-        .map(|mut node| {
-            node.kind = LABELED_NODE_KIND.to_string();
-            DocumentCommand::UpdateNode(node)
-        })
-        .collect::<Vec<_>>();
-    apply_commands(&mut document, commands);
-    document
+    let mut snapshot = document.to_snapshot();
+    for node in &mut snapshot.nodes {
+        node.kind = LABELED_NODE_KIND.to_string();
+    }
+    let labeled = CanvasDocument::from_snapshot(snapshot)
+        .expect("the complete labeled benchmark snapshot should be valid");
+    assert_eq!(labeled.node_count(), document.node_count());
+    assert_eq!(labeled.edge_count(), document.edge_count());
+    assert!(labeled.nodes().all(|node| node.kind == LABELED_NODE_KIND));
+    labeled
 }
 
 fn build_grid_document(columns: usize, rows: usize) -> CanvasDocument {

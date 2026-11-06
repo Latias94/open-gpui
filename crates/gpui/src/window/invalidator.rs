@@ -6,12 +6,24 @@ use crate::{App, Effect, EntityId};
 
 use super::DrawPhase;
 
+#[cfg(feature = "profiler")]
+use open_gpui_scheduler::Instant;
+
+#[cfg(feature = "profiler")]
+#[derive(Clone, Copy, Default)]
+pub(super) struct FrameDirtyAccumulator {
+    pub(super) dirty_at: Option<Instant>,
+    pub(super) invalidations: u64,
+}
+
 struct WindowInvalidatorInner {
     dirty: bool,
     focus_only_dirty: bool,
     draw_phase: DrawPhase,
     dirty_views: FxHashSet<EntityId>,
     update_count: usize,
+    #[cfg(feature = "profiler")]
+    frame_dirty: FrameDirtyAccumulator,
 }
 
 #[derive(Clone)]
@@ -28,6 +40,8 @@ impl WindowInvalidator {
                 draw_phase: DrawPhase::None,
                 dirty_views: FxHashSet::default(),
                 update_count: 0,
+                #[cfg(feature = "profiler")]
+                frame_dirty: FrameDirtyAccumulator::default(),
             })),
         }
     }
@@ -37,12 +51,16 @@ impl WindowInvalidator {
         inner.update_count += 1;
         inner.dirty_views.insert(entity);
         if inner.draw_phase == DrawPhase::None {
+            #[cfg(feature = "profiler")]
+            Self::record_frame_dirty(&mut inner);
             inner.dirty = true;
             inner.focus_only_dirty = false;
             cx.push_effect(Effect::Notify { emitter: entity });
             true
         } else {
             if inner.draw_phase == DrawPhase::Focus {
+                #[cfg(feature = "profiler")]
+                Self::record_frame_dirty(&mut inner);
                 inner.dirty = true;
                 inner.focus_only_dirty = false;
                 cx.push_effect(Effect::Notify { emitter: entity });
@@ -61,6 +79,8 @@ impl WindowInvalidator {
         inner.focus_only_dirty = false;
         if dirty {
             inner.update_count += 1;
+            #[cfg(feature = "profiler")]
+            Self::record_frame_dirty(&mut inner);
         }
     }
 
@@ -73,6 +93,36 @@ impl WindowInvalidator {
             inner.focus_only_dirty = false;
         }
         inner.update_count += 1;
+        #[cfg(feature = "profiler")]
+        Self::record_frame_dirty(&mut inner);
+    }
+
+    #[cfg(feature = "profiler")]
+    fn record_frame_dirty(inner: &mut WindowInvalidatorInner) {
+        inner.frame_dirty.dirty_at.get_or_insert_with(Instant::now);
+        inner.frame_dirty.invalidations = inner.frame_dirty.invalidations.saturating_add(1);
+    }
+
+    #[cfg(feature = "profiler")]
+    pub(super) fn take_frame_dirty(&self) -> FrameDirtyAccumulator {
+        mem::take(&mut self.inner.borrow_mut().frame_dirty)
+    }
+
+    #[cfg(feature = "profiler")]
+    pub(super) fn restore_frame_dirty(&self, previous: FrameDirtyAccumulator) {
+        let mut inner = self.inner.borrow_mut();
+        if let Some(previous_at) = previous.dirty_at {
+            inner.frame_dirty.dirty_at = Some(
+                inner
+                    .frame_dirty
+                    .dirty_at
+                    .map_or(previous_at, |current| current.min(previous_at)),
+            );
+        }
+        inner.frame_dirty.invalidations = inner
+            .frame_dirty
+            .invalidations
+            .saturating_add(previous.invalidations);
     }
 
     pub fn clear_focus_only_dirty(&self) -> bool {
@@ -86,6 +136,10 @@ impl WindowInvalidator {
         }
         inner.dirty = false;
         inner.focus_only_dirty = false;
+        #[cfg(feature = "profiler")]
+        {
+            inner.frame_dirty = FrameDirtyAccumulator::default();
+        }
         true
     }
 
@@ -161,5 +215,38 @@ impl WindowInvalidator {
             ),
             "this method can only be called during request_layout, prepaint, or paint"
         );
+    }
+}
+
+#[cfg(all(test, feature = "profiler"))]
+mod profiler_tests {
+    use super::*;
+
+    #[test]
+    fn canceled_focus_only_work_does_not_age_a_later_unrelated_frame() {
+        let invalidator = WindowInvalidator::new();
+        invalidator.set_dirty(false);
+        invalidator.set_focus_only_dirty();
+        assert!(invalidator.clear_focus_only_dirty());
+        let canceled = invalidator.take_frame_dirty();
+        assert_eq!(canceled.dirty_at, None);
+        assert_eq!(canceled.invalidations, 0);
+        let started = Instant::now();
+        invalidator.set_dirty(true);
+        let next = invalidator.take_frame_dirty();
+        assert!(next.dirty_at.is_some_and(|at| at >= started));
+        assert_eq!(next.invalidations, 1);
+    }
+
+    #[test]
+    fn refused_focus_only_cancellation_preserves_unrelated_dirty_work() {
+        let invalidator = WindowInvalidator::new();
+        invalidator.set_dirty(false);
+        invalidator.set_dirty(true);
+        invalidator.set_focus_only_dirty();
+        assert!(!invalidator.clear_focus_only_dirty());
+        let pending = invalidator.take_frame_dirty();
+        assert!(pending.dirty_at.is_some());
+        assert_eq!(pending.invalidations, 2);
     }
 }

@@ -1,9 +1,12 @@
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
+#[cfg(feature = "profiler")]
 use super::cold_path;
 
 use itertools::Itertools;
+use open_gpui_scheduler::Instant;
 
+#[cfg(feature = "profiler")]
 use crate::action::Action;
 
 #[doc(hidden)]
@@ -74,16 +77,21 @@ impl ActionStatistics {
         self.longest_runtimes.is_empty()
     }
 
+    #[cfg(feature = "profiler")]
     pub fn update_running_action(&mut self, action: &'static str, started: Instant) {
         self.running = Some((action, started));
     }
 
+    #[cfg(not(feature = "profiler"))]
+    pub fn update_running_action(&mut self, _action: &'static str, _started: Instant) {}
+
+    #[cfg(feature = "profiler")]
     pub fn save_action_timing(&mut self) {
         let now = Instant::now();
-        let (action, started) = self
-            .running
-            .take()
-            .expect("only called after `update_running_action`");
+        let Some((action, started)) = self.running.take() else {
+            cold_path();
+            return;
+        };
 
         let runtime = now.duration_since(started);
         if runtime >= self.runtime_to_beat {
@@ -93,7 +101,7 @@ impl ActionStatistics {
                 && let Some(to_replace) = self
                     .longest_runtimes
                     .iter_mut()
-                    .min_by_key(|action| runtime >= action.runtime())
+                    .min_by_key(|action| action.runtime())
             {
                 *to_replace = ActionTiming {
                     name: action,
@@ -110,14 +118,19 @@ impl ActionStatistics {
                     .expect("just checked it is not full");
             };
 
-            self.runtime_to_beat = self
-                .longest_runtimes
-                .iter()
-                .map(|action| action.runtime())
-                .min()
-                .expect("never empty");
+            if self.longest_runtimes.is_full() {
+                self.runtime_to_beat = self
+                    .longest_runtimes
+                    .iter()
+                    .map(|action| action.runtime())
+                    .min()
+                    .expect("never empty");
+            }
         }
     }
+
+    #[cfg(not(feature = "profiler"))]
+    pub fn save_action_timing(&mut self) {}
 
     pub fn longest_runtimes(&self, include_running: bool) -> impl Iterator<Item = ActionTiming> {
         self.longest_runtimes.iter().copied().chain(
@@ -166,10 +179,12 @@ impl ActionTiming {
 
 // The profiler is careful to never block when the lock is held, therefore a
 // spinlock is optimal.
+#[cfg(feature = "profiler")]
 static ACTION_STATISTICS: spin::Mutex<ActionStatistics> =
     const { spin::Mutex::new(ActionStatistics::new()) };
 
 #[doc(hidden)]
+#[cfg(feature = "profiler")]
 pub(crate) fn update_running_action(action: &(dyn Action + 'static), cx: &mut crate::App) {
     let now = Instant::now();
     let action = action.type_id();
@@ -178,11 +193,85 @@ pub(crate) fn update_running_action(action: &(dyn Action + 'static), cx: &mut cr
 }
 
 #[doc(hidden)]
+#[cfg(feature = "profiler")]
 pub(crate) fn save_action_timing() {
     ACTION_STATISTICS.lock().save_action_timing();
 }
 
 #[doc(hidden)]
+#[cfg(feature = "profiler")]
 pub fn take_action_stats() -> ActionStatistics {
     ACTION_STATISTICS.lock().take()
+}
+
+#[doc(hidden)]
+#[cfg(not(feature = "profiler"))]
+pub fn take_action_stats() -> ActionStatistics {
+    ActionStatistics::default()
+}
+
+#[cfg(all(test, feature = "profiler"))]
+mod foundation_tests {
+    use super::*;
+
+    #[test]
+    fn missing_running_action_does_not_panic_or_record_a_sample() {
+        let mut statistics = ActionStatistics::default();
+        statistics.save_action_timing();
+        assert!(statistics.is_empty());
+    }
+
+    #[test]
+    fn a_partial_action_history_retains_slower_than_cutoff_samples_below_its_first_peak() {
+        let mut statistics = ActionStatistics::default();
+        for (name, seconds) in [
+            ("nine", 9),
+            ("eight", 8),
+            ("seven", 7),
+            ("six", 6),
+            ("five", 5),
+        ] {
+            statistics.update_running_action(name, Instant::now() - Duration::from_secs(seconds));
+            statistics.save_action_timing();
+        }
+        let mut names = statistics
+            .longest_runtimes(false)
+            .map(|timing| timing.name)
+            .collect::<Vec<_>>();
+        names.sort_unstable();
+        assert_eq!(names, ["eight", "five", "nine", "seven", "six"]);
+    }
+
+    #[test]
+    fn a_full_action_history_replaces_the_shortest_runtime() {
+        let now = Instant::now();
+        let mut statistics = ActionStatistics::default();
+        for (name, seconds) in [
+            ("nine", 9),
+            ("eight", 8),
+            ("seven", 7),
+            ("six", 6),
+            ("five", 5),
+        ] {
+            statistics
+                .longest_runtimes
+                .push(ActionTiming {
+                    name,
+                    start: now - Duration::from_secs(seconds),
+                    end: now,
+                })
+                .unwrap();
+        }
+        statistics.runtime_to_beat = Duration::from_secs(5);
+        statistics.update_running_action("replacement", now - Duration::from_secs(6));
+        statistics.save_action_timing();
+        let names = statistics
+            .longest_runtimes(false)
+            .map(|timing| timing.name)
+            .collect::<Vec<_>>();
+        assert_eq!(names.len(), 5);
+        assert!(names.contains(&"nine"));
+        assert!(names.contains(&"replacement"));
+        assert!(!names.contains(&"five"));
+    }
 }
