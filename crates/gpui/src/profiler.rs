@@ -21,6 +21,12 @@ use std::{
 };
 
 mod actions;
+#[cfg(feature = "profiler")]
+pub mod hang;
+#[cfg(feature = "profiler")]
+pub mod journal;
+#[cfg(feature = "profiler")]
+pub use actions::ActionHandlerGuard;
 pub use actions::{ActionStatistics, ActionTiming, take_action_stats};
 
 use serde::{Deserialize, Serialize};
@@ -604,7 +610,7 @@ impl ThreadTimings {
     pub fn update_running_task(&mut self, _: SpawnTime, _: &'static std::panic::Location<'_>) {}
 
     #[cfg(feature = "profiler")]
-    pub fn save_task_timing(&mut self, ended: YieldTime) {
+    pub fn save_task_timing(&mut self, ended: YieldTime) -> TaskTiming {
         let ActiveTiming {
             location,
             start,
@@ -631,6 +637,7 @@ impl ThreadTimings {
             self.timings.push_back(timing);
             self.total_pushed += 1;
         }
+        timing
     }
 
     #[cfg(not(feature = "profiler"))]
@@ -684,12 +691,99 @@ impl Drop for ThreadTimings {
     }
 }
 
+/// Completes one runnable's poll timing and foreground turn, including during unwind.
+#[must_use]
+pub struct TaskTimingGuard {
+    #[cfg(feature = "profiler")]
+    previous_running: Option<ActiveTiming>,
+    #[cfg(feature = "profiler")]
+    foreground_queued: bool,
+    _not_send: std::marker::PhantomData<std::rc::Rc<()>>,
+}
+
+/// Profiles a runnable until the returned guard is dropped.
+///
+/// Use this instead of a bare [`update_running_task`]/[`save_task_timing`] pair
+/// when a runnable may unwind. Nested scopes restore the enclosing running task.
+/// Without the `profiler` feature, no timings are registered or retained.
+pub fn task_timing(
+    spawned: SpawnTime,
+    location: &'static std::panic::Location<'_>,
+) -> TaskTimingGuard {
+    task_timing_scope(spawned, location, true)
+}
+
+/// Profiles work that was not counted in the foreground executor's queue.
+///
+/// Use this for timers and background work dispatched onto the foreground thread.
+/// It records the same work and restores nested timing state without consuming
+/// another runnable's foreground queue count. Without `profiler` it is a no-op.
+pub fn task_timing_unqueued(
+    spawned: SpawnTime,
+    location: &'static std::panic::Location<'_>,
+) -> TaskTimingGuard {
+    task_timing_scope(spawned, location, false)
+}
+
+/// Settles one already admitted foreground runnable rejected by a later platform stage.
+///
+/// Call only on the originating foreground thread, after asynchronous admission
+/// prevents the scheduler from receiving a synchronous rejection. Synchronous
+/// dispatch rejection is settled by the scheduler's captured queue counter.
+#[doc(hidden)]
+pub fn foreground_task_rejected() {
+    #[cfg(feature = "profiler")]
+    journal::foreground_runnable_counter().finished();
+}
+
+fn task_timing_scope(
+    spawned: SpawnTime,
+    location: &'static std::panic::Location<'_>,
+    foreground_queued: bool,
+) -> TaskTimingGuard {
+    #[cfg(feature = "profiler")]
+    let previous_running = THREAD_TIMINGS.with(|timings| timings.lock().running);
+    #[cfg(not(feature = "profiler"))]
+    let _ = foreground_queued;
+    update_running_task(spawned, location);
+    TaskTimingGuard {
+        #[cfg(feature = "profiler")]
+        previous_running,
+        #[cfg(feature = "profiler")]
+        foreground_queued,
+        _not_send: std::marker::PhantomData,
+    }
+}
+
+impl Drop for TaskTimingGuard {
+    fn drop(&mut self) {
+        #[cfg(feature = "profiler")]
+        {
+            let yielded_at = YieldTime(Instant::now());
+            let timing = THREAD_TIMINGS.with(|timings| {
+                let mut timings = timings.lock();
+                let timing = timings.save_task_timing(yielded_at);
+                timings.running = self.previous_running;
+                timing
+            });
+            if self.foreground_queued {
+                journal::record_task_poll(timing);
+            } else {
+                journal::record_unqueued_task_poll(timing);
+            }
+        }
+    }
+}
+
 #[doc(hidden)]
 pub fn update_running_task(spawned: SpawnTime, location: &'static std::panic::Location<'_>) {
     #[cfg(feature = "profiler")]
-    THREAD_TIMINGS.with(|timings| {
-        timings.lock().update_running_task(spawned, location);
-    });
+    {
+        journal::begin_foreground_turn();
+        THREAD_TIMINGS.with(|timings| {
+            timings.lock().update_running_task(spawned, location);
+        });
+    }
     #[cfg(not(feature = "profiler"))]
     let _ = (spawned, location);
 }
@@ -699,9 +793,8 @@ pub fn save_task_timing() {
     #[cfg(feature = "profiler")]
     {
         let yielded_at = YieldTime(Instant::now());
-        THREAD_TIMINGS.with(|timings| {
-            timings.lock().save_task_timing(yielded_at);
-        });
+        let timing = THREAD_TIMINGS.with(|timings| timings.lock().save_task_timing(yielded_at));
+        journal::record_task_poll(timing);
     }
 }
 
@@ -859,7 +952,10 @@ impl FrameTiming {
     }
 }
 
-/// Work spent submitting a newly drawn window frame to the platform.
+/// Work spent attempting to submit a window frame to the platform.
+///
+/// A journal event can describe an unsuccessful attempt or an unchanged scene;
+/// successful newly drawn frames additionally produce a presentation boundary.
 #[cfg(feature = "profiler")]
 #[derive(Debug, Copy, Clone)]
 pub struct PresentTiming {
@@ -953,11 +1049,14 @@ pub struct InputLatencyRefreshCallsite {
 enum WindowActivity {
     Input {
         started_at: Instant,
+        kind: &'static str,
         covering_draw: Option<(Instant, usize)>,
         measurement_generation: u64,
+        _turn: journal::ForegroundTurnGuard,
     },
     Draw {
         started_at: Instant,
+        _turn: journal::ForegroundTurnGuard,
     },
 }
 
@@ -982,8 +1081,9 @@ pub(crate) struct DrawCheckpoint {
 ///
 /// Aggregate histograms and diagnostics are collected whenever the `profiler`
 /// feature is compiled in. Individual task, draw, and presentation records are
-/// retained only while tracing is enabled. Draw scopes must end after candidate
-/// acceptance or be canceled with [`Self::abort_draw`] on refusal or unwind.
+/// retained in the trace buffers only while tracing is enabled; the foreground
+/// journal records completed work independently. Draw scopes must end after
+/// candidate acceptance or be canceled with [`Self::abort_draw`] on refusal or unwind.
 #[cfg(feature = "profiler")]
 pub struct WindowProfiler {
     window_id: WindowId,
@@ -1010,6 +1110,7 @@ pub struct WindowProfiler {
     refresh_request_count: u64,
     coalesced_refresh_request_count: u64,
     refresh_callsites: Vec<InputLatencyRefreshCallsite>,
+    _not_send: std::marker::PhantomData<std::rc::Rc<()>>,
 }
 
 #[cfg(feature = "profiler")]
@@ -1018,7 +1119,7 @@ impl WindowProfiler {
     ///
     /// Returns an error if any aggregate histogram cannot be created.
     pub fn new(window_id: WindowId) -> anyhow::Result<Self> {
-        Ok(Self {
+        let profiler = Self {
             window_id,
             active_activities: SmallVec::new(),
             dirty_to_present_histogram: Histogram::new(3).map_err(|error| {
@@ -1053,30 +1154,45 @@ impl WindowProfiler {
             refresh_request_count: 0,
             coalesced_refresh_request_count: 0,
             refresh_callsites: Vec::new(),
-        })
+            _not_send: std::marker::PhantomData,
+        };
+        journal::record_frame_pending(window_id, Instant::now());
+        Ok(profiler)
     }
 
     /// Records the beginning of an input dispatch.
     ///
     /// `kind` names the platform input variant. Aggregate measurements do not
     /// retain individual input event names.
-    pub fn begin_input(&mut self, _kind: &'static str) {
+    pub fn begin_input(&mut self, kind: &'static str) {
+        let turn = journal::foreground_turn();
         self.active_activities.push(WindowActivity::Input {
             started_at: Instant::now(),
+            kind,
             covering_draw: None,
             measurement_generation: self.input_measurement_generation,
+            _turn: turn,
         });
     }
 
-    /// Ends the current input dispatch, recording only input that invalidated the window.
+    /// Ends the current input dispatch and journals its work.
     ///
-    /// Input received inside a draw is excluded because it cannot affect that
-    /// draw. Nested input dispatches retain the earliest invalidating input.
+    /// Only invalidating input contributes to latency aggregates. Input received
+    /// inside a draw is excluded because it cannot affect that draw. Nested input
+    /// dispatches retain the earliest invalidating input.
     pub fn end_input(&mut self, caused_invalidation: bool) {
         self.finish_input(caused_invalidation, None);
     }
 
     pub(crate) fn end_input_dispatch(&mut self, before: usize, after: usize, completed: bool) {
+        if !completed
+            && let Some(index) = self
+                .active_activities
+                .iter()
+                .rposition(|activity| matches!(activity, WindowActivity::Input { .. }))
+        {
+            self.truncate_activities(index + 1);
+        }
         self.finish_input(completed && after > before, Some((before, after)));
     }
 
@@ -1092,20 +1208,36 @@ impl WindowProfiler {
     }
 
     fn finish_input(&mut self, caused_invalidation: bool, dispatch: Option<(usize, usize)>) {
-        let Some(WindowActivity::Input {
-            started_at,
-            covering_draw,
-            measurement_generation,
-        }) = self.active_activities.last()
-        else {
+        if !matches!(
+            self.active_activities.last(),
+            Some(WindowActivity::Input { .. })
+        ) {
             debug_assert!(false, "input activity must be the current window activity");
             return;
+        }
+        let Some(WindowActivity::Input {
+            started_at,
+            kind,
+            covering_draw,
+            measurement_generation,
+            _turn,
+        }) = self.active_activities.pop()
+        else {
+            unreachable!("checked the current input activity");
         };
-        let started_at = *started_at;
-        let covering_draw = *covering_draw;
-        let measurement_generation = *measurement_generation;
-        self.active_activities.pop();
-        if !caused_invalidation || measurement_generation != self.input_measurement_generation {
+        if !journal::power_interrupted_since(started_at) {
+            journal::record_input(journal::InputTiming {
+                kind,
+                start: started_at,
+                end: Instant::now(),
+                caused_invalidation,
+            });
+        }
+        self.discard_stale_input_samples();
+        if !caused_invalidation
+            || measurement_generation != self.input_measurement_generation
+            || !journal::frame_sample_is_valid(self.window_id, started_at)
+        {
             return;
         }
         if self
@@ -1146,20 +1278,28 @@ impl WindowProfiler {
         }
     }
 
-    /// Records the beginning of an action handler in the shared action aggregates.
-    pub fn begin_action_handler(&mut self, action: &(dyn Action + 'static), cx: &mut App) {
-        actions::update_running_action(action, cx);
+    /// Begins an action handler whose returned guard also completes on unwind.
+    pub fn begin_action_handler(
+        &mut self,
+        action: &(dyn Action + 'static),
+        cx: &mut App,
+    ) -> ActionHandlerGuard {
+        actions::update_running_action(action, cx)
     }
 
-    /// Records the end of the current action handler.
-    pub fn end_action_handler(&mut self) {
-        actions::save_action_timing();
+    /// Completes the action handler owned by this guard.
+    pub fn end_action_handler(&mut self, handler: ActionHandlerGuard) {
+        drop(handler);
     }
 
     /// Begins a candidate draw without replacing the previous accepted pending frame.
     pub fn begin_draw(&mut self) {
+        let turn = journal::foreground_turn();
+        let started_at = Instant::now();
+        journal::record_frame_pending(self.window_id, started_at);
         self.active_activities.push(WindowActivity::Draw {
-            started_at: Instant::now(),
+            started_at,
+            _turn: turn,
         });
     }
 
@@ -1189,23 +1329,25 @@ impl WindowProfiler {
             self.abort_draw_checkpoint(checkpoint);
             return Duration::ZERO;
         }
-        if !matches!(
-            self.active_activities.last(),
-            Some(WindowActivity::Draw { .. })
-        ) {
+        if self.active_activities.len() != checkpoint.activity_depth + 1
+            || !matches!(
+                self.active_activities.last(),
+                Some(WindowActivity::Draw { .. })
+            )
+        {
             self.abort_draw_checkpoint(checkpoint);
             debug_assert!(false, "accepted draw must finish its nested activities");
             return Duration::ZERO;
         }
         let duration = self.end_draw(dirty_at, invalidations);
-        self.active_activities.truncate(checkpoint.activity_depth);
+        self.truncate_activities(checkpoint.activity_depth);
         duration
     }
 
     /// Restores the accepted pending frame and enclosing activity depth after refusal or unwind.
     /// Input measurements reset during the attempt remain cleared after rollback.
     pub(crate) fn abort_draw_checkpoint(&mut self, checkpoint: DrawCheckpoint) {
-        self.active_activities.truncate(checkpoint.activity_depth);
+        self.truncate_activities(checkpoint.activity_depth);
         self.pending_frame = checkpoint.pending_frame;
         if checkpoint.input_measurement_generation != self.input_measurement_generation
             && let Some(pending) = self.pending_frame.as_mut()
@@ -1228,24 +1370,34 @@ impl WindowProfiler {
     /// or unwinding candidate must instead call [`Self::abort_draw`]. An unmatched
     /// end asserts in debug builds and leaves activities unchanged otherwise.
     pub fn end_draw(&mut self, dirty_at: Option<Instant>, invalidations: u64) -> Duration {
-        let Some(WindowActivity::Draw {
-            started_at: draw_start,
-        }) = self.active_activities.last()
-        else {
+        if !matches!(
+            self.active_activities.last(),
+            Some(WindowActivity::Draw { .. })
+        ) {
             debug_assert!(false, "draw activity must be the current window activity");
             return Duration::ZERO;
+        }
+        let Some(WindowActivity::Draw {
+            started_at: draw_start,
+            _turn,
+        }) = self.active_activities.pop()
+        else {
+            unreachable!("checked the current draw activity");
         };
-        let draw_start = *draw_start;
-        self.active_activities.pop();
         let timing = FrameTiming {
             window_id: self.window_id,
-            dirty_at,
+            dirty_at: dirty_at.filter(|at| journal::frame_sample_is_valid(self.window_id, *at)),
             invalidations,
             draw_start,
             draw_end: Instant::now(),
         };
         let duration = timing.draw_duration();
-        self.record_draw_timing(timing);
+        if !journal::power_interrupted_since(draw_start) {
+            self.record_draw_timing(timing);
+        } else {
+            self.discard_pending_frame();
+            self.discard_stale_input_samples();
+        }
         duration
     }
 
@@ -1260,7 +1412,7 @@ impl WindowProfiler {
             .iter()
             .rposition(|activity| matches!(activity, WindowActivity::Draw { .. }))
         {
-            self.active_activities.truncate(index);
+            self.truncate_activities(index);
         }
     }
 
@@ -1269,8 +1421,9 @@ impl WindowProfiler {
     /// `present_end` is submission completion, not a display scanout timestamp.
     /// Input latency ends at `present_end` and includes only the inputs covered
     /// by the accepted draw. Later input remains pending for a subsequent draw.
-    /// All samples require a newly accepted pending draw; presenting an unchanged
-    /// scene does not complete input or add frame samples.
+    /// All aggregate samples require a newly accepted pending draw; presenting
+    /// an unchanged scene journals submission work without completing input or
+    /// adding frame samples.
     /// `next_frame_scheduled` sets animation state for the next new frame.
     ///
     /// This method does not increment presentation outcome counters. Window
@@ -1284,7 +1437,39 @@ impl WindowProfiler {
         window_active: bool,
         next_frame_scheduled: bool,
     ) {
-        let Some(pending) = self.pending_frame.take() else {
+        self.discard_stale_input_samples();
+        let pending = self
+            .pending_frame
+            .take()
+            .filter(|pending| {
+                journal::frame_sample_is_valid(self.window_id, pending.timing.draw_start)
+            })
+            .map(|mut pending| {
+                pending.timing.dirty_at = pending
+                    .timing
+                    .dirty_at
+                    .filter(|at| journal::frame_sample_is_valid(self.window_id, *at));
+                pending
+            });
+        let interrupted = journal::power_interrupted_since(present_start);
+        let pending = pending.filter(|_| !interrupted);
+        let animation_interval =
+            if pending.is_some() && self.animating_at_last_present && window_active {
+                self.last_present_at
+                    .filter(|at| journal::frame_sample_is_valid(self.window_id, *at))
+                    .map(|last_present| present_end.duration_since(last_present))
+            } else {
+                None
+            };
+        let present_timing = PresentTiming {
+            window_id: self.window_id,
+            present_start,
+            present_end,
+            animation_interval,
+        };
+        journal::record_present(present_timing, pending.map(|pending| pending.timing));
+        let Some(pending) = pending else {
+            self.input_after_draw_at = None;
             return;
         };
         if let Some(first_input_at) = pending.first_input_at {
@@ -1301,12 +1486,6 @@ impl WindowProfiler {
         self.pending_input_count = self.pending_input_count.saturating_sub(pending.input_count);
         self.first_input_at = self.input_after_draw_at.take();
         let frame = pending.timing;
-        let animation_interval = if self.animating_at_last_present && window_active {
-            self.last_present_at
-                .map(|last_present| present_end.duration_since(last_present))
-        } else {
-            None
-        };
         if let Some(dirty_at) = frame.dirty_at {
             record_duration(
                 &mut self.dirty_to_present_histogram,
@@ -1316,12 +1495,7 @@ impl WindowProfiler {
         if let Some(interval) = animation_interval {
             record_duration(&mut self.present_interval_histogram, interval);
         }
-        record_frame_event(FrameEvent::Present(PresentTiming {
-            window_id: self.window_id,
-            present_start,
-            present_end,
-            animation_interval,
-        }));
+        record_frame_event(FrameEvent::Present(present_timing));
         self.last_present_at = Some(present_end);
         self.animating_at_last_present = next_frame_scheduled && window_active;
     }
@@ -1347,6 +1521,14 @@ impl WindowProfiler {
         next_frame_scheduled: bool,
     ) {
         self.present_attempt_count += 1;
+        if outcome != PlatformWindowPresentOutcome::Submitted {
+            journal::record_unsubmitted_present(PresentTiming {
+                window_id: self.window_id,
+                present_start,
+                present_end,
+                animation_interval: None,
+            });
+        }
         match outcome {
             PlatformWindowPresentOutcome::Submitted => {
                 self.submitted_present_count += 1;
@@ -1449,6 +1631,7 @@ impl WindowProfiler {
     }
 
     fn record_draw_timing(&mut self, timing: FrameTiming) {
+        self.discard_stale_input_samples();
         record_duration(&mut self.draw_duration_histogram, timing.draw_duration());
         self.drawn_frame_count += 1;
         self.pending_frame = Some(PendingFrame {
@@ -1458,6 +1641,40 @@ impl WindowProfiler {
         });
         self.input_after_draw_at = None;
         record_frame_event(FrameEvent::Draw(timing));
+        journal::record_draw(timing);
+    }
+
+    fn discard_stale_input_samples(&mut self) {
+        if self
+            .first_input_at
+            .is_some_and(|at| !journal::frame_sample_is_valid(self.window_id, at))
+        {
+            self.first_input_at = None;
+            self.input_after_draw_at = None;
+            self.pending_input_count = 0;
+        }
+        if let Some(pending) = self.pending_frame.as_mut()
+            && pending
+                .first_input_at
+                .is_some_and(|at| !journal::frame_sample_is_valid(self.window_id, at))
+        {
+            pending.first_input_at = None;
+            pending.input_count = 0;
+        }
+    }
+
+    fn truncate_activities(&mut self, depth: usize) {
+        while self.active_activities.len() > depth {
+            self.active_activities.pop();
+        }
+    }
+}
+
+#[cfg(feature = "profiler")]
+impl Drop for WindowProfiler {
+    fn drop(&mut self) {
+        self.truncate_activities(0);
+        journal::record_window_closed(self.window_id);
     }
 }
 
@@ -1546,3 +1763,6 @@ impl FrameTimingCollector {
 
 #[cfg(test)]
 mod foundation_tests;
+
+#[cfg(test)]
+mod foreground_tests;

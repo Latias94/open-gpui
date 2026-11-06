@@ -24,6 +24,8 @@ pub struct BackgroundExecutor {
 pub struct ForegroundExecutor {
     inner: open_gpui_scheduler::LocalExecutor,
     dispatcher: Arc<dyn PlatformDispatcher>,
+    #[cfg(feature = "profiler")]
+    foreground_runnables: Option<crate::profiler::journal::ForegroundRunnableCounter>,
     not_send: PhantomData<Rc<()>>,
 }
 
@@ -284,15 +286,18 @@ impl ForegroundExecutor {
                 return Self {
                     inner,
                     dispatcher,
+                    #[cfg(feature = "profiler")]
+                    foreground_runnables: Some(platform_scheduler.foreground_runnable_counter()),
                     not_send: PhantomData,
                 };
             };
 
         #[cfg(not(any(test, feature = "test-support")))]
-        let inner = {
-            let platform_scheduler = Arc::new(PlatformScheduler::new(dispatcher.clone()));
-            platform_scheduler.foreground_executor()
-        };
+        let platform_scheduler = Arc::new(PlatformScheduler::new(dispatcher.clone()));
+        #[cfg(not(any(test, feature = "test-support")))]
+        let inner = platform_scheduler.foreground_executor();
+        #[cfg(all(not(any(test, feature = "test-support")), feature = "profiler"))]
+        let foreground_runnables = Some(platform_scheduler.foreground_runnable_counter());
 
         #[cfg(any(test, feature = "test-support"))]
         let inner = {
@@ -304,9 +309,16 @@ impl ForegroundExecutor {
             })
         };
 
+        #[cfg(all(any(test, feature = "test-support"), feature = "profiler"))]
+        // The deterministic test scheduler does not invoke GPUI's task profiler
+        // hooks, so an increment here would have no matching decrement.
+        let foreground_runnables = None;
+
         Self {
             inner,
             dispatcher,
+            #[cfg(feature = "profiler")]
+            foreground_runnables,
             not_send: PhantomData,
         }
     }
@@ -332,6 +344,55 @@ impl ForegroundExecutor {
     {
         // Priority is ignored for foreground tasks - they run in order on the main thread
         self.inner.spawn(future)
+    }
+
+    /// On platforms with dedicated support, enqueues the given future to run
+    /// on the main thread during platform idle time. Without a `timeout`,
+    /// polls may be deferred indefinitely while the platform stays busy;
+    /// with one, a poll still waiting after that long runs as ordinary main-thread work.
+    /// Each poll occupies part of one idle slice, so long synchronous stretches
+    /// should bound themselves against [`Self::idle_time_remaining`] and yield.
+    ///
+    /// On platforms without dedicated support, schedules the given future to run
+    /// with a low priority, ignoring `timeout`.
+    #[track_caller]
+    pub fn spawn_when_idle<R>(
+        &self,
+        timeout: Option<Duration>,
+        future: impl Future<Output = R> + 'static,
+    ) -> Task<R>
+    where
+        R: 'static,
+    {
+        let dispatcher = self.dispatcher.clone();
+        #[cfg(feature = "profiler")]
+        let foreground_runnables = self.foreground_runnables.clone();
+        let executor = open_gpui_scheduler::LocalExecutor::new(
+            self.inner.session_id(),
+            self.inner.scheduler().clone(),
+            move |runnable| {
+                #[cfg(feature = "profiler")]
+                if let Some(foreground_runnables) = &foreground_runnables {
+                    foreground_runnables.queued();
+                }
+                if !dispatcher.dispatch_on_main_thread_when_idle(runnable, timeout) {
+                    #[cfg(feature = "profiler")]
+                    if let Some(foreground_runnables) = &foreground_runnables {
+                        foreground_runnables.finished();
+                    }
+                }
+            },
+        );
+        executor.spawn(future.boxed_local())
+    }
+
+    /// The time remaining in the current idle slice, when called from a task
+    /// spawned via [`Self::spawn_when_idle`] on a platform that meters idle
+    /// time. `None` when idle time is unmetered (or the caller is not inside
+    /// an idle slice); work that must bound itself should then fall back to a
+    /// budget of its own.
+    pub fn idle_time_remaining(&self) -> Option<Duration> {
+        self.dispatcher.idle_time_remaining()
     }
 
     /// Used by the test harness to run an async test in a synchronous fashion.
@@ -503,5 +564,40 @@ mod test {
             *task_ran.borrow(),
             "Task should run normally when app is alive"
         );
+    }
+
+    #[cfg(feature = "profiler")]
+    #[test]
+    fn deterministic_foreground_tasks_do_not_hold_journal_busy() {
+        use crate::profiler::journal::{self, ForegroundJournalEntry, IntervalBoundary};
+
+        let (journal, _guard) = journal::install_test_foreground_journal(32, 4);
+        let mut collector = journal.collector();
+        let dispatcher = Arc::new(TestDispatcher::new(0));
+        let executor = ForegroundExecutor::new(dispatcher.clone());
+        assert!(executor.uses_test_dispatcher());
+
+        let foreground = executor.spawn(async { 1 });
+        let idle = executor.spawn_when_idle(Some(Duration::from_secs(1)), async { 2 });
+        dispatcher.run_until_parked();
+        assert_eq!(foreground.now_or_never(), Some(1));
+        assert_eq!(idle.now_or_never(), Some(2));
+
+        {
+            let _turn = journal::foreground_turn();
+            let now = Instant::now();
+            journal::record_input(journal::InputTiming {
+                kind: "test",
+                start: now,
+                end: now,
+                caused_invalidation: false,
+            });
+        }
+        assert!(collector.collect_unseen().entries.iter().any(|entry| {
+            matches!(
+                entry,
+                ForegroundJournalEntry::Boundary(IntervalBoundary::Idle { .. })
+            )
+        }));
     }
 }

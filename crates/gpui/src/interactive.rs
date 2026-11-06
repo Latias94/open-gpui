@@ -705,6 +705,24 @@ pub enum PlatformInput {
 }
 
 impl PlatformInput {
+    /// Returns a short static name for this input variant for diagnostics.
+    pub fn kind_name(&self) -> &'static str {
+        match self {
+            Self::KeyDown(_) => "key_down",
+            Self::KeyUp(_) => "key_up",
+            Self::ModifiersChanged(_) => "modifiers_changed",
+            Self::MouseDown(_) => "mouse_down",
+            Self::MouseUp(_) => "mouse_up",
+            Self::MousePressure(_) => "mouse_pressure",
+            Self::MouseMove(_) => "mouse_move",
+            Self::MouseExited(_) => "mouse_exited",
+            Self::PointerCanceled(_) => "pointer_canceled",
+            Self::ScrollWheel(_) => "scroll_wheel",
+            Self::Pinch(_) => "pinch",
+            Self::FileDrop(_) => "file_drop",
+        }
+    }
+
     pub(crate) fn mouse_event(&self) -> Option<&dyn Any> {
         match self {
             PlatformInput::KeyDown { .. } => None,

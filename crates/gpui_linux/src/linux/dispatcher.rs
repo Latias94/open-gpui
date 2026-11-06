@@ -42,9 +42,8 @@ impl LinuxDispatcher {
                         for runnable in receiver.iter() {
                             let location = runnable.metadata().location;
                             let spawned = runnable.metadata().spawned;
-                            profiler::update_running_task(spawned, location);
+                            let _task_timing = profiler::task_timing(spawned, location);
                             runnable.run();
-                            profiler::save_task_timing();
                         }
                     })
                     .unwrap()
@@ -71,9 +70,9 @@ impl LinuxDispatcher {
                                         if let Some(runnable) = runnable.take() {
                                             let location = runnable.metadata().location;
                                             let spawned = runnable.metadata().spawned;
-                                            profiler::update_running_task(spawned, location);
+                                            let _task_timing =
+                                                profiler::task_timing(spawned, location);
                                             runnable.run();
-                                            profiler::save_task_timing();
                                         }
                                         TimeoutAction::Drop
                                     },
@@ -110,10 +109,10 @@ impl PlatformDispatcher for LinuxDispatcher {
             .unwrap_or_else(|_| panic!("blocking sender returned without value"));
     }
 
-    fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority) {
-        self.main_sender
-            .send(priority, runnable)
-            .unwrap_or_else(|runnable| {
+    fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority) -> bool {
+        match self.main_sender.send(priority, runnable) {
+            Ok(()) => true,
+            Err(runnable) => {
                 // NOTE: Runnable may wrap a Future that is !Send.
                 //
                 // This is usually safe because we only poll it on the main thread.
@@ -123,7 +122,9 @@ impl PlatformDispatcher for LinuxDispatcher {
                 // It is not safe to drop something !Send on the wrong thread, and
                 // the app will exit soon anyway, so we must forget the runnable.
                 std::mem::forget(runnable);
-            });
+                false
+            }
+        }
     }
 
     fn dispatch_after(&self, duration: Duration, runnable: RunnableVariant) {

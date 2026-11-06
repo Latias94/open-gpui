@@ -28,6 +28,8 @@ pub struct PlatformScheduler {
     dispatcher: Arc<dyn PlatformDispatcher>,
     clock: Arc<PlatformClock>,
     next_session_id: AtomicU16,
+    #[cfg(feature = "profiler")]
+    foreground_runnables: crate::profiler::journal::ForegroundRunnableCounter,
 }
 
 impl PlatformScheduler {
@@ -36,6 +38,8 @@ impl PlatformScheduler {
             dispatcher: dispatcher.clone(),
             clock: Arc::new(PlatformClock { dispatcher }),
             next_session_id: AtomicU16::new(0),
+            #[cfg(feature = "profiler")]
+            foreground_runnables: crate::profiler::journal::foreground_runnable_counter(),
         }
     }
 
@@ -53,6 +57,13 @@ impl PlatformScheduler {
 
     fn next_session_id(&self) -> SessionId {
         SessionId::new(self.next_session_id.fetch_add(1, Ordering::SeqCst))
+    }
+
+    #[cfg(feature = "profiler")]
+    pub(crate) fn foreground_runnable_counter(
+        &self,
+    ) -> crate::profiler::journal::ForegroundRunnableCounter {
+        self.foreground_runnables.clone()
     }
 }
 
@@ -107,8 +118,15 @@ impl Scheduler for PlatformScheduler {
     }
 
     fn schedule_local(&self, _session_id: SessionId, runnable: Runnable<RunnableMeta>) {
-        self.dispatcher
-            .dispatch_on_main_thread(runnable, Priority::default());
+        #[cfg(feature = "profiler")]
+        self.foreground_runnables.queued();
+        if !self
+            .dispatcher
+            .dispatch_on_main_thread(runnable, Priority::default())
+        {
+            #[cfg(feature = "profiler")]
+            self.foreground_runnables.finished();
+        }
     }
 
     fn schedule_background_with_priority(
@@ -190,8 +208,16 @@ impl Clock for PlatformClock {
 #[cfg(all(test, not(target_family = "wasm")))]
 mod tests {
     use super::*;
+    #[cfg(feature = "profiler")]
+    use crate::{
+        ForegroundExecutor,
+        profiler::journal::{self, ForegroundJournalEntry, IntervalBoundary},
+    };
     use crate::{PriorityQueueReceiver, RunnableVariant};
+    #[cfg(feature = "profiler")]
+    use futures::FutureExt;
     use open_gpui_scheduler::BackgroundExecutor;
+    use parking_lot::Mutex;
     use std::time::Instant as StdInstant;
 
     // `spawn_dedicated` shouldn't touch the platform dispatcher at all;
@@ -205,7 +231,7 @@ mod tests {
         fn dispatch(&self, _runnable: RunnableVariant, _priority: Priority) {
             panic!("SmokeDispatcher should not be asked to dispatch in this test");
         }
-        fn dispatch_on_main_thread(&self, _runnable: RunnableVariant, _priority: Priority) {
+        fn dispatch_on_main_thread(&self, _runnable: RunnableVariant, _priority: Priority) -> bool {
             panic!("SmokeDispatcher does not implement a main thread");
         }
         fn dispatch_after(&self, _duration: Duration, _runnable: RunnableVariant) {
@@ -218,6 +244,20 @@ mod tests {
 
     struct MainQueueDispatcher {
         sender: crate::PriorityQueueSender<RunnableVariant>,
+        background: Mutex<Vec<RunnableVariant>>,
+        delayed: Mutex<Vec<(Duration, RunnableVariant)>>,
+        idle_timeouts: Mutex<Vec<Option<Duration>>>,
+    }
+
+    impl MainQueueDispatcher {
+        fn new(sender: crate::PriorityQueueSender<RunnableVariant>) -> Self {
+            Self {
+                sender,
+                background: Mutex::new(Vec::new()),
+                delayed: Mutex::new(Vec::new()),
+                idle_timeouts: Mutex::new(Vec::new()),
+            }
+        }
     }
 
     impl PlatformDispatcher for MainQueueDispatcher {
@@ -225,18 +265,32 @@ mod tests {
             true
         }
 
-        fn dispatch(&self, _runnable: RunnableVariant, _priority: Priority) {
-            panic!("MainQueueDispatcher does not implement background dispatch");
+        fn dispatch(&self, runnable: RunnableVariant, _priority: Priority) {
+            self.background.lock().push(runnable);
         }
 
-        fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority) {
+        fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority) -> bool {
             self.sender
                 .send(priority, runnable)
                 .expect("main-thread runnable queue should remain connected");
+            true
         }
 
-        fn dispatch_after(&self, _duration: Duration, _runnable: RunnableVariant) {
-            panic!("MainQueueDispatcher does not implement timers");
+        fn dispatch_after(&self, duration: Duration, runnable: RunnableVariant) {
+            self.delayed.lock().push((duration, runnable));
+        }
+
+        fn dispatch_on_main_thread_when_idle(
+            &self,
+            runnable: RunnableVariant,
+            timeout: Option<Duration>,
+        ) -> bool {
+            self.idle_timeouts.lock().push(timeout);
+            self.dispatch_on_main_thread(runnable, Priority::Low)
+        }
+
+        fn idle_time_remaining(&self) -> Option<Duration> {
+            Some(Duration::from_millis(2))
         }
 
         fn spawn_realtime(&self, _f: Box<dyn FnOnce() + Send>) {
@@ -244,14 +298,371 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "profiler")]
+    struct ClosingMainQueueDispatcher {
+        sender: crate::PriorityQueueSender<RunnableVariant>,
+        main_thread: std::thread::ThreadId,
+        rejected_on: Mutex<Vec<std::thread::ThreadId>>,
+    }
+
+    #[cfg(feature = "profiler")]
+    impl PlatformDispatcher for ClosingMainQueueDispatcher {
+        fn is_main_thread(&self) -> bool {
+            std::thread::current().id() == self.main_thread
+        }
+
+        fn dispatch(&self, _runnable: RunnableVariant, _priority: Priority) {
+            panic!("ClosingMainQueueDispatcher does not implement background dispatch");
+        }
+
+        fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority) -> bool {
+            if let Err(runnable) = self.sender.send(priority, runnable) {
+                self.rejected_on.lock().push(std::thread::current().id());
+                // Match native closed-queue handling: a worker must not drop a !Send future.
+                std::mem::forget(runnable);
+                false
+            } else {
+                true
+            }
+        }
+
+        fn dispatch_after(&self, _duration: Duration, _runnable: RunnableVariant) {
+            panic!("ClosingMainQueueDispatcher does not implement timers");
+        }
+
+        fn spawn_realtime(&self, _f: Box<dyn FnOnce() + Send>) {
+            panic!("ClosingMainQueueDispatcher does not implement realtime work");
+        }
+    }
+
+    fn run_runnable(runnable: RunnableVariant) {
+        let metadata = runnable.metadata();
+        crate::profiler::update_running_task(metadata.spawned, metadata.location);
+        runnable.run();
+        crate::profiler::save_task_timing();
+    }
+
+    fn run_next_main_runnable(receiver: &mut PriorityQueueReceiver<RunnableVariant>) {
+        run_runnable(
+            receiver
+                .try_pop()
+                .expect("main-thread queue should remain connected")
+                .expect("a main-thread runnable should be queued"),
+        );
+    }
+
+    #[cfg(feature = "profiler")]
+    fn retain_foreground_activity() {
+        let now = Instant::now();
+        journal::record_input(journal::InputTiming {
+            kind: "test",
+            start: now,
+            end: now,
+            caused_invalidation: false,
+        });
+    }
+
+    #[cfg(feature = "profiler")]
+    fn has_idle_boundary(entries: &[ForegroundJournalEntry]) -> bool {
+        entries.iter().any(|entry| {
+            matches!(
+                entry,
+                ForegroundJournalEntry::Boundary(IntervalBoundary::Idle { .. })
+            )
+        })
+    }
+
+    #[cfg(feature = "profiler")]
+    fn assert_closed_queue_late_wake_allows_reconstructed_foreground_idle(idle: bool) {
+        // A failed regression intentionally leaves a ghost count. Isolate its TLS without
+        // resetting the counter or allowing it to affect another test on a reused harness thread.
+        std::thread::spawn(move || {
+            use std::{cell::Cell, rc::Rc, thread};
+
+            struct LocalDropProbe {
+                main_thread: thread::ThreadId,
+                dropped: Rc<Cell<bool>>,
+            }
+
+            impl Drop for LocalDropProbe {
+                fn drop(&mut self) {
+                    assert_eq!(thread::current().id(), self.main_thread);
+                    self.dropped.set(true);
+                }
+            }
+
+            let (journal, _guard) = journal::install_test_foreground_journal(64, 4);
+            let mut collector = journal.collector();
+            let main_thread = thread::current().id();
+            let (sender, mut receiver) = PriorityQueueReceiver::new();
+            let dispatcher = Arc::new(ClosingMainQueueDispatcher {
+                sender,
+                main_thread,
+                rejected_on: Mutex::new(Vec::new()),
+            });
+            let executor = ForegroundExecutor::new(dispatcher.clone());
+            assert!(!executor.uses_test_dispatcher());
+
+            let dropped = Rc::new(Cell::new(false));
+            let polls = Rc::new(Cell::new(0));
+            let probe = LocalDropProbe {
+                main_thread,
+                dropped: dropped.clone(),
+            };
+            let (resume_tx, resume_rx) = oneshot::channel::<()>();
+            let future = {
+                let polls = polls.clone();
+                async move {
+                    let _probe = probe;
+                    polls.set(polls.get() + 1);
+                    resume_rx
+                        .await
+                        .expect("the worker should deliver the late wake");
+                    polls.set(polls.get() + 1);
+                }
+            };
+            let task = if idle {
+                executor.spawn_when_idle(Some(Duration::from_millis(25)), future)
+            } else {
+                executor.spawn(future)
+            };
+            task.detach();
+
+            retain_foreground_activity();
+            run_next_main_runnable(&mut receiver);
+            assert_eq!(polls.get(), 1);
+            assert!(!dropped.get());
+            assert!(has_idle_boundary(&collector.collect_unseen().entries));
+            assert!(receiver.try_pop().unwrap().is_none());
+            drop(executor);
+            drop(receiver);
+
+            let worker_thread = thread::spawn(move || {
+                resume_tx
+                    .send(())
+                    .expect("the detached local task must remain alive");
+                thread::current().id()
+            })
+            .join()
+            .expect("rejecting a late wake must not drop the local future on the worker");
+            assert_ne!(worker_thread, main_thread);
+            assert_eq!(*dispatcher.rejected_on.lock(), vec![worker_thread]);
+            assert_eq!(polls.get(), 1, "rejected work must not be polled");
+            assert!(
+                !dropped.get(),
+                "native rejection must forget the local future"
+            );
+
+            // Reconstruct on the same foreground thread, sharing the journal and counter.
+            let (sender, mut receiver) = PriorityQueueReceiver::new();
+            let executor = ForegroundExecutor::new(Arc::new(MainQueueDispatcher::new(sender)));
+            let completed = executor.spawn(async { 42 });
+            retain_foreground_activity();
+            run_next_main_runnable(&mut receiver);
+            assert_eq!(completed.now_or_never(), Some(42));
+            assert!(receiver.try_pop().unwrap().is_none());
+            assert!(
+                has_idle_boundary(&collector.collect_unseen().entries),
+                "a rejected late wake (idle={idle}) must not keep the reconstructed foreground busy"
+            );
+        })
+        .join()
+        .expect("closed-queue reconstruction must preserve foreground idle boundaries");
+    }
+
+    #[cfg(feature = "profiler")]
+    #[test]
+    fn closed_queue_foreground_late_wake_allows_reconstructed_foreground_idle() {
+        assert_closed_queue_late_wake_allows_reconstructed_foreground_idle(false);
+    }
+
+    #[cfg(feature = "profiler")]
+    #[test]
+    fn closed_queue_idle_late_wake_allows_reconstructed_foreground_idle() {
+        assert_closed_queue_late_wake_allows_reconstructed_foreground_idle(true);
+    }
+
+    #[cfg(feature = "profiler")]
+    #[test]
+    fn foreground_runnables_delay_idle_until_all_runnables_finish() {
+        let (journal, _guard) = journal::install_test_foreground_journal(32, 4);
+        let mut collector = journal.collector();
+        let (sender, mut receiver) = PriorityQueueReceiver::new();
+        let dispatcher = Arc::new(MainQueueDispatcher::new(sender));
+        let executor = ForegroundExecutor::new(dispatcher);
+        assert!(!executor.uses_test_dispatcher());
+
+        let (resume_tx, resume_rx) = oneshot::channel::<()>();
+        let first = executor.spawn(async move {
+            resume_rx
+                .await
+                .expect("worker should resume the foreground");
+            1
+        });
+        let second = executor.spawn_with_priority(Priority::Low, async { 2 });
+        let cancelled: Task<()> = executor.spawn(async {
+            panic!("a cancelled foreground future must not be polled");
+        });
+        drop(cancelled);
+        retain_foreground_activity();
+
+        run_next_main_runnable(&mut receiver);
+        assert!(!has_idle_boundary(&collector.collect_unseen().entries));
+        std::thread::spawn(move || resume_tx.send(()))
+            .join()
+            .expect("worker wake should complete")
+            .expect("foreground task should still be waiting");
+        run_next_main_runnable(&mut receiver);
+        assert!(!has_idle_boundary(&collector.collect_unseen().entries));
+        run_next_main_runnable(&mut receiver);
+        assert!(!has_idle_boundary(&collector.collect_unseen().entries));
+        run_next_main_runnable(&mut receiver);
+        assert!(has_idle_boundary(&collector.collect_unseen().entries));
+        assert!(receiver.try_pop().unwrap().is_none());
+        assert_eq!(first.now_or_never(), Some(1));
+        assert_eq!(second.now_or_never(), Some(2));
+    }
+
+    #[cfg(feature = "profiler")]
+    #[test]
+    fn unqueued_main_thread_work_preserves_queued_foreground_runnables() {
+        let (journal, _guard) = journal::install_test_foreground_journal(32, 4);
+        let mut collector = journal.collector();
+        let (sender, mut receiver) = PriorityQueueReceiver::new();
+        let dispatcher = Arc::new(MainQueueDispatcher::new(sender));
+        let scheduler = Arc::new(PlatformScheduler::new(dispatcher.clone()));
+        let foreground = scheduler.foreground_executor();
+        let background = BackgroundExecutor::new(scheduler);
+        let first = foreground.spawn(async { 1 });
+        let second = foreground.spawn(async { 2 });
+        let unqueued = background.spawn(async {
+            std::thread::sleep(journal::TASK_POLL_FLOOR);
+            3
+        });
+
+        let runnable = dispatcher.background.lock().pop().unwrap();
+        let metadata = runnable.metadata();
+        let location = metadata.location;
+        {
+            let _timing =
+                crate::profiler::task_timing_unqueued(metadata.spawned, metadata.location);
+            runnable.run();
+        }
+        assert_eq!(unqueued.now_or_never(), Some(3));
+        let entries = collector.collect_unseen().entries;
+        assert!(entries.iter().any(|entry| {
+            matches!(
+                entry,
+                ForegroundJournalEntry::Event(journal::ForegroundEvent::TaskPoll(timing))
+                    if timing.location == location
+            )
+        }));
+        assert!(!has_idle_boundary(&entries));
+
+        run_next_main_runnable(&mut receiver);
+        assert!(!has_idle_boundary(&collector.collect_unseen().entries));
+        run_next_main_runnable(&mut receiver);
+        assert!(has_idle_boundary(&collector.collect_unseen().entries));
+        assert!(receiver.try_pop().unwrap().is_none());
+        assert_eq!(first.now_or_never(), Some(1));
+        assert_eq!(second.now_or_never(), Some(2));
+    }
+
+    #[cfg(feature = "profiler")]
+    #[test]
+    fn idle_dispatch_counts_each_poll_once_and_preserves_timeout() {
+        let (journal, _guard) = journal::install_test_foreground_journal(32, 4);
+        let mut collector = journal.collector();
+        let (sender, mut receiver) = PriorityQueueReceiver::new();
+        let dispatcher = Arc::new(MainQueueDispatcher::new(sender));
+        let executor = ForegroundExecutor::new(dispatcher.clone());
+        let timeout = Some(Duration::from_millis(25));
+        assert_eq!(
+            executor.idle_time_remaining(),
+            Some(Duration::from_millis(2))
+        );
+
+        let mut woken = false;
+        let task = executor.spawn_when_idle(
+            timeout,
+            futures::future::poll_fn(move |cx| {
+                if !woken {
+                    woken = true;
+                    let waker = cx.waker().clone();
+                    std::thread::spawn(move || waker.wake())
+                        .join()
+                        .expect("worker idle wake should complete");
+                    std::task::Poll::Pending
+                } else {
+                    std::task::Poll::Ready(42)
+                }
+            }),
+        );
+        retain_foreground_activity();
+        assert_eq!(*dispatcher.idle_timeouts.lock(), vec![timeout]);
+
+        run_next_main_runnable(&mut receiver);
+        assert!(!has_idle_boundary(&collector.collect_unseen().entries));
+        assert_eq!(*dispatcher.idle_timeouts.lock(), vec![timeout, timeout]);
+        run_next_main_runnable(&mut receiver);
+        assert!(has_idle_boundary(&collector.collect_unseen().entries));
+        assert!(receiver.try_pop().unwrap().is_none());
+        assert_eq!(task.now_or_never(), Some(42));
+    }
+
+    #[cfg(feature = "profiler")]
+    #[test]
+    fn delayed_background_work_does_not_hold_foreground_busy() {
+        let (journal, _guard) = journal::install_test_foreground_journal(32, 4);
+        let mut collector = journal.collector();
+        let (sender, mut receiver) = PriorityQueueReceiver::new();
+        let dispatcher = Arc::new(MainQueueDispatcher::new(sender));
+        let scheduler = Arc::new(PlatformScheduler::new(dispatcher.clone()));
+        let foreground = scheduler.foreground_executor();
+        let background = crate::BackgroundExecutor::new(dispatcher.clone());
+        let delay = Duration::from_secs(1);
+        let timer = background.timer(delay);
+        let task = foreground.spawn(async move {
+            timer.await;
+            42
+        });
+        retain_foreground_activity();
+
+        run_next_main_runnable(&mut receiver);
+        assert!(has_idle_boundary(&collector.collect_unseen().entries));
+        assert!(receiver.try_pop().unwrap().is_none());
+
+        let timer_wait = dispatcher.background.lock().pop().unwrap();
+        std::thread::spawn(move || run_runnable(timer_wait))
+            .join()
+            .expect("background timer wait should park");
+        let (scheduled_delay, delayed) = dispatcher.delayed.lock().pop().unwrap();
+        assert_eq!(scheduled_delay, delay);
+        std::thread::spawn(move || run_runnable(delayed))
+            .join()
+            .expect("delayed timer runnable should complete");
+        let timer_wake = dispatcher.background.lock().pop().unwrap();
+        std::thread::spawn(move || run_runnable(timer_wake))
+            .join()
+            .expect("background timer completion should wake the foreground");
+
+        retain_foreground_activity();
+        run_next_main_runnable(&mut receiver);
+        assert!(has_idle_boundary(&collector.collect_unseen().entries));
+        assert!(receiver.try_pop().unwrap().is_none());
+        assert!(dispatcher.background.lock().is_empty());
+        assert!(dispatcher.delayed.lock().is_empty());
+        assert_eq!(task.now_or_never(), Some(42));
+    }
+
     #[test]
     fn foreground_executor_retains_dispatch_authority_until_local_task_finishes() {
         use std::{cell::Cell, rc::Rc, thread};
 
         let (sender, mut receiver) = PriorityQueueReceiver::new();
-        let scheduler = Arc::new(PlatformScheduler::new(Arc::new(MainQueueDispatcher {
+        let scheduler = Arc::new(PlatformScheduler::new(Arc::new(MainQueueDispatcher::new(
             sender,
-        })));
+        ))));
         let weak_scheduler = Arc::downgrade(&scheduler);
         let executor = scheduler.foreground_executor();
         let (resume_tx, resume_rx) = futures::channel::oneshot::channel::<()>();
@@ -282,10 +693,7 @@ mod tests {
             })
             .detach();
 
-        receiver
-            .pop()
-            .expect("initial local runnable should be queued")
-            .run();
+        run_next_main_runnable(&mut receiver);
         drop(executor);
         drop(scheduler);
         assert!(
@@ -299,10 +707,7 @@ mod tests {
             Ok(()),
             "the pending local task must still accept its wake"
         );
-        receiver
-            .pop()
-            .expect("woken local runnable should reach the main-thread queue")
-            .run();
+        run_next_main_runnable(&mut receiver);
 
         assert!(dropped_on_main.get());
         assert!(

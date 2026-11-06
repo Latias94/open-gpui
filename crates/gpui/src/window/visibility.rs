@@ -2,13 +2,26 @@ use crate::{App, Subscription, Window, WindowVisibility};
 
 impl Window {
     pub(crate) fn update_visibility(&mut self, visibility: WindowVisibility, cx: &mut App) {
-        if self.visibility == visibility {
-            return;
+        if self.visibility != visibility {
+            self.visibility = visibility;
+            #[cfg(feature = "profiler")]
+            crate::profiler::journal::record_window_visibility(self.handle.window_id(), visibility);
+            self.visibility_observers
+                .clone()
+                .retain(&(), |callback| callback(visibility, self, cx));
         }
-        self.visibility = visibility;
-        self.visibility_observers
-            .clone()
-            .retain(&(), |callback| callback(visibility, self, cx));
+        #[cfg(feature = "profiler")]
+        if self.invalidator.is_dirty() || self.needs_present.get() {
+            crate::profiler::journal::record_frame_pending(
+                self.handle.window_id(),
+                open_gpui_scheduler::Instant::now(),
+            );
+        }
+    }
+
+    #[cfg(feature = "profiler")]
+    pub(crate) fn refresh_visibility(&mut self, cx: &mut App) {
+        self.update_visibility(self.platform_window.visibility(), cx);
     }
 
     /// Returns whether the platform is presenting this window's frames.

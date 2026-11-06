@@ -100,6 +100,8 @@ mod frame_journal;
 mod frame_pump;
 mod input_dispatch;
 mod invalidator;
+#[cfg(all(test, feature = "profiler"))]
+mod journal_tests;
 #[cfg(test)]
 mod pending_input_tests;
 mod pointer_session;
@@ -2568,7 +2570,7 @@ impl Window {
         platform_window.set_background_appearance(window_background);
 
         let text_system = Rc::new(WindowTextSystem::new(cx.text_system().clone()));
-        let invalidator = WindowInvalidator::new();
+        let invalidator = WindowInvalidator::new(handle.window_id());
         let needs_present = Rc::new(Cell::new(false));
         let next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>> = Default::default();
         let input_rate_tracker = Rc::new(RefCell::new(InputRateTracker::default()));
@@ -2812,6 +2814,8 @@ impl Window {
         let appearance = platform_window.appearance();
         let active = Rc::new(Cell::new(platform_facts.is_active));
         let visibility = platform_window.visibility();
+        #[cfg(feature = "profiler")]
+        profiler::journal::record_window_visibility(handle.window_id(), visibility);
         let hovered = Rc::new(Cell::new(platform_window.is_hovered()));
 
         interaction_authority.bind_platform(platform_window.interaction_quiescence());
@@ -4219,6 +4223,10 @@ impl Window {
     fn reconcile_focus_followup_refresh(&mut self) {
         if !self.focus_followup_frame_needed() && self.invalidator.clear_focus_only_dirty() {
             self.refreshing = false;
+            #[cfg(feature = "profiler")]
+            if !self.needs_present.get() && !self.invalidator.is_dirty() {
+                profiler::journal::clear_frame_pending(self.handle.window_id());
+            }
         }
     }
 
@@ -7100,6 +7108,8 @@ impl Window {
         request_frame_options: RequestFrameOptions,
         cx: &mut App,
     ) {
+        #[cfg(feature = "profiler")]
+        let _foreground_turn = profiler::journal::foreground_turn();
         let renderer_repaint_pending = self.renderer_repaint_is_pending();
         let initial_presentation_pending = self.fresh_initial_presentation_is_pending();
         let provisional_presentation_pending = request_frame_options.require_presentation
@@ -7974,7 +7984,9 @@ impl Window {
     }
 
     #[profiling::function]
-    fn present(&mut self, cx: &mut App) -> PlatformWindowPresentOutcome {
+    pub(crate) fn present(&mut self, cx: &mut App) -> PlatformWindowPresentOutcome {
+        #[cfg(feature = "profiler")]
+        let _foreground_turn = profiler::journal::foreground_turn();
         let generation = self.rendered_frame.generation;
         if self.renderer_repaint_is_pending() {
             #[cfg(feature = "profiler")]
@@ -8103,6 +8115,17 @@ impl Window {
                 self.refresh();
             }
             self.needs_present.set(true);
+        }
+        #[cfg(feature = "profiler")]
+        if outcome == PlatformWindowPresentOutcome::Submitted
+            && (self.invalidator.is_dirty() || self.needs_present.get())
+        {
+            profiler::journal::record_frame_pending(
+                self.handle.window_id(),
+                self.invalidator
+                    .pending_dirty_at()
+                    .unwrap_or_else(Instant::now),
+            );
         }
         profiling::finish_frame!();
         outcome
@@ -12351,7 +12374,7 @@ impl Window {
         };
 
         #[cfg(feature = "profiler")]
-        self.window_profiler.begin_input("platform_input");
+        self.window_profiler.begin_input(event.kind_name());
         let update_count_before = self.invalidator.update_count();
         let dispatch = |window: &mut Window, cx: &mut App| {
             let event = input_dispatch::prepare_platform_input(window, cx, event);
@@ -13051,10 +13074,10 @@ impl Window {
         {
             for listener in &global_listeners {
                 #[cfg(feature = "profiler")]
-                self.window_profiler.begin_action_handler(action, cx);
+                let action_timing = self.window_profiler.begin_action_handler(action, cx);
                 listener(action.as_any(), DispatchPhase::Capture, cx);
                 #[cfg(feature = "profiler")]
-                self.window_profiler.end_action_handler();
+                self.window_profiler.end_action_handler(action_timing);
                 if !self.user_interaction_is_admitted() {
                     cx.stop_propagation();
                     break;
@@ -13089,10 +13112,10 @@ impl Window {
                 let any_action = action.as_any();
                 if action_type == any_action.type_id() {
                     #[cfg(feature = "profiler")]
-                    self.window_profiler.begin_action_handler(action, cx);
+                    let action_timing = self.window_profiler.begin_action_handler(action, cx);
                     listener(any_action, DispatchPhase::Capture, self, cx);
                     #[cfg(feature = "profiler")]
-                    self.window_profiler.end_action_handler();
+                    self.window_profiler.end_action_handler(action_timing);
 
                     if !self.interaction_dispatch_continues(cx) {
                         return;
@@ -13113,10 +13136,10 @@ impl Window {
                 if action_type == any_action.type_id() {
                     cx.propagate_event = false; // Actions stop propagation by default during the bubble phase
                     #[cfg(feature = "profiler")]
-                    self.window_profiler.begin_action_handler(action, cx);
+                    let action_timing = self.window_profiler.begin_action_handler(action, cx);
                     listener(any_action, DispatchPhase::Bubble, self, cx);
                     #[cfg(feature = "profiler")]
-                    self.window_profiler.end_action_handler();
+                    self.window_profiler.end_action_handler(action_timing);
 
                     if !self.user_interaction_is_admitted() {
                         cx.stop_propagation();
@@ -13138,10 +13161,10 @@ impl Window {
                 cx.propagate_event = false; // Actions stop propagation by default during the bubble phase
 
                 #[cfg(feature = "profiler")]
-                self.window_profiler.begin_action_handler(action, cx);
+                let action_timing = self.window_profiler.begin_action_handler(action, cx);
                 listener(action.as_any(), DispatchPhase::Bubble, cx);
                 #[cfg(feature = "profiler")]
-                self.window_profiler.end_action_handler();
+                self.window_profiler.end_action_handler(action_timing);
                 if !self.user_interaction_is_admitted() {
                     cx.stop_propagation();
                     break;
@@ -14736,13 +14759,13 @@ mod cached_paint_atlas_tests {
         }
     }
 
-    struct CandidateFocusCompletionRoot {
-        focus: FocusHandle,
-        tile: AtlasTile,
-        remaining_requests: Rc<Cell<usize>>,
-        next_request_id: Rc<Cell<usize>>,
-        outcomes: Rc<RefCell<Vec<(usize, FocusClaimOutcome)>>>,
-        subscriptions: Rc<RefCell<Vec<Subscription>>>,
+    pub(super) struct CandidateFocusCompletionRoot {
+        pub(super) focus: FocusHandle,
+        pub(super) tile: AtlasTile,
+        pub(super) remaining_requests: Rc<Cell<usize>>,
+        pub(super) next_request_id: Rc<Cell<usize>>,
+        pub(super) outcomes: Rc<RefCell<Vec<(usize, FocusClaimOutcome)>>>,
+        pub(super) subscriptions: Rc<RefCell<Vec<Subscription>>>,
     }
 
     impl Render for CandidateFocusCompletionRoot {

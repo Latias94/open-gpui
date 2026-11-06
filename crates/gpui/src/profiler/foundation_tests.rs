@@ -132,8 +132,10 @@ mod enabled {
     fn input_at(profiler: &mut WindowProfiler, started_at: Instant) {
         profiler.active_activities.push(WindowActivity::Input {
             started_at,
+            kind: "test_input",
             covering_draw: None,
             measurement_generation: profiler.input_measurement_generation,
+            _turn: journal::foreground_turn(),
         });
     }
 
@@ -885,7 +887,7 @@ mod enabled {
         profiler.begin_input("outer_input");
         profiler.begin_draw();
         let outer_start = match profiler.active_activities.last().unwrap() {
-            WindowActivity::Draw { started_at } => *started_at,
+            WindowActivity::Draw { started_at, .. } => *started_at,
             _ => unreachable!(),
         };
         let checkpoint = profiler.checkpoint_draw();

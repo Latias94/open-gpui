@@ -1,6 +1,8 @@
 use open_gpui::{
     PlatformDispatcher, Priority, PriorityQueueReceiver, PriorityQueueSender, RunnableVariant,
 };
+use open_gpui_core_util::defer;
+use std::cell::{Cell, RefCell};
 use std::sync::Arc;
 use std::sync::atomic::AtomicI32;
 use std::time::Duration;
@@ -85,10 +87,17 @@ fn shared_memory_supported() -> bool {
 
 #[cfg_attr(not(feature = "multithreaded"), allow(dead_code))]
 enum MainThreadItem {
-    Runnable(RunnableVariant),
+    Runnable {
+        runnable: RunnableVariant,
+        foreground_queued: bool,
+    },
     Delayed {
         runnable: RunnableVariant,
         millis: i32,
+    },
+    Idle {
+        runnable: RunnableVariant,
+        timeout: Option<Duration>,
     },
     // Realtime callbacks stay on the main-thread mailbox until a dedicated
     // web audio/worklet execution path exists.
@@ -112,9 +121,11 @@ impl MainThreadMailbox {
         }
     }
 
-    fn post(&self, priority: Priority, item: MainThreadItem) {
-        if self.sender.spin_send(priority, item).is_err() {
+    fn post(&self, priority: Priority, item: MainThreadItem) -> bool {
+        if let Err(item) = self.sender.spin_send(priority, item) {
+            std::mem::forget(item);
             log::error!("MainThreadMailbox::send failed: receiver disconnected");
+            return false;
         }
 
         // The queue is the source of truth; this atomic flag is only the
@@ -122,11 +133,16 @@ impl MainThreadMailbox {
         let view = self.signal_view();
         js_sys::Atomics::store(&view, 0, 1).ok();
         js_sys::Atomics::notify(&view, 0).ok();
+        true
     }
 
     #[cfg(feature = "multithreaded")]
     fn drain(&self, window: &web_sys::Window) {
-        let mut receiver = self.receiver.lock();
+        // Only the main thread accesses this receiver; never park if that changes.
+        let mut receiver = self
+            .receiver
+            .try_lock()
+            .expect("main-thread mailbox receiver must not be locked");
         loop {
             // We need these `spin` variants because we can't acquire a lock on the main thread.
             match receiver.spin_try_pop() {
@@ -156,6 +172,11 @@ impl MainThreadMailbox {
             loop {
                 js_sys::Atomics::store(&view, 0, 0).expect("Atomics.store failed");
 
+                // Items posted between the previous drain and the store above
+                // set the signal we just cleared, so their notify is lost.
+                // Drain again after re-arming to avoid missing them.
+                mailbox.drain(&window);
+
                 let result = match js_sys::Atomics::wait_async(&view, 0, 0) {
                     Ok(result) => result,
                     Err(error) => {
@@ -169,17 +190,17 @@ impl MainThreadMailbox {
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
 
-                if !is_async {
-                    log::error!("Atomics.waitAsync returned synchronously; waker loop exiting");
-                    break;
+                // `async: false` means the signal changed between the store and
+                // the wait ("not-equal"): work has already arrived, so skip
+                // waiting and drain immediately.
+                if is_async {
+                    let promise: js_sys::Promise =
+                        js_sys::Reflect::get(&result, &JsValue::from_str("value"))
+                            .expect("waitAsync result missing 'value'")
+                            .unchecked_into();
+
+                    let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
                 }
-
-                let promise: js_sys::Promise =
-                    js_sys::Reflect::get(&result, &JsValue::from_str("value"))
-                        .expect("waitAsync result missing 'value'")
-                        .unchecked_into();
-
-                let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
 
                 mailbox.drain(&window);
             }
@@ -206,7 +227,7 @@ fn spawn_background_workers(
                     }
                 };
 
-                runnable.run();
+                run_runnable(runnable, false);
             }
         }) {
             Ok(handle) => handles.push(handle),
@@ -326,6 +347,25 @@ impl WebDispatcher {
     fn on_main_thread(&self) -> bool {
         std::thread::current().id() == self.main_thread_id
     }
+
+    fn dispatch_on_main_thread_inner(
+        &self,
+        runnable: RunnableVariant,
+        priority: Priority,
+        foreground_queued: bool,
+    ) -> bool {
+        if self.on_main_thread() {
+            schedule_runnable(&self.browser_window, runnable, priority, foreground_queued)
+        } else {
+            self.main_thread_mailbox.post(
+                priority,
+                MainThreadItem::Runnable {
+                    runnable,
+                    foreground_queued,
+                },
+            )
+        }
+    }
 }
 
 impl PlatformDispatcher for WebDispatcher {
@@ -335,7 +375,7 @@ impl PlatformDispatcher for WebDispatcher {
 
     fn dispatch(&self, runnable: RunnableVariant, priority: Priority) {
         if !self.mode.supports_background_workers() {
-            self.dispatch_on_main_thread(runnable, priority);
+            self.dispatch_on_main_thread_inner(runnable, priority, false);
             return;
         }
 
@@ -350,20 +390,15 @@ impl PlatformDispatcher for WebDispatcher {
         }
     }
 
-    fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority) {
-        if self.on_main_thread() {
-            schedule_runnable(&self.browser_window, runnable, priority);
-        } else {
-            self.main_thread_mailbox
-                .post(priority, MainThreadItem::Runnable(runnable));
-        }
+    fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority) -> bool {
+        self.dispatch_on_main_thread_inner(runnable, priority, true)
     }
 
     fn dispatch_after(&self, duration: Duration, runnable: RunnableVariant) {
         let millis = duration.as_millis().min(i32::MAX as u128) as i32;
         if self.on_main_thread() {
             let callback = Closure::once_into_js(move || {
-                runnable.run();
+                run_runnable(runnable, false);
             });
             self.browser_window
                 .set_timeout_with_callback_and_timeout_and_arguments_0(
@@ -390,6 +425,31 @@ impl PlatformDispatcher for WebDispatcher {
         }
     }
 
+    fn dispatch_on_main_thread_when_idle(
+        &self,
+        runnable: RunnableVariant,
+        timeout: Option<Duration>,
+    ) -> bool {
+        if self.on_main_thread() {
+            schedule_idle_runnable(&self.browser_window, runnable, timeout)
+        } else {
+            self.main_thread_mailbox
+                .post(Priority::Low, MainThreadItem::Idle { runnable, timeout })
+        }
+    }
+
+    fn idle_time_remaining(&self) -> Option<Duration> {
+        if !self.on_main_thread() {
+            return None;
+        }
+        IDLE_DEADLINE.with(|deadline| {
+            deadline
+                .borrow()
+                .as_ref()
+                .map(|deadline| Duration::from_secs_f64(deadline.time_remaining() / 1000.0))
+        })
+    }
+
     fn now(&self) -> Instant {
         Instant::now()
     }
@@ -398,12 +458,20 @@ impl PlatformDispatcher for WebDispatcher {
 #[cfg(feature = "multithreaded")]
 fn execute_on_main_thread(window: &web_sys::Window, item: MainThreadItem) {
     match item {
-        MainThreadItem::Runnable(runnable) => {
-            runnable.run();
+        MainThreadItem::Runnable {
+            runnable,
+            foreground_queued,
+        } => {
+            run_runnable(runnable, foreground_queued);
+        }
+        MainThreadItem::Idle { runnable, timeout } => {
+            if !schedule_idle_runnable(window, runnable, timeout) {
+                open_gpui::profiler::foreground_task_rejected();
+            }
         }
         MainThreadItem::Delayed { runnable, millis } => {
             let callback = Closure::once_into_js(move || {
-                runnable.run();
+                run_runnable(runnable, false);
             });
             window
                 .set_timeout_with_callback_and_timeout_and_arguments_0(
@@ -418,23 +486,110 @@ fn execute_on_main_thread(window: &web_sys::Window, item: MainThreadItem) {
     }
 }
 
-fn schedule_runnable(window: &web_sys::Window, runnable: RunnableVariant, priority: Priority) {
-    let callback = Closure::once_into_js(move || {
-        runnable.run();
-    });
-    let callback: &js_sys::Function = callback.unchecked_ref();
+thread_local! {
+    static IDLE_DEADLINE: RefCell<Option<web_sys::IdleDeadline>> = const { RefCell::new(None) };
+    static IDLE_CALLBACK_SUPPORTED: Cell<Option<bool>> = const { Cell::new(None) };
+}
 
-    match priority {
+fn schedule_idle_runnable(
+    window: &web_sys::Window,
+    runnable: RunnableVariant,
+    timeout: Option<Duration>,
+) -> bool {
+    if !idle_callback_supported(window) {
+        return schedule_runnable(window, runnable, Priority::Low, true);
+    }
+    let callback: Closure<dyn FnMut(web_sys::IdleDeadline)> =
+        Closure::once(move |deadline: web_sys::IdleDeadline| {
+            let previous = IDLE_DEADLINE.with(|current| current.replace(Some(deadline)));
+            let _restore_deadline = defer(move || {
+                IDLE_DEADLINE.with(|current| current.replace(previous));
+            });
+            run_runnable(runnable, true);
+        });
+    let result = match timeout {
+        Some(timeout) => {
+            let options = web_sys::IdleRequestOptions::new();
+            options.set_timeout(timeout.as_millis().min(u32::MAX as u128) as u32);
+            window.request_idle_callback_with_options(callback.as_ref().unchecked_ref(), &options)
+        }
+        None => window.request_idle_callback(callback.as_ref().unchecked_ref()),
+    };
+    match result {
+        Ok(_) => {
+            callback.forget();
+            true
+        }
+        Err(error) => {
+            log::error!("requestIdleCallback failed: {error:?}");
+            false
+        }
+    }
+}
+
+fn idle_callback_supported(window: &web_sys::Window) -> bool {
+    IDLE_CALLBACK_SUPPORTED.with(|supported| {
+        if let Some(supported) = supported.get() {
+            return supported;
+        }
+        let probed =
+            js_sys::Reflect::has(window.as_ref(), &JsValue::from_str("requestIdleCallback"))
+                .unwrap_or(false);
+        supported.set(Some(probed));
+        probed
+    })
+}
+
+fn run_runnable(runnable: RunnableVariant, foreground_queued: bool) {
+    let metadata = runnable.metadata();
+    let _timing = if foreground_queued {
+        open_gpui::profiler::task_timing(metadata.spawned, metadata.location)
+    } else {
+        open_gpui::profiler::task_timing_unqueued(metadata.spawned, metadata.location)
+    };
+    runnable.run();
+}
+
+fn schedule_runnable(
+    window: &web_sys::Window,
+    runnable: RunnableVariant,
+    priority: Priority,
+    foreground_queued: bool,
+) -> bool {
+    let callback: Closure<dyn FnMut()> = Closure::once(move || {
+        run_runnable(runnable, foreground_queued);
+    });
+
+    let result = match priority {
         Priority::RealtimeAudio => {
-            window.queue_microtask(callback);
+            js_sys::Reflect::get(window.as_ref(), &JsValue::from_str("queueMicrotask"))
+                .and_then(|function| {
+                    function
+                        .dyn_into::<js_sys::Function>()?
+                        .call1(window.as_ref(), callback.as_ref())
+                })
+                .map(|_| ())
         }
         _ => {
             // Browser single-threaded scheduling currently preserves only the
             // realtime-vs-deferred distinction. Full priority queue draining is
             // deferred until the web backend has a broader scheduler surface.
             window
-                .set_timeout_with_callback_and_timeout_and_arguments_0(callback, 0)
-                .ok();
+                .set_timeout_with_callback_and_timeout_and_arguments_0(
+                    callback.as_ref().unchecked_ref(),
+                    0,
+                )
+                .map(|_| ())
+        }
+    };
+    match result {
+        Ok(()) => {
+            callback.forget();
+            true
+        }
+        Err(error) => {
+            log::error!("schedule_runnable failed: {error:?}");
+            false
         }
     }
 }
@@ -442,6 +597,157 @@ fn schedule_runnable(window: &web_sys::Window, runnable: RunnableVariant, priori
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::rc::Rc;
+
+    struct MainThreadDropProbe {
+        main_thread: std::thread::ThreadId,
+        dropped: Rc<Cell<bool>>,
+    }
+
+    impl Drop for MainThreadDropProbe {
+        fn drop(&mut self) {
+            assert_eq!(std::thread::current().id(), self.main_thread);
+            self.dropped.set(true);
+        }
+    }
+
+    fn local_runnable() -> (RunnableVariant, Rc<Cell<bool>>, Rc<Cell<bool>>) {
+        let dispatcher = open_gpui::TestDispatcher::new(0);
+        let captured = Arc::new(parking_lot::Mutex::new(None));
+        let captured_for_dispatch = captured.clone();
+        let executor = open_gpui::SchedulerLocalExecutor::new(
+            dispatcher.session_id(),
+            dispatcher.scheduler().clone(),
+            move |runnable| {
+                *captured_for_dispatch.lock() = Some(runnable);
+            },
+        );
+        let polled = Rc::new(Cell::new(false));
+        let polled_by_future = polled.clone();
+        let dropped = Rc::new(Cell::new(false));
+        let probe = MainThreadDropProbe {
+            main_thread: std::thread::current().id(),
+            dropped: dropped.clone(),
+        };
+        executor
+            .spawn(async move {
+                let _probe = probe;
+                polled_by_future.set(true);
+            })
+            .detach();
+        let runnable = captured.lock().take().expect("runnable should be captured");
+        (runnable, polled, dropped)
+    }
+
+    fn scheduler_window(method: &str, body: &str) -> web_sys::Window {
+        let window = js_sys::Object::new();
+        let registration = js_sys::Function::new_with_args("callback, options", body);
+        assert!(
+            js_sys::Reflect::set(&window, &JsValue::from_str(method), &registration)
+                .expect("scheduler method should be installed")
+        );
+        window.unchecked_into()
+    }
+
+    fn registered_callback(window: &web_sys::Window) -> js_sys::Function {
+        js_sys::Reflect::get(window.as_ref(), &JsValue::from_str("callback"))
+            .expect("registration should capture the callback")
+            .unchecked_into()
+    }
+
+    #[test]
+    fn runnable_registration_retains_ownership_until_execution() {
+        for (priority, method) in [
+            (Priority::High, "setTimeout"),
+            (Priority::RealtimeAudio, "queueMicrotask"),
+        ] {
+            let window = scheduler_window(method, "this.callback = callback; return 1;");
+            let (runnable, polled, dropped) = local_runnable();
+
+            assert!(schedule_runnable(&window, runnable, priority, false));
+            assert!(!polled.get());
+            assert!(!dropped.get());
+
+            registered_callback(&window)
+                .call0(window.as_ref())
+                .expect("admitted callback should remain callable");
+            assert!(polled.get());
+            assert!(dropped.get());
+        }
+    }
+
+    #[test]
+    fn runnable_registration_failure_drops_without_polling() {
+        for (priority, method) in [
+            (Priority::High, "setTimeout"),
+            (Priority::RealtimeAudio, "queueMicrotask"),
+        ] {
+            let window = scheduler_window(
+                method,
+                "this.callback = callback; throw new Error('registration rejected');",
+            );
+            let (runnable, polled, dropped) = local_runnable();
+
+            assert!(!schedule_runnable(&window, runnable, priority, false));
+            assert!(!polled.get());
+            assert!(dropped.get());
+            assert!(registered_callback(&window).call0(window.as_ref()).is_err());
+        }
+    }
+
+    #[test]
+    fn idle_registration_and_fallback_retain_ownership_until_execution() {
+        for method in ["requestIdleCallback", "setTimeout"] {
+            let previous_support =
+                IDLE_CALLBACK_SUPPORTED.with(|supported| supported.replace(None));
+            let _restore_support = defer(move || {
+                IDLE_CALLBACK_SUPPORTED.with(|supported| supported.set(previous_support));
+            });
+            let window = scheduler_window(method, "this.callback = callback; return 1;");
+            let (runnable, polled, dropped) = local_runnable();
+
+            assert!(schedule_idle_runnable(&window, runnable, None));
+            assert!(!polled.get());
+            assert!(!dropped.get());
+
+            registered_callback(&window)
+                .call1(window.as_ref(), &js_sys::Object::new())
+                .expect("admitted callback should remain callable");
+            assert!(polled.get());
+            assert!(dropped.get());
+            IDLE_DEADLINE.with(|deadline| assert!(deadline.borrow().is_none()));
+        }
+    }
+
+    #[test]
+    fn idle_registration_and_fallback_failure_drop_without_polling() {
+        for (method, timeout) in [
+            ("requestIdleCallback", None),
+            ("requestIdleCallback", Some(Duration::from_millis(5))),
+            ("setTimeout", None),
+        ] {
+            let previous_support =
+                IDLE_CALLBACK_SUPPORTED.with(|supported| supported.replace(None));
+            let _restore_support = defer(move || {
+                IDLE_CALLBACK_SUPPORTED.with(|supported| supported.set(previous_support));
+            });
+            let window = scheduler_window(
+                method,
+                "this.callback = callback; throw new Error('registration rejected');",
+            );
+            let (runnable, polled, dropped) = local_runnable();
+
+            assert!(!schedule_idle_runnable(&window, runnable, timeout));
+            assert!(!polled.get());
+            assert!(dropped.get());
+            assert!(
+                registered_callback(&window)
+                    .call1(window.as_ref(), &js_sys::Object::new())
+                    .is_err()
+            );
+            IDLE_DEADLINE.with(|deadline| assert!(deadline.borrow().is_none()));
+        }
+    }
 
     #[cfg(not(feature = "multithreaded"))]
     #[test]

@@ -52,11 +52,12 @@ impl PlatformDispatcher for MacDispatcher {
         }
     }
 
-    fn dispatch_on_main_thread(&self, runnable: RunnableVariant, _priority: Priority) {
+    fn dispatch_on_main_thread(&self, runnable: RunnableVariant, _priority: Priority) -> bool {
         let context = runnable.into_raw().as_ptr() as *mut c_void;
         unsafe {
             DispatchQueue::main().exec_async_f(context, trampoline);
         }
+        true
     }
 
     fn dispatch_after(&self, duration: Duration, runnable: RunnableVariant) {
@@ -169,7 +170,6 @@ extern "C" fn trampoline(context: *mut c_void) {
 
     let location = runnable.metadata().location;
     let spawned = runnable.metadata().spawned;
-    open_gpui::profiler::update_running_task(spawned, location);
+    let _task_timing = open_gpui::profiler::task_timing(spawned, location);
     runnable.run();
-    open_gpui::profiler::save_task_timing();
 }

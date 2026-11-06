@@ -5623,8 +5623,31 @@ pub enum TasksIncluded {
 pub trait PlatformDispatcher: Send + Sync {
     fn is_main_thread(&self) -> bool;
     fn dispatch(&self, runnable: RunnableVariant, priority: Priority);
-    fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority);
+
+    /// Returns `true` when the runnable was accepted for main-thread execution,
+    /// including when a subsequent wake notification fails. Returns `false` only
+    /// when the backend refused the runnable and handled it according to its
+    /// thread-affine drop policy; a refused runnable must never be polled.
+    ///
+    /// Accepted backlog remains the backend lifecycle's responsibility. Admission
+    /// does not guarantee execution or establish that teardown drained queued work.
+    fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority) -> bool;
     fn dispatch_after(&self, duration: Duration, runnable: RunnableVariant);
+
+    /// Submits idle work with the same admission and runnable-handling contract as
+    /// [`Self::dispatch_on_main_thread`]. The default uses low-priority foreground work.
+    fn dispatch_on_main_thread_when_idle(
+        &self,
+        runnable: RunnableVariant,
+        timeout: Option<Duration>,
+    ) -> bool {
+        let _ = timeout;
+        self.dispatch_on_main_thread(runnable, Priority::Low)
+    }
+
+    fn idle_time_remaining(&self) -> Option<Duration> {
+        None
+    }
 
     fn spawn_realtime(&self, f: Box<dyn FnOnce() + Send>);
 

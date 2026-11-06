@@ -775,6 +775,10 @@ pub struct App {
     next_native_captured_drag_generation: u64,
     pub(crate) background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
+    #[cfg(feature = "profiler")]
+    foreground_journal: crate::profiler::journal::ForegroundJournal,
+    #[cfg(all(feature = "profiler", not(target_family = "wasm")))]
+    hang_monitor: Option<crate::profiler::hang::HangMonitor>,
     pub(crate) entities: EntityMap,
     pub(crate) new_entity_observers: SubscriberSet<TypeId, NewEntityListener>,
     pub(crate) windows: SlotMap<WindowId, Option<Box<Window>>>,
@@ -924,6 +928,8 @@ impl App {
             background_executor.is_main_thread(),
             "must construct App on main thread"
         );
+        #[cfg(feature = "profiler")]
+        let foreground_journal = crate::profiler::journal::install_foreground_journal();
 
         let text_system = Arc::new(TextSystem::new(platform.text_system()));
         let entities = EntityMap::new();
@@ -951,6 +957,10 @@ impl App {
                 next_native_captured_drag_generation: 1,
                 background_executor,
                 foreground_executor,
+                #[cfg(feature = "profiler")]
+                foreground_journal,
+                #[cfg(all(feature = "profiler", not(target_family = "wasm")))]
+                hang_monitor: None,
                 svg_renderer: SvgRenderer::new(asset_source.clone()),
                 loading_assets: Default::default(),
                 asset_source,
@@ -1089,6 +1099,9 @@ impl App {
             }
         }));
 
+        #[cfg(feature = "profiler")]
+        crate::profiler::journal::observe_power(&app.borrow());
+
         app
     }
 
@@ -1184,6 +1197,11 @@ impl App {
         if !newly_started {
             return;
         }
+        #[cfg(all(feature = "profiler", not(target_family = "wasm")))]
+        let hang_monitor_flush = self
+            .hang_monitor
+            .as_ref()
+            .and_then(|monitor| monitor.request_flush());
         self.window_open_epoch = self
             .window_open_epoch
             .checked_add(1)
@@ -1201,6 +1219,19 @@ impl App {
                 Err(payload) => futures::future::ready(Err(payload)).boxed_local(),
             };
             futures.push(future);
+        }
+
+        #[cfg(all(feature = "profiler", not(target_family = "wasm")))]
+        if let Some(flushed) = hang_monitor_flush {
+            futures.push(
+                AssertUnwindSafe(async move {
+                    if flushed.await.is_err() {
+                        log::warn!("hang monitor exited before flushing");
+                    }
+                })
+                .catch_unwind()
+                .boxed_local(),
+            );
         }
 
         let futures = futures::future::join_all(futures);
@@ -2424,6 +2455,56 @@ impl App {
             panic!("Can't spawn on main thread after on_app_quit")
         };
         &self.foreground_executor
+    }
+
+    /// Returns the foreground work journal for this app's foreground thread.
+    /// Apps constructed on the same thread share the stream.
+    #[cfg(feature = "profiler")]
+    pub fn foreground_journal(&self) -> crate::profiler::journal::ForegroundJournal {
+        self.foreground_journal.clone()
+    }
+
+    /// Starts post-hoc foreground hang detection on a dedicated thread.
+    ///
+    /// The thread polls this app's journal every `config.interval` and delivers
+    /// incidents, including empty polls, to `on_poll` on that thread. Shutdown
+    /// requests a final [`crate::profiler::hang::HangMonitorPollReason::Flush`]
+    /// concurrently with quit observers and waits within the existing shutdown timeout.
+    /// The final poll reads finalized journal entries; a publisher entry waiting
+    /// on a reader can remain queued until a later foreground publication.
+    /// No thread is spawned unless this method is called.
+    ///
+    /// # Errors
+    /// Returns an error if a monitor was already started, its interval is zero
+    /// or cannot form a native deadline, or its thread cannot be spawned.
+    #[cfg(all(feature = "profiler", not(target_family = "wasm")))]
+    pub fn start_hang_monitor(
+        &mut self,
+        config: crate::profiler::hang::HangMonitorConfig,
+        on_poll: impl FnMut(crate::profiler::hang::HangMonitorPoll) + Send + 'static,
+    ) -> Result<(), crate::profiler::hang::HangMonitorError> {
+        use crate::profiler::hang::{HangDetector, HangMonitor, HangMonitorError};
+
+        if self.hang_monitor.is_some() {
+            debug_assert!(false, "the hang monitor was started twice");
+            return Err(HangMonitorError::AlreadyStarted);
+        }
+        if config.interval.is_zero()
+            || std::time::Instant::now()
+                .checked_add(config.interval)
+                .is_none()
+        {
+            return Err(HangMonitorError::InvalidInterval);
+        }
+        let detector = HangDetector::new(
+            self.foreground_journal(),
+            config.threshold,
+            config.frame_budget,
+        );
+        let monitor = HangMonitor::spawn(detector, config.interval, on_poll)
+            .map_err(HangMonitorError::Spawn)?;
+        self.hang_monitor = Some(monitor);
+        Ok(())
     }
 
     /// Spawns the future returned by the given function on the main thread. The closure will be invoked

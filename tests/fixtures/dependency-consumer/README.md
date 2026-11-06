@@ -223,3 +223,68 @@ This consumer does not qualify Window invalidation, histogram sampling across dr
 input-to-Submitted latency, renderer submission outcomes, or native timing. Framework owner and
 native consumers retain the separate exact-generation and Submitted diagnostic assertions.
 Journal/hang telemetry and the fork's existing Criterion benchmark setup are outside this gate.
+
+## Foreground journal and hang consumer
+
+The `foreground_journal` integration test target uses the same optional `profiler` feature,
+without `test-support`, additional fixture dependencies, or a separate application/runtime
+owner. Its coherent official source is Zed
+[`d284cbbc87b55d659303106ced627c8612369827`](https://github.com/zed-industries/zed/tree/d284cbbc87b55d659303106ced627c8612369827),
+within the dependency-ordered refresh toward the cycle target
+[`635026fabc38440fce5e1767d125026a17b12012`](https://github.com/zed-industries/zed/tree/635026fabc38440fce5e1767d125026a17b12012).
+This gate does not claim the later frame-signal or refresh-aware measurement mechanisms.
+
+Two tests contain explicitly named, deliberately unexecuted `_type_only` closures. They consume
+`App::foreground_journal()`, cloned journal handles, independently held collectors,
+`DrainedEntries`, `IntervalSealer`, and `HangDetector` polling/first-presentation access. On
+non-Wasm targets, the monitor closure consumes
+`App::start_hang_monitor(HangMonitorConfig, on_poll)` with an owned mutable, `Send + 'static`
+callback receiving `HangMonitorPoll`, returning `Result<(), HangMonitorError>`. These are
+signature checks only: they do not construct an App, record work, poll a live stream, or spawn
+a monitor thread. The APIs retain their official module paths under
+`open_gpui::profiler::{journal, hang}`.
+
+Monitor intervals must be positive and form a representable native deadline; invalid values
+return `HangMonitorError::InvalidInterval` without occupying the App slot. Shutdown awaits one
+poll of finalized journal entries and its callback within the existing bounded shutdown wait.
+A contended publisher tail can remain queued until the next foreground publication; Flush is
+not a guarantee that every offered entry has finalized. The detector remains post-hoc and does
+not report work that never returns. Ordinary callback completion, observer panic/reentry and
+bounded waiting have separate framework tests.
+
+The executable value controls feed public action/input values and a small-poll summary into
+the public sealer, close them with an explicit idle boundary, and check nested occupancy,
+threshold versus budget qualification, startup/steady conversion metadata and contributor
+capping. They also check monitor error sources and distinct interval/flush reasons on non-Wasm
+targets. These are constructed data controls, not measured input dispatch, actual slow work,
+or JSON serialization. All journal/detector tests require the fixture's `profiler` feature;
+monitor tests additionally require a non-Wasm target.
+
+Keep the existing consumer lockfile. Compile ordinary application targets with instrumentation
+disabled, then run the feature-enabled public consumer separately, serially, from the root:
+
+```text
+cargo check --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --all-targets --jobs 1 --target-dir target
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --features profiler --test foreground_journal --jobs 1 --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+The framework's separate crate-external `crates/gpui/tests/foreground_journal.rs` target requires
+both `test-support` and `profiler`. It uses the existing `TestAppContext` and `VisualTestContext`,
+real Window input handlers and renders, deferred platform frame requests, visibility changes,
+and sleep/wake notification ingress. Its collectors, sealer and detector observe independently;
+serialized incident comparison executes through `serde_json` in that framework target. The
+non-Wasm shutdown scenario starts the App-owned monitor, uses shutdown to request and await
+the final flush, and checks callback-thread, window/App release, channel disconnection and
+collector survival across App release. It uses no fabricated Window ID, timing-buffer cursor,
+or manually recorded submission.
+
+```text
+cargo nextest run -p open-gpui --features test-support,profiler --test foreground_journal --jobs 1 --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+Those framework cases use the test platform's presentation callback and outcome. They do not
+establish native `Submitted` receipts, GPU output, physical power transitions, native visibility,
+frame-deadline expiry, a never-returning foreground watchdog, or measured overhead. Native
+input/draw/submission, power/visibility interruption, shutdown flush and retirement belong to
+the separate `crates/gpui_windows/src/native_profiler_tests.rs` trajectory. The commands above
+are verification instructions, not a record that this gate has been compiled or executed.

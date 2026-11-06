@@ -32,6 +32,9 @@ impl HeadlessClient {
         handle
             .insert_source(main_receiver, |event, _, _: &mut HeadlessClient| {
                 if let calloop::channel::Event::Msg(runnable) = event {
+                    let metadata = runnable.metadata();
+                    let _timing =
+                        open_gpui::profiler::task_timing(metadata.spawned, metadata.location);
                     runnable.run();
                 }
             })

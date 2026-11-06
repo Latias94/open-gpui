@@ -10,6 +10,12 @@ use super::*;
 use crate::native_test_observation::{
     NativeWindowTestMessageDisposition, NativeWindowTestObservation,
 };
+use open_gpui::profiler::{
+    hang::{HangMonitorConfig, HangMonitorPollReason},
+    journal::{
+        ForegroundEvent, ForegroundJournalCollector, ForegroundJournalEntry, IntervalBoundary,
+    },
+};
 use open_gpui::{
     FocusHandle, FrameDurationSnapshot, FrameEvent, FrameTiming, FrameTimingCollector,
     InputLatencySnapshot, InteractiveElement, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent,
@@ -483,6 +489,36 @@ fn native_profiler_tracks_input_submission_redraw_and_reconstructed_window() {
     let platform_lifetime = Rc::downgrade(&platform);
     let lifecycle_probe = platform.lifecycle_test_probe.clone();
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
+    let journal = app.update_for_test(|cx| cx.foreground_journal());
+    let mut journal_collector = journal.collector();
+    let mut independent_collector = journal.collector();
+    let callback_lifetime = Arc::new(());
+    let callback_weak = Arc::downgrade(&callback_lifetime);
+    let monitor_completed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let callback_completed = Arc::clone(&monitor_completed);
+    let (monitor_sender, monitor_receiver) = std::sync::mpsc::channel();
+    let foreground_thread = std::thread::current().id();
+    app.update_for_test(|cx| {
+        cx.start_hang_monitor(
+            HangMonitorConfig {
+                threshold: Duration::from_millis(100),
+                frame_budget: Duration::from_millis(24),
+                interval: Duration::from_secs(3600),
+            },
+            move |poll| {
+                let _keep_alive = &callback_lifetime;
+                monitor_sender
+                    .send((
+                        poll.reason,
+                        std::thread::current().id(),
+                        poll.first_present_at,
+                    ))
+                    .expect("the native consumer must retain its monitor receiver");
+                callback_completed.store(true, std::sync::atomic::Ordering::Release);
+            },
+        )
+        .expect("the native consumer must start the opt-in GPUI hang monitor");
+    });
     platform.begin_vsync_thread();
     let consumer = NativeProfilerWindow::open(&mut app, &platform);
     let (mut generation, _) =
@@ -573,6 +609,13 @@ fn native_profiler_tracks_input_submission_redraw_and_reconstructed_window() {
         &paint,
         &traced_frame,
     );
+    assert_native_foreground_journal(
+        &consumer,
+        &mut journal_collector,
+        &mut independent_collector,
+        presented,
+        &paint,
+    );
     assert!(input_start <= input_end && input_end <= paint.painted_at);
     let minimum_latency = u64::try_from(presented.present_end.duration_since(input_end).as_nanos())
         .expect("bounded native input latency lower bound");
@@ -628,10 +671,32 @@ fn native_profiler_tracks_input_submission_redraw_and_reconstructed_window() {
     consumer.retire(&mut app, &platform, &observation);
     assert!(collector.collect_unseen().is_empty());
 
+    assert!(profiler::set_trace_enabled(false));
     let rebuilt = NativeProfilerWindow::open(&mut app, &platform);
     assert_ne!(rebuilt.handle.window_id(), retired_id);
-    let (rebuilt_generation, rebuilt_paint) =
+    let (initial_rebuilt_generation, _) =
         rebuilt.wait_for_submission(&mut app, NativeProfilerSource::default(), 0);
+    rebuilt.settle(&mut app);
+    assert!(collector.collect_unseen().is_empty());
+    let (initial_rebuilt_input, _) = rebuilt.snapshot(&mut app);
+    assert_native_profiler_outcomes(&initial_rebuilt_input);
+    assert!(profiler::set_trace_enabled(true));
+    app.update_for_test(|cx| {
+        rebuilt.handle.update(cx, |root, window, cx| {
+            root.source.redraws += 1;
+            window.refresh();
+            cx.notify();
+        })
+    })
+    .expect("the rebuilt visible window must expose a complete dirty-to-present trace");
+    let (rebuilt_generation, rebuilt_paint) = rebuilt.wait_for_submission(
+        &mut app,
+        NativeProfilerSource {
+            redraws: 1,
+            ..NativeProfilerSource::default()
+        },
+        initial_rebuilt_generation,
+    );
     let (rebuilt_input, rebuilt_frame) = rebuilt.snapshot(&mut app);
     assert_native_profiler_outcomes(&rebuilt_input);
     assert!(rebuilt_input.latency_histogram.is_empty());
@@ -657,7 +722,7 @@ fn native_profiler_tracks_input_submission_redraw_and_reconstructed_window() {
     rebuilt.wait_for_submission(
         &mut app,
         NativeProfilerSource {
-            redraws: 1,
+            redraws: 2,
             ..NativeProfilerSource::default()
         },
         rebuilt_generation,
@@ -676,13 +741,65 @@ fn native_profiler_tracks_input_submission_redraw_and_reconstructed_window() {
     rebuilt.retire(&mut app, &platform, &observation);
 
     app.update_for_test(|cx| cx.shutdown());
+    assert!(monitor_completed.load(std::sync::atomic::Ordering::Acquire));
+    let (reason, monitor_thread, first_present_at) = monitor_receiver
+        .try_recv()
+        .expect("App shutdown must await the monitor's final flush");
+    assert_eq!(reason, HangMonitorPollReason::Flush);
+    assert_ne!(monitor_thread, foreground_thread);
+    assert!(first_present_at.is_some());
     drop(app);
     drop(platform);
     pump_messages_until_with_delay(
         "native profiler platform message HWND retirement",
         Duration::from_millis(5),
-        || unsafe { !IsWindow(Some(platform_hwnd)).as_bool() },
+        || unsafe { !IsWindow(Some(platform_hwnd)).as_bool() } && callback_weak.upgrade().is_none(),
     );
     assert!(platform_lifetime.upgrade().is_none());
     assert_eq!(lifecycle_probe.ole_uninitialize_count(), 1);
+}
+
+fn assert_native_foreground_journal(
+    consumer: &NativeProfilerWindow,
+    collector: &mut ForegroundJournalCollector,
+    independent: &mut ForegroundJournalCollector,
+    presented: open_gpui::PresentTiming,
+    paint: &NativeProfilerPaint,
+) {
+    let drained = collector.collect_unseen();
+    let second = independent.collect_unseen();
+    assert_eq!(drained.lost, 0);
+    assert_eq!(second.lost, 0);
+    let markers = |entries: &[ForegroundJournalEntry]| {
+        entries
+            .iter()
+            .filter_map(|entry| match entry {
+                ForegroundJournalEntry::Event(ForegroundEvent::Input(input)) => {
+                    Some((input.kind, None, input.start))
+                }
+                ForegroundJournalEntry::Boundary(IntervalBoundary::Presented(frame)) => Some((
+                    "presented",
+                    Some(frame.frame.window_id),
+                    frame.presentation.present_start,
+                )),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let observed = markers(&drained.entries);
+    assert_eq!(observed, markers(&second.entries));
+    assert!(observed.iter().any(|(kind, _, _)| *kind == "mouse_down"));
+    assert!(observed.iter().any(|(kind, _, _)| *kind == "key_down"));
+    assert!(drained.entries.iter().any(|entry| {
+        let ForegroundJournalEntry::Boundary(IntervalBoundary::Presented(frame)) = entry else {
+            return false;
+        };
+        frame.frame.window_id == consumer.handle.window_id()
+            && frame.presentation.present_start == presented.present_start
+            && frame.presentation.present_end == presented.present_end
+            && frame.frame.draw_start <= paint.painted_at
+            && paint.painted_at <= frame.frame.draw_end
+    }));
+    assert!(collector.collect_unseen().entries.is_empty());
+    assert!(independent.collect_unseen().entries.is_empty());
 }

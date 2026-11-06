@@ -2,7 +2,7 @@ use std::{cell::RefCell, mem, rc::Rc};
 
 use open_gpui_collections::FxHashSet;
 
-use crate::{App, Effect, EntityId};
+use crate::{App, Effect, EntityId, WindowId};
 
 use super::DrawPhase;
 
@@ -17,6 +17,8 @@ pub(super) struct FrameDirtyAccumulator {
 }
 
 struct WindowInvalidatorInner {
+    #[cfg(feature = "profiler")]
+    window_id: WindowId,
     dirty: bool,
     focus_only_dirty: bool,
     draw_phase: DrawPhase,
@@ -32,9 +34,13 @@ pub(crate) struct WindowInvalidator {
 }
 
 impl WindowInvalidator {
-    pub fn new() -> Self {
+    pub fn new(window_id: WindowId) -> Self {
+        #[cfg(not(feature = "profiler"))]
+        let _ = window_id;
         WindowInvalidator {
             inner: Rc::new(RefCell::new(WindowInvalidatorInner {
+                #[cfg(feature = "profiler")]
+                window_id,
                 dirty: true,
                 focus_only_dirty: false,
                 draw_phase: DrawPhase::None,
@@ -101,11 +107,19 @@ impl WindowInvalidator {
     fn record_frame_dirty(inner: &mut WindowInvalidatorInner) {
         inner.frame_dirty.dirty_at.get_or_insert_with(Instant::now);
         inner.frame_dirty.invalidations = inner.frame_dirty.invalidations.saturating_add(1);
+        if let Some(dirty_at) = inner.frame_dirty.dirty_at {
+            crate::profiler::journal::record_frame_pending(inner.window_id, dirty_at);
+        }
     }
 
     #[cfg(feature = "profiler")]
     pub(super) fn take_frame_dirty(&self) -> FrameDirtyAccumulator {
         mem::take(&mut self.inner.borrow_mut().frame_dirty)
+    }
+
+    #[cfg(feature = "profiler")]
+    pub(super) fn pending_dirty_at(&self) -> Option<Instant> {
+        self.inner.borrow().frame_dirty.dirty_at
     }
 
     #[cfg(feature = "profiler")]
@@ -224,7 +238,7 @@ mod profiler_tests {
 
     #[test]
     fn canceled_focus_only_work_does_not_age_a_later_unrelated_frame() {
-        let invalidator = WindowInvalidator::new();
+        let invalidator = WindowInvalidator::new(WindowId::from(1));
         invalidator.set_dirty(false);
         invalidator.set_focus_only_dirty();
         assert!(invalidator.clear_focus_only_dirty());
@@ -240,7 +254,7 @@ mod profiler_tests {
 
     #[test]
     fn refused_focus_only_cancellation_preserves_unrelated_dirty_work() {
-        let invalidator = WindowInvalidator::new();
+        let invalidator = WindowInvalidator::new(WindowId::from(1));
         invalidator.set_dirty(false);
         invalidator.set_dirty(true);
         invalidator.set_focus_only_dirty();

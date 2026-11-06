@@ -92,9 +92,8 @@ impl WindowsDispatcher {
     pub(crate) fn execute_runnable(runnable: RunnableVariant) {
         let location = runnable.metadata().location;
         let spawned = runnable.metadata().spawned;
-        open_gpui::profiler::update_running_task(spawned, location);
+        let _task_timing = open_gpui::profiler::task_timing(spawned, location);
         runnable.run();
-        open_gpui::profiler::save_task_timing();
     }
 }
 
@@ -115,7 +114,7 @@ impl PlatformDispatcher for WindowsDispatcher {
         self.dispatch_on_threadpool(priority, runnable);
     }
 
-    fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority) {
+    fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority) -> bool {
         match self.main_sender.send(priority, runnable) {
             Ok(_) => {
                 if !self.wake_posted.swap(true, Ordering::AcqRel) {
@@ -129,6 +128,7 @@ impl PlatformDispatcher for WindowsDispatcher {
                         .log_err();
                     }
                 }
+                true
             }
             Err(runnable) => {
                 // NOTE: Runnable may wrap a Future that is !Send.
@@ -140,6 +140,7 @@ impl PlatformDispatcher for WindowsDispatcher {
                 // It is not safe to drop something !Send on the wrong thread, and
                 // the app will exit soon anyway, so we must forget the runnable.
                 std::mem::forget(runnable);
+                false
             }
         }
     }

@@ -93,7 +93,16 @@ impl ActionStatistics {
             return;
         };
 
-        let runtime = now.duration_since(started);
+        self.record_action_timing(ActionTiming {
+            name: action,
+            start: started,
+            end: now,
+        });
+    }
+
+    #[cfg(feature = "profiler")]
+    fn record_action_timing(&mut self, timing: ActionTiming) {
+        let runtime = timing.runtime();
         if runtime >= self.runtime_to_beat {
             cold_path(); // most actions are not the worst, optimize for that
 
@@ -103,18 +112,10 @@ impl ActionStatistics {
                     .iter_mut()
                     .min_by_key(|action| action.runtime())
             {
-                *to_replace = ActionTiming {
-                    name: action,
-                    start: started,
-                    end: now,
-                };
+                *to_replace = timing;
             } else {
                 self.longest_runtimes
-                    .push(ActionTiming {
-                        name: action,
-                        start: started,
-                        end: now,
-                    })
+                    .push(timing)
                     .expect("just checked it is not full");
             };
 
@@ -183,19 +184,65 @@ impl ActionTiming {
 static ACTION_STATISTICS: spin::Mutex<ActionStatistics> =
     const { spin::Mutex::new(ActionStatistics::new()) };
 
-#[doc(hidden)]
+/// Completes an action's aggregate and journal timing, including during unwind.
 #[cfg(feature = "profiler")]
-pub(crate) fn update_running_action(action: &(dyn Action + 'static), cx: &mut crate::App) {
-    let now = Instant::now();
-    let action = action.type_id();
-    let action = cx.actions.try_resolve_action(&action).unwrap_or("un-named");
-    ACTION_STATISTICS.lock().update_running_action(action, now);
+#[must_use]
+pub struct ActionHandlerGuard {
+    name: &'static str,
+    start: Instant,
+    previous_running: Option<(&'static str, Instant)>,
+    _turn: super::journal::ForegroundTurnGuard,
+    _not_send: std::marker::PhantomData<std::rc::Rc<()>>,
+}
+
+#[cfg(feature = "profiler")]
+impl ActionHandlerGuard {
+    pub(super) fn new(name: &'static str) -> Self {
+        let turn = super::journal::foreground_turn();
+        let start = Instant::now();
+        let mut statistics = ACTION_STATISTICS.lock();
+        let previous_running = statistics.running;
+        statistics.update_running_action(name, start);
+        Self {
+            name,
+            start,
+            previous_running,
+            _turn: turn,
+            _not_send: std::marker::PhantomData,
+        }
+    }
+}
+
+#[cfg(feature = "profiler")]
+impl Drop for ActionHandlerGuard {
+    fn drop(&mut self) {
+        let timing = ActionTiming {
+            name: self.name,
+            start: self.start,
+            end: Instant::now(),
+        };
+        {
+            let mut statistics = ACTION_STATISTICS.lock();
+            if statistics.running == Some((self.name, self.start)) {
+                statistics.running = self.previous_running;
+            }
+            statistics.record_action_timing(timing);
+        }
+        if !super::journal::power_interrupted_since(timing.start) {
+            super::journal::record_action(timing);
+        }
+    }
 }
 
 #[doc(hidden)]
 #[cfg(feature = "profiler")]
-pub(crate) fn save_action_timing() {
-    ACTION_STATISTICS.lock().save_action_timing();
+pub(crate) fn update_running_action(
+    action: &(dyn Action + 'static),
+    cx: &mut crate::App,
+) -> ActionHandlerGuard {
+    let action = action.type_id();
+    let action = cx.actions.try_resolve_action(&action).unwrap_or("un-named");
+    ActionHandlerGuard::new(action)
 }
 
 #[doc(hidden)]

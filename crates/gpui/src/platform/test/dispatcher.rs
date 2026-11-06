@@ -125,8 +125,9 @@ impl PlatformDispatcher for TestDispatcher {
             .schedule_background_with_priority(runnable, priority);
     }
 
-    fn dispatch_on_main_thread(&self, runnable: RunnableVariant, _priority: Priority) {
+    fn dispatch_on_main_thread(&self, runnable: RunnableVariant, _priority: Priority) -> bool {
         self.scheduler.schedule_local(self.session_id, runnable);
+        true
     }
 
     fn dispatch_after(&self, _duration: Duration, _runnable: RunnableVariant) {
