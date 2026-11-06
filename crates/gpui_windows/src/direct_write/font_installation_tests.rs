@@ -18,6 +18,36 @@ const IBM_PLEX: &[u8] = include_bytes!("../../../../tests/fixtures/fonts/IBMPlex
 const NOTO_EMOJI: &[u8] = include_bytes!("../../../../tests/fixtures/fonts/NotoEmoji-Regular.ttf");
 
 #[test]
+fn loading_an_alias_preserves_the_first_observed_face_identity() -> Result<()> {
+    let devices = DirectXDevices::new()?;
+    let platform = DirectWriteTextSystem::new(&devices)?;
+    platform.add_fonts(vec![Cow::Borrowed(IBM_PLEX)])?;
+    let descriptor = font("IBM Plex Sans");
+    let original = platform.font_id(&descriptor)?;
+    let runs = [FontRun {
+        len: 2,
+        font_id: original,
+    }];
+    let before = platform.layout_line("mi", px(18.), &runs);
+    assert_eq!(before.runs.len(), 1);
+    assert_eq!(before.runs[0].font_id, original);
+    let alias = platform.font_id(&font(".ZedSans"))?;
+    assert_ne!(alias, original);
+    assert_eq!(platform.font_id(&descriptor)?, original);
+    let after = platform.layout_line("mi", px(18.), &runs);
+    assert_eq!(after.runs.len(), 1);
+    assert_eq!(after.runs[0].font_id, original);
+    assert_eq!(after.width, before.width);
+    assert_eq!(after.runs[0].glyphs.len(), before.runs[0].glyphs.len());
+    for (actual, expected) in after.runs[0].glyphs.iter().zip(&before.runs[0].glyphs) {
+        assert_eq!(actual.id, expected.id);
+        assert_eq!(actual.position, expected.position);
+        assert_eq!(actual.index, expected.index);
+    }
+    Ok(())
+}
+
+#[test]
 fn installed_weight_reselects_a_matched_family_and_preserves_old_glyphs() -> Result<()> {
     let devices = DirectXDevices::new()?;
     let platform = Arc::new(DirectWriteTextSystem::new(&devices)?);

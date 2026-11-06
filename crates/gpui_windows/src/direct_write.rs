@@ -443,7 +443,8 @@ impl DirectWriteState {
                 this.fonts[font_id.0] = info;
             }
             this.font_info_cache
-                .insert(font_face_key, (font_id, retained_face));
+                .entry(font_face_key)
+                .or_insert((font_id, retained_face));
             Some(font_id)
         };
 
