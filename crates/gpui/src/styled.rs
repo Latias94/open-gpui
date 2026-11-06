@@ -97,6 +97,12 @@ pub trait Styled: Sized {
         self
     }
 
+    /// Replaces the middle of overflowing text with an ellipsis (…), preserving both ends.
+    fn text_ellipsis_middle(mut self) -> Self {
+        self.text_style().text_overflow = Some(TextOverflow::TruncateMiddle(ELLIPSIS));
+        self
+    }
+
     /// Sets the text overflow behavior of the element.
     fn text_overflow(mut self, overflow: TextOverflow) -> Self {
         self.text_style().text_overflow = Some(overflow);

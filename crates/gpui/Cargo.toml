@@ -63,6 +63,7 @@ open_gpui_macros.workspace = true
 open_gpui_shared_string.workspace = true
 open_gpui_http_client.workspace = true
 image.workspace = true
+icu_segmenter.workspace = true
 inventory.workspace = true
 itertools.workspace = true
 log.workspace = true
@@ -111,6 +112,7 @@ url.workspace = true
 uuid.workspace = true
 web-time.workspace = true
 heapless.workspace = true
+unicode-segmentation.workspace = true
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 getrandom = { version = "0.4.3", features = ["wasm_js"] }
@@ -150,7 +152,6 @@ rand.workspace = true
 open_gpui_scheduler = { workspace = true, features = ["test-support"] }
 syn.workspace = true
 trybuild.workspace = true
-unicode-segmentation = { workspace = true }
 
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
 open_gpui_http_client = { workspace = true, features = ["test-support"] }

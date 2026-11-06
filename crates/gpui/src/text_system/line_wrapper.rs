@@ -1,14 +1,29 @@
 use crate::{Font, FontId, Pixels, SharedString, TextRun, TextSystem, px};
 use open_gpui_collections::HashMap;
 use std::{borrow::Cow, iter, sync::Arc};
+use unicode_segmentation::UnicodeSegmentation;
 
-/// Determines whether to truncate text from the start or end.
+/// Determines which part of the text is replaced by the truncation affix.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TruncateFrom {
     /// Truncate text from the start.
     Start,
     /// Truncate text from the end.
     End,
+    /// Truncate text from the middle, preserving the start and end.
+    Middle,
+}
+
+/// Controls how soft-wrapped continuation lines are indented.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum IndentAdjustment {
+    /// Start continuation lines at column zero.
+    NoIndent,
+    /// Match the original line's leading spaces.
+    #[default]
+    SameIndent,
+    /// Add this many space-character widths to the original indentation.
+    ExtraColumns(u32),
 }
 
 /// The GPUI line wrapper, used to wrap lines of text to a given width.
@@ -19,6 +34,7 @@ pub struct LineWrapper {
     pub(crate) font_id: FontId,
     pub(crate) font_size: Pixels,
     char_widths: CharWidthCache,
+    text_buffer: String,
 }
 
 /// Cached character widths for one resolved font and size, independent of its TextSystem.
@@ -57,6 +73,7 @@ impl LineWrapper {
             font_id,
             font_size,
             char_widths,
+            text_buffer: String::new(),
         }
     }
 
@@ -65,19 +82,61 @@ impl LineWrapper {
     }
 
     /// Wrap a line of text to the given width with this wrapper's font and font size.
+    ///
+    /// Break opportunities and extended graphemes span adjacent fragments. Inline elements stay
+    /// atomic and contribute their declared byte lengths. A grapheme wider than the available
+    /// width stays whole. `indent_adjustment` controls continuation rows.
     pub fn wrap_line<'a>(
         &'a mut self,
         fragments: &'a [LineFragment],
         wrap_width: Pixels,
+        indent_adjustment: IndentAdjustment,
     ) -> impl Iterator<Item = Boundary> + 'a {
         let mut width = px(0.);
         let mut first_non_whitespace_ix = None;
-        let mut indent = None;
+        let mut base_indent = None;
         let mut last_candidate_ix = 0;
         let mut last_candidate_width = px(0.);
         let mut last_wrap_ix = 0;
-        let mut prev_c = '\0';
         let mut index = 0;
+        let Self {
+            text_buffer: text,
+            char_widths,
+            text_system,
+            font,
+            font_id,
+            resolved_font_generation,
+            font_size,
+        } = self;
+        text.clear();
+        for fragment in fragments {
+            match fragment {
+                LineFragment::Text {
+                    text: fragment_text,
+                } => text.push_str(fragment_text),
+                LineFragment::Element { len_utf8, .. } => {
+                    text.extend(iter::repeat_n('a', *len_utf8));
+                }
+            }
+        }
+        let mut break_indices = Self::break_indices(text).peekable();
+        let mut grapheme_indices = text
+            .grapheme_indices(true)
+            .map(|(index, _)| index)
+            .peekable();
+        let mut width_for_char = move |character| {
+            width_for_char(
+                char_widths,
+                character,
+                text_system,
+                font,
+                font_id,
+                resolved_font_generation,
+                *font_size,
+            )
+        };
+        let mut grapheme_index = 0;
+        let mut width_before_grapheme = px(0.);
         let mut candidates = fragments
             .iter()
             .flat_map(move |fragment| fragment.wrap_boundary_candidates())
@@ -86,43 +145,38 @@ impl LineWrapper {
             for candidate in candidates.by_ref() {
                 let ix = index;
                 index += candidate.len_utf8();
-                let mut new_prev_c = prev_c;
+                while grapheme_indices
+                    .next_if(|position| *position < ix)
+                    .is_some()
+                {}
+                let is_grapheme_boundary = grapheme_indices.next_if_eq(&ix).is_some();
+                if is_grapheme_boundary {
+                    grapheme_index = ix;
+                    width_before_grapheme = width;
+                }
+                if break_indices.next_if_eq(&ix).is_some()
+                    && is_grapheme_boundary
+                    && first_non_whitespace_ix.is_some()
+                {
+                    last_candidate_ix = ix;
+                    last_candidate_width = width;
+                }
                 let item_width = match candidate {
                     WrapBoundaryCandidate::Char { character: c } => {
                         if c == '\n' {
                             continue;
                         }
 
-                        if Self::is_word_char(c) {
-                            if prev_c == ' ' && c != ' ' && first_non_whitespace_ix.is_some() {
-                                last_candidate_ix = ix;
-                                last_candidate_width = width;
-                            }
-                        } else {
-                            // CJK may not be space separated, e.g.: `Hello world你好世界`
-                            if c != ' ' && first_non_whitespace_ix.is_some() {
-                                last_candidate_ix = ix;
-                                last_candidate_width = width;
-                            }
-                        }
-
                         if c != ' ' && first_non_whitespace_ix.is_none() {
                             first_non_whitespace_ix = Some(ix);
                         }
 
-                        new_prev_c = c;
-
-                        self.width_for_char(c)
+                        width_for_char(c)
                     }
                     WrapBoundaryCandidate::Element {
                         width: element_width,
                         ..
                     } => {
-                        if prev_c == ' ' && first_non_whitespace_ix.is_some() {
-                            last_candidate_ix = ix;
-                            last_candidate_width = width;
-                        }
-
                         if first_non_whitespace_ix.is_none() {
                             first_non_whitespace_ix = Some(ix);
                         }
@@ -132,31 +186,55 @@ impl LineWrapper {
                 };
 
                 width += item_width;
-                if width > wrap_width && ix > last_wrap_ix {
-                    if let (None, Some(first_non_whitespace_ix)) = (indent, first_non_whitespace_ix)
-                    {
-                        indent = Some(
-                            Self::MAX_INDENT.min((first_non_whitespace_ix - last_wrap_ix) as u32),
-                        );
+                if width > wrap_width && grapheme_index > last_wrap_ix {
+                    let wrap_at_candidate = last_candidate_ix > last_wrap_ix
+                        && width - last_candidate_width <= wrap_width;
+                    let carried_width = if wrap_at_candidate {
+                        width - last_candidate_width
+                    } else {
+                        width - width_before_grapheme
+                    };
+                    if base_indent.is_none() {
+                        if let Some(first_non_whitespace_ix) = first_non_whitespace_ix {
+                            base_indent =
+                                Some(Self::MAX_INDENT.min(
+                                    first_non_whitespace_ix.saturating_sub(last_wrap_ix) as u32,
+                                ));
+                        }
                     }
-
-                    if last_candidate_ix > 0 {
+                    let next_indent = match indent_adjustment {
+                        IndentAdjustment::NoIndent => 0,
+                        IndentAdjustment::SameIndent => base_indent.unwrap_or(0),
+                        IndentAdjustment::ExtraColumns(extra) => {
+                            if let Some(base_indent) = base_indent {
+                                let candidate = base_indent.saturating_add(extra);
+                                let indent_width = width_for_char(' ') * candidate as f32;
+                                let headroom = carried_width.max(width_for_char(' ') * 2.);
+                                if indent_width + headroom > wrap_width {
+                                    0
+                                } else {
+                                    Self::MAX_INDENT.min(candidate)
+                                }
+                            } else {
+                                0
+                            }
+                        }
+                    };
+                    if wrap_at_candidate {
                         last_wrap_ix = last_candidate_ix;
                         width -= last_candidate_width;
-                        last_candidate_ix = 0;
+                        width_before_grapheme -= last_candidate_width;
                     } else {
-                        last_wrap_ix = ix;
-                        width = item_width;
+                        last_wrap_ix = grapheme_index;
+                        width -= width_before_grapheme;
+                        width_before_grapheme = px(0.);
                     }
-
-                    if let Some(indent) = indent {
-                        width += self.width_for_char(' ') * indent as f32;
-                    }
-
-                    return Some(Boundary::new(last_wrap_ix, indent.unwrap_or(0)));
+                    last_candidate_ix = 0;
+                    let indent_width = width_for_char(' ') * next_indent as f32;
+                    width += indent_width;
+                    width_before_grapheme += indent_width;
+                    return Some(Boundary::new(last_wrap_ix, next_indent));
                 }
-
-                prev_c = new_prev_c;
             }
 
             None
@@ -165,7 +243,8 @@ impl LineWrapper {
 
     /// Determines if a line should be truncated based on its width.
     ///
-    /// Returns the truncation index in `line`.
+    /// Returns the truncation index in `line` for start or end truncation.
+    /// Middle truncation needs two boundaries; use [`Self::truncate_line`] instead.
     pub fn should_truncate_line(
         &mut self,
         line: &str,
@@ -178,17 +257,25 @@ impl LineWrapper {
             .chars()
             .map(|c| self.width_for_char(c))
             .fold(px(0.0), |a, x| a + x);
-        let mut truncate_ix = 0;
+        let mut truncate_ix = if truncate_from == TruncateFrom::Start {
+            line.grapheme_indices(true)
+                .next_back()
+                .map_or(0, |(index, _)| index)
+        } else {
+            0
+        };
 
         match truncate_from {
             TruncateFrom::Start => {
-                for (ix, c) in line.char_indices().rev() {
+                for (ix, grapheme) in line.grapheme_indices(true).rev() {
                     if width + suffix_width < truncate_width {
                         truncate_ix = ix;
                     }
 
-                    let char_width = self.width_for_char(c);
-                    width += char_width;
+                    width += grapheme
+                        .chars()
+                        .map(|c| self.width_for_char(c))
+                        .sum::<Pixels>();
 
                     if width.floor() > truncate_width {
                         return Some(truncate_ix);
@@ -196,22 +283,118 @@ impl LineWrapper {
                 }
             }
             TruncateFrom::End => {
-                for (ix, c) in line.char_indices() {
+                for (ix, grapheme) in line.grapheme_indices(true) {
                     if width + suffix_width < truncate_width {
                         truncate_ix = ix;
                     }
 
-                    let char_width = self.width_for_char(c);
-                    width += char_width;
+                    width += grapheme
+                        .chars()
+                        .map(|c| self.width_for_char(c))
+                        .sum::<Pixels>();
 
                     if width.floor() > truncate_width {
                         return Some(truncate_ix);
                     }
                 }
             }
+            TruncateFrom::Middle => {}
         }
 
         None
+    }
+
+    fn should_truncate_line_middle(
+        &mut self,
+        line: &str,
+        truncate_width: Pixels,
+        truncation_affix: &str,
+        single_paragraph: bool,
+    ) -> Option<(usize, usize)> {
+        let affix_width: Pixels = truncation_affix
+            .chars()
+            .map(|c| self.width_for_char(c))
+            .sum();
+        let total_width: Pixels = line.chars().map(|c| self.width_for_char(c)).sum();
+        let paragraph_bounds = if single_paragraph {
+            let mut newlines = line
+                .grapheme_indices(true)
+                .filter(|(_, grapheme)| grapheme.contains('\n'));
+            newlines.next().map(|first| {
+                let last = newlines.next_back().unwrap_or(first);
+                (first.0, last.0 + last.1.len())
+            })
+        } else {
+            None
+        };
+        if let Some((front, back)) = paragraph_bounds {
+            let ends_width: Pixels = line[..front]
+                .chars()
+                .chain(line[back..].chars())
+                .map(|c| self.width_for_char(c))
+                .sum();
+            if ends_width + affix_width <= truncate_width {
+                return Some((front, back));
+            }
+        } else if total_width <= truncate_width {
+            return None;
+        }
+        let content_budget = truncate_width - affix_width;
+        if content_budget <= px(0.) {
+            return Some((0, line.len()));
+        }
+        let front_budget = content_budget * (2. / 3.);
+        let back_budget = content_budget - front_budget;
+        let mut front_width = px(0.);
+        let mut front_end_ix = 0;
+        for (ix, grapheme) in line.grapheme_indices(true) {
+            if paragraph_bounds.is_some_and(|(front, _)| ix >= front) {
+                break;
+            }
+            let width: Pixels = grapheme.chars().map(|c| self.width_for_char(c)).sum();
+            if front_width + width > front_budget {
+                break;
+            }
+            front_width += width;
+            front_end_ix = ix + grapheme.len();
+        }
+        let mut back_width = px(0.);
+        let mut back_start_ix = line.len();
+        for (ix, grapheme) in line.grapheme_indices(true).rev() {
+            if paragraph_bounds.is_some_and(|(_, back)| ix < back) {
+                break;
+            }
+            let width: Pixels = grapheme.chars().map(|c| self.width_for_char(c)).sum();
+            if back_width + width > back_budget {
+                break;
+            }
+            back_width += width;
+            back_start_ix = ix;
+        }
+        if front_end_ix >= back_start_ix {
+            return Some((0, line.len()));
+        }
+        Some((front_end_ix, back_start_ix))
+    }
+
+    fn truncate_middle<'a>(
+        &mut self,
+        line: SharedString,
+        width: Pixels,
+        affix: &str,
+        runs: &'a [TextRun],
+        single_paragraph: bool,
+    ) -> (SharedString, Cow<'a, [TextRun]>) {
+        if let Some((front, back)) =
+            self.should_truncate_line_middle(&line, width, affix, single_paragraph)
+        {
+            let result = SharedString::from(format!("{}{affix}{}", &line[..front], &line[back..]));
+            let mut runs = runs.to_vec();
+            update_runs_after_middle_truncation(affix, &mut runs, front, back);
+            (result, Cow::Owned(runs))
+        } else {
+            (line, Cow::Borrowed(runs))
+        }
     }
 
     /// Truncate a line of text to the given width with this wrapper's font and font size.
@@ -223,19 +406,26 @@ impl LineWrapper {
         runs: &'a [TextRun],
         truncate_from: TruncateFrom,
     ) -> (SharedString, Cow<'a, [TextRun]>) {
+        if truncate_from == TruncateFrom::Middle {
+            return self.truncate_middle(line, truncate_width, truncation_affix, runs, false);
+        }
         if let Some(truncate_ix) =
             self.should_truncate_line(&line, truncate_width, truncation_affix, truncate_from)
         {
             let result = match truncate_from {
                 TruncateFrom::Start => SharedString::from(format!(
                     "{truncation_affix}{}",
-                    &line[line.ceil_char_boundary(truncate_ix + 1)..]
+                    &line[truncate_ix
+                        + line[truncate_ix..]
+                            .graphemes(true)
+                            .next()
+                            .map_or(0, str::len)..]
                 )),
                 TruncateFrom::End => SharedString::from(format!(
                     "{}{truncation_affix}",
-                    line[..truncate_ix]
-                        .trim_end_matches(|c: char| c.is_whitespace() || c.is_ascii_punctuation())
+                    trim_truncation_end(&line[..truncate_ix])
                 )),
+                TruncateFrom::Middle => unreachable!("middle truncation is handled above"),
             };
             let mut runs = runs.to_vec();
             update_runs_after_truncation(&result, truncation_affix, &mut runs, truncate_from);
@@ -247,13 +437,13 @@ impl LineWrapper {
 
     /// Truncate text to fit within a given number of wrapped lines.
     ///
-    /// Unlike `truncate_line` which treats the text as a flat width budget
-    /// (`width * max_lines`), this method accounts for word-boundary wrapping:
-    /// it walks through characters once, tracking wrap boundaries and the
-    /// truncation point simultaneously. When text overflows on the last
-    /// allowed line, it truncates there and appends the affix.
+    /// Start and End truncation measure complete-grapheme candidates through the same wrapper and
+    /// paragraph contents used for layout, reserving the affix within the row budget. Empty trailing
+    /// paragraphs may be omitted without an affix. Middle truncation keeps the first and last
+    /// paragraph ends together on one row. The complete affix stays visible even if it exceeds the
+    /// available width by itself.
     ///
-    /// For `max_lines == 1`, this delegates to `truncate_line`.
+    /// Flat single-row input retains [`Self::truncate_line`]'s width policy.
     pub fn truncate_wrapped_line<'a>(
         &mut self,
         text: SharedString,
@@ -263,7 +453,7 @@ impl LineWrapper {
         runs: &'a [TextRun],
         truncate_from: TruncateFrom,
     ) -> (SharedString, Cow<'a, [TextRun]>) {
-        if max_lines <= 1 || truncate_from == TruncateFrom::Start {
+        if max_lines == 0 {
             return self.truncate_line(
                 text,
                 wrap_width * max_lines,
@@ -272,192 +462,157 @@ impl LineWrapper {
                 truncate_from,
             );
         }
-
-        let affix_width: Pixels = truncation_affix
-            .chars()
-            .map(|c| self.width_for_char(c))
-            .sum();
-
-        let mut width = px(0.);
-        let mut line = 0usize;
-        let mut first_non_whitespace_ix = None;
-        let mut last_candidate_ix = 0usize;
-        let mut last_candidate_width = px(0.);
-        let mut last_wrap_ix = 0usize;
-        let mut prev_c = '\0';
-        let mut indent: Option<u32> = None;
-        let mut truncate_ix = 0usize;
-
-        for (ix, c) in text.char_indices() {
-            if c == '\n' {
-                if line >= max_lines - 1 && !text[ix + 1..].trim().is_empty() {
-                    // Newline on the last allowed line with real content
-                    // below. Truncate here.
-                    let truncated = text[..truncate_ix]
-                        .trim_end_matches(|c: char| c.is_whitespace() || c.is_ascii_punctuation());
-                    let result = SharedString::from(format!("{truncated}{truncation_affix}"));
-                    let mut runs = runs.to_vec();
-                    update_runs_after_truncation(
-                        &result,
-                        truncation_affix,
-                        &mut runs,
-                        TruncateFrom::End,
-                    );
-                    return (result, Cow::Owned(runs));
-                }
-
-                // Newline before the last line: it consumes a line.
-                line += 1;
-                width = px(0.);
-                first_non_whitespace_ix = None;
-                last_candidate_ix = 0;
-                last_candidate_width = px(0.);
-                last_wrap_ix = ix + 1;
-                prev_c = '\0';
-                indent = None;
-                truncate_ix = ix + 1;
-                continue;
-            }
-
-            let char_width = self.width_for_char(c);
-
-            if Self::is_word_char(c) {
-                if prev_c == ' ' && first_non_whitespace_ix.is_some() {
-                    last_candidate_ix = ix;
-                    last_candidate_width = width;
-                }
-            } else if c != ' ' && first_non_whitespace_ix.is_some() {
-                last_candidate_ix = ix;
-                last_candidate_width = width;
-            }
-
-            if c != ' ' && first_non_whitespace_ix.is_none() {
-                first_non_whitespace_ix = Some(ix);
-            }
-
-            width += char_width;
-
-            if line < max_lines - 1 {
-                // Before the last line: replicate wrap_line's boundary logic.
-                if width > wrap_width && ix > last_wrap_ix {
-                    if let (None, Some(first_nw)) = (indent, first_non_whitespace_ix) {
-                        indent = Some(Self::MAX_INDENT.min((first_nw - last_wrap_ix) as u32));
-                    }
-
-                    if last_candidate_ix > last_wrap_ix {
-                        last_wrap_ix = last_candidate_ix;
-                        width -= last_candidate_width;
-                        last_candidate_ix = 0;
-                    } else {
-                        last_wrap_ix = ix;
-                        width = char_width;
-                    }
-
-                    if let Some(ind) = indent {
-                        width += self.width_for_char(' ') * ind as f32;
-                    }
-
-                    line += 1;
-                    truncate_ix = last_wrap_ix;
-                }
-            } else {
-                // On the last line: track the furthest point where the affix
-                // still fits, and stop as soon as the line overflows.
-                if width + affix_width <= wrap_width {
-                    truncate_ix = ix + c.len_utf8();
-                }
-
-                if width > wrap_width {
-                    let truncated = text[..truncate_ix]
-                        .trim_end_matches(|c: char| c.is_whitespace() || c.is_ascii_punctuation());
-                    let result = SharedString::from(format!("{truncated}{truncation_affix}"));
-                    let mut runs = runs.to_vec();
-                    update_runs_after_truncation(
-                        &result,
-                        truncation_affix,
-                        &mut runs,
-                        TruncateFrom::End,
-                    );
-                    return (result, Cow::Owned(runs));
-                }
-            }
-
-            prev_c = c;
+        if truncate_from == TruncateFrom::Middle {
+            return self.truncate_middle(text, wrap_width, truncation_affix, runs, true);
         }
-
-        // Text fits within max_lines without truncation.
-        (text, Cow::Borrowed(runs))
+        if max_lines == 1 && !text.contains('\n') {
+            return self.truncate_line(text, wrap_width, truncation_affix, runs, truncate_from);
+        }
+        if self.fits_wrapped_lines(&text, wrap_width, max_lines) {
+            return (text, Cow::Borrowed(runs));
+        }
+        let content_end = text
+            .grapheme_indices(true)
+            .rev()
+            .find(|(_, grapheme)| !matches!(*grapheme, "\n" | "\r\n"))
+            .map_or(0, |(index, grapheme)| index + grapheme.len());
+        if content_end < text.len()
+            && self.fits_wrapped_lines(&text[..content_end], wrap_width, max_lines)
+        {
+            let result: SharedString = text[..content_end].to_owned().into();
+            let mut runs = runs.to_vec();
+            update_runs_after_truncation(&result, "", &mut runs, TruncateFrom::End);
+            return (result, Cow::Owned(runs));
+        }
+        let boundaries = text
+            .grapheme_indices(true)
+            .map(|(index, _)| index)
+            .chain(iter::once(text.len()))
+            .collect::<Vec<_>>();
+        let from_start = truncate_from == TruncateFrom::Start;
+        let mut lower = usize::from(from_start);
+        let mut upper = boundaries.len() - if from_start { 1 } else { 2 };
+        let write_candidate = |result: &mut String, boundary: usize| {
+            result.clear();
+            if from_start {
+                result.push_str(truncation_affix);
+                result.push_str(&text[boundary..]);
+            } else {
+                result.push_str(trim_truncation_end(&text[..boundary]));
+                result.push_str(truncation_affix);
+            }
+        };
+        let mut result = String::with_capacity(text.len() + truncation_affix.len());
+        while lower < upper {
+            let midpoint = lower + (upper - lower + usize::from(!from_start)) / 2;
+            write_candidate(&mut result, boundaries[midpoint]);
+            if self.fits_wrapped_lines(&result, wrap_width, max_lines) {
+                if from_start {
+                    upper = midpoint;
+                } else {
+                    lower = midpoint;
+                }
+            } else if from_start {
+                lower = midpoint + 1;
+            } else {
+                upper = midpoint - 1;
+            }
+        }
+        write_candidate(&mut result, boundaries[lower]);
+        let mut runs = runs.to_vec();
+        update_runs_after_truncation(&result, truncation_affix, &mut runs, truncate_from);
+        (result.into(), Cow::Owned(runs))
     }
 
-    /// Any character in this list should be treated as a word character,
-    /// meaning it can be part of a word that should not be wrapped.
-    pub(crate) fn is_word_char(c: char) -> bool {
-        // ASCII alphanumeric characters, for English, numbers: `Hello123`, etc.
-        c.is_ascii_alphanumeric() ||
-        // Latin script in Unicode for French, German, Spanish, etc.
-        // Latin-1 Supplement
-        // https://en.wikipedia.org/wiki/Latin-1_Supplement
-        matches!(c, '\u{00C0}'..='\u{00FF}') ||
-        // Latin Extended-A
-        // https://en.wikipedia.org/wiki/Latin_Extended-A
-        matches!(c, '\u{0100}'..='\u{017F}') ||
-        // Latin Extended-B
-        // https://en.wikipedia.org/wiki/Latin_Extended-B
-        matches!(c, '\u{0180}'..='\u{024F}') ||
-        // Cyrillic for Russian, Ukrainian, etc.
-        // https://en.wikipedia.org/wiki/Cyrillic_script_in_Unicode
-        matches!(c, '\u{0400}'..='\u{04FF}') ||
+    fn fits_wrapped_lines(&mut self, text: &str, wrap_width: Pixels, max_lines: usize) -> bool {
+        let mut remaining = max_lines;
+        for line in text.split('\n') {
+            if remaining == 0 {
+                return false;
+            }
+            let fragments = [LineFragment::text(line)];
+            let wraps = self
+                .wrap_line(&fragments, wrap_width, IndentAdjustment::SameIndent)
+                .take(remaining)
+                .count();
+            if wraps >= remaining {
+                return false;
+            }
+            remaining -= wraps + 1;
+        }
+        true
+    }
 
-        // Vietnamese (https://vietunicode.sourceforge.net/charset/)
-        matches!(c, '\u{1E00}'..='\u{1EFF}') || // Latin Extended Additional
-        matches!(c, '\u{0300}'..='\u{036F}') || // Combining Diacritical Marks
-
-        // Bengali (https://en.wikipedia.org/wiki/Bengali_(Unicode_block))
-        matches!(c, '\u{0980}'..='\u{09FF}') ||
-
-        // Some other known special characters that should be treated as word characters,
-        // e.g. `a-b`, `var_name`, `I'm`/`won’t`, '@mention`, `#hashtag`, `100%`, `3.1415`,
-        // `2^3`, `a~b`, `a=1`, `Self::new`, etc. Trailing punctuation like `,`, `.`, `:`, `;`
-        // is included so it stays attached to the preceding word when wrapping.
-        matches!(c, '-' | '_' | '.' | '\'' | '’' | '‘' | '$' | '%' | '@' | '#' | '^' | '~' | ',' | '=' | ':' | ';') ||
-        // `⋯` is kept attached to the preceding text so it stays at the end of the line.
-        matches!(c, '⋯')
+    /// Byte offsets at which Unicode line breaking allows a new line.
+    pub(crate) fn break_indices(text: &str) -> impl Iterator<Item = usize> {
+        icu_segmenter::LineSegmenter::new_for_non_complex_scripts(Default::default())
+            .segment_str(text)
     }
 
     #[inline(always)]
     fn width_for_char(&mut self, c: char) -> Pixels {
-        let generation = self.text_system.font_generation();
-        if self.resolved_font_generation != generation {
-            self.font_id = self.text_system.resolve_font(&self.font);
-            self.resolved_font_generation = generation;
-            self.char_widths = CharWidthCache::default();
-        }
-        if self.char_widths.font_generation != Some(generation) {
-            self.char_widths = CharWidthCache {
-                font_generation: Some(generation),
-                ..Default::default()
-            };
-        }
-        if (c as u32) < 128 {
-            if let Some(cached_width) = self.char_widths.ascii[c as usize] {
-                cached_width
-            } else {
-                let width = self
-                    .text_system
-                    .layout_width(self.font_id, self.font_size, c);
-                self.char_widths.ascii[c as usize] = Some(width);
-                width
-            }
-        } else if let Some(cached_width) = self.char_widths.other.get(&c) {
-            *cached_width
+        width_for_char(
+            &mut self.char_widths,
+            c,
+            &self.text_system,
+            &self.font,
+            &mut self.font_id,
+            &mut self.resolved_font_generation,
+            self.font_size,
+        )
+    }
+}
+
+#[inline(always)]
+fn width_for_char(
+    char_widths: &mut CharWidthCache,
+    c: char,
+    text_system: &TextSystem,
+    font: &Font,
+    font_id: &mut FontId,
+    resolved_font_generation: &mut usize,
+    font_size: Pixels,
+) -> Pixels {
+    let generation = text_system.font_generation();
+    if *resolved_font_generation != generation {
+        *font_id = text_system.resolve_font(font);
+        *resolved_font_generation = generation;
+        *char_widths = CharWidthCache::default();
+    }
+    if char_widths.font_generation != Some(generation) {
+        *char_widths = CharWidthCache {
+            font_generation: Some(generation),
+            ..Default::default()
+        };
+    }
+    if (c as u32) < 128 {
+        if let Some(cached_width) = char_widths.ascii[c as usize] {
+            cached_width
         } else {
-            let width = self
-                .text_system
-                .layout_width(self.font_id, self.font_size, c);
-            self.char_widths.other.insert(c, width);
+            let width = text_system.layout_width(*font_id, font_size, c);
+            char_widths.ascii[c as usize] = Some(width);
             width
         }
+    } else if let Some(cached_width) = char_widths.other.get(&c) {
+        *cached_width
+    } else {
+        let width = text_system.layout_width(*font_id, font_size, c);
+        char_widths.other.insert(c, width);
+        width
     }
+}
+
+fn trim_truncation_end(text: &str) -> &str {
+    let end = text
+        .grapheme_indices(true)
+        .rev()
+        .find(|(_, grapheme)| {
+            !grapheme
+                .chars()
+                .all(|c| c.is_whitespace() || c.is_ascii_punctuation())
+        })
+        .map_or(0, |(index, grapheme)| index + grapheme.len());
+    &text[..end]
 }
 
 fn update_runs_after_truncation(
@@ -490,7 +645,56 @@ fn update_runs_after_truncation(
                 }
             }
         }
+        TruncateFrom::Middle => unreachable!("middle truncation updates both retained ranges"),
     }
+}
+
+fn update_runs_after_middle_truncation(
+    ellipsis: &str,
+    runs: &mut Vec<TextRun>,
+    front_end_ix: usize,
+    back_start_ix: usize,
+) {
+    let original_runs = std::mem::take(runs);
+    let mut result = Vec::with_capacity(original_runs.len());
+    let mut front_remaining = front_end_ix;
+    let mut front_done = false;
+    for run in &original_runs {
+        if front_done {
+            break;
+        }
+        if run.len <= front_remaining {
+            result.push(run.clone());
+            front_remaining -= run.len;
+        } else {
+            let mut partial = run.clone();
+            partial.len = front_remaining + ellipsis.len();
+            result.push(partial);
+            front_done = true;
+        }
+    }
+    if !front_done {
+        if let Some(last) = result.last_mut() {
+            last.len += ellipsis.len();
+        } else if let Some(first) = original_runs.first() {
+            let mut affix_run = first.clone();
+            affix_run.len = ellipsis.len();
+            result.push(affix_run);
+        }
+    }
+    let mut byte_pos = 0;
+    for run in &original_runs {
+        let run_end = byte_pos + run.len;
+        if run_end > back_start_ix {
+            let mut partial = run.clone();
+            if byte_pos < back_start_ix {
+                partial.len = run_end - back_start_ix;
+            }
+            result.push(partial);
+        }
+        byte_pos = run_end;
+    }
+    *runs = result;
 }
 
 /// A fragment of a line that can be wrapped.
@@ -555,7 +759,7 @@ impl WrapBoundaryCandidate {
 /// A boundary between two lines of text.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct Boundary {
-    /// The index of the last character in a line
+    /// The UTF-8 byte index at the start of the next line.
     pub ix: usize,
     /// The indent of the next line.
     pub next_indent: u32,
@@ -569,6 +773,8 @@ impl Boundary {
 
 #[cfg(test)]
 mod tests {
+    mod unicode;
+
     use super::*;
     use crate::{Font, FontFeatures, FontStyle, FontWeight, TestAppContext, TestDispatcher, font};
     #[cfg(target_os = "macos")]
@@ -606,12 +812,42 @@ mod tests {
     }
 
     #[test]
+    fn line_breaks_follow_solidus() {
+        let mut wrapper = build_wrapper();
+        let boundaries = wrapper
+            .wrap_line(
+                &[LineFragment::text("aaa/bbbb")],
+                px(60.),
+                IndentAdjustment::default(),
+            )
+            .collect::<Vec<_>>();
+        assert_eq!(boundaries, [Boundary::new(4, 0)]);
+    }
+
+    #[test]
+    fn wrapping_preserves_extended_graphemes() {
+        let mut wrapper = build_wrapper();
+        let boundaries = wrapper
+            .wrap_line(
+                &[LineFragment::text("e\u{301}e\u{301}")],
+                px(10.),
+                IndentAdjustment::default(),
+            )
+            .collect::<Vec<_>>();
+        assert_eq!(boundaries, [Boundary::new(3, 0)]);
+    }
+
+    #[test]
     fn test_wrap_line() {
         let mut wrapper = build_wrapper();
 
         assert_eq!(
             wrapper
-                .wrap_line(&[LineFragment::text("aa bbb cccc ddddd eeee")], px(72.))
+                .wrap_line(
+                    &[LineFragment::text("aa bbb cccc ddddd eeee")],
+                    px(72.),
+                    IndentAdjustment::default()
+                )
                 .collect::<Vec<_>>(),
             &[
                 Boundary::new(7, 0),
@@ -621,7 +857,11 @@ mod tests {
         );
         assert_eq!(
             wrapper
-                .wrap_line(&[LineFragment::text("aaa aaaaaaaaaaaaaaaaaa")], px(72.0))
+                .wrap_line(
+                    &[LineFragment::text("aaa aaaaaaaaaaaaaaaaaa")],
+                    px(72.0),
+                    IndentAdjustment::default()
+                )
                 .collect::<Vec<_>>(),
             &[
                 Boundary::new(4, 0),
@@ -631,7 +871,11 @@ mod tests {
         );
         assert_eq!(
             wrapper
-                .wrap_line(&[LineFragment::text("     aaaaaaa")], px(72.))
+                .wrap_line(
+                    &[LineFragment::text("     aaaaaaa")],
+                    px(72.),
+                    IndentAdjustment::default()
+                )
                 .collect::<Vec<_>>(),
             &[
                 Boundary::new(7, 5),
@@ -643,7 +887,8 @@ mod tests {
             wrapper
                 .wrap_line(
                     &[LineFragment::text("                            ")],
-                    px(72.)
+                    px(72.),
+                    IndentAdjustment::default()
                 )
                 .collect::<Vec<_>>(),
             &[
@@ -654,7 +899,11 @@ mod tests {
         );
         assert_eq!(
             wrapper
-                .wrap_line(&[LineFragment::text("          aaaaaaaaaaaaaa")], px(72.))
+                .wrap_line(
+                    &[LineFragment::text("          aaaaaaaaaaaaaa")],
+                    px(72.),
+                    IndentAdjustment::default()
+                )
                 .collect::<Vec<_>>(),
             &[
                 Boundary::new(7, 0),
@@ -672,7 +921,8 @@ mod tests {
                         LineFragment::text("aa bbb "),
                         LineFragment::text("cccc ddddd eeee")
                     ],
-                    px(72.)
+                    px(72.),
+                    IndentAdjustment::default()
                 )
                 .collect::<Vec<_>>(),
             &[
@@ -693,7 +943,8 @@ mod tests {
                         LineFragment::element(px(30.), 1),
                         LineFragment::text(" cccc")
                     ],
-                    px(72.)
+                    px(72.),
+                    IndentAdjustment::default()
                 )
                 .collect::<Vec<_>>(),
             &[
@@ -711,7 +962,8 @@ mod tests {
                         LineFragment::element(px(50.), 1),
                         LineFragment::text(" aaaa bbbb cccc dddd")
                     ],
-                    px(72.)
+                    px(72.),
+                    IndentAdjustment::default()
                 )
                 .collect::<Vec<_>>(),
             &[
@@ -731,7 +983,8 @@ mod tests {
                         LineFragment::element(px(100.), 1),
                         LineFragment::text(" more text")
                     ],
-                    px(72.)
+                    px(72.),
+                    IndentAdjustment::default()
                 )
                 .collect::<Vec<_>>(),
             &[
@@ -1001,74 +1254,32 @@ mod tests {
     }
 
     #[test]
-    fn test_is_word_char() {
-        #[track_caller]
-        fn assert_word(word: &str) {
-            for c in word.chars() {
-                assert!(
-                    LineWrapper::is_word_char(c),
-                    "assertion failed for '{}' (unicode 0x{:x})",
-                    c,
-                    c as u32
-                );
-            }
+    fn unicode_breaks_preserve_nonseparable_words() {
+        for word in [
+            "Hello123",
+            "var_name",
+            "123456",
+            "3.1415",
+            "100%",
+            "@mention",
+            "#hashtag",
+            "github.com",
+            "won’t",
+            "‘twas",
+            "ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏ",
+            "ĀāĂăĄąĆćĈĉĊċČčĎď",
+            "АБВГДЕЖЗИЙКЛМНОП",
+            "ThậmchíđếnkhithuachạychúngcònnhẫntâmgiếtnốtsốđôngtùchínhtrịởYênBáivàCaoBằng",
+            "গিয়েছিলেন",
+            "ছেলে",
+            "হচ্ছিল",
+        ] {
+            assert_eq!(
+                LineWrapper::break_indices(word).collect::<Vec<_>>(),
+                [0, word.len()],
+                "{word:?}"
+            );
         }
-
-        #[track_caller]
-        fn assert_not_word(word: &str) {
-            let found = word.chars().any(|c| !LineWrapper::is_word_char(c));
-            assert!(found, "assertion failed for '{}'", word);
-        }
-
-        assert_word("Hello123");
-        assert_word("non-English");
-        assert_word("var_name");
-        assert_word("123456");
-        assert_word("3.1415");
-        assert_word("10^2");
-        assert_word("1~2");
-        assert_word("100%");
-        assert_word("@mention");
-        assert_word("#hashtag");
-        assert_word("$variable");
-        assert_word("a=1");
-        assert_word("Self::is_word_char");
-        assert_word("on;");
-        assert_word("more⋯");
-        assert_word("won’t");
-        assert_word("‘twas");
-
-        // Space
-        assert_not_word("foo bar");
-
-        // URL case
-        assert_word("github.com");
-        assert_not_word("zed-industries/zed");
-        assert_not_word("zed-industries\\zed");
-        assert_not_word("a=1&b=2");
-        assert_not_word("foo?b=2");
-
-        // Latin-1 Supplement
-        assert_word("ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏ");
-        // Latin Extended-A
-        assert_word("ĀāĂăĄąĆćĈĉĊċČčĎď");
-        // Latin Extended-B
-        assert_word("ƀƁƂƃƄƅƆƇƈƉƊƋƌƍƎƏ");
-        // Cyrillic
-        assert_word("АБВГДЕЖЗИЙКЛМНОП");
-        // Vietnamese (https://github.com/zed-industries/zed/issues/23245)
-        assert_word("ThậmchíđếnkhithuachạychúngcònnhẫntâmgiếtnốtsốđôngtùchínhtrịởYênBáivàCaoBằng");
-        // Bengali
-        assert_word("গিয়েছিলেন");
-        assert_word("ছেলে");
-        assert_word("হচ্ছিল");
-
-        // non-word characters
-        assert_not_word("你好");
-        assert_not_word("안녕하세요");
-        assert_not_word("こんにちは");
-        assert_not_word("😀😁😂");
-        assert_not_word("()[]{}<>");
     }
 
     // These seem to vary wildly based on the text system.
@@ -1159,7 +1370,11 @@ mod tests {
 
         // The truncated text, when wrapped, must fit within max_lines lines.
         let wrap_count = wrapper
-            .wrap_line(&[LineFragment::text(&truncated)], wrap_width)
+            .wrap_line(
+                &[LineFragment::text(&truncated)],
+                wrap_width,
+                IndentAdjustment::default(),
+            )
             .count();
 
         assert!(
@@ -1224,7 +1439,11 @@ mod tests {
         );
 
         let wrap_count = wrapper
-            .wrap_line(&[LineFragment::text(&truncated)], wrap_width)
+            .wrap_line(
+                &[LineFragment::text(&truncated)],
+                wrap_width,
+                IndentAdjustment::default(),
+            )
             .count();
 
         assert!(

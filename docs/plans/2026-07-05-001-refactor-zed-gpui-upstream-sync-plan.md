@@ -336,6 +336,43 @@ native DirectWrite/rendering cohorts retain their own backend scope; they do not
 native Cosmic output by association.
 Affected UI core/components/docking/Canvas passes 2,964/2,964 across 25 binaries with no skips.
 
+### Unicode Wrapping, Indentation And Truncation Successor
+
+Continue from `f48d20d27862e45ff27fcd7ba4f261fd9119d0f7` against the same fixed Zed target.
+Reconcile `f0210f1621c6be9df4510a4356fa5049680e1c01`,
+`4f70d91bda7ec5f5600a000a0dc34391d9f1e96f` and the inherited omission
+`03a8544040ff95ec2e7921ca71c83799ad7f17cd` as one complete text workflow. Unicode line
+opportunities must agree across text fragments, inline elements, emergency grapheme wrapping and
+shaped-cluster layouts. Preserve the upstream RTL workaround without claiming general UAX #9
+caret support. Replace the obsolete script/punctuation heuristic rather than retaining two policies.
+
+Expose the explicit `IndentAdjustment` parameter and migrate public consumers. Preserve ordinary,
+extra-column, narrow-row, all-space and saturated indentation behavior. Route Middle truncation
+through public style and element measurement, retain both source ends and redistribute complete
+TextRuns. Correct the target's grapheme cuts in all truncation directions and wrapped End rather
+than importing those defects. Keep existing font-resolution/width generations, independent pooled
+width caches, admitted/aborted layout epochs and exact TextSystem lifetime.
+
+Use the target's non-complex-scripts ICU segmenter with compiled data; it does not qualify full
+complex-script segmentation. Review both lockfiles for only the necessary dependency closure,
+retain the independent application's compatible resolution, and execute the installed Rust 1.92
+compiler before qualifying that floor. Regress the actual old slash/grapheme failures, then exercise
+public headless shape/paint, style-driven truncation, notified reflow, repeated frames and window
+reconstruction. Record native Windows and headless Cosmic evidence separately. Font fallback
+priority, later layout/API work, other native platforms and measured budgets remain open.
+
+Consumer/review regressions extend the target adaptation: group actual visual glyphs by original
+source grapheme while retaining the first visual glyph's boundary, including marks preceding their
+RTL base across runs. Reconcile carried End content, zero-deletion Start candidates, explicit
+paragraphs at a one-row limit and CRLF against public unclamped shaping. Start and End now use
+one wrapper/paragraph authority rather than retaining the target's duplicate End walk. Candidate
+searches remove source before adding an affix and keep exact TextRun coverage. Empty trailing
+paragraphs may be omitted without an affix; wrapped Middle keeps the first/last paragraph ends
+together. Flat single-row and direct `truncate_line` semantics retain their separate policy.
+Bounded overflowing multiline probes are a correctness tradeoff, not a measured speedup. The
+[qualification](../verification.md#unicode-wrapping-indentation-and-middle-truncation) owns the
+executed source, public-style, native, compiler and dependency results.
+
 ## Maintained Baseline Before Engine Adaptation
 
 Finish a bounded framework refresh against the recorded November 5 Zed revision before expanding

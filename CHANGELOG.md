@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Breaking Changes and Migration Notes
 
+- `LineWrapper::wrap_line` now takes an explicit third `IndentAdjustment` argument. Pass `IndentAdjustment::default()` for matching indentation, or select `NoIndent` / `ExtraColumns(n)`. Exhaustive matches must also handle `TruncateFrom::Middle` and `TextOverflow::TruncateMiddle`.
 - Renderer-record fields `PolychromeSprite::grayscale` and `Underline::wavy` now use `PaddedBool32`: construct them with bool `.into()` values. Author-facing style and paint APIs still accept bool; custom GPU consumers read a fully initialized four-byte unsigned value.
 - `ArenaClearNeeded::clear` now requires the same `&mut App` used by `Window::draw`: migrate `window.draw(cx).clear()` to `window.draw(cx).clear(cx)`. Nested draws defer cleanup until the enclosing draw ends, and clear tokens reject another App.
 - Windows command dispatchers must handle `PlatformWindowCommand::CompleteNativeFrame`. The native backend uses the existing post-borrow command queue for DirectManipulation and IME maintenance after a retained frame request; unsupported custom backends must report that outcome.
@@ -58,6 +59,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Changed
 
+- Text wrapping follows Unicode line-break opportunities across fragments and inline elements, preserving complete graphemes during emergency wrapping and truncation. `Styled::text_ellipsis_middle()` retains both ends of overflowing labels with their source styles. Hyphenated words can now wrap after the hyphen.
 - Cosmic preserves original source indices and same-line geometry when paragraph separators split text into different BiDi directions. Font runs keep their configurations across segments, and missing-glyph reports retain whole original graphemes, including CRLF. Closest-hit queries now compare the final glyph cluster with the line end instead of jumping to the end for every position after that glyph's origin.
 - Windows font installation reselects already matched weights and named private fallbacks while retaining old glyph faces and unchanged FontIds. Native callback caching preserves synthesized faces instead of substituting a newer name-based selection. The corresponding CoreText implementation and deterministic regressions await macOS qualification.
 - Runtime font installation invalidates resolved descriptors, line layouts and character-width caches. Cosmic preserves existing face identities while refreshing fallback resolution, retains embedded font storage without copying it, and keeps fallback-only faces available after a primary-family lookup fails. Applications can observe complete missing graphemes through a replaceable, subscription-scoped callback on supported backends and explicitly redraw after installing fonts.

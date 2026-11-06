@@ -1069,6 +1069,208 @@ in this unit. The declared Rust 1.92 floor remains unchanged and unexecuted; nat
 browser execution, measured costs and full framework parity remain unqualified. Documentation
 closure does not require repeating the already green product cohorts.
 
+## Unicode Wrapping, Indentation And Middle Truncation
+
+The successor to `f48d20d27862e45ff27fcd7ba4f261fd9119d0f7` reconciles fixed-target
+`f0210f1621c6be9df4510a4356fa5049680e1c01`,
+`4f70d91bda7ec5f5600a000a0dc34391d9f1e96f` and the earlier omitted
+`03a8544040ff95ec2e7921ca71c83799ad7f17cd`. The baseline run fails both selected regressions
+(`b30402fc-e926-4119-acc2-801f06ccd65a`): `aaa/bbbb` breaks before the solidus, and repeated
+combining graphemes break inside their source clusters. Preserve these failures as the owning
+motivation rather than treating a symbol-level source match as qualification.
+
+The wrapper now segments complete fragment text with Unicode line-break opportunities, retains
+inline-element byte accounting and atomic widths, and keeps emergency cuts at complete grapheme
+boundaries. Explicit indentation covers ordinary, extra-column, saturated, narrow, all-space and
+carried-suffix cases. Shaped wrapping filters break opportunities through actual native cluster
+indices and retains the fixed target's RTL workaround. This is the non-complex-scripts segmenter,
+not full complex-script segmentation or general visual RTL caret qualification.
+
+Middle truncation flows through `TextOverflow`, fluent `Styled` and normal text measurement,
+preserving both source ends and exact output TextRuns. The target's character-wise cuts can
+detach combining marks in Middle, Start/End and wrapped End. Those owning walks now use source
+graphemes. A separate tiny-budget Start correction returns only the affix when no source content
+fits. An affix wider than the budget remains visible, preserving the existing truncation policy.
+The existing descriptor/width generations, independent width pool and single-Mutex candidate
+cache ownership remain; no global text state or second layout cache is introduced.
+
+The first focused run passes 52/52 (`9f3cc52c-f9f7-41b3-bdde-392d8b3ea373`), covering wrapper,
+shaped layout and pool/reconstruction cases. It precedes the additional tiny-budget Start test.
+The public Cosmic consumer initially fails to compile because its pointer assertion does not
+coerce `Arc<WindowTextSystem>` through to `TextSystem`; the explicit typed reference corrects the
+test. It then passes 1/1 (`f2ef743f-dfcf-463d-9f81-eebe41f69f11`). Its public Render/canvas
+shape/paint trajectory includes style-driven Middle output, exact multistyle byte redistribution,
+Unicode/emoji boundaries, explicit notifications, changed text size, narrower allocation, repeated
+frames, window reconstruction and final TextSystem release. It uses actual licensed Cosmic font
+fixtures and TestPlatform accepted paint; it does not establish native Cosmic GPU/compositor output
+or dedicated CJK glyph coverage.
+
+The root lock resolves ICU segmenter/data 2.3, with required ICU/zero-copy prerequisites, and the
+independent consumer resolves compatible ICU 2.4 alongside its existing Taffy/WGPU pins. The initial
+Cargo resolution proposed unrelated platform/HTTP/proc-macro upgrades; they were removed before
+acceptance. The retained root version changes are the necessary ICU/zero-copy closure, including
+Syn 3 for `zerovec-derive` alongside existing Syn 2. The existing duplicate policy records this
+actual coexistence. These dependency facts alone do not qualify a compiler floor or numeric cost.
+
+The independently locked public consumer passes both API tests
+(`c4a631af-08c4-44d4-b7c0-e21354778540`) using its own ICU 2.4 and WGPU/Taffy resolution.
+This first run precedes the shaped/truncation review corrections below and uses NoopTextSystem;
+it qualifies public API consumption rather than actual-font or native behavior.
+
+Independent correctness review identifies three remaining workflow defects in the adapted target:
+distinct shaped indices can still split one source grapheme, a fitting suffix carried into the
+last row is discarded by wrapped End, and wrapped Start's summed-width budget can exceed its
+actual row count. A filter retaining only source grapheme starts is insufficient for RTL marks:
+the boundary must move the first visual glyph with its source grapheme across font runs. These
+regressions require owning fixes and executed reruns before this unit closes.
+
+All four added regressions fail before correction
+(`8695b6cd-6c19-46d5-ac8a-b53a4f7e7a2a`), including both LTR/emoji source clusters and an RTL
+mark/base split across font runs. The layout owner now maps existing native indices to source
+graphemes in one source/glyph pass, groups adjacent visual glyphs by that identity and keeps each
+group's first actual glyph as the WrapBoundary. Painting retains all original glyphs. The UAX/native
+break intersection and source metrics remain. This removes the reproduced mark/base row split
+without claiming general visual RTL hit testing or logical reconstruction of reordered rows.
+
+The initial Wrapped End correction immediately records the furthest carried suffix that fits with continuation
+indentation and affix, including immediate overflow on entering the last row. Wrapped Start first
+checks real wrapper rows, then probes complete-grapheme suffixes with the same wrapper/newline
+rules. Its bounded search retains a fitting candidate instead of assuming summed widths prove
+row fit. It performs at most logarithmically many source probes; no new cache/shaping owner or
+measured speedup is claimed. Context-dependent exotic affixes are not a global maximal-suffix
+guarantee. The complete affix remains visible when it cannot fit by itself.
+The corrected focused cohort passes 57/57 (`c9fb7849-69d9-48dc-99cf-2f4c584d529b`), retaining
+all original wrapper, shaped-layout, font-generation, rejected-candidate and lifetime assertions.
+
+The expanded public style and two Windows native trajectories pass 3/3
+(`35a46ddc-ce9f-47f2-bdc5-bf4a497a3089`). Public `line_clamp` Start/End now checks the actual
+displayed affix, retained suffix, carried content and independently shaped row widths. Native
+DirectWrite paints the complete finite-width Unicode source and redistributed Middle runs in the
+same frame. The existing receipt predicate requires the exact accepted, Submitted, nonempty,
+rendered and diagnostics generation. Notification narrows 240px to 112px, increases wrap rows and
+shortens Middle, whose actual shaped width must fit each budget. Original tab/separator/source,
+notification, retirement and TextSystem/platform-release assertions remain. These fixtures are
+native paint/submission evidence, not compositor glyph-pixel or general fallback-priority proof.
+
+The complete all-feature Core/WGPU/Windows libraries plus both public text consumers pass
+1,245/1,245 (`669adc81-342d-4d69-9076-06e663266714`): Core 980, WGPU 66, Windows 197 and two
+public consumers. Four existing interactive Windows cases remain skipped. This retains the actual
+production renderer pipeline, native cached/deferred pixels, input, candidate refusal/retry, font
+installation and exact native release. It does not convert the Cosmic consumers' headless/software
+scope into native Cosmic GPU qualification.
+
+Further review identifies a zero-deletion Start candidate with incomplete TextRun coverage, an
+unhandled explicit newline at a one-row limit and a CRLF probe that removes a character retained
+by `shape_text`. Four additional regressions fail before correction
+(`1f4d5f23-384e-45ef-92d2-ae409df21ada`). They include public unclamped `shape_text` row counts,
+all three directions at a one-row limit and whole-grapheme Middle paragraph ends. The first
+component-cohort build was interrupted before execution to correct these known owning defects;
+the complete cohort must be rerun after the successor below.
+
+The final successor removes the duplicate End wrapping walk. Start and End share bounded actual
+wrapper probes over exact layout paragraph contents, including retained CR, and strictly remove
+source graphemes before adding an affix. Empty trailing LF/CRLF paragraphs can be omitted without
+an affix, retaining the established visible-content policy and exact adjusted runs. Wrapped Middle
+keeps complete first/last paragraph ends together through the affix; direct flat `truncate_line`
+semantics remain. Both overflowing multiline directions have bounded logarithmic probe counts;
+ordinary flat single-row labels retain their existing path. This is a correctness/ownership
+consolidation, not a measured performance improvement.
+The expanded focused cohort passes 62/62 (`30260147-a359-48b7-80ec-136b0120e73a`), combining
+61 owner regressions with the complete real-Cosmic public style/paint trajectory. The latter adds
+actual one-row Start/End/Middle controls, multi-paragraph Middle and indented Start. It checks
+adjusted styles and UTF-8 coverage, public unclamped shaping row counts, independently shaped
+row widths and existing notified reflow, reconstruction and final release.
+
+The final bounded review also reproduces an End trim splitting `Prepend + ASCII punctuation`
+(`11beb561-85fa-48d0-986c-0c53f14b0b2a`). Both flat and wrapped End now share a whole-grapheme
+trim: a trailing grapheme is removed only when every character meets the existing whitespace or
+ASCII-punctuation condition. The regression covers exact flat output, wrapped widths 1 through 6
+and exact TextRun coverage.
+
+The first actual Rust 1.92.0 framework check fails with E0658 at
+`gpui_util::TypeIdHasher`: `slice::as_array` is unstable on that compiler. Independent correction
+`8d35827da9a0bd335c3e85201ee82dbd77135224` uses `first_chunk::<8>()`, retaining the first eight
+native-endian bytes and the existing short-input policy. Its existing TypeId variety test and
+new exact eight-/nine-byte test pass 2/2 under Rust 1.92.0
+(`c2fab855-337e-4fbc-b7cd-6a2c21c476d3`). The declared floor remains unchanged; the complete
+affected/independent checks and final runtime cohorts follow this correction.
+The fixed target's `rust-toolchain.toml` pins Rust 1.98.1. That source environment is distinct
+from the extracted framework's actual minimum-compiler requirement.
+
+The next floor check exposes the existing profiler's unstable `std::hint::cold_path`; a private
+`#[cold]`/`#[inline(never)]` marker preserves its hint intent and leaves sampling/statistics work
+unchanged. A further check reaches Windows and rejects an existing `if let` match guard. The
+native owner now matches the decoder's exact eight button-message constants and chains the same
+decoder/handler; invalid XBUTTON still returns the existing default-handler path without pointer
+side effects. Independent bounded source review confirms message-set equivalence, disjoint arms,
+callback order and unchanged profiler state, with no P1/P2. Explicit malformed-XBUTTON native
+message execution is not newly qualified by that source review.
+The affected Core/WGPU/Windows all-feature/all-target check then passes under actual Rust 1.92.0
+on Windows 11. These are source-compatibility corrections rather than a raised compiler floor or
+measured performance claim; the independently locked consumer and final runtime cohorts follow.
+The independently locked consumer's all-target/all-feature check also passes on Rust 1.92.0,
+retaining its ICU 2.4, Taffy 0.10.0 and WGPU 30.0.1 resolution. Together with the affected
+framework check, this executes the declared compiler floor for the selected Windows closure.
+It does not qualify Linux/macOS/browser compilation or their runtime behavior.
+
+```text
+cargo +1.92.0 nextest run --locked -p open-gpui-core-util --lib -E 'test(type_id_hasher)' --test-threads=1 --no-fail-fast --no-tests fail
+cargo +1.92.0 check --locked -p open-gpui -p open-gpui-wgpu -p open-gpui-windows --all-features --all-targets
+cargo +1.92.0 check --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --all-targets --all-features
+```
+
+After the final paragraph, whole-grapheme trim and compiler-compatibility corrections, the complete
+all-feature Core/WGPU/Windows libraries plus both public text consumers pass 1,250/1,250
+(`b25bbe64-bdd7-4170-94bc-f6574df16ca0`): Core 985, WGPU 66, Windows 197 and public consumers 2.
+Four existing interactive Windows cases remain skipped. This supersedes the earlier 1,245-case
+source checkpoint for this unit and retains the complete native Unicode/Submitted trajectory,
+candidate refusal/retry, cached/deferred pixels, font installation and exact release assertions.
+
+The first final consumer build stops before test execution with MSVC `LNK1318: Unexpected PDB
+error; LIMIT (12)` while linking the Canvas test program. An owned retry is interrupted before
+execution after inspection finds less than 0.1 GiB free on the target volume. Twenty-five verified
+old Open-GPUI PDB files are removed without deleting source or the current test programs. The
+same component command then passes 2,964/2,964 across 25 binaries with no skipped cases
+(`197fc02e-5fe1-430c-8f9c-c6366522dacf`), retaining existing field, collection, overlay,
+docking and Canvas consumers. No acceptance assertion or product source changes for this retry.
+The independently locked public API consumer then passes all three tests
+(`ad32664d-0dad-4026-a2e2-1b4e68eb83c2`), including fragmented graphemes and wrapped Start's
+real row budget. This consumer retains NoopTextSystem scope. Eight additional obsolete
+prior-checkpoint symbols are removed to keep space for its build and the final checks.
+
+The verification workflow now includes a narrow Windows Rust 1.92 job for both locked checks above.
+The official toolchain action's `1.92.0` ref was verified, and the workflow parses as YAML. These
+commands passed locally; the new hosted job has not been executed or published in this continuation.
+
+Locked workspace all-target and independently locked consumer all-target/all-feature compilation,
+plus Core/WGPU/Windows all-target/all-feature correctness Clippy, pass on Windows 11/Rust 1.95.0
+with one build job. Existing nonblocking warnings remain. The existing dependency-policy tests
+first stop during compilation with `no space on device`, before execution. After removing verified
+ordinary object/cache files from eight old Open-GPUI incremental checkpoints, their unchanged
+command passes 2/2 (`067a7706-a6be-41f1-855f-324430ce415a`; 86 unrelated cases filtered out).
+Root and independent-consumer formatting checks also pass; they are explicitly rerun after the
+interruption. Earlier completed behavioral results retain their source scope after the user's
+subsequent build-cache cleanup; no product source changes for these environment recoveries.
+
+Independent text and compiler/native-dispatch reviews leave no outstanding P1/P2 in this unit.
+The new Cosmic public trajectory remains headless/software evidence; native DirectWrite/Submitted
+frames qualify their own backend. Complete complex-script segmentation, general visual RTL caret
+and logical reconstruction of reordered wrapped rows, configured fallback priority, other native
+platforms/browser, numeric costs, engine View integration and the full fixed-target refresh remain
+open. These changes establish no new Nara Editor or game-UI default.
+
+```text
+cargo +1.95.0 nextest run --locked -p open-gpui -p open-gpui-wgpu -p open-gpui-windows --all-features --lib --test paragraph_text --test wrapping_text --test-threads=1 --no-fail-fast --no-tests fail
+cargo +1.95.0 nextest run --locked -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-docking -p open-gpui-canvas --lib --tests --test-threads=1 --no-fail-fast --no-tests fail
+cargo +1.95.0 nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --all-features --test wrapping --test-threads=1 --no-fail-fast --no-tests fail
+cargo +1.95.0 check --locked --workspace --all-targets
+cargo +1.95.0 check --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --all-targets --all-features
+cargo +1.95.0 clippy --locked -p open-gpui -p open-gpui-wgpu -p open-gpui-windows --all-targets --all-features -- -D clippy::correctness
+cargo +1.95.0 nextest run --locked -p xtask --lib -E 'test(dependency_health::tests::)' --test-threads=1 --no-fail-fast --no-tests fail
+cargo +1.95.0 fmt --all -- --check
+cargo +1.95.0 fmt --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --all -- --check
+```
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:

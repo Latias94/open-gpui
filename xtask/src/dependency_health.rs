@@ -52,6 +52,7 @@ const ALLOWED_DUPLICATE_CRATES: &[&str] = &[
     "shlex",
     "skrifa",
     "spin",
+    "syn",
     "thiserror",
     "thiserror-impl",
     "toml",

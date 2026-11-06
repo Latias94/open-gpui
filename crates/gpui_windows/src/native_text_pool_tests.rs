@@ -1,5 +1,5 @@
 use super::*;
-use open_gpui::{LineFragment, font};
+use open_gpui::{IndentAdjustment, LineFragment, font};
 
 struct WrappedNativeText;
 
@@ -25,7 +25,9 @@ fn native_app_reconstruction_releases_wrapped_text_system_and_direct_write() {
         let fragments = [LineFragment::text("hello world 你好 ééé")];
         let expected = {
             let mut wrapper = text_system.line_wrapper(font("Segoe UI"), px(16.));
-            wrapper.wrap_line(&fragments, px(64.)).collect::<Vec<_>>()
+            wrapper
+                .wrap_line(&fragments, px(64.), IndentAdjustment::default())
+                .collect::<Vec<_>>()
         };
         assert!(!expected.is_empty());
         let window = app
@@ -48,7 +50,9 @@ fn native_app_reconstruction_releases_wrapped_text_system_and_direct_write() {
         {
             let mut wrapper = text_system.line_wrapper(font("Segoe UI"), px(16.));
             assert_eq!(
-                wrapper.wrap_line(&fragments, px(64.)).collect::<Vec<_>>(),
+                wrapper
+                    .wrap_line(&fragments, px(64.), IndentAdjustment::default())
+                    .collect::<Vec<_>>(),
                 expected
             );
         }

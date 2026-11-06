@@ -77,7 +77,9 @@ fn pooled_line_wrappers_do_not_retain_text_system() {
     let weak_text_system = Arc::downgrade(&text_system);
     let mut wrapper = text_system.line_wrapper(font(".OpenGpuiMono"), px(16.));
     let fragments = [LineFragment::text("hello world 你好")];
-    wrapper.wrap_line(&fragments, px(40.)).for_each(drop);
+    wrapper
+        .wrap_line(&fragments, px(40.), IndentAdjustment::default())
+        .for_each(drop);
     drop(wrapper);
     drop(text_system);
     drop(platform);
@@ -95,12 +97,16 @@ fn checked_out_wrapper_keeps_text_system_alive_until_its_last_handle_drops() {
     drop(text_system);
 
     let fragments = [LineFragment::text("hello world 你好")];
-    let expected = first.wrap_line(&fragments, px(40.)).collect::<Vec<_>>();
+    let expected = first
+        .wrap_line(&fragments, px(40.), IndentAdjustment::default())
+        .collect::<Vec<_>>();
     assert!(!expected.is_empty());
     drop(first);
     assert!(weak.upgrade().is_some());
     assert_eq!(
-        second.wrap_line(&fragments, px(40.)).collect::<Vec<_>>(),
+        second
+            .wrap_line(&fragments, px(40.), IndentAdjustment::default())
+            .collect::<Vec<_>>(),
         expected
     );
     drop(second);
@@ -114,7 +120,9 @@ fn returned_ascii_and_unicode_width_caches_are_reused_by_overlapping_handles() {
     let fragments = [LineFragment::text("a a 中 中 é é")];
     let mut first = text_system.line_wrapper(font("primary"), px(16.));
     let mut second = text_system.line_wrapper(font("primary"), px(16.));
-    let expected = first.wrap_line(&fragments, px(40.)).collect::<Vec<_>>();
+    let expected = first
+        .wrap_line(&fragments, px(40.), IndentAdjustment::default())
+        .collect::<Vec<_>>();
     assert!(!expected.is_empty());
     let cold_layouts = platform.layouts.load(Ordering::Relaxed);
     assert!(cold_layouts > 0);
@@ -122,12 +130,16 @@ fn returned_ascii_and_unicode_width_caches_are_reused_by_overlapping_handles() {
 
     let mut reused = text_system.line_wrapper(font("primary"), px(16.));
     assert_eq!(
-        reused.wrap_line(&fragments, px(40.)).collect::<Vec<_>>(),
+        reused
+            .wrap_line(&fragments, px(40.), IndentAdjustment::default())
+            .collect::<Vec<_>>(),
         expected
     );
     assert_eq!(platform.layouts.load(Ordering::Relaxed), cold_layouts);
     assert_eq!(
-        second.wrap_line(&fragments, px(40.)).collect::<Vec<_>>(),
+        second
+            .wrap_line(&fragments, px(40.), IndentAdjustment::default())
+            .collect::<Vec<_>>(),
         expected
     );
     assert_eq!(platform.layouts.load(Ordering::Relaxed), cold_layouts * 2);
@@ -137,11 +149,15 @@ fn returned_ascii_and_unicode_width_caches_are_reused_by_overlapping_handles() {
     let mut first = text_system.line_wrapper(font("primary"), px(16.));
     let mut second = text_system.line_wrapper(font("primary"), px(16.));
     assert_eq!(
-        first.wrap_line(&fragments, px(40.)).collect::<Vec<_>>(),
+        first
+            .wrap_line(&fragments, px(40.), IndentAdjustment::default())
+            .collect::<Vec<_>>(),
         expected
     );
     assert_eq!(
-        second.wrap_line(&fragments, px(40.)).collect::<Vec<_>>(),
+        second
+            .wrap_line(&fragments, px(40.), IndentAdjustment::default())
+            .collect::<Vec<_>>(),
         expected
     );
     assert_eq!(platform.layouts.load(Ordering::Relaxed), cold_layouts * 2);
@@ -153,19 +169,25 @@ fn pooled_width_caches_remain_partitioned_by_resolved_font_and_size() {
     let text_system = Arc::new(TextSystem::new(platform.clone()));
     let fragments = [LineFragment::text("a a 中 中 é é")];
     let mut primary = text_system.line_wrapper(font("primary"), px(16.));
-    let expected = primary.wrap_line(&fragments, px(40.)).collect::<Vec<_>>();
+    let expected = primary
+        .wrap_line(&fragments, px(40.), IndentAdjustment::default())
+        .collect::<Vec<_>>();
     let cold_layouts = platform.layouts.load(Ordering::Relaxed);
     drop(primary);
 
     let mut secondary = text_system.line_wrapper(font("secondary"), px(16.));
-    let secondary_breaks = secondary.wrap_line(&fragments, px(40.)).collect::<Vec<_>>();
+    let secondary_breaks = secondary
+        .wrap_line(&fragments, px(40.), IndentAdjustment::default())
+        .collect::<Vec<_>>();
     assert_ne!(secondary_breaks, expected);
     assert_eq!(platform.layouts.load(Ordering::Relaxed), cold_layouts * 2);
     drop(secondary);
 
     let mut larger = text_system.line_wrapper(font("primary"), px(32.));
     assert_eq!(
-        larger.wrap_line(&fragments, px(40.)).collect::<Vec<_>>(),
+        larger
+            .wrap_line(&fragments, px(40.), IndentAdjustment::default())
+            .collect::<Vec<_>>(),
         secondary_breaks
     );
     assert_eq!(platform.layouts.load(Ordering::Relaxed), cold_layouts * 3);
@@ -173,7 +195,9 @@ fn pooled_width_caches_remain_partitioned_by_resolved_font_and_size() {
 
     let mut primary = text_system.line_wrapper(font("primary"), px(16.));
     assert_eq!(
-        primary.wrap_line(&fragments, px(40.)).collect::<Vec<_>>(),
+        primary
+            .wrap_line(&fragments, px(40.), IndentAdjustment::default())
+            .collect::<Vec<_>>(),
         expected
     );
     assert_eq!(platform.layouts.load(Ordering::Relaxed), cold_layouts * 3);
@@ -188,14 +212,18 @@ fn unwinding_returns_width_cache_without_retaining_the_text_system() {
     assert!(
         catch_unwind(AssertUnwindSafe(|| {
             let mut wrapper = text_system.line_wrapper(font("primary"), px(16.));
-            wrapper.wrap_line(&fragments, px(40.)).for_each(drop);
+            wrapper
+                .wrap_line(&fragments, px(40.), IndentAdjustment::default())
+                .for_each(drop);
             panic!("abandoned text layout");
         }))
         .is_err()
     );
     let layouts = platform.layouts.load(Ordering::Relaxed);
     let mut wrapper = text_system.line_wrapper(font("primary"), px(16.));
-    wrapper.wrap_line(&fragments, px(40.)).for_each(drop);
+    wrapper
+        .wrap_line(&fragments, px(40.), IndentAdjustment::default())
+        .for_each(drop);
     assert_eq!(platform.layouts.load(Ordering::Relaxed), layouts);
     drop(wrapper);
     drop(text_system);

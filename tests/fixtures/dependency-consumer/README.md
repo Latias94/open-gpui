@@ -43,3 +43,14 @@ This is a source compilation and dependency resolution gate. It requires the nor
 prerequisites for the host platform. No application launch or test framework is required. Passing
 the gate does not qualify native window behavior, visual output, GPU execution, or the declared
 minimum Rust version. Platform runtime features and renderer execution need separate validation.
+
+The optional public text tests consume `IndentAdjustment`, Unicode wrapping, Middle truncation and
+the fluent style API through this independent lockfile. Run them separately from compilation:
+
+```text
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --all-features --test wrapping --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+These tests use `NoopTextSystem` for deterministic boundary and run checks. They do not launch the
+application or establish real-font, native, GPU or compiler-floor qualification. The framework's
+separate wrapping consumer uses actual Cosmic fonts and public headless paint.

@@ -1,4 +1,5 @@
 use crate::{FontId, GlyphId, Pixels, PlatformTextSystem, Point, SharedString, Size, point, px};
+use itertools::Itertools as _;
 use open_gpui_collections::FxHashMap;
 use parking_lot::{Mutex, MutexGuard};
 use smallvec::SmallVec;
@@ -11,6 +12,7 @@ use std::{
         atomic::{AtomicUsize, Ordering},
     },
 };
+use unicode_segmentation::UnicodeSegmentation as _;
 
 use super::LineWrapper;
 
@@ -133,7 +135,7 @@ impl LineLayout {
         max_lines: Option<usize>,
     ) -> SmallVec<[WrapBoundary; 1]> {
         let mut boundaries = SmallVec::new();
-        let mut first_non_whitespace_ix = None;
+        let mut current_segment: Option<Range<usize>> = None;
         let mut last_candidate_ix = None;
         let mut last_candidate_x = px(0.);
         let mut last_boundary = WrapBoundary {
@@ -141,44 +143,61 @@ impl LineLayout {
             glyph_ix: 0,
         };
         let mut last_boundary_x = px(0.);
-        let mut prev_ch = '\0';
+        let mut glyph_graphemes = self
+            .runs
+            .iter()
+            .flat_map(|run| run.glyphs.iter().map(|glyph| (glyph.index, glyph.index)))
+            .collect::<FxHashMap<_, _>>();
+        for (start, grapheme) in text.grapheme_indices(true) {
+            for (offset, _) in grapheme.char_indices() {
+                if let Some(index) = glyph_graphemes.get_mut(&(start + offset)) {
+                    *index = start;
+                }
+            }
+        }
+        let break_indices = LineWrapper::break_indices(text)
+            .filter(|index| glyph_graphemes.get(index) == Some(index))
+            .collect::<Vec<_>>();
+        let glyph_graphemes = &glyph_graphemes;
         let mut glyphs = self
             .runs
             .iter()
             .enumerate()
             .flat_map(move |(run_ix, run)| {
                 run.glyphs.iter().enumerate().map(move |(glyph_ix, glyph)| {
-                    let character = text[glyph.index..].chars().next().unwrap();
                     (
                         WrapBoundary { run_ix, glyph_ix },
-                        character,
+                        glyph_graphemes[&glyph.index],
                         glyph.position.x,
                     )
                 })
             })
+            .dedup_by(|(_, previous_index, ..), (_, index, ..)| previous_index == index)
             .peekable();
 
-        while let Some((boundary, ch, x)) = glyphs.next() {
-            if ch == '\n' {
+        while let Some((boundary, index, x)) = glyphs.next() {
+            let byte = text.as_bytes()[index];
+            if byte == b'\n' {
                 continue;
             }
 
-            // Here is very similar to `LineWrapper::wrap_line` to determine text wrapping,
-            // but there are some differences, so we have to duplicate the code here.
-            if LineWrapper::is_word_char(ch) {
-                if prev_ch == ' ' && ch != ' ' && first_non_whitespace_ix.is_some() {
+            if byte != b' '
+                && current_segment
+                    .as_ref()
+                    .is_none_or(|segment| !segment.contains(&index))
+            {
+                let segment = break_indices.partition_point(|break_index| *break_index <= index);
+                if current_segment.is_some() {
                     last_candidate_ix = Some(boundary);
                     last_candidate_x = x;
                 }
-            } else {
-                if ch != ' ' && first_non_whitespace_ix.is_some() {
-                    last_candidate_ix = Some(boundary);
-                    last_candidate_x = x;
-                }
-            }
-
-            if ch != ' ' && first_non_whitespace_ix.is_none() {
-                first_non_whitespace_ix = Some(boundary);
+                let start = segment
+                    .checked_sub(1)
+                    .and_then(|previous| break_indices.get(previous))
+                    .copied()
+                    .unwrap_or(0);
+                let end = break_indices.get(segment).copied().unwrap_or(text.len());
+                current_segment = Some(start..end);
             }
 
             let next_x = glyphs.peek().map_or(self.width, |(_, _, x)| *x);
@@ -201,7 +220,6 @@ impl LineLayout {
                 }
                 boundaries.push(last_boundary);
             }
-            prev_ch = ch;
         }
 
         boundaries
@@ -1072,6 +1090,9 @@ mod hit_test_tests;
 
 #[cfg(test)]
 mod font_generation_tests;
+
+#[cfg(test)]
+mod wrapping_tests;
 
 #[cfg(test)]
 mod tests {
