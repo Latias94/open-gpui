@@ -5575,6 +5575,8 @@ pub trait PlatformTextSystem: Send + Sync {
     fn all_font_names(&self) -> Vec<String>;
     /// Get the font ID for a font descriptor.
     fn font_id(&self, descriptor: &Font) -> Result<FontId>;
+    /// Prewarm platform caches used to shape text with these already resolved fonts.
+    fn prewarm_fonts(&self, _font_ids: &[FontId]) {}
     /// Get metrics for a font.
     fn font_metrics(&self, font_id: FontId) -> FontMetrics;
     /// Get typographic bounds for a glyph.

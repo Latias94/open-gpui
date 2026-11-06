@@ -44,7 +44,21 @@ const MONO: usize = 1;
 
 struct ObservedTextSystem {
     platform: Arc<CosmicTextSystem>,
-    rasterized: Mutex<Vec<(FontId, GlyphId)>>,
+    prewarmed: Mutex<Vec<Vec<FontId>>>,
+    rasters: Mutex<Vec<GlyphRasterObservation>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum GlyphRasterPhase {
+    Bounds,
+    Raster,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct GlyphRasterObservation {
+    phase: GlyphRasterPhase,
+    params: RenderGlyphParams,
+    bounds: Bounds<DevicePixels>,
 }
 
 impl PlatformTextSystem for ObservedTextSystem {
@@ -64,6 +78,11 @@ impl PlatformTextSystem for ObservedTextSystem {
         self.platform.font_id(font)
     }
 
+    fn prewarm_fonts(&self, font_ids: &[FontId]) {
+        self.platform.prewarm_fonts(font_ids);
+        self.prewarmed.lock().unwrap().push(font_ids.to_vec());
+    }
+
     fn font_metrics(&self, id: FontId) -> FontMetrics {
         self.platform.font_metrics(id)
     }
@@ -81,7 +100,13 @@ impl PlatformTextSystem for ObservedTextSystem {
     }
 
     fn glyph_raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
-        self.platform.glyph_raster_bounds(params)
+        let bounds = self.platform.glyph_raster_bounds(params)?;
+        self.rasters.lock().unwrap().push(GlyphRasterObservation {
+            phase: GlyphRasterPhase::Bounds,
+            params: params.clone(),
+            bounds,
+        });
+        Ok(bounds)
     }
 
     fn rasterize_glyph(
@@ -90,11 +115,13 @@ impl PlatformTextSystem for ObservedTextSystem {
         bounds: Bounds<DevicePixels>,
     ) -> Result<(Size<DevicePixels>, Vec<u8>)> {
         let raster = self.platform.rasterize_glyph(params, bounds)?;
+        assert_eq!(raster.0, bounds.size);
         assert!(raster.1.iter().any(|byte| *byte != 0));
-        self.rasterized
-            .lock()
-            .unwrap()
-            .push((params.font_id, params.glyph_id));
+        self.rasters.lock().unwrap().push(GlyphRasterObservation {
+            phase: GlyphRasterPhase::Raster,
+            params: params.clone(),
+            bounds,
+        });
         Ok(raster)
     }
 
@@ -105,6 +132,40 @@ impl PlatformTextSystem for ObservedTextSystem {
     fn recommended_rendering_mode(&self, id: FontId, size: Pixels) -> TextRenderingMode {
         self.platform.recommended_rendering_mode(id, size)
     }
+}
+
+/// Checks fresh public paint keys at the bounds-to-raster boundary.
+/// Backend unit tests separately establish actual image-generation reuse.
+fn assert_fresh_paint_handoffs(
+    observations: &[GlyphRasterObservation],
+    font_size: Pixels,
+    scale_factor: f32,
+) {
+    let mut raster_count = 0;
+    for (index, observation) in observations.iter().enumerate() {
+        if observation.phase != GlyphRasterPhase::Raster {
+            continue;
+        }
+        raster_count += 1;
+        assert_eq!(observation.params.font_size, font_size);
+        assert_eq!(observation.params.scale_factor, scale_factor);
+        assert!(!observation.params.is_emoji);
+        assert!(!observation.params.subpixel_rendering);
+        assert_eq!(observation.params.dilation, 0);
+        assert!(observation.bounds.size.width.0 > 0);
+        assert!(observation.bounds.size.height.0 > 0);
+        let bounds = index
+            .checked_sub(1)
+            .map(|previous| &observations[previous])
+            .expect("a fresh public raster must follow its bounds request");
+        assert_eq!(bounds.phase, GlyphRasterPhase::Bounds);
+        assert_eq!(bounds.params, observation.params);
+        assert_eq!(bounds.bounds, observation.bounds);
+    }
+    assert!(
+        raster_count > 0,
+        "the public paint must rasterize real glyphs"
+    );
 }
 
 type RunRecipe = &'static [(usize, usize)];
@@ -512,7 +573,8 @@ fn paragraph_text_survives_headless_notification_layout_resize_and_reconstructio
     let platform = Arc::new(CosmicTextSystem::new_without_system_fonts("IBM Plex Sans"));
     let observed = Arc::new(ObservedTextSystem {
         platform: platform.clone(),
-        rasterized: Mutex::default(),
+        prewarmed: Mutex::default(),
+        rasters: Mutex::default(),
     });
     let mut app = HeadlessAppContext::new(observed.clone());
     app.update(|cx| {
@@ -539,11 +601,19 @@ fn paragraph_text_survives_headless_notification_layout_resize_and_reconstructio
         platform.all_font_names(),
         ["IBM Plex Sans", "Lilex", "Noto Sans Hebrew"],
     );
+    assert_eq!(text_system.all_font_names(), platform.all_font_names());
     let fonts = ["IBM Plex Sans", "Lilex"].map(|family| Font {
         features: FontFeatures::disable_ligatures(),
         fallbacks: Some(FontFallbacks::from_fonts(vec!["Noto Sans Hebrew".into()])),
         ..font(family)
     });
+    text_system.prewarm_fonts(&fonts);
+    let prewarmed_ids = fonts.each_ref().map(|font| text_system.resolve_font(font));
+    assert_eq!(
+        observed.prewarmed.lock().unwrap().as_slice(),
+        &[prewarmed_ids.to_vec()],
+    );
+    assert!(observed.rasters.lock().unwrap().is_empty());
     for font in &fonts {
         let primary = text_system.resolve_font(font);
         assert!(platform.glyph_for_char(primary, 'א').is_none());
@@ -570,8 +640,9 @@ fn paragraph_text_survives_headless_notification_layout_resize_and_reconstructio
         }
     })?;
     let root = handle.root(&mut app)?;
-    app.update_window(handle.into(), |_, window, _| {
+    let scale_factor = app.update_window(handle.into(), |_, window, _| {
         assert_eq!(window.viewport_size(), size(px(640.), px(440.)));
+        window.scale_factor()
     })?;
     let notifications = Rc::new(RefCell::new(0));
     let notification_subscription = app.update(|cx| {
@@ -586,14 +657,20 @@ fn paragraph_text_survives_headless_notification_layout_resize_and_reconstructio
         .clone();
     assert_eq!(initial.version, 0);
     assert_eq!(initial.wrapped_rows(), 2);
-    let paint_rasters = observed.rasterized.lock().unwrap().clone();
+    let paint_rasters = observed.rasters.lock().unwrap().clone();
+    assert_fresh_paint_handoffs(&paint_rasters, px(24.), scale_factor);
     for expected in [GlyphId(3), GlyphId(12)] {
-        assert!(paint_rasters.iter().any(
-            |(font, glyph)| *glyph == expected && platform.glyph_for_char(*font, 'm').is_none()
-        ));
+        assert!(paint_rasters.iter().any(|raster| {
+            raster.phase == GlyphRasterPhase::Raster
+                && raster.params.glyph_id == expected
+                && platform
+                    .glyph_for_char(raster.params.font_id, 'm')
+                    .is_none()
+        }));
     }
     assert_real_glyphs_and_software_rasters(&platform, &initial)?;
 
+    let rasters_before_notification = observed.rasters.lock().unwrap().len();
     handle.update(&mut app, |view, _, cx| {
         view.font_size = px(28.);
         view.version = 1;
@@ -610,6 +687,11 @@ fn paragraph_text_survives_headless_notification_layout_resize_and_reconstructio
         .clone();
     assert_eq!(notified.version, 1);
     assert!(notified.lines[0].layout.width > initial.lines[0].layout.width);
+    assert_fresh_paint_handoffs(
+        &observed.rasters.lock().unwrap()[rasters_before_notification..],
+        px(28.),
+        scale_factor,
+    );
     assert_real_glyphs_and_software_rasters(&platform, &notified)?;
 
     handle.update(&mut app, |view, _, cx| {
@@ -636,11 +718,17 @@ fn paragraph_text_survives_headless_notification_layout_resize_and_reconstructio
     let mut revision = resized_revision;
     for _ in 0..2 {
         let paint_count = paints.borrow().len();
+        let raster_count = observed.rasters.lock().unwrap().len();
         app.update_window(handle.into(), |_, window, _| window.refresh())?;
         let next_revision = draw_frame(&mut app, handle)?;
         assert!(next_revision > revision);
         assert!(paints.borrow().len() > paint_count);
         paints.borrow().last().unwrap().assert_same_text(&resized);
+        assert_eq!(
+            observed.rasters.lock().unwrap().len(),
+            raster_count,
+            "unchanged redraws exercise the existing atlas cache control",
+        );
         revision = next_revision;
     }
 
@@ -653,7 +741,13 @@ fn paragraph_text_survives_headless_notification_layout_resize_and_reconstructio
     assert!(Arc::ptr_eq(app.text_system(), &text_system));
     app.update(|cx| assert!(Arc::ptr_eq(cx.text_system(), &text_system)));
 
-    let rasters_before_reconstruction = observed.rasterized.lock().unwrap().len();
+    let rasters_before_reconstruction = observed
+        .rasters
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|raster| raster.phase == GlyphRasterPhase::Raster)
+        .count();
     let reconstructed = app.open_window(size(px(360.), px(440.)), {
         let platform = platform.clone();
         let paints = paints.clone();
@@ -673,7 +767,16 @@ fn paragraph_text_survives_headless_notification_layout_resize_and_reconstructio
         assert_eq!(window.viewport_size(), size(px(360.), px(440.)));
     })?;
     draw_frame(&mut app, reconstructed)?;
-    assert!(observed.rasterized.lock().unwrap().len() > rasters_before_reconstruction);
+    assert!(
+        observed
+            .rasters
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|raster| raster.phase == GlyphRasterPhase::Raster)
+            .count()
+            > rasters_before_reconstruction
+    );
     let rebuilt = paints
         .borrow()
         .last()
@@ -694,11 +797,17 @@ fn paragraph_text_survives_headless_notification_layout_resize_and_reconstructio
     drop(close_subscription);
 
     let text_lifetime = Arc::downgrade(&text_system);
+    let observed_lifetime = Arc::downgrade(&observed);
+    let platform_lifetime = Arc::downgrade(&platform);
     drop(text_system);
     assert_eq!(*shutdowns.borrow(), 0);
     drop(app);
     assert_eq!(*shutdowns.borrow(), 1);
     drop(shutdown_subscription);
     assert!(text_lifetime.upgrade().is_none());
+    drop(observed);
+    assert!(observed_lifetime.upgrade().is_none());
+    drop(platform);
+    assert!(platform_lifetime.upgrade().is_none());
     Ok(())
 }

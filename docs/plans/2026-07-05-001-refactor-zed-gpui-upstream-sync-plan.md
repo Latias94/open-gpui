@@ -373,6 +373,93 @@ Bounded overflowing multiline probes are a correctness tradeoff, not a measured 
 [qualification](../verification.md#unicode-wrapping-indentation-and-middle-truncation) owns the
 executed source, public-style, native, compiler and dependency results.
 
+### Font Preparation, Inventory And Raster Work Successor
+
+Continue from `b466037e87e17f11e7acce70706b7866edda3ca1` against the same fixed Zed target.
+Reconcile `f1d27d545e79f98ffde7ebf3229f8eb8bad791aa`,
+`5b4a2153a087055a7f9cb3464f188f1cab9fd678` and
+`1ff7cb669b6351eaf2a5b79ccb40f5cd1676b8f8` through existing TextSystem/platform/Cosmic owners.
+Keep the upstream application's startup policy outside the extracted framework closure.
+
+Expose explicit `TextSystem::prewarm_fonts(&[Font])` and an optional platform hook. Resolve complete
+descriptors through the existing generation-aware cache, deduplicate resolved IDs, and prime
+Cosmic's actual primary/fallback match attributes using the same properties as normal shaping.
+No new thread, task owner or automatic redraw is required. Callers choose when to prepare and
+can use their existing background executor. Successful installation retains its current
+invalidation rules; failed installation retains the prior cache and usable layouts.
+
+Return only sorted unique platform-reported families from `all_font_names`, including registered
+fonts. Do not inject guessed fallback candidates or virtual aliases. Existing aliases still
+resolve; a reported fallback-only family need not pass the backend's Latin-primary eligibility
+check. Preserve old face IDs, glyph bytes, paragraph/source geometry and configured FontRuns.
+
+Preparation can load another descriptor for an already observed native face. DirectWrite's
+callback identity must retain the first mapping for that physical face, without merging distinct
+input descriptors, features or fallbacks. The native installation consumer exposes this defect;
+the independent alias regression and correction are committed as `19a4ed3434a`. Keep the actual
+source, retained-glyph repaint and exact native retirement assertions in the complete consumer.
+
+Reuse a rendered Cosmic glyph image between bounds measurement and atlas rasterization using its
+complete RenderGlyphParams key. The target's unbounded pending-image map needs a bounded local
+handoff for measurement-only custom consumers: cap pending entries at 256 and retained image
+buffer capacity at 8 MiB. Admission pressure evicts temporary images and later rasterization
+recomputes normally; it cannot reject or truncate glyphs. Empty/error results retain no pending
+image. Track replacement/consumption accurately and retain direct-raster, interleaved-key,
+repeated-raster and post-installation recovery. This bounds the new temporary image storage,
+not the existing bounds cache, atlas, total font memory or process retention.
+
+Reproduce the invented-name failure first. Use actual Swash generation attempts, cold pixel
+oracles and exact source/size/scale controls to distinguish new reuse from existing atlas hits.
+Extend existing public headless shape/paint/reconstruction, Windows installation/Submitted/close
+and independently locked consumers. Preserve generation, candidate refusal/retry and old-face
+evidence. Count concrete queries/image generation and state the bound without claiming frame-time,
+retained-process or cross-platform performance qualification. Run focused regressions, affected
+runtime/component/native cohorts and compiler/consumer checks serially before this unit closes.
+
+The [completed qualification](../verification.md#font-preparation-inventory-and-raster-reuse)
+records the original inventory/alias failures, bounded-handoff cold pixel/work controls and exact
+native installation/retirement. Final Core/WGPU/Windows plus public text passes 1,268/1,268 with
+four existing interactive Windows cases skipped; affected UI core/components/docking/Canvas
+passes 2,964/2,964 and independently locked public API tests pass 5/5. Locked compilation,
+correctness Clippy, formatting and actual Windows Rust 1.92.0 affected-framework/independent
+checks pass. This closes the scoped font-work unit without qualifying other platforms, complete
+fallback/script support, numeric costs, canonical docking or engine integration.
+
+### Queued Text Split, Layers And Underline Successor
+
+After the font-work qualification, reconcile `2936989f1b`, `f792c2d72d`, `bda9c0bd43` and
+`0dea8c63d9` against the same fixed target. A bounded source comparison at fork `19a4ed3434`
+identifies missing raw LineLayout split/paint, ShapedLineCursor, public TextLayout background/
+foreground passes and underline callbacks/exclusions. Existing ShapedLine split and low-level
+background/foreground painting remain the starting owners. This is queued source evidence,
+not an implemented or executed successor.
+
+Preserve these complete consumer requirements:
+
+- Shape, split and paint multibyte source with multiple font/decoration runs. Check complete
+  source reconstruction, retained glyphs and rebased byte/position geometry. Cursor boundaries
+  are monotonic UTF-8 character boundaries; repeated boundaries are valid, while backward,
+  out-of-range and interior-byte requests are refused according to the selected public contract.
+- Define visually reordered split semantics before porting the fallback. The target's cursor
+  falls back to the old split for unordered glyph indices, but that split uses `partition_point`.
+  Equality with that implementation is not an independent correctness oracle. Actual Hebrew and
+  mixed-direction consumers must check glyph membership, finite geometry and index rebasing;
+  retain any unsupported script/caret scope explicitly.
+- Let a measured custom element paint opaque text backgrounds, insert its own highlight and
+  then paint foreground once. Shared layer footprints must contain every aligned wrapped row,
+  including centered/right-aligned text, narrow/wide allocations, empty text and overlapping
+  clipped content. Preserve ordinary combined painting, redraw and reconstruction.
+- Expose underline byte ranges and the existing zero-advance geometry adjustment through the
+  same paint owner. Preserve callback forwarding, style transitions and final range settlement.
+  Adapt absolute scaled-device exclusion ranges through the fork's existing underline projection,
+  subtree transforms and clip authority. Keep full-line geometry/wave phase while masking visible
+  segments; cover unordered, overlapping, adjacent, out-of-range and fully covering exclusions,
+  opacity, fractional origins and scales 1, 1.25, 1.5, 2 and 3.
+
+Use the existing public headless/native and independently locked consumers, with actual source/
+geometry and pixel oracles where relevant. No Zed diagnostics owner, new layout authority or
+separate text renderer is required. Window-local Rc and Taffy migration remain separate units.
+
 ## Maintained Baseline Before Engine Adaptation
 
 Finish a bounded framework refresh against the recorded November 5 Zed revision before expanding

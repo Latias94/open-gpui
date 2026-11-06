@@ -54,3 +54,12 @@ cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml 
 These tests use `NoopTextSystem` for deterministic boundary and run checks. They do not launch the
 application or establish real-font, native, GPU or compiler-floor qualification. The framework's
 separate wrapping consumer uses actual Cosmic fonts and public headless paint.
+
+The optional `fonts` tests exercise public prewarming and backend-only family inventory. With
+`wgpu-renderer`, the same independently locked consumer installs tracked Cosmic fonts, shapes
+mixed text, installs another face and retains the old layout, glyph bytes and exact text/backend
+lifetime. It uses software rasterization and does not establish native window or GPU output:
+
+```text
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --all-features --test fonts --test-threads=1 --no-fail-fast --no-tests fail
+```

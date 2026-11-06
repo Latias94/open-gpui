@@ -7,6 +7,8 @@ pub(crate) struct DynamicPlatform {
     installed: AtomicBool,
     lookups: AtomicUsize,
     layouts: AtomicUsize,
+    descriptors: Mutex<Vec<Font>>,
+    prewarmed: Mutex<Vec<Vec<FontId>>>,
 }
 
 impl PlatformTextSystem for DynamicPlatform {
@@ -19,16 +21,21 @@ impl PlatformTextSystem for DynamicPlatform {
     }
 
     fn all_font_names(&self) -> Vec<String> {
-        vec!["primary".into(), "Arial".into()]
+        vec!["primary".into(), "Arial".into(), "primary".into()]
     }
 
     fn font_id(&self, descriptor: &Font) -> Result<FontId> {
         self.lookups.fetch_add(1, Ordering::Relaxed);
+        self.descriptors.lock().push(descriptor.clone());
         match descriptor.family.as_str() {
             "primary" | "Arial" => Ok(FontId(1)),
             "late" if self.installed.load(Ordering::Acquire) => Ok(FontId(2)),
             _ => anyhow::bail!("font not installed"),
         }
+    }
+
+    fn prewarm_fonts(&self, font_ids: &[FontId]) {
+        self.prewarmed.lock().push(font_ids.to_vec());
     }
 
     fn font_metrics(&self, id: FontId) -> FontMetrics {
@@ -87,6 +94,78 @@ fn run(text: &str) -> TextRun {
         font: font("primary"),
         ..Default::default()
     }
+}
+
+#[test]
+fn all_font_names_reports_only_backend_families() {
+    let (_, text, _) = fixture();
+    assert_eq!(text.all_font_names(), ["Arial", "primary"]);
+}
+
+#[test]
+fn all_font_names_keeps_an_empty_backend_empty() {
+    let text = TextSystem::new(Arc::new(NoopTextSystem));
+    assert!(text.all_font_names().is_empty());
+}
+
+#[test]
+fn prewarming_resolves_complete_descriptors_and_deduplicates_platform_faces() {
+    let (platform, text, window) = fixture();
+    let descriptors = [
+        font("primary"),
+        font("primary").bold(),
+        font("primary"),
+        font("late"),
+        font("late").italic(),
+    ];
+    text.prewarm_fonts(&descriptors);
+    assert_eq!(*platform.prewarmed.lock(), [vec![FontId(1)]]);
+    let lookups = platform.lookups.load(Ordering::Relaxed);
+    for descriptor in &descriptors {
+        assert_eq!(text.resolve_font(descriptor), FontId(1));
+        let line = window.shape_line(
+            "prepared".into(),
+            px(16.),
+            &[TextRun {
+                len: "prepared".len(),
+                font: descriptor.clone(),
+                ..Default::default()
+            }],
+            None,
+        );
+        assert_eq!(line.text.as_ref(), "prepared");
+    }
+    assert_eq!(platform.lookups.load(Ordering::Relaxed), lookups);
+    let observed = platform.descriptors.lock();
+    for descriptor in &descriptors {
+        assert_eq!(
+            observed.iter().filter(|font| *font == descriptor).count(),
+            1
+        );
+    }
+}
+
+#[test]
+fn prewarming_retains_failed_installation_and_refreshes_after_success() {
+    let (platform, text, _) = fixture();
+    let requested = font("late").bold().italic();
+    text.prewarm_fonts(std::slice::from_ref(&requested));
+    let lookups = platform.lookups.load(Ordering::Relaxed);
+    assert!(text.add_fonts(vec![Cow::Borrowed(b"reject")]).is_err());
+    text.prewarm_fonts(std::slice::from_ref(&requested));
+    assert_eq!(platform.lookups.load(Ordering::Relaxed), lookups);
+    assert_eq!(
+        *platform.prewarmed.lock(),
+        [vec![FontId(1)], vec![FontId(1)]]
+    );
+
+    text.add_fonts(vec![Cow::Borrowed(b"font")]).unwrap();
+    text.prewarm_fonts(std::slice::from_ref(&requested));
+    assert_eq!(platform.prewarmed.lock().last(), Some(&vec![FontId(2)]));
+    let lookups = platform.lookups.load(Ordering::Relaxed);
+    assert_eq!(text.resolve_font(&requested), FontId(2));
+    assert_eq!(platform.lookups.load(Ordering::Relaxed), lookups);
+    assert_eq!(text.get_font_for_id(FontId(2)), Some(requested));
 }
 
 #[test]

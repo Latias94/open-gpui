@@ -59,6 +59,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Changed
 
+- `TextSystem::prewarm_fonts` prepares descriptor resolution and optional platform shaping caches before first use; callers choose when and where to run it. Cosmic shares the exact primary/fallback attributes with normal shaping.
+- Font suggestions now contain only sorted, unique platform-reported families, including registered fonts. Virtual aliases continue to resolve without being injected into the available-family list.
+- Loading another Windows font alias preserves the first observed native glyph face identity while keeping each input descriptor's features and fallback configuration.
+- Cosmic reuses measured glyph images during subsequent rasterization through a temporary handoff bounded to 256 images and 8 MiB of image-buffer capacity. Evicted images are regenerated normally.
 - Text wrapping follows Unicode line-break opportunities across fragments and inline elements, preserving complete graphemes during emergency wrapping and truncation. `Styled::text_ellipsis_middle()` retains both ends of overflowing labels with their source styles. Hyphenated words can now wrap after the hyphen.
 - Cosmic preserves original source indices and same-line geometry when paragraph separators split text into different BiDi directions. Font runs keep their configurations across segments, and missing-glyph reports retain whole original graphemes, including CRLF. Closest-hit queries now compare the final glyph cluster with the line end instead of jumping to the end for every position after that glyph's origin.
 - Windows font installation reselects already matched weights and named private fallbacks while retaining old glyph faces and unchanged FontIds. Native callback caching preserves synthesized faces instead of substituting a newer name-based selection. The corresponding CoreText implementation and deterministic regressions await macOS qualification.

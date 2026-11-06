@@ -306,6 +306,17 @@ fn assert_lilex_m_metrics(
     );
 }
 
+fn assert_native_font_names(text_system: &TextSystem, platform: &dyn PlatformTextSystem) {
+    let mut expected = platform.all_font_names();
+    expected.sort();
+    expected.dedup();
+    assert_eq!(text_system.all_font_names(), expected);
+    assert!(expected.iter().any(|family| family == "IBM Plex Sans"));
+    for alias in [".SystemUIFont", ".OpenGpuiSans", ".OpenGpuiMono"] {
+        assert!(!expected.iter().any(|family| family == alias));
+    }
+}
+
 #[test]
 fn native_font_installation_replaces_fallback_after_child_notify_and_preserves_old_glyphs() {
     run_native_font_installation(NativeFontInstallationScenario::MissingFamily);
@@ -316,6 +327,8 @@ fn native_font_installation_reselects_bold_after_child_notify_and_preserves_old_
     run_native_font_installation(NativeFontInstallationScenario::AdditionalBold);
 }
 
+/// Exercises Core prewarming through DirectWrite's default backend hook.
+/// Submission and retained outlines do not establish a new native raster benefit.
 fn run_native_font_installation(scenario: NativeFontInstallationScenario) {
     discard_stale_quit_messages();
     let (_observation_guard, observation) = begin_native_window_test_observation();
@@ -349,6 +362,18 @@ fn run_native_font_installation(scenario: NativeFontInstallationScenario) {
         );
     }
     let requested_font = scenario.requested_font();
+    assert_native_font_names(&text_system, platform_text_system.as_ref());
+    let names_before_prewarm = text_system.all_font_names();
+    app.update_for_test(|cx| {
+        assert!(Arc::ptr_eq(cx.text_system(), &text_system));
+        cx.text_system().prewarm_fonts(&[
+            requested_font.clone(),
+            font("IBM Plex Sans"),
+            font(".SystemUIFont"),
+        ]);
+    });
+    assert_eq!(text_system.all_font_names(), names_before_prewarm);
+    assert_native_font_names(&text_system, platform_text_system.as_ref());
     let previous_font = text_system.resolve_font(&requested_font);
     let control_font = platform_text_system
         .font_id(&font("IBM Plex Sans"))
@@ -479,6 +504,14 @@ fn run_native_font_installation(scenario: NativeFontInstallationScenario) {
     text_system
         .add_fonts(vec![Cow::Borrowed(scenario.font_bytes())])
         .expect("the existing application TextSystem must install the checked-in Lilex face bytes");
+    assert_native_font_names(&text_system, platform_text_system.as_ref());
+    assert!(
+        text_system
+            .all_font_names()
+            .iter()
+            .any(|family| family == "Lilex")
+    );
+    text_system.prewarm_fonts(&[requested_font.clone(), font("IBM Plex Sans")]);
     let installed_font = platform_text_system.font_id(&requested_font).expect(
         "the requested Lilex face must be selectable after the application installs its bytes",
     );

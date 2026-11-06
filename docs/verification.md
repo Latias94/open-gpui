@@ -1253,6 +1253,8 @@ interruption. Earlier completed behavioral results retain their source scope aft
 subsequent build-cache cleanup; no product source changes for these environment recoveries.
 
 Independent text and compiler/native-dispatch reviews leave no outstanding P1/P2 in this unit.
+Existing import-boundary, document-link, release-document and public-API checks pass again after
+rebuilding the original xtask executable following build-cache cleanup.
 The new Cosmic public trajectory remains headless/software evidence; native DirectWrite/Submitted
 frames qualify their own backend. Complete complex-script segmentation, general visual RTL caret
 and logical reconstruction of reordered wrapped rows, configured fallback priority, other native
@@ -1270,6 +1272,105 @@ cargo +1.95.0 nextest run --locked -p xtask --lib -E 'test(dependency_health::te
 cargo +1.95.0 fmt --all -- --check
 cargo +1.95.0 fmt --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --all -- --check
 ```
+
+## Font Preparation, Inventory And Raster Reuse
+
+The successor to `b466037e87e17f11e7acce70706b7866edda3ca1` reconciles fixed-target
+`f1d27d545e79f98ffde7ebf3229f8eb8bad791aa`,
+`5b4a2153a087055a7f9cb3464f188f1cab9fd678` and
+`1ff7cb669b6351eaf2a5b79ccb40f5cd1676b8f8`. The two initial inventory regressions fail on the
+baseline (`8a8c2f1f-e125-4a8d-b094-c4933ab04bc5`): a deterministic backend's two actual families
+grow into twelve suggestions, and an empty backend reports guessed families and virtual aliases.
+The owner now returns only sorted unique backend names. Alias resolution is unchanged.
+
+The public explicit prewarm entry resolves full descriptors using the existing cache and sends
+distinct resolved IDs to the optional platform hook. Core tests count actual descriptor queries,
+consume the prepared fonts through normal shaping and retain failed-installation reuse and
+successful-installation invalidation. The selected Core installation, window-candidate and width-
+pool cohort passes 21/21 (`de182c08-de7b-45a8-9269-b48c60c94f8f`; 968 unrelated cases filtered).
+This moves cold lookup work before consumption; ordinary repeated resolution already had a cache.
+
+Cosmic's prepared match properties are shared with primary/fallback shaping. The pending image
+handoff uses complete RenderGlyphParams under the existing backend lock. The fork adds local
+256-entry/8-MiB image-buffer-capacity admission to prevent unbounded measurement-only pixel
+retention; pressure discards temporary images and rasterization regenerates them. It introduces
+no glyph output limit, new atlas or second lifetime authority. These limits apply only to the new
+handoff, not the existing bounds cache, complete font memory or process retention.
+
+The first backend build stops with E0282 before execution because the measured `Bounds` local
+needs an explicit `Bounds<DevicePixels>` annotation before its component fields are inspected.
+The annotation corrects this integration error; the backend/public rerun follows. Independent
+source review finds no confirmed P1/P2 and adds full cold-byte comparisons to interleaved
+consumption and oversized-image controls before their first execution.
+
+The corrected selected Cosmic installation/work-reuse suite and both complete public text
+trajectories pass 29/29 (`520f8449-7fc3-4771-803f-86d7e465c31c`; 52 unrelated cases filtered).
+Thirteen new backend cases count actual Swash render attempts, compare independent cold size/
+placement/bytes at scales 1.0/1.5, and exercise grayscale, subpixel and actual Windows Segoe UI Emoji
+color output. Complete key partition, replacement/consumption capacity accounting, interleaved
+hits, entry/byte eviction, oversized recomputation, empty/error recovery and old installed-face
+retention pass. The prewarm controls verify actual cached match identity and complete attributes,
+then compare cold/warm features, fallback, paragraph layouts and missing-grapheme reports.
+
+The public paragraph trajectory forwards preparation to real Cosmic, observes complete bounds/
+raster keys through actual paint, and retains notified reflow, window reconstruction and final
+TextSystem/wrapper/backend release. Unchanged atlas reuse remains an existing control rather than
+a new benefit. The measured new effect is removal of the second image-generation attempt in the
+bounds-to-raster handoff; these results are not frame-time or retained-process measurements.
+
+The first selected Windows run passes 2/3 and fails the original MissingFamily trajectory
+(`08e91d6e-5726-46ef-8e35-a471d8fd7332`): prewarming an additional alias replaces an already
+loaded native face's callback-cache FontId. The actual drawn first glyph reports FontId 2 rather
+than the retained fallback's FontId 0. AdditionalBold and complete native App/TextSystem/backend
+reconstruction pass in the same run. The existing source/face-identity assertion is retained.
+
+A deterministic DirectWrite alias regression reproduces the same owner defect independently:
+shape installed IBM Plex, load `.ZedSans`, then shape the original FontId again. The last step
+incorrectly reports the alias ID (`24d8049f-12dc-4593-98d0-76493af1473e`). Selection now keeps
+the first native callback-cache mapping instead of overwriting that physical face's identity.
+Per-descriptor IDs/features/fallbacks, retained COM identity and unknown native-face handling
+stay in their original owners. The added regression also retains complete glyph count/IDs,
+positions/source indices and width. Corrected complete font/native and broader reruns follow.
+
+The corrected selected DirectWrite installation/identity suite and all three complete native
+installation/reconstruction trajectories pass 11/11 (`a79e2577-8459-4544-b233-76b85d9809a2`;
+191 unrelated cases filtered). Additional alias preparation remains in the real consumer. Both
+newer accepted/nonempty Submitted generation and retained old glyph repaint keep their original
+metrics/outlines/source checks; exact HWND/platform/OLE retirement remains. DirectWrite's platform
+prewarm hook is the optional no-op, so these results establish no new native raster speedup.
+Independent DirectWrite review confirms the correction retains descriptor-specific typography,
+fallbacks and input IDs while the same physical face has one stable first-registered callback
+ID. Shaped glyph face identity is not a promise that every alias/feature descriptor's distinct
+input ID must be echoed. Layout applies the requested descriptor's features before the callback;
+the correction does not merge those descriptor records. Installation, simulations and unknown
+face recovery remain covered by the complete selected suite above. This prerequisite is committed
+separately as `19a4ed3434a19e0cedbaadff5bbd63bac00e7441`.
+
+The final all-feature Core/WGPU/Windows libraries plus both public text trajectories pass
+1,268/1,268 (`c29f031c-e4b1-433a-b3b5-b13bee4deced`), with four existing interactive Windows
+cases skipped: Core 989, WGPU 79, Windows 198 and two public trajectories. This includes the
+complete native font-installation, retained-face, text, cache/input/rendering and native retirement
+cohorts. Affected UI core/components/docking/Canvas pass 2,964/2,964 across 25 binaries with no
+skipped cases (`6f52fee2-fc28-4058-aa96-f48338152a94`). The independently locked public fonts
+and wrapping tests pass 5/5 without skips (`0138e675-b87d-48c5-bf91-5fc218382048`). They retain
+Noop's empty inventory and actual Cosmic aliases, mixed-source shaping, installation, retained
+old glyph bytes and final TextSystem/backend release. These consumers use software rasterization;
+the Windows native trajectories above qualify their own backend. Final compiler/tooling
+qualification now passes on Windows 11 with one build job and the shared target: locked workspace
+all-target compilation, independently locked all-target/all-feature compilation, affected
+Core/WGPU/Windows all-target/all-feature correctness Clippy and both explicit formatting checks
+under Rust 1.95.0. Actual Rust 1.92.0 also passes affected Core/WGPU/Windows and independent
+consumer all-target/all-feature checks. Existing nonblocking warnings remain. Import-boundary,
+public API-tier, public-document-link and release-document scans pass. Independent implementation
+and DirectWrite identity reviews leave no outstanding P1/P2 in this unit.
+
+The final qualification includes cold reconstruction after the owner's build cleanup. The
+workspace check rebuilds the existing aws-lc-sys native dependency before completing; this is
+build evidence, not a runtime-cost measurement. No dependency or lockfile changes are needed.
+Core's optional hook remains a no-op in other backends unless they override it. CoreText source,
+Linux/browser execution, complete fallback priority, script/caret support, numeric frame/process
+budgets and engine rendering integration retain their separate scope. This closes the font-work
+unit, not the complete fixed-target refresh or canonical-docking replacement.
 
 ## Focused Product Gates
 

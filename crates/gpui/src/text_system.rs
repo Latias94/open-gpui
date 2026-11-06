@@ -108,16 +108,13 @@ impl TextSystem {
         }
     }
 
-    /// Get a list of all available font names from the operating system.
+    /// Get sorted, unique font family names available to the platform text system.
+    ///
+    /// Includes fonts registered with [`Self::add_fonts`]. Virtual aliases still resolve but are
+    /// not added to this inventory unless the platform itself reports them.
     pub fn all_font_names(&self) -> Vec<String> {
         let mut names = self.platform_text_system.all_font_names();
-        names.extend(
-            self.fallback_font_stack
-                .iter()
-                .map(|font| font.family.to_string()),
-        );
-        names.push(".SystemUIFont".to_string());
-        names.sort();
+        names.sort_unstable();
         names.dedup();
         names
     }
@@ -188,6 +185,27 @@ impl TextSystem {
             return *font_id;
         }
         self.resolve_font_uncached(font)
+    }
+
+    /// Resolve these fonts and prewarm platform caches used by normal text shaping.
+    ///
+    /// This can be expensive; callers should generally use a background executor before the first
+    /// text consumer. Each distinct resolved face is passed to the platform once per call. Missing
+    /// entries continue to populate on demand. Successful font installation invalidates descriptor
+    /// resolution as usual; callers may prewarm again after installing fonts.
+    ///
+    /// # Panics
+    ///
+    /// Panics under the same conditions as [`Self::resolve_font`].
+    pub fn prewarm_fonts(&self, fonts: &[Font]) {
+        let mut font_ids = SmallVec::<[FontId; 8]>::new();
+        for font in fonts {
+            let font_id = self.resolve_font(font);
+            if !font_ids.contains(&font_id) {
+                font_ids.push(font_id);
+            }
+        }
+        self.platform_text_system.prewarm_fonts(&font_ids);
     }
 
     /// Get the bounding box for the given font and font size.

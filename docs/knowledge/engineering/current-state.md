@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-06T10:12:15+08:00
+timestamp: 2026-11-06T11:34:43+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -126,6 +126,24 @@ verified_by:
   Clippy, dependency-policy tests and explicitly rerun formatting checks pass. Complete refresh,
   other platforms, engine integration and measured costs remain open.
 
+- The font-work successor is qualified after Unicode commit `b466037e87e`. Explicit public
+  prewarming shares normal Cosmic primary/fallback attributes, while available-name suggestions
+  reflect only backend-reported families. Measured glyph images have a one-use handoff bounded to
+  256 entries and 8 MiB of image-buffer capacity; eviction regenerates normally. The two inventory
+  regressions fail on baseline. Cold exact bytes, actual generation/match identity, capacity
+  pressure and old-face retention pass. Additional native alias preparation exposes an existing
+  DirectWrite callback identity defect; separate correction `19a4ed3434a` preserves the first
+  physical face mapping without merging input descriptors. Final all-feature Core/WGPU/Windows
+  plus public text trajectories pass 1,268/1,268 with four existing interactive Windows cases
+  skipped; affected UI core/components/docking/Canvas pass 2,964/2,964 with no skips. Independently
+  locked public fonts/wrapping tests pass 5/5. Locked workspace and independent-consumer checks
+  pass on Rust 1.95.0, as do affected correctness Clippy and both formatting checks. Actual Rust
+  1.92.0 affected Core/WGPU/Windows and independently locked consumer all-target/all-feature
+  checks pass on Windows. Existing import/document/release/API scans pass. The verification
+  record retains the red/compile corrections, independent reviews and exact native/software
+  scopes. Other platforms, complete fallback/script support, engine integration and measured
+  frame/process costs remain open.
+
 # Historical Main Integration
 
 The previous snapshot recorded `df6ae2f` on July 9. The following integration summary retains that
@@ -153,8 +171,9 @@ historical scope and is not current branch or CI qualification.
 
 - Continue the coherent framework refresh beyond the five initial correctness units. The candidate
   queue retains font/text/layout/API, image decoding, external-run-loop and platform differences.
-  Continue font prewarming, available-family names and glyph-raster work reuse, then text
-  split/layers, window-local text ownership, Taffy/API and platform differences. Qualify the
+  Font prewarming, available-family names and glyph-raster qualification are complete within the
+  recorded Windows/software scope. Continue the queued text split/layers/underline unit, then
+  window-local text ownership, Taffy/API and platform differences. Qualify the
   prepared CoreText selection/cascade work on macOS when that platform is available. The
   DirectWrite successor now
   has separate existing-family and installed-fallback evidence rather than borrowing the
