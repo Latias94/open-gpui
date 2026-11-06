@@ -42,15 +42,15 @@ use crate::{
     SystemWindowTab, Task, Window, WindowControlArea, WindowId, WindowMutationRequest,
     geometry::ResolvedSubtreeTransform, hash, point, px, size,
 };
-use anyhow::Result;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use anyhow::bail;
+use anyhow::{Context as _, Result};
 use async_task::Runnable;
 use futures::channel::oneshot;
 #[cfg(any(test, feature = "test-support"))]
 use image::RgbaImage;
-use image::codecs::gif::GifDecoder;
-use image::{AnimationDecoder as _, Frame};
+use image::codecs::{gif::GifDecoder, webp::WebPDecoder};
+use image::{DynamicImage, Frame, Rgba};
 use open_gpui_scheduler::Instant;
 pub use open_gpui_scheduler::RunnableMeta;
 use parking_lot::Mutex as ParkingMutex;
@@ -7742,6 +7742,76 @@ pub struct Image {
     pub id: u64,
 }
 
+pub(crate) fn decode_static_image(
+    bytes: &[u8],
+    format: image::ImageFormat,
+) -> Result<SmallVec<[Frame; 1]>> {
+    let decoder = image::ImageReader::with_format(Cursor::new(bytes), format)
+        .into_decoder()
+        .context("creating image decoder")?;
+    decode_static_image_from_decoder(decoder)
+}
+
+pub(crate) fn decode_static_image_from_decoder(
+    mut decoder: impl image::ImageDecoder,
+) -> Result<SmallVec<[Frame; 1]>> {
+    let orientation = decoder
+        .orientation()
+        .context("reading decoder's orientation")?;
+    let mut image = DynamicImage::from_decoder(decoder).context("decoding image")?;
+    image.apply_orientation(orientation);
+
+    let mut data = image.into_rgba8();
+    for pixel in data.chunks_exact_mut(4) {
+        pixel.swap(0, 2);
+    }
+
+    Ok(SmallVec::from_elem(Frame::new(data), 1))
+}
+
+fn decode_animated_frames<'a>(
+    decoder: impl image::AnimationDecoder<'a>,
+    format_name: &str,
+) -> Result<SmallVec<[Frame; 1]>> {
+    let mut frames = SmallVec::new();
+
+    for frame in decoder.into_frames() {
+        match frame {
+            Ok(mut frame) => {
+                for pixel in frame.buffer_mut().chunks_exact_mut(4) {
+                    pixel.swap(0, 2);
+                }
+                frames.push(frame);
+            }
+            Err(err) => {
+                log::debug!("Skipping {format_name} frame due to decode error: {err}");
+            }
+        }
+    }
+
+    if frames.is_empty() {
+        anyhow::bail!("{format_name} could not be decoded: all frames failed");
+    }
+
+    Ok(frames)
+}
+
+pub(crate) fn decode_gif_image(bytes: &[u8]) -> Result<SmallVec<[Frame; 1]>> {
+    let decoder = GifDecoder::new(Cursor::new(bytes))?;
+    decode_animated_frames(decoder, "GIF")
+}
+
+pub(crate) fn decode_webp_image(bytes: &[u8]) -> Result<SmallVec<[Frame; 1]>> {
+    let mut decoder = WebPDecoder::new(Cursor::new(bytes))?;
+
+    if decoder.has_animation() {
+        let _ = decoder.set_background_color(Rgba([0, 0, 0, 0]));
+        decode_animated_frames(decoder, "WebP")
+    } else {
+        decode_static_image_from_decoder(decoder)
+    }
+}
+
 impl Hash for Image {
     fn hash<H: Hasher>(&self, state: &mut H) {
         state.write_u64(self.id);
@@ -7797,58 +7867,20 @@ impl Image {
 
     /// Convert the clipboard image to an `ImageData` object.
     pub fn to_image_data(&self, svg_renderer: SvgRenderer) -> Result<Arc<RenderImage>> {
-        fn frames_for_image(
-            bytes: &[u8],
-            format: image::ImageFormat,
-        ) -> Result<SmallVec<[Frame; 1]>> {
-            let mut data = image::load_from_memory_with_format(bytes, format)?.into_rgba8();
-
-            // Convert from RGBA to BGRA.
-            for pixel in data.chunks_exact_mut(4) {
-                pixel.swap(0, 2);
-            }
-
-            Ok(SmallVec::from_elem(Frame::new(data), 1))
-        }
-
         let frames = match self.format {
-            ImageFormat::Gif => {
-                let decoder = GifDecoder::new(Cursor::new(&self.bytes))?;
-                let mut frames = SmallVec::new();
-
-                for frame in decoder.into_frames() {
-                    match frame {
-                        Ok(mut frame) => {
-                            // Convert from RGBA to BGRA.
-                            for pixel in frame.buffer_mut().chunks_exact_mut(4) {
-                                pixel.swap(0, 2);
-                            }
-                            frames.push(frame);
-                        }
-                        Err(err) => {
-                            log::debug!("Skipping GIF frame due to decode error: {err}");
-                        }
-                    }
-                }
-
-                if frames.is_empty() {
-                    anyhow::bail!("GIF could not be decoded: all frames failed");
-                }
-
-                frames
-            }
-            ImageFormat::Png => frames_for_image(&self.bytes, image::ImageFormat::Png)?,
-            ImageFormat::Jpeg => frames_for_image(&self.bytes, image::ImageFormat::Jpeg)?,
-            ImageFormat::Webp => frames_for_image(&self.bytes, image::ImageFormat::WebP)?,
-            ImageFormat::Bmp => frames_for_image(&self.bytes, image::ImageFormat::Bmp)?,
-            ImageFormat::Tiff => frames_for_image(&self.bytes, image::ImageFormat::Tiff)?,
-            ImageFormat::Ico => frames_for_image(&self.bytes, image::ImageFormat::Ico)?,
+            ImageFormat::Gif => decode_gif_image(&self.bytes)?,
+            ImageFormat::Png => decode_static_image(&self.bytes, image::ImageFormat::Png)?,
+            ImageFormat::Jpeg => decode_static_image(&self.bytes, image::ImageFormat::Jpeg)?,
+            ImageFormat::Webp => decode_webp_image(&self.bytes)?,
+            ImageFormat::Bmp => decode_static_image(&self.bytes, image::ImageFormat::Bmp)?,
+            ImageFormat::Tiff => decode_static_image(&self.bytes, image::ImageFormat::Tiff)?,
+            ImageFormat::Ico => decode_static_image(&self.bytes, image::ImageFormat::Ico)?,
             ImageFormat::Svg => {
                 return svg_renderer
                     .render_single_frame(&self.bytes, 1.0)
                     .map_err(Into::into);
             }
-            ImageFormat::Pnm => frames_for_image(&self.bytes, image::ImageFormat::Pnm)?,
+            ImageFormat::Pnm => decode_static_image(&self.bytes, image::ImageFormat::Pnm)?,
         };
 
         Ok(Arc::new(RenderImage::new(frames)))
@@ -8064,28 +8096,7 @@ mod physical_display_observation_tests {
 }
 
 #[cfg(test)]
-mod image_tests {
-    use super::*;
-    use std::sync::Arc;
-
-    #[test]
-    fn test_svg_image_to_image_data_converts_to_bgra() {
-        let image = Image::from_bytes(
-            ImageFormat::Svg,
-            br##"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1">
-<rect width="1" height="1" fill="#38BDF8"/>
-</svg>"##
-                .to_vec(),
-        );
-
-        let render_image = image.to_image_data(SvgRenderer::new(Arc::new(()))).unwrap();
-        let bytes = render_image.as_bytes(0).unwrap();
-
-        for pixel in bytes.chunks_exact(4) {
-            assert_eq!(pixel, &[0xF8, 0xBD, 0x38, 0xFF]);
-        }
-    }
-}
+mod image_tests;
 
 #[cfg(test)]
 mod provisional_placement_tests {

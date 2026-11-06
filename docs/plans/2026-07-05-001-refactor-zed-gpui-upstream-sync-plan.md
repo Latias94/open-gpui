@@ -589,6 +589,64 @@ the inherited-cache red result and fixture corrections; bounded independent revi
 confirmed findings. This completes the selected layout unit, not complete framework refresh,
 other platform execution, measured costs, canonical docking or engine adoption.
 
+### Shared Image Decoding Successor
+
+After `11d9a96033ea`, reconcile official `9552acc2bc242d45342fa9b5a987d43868aee1ec`
+and fixed target `635026fabc38440fce5e1767d125026a17b12012` as one complete image
+consumer unit. Adopt the final official shared static/GIF/WebP decoder functions in the
+existing platform owner. Remove duplicated element-loader decoding. Static images read and
+apply decoder orientation before BGRA conversion; animated GIF/WebP preserve original frame
+delays, transparent WebP background, and the official successful-frame/error policy. SVG
+retains its existing renderer. Keep the image dependency's required orientation API explicit;
+the already locked version is distinct from the manifest minimum and compiler floor.
+
+Preserve the two official regressions and qualify both encoded Image and resource-loader
+entry points, static dimensions, orientation, BGRA/alpha, GIF/WebP delays and malformed input.
+Additional fork tests must be labeled as qualification, not official implementation. Use the
+existing window/asset/candidate/atlas owners for animation progression, notification, cache
+replay and native retirement. Do not infer playback from a decoder frame count, GPU completion
+from an atlas upload, or native pixels from a headless frame. Independently locked public API,
+affected framework/component suites, compiler-floor/build/Clippy/format and existing document/
+import checks complete the bounded unit. Other platforms, numeric costs, external-loop,
+renderer-lifetime reconciliation, canonical docking and engine adoption remain separate scope.
+
+Source comparison confirms these decoder blocks are inherited official code, unchanged from
+the import anchor, rather than a fork-specific abstraction. The final shared helpers change
+loader decoder errors from `ImageCacheError::Image` to contextual `ImageCacheError::Other`;
+record that observable official behavior in migration notes. The official EXIF commit message
+claims an `image` minimum increase but its actual manifest and final target still declare
+0.25.1. The fork explicitly declares 0.25.4 after inspecting that exact crate archive's
+`ImageDecoder::orientation`, `DynamicImage::apply_orientation` and WebP background APIs.
+Both existing lockfiles retain 0.25.10; source-confirmed API availability does not imply an
+executed full-workspace 0.25.4 qualification. This manifest correction is fork-owned.
+
+The fork also uses the App's existing executor clock for Img frame progression and loading
+delay checks. Its asynchronous timer already belongs to that clock; the native scheduler
+continues to supply monotonic time while headless tests can now advance the same authority.
+This small testability adaptation is separate from the official shared decoder implementation.
+Review reproduces a strict-deadline defect after clock unification: the once-only loading timer
+notifies at exactly 200 ms while `>` prevents placeholder paint and schedules no successor.
+The fork changes that existing comparison to `>=`, with a public notify-only 199/200 ms
+regression. It also strengthens the eight-orientation oracle with a two-axis-asymmetric JPEG
+and requires eight distinct results; the original official JPEG has identical pixels across
+each row and cannot distinguish four mirrored pairs. Keep both corrections distinct from
+the official decoder adoption.
+
+The [qualification](../verification.md#shared-image-decoding-and-animation) records final
+Core/WGPU/Windows plus six public consumer binaries at 1,328/1,328, with four existing
+interactive Windows cases skipped. Affected components/docking/Canvas pass 2,964/2,964;
+independently locked public consumers pass 12/12 without skips. Isolated loaders each notify
+their own root without clock advancement or compensating draw, and static images have no
+animation callback or idle revision change. Actual Windows encoded/embedded Img instances
+complete 0/1/0 with exact Submitted/GPU-readback generation, source replacement and complete
+retirement/reconstruction. Both bounded independent rereviews close confirmed findings.
+Locked workspace/consumer compilation, correctness Clippy, both formatting checks and existing
+import/document/release/API scans pass on Rust 1.95.0. Actual Windows Rust 1.92.0 framework/
+consumer all-target/all-feature checks pass. The image minimum is source-confirmed, not an
+executed 0.25.4 workspace matrix. The separate AVIF feature-policy difference remains queued;
+other platform execution, numeric costs, external-loop/API/renderer lifetime, canonical docking
+and engine acceptance remain open. This completes the selected decoder unit, not the refresh.
+
 ## Maintained Baseline Before Engine Adaptation
 
 Finish a bounded framework refresh against the recorded November 5 Zed revision before expanding

@@ -1672,6 +1672,112 @@ and exact release. Source inspection or dependency release notes do not establis
 CPU, allocation, P99 or process-retention improvement. Other platforms, canonical docking,
 engine View integration and complete R11/R12 remain open.
 
+## Shared Image Decoding And Animation
+
+This unit starts from `11d9a96033ea8425b07f64fdf2bad6503f1720dc` and reconciles official
+`9552acc2bc242d45342fa9b5a987d43868aee1ec` with fixed Zed target
+`635026fabc38440fce5e1767d125026a17b12012`. Both original decode blocks are inherited
+official implementation, content-identical to the imported anchor. The final target puts
+static/GIF/WebP decoding under the existing platform owner; resource acquisition remains
+in ImageAssetLoader. Static orientation precedes BGRA conversion, animated WebP uses a
+transparent background, and animations preserve successful-frame delays while skipping bad
+frames and refusing empty output. SVG keeps its existing renderer. Animated orientation is
+outside the official mechanism.
+
+The fork retains that implementation and records two local adaptations separately:
+
+- The root `image` requirement is 0.25.4. The official EXIF message states this intent, but
+  its actual manifest and final target still say 0.25.1. Inspection of the exact
+  [0.25.4 archive](https://static.crates.io/crates/image/image-0.25.4.crate) confirms
+  `ImageDecoder::orientation`, `DynamicImage::apply_orientation` and WebP background APIs.
+  Both lockfiles remain on 0.25.10, without dependency churn. Archive inspection is not an
+  executed minimum-image-version workspace matrix.
+- Img uses the existing App executor clock for frame/loading elapsed time, matching its
+  asynchronous loading timer. Native scheduling still supplies monotonic time; deterministic
+  public consumers can advance the same clock without sleeping or writing frame indices.
+
+The shared helper's contextual error conversion follows official behavior: resource decoder
+failures now enter `ImageCacheError::Other`, while transport-specific branches retain their
+own errors. The changelog records this observable migration. No new public decode/cache owner
+or renderer contract is introduced.
+
+On Windows 11, Rust 1.95.0, one build job and the shared Nara target, the unchanged decoder
+first fails both official regressions: animated WebP returns one frame instead of two and
+EXIF orientation yields the black first pixel instead of white. Nextest run
+`b0912147-8e56-4c1b-bab6-40c09ae75461` reports 0/2, with 1,029 filtered tests. New tests
+retain the exact upstream fixture bytes and add color/alpha, all-eight-orientation,
+PNG/static-WebP, remaining static formats, GIF delay and malformed/frame-error controls.
+The first focused build needs a test-only correction because image::Frame has no Debug
+implementation for Result::unwrap_err; it is not a decoder failure.
+
+The first runtime selection reports 14/15 (`a7d51802-48b9-4fca-84cf-d530f34f67c3`):
+the generated ICO embeds an RGB PNG that the image decoder correctly refuses because ICO
+requires RGBA. The fixture now encodes RGBA and retains all dimensions/pixel assertions.
+The direct async loader test initially exposes opaque-future lifetime capture across the
+App update closure; test-only static BoxFuture erasure preserves the public loader contract.
+The corrected owner/loader selection passes 17/17
+(`56dc8a8e-a659-4ee0-8f1e-a6f6afd5244d`).
+
+Independent review identifies a strict loading-deadline defect under the unified clock.
+An actual pending Custom Image has no placeholder at 199 ms; its one-shot timer notifies at
+exactly 200 ms but the old `>` comparison prevents placeholder paint and schedules no new
+notification. The public regression fails without another draw/refresh, alongside 20 other
+passing owner/public image tests (`240d194e-afc0-49ac-90dd-945f173b3672`, 20/21).
+The fork changes that comparison to `>=`. Review also catches the original official JPEG's
+horizontal symmetry: it distinguishes only four of the eight transforms. The additional
+matrix now encodes a two-axis-asymmetric JPEG, transplants the exact EXIF segment, compares
+every pixel to independently decoded source coordinates and requires all eight results to
+be distinct. The unmodified official fixture regression remains. An expanded WebP canvas
+also checks transparent pixels outside both encoded 1x1 frames; the shared frame-policy
+test preserves nonzero frame offsets. Synthetic frame-error coverage does not claim actual
+codec recovery from every corrupted stream.
+
+The corrected selected owner/public/native cohort passes 22/22
+(`e2b28bb2-f4a1-41d7-9369-1ba9ac1d3edf`). Actual Windows Img instances independently
+complete 0/1/0 frame sequences through encoded Image and embedded Resource. Each observation
+binds accepted/nonempty Submitted, current rendered revision, submitted diagnostics and GPU
+capture to one generation, checks the decoded delays and frame colors, and observes real
+active/foreground status. Repeated frame zero reuses its atlas tile. Stable IDs then replace
+the animated sources with EXIF JPEG, and a notified successor paints corrected dimensions and
+corner pixels before unchanged-source atlas reuse. Closing and reconstruction verify exact
+registered HWND generations, ordered retirement, root/window/App/asset/backend/platform
+release and no native invariant failure. No forced draw, frame-index injection or fabricated
+renderer receipt drives the native trajectory. Offscreen scene readback is not compositor
+display evidence.
+
+Consumer review then strengthens two missing negative controls. Image-only and path-only
+headless roots must each receive completion notification and accept their actual paint without
+another loader, clock advancement, a loading deadline or compensating draw. Static-image
+timelines explicitly drain the frame callback queue, require no animation callback and retain
+notification/revision before a separate atlas-reuse draw. The first stricter static check
+reports 3/4 (`5e314022-fb4e-42fd-8325-7d24b6e703fe`) because its local revision variable
+omits the immediately preceding explicit reuse draw; the fixture now tracks that exact final
+revision. The corrected public selection passes 4/4 without skips
+(`f1ace74c-e8ee-4558-9554-80ac517ee31b`). Atlas-hit controls remain separate from existing
+view-cache replay/refused-candidate suites.
+
+Final runtime qualification uses the same one-job shared target and locked dependencies:
+
+| Executed gate | Result | Nextest run |
+| --- | --- | --- |
+| Core/WGPU/Windows libraries, all features, plus paragraph/layer/wrapping/window/intrinsic/image public consumers | 1,328/1,328; four existing interactive Windows cases skipped | `4341efab-d63e-4625-9f79-f4b4623b4a6c` |
+| UI core/components/docking/Canvas libraries and integrations | 2,964/2,964; no skips | `b93a1d9a-8257-4ae6-a780-7ea257118b7e` |
+| Independently locked public font/wrapping/layer/window/grid/image consumers | 12/12; no skips | `d447dd1d-8a64-498b-9edf-186a0715a0af` |
+
+Both bounded production and consumer rereviews close confirmed P2 findings. Independent
+image tests use public decoding without test-support; headless image tests use actual windows
+and simulated scheduling with NoopTextSystem, not real-font or GPU evidence. Native evidence
+comes from the separate Windows consumer above. Decoder frame counts alone establish neither
+playback nor cache replay; atlas hits are not view-cache replay. Locked workspace all-target
+and independent-consumer all-target/all-feature checks pass on Rust 1.95.0, as do affected
+Core/WGPU/Windows correctness Clippy and both root/consumer formatting checks. Actual Windows
+Rust 1.92.0 checks pass for those three framework packages and the independently locked
+consumer, both all-target/all-feature. Existing import-boundary, public-API-tier, document-link
+and release-document scans pass. No minimum-image-version build follows from these gates.
+Other platform execution, numeric costs, the separate AVIF dependency-feature
+policy, external loop, renderer-lifetime reconciliation, canonical docking and engine adoption
+remain open.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:

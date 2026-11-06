@@ -2,21 +2,19 @@ use crate::{
     AnyElement, AnyImageCache, App, Asset, AssetLogger, Bounds, DefiniteLength, Element, ElementId,
     Entity, GlobalElementId, Hitbox, Image, ImageCache, InspectorElementId, InteractiveElement,
     Interactivity, IntoElement, LayoutId, Length, ObjectFit, Pixels, PreparedSubtreeClip,
-    RenderImage, Resource, SharedString, SharedUri, StyleRefinement, Styled, Task, Window, px,
+    RenderImage, Resource, SharedString, SharedUri, StyleRefinement, Styled, Task, Window,
+    decode_gif_image, decode_static_image, decode_webp_image, px,
 };
 use anyhow::Result;
 
 use futures::Future;
-use image::{
-    AnimationDecoder, DynamicImage, Frame, ImageError, ImageFormat, Rgba,
-    codecs::{gif::GifDecoder, webp::WebPDecoder},
-};
+use image::{ImageError, ImageFormat};
 use open_gpui_core_util::ResultExt;
 use open_gpui_scheduler::Instant;
+#[cfg(test)]
 use smallvec::SmallVec;
 use std::{
-    fs,
-    io::{self, Cursor},
+    fs, io,
     ops::{Deref, DerefMut},
     path::{Path, PathBuf},
     str::FromStr,
@@ -319,7 +317,7 @@ impl Element for Img {
                                 state.frame_index = state.frame_index.min(max_frame_index);
                                 if frame_count > 1 {
                                     if window.is_window_active() {
-                                        let current_time = Instant::now();
+                                        let current_time = cx.background_executor().now();
                                         if let Some(last_frame_time) = state.last_frame_time {
                                             let elapsed = current_time - last_frame_time;
                                             let frame_duration =
@@ -395,7 +393,8 @@ impl Element for Img {
                         None => {
                             if let Some(state) = &mut state {
                                 if let Some((started_loading, _)) = state.started_loading {
-                                    if started_loading.elapsed() > LOADING_DELAY
+                                    if cx.background_executor().now() - started_loading
+                                        >= LOADING_DELAY
                                         && let Some(loading) = self.style.loading.as_ref()
                                     {
                                         let mut element = loading();
@@ -411,7 +410,8 @@ impl Element for Img {
                                         })
                                         .ok();
                                     });
-                                    state.started_loading = Some((Instant::now(), task));
+                                    state.started_loading =
+                                        Some((cx.background_executor().now(), task));
                                 }
                             }
                         }
@@ -655,88 +655,9 @@ impl Asset for ImageAssetLoader {
 
             if let Ok(format) = image::guess_format(&bytes) {
                 let data = match format {
-                    ImageFormat::Gif => {
-                        let decoder = GifDecoder::new(Cursor::new(&bytes))?;
-                        let mut frames = SmallVec::new();
-
-                        for frame in decoder.into_frames() {
-                            match frame {
-                                Ok(mut frame) => {
-                                    // Convert from RGBA to BGRA.
-                                    for pixel in frame.buffer_mut().chunks_exact_mut(4) {
-                                        pixel.swap(0, 2);
-                                    }
-                                    frames.push(frame);
-                                }
-                                Err(err) => {
-                                    log::debug!(
-                                        "Skipping GIF frame in {source:?} due to decode error: {err}"
-                                    );
-                                }
-                            }
-                        }
-
-                        if frames.is_empty() {
-                            return Err(ImageCacheError::Other(Arc::new(anyhow::anyhow!(
-                                "GIF could not be decoded: all frames failed ({source:?})"
-                            ))));
-                        }
-
-                        frames
-                    }
-                    ImageFormat::WebP => {
-                        let mut decoder = WebPDecoder::new(Cursor::new(&bytes))?;
-
-                        if decoder.has_animation() {
-                            let _ = decoder.set_background_color(Rgba([0, 0, 0, 0]));
-                            let mut frames = SmallVec::new();
-
-                            for frame in decoder.into_frames() {
-                                match frame {
-                                    Ok(mut frame) => {
-                                        // Convert from RGBA to BGRA.
-                                        for pixel in frame.buffer_mut().chunks_exact_mut(4) {
-                                            pixel.swap(0, 2);
-                                        }
-                                        frames.push(frame);
-                                    }
-                                    Err(err) => {
-                                        log::debug!(
-                                            "Skipping WebP frame in {source:?} due to decode error: {err}"
-                                        );
-                                    }
-                                }
-                            }
-
-                            if frames.is_empty() {
-                                return Err(ImageCacheError::Other(Arc::new(anyhow::anyhow!(
-                                    "WebP could not be decoded: all frames failed ({source:?})"
-                                ))));
-                            }
-
-                            frames
-                        } else {
-                            let mut data = DynamicImage::from_decoder(decoder)?.into_rgba8();
-
-                            // Convert from RGBA to BGRA.
-                            for pixel in data.chunks_exact_mut(4) {
-                                pixel.swap(0, 2);
-                            }
-
-                            SmallVec::from_elem(Frame::new(data), 1)
-                        }
-                    }
-                    _ => {
-                        let mut data =
-                            image::load_from_memory_with_format(&bytes, format)?.into_rgba8();
-
-                        // Convert from RGBA to BGRA.
-                        for pixel in data.chunks_exact_mut(4) {
-                            pixel.swap(0, 2);
-                        }
-
-                        SmallVec::from_elem(Frame::new(data), 1)
-                    }
+                    ImageFormat::Gif => decode_gif_image(&bytes)?,
+                    ImageFormat::WebP => decode_webp_image(&bytes)?,
+                    _ => decode_static_image(&bytes, format)?,
                 };
 
                 Ok(Arc::new(RenderImage::new(data)))
@@ -992,5 +913,113 @@ mod tests {
         });
 
         assert!(second_frame_generation > first_frame_generation);
+    }
+
+    fn assert_same_frames(actual: &RenderImage, expected: &RenderImage) {
+        assert_eq!(actual.frame_count(), expected.frame_count());
+        for frame in 0..expected.frame_count() {
+            assert_eq!(actual.size(frame), expected.size(frame));
+            assert_eq!(actual.delay(frame), expected.delay(frame));
+            assert_eq!(actual.as_bytes(frame), expected.as_bytes(frame));
+        }
+    }
+
+    #[open_gpui::test]
+    async fn path_and_http_loaders_share_the_public_image_decoder(cx: &mut TestAppContext) {
+        use crate::{ImageFormat as EncodedFormat, SvgRenderer};
+        use open_gpui_http_client::{FakeHttpClient, Response};
+
+        for (name, format, bytes) in [
+            (
+                "red-blue-100ms.webp",
+                EncodedFormat::Webp,
+                include_bytes!("../../../../tests/fixtures/images/red-blue-100ms.webp").as_slice(),
+            ),
+            (
+                "exif-orientation-rotate-180.jpg",
+                EncodedFormat::Jpeg,
+                include_bytes!("../../../../tests/fixtures/images/exif-orientation-rotate-180.jpg")
+                    .as_slice(),
+            ),
+        ] {
+            let expected = Image::from_bytes(format, bytes.to_vec())
+                .to_image_data(SvgRenderer::new(Arc::new(())))
+                .unwrap();
+            let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../tests/fixtures/images")
+                .join(name);
+            let path_loaded = cx
+                .update(|cx| {
+                    let load: futures::future::BoxFuture<'static, _> =
+                        Box::pin(ImageAssetLoader::load(Resource::Path(path.into()), cx));
+                    load
+                })
+                .await
+                .unwrap();
+            assert_same_frames(&path_loaded, &expected);
+
+            let client = FakeHttpClient::create(move |_| async move {
+                Ok(Response::builder().status(200).body(bytes.into()).unwrap())
+            });
+            cx.update(|cx| cx.set_http_client(client));
+            let resource = Resource::Uri(format!("https://test.example/{name}").into());
+            let http_loaded = cx
+                .update(|cx| {
+                    let load: futures::future::BoxFuture<'static, _> =
+                        Box::pin(ImageAssetLoader::load(resource, cx));
+                    load
+                })
+                .await
+                .unwrap();
+            assert_same_frames(&http_loaded, &expected);
+        }
+    }
+
+    #[open_gpui::test]
+    async fn shared_decoder_errors_keep_context_and_http_status_is_separate(
+        cx: &mut TestAppContext,
+    ) {
+        use open_gpui_http_client::{FakeHttpClient, Response, StatusCode};
+
+        let resource = Resource::Uri("https://test.example/truncated.webp".into());
+        let invalid =
+            &include_bytes!("../../../../tests/fixtures/images/red-blue-100ms.webp")[..40];
+        cx.update(|cx| {
+            cx.set_http_client(FakeHttpClient::create(move |_| async move {
+                Ok(Response::builder()
+                    .status(200)
+                    .body(invalid.into())
+                    .unwrap())
+            }));
+        });
+        let decoded = cx
+            .update(|cx| {
+                let load: futures::future::BoxFuture<'static, _> =
+                    Box::pin(ImageAssetLoader::load(resource.clone(), cx));
+                load
+            })
+            .await
+            .err()
+            .expect("the recognized but incomplete WebP must fail");
+        assert!(matches!(decoded, ImageCacheError::Other(_)));
+        assert!(!decoded.to_string().is_empty());
+
+        cx.update(|cx| cx.set_http_client(FakeHttpClient::with_404_response()));
+        let error = cx
+            .update(|cx| {
+                let load: futures::future::BoxFuture<'static, _> =
+                    Box::pin(ImageAssetLoader::load(resource, cx));
+                load
+            })
+            .await
+            .err()
+            .expect("the HTTP error must precede decoding");
+        assert!(matches!(
+            error,
+            ImageCacheError::BadStatus {
+                status: StatusCode::NOT_FOUND,
+                ..
+            }
+        ));
     }
 }

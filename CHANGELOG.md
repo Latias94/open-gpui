@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Breaking Changes and Migration Notes
 
+- Raster decoder failures from `ImageAssetLoader` now use `ImageCacheError::Other` through the shared decoder's contextual error, following the upstream implementation. Consumers matching error categories should inspect the contextual decoder error rather than requiring `ImageCacheError::Image`.
 - `TemplateColumnMinSize` is renamed to `GridTemplateMinSize` without an alias; custom style/schema consumers must update the type name. Window and prompt roots fill their auto dimensions from the viewport; set explicit dimensions when shrink-wrapped root sizing is required. Stack growth is now opt-in through the `stacker` feature. The framework uses Taffy 0.15 and its updated alignment/measurement contract.
 - `Window::text_system` now returns `&Rc<WindowTextSystem>`. Keep window layout/cache access on its owning thread and use the shared `Arc<TextSystem>` for background font work. The unused `shape_line_by_hash`, `try_layout_line_by_hash` and `layout_line_by_hash` interfaces are removed; materialize source text and use the ordinary `shape_line` / `layout_line` APIs.
 - `ShapedLine::split_at` explicitly rejects adjusted source lengths and invalid UTF-8 boundaries. Raw `LineLayout::split_at` requires a caller-validated source boundary. Both preserve shaped glyphs and original visual geometry; fragments are not independently reflowed bidi text.
@@ -62,6 +63,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Changed
 
+- Encoded `Image` and resource-backed `img` use the same static/GIF/WebP decoders. Static images apply EXIF orientation before BGRA conversion; animated WebP preserves all successfully decoded frames and delays in both paths. The image element uses its App executor clock for animation and loading timers, including deterministic headless tests.
 - Text measurement no longer reuses a truncated size for unconstrained intrinsic probes. Nonwrapped text that fits its actual shaped width retains its complete source, including kerning-sensitive exact fits. Lists use MaxContent when their width is unknown, and grid rows gain min/max-content declarations.
 - Changing a line clamp now selects a matching wrapped layout instead of reusing another clamp's cached boundaries. Window-local caches retain font-installation invalidation and rejected-frame recovery without locking across backend shaping.
 - Custom text elements can paint `TextLayout` backgrounds, insert their own highlights, then paint foreground glyphs and decorations. Ordinary text painting completes all backgrounds first, and aligned wrapped rows use their actual geometry.

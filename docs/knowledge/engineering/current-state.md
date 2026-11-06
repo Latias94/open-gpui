@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-06T14:27:00+08:00
+timestamp: 2026-11-06T15:22:00+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -197,6 +197,27 @@ verified_by:
   other native platform or engine integration follows. Both formatting checks and existing
   import/document/release/API scans pass.
 
+- The shared image successor adopts official EXIF orientation and final-target shared
+  static/GIF/WebP decoders. The removed duplicate paths were inherited upstream code, not a
+  fork-specific mechanism. Encoded Image and resource Img retain successful animation frames,
+  delays, transparent canvas and contextual decode errors. Fork adaptations declare the
+  source-confirmed image 0.25.4 API minimum without changing either 0.25.10 lock entry, and
+  align Img with the existing executor clock. Review reproduces and fixes the exact loading
+  deadline; the asymmetric orientation oracle distinguishes all eight transforms. Public
+  consumers isolate each loader's completion notification, deterministic 99/100 ms timelines
+  and static idle callbacks. Actual Windows two-source Img submits 0/1/0, binds GPU readback
+  to exact generations, replaces EXIF sources and reconstructs/releases all owners. Both
+  bounded independent reviews close confirmed findings; all six subthreads are closed.
+  Complete Core/WGPU/Windows and six public consumer binaries pass 1,328/1,328 with four
+  existing interactive Windows cases skipped. Affected components/docking/Canvas pass
+  2,964/2,964 and independently locked public consumers pass 12/12 without skips. Locked
+  workspace/consumer checks, affected correctness Clippy, both formatting checks and existing
+  import/document/release/API scans pass on Rust 1.95.0. Actual Windows Rust 1.92.0 framework/
+  independent-consumer all-target/all-feature checks also pass. The verification guide retains
+  red regressions and fixture corrections. Numeric costs, other platforms, image dependency
+  features, external-loop/API/renderer-lifetime reconciliation, canonical docking and engine
+  adoption remain open.
+
 # Historical Main Integration
 
 The previous snapshot recorded `df6ae2f` on July 9. The following integration summary retains that
@@ -227,7 +248,8 @@ historical scope and is not current branch or CI qualification.
   Font prewarming, available-family names and glyph-raster qualification are complete within the
   recorded Windows/software scope, as are source-fragment/layer/underline and window-local
   text ownership. The Taffy/intrinsic/root/grid/stack successor is qualified within its
-  recorded scope. Continue remaining image/API/platform/external-loop differences. Qualify the
+  recorded scope, together with shared-image decoding and its real public/native consumers.
+  Continue remaining image-feature/API/platform/external-loop differences. Qualify the
   prepared CoreText selection/cascade work on macOS when that platform is available. The
   DirectWrite successor now
   has separate existing-family and installed-fallback evidence rather than borrowing the

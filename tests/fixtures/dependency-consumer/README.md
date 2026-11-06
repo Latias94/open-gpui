@@ -88,3 +88,13 @@ row/column content sizing through the public style API. It remains direct API ev
 actual measured grid/text/root painting and native submission have separate framework consumers.
 The independent application does not enable stack growth unless it explicitly requests the
 framework's `stacker` feature.
+
+The optional `images` tests directly consume public `Image::to_image_data` without test-support.
+They preserve animated WebP frames, delays and BGRA color/alpha, static JPEG EXIF orientation,
+and malformed/truncated-input errors through this independent lockfile. Actual asynchronous
+Img loading, animation clocks, atlas reuse and native Submitted/readback/retirement have
+separate framework consumers; direct decoding does not qualify those paths:
+
+```text
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --all-features --test images --test-threads=1 --no-fail-fast --no-tests fail
+```
