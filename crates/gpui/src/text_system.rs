@@ -42,6 +42,11 @@ use std::{
     },
 };
 
+/// Returns the logical vertical offset for an underline within a line.
+pub fn underline_y_offset(line_height: Pixels, ascent: Pixels, descent: Pixels) -> Pixels {
+    (line_height - ascent - descent) / 2. + ascent + descent * 0.618
+}
+
 /// An opaque identifier for a specific font.
 #[derive(Hash, PartialEq, Eq, Clone, Copy, Debug)]
 #[repr(C)]

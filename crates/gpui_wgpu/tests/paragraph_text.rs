@@ -8,11 +8,11 @@
 
 use anyhow::Result;
 use open_gpui::{
-    AppContext as _, Bounds, Context, DevicePixels, Font, FontFallbacks, FontFeatures, FontId,
-    FontMetrics, FontRun, GlyphId, HeadlessAppContext, IntoElement, LineLayout, ParentElement as _,
-    Pixels, PlatformTextSystem, Point, QuitMode, Render, RenderGlyphParams, SharedString, Size,
-    Styled as _, TextAlign, TextRenderingMode, TextRun, TextSystem, Window, WindowHandle, canvas,
-    div, font, point, px, size,
+    AppContext as _, Bounds, Context, DecorationRun, DevicePixels, Font, FontFallbacks,
+    FontFeatures, FontId, FontMetrics, FontRun, GlyphId, HeadlessAppContext, IntoElement,
+    LineLayout, ParentElement as _, Pixels, PlatformTextSystem, Point, QuitMode, Render,
+    RenderGlyphParams, ShapedLine, SharedString, Size, Styled as _, TextAlign, TextRenderingMode,
+    TextRun, TextSystem, Window, WindowHandle, black, canvas, div, font, point, px, size,
 };
 use open_gpui_wgpu::CosmicTextSystem;
 use std::sync::Mutex;
@@ -389,9 +389,21 @@ impl Render for ParagraphView {
                         None,
                     );
                     assert_ltr_index_hit_and_split(&control);
-                    (lines, control)
+                    let fragments = ["aéא\u{05b7}בB", "office ffi"].map(|text| {
+                        window.text_system().shape_line(
+                            text.into(),
+                            font_size,
+                            &[TextRun {
+                                len: text.len(),
+                                font: font("IBM Plex Sans"),
+                                ..Default::default()
+                            }],
+                            None,
+                        )
+                    });
+                    (lines, control, fragments)
                 },
-                move |bounds, (lines, control), window, cx| {
+                move |bounds, (lines, control, fragments), window, cx| {
                     let line_height = px(40.);
                     let mut origin = bounds.origin;
                     let mut source_start = 0;
@@ -417,6 +429,11 @@ impl Render for ParagraphView {
                     control
                         .paint(origin, line_height, TextAlign::Left, None, window, cx)
                         .expect("the LTR control must also paint real glyphs");
+                    origin.y += line_height;
+                    for line in fragments {
+                        assert_and_paint_fragments(&line, origin, line_height, window, cx);
+                        origin.y += line_height;
+                    }
                     paints.borrow_mut().push(PaintedText {
                         version,
                         bounds,
@@ -427,6 +444,106 @@ impl Render for ParagraphView {
             .w(self.content_width)
             .h(px(400.)),
         )
+    }
+}
+
+fn assert_and_paint_fragments(
+    line: &ShapedLine,
+    origin: Point<Pixels>,
+    line_height: Pixels,
+    window: &mut Window,
+    cx: &mut open_gpui::App,
+) {
+    let original = glyphs(line);
+    assert!(!original.is_empty());
+    assert!(original.iter().all(|glyph| glyph.id != GlyphId(0)));
+    if line.text.contains('א') {
+        assert!(!original.iter().map(|glyph| glyph.index).is_sorted());
+    }
+    let mut cursor = line.cursor();
+    let mut source = String::new();
+    let mut recovered = Vec::new();
+    for boundary in std::iter::once(0)
+        .chain(line.text.char_indices().skip(1).map(|(index, _)| index))
+        .chain([line.len(), line.len()])
+    {
+        let previous_x = cursor.x_offset();
+        let byte_offset = source.len();
+        let piece = cursor.take_until(boundary);
+        assert_eq!(piece.width() + previous_x, cursor.x_offset());
+        for mut glyph in glyphs(&piece) {
+            assert!(glyph.index < piece.len());
+            assert!(piece.text.is_char_boundary(glyph.index));
+            glyph.index += byte_offset;
+            glyph.position.x += previous_x;
+            recovered.push(glyph);
+        }
+        let decorations = [DecorationRun {
+            len: piece.len() as u32,
+            color: black(),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        }];
+        let piece_origin = origin + point(previous_x, px(0.));
+        LineLayout::paint_background(
+            &piece,
+            piece_origin,
+            line_height,
+            TextAlign::Left,
+            None,
+            &decorations,
+            window,
+            cx,
+        )
+        .unwrap();
+        LineLayout::paint(
+            &piece,
+            piece_origin,
+            line_height,
+            TextAlign::Left,
+            None,
+            &decorations,
+            window,
+            cx,
+        )
+        .unwrap();
+        source.push_str(&piece.text);
+    }
+    assert_eq!(source, line.text.as_ref());
+    assert_eq!(cursor.x_offset(), line.width());
+    let order = |glyph: &GlyphObservation| (glyph.index, glyph.font_id.0, glyph.id.0);
+    let mut expected = original;
+    expected.sort_by_key(order);
+    recovered.sort_by_key(order);
+    assert_eq!(recovered, expected);
+    for boundary in line
+        .text
+        .char_indices()
+        .map(|(index, _)| index)
+        .chain([line.len()])
+    {
+        let (left, right) = LineLayout::split_at(line, boundary);
+        assert_eq!(left.len + right.len, line.len());
+        assert_eq!(left.width + right.width, line.width());
+        assert_eq!(
+            left.runs.iter().map(|run| run.glyphs.len()).sum::<usize>()
+                + right.runs.iter().map(|run| run.glyphs.len()).sum::<usize>(),
+            expected.len()
+        );
+        assert!(
+            left.runs
+                .iter()
+                .flat_map(|run| &run.glyphs)
+                .all(|glyph| glyph.index < boundary)
+        );
+        assert!(
+            right
+                .runs
+                .iter()
+                .flat_map(|run| &run.glyphs)
+                .all(|glyph| glyph.index < right.len)
+        );
     }
 }
 

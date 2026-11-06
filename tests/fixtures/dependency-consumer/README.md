@@ -63,3 +63,12 @@ lifetime. It uses software rasterization and does not establish native window or
 ```text
 cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --all-features --test fonts --test-threads=1 --no-fail-fast --no-tests fail
 ```
+
+The optional `text_layers` test type-checks a custom Element that delegates measurement/prepaint
+to StyledText and uses public background/highlight/foreground passes. It verifies the exact API
+signatures without launching that element. Actual layered primitive order, real Cosmic paint and
+native source-fragment/underline submission have separate framework consumers:
+
+```text
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --all-features --test text_layers --test-threads=1 --no-fail-fast --no-tests fail
+```

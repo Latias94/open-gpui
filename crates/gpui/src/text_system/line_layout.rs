@@ -128,6 +128,75 @@ impl LineLayout {
         None
     }
 
+    /// Splits glyphs by their source byte index without reshaping or visual reordering.
+    ///
+    /// The prefix retains original coordinates. The suffix rebases indices by `byte_index`
+    /// and x coordinates by the prefix width, so painting the pieces at successive advances
+    /// reconstructs the original geometry. Visually reordered glyphs may extend outside a
+    /// piece's advance width. Splitting inside a shaped cluster assigns its glyphs by their
+    /// original cluster index; this is not a caret, independent reflow, or bidi layout operation.
+    /// The caller must supply a source character boundary because a raw layout has no text.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `byte_index` exceeds the layout's source length.
+    pub fn split_at(&self, byte_index: usize) -> (Self, Self) {
+        assert!(byte_index <= self.len, "split boundary exceeds line length");
+        let x_offset = if byte_index == 0 {
+            px(0.)
+        } else {
+            self.x_for_index(byte_index)
+        };
+        let mut left_runs = Vec::new();
+        let mut right_runs = Vec::new();
+        for run in &self.runs {
+            let mut left = Vec::new();
+            let mut right = Vec::new();
+            for glyph in &run.glyphs {
+                if glyph.index < byte_index {
+                    left.push(glyph.clone());
+                } else {
+                    right.push(ShapedGlyph {
+                        id: glyph.id,
+                        position: point(glyph.position.x - x_offset, glyph.position.y),
+                        index: glyph.index - byte_index,
+                        is_emoji: glyph.is_emoji,
+                    });
+                }
+            }
+            if !left.is_empty() {
+                left_runs.push(ShapedRun {
+                    font_id: run.font_id,
+                    glyphs: left,
+                });
+            }
+            if !right.is_empty() {
+                right_runs.push(ShapedRun {
+                    font_id: run.font_id,
+                    glyphs: right,
+                });
+            }
+        }
+        (
+            Self {
+                font_size: self.font_size,
+                width: x_offset,
+                ascent: self.ascent,
+                descent: self.descent,
+                runs: left_runs,
+                len: byte_index,
+            },
+            Self {
+                font_size: self.font_size,
+                width: self.width - x_offset,
+                ascent: self.ascent,
+                descent: self.descent,
+                runs: right_runs,
+                len: self.len - byte_index,
+            },
+        )
+    }
+
     fn compute_wrap_boundaries(
         &self,
         text: &str,

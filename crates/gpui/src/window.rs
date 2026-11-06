@@ -103,6 +103,8 @@ mod portal_anchor;
 mod prompts;
 #[doc(hidden)]
 pub mod retained_visual;
+#[cfg(test)]
+mod underline_tests;
 
 use self::a11y::A11y;
 pub use self::a11y::{
@@ -10975,6 +10977,91 @@ impl Window {
         self.insert_scene_primitive(path);
     }
 
+    /// Returns the snapped, projected device-space bounds used to paint the complete underline.
+    ///
+    /// The bounds include the current subtree transform and are independent of clipping and
+    /// exclusions. Returns empty bounds when the underline has no drawable geometry or its
+    /// projection fails. Call during prepaint or paint within the underline's geometry scope.
+    pub fn underline_bounds(
+        &self,
+        origin: Point<Pixels>,
+        width: Pixels,
+        style: &UnderlineStyle,
+    ) -> Bounds<ScaledPixels> {
+        self.prepare_underline(origin, width, style)
+            .map(|(_, bounds)| bounds)
+            .unwrap_or_default()
+    }
+
+    /// Paints an underline excluding absolute, projected device-space horizontal spans.
+    ///
+    /// Exclusions may be unordered, overlapping, adjacent, or outside the underline. Empty,
+    /// reversed, and non-finite ranges are ignored. Every visible segment retains the complete
+    /// underline's geometry and wave phase, intersected with the current exact clip stack.
+    /// This method should only be called during the paint phase of element drawing.
+    pub fn paint_underline_with_exclusions(
+        &mut self,
+        origin: Point<Pixels>,
+        width: Pixels,
+        style: &UnderlineStyle,
+        exclusions: &[Range<ScaledPixels>],
+    ) {
+        self.invalidator.debug_assert_paint();
+        let Some((underline, projected_bounds)) = self.prepare_underline(origin, width, style)
+        else {
+            return;
+        };
+        if exclusions.is_empty() {
+            self.insert_scene_primitive(underline);
+            return;
+        }
+
+        let scale_factor = self.scale_factor();
+        let clip_stack = self.clip_stack();
+        let bounds =
+            projected_bounds.intersect(&clip_stack.conservative_bounds().scale(scale_factor));
+        if bounds.is_empty() {
+            return;
+        }
+
+        let mut exclusions = exclusions
+            .iter()
+            .filter_map(|span| {
+                if !span.start.0.is_finite() || !span.end.0.is_finite() {
+                    return None;
+                }
+                let start = span.start.max(bounds.left());
+                let end = span.end.min(bounds.right());
+                (start < end).then_some(start..end)
+            })
+            .collect::<SmallVec<[_; 4]>>();
+        if exclusions.is_empty() {
+            self.insert_scene_primitive(underline);
+            return;
+        }
+        exclusions.sort_unstable_by_key(|span| span.start);
+
+        let mut paint_span = |start, end| {
+            let span_bounds =
+                Bounds::from_corners(point(start, bounds.top()), point(end, bounds.bottom()))
+                    .map(|value| px(value.0 / scale_factor));
+            let snapshot = clip_stack.push(ResolvedClip::rectangle(span_bounds));
+            self.with_resolved_clip_stack(snapshot, |window| {
+                window.insert_scene_primitive(underline);
+            });
+        };
+        let mut start = bounds.left();
+        for exclusion in exclusions {
+            if start < exclusion.start {
+                paint_span(start, exclusion.start);
+            }
+            start = start.max(exclusion.end);
+        }
+        if start < bounds.right() {
+            paint_span(start, bounds.right());
+        }
+    }
+
     /// Paint an underline into the scene for the next frame at the current z-index.
     ///
     /// This method should only be called as part of the paint phase of element drawing.
@@ -10985,7 +11072,18 @@ impl Window {
         style: &UnderlineStyle,
     ) {
         self.invalidator.debug_assert_paint();
+        if let Some((underline, _)) = self.prepare_underline(origin, width, style) {
+            self.insert_scene_primitive(underline);
+        }
+    }
 
+    fn prepare_underline(
+        &self,
+        origin: Point<Pixels>,
+        width: Pixels,
+        style: &UnderlineStyle,
+    ) -> Option<(Underline, Bounds<ScaledPixels>)> {
+        self.invalidator.debug_assert_paint_or_prepaint();
         let scale_factor = self.scale_factor();
         let local_thickness = style.thickness.scale(scale_factor);
         let height_multiplier = if style.wavy { 3.0 } else { 1.0 };
@@ -10997,28 +11095,31 @@ impl Window {
             ),
         };
         let element_opacity = self.element_opacity();
-        let Some(base_transform) = self.base_primitive_transform() else {
-            return;
-        };
-        let Some((transform, thickness)) = self.underline_raster_projection(
+        let base_transform = self.base_primitive_transform()?;
+        let (transform, thickness) = self.underline_raster_projection(
             base_transform,
             bounds,
             local_thickness,
             height_multiplier,
-        ) else {
-            return;
-        };
+        )?;
+        let projected_bounds = transform
+            .try_project_bounds(bounds)
+            .inspect_err(|error| self.record_subtree_transform_failure(*error))
+            .ok()?;
 
-        self.insert_scene_primitive(Underline {
-            order: 0,
-            pad: 0,
-            bounds,
-            clip: Default::default(),
-            color: style.color.unwrap_or_default().opacity(element_opacity),
-            thickness,
-            wavy: style.wavy.into(),
-            transform,
-        });
+        Some((
+            Underline {
+                order: 0,
+                pad: 0,
+                bounds,
+                clip: Default::default(),
+                color: style.color.unwrap_or_default().opacity(element_opacity),
+                thickness,
+                wavy: style.wavy.into(),
+                transform,
+            },
+            projected_bounds,
+        ))
     }
 
     /// Paint a strikethrough into the scene for the next frame at the current z-index.

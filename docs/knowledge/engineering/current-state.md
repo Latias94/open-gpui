@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-06T11:34:43+08:00
+timestamp: 2026-11-06T12:29:17+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -144,6 +144,25 @@ verified_by:
   scopes. Other platforms, complete fallback/script support, engine integration and measured
   frame/process costs remain open.
 
+- The text fragment/layer/underline successor is qualified after `1d148d66dfd`. Raw
+  layouts own source-index glyph partition; the forward cursor preserves existing shaping and
+  explicitly separates ordered traversal from reordered scans. The old RTL underflow and an
+  advance-only fragment/opaque-cover ordering defect are reproduced before correction. TextLayout
+  releases its borrow before painting shared measured snapshots; backgrounds/highlights/foregrounds
+  have public split passes with actual aligned/wrapped geometry. Underline callbacks expose source
+  ranges/resolved styles; Window bounds/exclusions share existing snapped projection and exact
+  ancestor clips. The corrected focused suite passes 19/19, including actual emitted primitives,
+  Cosmic public paint/reconstruction and native source-fragment/underline Submitted/retirement.
+  The verification record retains the half-open-boundary and floating-intersection fixture
+  corrections. Final Core/WGPU/Windows plus three public text trajectories pass 1,281/1,281
+  with four existing interactive Windows cases skipped; affected components/docking/Canvas pass
+  2,964/2,964 and independent fonts/wrapping/layer API tests pass 6/6 without skips. Locked
+  workspace/consumer compilation, correctness Clippy, both formatting checks and existing
+  import/document/release/API scans pass on Rust 1.95.0. Actual Rust 1.92.0 affected-framework and
+  independent-consumer all-target/all-feature checks pass on Windows. Both bounded independent
+  reviews leave no outstanding confirmed P1/P2. This is not independent bidi reflow, general
+  caret support, full ink-overhang qualification, a numeric cost result or complete upstream parity.
+
 # Historical Main Integration
 
 The previous snapshot recorded `df6ae2f` on July 9. The following integration summary retains that
@@ -172,7 +191,7 @@ historical scope and is not current branch or CI qualification.
 - Continue the coherent framework refresh beyond the five initial correctness units. The candidate
   queue retains font/text/layout/API, image decoding, external-run-loop and platform differences.
   Font prewarming, available-family names and glyph-raster qualification are complete within the
-  recorded Windows/software scope. Continue the queued text split/layers/underline unit, then
+  recorded Windows/software scope, as is the source-fragment/layer/underline unit. Continue
   window-local text ownership, Taffy/API and platform differences. Qualify the
   prepared CoreText selection/cascade work on macOS when that platform is available. The
   DirectWrite successor now

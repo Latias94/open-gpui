@@ -1372,6 +1372,91 @@ Linux/browser execution, complete fallback priority, script/caret support, numer
 budgets and engine rendering integration retain their separate scope. This closes the font-work
 unit, not the complete fixed-target refresh or canonical-docking replacement.
 
+## Source Fragments, Text Layers And Underline Exclusions
+
+The successor to `1d148d66dfdf89115046e08d6e01923b4b2e2165` reconciles fixed-target
+`2936989f1b`, `f792c2d72d`, `bda9c0bd43` and `0dea8c63d9`. A deterministic visual Hebrew
+glyph fixture reproduces the original split's index underflow before correction
+(`11738462-2342-4139-be83-3f1d57bece89`, 0/1). `LineLayout` now owns the source-index partition;
+ShapedLine delegates to it, retaining visual order and rebasing suffix indices/coordinates.
+Ordered cursor traversal advances glyphs/decorations once, while reordered input scans its
+remaining glyphs. Repeated and invalid UTF-8 boundaries, complete source reconstruction,
+zero-length decorations and refusal recovery retain explicit tests. These fragments preserve
+the existing shaping; they are not independently reshaped bidi/reflow/caret layouts.
+
+TextLayout shares immutable measured lines through a local Rc snapshot and releases its internal
+borrow before backend calls. Explicit background/foreground passes propagate errors; ordinary
+painting keeps logging and finishes backgrounds before foregrounds. Both row passes use aligned
+wrapped footprints, continued-decoration origins and exact final row endpoints. The zero-advance
+background fix computes width after the existing half-cell origin adjustment. Underline callbacks
+carry source ranges and resolved colors/styles; contiguous equal resolved styles merge ranges.
+
+Window bounds and painting share the actual prepared underline, with existing snapped subtree
+projection and opacity. Device-space exclusions normalize intervals and add visible-segment exact
+clip rectangles to the existing clip stack. They retain full underline geometry, phase, transformed/
+rounded ancestor clips, replay and sibling recovery. Five focused Window cases cover scales
+1/1.25/1.5/2/3, fractional origins, nested transforms, invalid projection, empty geometry and
+unordered/overlapping/adjacent/outside/covering exclusions.
+
+The first focused library run passes 13/14 (`8950686e-fac7-462b-86c7-1314dc1f06df`). Its only
+failure is a newly authored test using `Bounds::contains` on the exclusive bottom-right corner;
+the test now compares enclosing right/bottom edges directly. All exact row background/underline
+geometry assertions remain. The corrected RTL/cursor/callback and all five Window cases pass in
+that run; the complete layer/public/native consumers follow.
+
+Independent review exposes another owner defect: a positive-advance mixed RTL prefix can retain a
+glyph beyond that advance, so an advance-only batch hides its footprint from a later opaque quad.
+The actual raster-sprite/cover regression fails before correction
+(`1cc9d8f6-46d6-42bb-9cc4-65ba90125b46`, 0/1). Foreground/background painting now bypasses the
+whole-line batch for unordered, non-increasing-position or outlying glyphs and lets actual primitives participate in
+ordering. Ordinary byte-ordered contained text retains aligned/wrapped batching. This corrects
+the introduced fragment contract without guessed ink padding or additional raster preparation.
+
+The first combined public/native focused run passes 18/19
+(`ee46454a-b2f3-4915-9c29-90d74f46e6a5`); the native fixture's intersection recomputes a height
+from 6.0000005 to 6, making exact Bounds structure equality an invalid containment oracle.
+Direct left/right/top/bottom containment retains the intended geometry check without changing
+the device-alignment, source, callback, submission or retirement requirements. A zero-advance
+background/cover ordering assertion also covers its half-cell extension beyond the advance.
+
+The corrected focused run passes 19/19 (`6442d6c2-a21a-4691-82b9-f15380999beb`; 1,266 unrelated
+cases filtered). It includes actual primitive row/order/count checks, backend reentry, real
+Cosmic source fragments/layers and the complete native text submission trajectory. The latter
+retains every original source/tab/separator/font-feature/wrapping/Middle/notification/retirement
+assertion and adds raw layout painting, source-verified RTL fragments and forwarded/excluded
+underline callbacks. An unused integration-test import is subsequently removed; aggregate runs
+use that same production source.
+
+The final all-feature Core/WGPU/Windows libraries and all three public text trajectories pass
+1,281/1,281 (`760c6f5e-f1d4-4d2e-9f89-aac97455a516`): Core 1,001, WGPU 79, Windows 198 and
+public consumers 3, with four existing interactive Windows cases skipped. The complete native
+text/cache/input/font/render-resource/color-pixel/retirement cases retain their existing scope.
+Affected UI core/components/docking/Canvas pass 2,964/2,964 across 25 binaries without skips
+(`dc0f85c4-38ce-436a-b6d2-dcad362d3dbc`). Independently locked fonts/wrapping/text-layer tests
+pass 6/6 without skips (`e72b5ba0-3e73-404b-bfec-a7ebc68a8941`). The new independent test checks
+the exact public method signatures and a custom Element's source construction; it does not launch
+that element. Real layered drawing and native submission are established by their separate
+consumers above.
+
+Final locked workspace all-target and independently locked consumer all-target/all-feature
+checks pass on Windows 11/Rust 1.95.0 with one build job and the shared target. Affected
+Core/WGPU/Windows all-target/all-feature correctness Clippy and both explicit formatting checks
+pass. Actual Rust 1.92.0 passes affected-framework and independent-consumer all-target/all-feature
+checks. Nonblocking warnings remain, including existing project lints on test unwraps and argument
+counts. No dependency or lockfile changes are required. Existing import-boundary, public API-tier,
+document-link and release-document scans pass.
+The split/cursor reviewer closes the original ordering P2 after the correction and actual
+regressions; independent Window/TextLayout review finds no additional confirmed P1/P2. Neither
+review runs Cargo independently. Their bounded source scopes and the executed main-thread runs
+are distinct evidence. Existing general font-ink overhang is outside this fragment correction.
+Actual primitive order
+and software raster observations are separate from native Submitted frames, compositor pixels,
+numeric costs, other platforms and general script/caret support.
+
+This closes the scoped source-fragment/layer/underline unit. Window-local text ownership,
+Taffy/intrinsic/root/grid/stack policy, image/API/platform work, canonical docking and the
+consumer engine's View/Editor/game-runtime comparison remain separate incomplete work.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:

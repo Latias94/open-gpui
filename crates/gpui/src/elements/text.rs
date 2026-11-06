@@ -614,9 +614,15 @@ impl IntoElement for StyledText {
 #[derive(Default, Clone)]
 pub struct TextLayout(Rc<RefCell<Option<TextLayoutInner>>>);
 
+enum TextPaintPass {
+    All,
+    Background,
+    Foreground,
+}
+
 struct TextLayoutInner {
     len: usize,
-    lines: SmallVec<[WrappedLine; 1]>,
+    lines: Rc<SmallVec<[WrappedLine; 1]>>,
     line_height: Pixels,
     wrap_width: Option<Pixels>,
     size: Option<Size<Pixels>>,
@@ -746,7 +752,7 @@ impl TextLayout {
                 }
 
                 element_state.0.borrow_mut().replace(TextLayoutInner {
-                    lines,
+                    lines: Rc::new(lines),
                     len,
                     line_height,
                     wrap_width,
@@ -769,40 +775,86 @@ impl TextLayout {
     }
 
     fn paint(&self, text: &str, window: &mut Window, cx: &mut App) {
-        let element_state = self.0.borrow();
-        let element_state = element_state
-            .as_ref()
-            .with_context(|| format!("measurement has not been performed on {text}"))
+        self.paint_lines(TextPaintPass::All, window, cx)
+            .with_context(|| format!("failed to paint {text}"))
             .unwrap();
-        let bounds = element_state
-            .bounds
-            .with_context(|| format!("prepaint has not been performed on {text}"))
-            .unwrap();
+    }
 
-        let line_height = element_state.line_height;
-        let mut line_origin = bounds.origin;
-        let text_style = window.text_style();
-        for line in &element_state.lines {
-            line.paint_background(
-                line_origin,
-                line_height,
-                text_style.text_align,
-                Some(bounds),
-                window,
-                cx,
+    /// Paints run backgrounds without glyphs or decorations. Call this before painting
+    /// custom highlights, then call [`Self::paint_foreground`] to paint the text above them.
+    ///
+    /// The owning text element must have completed measurement and prepaint in the
+    /// current element lifecycle. Returns an error if either phase has not completed.
+    pub fn paint_background(&self, window: &mut Window, cx: &mut App) -> anyhow::Result<()> {
+        self.paint_lines(TextPaintPass::Background, window, cx)
+    }
+
+    /// Paints glyphs and decorations without run backgrounds.
+    ///
+    /// Use the same inherited text style and clip as [`Self::paint_background`]. The owning
+    /// text element must have completed measurement and prepaint in the current element
+    /// lifecycle. Returns an error if either phase has not completed.
+    pub fn paint_foreground(&self, window: &mut Window, cx: &mut App) -> anyhow::Result<()> {
+        self.paint_lines(TextPaintPass::Foreground, window, cx)
+    }
+
+    fn paint_lines(
+        &self,
+        pass: TextPaintPass,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> anyhow::Result<()> {
+        let (lines, line_height, bounds) = {
+            let element_state = self.0.borrow();
+            let element_state = element_state
+                .as_ref()
+                .context("measurement has not been performed")?;
+            let bounds = element_state
+                .bounds
+                .context("prepaint has not been performed")?;
+            (
+                element_state.lines.clone(),
+                element_state.line_height,
+                bounds,
             )
-            .log_err();
-            line.paint(
-                line_origin,
-                line_height,
-                text_style.text_align,
-                Some(bounds),
-                window,
-                cx,
-            )
-            .log_err();
-            line_origin.y += line.size(line_height).height;
+        };
+        let text_align = window.text_style().text_align;
+        let passes: &[TextPaintPass] = match pass {
+            TextPaintPass::All => &[TextPaintPass::Background, TextPaintPass::Foreground],
+            TextPaintPass::Background => &[TextPaintPass::Background],
+            TextPaintPass::Foreground => &[TextPaintPass::Foreground],
+        };
+        for layer in passes {
+            let mut line_origin = bounds.origin;
+            for line in lines.iter() {
+                let result = match layer {
+                    TextPaintPass::Background => line.paint_background(
+                        line_origin,
+                        line_height,
+                        text_align,
+                        Some(bounds),
+                        window,
+                        cx,
+                    ),
+                    TextPaintPass::Foreground => line.paint(
+                        line_origin,
+                        line_height,
+                        text_align,
+                        Some(bounds),
+                        window,
+                        cx,
+                    ),
+                    TextPaintPass::All => unreachable!(),
+                };
+                if matches!(pass, TextPaintPass::All) {
+                    result.log_err();
+                } else {
+                    result?;
+                }
+                line_origin.y += line.size(line_height).height;
+            }
         }
+        Ok(())
     }
 
     /// Get the byte index into the input of the pixel position.
@@ -822,7 +874,7 @@ impl TextLayout {
         let line_height = element_state.line_height;
         let mut line_origin = bounds.origin;
         let mut line_start_ix = 0;
-        for line in &element_state.lines {
+        for line in element_state.lines.iter() {
             let line_bottom = line_origin.y + line.size(line_height).height;
             if position.y > line_bottom {
                 line_origin.y = line_bottom;
@@ -853,7 +905,7 @@ impl TextLayout {
         let mut line_origin = bounds.origin;
         let mut line_start_ix = 0;
 
-        for line in &element_state.lines {
+        for line in element_state.lines.iter() {
             let line_end_ix = line_start_ix + line.len();
             if index < line_start_ix {
                 break;
@@ -884,7 +936,7 @@ impl TextLayout {
         let mut line_origin = bounds.origin;
         let mut line_start_ix = 0;
 
-        for line in &element_state.lines {
+        for line in element_state.lines.iter() {
             let line_end_ix = line_start_ix + line.len();
             if index < line_start_ix {
                 break;
@@ -1328,6 +1380,438 @@ impl IntoElement for InteractiveText {
 
     fn into_element(self) -> Self::Element {
         self
+    }
+}
+
+#[cfg(test)]
+mod text_layer_tests {
+    use super::*;
+    use crate::{
+        AppContext as _, Context, DevicePixels, Font, FontId, FontMetrics, FontRun, GlyphId,
+        HeadlessAppContext, LineLayout, NoopTextSystem, ParentElement as _, PlatformTextSystem,
+        PreparedSubtreeClip, QuitMode, Render, RenderGlyphParams, StrikethroughStyle, Styled as _,
+        SubtreeClip, TextAlign, TextRenderingMode, UnderlineStyle, div, fill, point, px, rgb, size,
+    };
+
+    thread_local! {
+        static PAINTING_LAYOUT: RefCell<Option<TextLayout>> = const { RefCell::new(None) };
+    }
+
+    struct RasterTextSystem(NoopTextSystem);
+
+    impl PlatformTextSystem for RasterTextSystem {
+        fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> anyhow::Result<()> {
+            self.0.add_fonts(fonts)
+        }
+
+        fn all_font_names(&self) -> Vec<String> {
+            self.0.all_font_names()
+        }
+
+        fn font_id(&self, font: &Font) -> anyhow::Result<FontId> {
+            self.0.font_id(font)
+        }
+
+        fn font_metrics(&self, font_id: FontId) -> FontMetrics {
+            self.0.font_metrics(font_id)
+        }
+
+        fn typographic_bounds(
+            &self,
+            font_id: FontId,
+            glyph_id: GlyphId,
+        ) -> anyhow::Result<Bounds<f32>> {
+            self.0.typographic_bounds(font_id, glyph_id)
+        }
+
+        fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> anyhow::Result<Size<f32>> {
+            self.0.advance(font_id, glyph_id)
+        }
+
+        fn glyph_for_char(&self, font_id: FontId, character: char) -> Option<GlyphId> {
+            self.0.glyph_for_char(font_id, character)
+        }
+
+        fn glyph_raster_bounds(
+            &self,
+            _: &RenderGlyphParams,
+        ) -> anyhow::Result<Bounds<DevicePixels>> {
+            PAINTING_LAYOUT.with_borrow(|layout| {
+                let layout = layout
+                    .as_ref()
+                    .expect("paint must install its layout probe");
+                assert!(
+                    layout.0.try_borrow_mut().is_ok(),
+                    "text painting must release its internal borrow before backend reentry"
+                );
+            });
+            Ok(Bounds::new(
+                point(DevicePixels(0), DevicePixels(-12)),
+                size(DevicePixels(10), DevicePixels(16)),
+            ))
+        }
+
+        fn rasterize_glyph(
+            &self,
+            _: &RenderGlyphParams,
+            bounds: Bounds<DevicePixels>,
+        ) -> anyhow::Result<(Size<DevicePixels>, Vec<u8>)> {
+            Ok((
+                bounds.size,
+                vec![255; (bounds.size.width.0 * bounds.size.height.0) as usize],
+            ))
+        }
+
+        fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout {
+            self.0.layout_line(text, font_size, runs)
+        }
+
+        fn recommended_rendering_mode(&self, _: FontId, _: Pixels) -> TextRenderingMode {
+            TextRenderingMode::Grayscale
+        }
+    }
+
+    struct LayeredSceneProbe {
+        label: StyledText,
+        align: TextAlign,
+        align_width: Pixels,
+        clipped: bool,
+    }
+
+    impl IntoElement for LayeredSceneProbe {
+        type Element = Self;
+
+        fn into_element(self) -> Self::Element {
+            self
+        }
+    }
+
+    impl Element for LayeredSceneProbe {
+        type RequestLayoutState = ();
+        type PrepaintState = Option<PreparedSubtreeClip>;
+
+        fn id(&self) -> Option<ElementId> {
+            None
+        }
+
+        fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+            None
+        }
+
+        fn request_layout(
+            &mut self,
+            id: Option<&GlobalElementId>,
+            inspector_id: Option<&InspectorElementId>,
+            window: &mut Window,
+            cx: &mut App,
+        ) -> (LayoutId, Self::RequestLayoutState) {
+            self.label.request_layout(id, inspector_id, window, cx)
+        }
+
+        fn prepaint(
+            &mut self,
+            id: Option<&GlobalElementId>,
+            inspector_id: Option<&InspectorElementId>,
+            bounds: Bounds<Pixels>,
+            state: &mut Self::RequestLayoutState,
+            window: &mut Window,
+            cx: &mut App,
+        ) -> Self::PrepaintState {
+            let bounds = Bounds::new(
+                bounds.origin + point(px(100.), px(40.)),
+                size(self.align_width, bounds.size.height),
+            );
+            self.label
+                .prepaint(id, inspector_id, bounds, state, window, cx);
+            self.clipped.then(|| {
+                window.prepare_subtree_clip(
+                    &SubtreeClip::try_rect(Bounds::new(
+                        point(px(-20.), px(5.)),
+                        size(self.align_width + px(40.), px(25.)),
+                    ))
+                    .unwrap(),
+                    bounds,
+                )
+            })
+        }
+
+        fn paint(
+            &mut self,
+            id: Option<&GlobalElementId>,
+            inspector_id: Option<&InspectorElementId>,
+            bounds: Bounds<Pixels>,
+            state: &mut Self::RequestLayoutState,
+            clip: &mut Self::PrepaintState,
+            window: &mut Window,
+            cx: &mut App,
+        ) {
+            let layout = self.label.layout().clone();
+            PAINTING_LAYOUT.with_borrow_mut(|probe| *probe = Some(layout.clone()));
+            let mut paint = |window: &mut Window| {
+                let start = (
+                    window.next_frame.scene.quads.len(),
+                    window.next_frame.scene.monochrome_sprites.len(),
+                    window.next_frame.scene.underlines.len(),
+                );
+                layout.paint_background(window, cx).unwrap();
+                let backgrounds = window.next_frame.scene.quads[start.0..].to_vec();
+                assert_eq!(window.next_frame.scene.monochrome_sprites.len(), start.1);
+                assert_eq!(window.next_frame.scene.underlines.len(), start.2);
+
+                let mut expected_rows = Vec::new();
+                let mut byte_offset = 0;
+                let mut y = layout.bounds().top();
+                let text = layout.text();
+                for paragraph in text.split('\n') {
+                    let line = layout.line_layout_for_index(byte_offset).unwrap();
+                    let row_edges = std::iter::once(px(0.))
+                        .chain(line.wrap_boundaries().iter().map(|boundary| {
+                            line.unwrapped_layout.runs[boundary.run_ix].glyphs[boundary.glyph_ix]
+                                .position
+                                .x
+                        }))
+                        .chain(std::iter::once(line.unwrapped_layout.width))
+                        .collect::<Vec<_>>();
+                    for edges in row_edges.windows(2) {
+                        let width = edges[1] - edges[0];
+                        let extra = self.align_width - width;
+                        let x = layout.bounds().left()
+                            + match self.align {
+                                TextAlign::Left => px(0.),
+                                TextAlign::Center => extra / 2.,
+                                TextAlign::Right => extra,
+                            };
+                        let row = Bounds::new(point(x, y), size(width, layout.line_height()));
+                        if width > px(0.) && row.intersects(&window.clip_bounds()) {
+                            expected_rows.push(row.scale(window.scale_factor()));
+                            window.paint_quad(fill(row, rgb(0x287d3e)));
+                        }
+                        y += layout.line_height();
+                    }
+                    byte_offset += paragraph.len() + 1;
+                }
+                assert_eq!(backgrounds.len(), expected_rows.len());
+                for (quad, expected) in backgrounds.iter().zip(&expected_rows) {
+                    assert_eq!(
+                        crate::Primitive::Quad(*quad).try_visual_bounds().unwrap(),
+                        *expected,
+                        "run backgrounds must use each aligned visual row's actual endpoint"
+                    );
+                }
+                let quads_before_foreground = window.next_frame.scene.quads.len();
+                let highlights =
+                    window.next_frame.scene.quads[start.0 + backgrounds.len()..].to_vec();
+                layout.paint_foreground(window, cx).unwrap();
+                assert_eq!(window.next_frame.scene.quads.len(), quads_before_foreground);
+                let sprites = window.next_frame.scene.monochrome_sprites[start.1..].to_vec();
+                let underlines = window.next_frame.scene.underlines[start.2..].to_vec();
+                assert!(!sprites.is_empty());
+                assert!(!underlines.is_empty());
+                for background in &backgrounds {
+                    let background_bounds = crate::Primitive::Quad(*background)
+                        .try_visual_bounds()
+                        .unwrap();
+                    for highlight in &highlights {
+                        if background_bounds.intersects(
+                            &crate::Primitive::Quad(*highlight)
+                                .try_visual_bounds()
+                                .unwrap(),
+                        ) {
+                            assert!(background.order < highlight.order);
+                        }
+                    }
+                }
+                for highlight in &highlights {
+                    let highlight_bounds = crate::Primitive::Quad(*highlight)
+                        .try_visual_bounds()
+                        .unwrap();
+                    for sprite in &sprites {
+                        if highlight_bounds.intersects(
+                            &crate::Primitive::MonochromeSprite(*sprite)
+                                .try_visual_bounds()
+                                .unwrap(),
+                        ) {
+                            assert!(highlight.order < sprite.order);
+                        }
+                    }
+                }
+                for underline in underlines
+                    .iter()
+                    .filter(|underline| underline.color == rgb(0xffd020).into())
+                {
+                    let actual = crate::Primitive::Underline(*underline)
+                        .try_visual_bounds()
+                        .unwrap();
+                    assert!(
+                        expected_rows.iter().any(|row| {
+                            row.left() == actual.left() && row.right() == actual.right()
+                        }),
+                        "underline endpoints must match one independently computed aligned visual row"
+                    );
+                }
+
+                let combined_start = (
+                    window.next_frame.scene.quads.len(),
+                    window.next_frame.scene.monochrome_sprites.len(),
+                    window.next_frame.scene.underlines.len(),
+                );
+                self.label
+                    .paint(id, inspector_id, bounds, state, &mut (), window, cx);
+                let scene = &window.next_frame.scene;
+                let combined_backgrounds = &scene.quads[combined_start.0..];
+                let combined_sprites = &scene.monochrome_sprites[combined_start.1..];
+                let combined_underlines = &scene.underlines[combined_start.2..];
+                assert_eq!(combined_backgrounds.len(), backgrounds.len());
+                assert_eq!(combined_sprites.len(), sprites.len());
+                assert_eq!(combined_underlines.len(), underlines.len());
+                for (actual, expected) in combined_sprites.iter().zip(&sprites) {
+                    assert_eq!(actual.bounds, expected.bounds);
+                    assert_eq!(actual.color, expected.color);
+                }
+                for (actual, expected) in combined_underlines.iter().zip(&underlines) {
+                    assert_eq!(actual.bounds, expected.bounds);
+                    assert_eq!(actual.color, expected.color);
+                }
+                for background in combined_backgrounds {
+                    let background_bounds = crate::Primitive::Quad(*background)
+                        .try_visual_bounds()
+                        .unwrap();
+                    for sprite in combined_sprites {
+                        if background_bounds.intersects(
+                            &crate::Primitive::MonochromeSprite(*sprite)
+                                .try_visual_bounds()
+                                .unwrap(),
+                        ) {
+                            assert!(
+                                background.order < sprite.order,
+                                "ordinary paint must finish every background before overlapping glyphs"
+                            );
+                        }
+                    }
+                }
+
+                let original = LineLayout {
+                    font_size: px(16.),
+                    width: px(50.),
+                    ascent: px(12.),
+                    descent: px(4.),
+                    len: 8,
+                    runs: vec![crate::ShapedRun {
+                        font_id: FontId(0),
+                        glyphs: [(0, 0.), (5, 10.), (3, 20.), (1, 30.), (7, 40.)]
+                            .into_iter()
+                            .map(|(index, x)| crate::ShapedGlyph {
+                                index,
+                                id: GlyphId(1),
+                                position: point(px(x), px(0.)),
+                                is_emoji: false,
+                            })
+                            .collect(),
+                    }],
+                };
+                let (prefix, _) = original.split_at(3);
+                assert_eq!(prefix.width, px(10.));
+                assert_eq!(prefix.runs[0].glyphs[1].position.x, px(30.));
+                let fragment_origin = layout.bounds().origin + point(px(10.), px(10.));
+                prefix
+                    .paint(
+                        fragment_origin,
+                        px(20.),
+                        TextAlign::Left,
+                        None,
+                        &[],
+                        window,
+                        cx,
+                    )
+                    .unwrap();
+                let sprite = *window.next_frame.scene.monochrome_sprites.last().unwrap();
+                let glyph_bounds = crate::Primitive::MonochromeSprite(sprite)
+                    .try_visual_bounds()
+                    .unwrap();
+                assert!(
+                    glyph_bounds.left()
+                        >= (fragment_origin.x + prefix.width).scale(window.scale_factor())
+                );
+                window.paint_quad(fill(
+                    glyph_bounds.map(|value| px(value.0 / window.scale_factor())),
+                    rgb(0xff0000),
+                ));
+                let cover = window.next_frame.scene.quads.last().unwrap();
+                assert!(
+                    sprite.order < cover.order,
+                    "a later opaque cover must paint above the fragment glyph outside its advance"
+                );
+            };
+            if let Some(clip) = clip {
+                window.with_prepared_subtree_clip(clip, paint).unwrap();
+            } else {
+                paint(window);
+            }
+            PAINTING_LAYOUT.with_borrow_mut(|probe| *probe = None);
+        }
+    }
+
+    struct LayeredSceneView {
+        align: TextAlign,
+        align_width: Pixels,
+        clipped: bool,
+    }
+
+    impl Render for LayeredSceneView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let source = "aaaa bbbb cccc\n\nxy\n";
+            let label = StyledText::new(source).with_runs(vec![TextRun {
+                len: source.len(),
+                color: rgb(0xffffff).into(),
+                background_color: Some(rgb(0x602040).into()),
+                underline: Some(UnderlineStyle {
+                    color: Some(rgb(0xffd020).into()),
+                    thickness: px(2.),
+                    wavy: false,
+                }),
+                strikethrough: Some(StrikethroughStyle {
+                    color: Some(rgb(0x40a0ff).into()),
+                    thickness: px(1.),
+                }),
+                ..Default::default()
+            }]);
+            div()
+                .w(px(80.))
+                .text_size(px(20.))
+                .line_height(px(12.))
+                .text_align(self.align)
+                .child(LayeredSceneProbe {
+                    label,
+                    align: self.align,
+                    align_width: self.align_width,
+                    clipped: self.clipped,
+                })
+        }
+    }
+
+    #[test]
+    fn text_layout_layers_preserve_row_geometry_order_counts_and_reentry() -> anyhow::Result<()> {
+        for align in [TextAlign::Center, TextAlign::Right] {
+            for align_width in [px(36.), px(300.)] {
+                for clipped in [false, true] {
+                    let mut app =
+                        HeadlessAppContext::new(Arc::new(RasterTextSystem(NoopTextSystem)));
+                    app.update(|cx| {
+                        cx.set_quit_mode(QuitMode::Explicit);
+                        cx.set_text_rendering_mode(TextRenderingMode::Grayscale);
+                    });
+                    let handle = app.open_window(size(px(800.), px(400.)), move |_, cx| {
+                        cx.new(|_| LayeredSceneView {
+                            align,
+                            align_width,
+                            clipped,
+                        })
+                    })?;
+                    app.update_window(handle.into(), |_, window, cx| window.draw(cx).clear(cx))?;
+                }
+            }
+        }
+        Ok(())
     }
 }
 

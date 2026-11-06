@@ -425,14 +425,15 @@ correctness Clippy, formatting and actual Windows Rust 1.92.0 affected-framework
 checks pass. This closes the scoped font-work unit without qualifying other platforms, complete
 fallback/script support, numeric costs, canonical docking or engine integration.
 
-### Queued Text Split, Layers And Underline Successor
+### Text Split, Layers And Underline Successor
 
 After the font-work qualification, reconcile `2936989f1b`, `f792c2d72d`, `bda9c0bd43` and
 `0dea8c63d9` against the same fixed target. A bounded source comparison at fork `19a4ed3434`
 identifies missing raw LineLayout split/paint, ShapedLineCursor, public TextLayout background/
 foreground passes and underline callbacks/exclusions. Existing ShapedLine split and low-level
-background/foreground painting remain the starting owners. This is queued source evidence,
-not an implemented or executed successor.
+background/foreground painting remain the starting owners. Implementation now follows font-work
+revision `1d148d66dfd`; the verification record must distinguish each executed checkpoint from
+the full unit qualification.
 
 Preserve these complete consumer requirements:
 
@@ -459,6 +460,38 @@ Preserve these complete consumer requirements:
 Use the existing public headless/native and independently locked consumers, with actual source/
 geometry and pixel oracles where relevant. No Zed diagnostics owner, new layout authority or
 separate text renderer is required. Window-local Rc and Taffy migration remain separate units.
+
+The selected split contract partitions glyphs by their original source index, keeps visual order
+and rebases suffix indices/coordinates. Painting fragments at successive recorded advances
+reconstructs their original glyph geometry; fragments may extend outside that advance. This is
+not independent bidi reflow, a caret operation or reshaping across a cluster boundary. The old
+`partition_point` implementation reproduces an RTL index-underflow failure. Both raw layouts
+and ShapedLine now use the same source partition, while the ordered cursor advances glyphs and
+decorations once. Reordered input scans the remaining glyphs rather than claiming linear work.
+
+TextLayout owns an immutable Rc snapshot of its measured lines and releases its RefCell borrow
+before calling painting/backend code. Ordinary drawing finishes all backgrounds before all
+foregrounds; explicit split passes propagate errors. Shared aligned/wrapped row footprints,
+continued decorations and final row endpoints use actual aligned origins. Window underlines
+share one prepared snapped/projected primitive. Absolute device exclusions add exact clip
+rectangles to the existing transformed/rounded clip stack without shortening the full wave.
+
+Independent review identifies that advance-only batching cannot cover outlying fragment glyphs.
+Retain a real emitted-sprite/opaque-cover ordering regression and correct the line batching
+condition before closing this unit. The existing platform and complete public consumers keep
+their source, reflow, notification, reconstruction and exact retirement checks. These mechanisms
+do not establish numeric costs, general visual RTL caret/reflow or execution on other platforms.
+
+The [completed qualification](../verification.md#source-fragments-text-layers-and-underline-exclusions)
+retains both reproduced owner defects and their corrections. Unordered, non-increasing-position
+or outlying glyphs use actual primitive bounds for ordering; ordinary contained text retains
+aligned/wrapped batching. Focused public/native passes 19/19, complete Core/WGPU/Windows plus
+public text passes 1,281/1,281 with four existing interactive Windows cases skipped, affected
+components/docking/Canvas passes 2,964/2,964 and independent API tests pass 6/6. Locked compilation,
+correctness Clippy, formatting and actual Windows Rust 1.92.0 affected-framework/consumer checks
+pass. Bounded independent reviews close the ordering P2 without outstanding confirmed findings.
+The unit is complete within its recorded scope; existing ink-overhang, complete script/caret,
+remaining platforms, numeric costs and the wider refresh remain open.
 
 ## Maintained Baseline Before Engine Adaptation
 
