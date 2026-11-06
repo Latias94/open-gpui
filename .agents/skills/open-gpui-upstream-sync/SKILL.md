@@ -75,10 +75,16 @@ with their prerequisites; preserve upstream regression scenarios when adapting t
 
 ## Integrate Through Existing Owners
 
-Apply the semantic change to the extracted framework. Respect package/dependency cleanup and
-in-progress component/docking work. Keep a local mechanism when a concrete consumer or Accepted
-contract needs it; remove it when the reconciled owner makes it obsolete. Framework maintenance
-does not introduce a consumer engine's document, history or ECS owner.
+Use the fixed target's complete official mechanisms as the default baseline within the framework
+closure. Preserve their supported behavior and regression scenarios while adding features and
+refactoring into reusable modules. First adjust or replace fork-owned changes to fit that baseline.
+A retained difference needs a concrete consumer or Accepted contract, source evidence and an
+owning verification path; an unimplemented official mechanism remains queued rather than becoming
+an implicit rejection. Keep ordinary public consumers usable without engine-private dependencies.
+
+Respect package/dependency cleanup and in-progress component/docking work. Remove obsolete fork
+mechanisms as their successors are qualified. Framework maintenance does not introduce a consumer
+engine's document, history or ECS owner.
 
 For the affected unit, trace the full path through notification, layout/prepaint, deferred work,
 paint/cache replay, candidate acceptance and native presentation. In this fork, subscriptions,
