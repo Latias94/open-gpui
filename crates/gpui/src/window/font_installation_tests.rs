@@ -11,7 +11,7 @@ struct FontCandidateRoot {
 struct CandidateLayouts {
     plain: Arc<crate::LineLayout>,
     wrapped: Arc<crate::WrappedLineLayout>,
-    hashed: Arc<crate::LineLayout>,
+    shaped: crate::ShapedLine,
 }
 
 impl Render for FontCandidateRoot {
@@ -34,18 +34,15 @@ impl Render for FontCandidateRoot {
                         .text_system()
                         .shape_text(source.into(), px(16.), &runs, Some(px(40.)), None)
                         .unwrap();
-                    let hashed = window.text_system().layout_line_by_hash(
-                        42,
-                        source.len(),
-                        px(16.),
-                        &runs,
-                        None,
-                        || source.into(),
-                    );
+                    let shaped =
+                        window
+                            .text_system()
+                            .shape_line(source.into(), px(16.), &runs, None);
+                    assert_eq!(shaped.text.as_ref(), source);
                     layouts.borrow_mut().push(CandidateLayouts {
                         plain: line,
                         wrapped: wrapped[0].layout.clone(),
-                        hashed,
+                        shaped,
                     });
                     window.insert_scene_primitive(MonochromeSprite {
                         order: 0,
@@ -107,7 +104,7 @@ fn candidate_retry(install: bool) {
         let candidate = layouts.borrow().last().unwrap().clone();
         for (before, after) in [
             (&original.plain, &candidate.plain),
-            (&original.hashed, &candidate.hashed),
+            (&original.shaped.layout, &candidate.shaped.layout),
         ] {
             assert_eq!(Arc::ptr_eq(before, after), !install);
             assert_eq!(after.width, before.width * if install { 2. } else { 1. });
@@ -123,7 +120,11 @@ fn candidate_retry(install: bool) {
         let retried = recorded.last().unwrap();
         assert!(Arc::ptr_eq(&candidate.plain, &retried.plain));
         assert!(Arc::ptr_eq(&candidate.wrapped, &retried.wrapped));
-        assert!(Arc::ptr_eq(&candidate.hashed, &retried.hashed));
+        assert_eq!(retried.shaped.text.as_ref(), "candidate layout");
+        assert!(Arc::ptr_eq(
+            &candidate.shaped.layout,
+            &retried.shaped.layout
+        ));
         assert!(!window.refresh_pending_for_test());
         window.remove_window(cx);
     })

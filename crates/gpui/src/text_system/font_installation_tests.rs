@@ -191,7 +191,7 @@ fn resolved_fallback_is_retained_as_the_requested_descriptor_result() {
 }
 
 #[test]
-fn installation_invalidates_plain_wrapped_and_hashed_layouts_with_stable_font_ids() {
+fn installation_invalidates_plain_wrapped_and_shaped_layouts_with_stable_font_ids() {
     let (platform, text, window) = fixture();
     let source = "alpha beta 你好";
     let runs = [run(source)];
@@ -199,8 +199,9 @@ fn installation_invalidates_plain_wrapped_and_hashed_layouts_with_stable_font_id
     let wrapped = window
         .shape_text(source.into(), px(16.), &runs, Some(px(70.)), None)
         .unwrap();
-    let hashed =
-        window.shape_line_by_hash(11, source.len(), px(16.), &runs, None, || source.into());
+    let shaped = window.shape_line(source.into(), px(16.), &runs, None);
+    assert_eq!(shaped.text.as_ref(), source);
+    assert!(Arc::ptr_eq(&initial, &shaped.layout));
     window.finish_frame();
     text.add_fonts(vec![Cow::Borrowed(b"font")]).unwrap();
     assert_eq!(text.resolve_font(&font("primary")), FontId(1));
@@ -211,11 +212,12 @@ fn installation_invalidates_plain_wrapped_and_hashed_layouts_with_stable_font_id
         .shape_text(source.into(), px(16.), &runs, Some(px(70.)), None)
         .unwrap();
     assert!(!Arc::ptr_eq(&wrapped[0].layout, &after_wrapped[0].layout));
-    let after_hashed =
-        window.shape_line_by_hash(11, source.len(), px(16.), &runs, None, || source.into());
-    assert!(!Arc::ptr_eq(&hashed.layout, &after_hashed.layout));
-    assert_eq!(after_hashed.width, hashed.width * 2.);
-    assert!(platform.layouts.load(Ordering::Relaxed) >= 4);
+    let after_shaped = window.shape_line(source.into(), px(16.), &runs, None);
+    assert_eq!(after_shaped.text.as_ref(), source);
+    assert!(Arc::ptr_eq(&after, &after_shaped.layout));
+    assert!(!Arc::ptr_eq(&shaped.layout, &after_shaped.layout));
+    assert_eq!(after_shaped.width, shaped.width * 2.);
+    assert_eq!(platform.layouts.load(Ordering::Relaxed), 2);
 }
 
 #[test]

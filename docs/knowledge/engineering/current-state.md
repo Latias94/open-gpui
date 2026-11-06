@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-06T12:29:17+08:00
+timestamp: 2026-11-06T13:22:00+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -163,6 +163,21 @@ verified_by:
   reviews leave no outstanding confirmed P1/P2. This is not independent bidi reflow, general
   caret support, full ink-overhang qualification, a numeric cost result or complete upstream parity.
 
+- The window-text ownership successor adopts official Rc window handles, RefCell cache state,
+  final-target Cell scratch and deletion of unused hash APIs. Global TextSystem and immutable
+  layouts retain Arc ownership. Fork generation coherence, actual refused-candidate recovery
+  and borrow-free backend reentry/publication remain explicit local adaptations. Independent
+  review reproduces a wrapped-key clamp omission present in the starting fork and official
+  target; the existing content key now includes max_lines. The notify consumer now observes
+  automatic accepted successors without compensating refresh/draw. Corrected Core/WGPU/Windows
+  plus four public text consumers pass 1,292/1,292 with four existing interactive Windows cases
+  skipped. Affected components/docking/Canvas pass 2,964/2,964 and independently locked public
+  text tests pass 7/7 without skips. Both bounded reviews close their findings. Locked
+  workspace/consumer compilation and affected correctness Clippy pass on Rust 1.95.0; actual
+  Windows Rust 1.92.0 framework/consumer all-target/all-feature checks pass. The verification
+  guide owns exact scope, final checks and red history; numeric costs and other platforms
+  remain unqualified. Both formatting checks and existing import/document/release/API scans pass.
+
 # Historical Main Integration
 
 The previous snapshot recorded `df6ae2f` on July 9. The following integration summary retains that
@@ -191,8 +206,8 @@ historical scope and is not current branch or CI qualification.
 - Continue the coherent framework refresh beyond the five initial correctness units. The candidate
   queue retains font/text/layout/API, image decoding, external-run-loop and platform differences.
   Font prewarming, available-family names and glyph-raster qualification are complete within the
-  recorded Windows/software scope, as is the source-fragment/layer/underline unit. Continue
-  window-local text ownership, Taffy/API and platform differences. Qualify the
+  recorded Windows/software scope, as are source-fragment/layer/underline and window-local
+  text ownership. Continue Taffy/intrinsic/root/grid/stack and platform differences. Qualify the
   prepared CoreText selection/cascade work on macOS when that platform is available. The
   DirectWrite successor now
   has separate existing-family and installed-fallback evidence rather than borrowing the

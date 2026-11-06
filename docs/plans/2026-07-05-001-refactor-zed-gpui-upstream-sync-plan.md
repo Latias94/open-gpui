@@ -493,6 +493,49 @@ pass. Bounded independent reviews close the ordering P2 without outstanding conf
 The unit is complete within its recorded scope; existing ink-overhang, complete script/caret,
 remaining platforms, numeric costs and the wider refresh remain open.
 
+### Window-Local Text Ownership Successor
+
+After `55ddbcde395`, reconcile official changes `772a8a9100` and `2a74c8dff6` with the
+same fixed target. The official implementation makes WindowTextSystem Rc-owned, changes
+window cache synchronization to RefCell, moves font-run scratch storage from the global
+TextSystem into each window, and deletes the unused hash-only layout APIs. Follow-up official
+`dde76a1dca` uses Cell take/set for that scratch buffer in the final target. Adopt that
+ownership directly. Materialized source APIs retain complete ShapedLine text; remove the
+parallel hash keys, maps, range indices and empty-source placeholder rather than preserving
+a fork compatibility wrapper.
+
+Keep provenance explicit. The fork's coherent current/previous font generation and refused
+candidate recovery serve existing runtime font installation and atlas-lease admission
+consumers. They are fork adaptations, not behavior supplied by these official changes.
+Retain their qualified behavior while removing synchronization from the window owner.
+The fork also releases local cache borrows before backend calls; after reentry, reuse an already
+published canonical result and refuse stale-generation publication. Global TextSystem and
+immutable LineLayout results retain Arc ownership.
+
+Qualification must include same/different-key backend reentry and unwind, genuine global
+font installation with window-thread cache access, stale ranges/publication, and the
+existing real candidate refusal/retry trajectory. Public two-window Cosmic, independently
+locked API and native reconstruction consumers must prove distinct local caches, one exact
+shared global TextSystem, source-preserving reuse/reflow and lifetime through retained Rc
+handles. Existing notification, paint, Submitted and platform-release checks stay in place.
+Ownership and removed locks alone do not establish a measured performance improvement.
+
+Independent review also identifies a cache-key defect present in both the starting fork and
+official target: wrapped results depend on max_lines, but their key omits it. A fresh-owner
+oracle reproduces stale unlimited boundaries after changing to one line. Correct the existing
+owned/borrowed content key rather than adding another cache or bypass. Keep this correction
+explicitly fork-owned, with both clamp orders and committed/aborted frame reuse qualified.
+
+The [completed qualification](../verification.md#window-local-text-ownership-and-source-cache)
+retains the original 29/29 focused result, 5/5 public/native checkpoint, reproduced clamp
+failure and notify-fixture correction. Corrected Core/WGPU/Windows plus four public text
+trajectories pass 1,292/1,292 with four existing interactive Windows cases skipped; affected
+components/docking/Canvas pass 2,964/2,964 and independently locked public API tests pass 7/7.
+Locked compilation, affected correctness Clippy and actual Windows Rust 1.92.0 framework/
+consumer checks pass. Independent cache and consumer rereviews close their confirmed P2
+findings. This closes the selected ownership unit without completing Taffy/platform refresh,
+canonical docking, measured costs or engine adoption.
+
 ## Maintained Baseline Before Engine Adaptation
 
 Finish a bounded framework refresh against the recorded November 5 Zed revision before expanding

@@ -72,3 +72,13 @@ native source-fragment/underline submission have separate framework consumers:
 ```text
 cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --all-features --test text_layers --test-threads=1 --no-fail-fast --no-tests fail
 ```
+
+The optional `window_text` test checks the public Rc window-text getter signature and directly
+consumes two WindowTextSystem owners over one global Arc TextSystem. It exercises complete source,
+cache isolation, width changes, reconstruction and exact final release with NoopTextSystem.
+It does not launch an App or Window. The framework has separate two-window Cosmic headless and
+native reconstruction consumers; these tests do not establish renderer performance:
+
+```text
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --all-features --test window_text --test-threads=1 --no-fail-fast --no-tests fail
+```

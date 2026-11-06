@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Breaking Changes and Migration Notes
 
+- `Window::text_system` now returns `&Rc<WindowTextSystem>`. Keep window layout/cache access on its owning thread and use the shared `Arc<TextSystem>` for background font work. The unused `shape_line_by_hash`, `try_layout_line_by_hash` and `layout_line_by_hash` interfaces are removed; materialize source text and use the ordinary `shape_line` / `layout_line` APIs.
 - `ShapedLine::split_at` explicitly rejects adjusted source lengths and invalid UTF-8 boundaries. Raw `LineLayout::split_at` requires a caller-validated source boundary. Both preserve shaped glyphs and original visual geometry; fragments are not independently reflowed bidi text.
 - `LineWrapper::wrap_line` now takes an explicit third `IndentAdjustment` argument. Pass `IndentAdjustment::default()` for matching indentation, or select `NoIndent` / `ExtraColumns(n)`. Exhaustive matches must also handle `TruncateFrom::Middle` and `TextOverflow::TruncateMiddle`.
 - Renderer-record fields `PolychromeSprite::grayscale` and `Underline::wavy` now use `PaddedBool32`: construct them with bool `.into()` values. Author-facing style and paint APIs still accept bool; custom GPU consumers read a fully initialized four-byte unsigned value.
@@ -60,6 +61,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Changed
 
+- Changing a line clamp now selects a matching wrapped layout instead of reusing another clamp's cached boundaries. Window-local caches retain font-installation invalidation and rejected-frame recovery without locking across backend shaping.
 - Custom text elements can paint `TextLayout` backgrounds, insert their own highlights, then paint foreground glyphs and decorations. Ordinary text painting completes all backgrounds first, and aligned wrapped rows use their actual geometry.
 - Raw line layouts expose split/background/foreground painting; `ShapedLine::cursor` incrementally takes source fragments without reshaping. Reordered glyphs retain source membership and coordinates, while outlying fragments use primitive bounds for paint order.
 - Underline callbacks expose source byte ranges and resolved geometry. `Window::underline_bounds` reports final projected device bounds, and absolute device-space exclusions preserve full wave geometry through the existing exact clip stack.

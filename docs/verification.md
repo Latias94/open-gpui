@@ -1457,6 +1457,96 @@ This closes the scoped source-fragment/layer/underline unit. Window-local text o
 Taffy/intrinsic/root/grid/stack policy, image/API/platform work, canonical docking and the
 consumer engine's View/Editor/game-runtime comparison remain separate incomplete work.
 
+## Window-Local Text Ownership And Source Cache
+
+This successor starts from Open-GPUI `55ddbcde39527629a28555b5eadb678cddfccd71` against fixed
+Zed `635026fabc38440fce5e1767d125026a17b12012`. Official `772a8a9100` supplies Rc window-text
+ownership, local RefCell state and a per-window font-run buffer, with final-target Cell take/set
+from official follow-up `dde76a1dca`; `2a74c8dff6` removes unused
+hash-only layout interfaces. The fork adopts these mechanisms without a hash compatibility
+path. Normal content keys and full source remain the single cache interface. Global
+TextSystem and immutable LineLayout results retain Arc ownership.
+
+The fork separately owns coherent current/previous font generation and `abort_frame` recovery
+after rejected atlas admission. Those existing contracts remain required by runtime font
+installation and real rejected-candidate retry consumers. The fork also ends RefCell borrows before backend
+shaping; publication rechecks generation and prefers a canonical result published by reentry.
+No cross-thread window cache is introduced to retain an obsolete mutex-era test fixture.
+Shared-global font installation still executes on a real worker thread, with range/cache
+operations on the window owner.
+
+The public Cosmic consumer uses two actual headless windows, exact shared global identity,
+distinct local caches, plain/wrapped source reuse, notified width/font changes, retained old
+glyph painting and close/reconstruct/release. The independent lockfile consumes the public
+getter signature and directly executes two Noop WindowTextSystem owners; it does not launch
+an App/Window. The existing Windows reconstruction trajectory adds real nonempty Submitted
+frames, distinct rebuilt Rc caches and retained-handle lifetimes while preserving all original
+wrapper, HWND/platform and backend release assertions.
+
+The first stable-source focused run passes **29/29**, with 981 unrelated Core tests filtered:
+`1362d402-0bb9-408a-aacf-1c33e178ff8a`. It includes the nine new window-entry reentry/unwind,
+font-publication, canonical-key and abort/range scenarios, all five adapted generation cases,
+the existing public font-installation tests and both actual rejected-candidate retry cases.
+The source-preserving plain and ShapedLine paths share the same canonical layout, so dynamic
+installation now requires exactly two backend shapes across the two generations rather than
+retaining a duplicate hash-cache path.
+
+The initial public/native cohort passes **5/5**, run
+`85d8d47c-aa0b-4d8d-ac2b-15e48517495f`: the Cosmic two-window consumer, both existing native
+font-installation trajectories, native Unicode text and three-cycle native App reconstruction.
+Independent consumer review then identifies that forced refresh masks a notification failure.
+Notified width and font updates now capture the prior paint count and only observe the
+automatically accepted successor after update/dispatcher settlement. They issue no extra
+refresh or draw; explicit refresh remains solely in the cross-frame reuse checks.
+
+Independent cache review also identifies max_lines missing from the wrapped cache key in both
+the starting fork and fixed official target. Run `6a7ae099-7364-44b3-828f-1ac61ee7aa5a` reproduces
+the defect: after unlimited wrapping, clamp Some(1) reuses three boundaries while a fresh owner
+returns none. The corrected notify-only public consumer passes in that same **1/2** red run.
+The existing owned/borrowed content key now includes the wrapping limit, with None for plain
+layouts. Both clamp orders, exact source, same-clamp reuse and committed/aborted frame cycles
+use a fresh-owner oracle. This is an explicit fork correction to an inherited official defect,
+separate from the official Rc/Cell/hash-interface migration.
+
+The corrected complete all-feature Core/WGPU/Windows libraries plus the four public paragraph,
+wrapping, layer and window-text consumers pass **1,292/1,292**, with four existing interactive
+Windows cases skipped: `45531404-9e56-47a9-af74-d0decc341947`. This is Core 1,011, WGPU 79,
+Windows 198 and four public trajectories across seven binaries. It includes the reproduced
+clamp regression, notify-only successor observations and original native installation,
+cached/deferred paint, source layout and exact reconstruction/teardown assertions.
+Both independent reviews close their confirmed findings after bounded rereview; the reviews
+are static and the serial executed qualification above is main-thread evidence.
+
+Affected UI core/components/docking/Canvas libraries and integrations pass **2,964/2,964**
+across 25 binaries without skips: `3eb9734b-720d-437c-9efa-d8222b1ca9c6`. Existing test-support
+dead-code warnings remain outside the correctness claim.
+
+The independently locked public fonts/wrapping/layer/window-text consumer passes **7/7**
+without skips: `dbf2bdb7-113f-4623-a143-b68c709eb034`. Its new ownership case directly executes
+Noop source layouts and exact release; the existing Cosmic case keeps real font installation,
+old glyph bytes and backend lifetime. The layer case remains compile-only custom Element API
+evidence. These independently resolved dependencies do not turn direct Noop owners into an
+App/window or GPU qualification.
+
+Locked workspace/all-target and independent all-target/all-feature checks pass on Windows 11
+with Rust 1.95.0, as does affected Core/WGPU/Windows correctness Clippy with all targets/features.
+Cargo uses one build job and the shared Nara target throughout. Existing warning categories
+remain; these results do not claim a warning-free workspace.
+
+Actual Rust 1.92.0 affected Core/WGPU/Windows and independently locked consumer
+all-target/all-feature checks also pass on Windows. The fixed upstream workspace's newer
+compiler pin is separate from this extracted-framework floor. Other OS compilation and
+execution require their own qualification.
+
+Root and independent workspace formatting checks pass under Rust 1.95.0. The existing built
+import-boundary, document-link, release-document and public-API scans pass after documentation
+closure, as does diff whitespace validation. No remote CI execution or publication occurs in
+this unit.
+
+Native Submitted, headless accepted paint and direct Noop API execution remain separate evidence. Removed locks
+and fewer cache paths do not establish a CPU, allocation, frame-tail or process-memory result.
+Other platforms, Taffy/API migration, canonical docking and engine adoption remain open.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:

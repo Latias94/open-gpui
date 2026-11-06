@@ -81,6 +81,24 @@ missing-grapheme detection, including the fork's current Web path. Windows and C
 the optional hook's default behavior and do not report missing glyphs through it. The target's
 later Web Canvas fallback layer remains a separate platform migration.
 
+## Window-Local Text Ownership
+
+`Window::text_system` returns `&Rc<WindowTextSystem>` rather than an Arc. Retain its Rc only
+on the window thread. Different windows have independent layout caches and font-run scratch
+buffers while their global `Arc<TextSystem>` remains shared. Use `App::text_system` or the
+public headless/test accessor for background font preparation and installation. Immutable
+`Arc<LineLayout>` results remain retainable after their originating window is removed.
+
+The upstream Rc/RefCell ownership and removal of unused hash-only APIs are adopted directly.
+The fork additionally preserves its generation-coherent cache invalidation and rejected-frame
+recovery for runtime font installation and atlas-lease admission. These are separate contracts;
+Rc ownership does not grant a candidate permission to commit.
+
+`shape_line_by_hash`, `try_layout_line_by_hash` and `layout_line_by_hash` are removed without
+aliases. Materialize the complete source and use `shape_line` or `layout_line`. A ShapedLine
+always retains its source; an empty placeholder is no longer a supported cache-hit representation.
+The ordinary content cache supplies layout reuse across these source-preserving calls.
+
 ## Cosmic Paragraph Separators
 
 Cosmic 0.19.0 receives each `Bidi_Class=B` paragraph and separator separately, avoiding its

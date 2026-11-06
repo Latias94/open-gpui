@@ -1789,7 +1789,7 @@ pub struct Window {
     window_mutations: WindowMutationState,
     display_id: Option<DisplayId>,
     sprite_atlas: Arc<dyn PlatformAtlas>,
-    text_system: Arc<WindowTextSystem>,
+    text_system: Rc<WindowTextSystem>,
     text_rendering_mode: Rc<Cell<TextRenderingMode>>,
     rem_size: Pixels,
     /// The stack of override values for the window's rem size.
@@ -2780,7 +2780,7 @@ impl Window {
             .request_decorations(window_decorations.unwrap_or(WindowDecorations::Server));
         platform_window.set_background_appearance(window_background);
 
-        let text_system = Arc::new(WindowTextSystem::new(cx.text_system().clone()));
+        let text_system = Rc::new(WindowTextSystem::new(cx.text_system().clone()));
         let invalidator = WindowInvalidator::new();
         let needs_present = Rc::new(Cell::new(false));
         let next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>> = Default::default();
@@ -5761,8 +5761,8 @@ impl Window {
         }
     }
 
-    /// Accessor for the text system.
-    pub fn text_system(&self) -> &Arc<WindowTextSystem> {
+    /// Returns this window's local text cache over the shared global text system.
+    pub fn text_system(&self) -> &Rc<WindowTextSystem> {
         &self.text_system
     }
 
