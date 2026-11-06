@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-06T18:52:00+08:00
+timestamp: 2026-11-06T21:23:00+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -281,6 +281,27 @@ verified_by:
   retains that gap and the proptest pin comparison. Refresh-aware telemetry remains queued
   rather than implied by the getter.
 
+- The unified-profiler foundation at `3e5a907775e9f22d0a092a0f9f27c6f1696ade0e` adopts
+  official feature gating, safe thread-owner collection
+  and the common WindowProfiler before the queued journal/hang/refresh-aware chain. It removes
+  InputLatencyTracker and its feature name, preserves concrete submission/callsite diagnostics,
+  and migrates the ordinary consumer and real Criterion Canvas workflow. Fork adaptations keep
+  input tied to the accepted draw that covers it, including synchronous keyboard draws, refused
+  candidates, exact scene retries, reset and unwind. The existing Window rollback now handles
+  interrupted Render/prepaint/paint, and accepted-publication failures finish Window completion
+  before propagating the first panic. Trace lifecycle serialization and corrected slow-history
+  ranking repair source-confirmed inherited defects; the verification guide owns executed red
+  baselines and distinct scopes. Corrected focused 37, full runtime/public/gallery 1,426 and
+  UI/component/docking/Canvas 2,966 pass, with four existing interactive Windows skips in the
+  full runtime cohort. Disabled Core 1,095 and independent enabled 20/disabled 18 pass, with
+  final scoped feature checks against the latest source. The real 20,000-node/19,900-edge Canvas
+  benchmark passes both feature configurations after replacing inherited quadratic fixture
+  preparation with complete public snapshot construction. No runtime mutation or numeric cost
+  improvement follows from that setup correction. All ten implementation/review subthreads
+  are closed. Locked workspace/independent checks, correctness Clippy, formatting and actual
+  Windows Rust 1.92.0 affected-framework/Canvas/consumer checks pass. Production wasm compilation
+  is separate from browser execution and the unchanged Web test-support dependency gap.
+
 # Historical Main Integration
 
 The previous snapshot recorded `df6ae2f` on July 9. The following integration summary retains that
@@ -313,8 +334,11 @@ historical scope and is not current branch or CI qualification.
   text ownership. The Taffy/intrinsic/root/grid/stack successor is qualified within its
   recorded scope, together with shared-image decoding and its real public/native consumers.
   The externally driven App, owning asset-load and display-observation units are qualified within
-  their recorded scope. Reconcile the official refresh-aware telemetry owner next; display getters
-  do not qualify frame pacing. Apply the maintenance skill's official-baseline rule while
+  their recorded scope. The unified-profiler foundation is qualified within its recorded scope.
+  Continue with official multi-subscriber wake and sleep/window visibility, then foreground
+  journal/hang detection, the GPUI monitor, frame-signal provenance and refresh-aware reporting
+  in the candidate queue's prerequisite order. Display getters and the foundation profiler do
+  not qualify complete frame pacing. Apply the maintenance skill's official-baseline rule while
   reconciling remaining image-feature/API/platform/hot-reload differences. Qualify the
   prepared CoreText selection/cascade work on macOS when that platform is available. The
   DirectWrite successor now

@@ -2132,6 +2132,207 @@ Official refresh-aware profiler/reporting successor `4f6d97b9de7d9f167da8b7832ee
 remains queued; the display getter alone does not adopt it. Complete fixed-target reconciliation,
 canonical docking, Nara adaptation and full R11/R12 remain open.
 
+## Unified Profiler Foundation
+
+The qualified local implementation is `3e5a907775e9f22d0a092a0f9f27c6f1696ade0e`, without
+remote publication. The existing plan and candidate queue retain its fixed upstream target and
+the remaining dependency-ordered work.
+
+This prerequisite starts from `e5ad73a24a69274378264f792f4efb4d6d892ac6`, targeting the
+official unified owner `a21007b7a948e46afbe719150f5e9968bfcd1078` together with profiler
+feature gating `48511e0b9c` and last-reference collection safety `c16d19c94d`. The fixed
+refresh target remains `635026fabc38440fce5e1767d125026a17b12012`. Scheduler action clocks,
+draw-duration returns and dirty-to-present histograms use the corresponding final-source
+follow-ups. This record does not claim the absent foreground journal, hang detector/monitor,
+power/visibility filtering, native frame-signal timing or refresh-aware version-3 reports.
+
+The official profiler feature gates task/action measurement and the single per-window
+input/draw/presentation owner. Aggregate histograms remain active while the feature is enabled;
+runtime tracing controls retained detailed records. Reference-counted internal scopes preserve
+overlapping measurements and manual settings. Collection upgrades thread owners under the global
+registry lock, then releases that lock before copying, locking or dropping those owners. The
+existing stable cold marker preserves the qualified compiler floor. Trace cursors remain monotone
+when buffers clear so independent collectors can continue across disable/re-enable.
+
+Fork integration replaces InputLatencyTracker rather than creating another owner. Its actual
+Submitted/Deferred/RepaintRequired/Rejected counts, pending input and exact refresh-callsite rows
+move into WindowProfiler. Only accepted draws enter frame measurements; only actual Submitted
+outcomes complete their covered input. Input arriving after an accepted draw remains pending
+when that older scene is retried. Draw refusal/unwind restores the earlier pending measurement
+and first invalidation; an accepted-generation unwind cannot publish an older scene's timing.
+Platform-call start/end use the same scheduler clock and do not establish scanout.
+
+The existing Criterion context and Canvas consumer retain their setup/update/teardown API.
+Scoped tracing wraps the measured loop and collects once afterward, excluding setup and avoiding
+per-iteration trace snapshot allocation. This adapter is distinct from the queued complete
+upstream benchmark metrics/report evolution. Independent public consumers compile without
+test-support. Instrumentation-disabled builds have separate no-collection checks.
+
+The first focused compile succeeds. Its 18/28 result
+(`f2e750e3-67f8-440d-9c63-021998c30134`) passes task/trace/lock/scope and actual Criterion
+owner cases. All ten new Window cases stop at their common fixture assertion: TestAppContext's
+input simulator drains scheduled work before the fixture's explicit draw/present controls. The
+fixture next invokes production Window::dispatch_event without draining the scheduler. The
+second result is 20/30 after including action regressions: the same ten Window cases still
+stop at their common dirty assertion. App's test-dispatcher effect flush also draws dirty
+windows when an update ends. The fixture now holds one real outer App update batch across
+its manual input/draw/present sequence, preserving actual input handlers, dirty state,
+accepted generations, renderer outcomes and sample assertions. It does not forge receipts or
+reset candidate state.
+
+That correction reaches 30/33 (`87828d4e-086b-4b7b-a5bb-767a7b4755d2`). The new reset
+regression reproduces input metadata being restored from an older draw checkpoint after reset.
+Actual Render unwind also reproduces retained fork draw-stack state blocking recovery. The
+remaining refresh assertion omitted Div's unconditional active-state MouseDown refresh in
+addition to the authored handler refresh. The Window repair shares the
+existing refused-candidate rollback and restores the interrupted root drawing context; separate
+feature-on/off cases exercise Render, prepaint and paint failures through a later real Submitted
+test-platform frame. Further qualification follows against the owning corrections.
+
+The next source checkpoint passes 32/36 (`3e6e52c2-6c7d-40c0-8459-92a20fb52eb5`). The
+trace lifecycle matrix and reset rollback fix pass. Expanded acceptance reproduces stale
+accepted-generation facts after a publication callback panics and omitted input completion
+when keyboard modality dispatch draws synchronously before the input handler returns. The
+new ungated draw fixture initially leases its own root through WindowHandle::update; it now
+uses App::update_window so the actual draw can independently borrow/render that root. The
+keyboard-only focus-visible recipe is confined to its concrete test.
+
+The owning successor tracks the invalidation count at an accepted draw's start. An in-flight
+input joins that pending draw only if its invalidations were covered and none occurred later;
+later handler work remains pending for a newer draw. Reset's existing owner generation also
+invalidates an in-flight pre-reset input. No extra scene identity is introduced. Root unwind
+invalidates state already consumed by a by-value element callback rather than claiming it can
+be restored after destruction. Ordinary atlas refusal retains strict state-transfer assertions.
+Accepted publications settle subsequent accepted outputs and Window completion even after a
+callback fails, preserve the new frame and presentation facts, then propagate the first panic.
+The added context restoration and cleanup paths have functional rather than numeric cost scope.
+
+The subsequent 35/37 checkpoint (`686c5374-ac36-4dce-af6a-39ed06ae95a6`) passes trace/reset,
+actual root unwind/recovery, accepted-publication continuation and both synchronous keyboard
+cases. The ungated color oracle omitted the authored 0.5 opacity; it now checks both color and
+opacity. The refresh oracle initially attributes the automatic call to input modality. Moving
+the final baseline inside the held update preserves exact control but does not remove that call:
+36/37 (`c3c390b7-cc5c-4f17-bbec-fc9f694b5f9c`) still sees two refreshes. Following Div's
+actual MouseDown listener identifies its unconditional active-state refresh. The final oracle
+requires that exact non-coalesced Div call and the authored handler's coalesced call, two distinct
+source rows and one completed input. The mouse-mode baseline does not change input modality.
+
+The corrected focused gate passes 37/37 (`7bf3e09d-8409-4713-a811-586d50576cd2`), with
+1,091 unrelated cases filtered out. Independent final production/acceptance review confirms
+no remaining P1/P2 in the scoped source, including the native Draw/Present correlation. This
+is not yet the complete runtime/native/consumer qualification. Trace lifecycle regression has
+green execution and a source-confirmed race; only reset and the recorded Window defects have
+executed red baselines. No trace-race red result is claimed.
+
+The first native compile succeeds. Its executed trajectory (`cc58211f-245f-4753-8294-b1ab06e57c1d`)
+stops at a two-input fixture expectation: MouseDown, MouseUp and KeyDown all invalidate this
+stateful consumer. In particular, Div's capture-phase MouseUp listener clears the active state.
+The corrected prefix oracle requires exactly three pending synthetic events. Its next execution
+(`4d996539-6d78-4744-b62a-ac9435de4078`) reaches a later histogram with four covered inputs:
+the actual message pump can deliver additional native pointer work before presentation. The final
+native paint receipt therefore records the real pending batch at that candidate. The histogram
+must match that exact batch, include at least the three already verified synthetic events, and
+clear pending input on submission. The one histogram sample, authored pointer/key source, actual
+accepted generation, nonempty Submitted receipt, timing bounds and teardown assertions remain.
+
+That correction reaches the no-input redraw control in
+`8b63b909-4ae4-427f-ac84-353001750954`. Post-submission native pointer work from the preceding
+synthetic input can still complete another sample. The successor settles actual pending input
+and frame measurements through the existing delayed message pump before taking the no-input
+baseline. The controlled redraw must then leave both input histograms unchanged. It does not
+clear pending work or fabricate an input-free frame; follow-up native work is outside that
+isolated control and retained separately from the checked source submission.
+
+The corrected native trajectory passes 1/1 (`7f8879f5-813b-4f53-a523-383d5fae16b7`), with
+1,338 unrelated cases filtered out. It covers tracing disabled/enabled, actual synthetic-prefix
+input, accepted/nonempty Submitted receipt correlation, no-input redraw after native follow-up
+settles, exact window retirement, reconstruction and final HWND/App/backend/OLE release. This
+does not establish OS input injection, scanout, physical display changes or numeric overhead.
+
+The complete instrumentation-disabled Core library passes 1,095/1,095
+(`939d12e3-591b-4569-865c-4ca973c73096`), without skips, using no defaults and the fork's
+existing `test-support` feature. An initial command selects the upstream `bench-support` name,
+which this retained Criterion consumer does not expose; it fails before compilation. The
+corrected command does not add a feature alias or claim the queued complete upstream benchmark
+API/report migration.
+
+The independent lock update adds only hdrhistogram 7.6.0 and its crossbeam-channel 0.5.17
+dependency; existing selections remain intact, distinct from root hdrhistogram 7.5.4. Its
+all-target/all-feature check and 20/20 enabled public tests
+(`a70993f7-9074-4ab4-8de1-019da2a62df6`) pass. Disabled public consumers pass 18/18
+(`be7f02ed-b6ef-4886-b80a-e923f3246a81`), without skips. The private benchmark guard follows
+the retained test-support/test boundary; profiler-only ordinary builds do not compile an unused
+scope API. The profiler-only action-name lookup/import also follows its actual feature owner.
+The four new Windows CI steps
+separately execute enabled/disabled Core contracts and the ordinary public profiler consumer.
+The workflow YAML parses locally; remote CI has not run.
+
+The first complete enabled framework/public/gallery checkpoint passes 1,425/1,425
+(`5ab25e94-1bed-48a9-90cc-0500fdae8b9e`), with the same four preexisting interactive Windows
+skips. A final action-statistics review then identifies another defect shared by the starting
+fork and fixed official target: a partial slow-action history raises its cutoff to the first
+peak before filling its five slots. Descending qualifying samples retain only the first event.
+The public ActionStatistics regression reproduces this in
+`28537b96-e0a9-4d58-b228-15e4cc76444b` (2/3 pass). The successor keeps the original 100-microsecond
+floor until the history is full, then uses its actual shortest retained runtime. It preserves
+the separate full-history shortest-replacement regression. The pending component invocation is
+interrupted during compilation before execution so final qualification can use this correction;
+no component result is claimed from the interrupted invocation.
+
+The final corrected framework/public/gallery gate passes 1,426/1,426
+(`60f0b918-77a8-4113-9d94-1c003ac232fe`), including the new partial-history control and actual
+native profiler trajectory. Four preexisting interactive Windows cases remain skipped.
+The bounded final-delta review confirms the inherited action defect, take/reset behavior,
+feature boundaries, native measurement scopes and four direct CI commands without another
+confirmed P1/P2. All nine implementation/review subthreads are closed. Remaining broad consumer,
+benchmark, compiler-floor and static checks are recorded below when complete.
+
+The all-feature UI core/components/docking/Canvas cohort passes 2,966/2,966 across 25 binaries
+(`cd2ae25d-e447-4748-917a-3b018ba55ca5`), without skips. The selected real Criterion consumer
+`paint_frame_render_labels` then exposes inherited setup cost: its label conversion issues
+20,000 UpdateNode commands, each cloning and validating the full document. The active debug
+smoke is interrupted in that preparation after more than eight minutes; it yields no benchmark
+result or numeric overhead comparison.
+
+The fixture successor changes only preparation outside `b.iter`: update kind values in the
+complete public snapshot, then reconstruct through CanvasDocument::from_snapshot. Full
+20,000-node/19,900-edge counts and every label kind are asserted. Shapes, relations, metadata,
+geometry, viewport, clipping and the measured render loop remain represented by that same
+snapshot and public admission owner. A tenth independent review finds no P1/P2 in this bounded
+fixture change; all ten subthreads are closed. This does not optimize runtime bulk mutation.
+Both real Criterion test-mode invocations pass:
+
+```text
+cargo +1.95.0 test --locked -p open-gpui-canvas --bench large_canvas --features profiler -- paint_frame_render_labels --test
+cargo +1.95.0 test --locked -p open-gpui-canvas --bench large_canvas --no-default-features -- paint_frame_render_labels --test
+```
+
+These are full-fixture execution controls in the debug test profile, not release measurements,
+profiler overhead numbers or the queued upstream benchmark/report implementation.
+
+Final feature-scoped checks against the corrected source pass: disabled Core 6/6
+(`df4c4500-1442-4e95-9540-ebeed8b1767c`), enabled independent profiler 2/2
+(`8337eccb-f660-4c24-b63a-dbfa6a91c239`) and disabled independent profiler 1/1
+(`256eaf4f-3085-4caf-87b1-4b1e3cffecf6`). The earlier complete disabled/public cohorts retain
+their recorded scope. Locked workspace all-target and independent all-target/all-feature
+checks pass on Rust 1.95.0, as does correctness Clippy across Core/WGPU/Windows/Canvas with
+all targets/features. This is a correctness gate, not a claim that existing non-fatal repository
+warnings have been removed. Root and independent formatting checks pass.
+
+Actual Windows Rust 1.92.0 all-target/all-feature checks pass for Core/WGPU/Windows/Canvas and
+the independently locked consumer, including its separate hdrhistogram resolution. The existing
+compiler-floor CI job now includes Canvas. Core/WGPU/Web production libraries compile for
+wasm32-unknown-unknown both without and with the optional profiler. These compile results
+establish neither native foreign-platform execution nor browser/test-support qualification;
+the unchanged Web test-support dependency failure recorded by the display successor remains open.
+
+Final import-boundary, public-document-link, release-document and public-API scans pass, together
+with Git whitespace and workflow YAML checks. This closes the scoped profiler foundation;
+multi-subscriber wake, sleep/window visibility, journal/hang detection/monitor, first frame-signal
+provenance, refresh-aware measurements, power/cadence and complete upstream benchmark/debug
+overlay dispositions remain queued. Complete fixed-target parity, foreign-platform execution,
+numeric costs, canonical docking, Nara GPU/View adaptation and Editor/game selection remain open.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:

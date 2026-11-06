@@ -807,7 +807,62 @@ the backend. Retain that concrete dependency/platform gap, including the fork's 
 pin versus fixed-target 1.12.0, in the remaining audit; production compilation is not browser or
 test-support qualification. Existing import/document/release/API scans pass.
 
+### Unified Profiler Foundation Successor
+
+After `e5ad73a24a69274378264f792f4efb4d6d892ac6`, the refresh-aware telemetry audit
+finds inherited prerequisites absent from the fork: official feature gating `48511e0b9c`,
+last-reference collection safety `c16d19c94d` and unified per-window ownership
+`a21007b7a948e46afbe719150f5e9968bfcd1078`. Reconcile this complete common profiler owner
+before layering foreground journal/hang detection and refresh-aware reporting. The fixed target
+remains `635026fabc38440fce5e1767d125026a17b12012`; this prerequisite is not a declaration
+that its complete telemetry chain is synchronized.
+
+Use the official `profiler` feature for task/action collection, aggregate input/draw/present
+histograms and bounded trace buffers. Runtime trace controls and reference-counted scopes govern
+retained events without disabling another active measurement. Release the global registry lock
+before locking/copying/dropping upgraded per-thread owners. Replace the fork's parallel
+InputLatencyTracker with one WindowProfiler and migrate actual public consumers rather than
+retaining a feature/API alias. Preserve concrete Submitted/Deferred/RepaintRequired/Rejected
+diagnostics and direct refresh-callsite observation within that owner. Existing Criterion
+benchmark-context consumers remain explicit inputs when mapping upstream benchmark APIs.
+
+Fork candidate admission and exact native presentation remain authoritative. Draw refusal,
+unwind, deferred presentation, same-scene retry and reconstruction must not fabricate input
+completion, associate work with an older scene or strand profiler activity state. Measure
+submission start/end around the platform operation and retain its actual outcome. Native and
+independent public consumers must verify the successor, both with and without instrumentation;
+profiling-disabled builds must not initialize timing buffers or collect aggregate work.
+
+Focused execution exposes a retained fork candidate after a real Render unwind. Repair the
+existing Window rejection/rollback path and interrupted drawing context rather than resetting
+state in the fixture. Render, prepaint and paint failures must preserve the last accepted scene
+and permit a later real Submitted frame with the profiler enabled or disabled. This is an
+explicit fork transaction adaptation, distinct from the official profiler mechanism. Review also
+requires trace disable/cleanup/re-enable serialization and authoritative input resets through
+draw rollback. These private owner corrections introduce neither another scene identity nor a
+new framework-wide state owner. Their functional qualification does not measure added overhead.
+
+Keep the official foreground journal, hang monitor, power/visibility boundaries, first platform
+frame-signal provenance and refresh-aware reporting as dependency-ordered successors. Do not
+replace those mechanisms with fixed-budget counters, claim complete `4f6d97b9de` adoption from
+this foundation, import Zed product telemetry, or infer numerical overhead from functional tests.
+Run focused regressions, affected framework/component/native and independent consumers, locked
+checks, correctness Clippy, actual Windows compiler-floor checks and formatting. Preserve the
+known Web test-support dependency gap and unexecuted native-platform scope.
+
 ## Maintained Baseline Before Engine Adaptation
+
+The [unified-profiler qualification](../verification.md#unified-profiler-foundation) now records
+local implementation `3e5a907775e9f22d0a092a0f9f27c6f1696ade0e`, its complete scoped
+foundation, official provenance and fork corrections. Corrected full
+runtime/public/gallery 1,426 and all-feature UI/component/docking/Canvas 2,966 pass; disabled
+Core 1,095 and independent enabled/disabled 20/18 keep their distinct scope. Actual native
+Submitted/reconstruction and both full-size Criterion smoke configurations execute. Locked
+compilation, correctness Clippy, formatting and actual Windows Rust 1.92.0 framework/Canvas/
+independent checks pass. Production wasm compiles with and without profiling; browser/native
+foreign-platform and numeric-cost qualification remain open. Continue at the queued native
+wake/sleep/visibility prerequisite rather than treating this common owner as refresh-aware
+telemetry or complete benchmark/report parity.
 
 Finish a bounded framework refresh against the recorded November 5 Zed revision before expanding
 Nara-specific UI implementation. The five correctness units are the first dependency-ordered

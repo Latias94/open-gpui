@@ -197,7 +197,7 @@ disposition of the 364 commits.
 | Implemented: owning asset loads | Official `5896274168e06663568f42b5bae142162936e0a6` and fixed-target cleanup now flow through the owning CachedLoad, Option-returning App fetch, Window subscriptions and opaque ImageCacheItem. Shared task handles and per-use completion tasks are removed from App, Window, retain-all and the actual gallery LRU. | The [asset-load qualification](../verification.md#owning-asset-loads-and-view-completion) records the reproduced fork App-borrow failure and wait-before-publication adaptation. Focused owner/image/candidate/LRU/native cases pass 22/22. Each interested view receives one notification, passive reads do not redraw, eviction cancels old entries and accepted frame leases survive key removal. The dormant gallery now has an explicit platform example target and actual cache tests. Browser contention, numeric costs and complete framework/engine acceptance remain distinct unqualified scope. |
 | Implemented: externally driven App ownership | Official `74798c68d5c` now supplies `Application::run_embedded` and the strong ApplicationHandle; launch reuses the existing run_platform owner. Handle update deliberately uses the fork's complete update transaction rather than official direct callback invocation. | The [application qualification](../verification.md#externally-driven-application-lifetime) records defer/batching red results, 10 owner cases and actual Windows visual-host Submitted/readback/retirement. Complete affected runtime/public, component and independent suites pass 1,339/1,339, 2,964/2,964 and 14/14; four existing interactive Windows cases remain skipped. Locked checks, correctness Clippy and actual Windows Rust 1.92.0 affected-framework/consumer checks pass. Stock Windows still owns a blocking process loop; native production external-loop support, shared GPU and separate display/hot-reload/asset owners are not implied. |
 | Implemented: display and launch lifecycle | `f495dd0f77b69e287ed72c1168dc02965f08be7d` now supplies App-owned display observation, per-window association and cached refresh intervals, initialized from both launch callbacks. The fixed target retains that mechanism. | The [qualification](../verification.md#connected-displays-and-window-association) records the fork's ordered native ingress/immutable topology adaptation, official reciprocal-overflow correction, deferred-close reentry fix and ordinary required bitflags dependency. Corrected runtime/public/gallery, component and independent consumers pass 1,388/1,388, 2,964/2,964 and 18/18; four existing interactive Windows cases remain skipped. Source migration, actual Submitted frames and synthetic WM ingress retain distinct scope from physical hotplug/refresh-mode and non-Windows native qualification. |
-| Refresh-aware frame telemetry | `4f6d97b9de7d9f167da8b7832eeecea22c5a9efa` measures frame work against the window's refresh interval and evolves profiler/reporting consumers. | Queue this complete telemetry owner after display observation. The new refresh getter alone does not adopt timing thresholds, missed-refresh accounting or application reports. Preserve reusable framework interfaces and qualify real timing separately. |
+| Implemented profiler foundation; queued refresh-aware telemetry | `4f6d97b9de7d9f167da8b7832eeecea22c5a9efa` measures frame work against the window's refresh interval and evolves profiler/reporting consumers. The common task/frame owner is now qualified; journal and platform-state prerequisites remain. | The [unified profiler successor](../verification.md#unified-profiler-foundation) adopts `48511e0b9c`, `c16d19c94d` and `a21007b7a9`, preserving actual Submitted/candidate consumers. Complete refresh-aware telemetry remains queued until its journal, lifecycle and signal owners are reconciled. |
 | Conditional GPUI hot reload | `670a779a5ed9e7161c97aa4f998d395c207d5631` initializes Subsecond hot reload under `cfg(gpui_hot_reload)` during both launch callbacks; the fork has no matching owner or dependency. | Compare compiler/build/runtime prerequisites and real stateful custom-panel replacement/recovery before selecting the target's mechanism. External-loop ownership is not hot reload, and source adoption alone does not qualify edit-to-result latency. |
 | Atlas and renderer lifetime | Target `platform.rs` adds shared `AtlasBackend`/`AtlasState`; `96e95edac45` skips released-texture sprites, and WGPU adds texture generations and bind-group caching. The fork instead has per-instance lease generations and candidate-frame refusal. | Compare the lifetime behavior in the existing owner, including stale resource and rejected-frame controls. Preserve admitted candidate and lease semantics while evaluating deeper shared atlas code; copying upstream's skip policy would change the product contract. |
 | Platform closure | Target macOS shares `gpui_apple` and uses `objc2`; Linux gains switchable headless/windowed modes and rendering; Web adds backend/focus/input changes. The native-font successor now corrects already-matched Windows selections and private fallback, including gaps retained by the fixed target. CoreText source adaptation has separate unexecuted-platform scope. | Map trait and manifest changes across the actual supported backend closure. The [native-font record](../verification.md#native-font-reselection-and-retained-faces) distinguishes actual simulation/face retention, submitted Windows frames and prepared Mac source. Treat iOS as a separate platform decision and retain unexecuted native-platform limits. Existing Windows-only evidence cannot qualify the other backends. |
@@ -217,6 +217,44 @@ pin against target 1.12.0 and the supported test feature sets; a version differe
 evidence that an upgrade fixes it. The [qualification](../verification.md#connected-displays-and-window-association)
 keeps that failed attempt distinct from production compilation and unexecuted browser/native OS
 scope.
+
+### Profiler And Platform Prerequisite Order
+
+The fixed-target source audit after `e5ad73a24a6` finds the following coherent dependency
+order. These are framework mechanisms; Zed's GPL hang_telemetry, input_latency_ui and product
+report publication remain outside the extracted closure. GPUI's Apache debug overlay is a
+framework consumer and needs its own disposition rather than implicit exclusion.
+
+1. Qualified unified profiler foundation: `48511e0b9c`, `c16d19c94d`, `a21007b7a9`, with the
+   scheduler action clock `d4cd310edb`, draw-duration return `07a0bd1220` and
+   dirty-to-present histogram `55007f518b`. Retain the existing Criterion API's actual Canvas
+   consumer while mapping the official measurement scopes. Complete upstream benchmark report/
+   metrics evolution (`7316cf7745`, `1f7eae7fb7`) remains an explicit consumer comparison. The
+   local implementation `3e5a907775e9f22d0a092a0f9f27c6f1696ade0e` and its
+   [qualification](../verification.md#unified-profiler-foundation) separate official baseline,
+   fork candidate/input/reset/unwind adaptations, inherited trace/action corrections, complete
+   public/native consumers, the unchanged-size benchmark fixture and unmeasured overhead.
+2. Native lifecycle observation: multi-subscriber wake `7a7c3e1d2f` and sleep/window visibility
+   `3db02c2c77`. App/window/context and every platform backend must agree before journal filtering.
+3. Foreground journal and hang detection: `1861e58f98`, trigger rules `97b1e64a17`,
+   sleep/visibility `f0fb48c71a` and unnotified suspend `7232ba04ef`. Preserve bounded writer,
+   independent cursors, small-poll aggregation, explicit interval boundaries and demand deadlines.
+4. GPUI-owned hang monitor `0f9c923e67`, including `4c0ead4a3e` and `d284cbbc87` test
+   corrections, App shutdown flush and background ownership. Source detection is post-hoc;
+   it is not a watchdog for work that never returns.
+5. Platform frame-signal provenance `cd4fc8de4c` and nonempty completed-skip sealing
+   `36b6d0951f`: shared atomic first timestamp/source, actual backend clock conversion and
+   feature-disabled zero-capture behavior. Display observation `f495dd0f77` is already qualified.
+6. Refresh-aware frame/view/hang measurement `4f6d97b9de`: real signal/dirty work start,
+   submission-start cutoff, per-refresh histograms, missed refreshes, view self-time and
+   measurement-version-3 trigger/active-use rules. Do not infer timing fidelity or overhead from
+   functional tests.
+7. Fixed-target power/cadence follow-ups `fdcb198110`, `2580a00264`, `7c8dbadcb5`, plus
+   macOS MetalFrameSource `0373366f43`. Public power modes, configurable frame limits, stable
+   pacing, mandatory presentation bypass and actual platform frame sources need complete owners.
+
+Use the final target's files and follow-ups for each unit, mapping relocated ownership. Merely
+adding an API name or retaining an earlier fixed-budget counter does not close its mechanism.
 
 ### Text And Layout Reconciliation Units
 
