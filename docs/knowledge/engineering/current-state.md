@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-06T15:22:00+08:00
+timestamp: 2026-11-06T16:20:00+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -218,6 +218,26 @@ verified_by:
   features, external-loop/API/renderer-lifetime reconciliation, canonical docking and engine
   adoption remain open.
 
+- The externally driven App successor adopts official run_embedded/ApplicationHandle, using
+  the existing shared launch path and strong/weak ownership. A reproduced 0/2 direct-callback
+  baseline justifies the fork's complete update transaction for defer-only effects and nested
+  batching. Corrected owner tests pass 10/10; the actual Windows visual-host selection passes
+  11/11. Returning Test/VisualTest platforms support the launch lifecycle without changing
+  stock Windows' blocking process loop. Four native model stages bind accepted/nonempty
+  Submitted and offscreen captures, with notification/defer settled before polling, background
+  await, a visual timer and exact observed native/App/text/platform release. Delayed-launch
+  callback custody, nonterminal public shutdown and weak AsyncApp limits remain explicit.
+  Both bounded independent reviews find no confirmed P1/P2; all five subthreads are closed.
+  Complete Core/WGPU/Windows and six public text/layout/image consumers pass 1,339/1,339,
+  with four existing interactive Windows cases skipped. Affected components/docking/Canvas
+  pass 2,964/2,964 and independently locked consumers pass 14/14 without skips. Locked
+  workspace/consumer checks, correctness Clippy and actual Windows Rust 1.92.0 affected-framework/
+  consumer all-target/all-feature checks pass, together with root/consumer formatting and
+  existing import/document/release/API scans. No production
+  external Windows loop, shared GPU, full renderer release, OS-input/timing or performance
+  claim follows. The queue now separately records display observation, conditional hot reload
+  and the target's owning asset-load migration; they are not implied by this entry point.
+
 # Historical Main Integration
 
 The previous snapshot recorded `df6ae2f` on July 9. The following integration summary retains that
@@ -249,7 +269,8 @@ historical scope and is not current branch or CI qualification.
   recorded Windows/software scope, as are source-fragment/layer/underline and window-local
   text ownership. The Taffy/intrinsic/root/grid/stack successor is qualified within its
   recorded scope, together with shared-image decoding and its real public/native consumers.
-  Continue remaining image-feature/API/platform/external-loop differences. Qualify the
+  The externally driven App unit is qualified within its recorded scope. Reconcile owning
+  asset loads and the remaining image-feature/API/platform/display/hot-reload differences. Qualify the
   prepared CoreText selection/cascade work on macOS when that platform is available. The
   DirectWrite successor now
   has separate existing-family and installed-fallback evidence rather than borrowing the

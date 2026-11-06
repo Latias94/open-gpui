@@ -67,6 +67,8 @@ mod async_context;
 mod bench_context;
 mod cell;
 mod context;
+#[cfg(test)]
+mod embedded_tests;
 mod entity_map;
 #[cfg(any(test, feature = "test-support"))]
 mod headless_app_context;
@@ -215,8 +217,35 @@ thread_local! {
 /// You won't interact with this type much outside of initial configuration and startup.
 pub struct Application(Rc<AppCell>);
 
+/// A strong application owner returned by [`Application::run_embedded`].
+///
+/// Keep this handle alive while the external loop uses the application. Finish application
+/// shutdown and native window retirement before releasing it. Dropping the handle releases
+/// its strong reference; it does not pump a host loop or implicitly call [`App::shutdown`].
+pub struct ApplicationHandle {
+    app: Rc<AppCell>,
+}
+
+impl ApplicationHandle {
+    /// Runs one application update and flushes its effects before returning.
+    ///
+    /// # Panics
+    ///
+    /// Panics if called reentrantly while the same application is already borrowed. Use the
+    /// current App context inside a callback, or an [`AsyncApp`] outside the active update.
+    #[track_caller]
+    pub fn update<R>(&self, update: impl FnOnce(&mut App) -> R) -> R {
+        self.app.borrow_mut().update(update)
+    }
+
+    /// Returns a weak async context without transferring application ownership.
+    pub fn to_async(&self) -> AsyncApp {
+        self.update(|cx| cx.to_async())
+    }
+}
+
 /// Represents an application before it is fully launched. Once your app is
-/// configured, you'll start the app with `App::run`.
+/// configured, you'll start the app with [`Application::run`].
 impl Application {
     /// Builds an app with a caller-provided platform implementation.
     pub fn with_platform(platform: Rc<dyn Platform>) -> Self {
@@ -285,6 +314,23 @@ impl Application {
         RUNNING_WEB_APPLICATIONS.with(|applications| {
             applications.borrow_mut().push(self.0);
         });
+    }
+
+    /// Starts an application whose platform run loop returns control to its host.
+    ///
+    /// Calls [`Platform::run`] exactly as [`Self::run`] does, then returns a strong application
+    /// handle. The platform must arrange its own launch callback and event delivery. This does
+    /// not make a blocking native platform return early or supply a shared renderer.
+    ///
+    /// A returning platform may finish launch asynchronously after this method returns. Keep
+    /// the handle and drive that platform's event loop through shutdown and native retirement.
+    #[must_use = "the host must retain application ownership while its external loop runs"]
+    pub fn run_embedded<F>(self, on_finish_launching: F) -> ApplicationHandle
+    where
+        F: 'static + FnOnce(&mut App),
+    {
+        self.run_platform(on_finish_launching);
+        ApplicationHandle { app: self.0 }
     }
 
     /// Runs a returning test platform while retaining the application for post-run inspection.

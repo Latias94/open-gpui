@@ -74,6 +74,8 @@ use windows::core::{PCWSTR, w};
 
 #[path = "native_cache_dependency_tests.rs"]
 mod native_cache_dependency_tests;
+#[path = "native_embedded_app_tests.rs"]
+mod native_embedded_app_tests;
 #[path = "native_font_installation_tests.rs"]
 mod native_font_installation_tests;
 #[path = "native_image_decode_tests.rs"]

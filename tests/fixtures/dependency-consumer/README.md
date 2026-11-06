@@ -98,3 +98,13 @@ separate framework consumers; direct decoding does not qualify those paths:
 ```text
 cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --all-features --test images --test-threads=1 --no-fail-fast --no-tests fail
 ```
+
+The optional `embedded_app` tests type-check consuming Application::run_embedded, shared
+ApplicationHandle updates with owned generic results, and weak AsyncApp access without
+test-support. They do not construct a platform, start an App, or qualify a production external
+loop. The framework separately tests App lifecycle and a returning visual-test host over real
+Windows windows:
+
+```text
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --all-features --test embedded_app --test-threads=1 --no-fail-fast --no-tests fail
+```

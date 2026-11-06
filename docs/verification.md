@@ -1778,6 +1778,92 @@ Other platform execution, numeric costs, the separate AVIF dependency-feature
 policy, external loop, renderer-lifetime reconciliation, canonical docking and engine adoption
 remain open.
 
+## Externally Driven Application Lifetime
+
+This unit starts from `995ac8576362e43f36364616b33cc45c9560fab7` and adopts official
+`74798c68d5c63d31e2ccca5c8f5ec0a02c90679c` against fixed target
+`635026fabc38440fce5e1767d125026a17b12012`. ApplicationHandle holds one strong AppCell;
+to_async returns the existing weak AsyncApp. run_embedded uses the same run_platform path
+as normal startup without adding the ordinary Wasm run's permanent retention. No custom
+Drop, Clone, cross-thread entry, renderer, window or shutdown owner is introduced.
+
+The fixed target leaves ApplicationHandle's definition/methods unchanged after introduction.
+Its later launch path initializes display observation (`f495dd0f77`) and conditional
+Subsecond hot reload (`670a779a5e`). The fork retains direct platform display/snapshot queries
+and does not import those separate owners or hot-reload dependencies as a side effect of this
+entry point. Full display/lifecycle notification and hot reload remain explicit closure work.
+Official borrow-group/error diagnostics are also distinct from fork post-borrow convergence.
+
+The deliberate fork adaptation is a complete App update transaction around handle callbacks,
+matching AsyncApp::update. Copying official direct callback invocation reproduces both
+defer-only effects stranded on return and nested entity updates escaping the host's outer
+generation/batch: nextest `8d8a5f17-3cc1-46e9-9c93-0ea54414bc99` fails 0/2. The adapted
+entry uses the existing update/unwind/effect owner and releases its AppCell borrow through
+existing native callback/shutdown convergence. TestPlatform and VisualTestPlatform now invoke
+launch and return instead of panicking; a test-only deferred TestPlatform launch uses its
+existing foreground scheduler. VisualTestPlatform still delegates window/backend creation,
+and its test host drives simulated tasks and native messages.
+
+The first adapted owner cohort reports 6/8
+(`3aff7fba-7925-46f4-93f1-5f2a7e007139`); two new fixtures assumed the wrong existing
+lifecycle facts. Inside a host update pending_updates is one, not idle zero. Public nonterminal
+shutdown restores the prior quitting state after its fence, as the existing shutdown-barrier
+test already proves with a replacement window. The corrected tests require new-window refusal
+during quit-observer preparation, completed window/root release and no residual barrier after
+shutdown; they do not invent permanent terminal shutdown. Original production behavior remains.
+
+The corrected owner selection passes 10/10 without skips
+(`cdb0ce31-a22c-4f7d-bbb9-51bdb0589c52`). It checks synchronous and deferred launch,
+native ordinary/returning and embedded owner lifetimes, whole-batch generation and defer-only effects,
+reentry panic and subsequent update recovery, queued work after panic without an invented
+rollback promise, native wake delivery after host borrow release, async timer updates, weak
+AsyncApp release, shutdown observation and completed window/root release. A pending platform
+launch callback independently retains its App after the returned handle is dropped; its
+eventual one execution and final release are explicit controls. Bounded production review
+finds no confirmed P1/P2 in the adapted entry or test-platform changes.
+The ordinary-run release comparison is explicitly non-Wasm: ordinary Wasm run deliberately
+retains its App, while run_embedded has the separate explicit lifetime. Wasm execution is
+not qualified by the Windows cohort.
+
+The first native compile finds test-only access to the private Pixels tuple field; public
+f32 conversions retain the exact logical-to-device sampling oracle. The corrected selected
+owner/native run passes 11/11 (`ae46cbfd-bf7f-44b3-8958-ddcd14563df5`). The consumer launches
+once through Application::run_embedded over returning VisualTestPlatform and the real Windows
+backend. Only ApplicationHandle/AsyncApp drive subsequent App work. Four actual model stages
+produce matching-window/version accepted, nonempty Submitted, rendered/diagnostic/capture
+generations, distinct quad colors and visible native text pixels. Source/run assertions verify
+the shaped labels; the pixel oracle establishes visible text, not OCR of each exact label.
+
+Notification and defer counters settle before any submission polling. A background await and
+visual 100 ms timer drive the third state, followed by another host update. Busy-App native
+input preserves its typed rejection, while frame callbacks wait for borrow release; direct
+callback invocation and synthetic SendMessageW input remain test ingress, not OS-input fidelity.
+Shutdown observes the exact registered HWND retirement sequence, model/root/window/global-text/
+asset/platform release, and one OLE uninitialization. The retained AsyncApp cannot access the
+released App. Its observed backend weak reference is the text backend, not proof that every GPU
+allocation or native vsync thread has completed release. Bounded consumer review finds no
+confirmed P1/P2; all five implementation/research/review subthreads are closed.
+
+Complete all-feature Core/WGPU/Windows libraries plus six existing public text/layout/image
+consumers pass 1,339/1,339, with four existing interactive Windows cases skipped
+(`0a4a671d-31e4-495b-b3bc-a98008e5e56f`). Affected UI core/components/docking/Canvas
+libraries and integrations pass 2,964/2,964 without skips
+(`2daff788-2c5b-4501-a55c-6aa1813184ed`). Independently locked public consumers pass 14/14
+without skips (`9b2a74d3-9f38-4126-ab02-52fd0bef95b7`); the two new embedded consumers
+type-check ownership, generic returns and weak-context signatures without starting an App
+or enabling test-support. Locked workspace all-target and independent-consumer all-target/
+all-feature checks pass on Rust 1.95.0, as does affected Core/WGPU/Windows correctness Clippy.
+Actual Windows Rust 1.92.0 affected-framework and independent-consumer all-target/all-feature
+checks pass. Root/consumer formatting and existing import-boundary, public-API-tier,
+document-link and release-document scans pass. Both lockfiles remain unchanged. The API does
+not make a blocking platform return early. Stock
+Windows still owns GetMessageW and process exit; the returning visual-test backend is distinct
+from a production external Windows loop. Delayed launch may retain its callback/App after handle
+drop, and AsyncApp weakness does not automatically cancel every future. Framework GPU capture
+is not compositor display, numeric costs or shared engine rendering evidence. Other native
+platforms, complete closure reconciliation, canonical docking, Nara integration and R11/R12
+remain open.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:

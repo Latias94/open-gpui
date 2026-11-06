@@ -63,6 +63,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Changed
 
+- `Application::run_embedded` returns an owning `ApplicationHandle` for a platform whose run loop returns to its host. Handle updates batch and flush through the existing App transaction; AsyncApp remains weak. Launch timing and message pumping remain the platform's responsibility, and stock Windows startup remains blocking and process-owning.
 - Encoded `Image` and resource-backed `img` use the same static/GIF/WebP decoders. Static images apply EXIF orientation before BGRA conversion; animated WebP preserves all successfully decoded frames and delays in both paths. The image element uses its App executor clock for animation and loading timers, including deterministic headless tests.
 - Text measurement no longer reuses a truncated size for unconstrained intrinsic probes. Nonwrapped text that fits its actual shaped width retains its complete source, including kerning-sensitive exact fits. Lists use MaxContent when their width is unknown, and grid rows gain min/max-content declarations.
 - Changing a line clamp now selects a matching wrapped layout instead of reusing another clamp's cached boundaries. Window-local caches retain font-installation invalidation and rejected-frame recovery without locking across backend shaping.

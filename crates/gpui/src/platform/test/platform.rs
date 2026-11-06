@@ -64,6 +64,7 @@ pub(crate) struct TestPlatform {
     open_urls_callback: RefCell<Option<Box<dyn FnMut(Vec<String>)>>>,
     reopen_callback: RefCell<Option<Box<dyn FnMut()>>>,
     system_wake_callback: RefCell<Option<NativeAppNotificationHandler>>,
+    defer_next_launch: Cell<bool>,
     will_open_app_menu_callback: RefCell<Option<Box<dyn FnMut()>>>,
     app_menu_action_callback: RefCell<Option<Box<dyn FnMut(&dyn crate::Action)>>>,
     validate_app_menu_command_callback: RefCell<Option<Box<dyn FnMut(&dyn crate::Action) -> bool>>>,
@@ -125,6 +126,11 @@ pub(crate) struct TestPrompts {
 }
 
 impl TestPlatform {
+    #[cfg(test)]
+    pub(crate) fn defer_next_launch(&self) {
+        self.defer_next_launch.set(true);
+    }
+
     pub fn new(executor: BackgroundExecutor, foreground_executor: ForegroundExecutor) -> Rc<Self> {
         Self::with_platform(
             executor,
@@ -182,6 +188,7 @@ impl TestPlatform {
             open_urls_callback: Default::default(),
             reopen_callback: Default::default(),
             system_wake_callback: Default::default(),
+            defer_next_launch: Cell::new(false),
             will_open_app_menu_callback: Default::default(),
             app_menu_action_callback: Default::default(),
             validate_app_menu_command_callback: Default::default(),
@@ -573,8 +580,14 @@ impl Platform for TestPlatform {
         ThermalState::Nominal
     }
 
-    fn run(&self, _on_finish_launching: Box<dyn FnOnce()>) {
-        unimplemented!()
+    fn run(&self, on_finish_launching: Box<dyn FnOnce()>) {
+        if self.defer_next_launch.replace(false) {
+            self.foreground_executor
+                .spawn(async move { on_finish_launching() })
+                .detach();
+        } else {
+            on_finish_launching();
+        }
     }
 
     fn quit(&self) {

@@ -1,7 +1,7 @@
-//! Visual test platform that combines real rendering (macOs-only for now) with controllable TestDispatcher.
+//! Visual test platform combining a supplied rendering backend with controllable TestDispatcher.
 //!
 //! This platform is used for visual tests that need:
-//! - Real rendering (e.g. Metal/compositor) for accurate screenshots
+//! - Framework frame capture through the supplied renderer
 //! - Deterministic task scheduling via TestDispatcher
 //! - Controllable time via `advance_clock`
 
@@ -24,12 +24,16 @@ use std::{
     sync::Arc,
 };
 
-/// A platform that combines real Mac rendering with controllable TestDispatcher.
+/// A platform combining a supplied native rendering backend with controllable TestDispatcher.
 ///
 /// This allows visual tests to:
-/// - Render real UI via Metal for accurate screenshots
+/// - Render UI through the supplied backend for framework frame capture
 /// - Control task scheduling deterministically via TestDispatcher
 /// - Advance simulated time for testing time-based behaviors (tooltips, animations, etc.)
+///
+/// Its run method invokes the launch callback and returns. A test host must drive its
+/// dispatcher and the supplied backend's native event pump through window retirement. It
+/// does not invoke the backend's blocking run method or replace a production platform loop.
 pub struct VisualTestPlatform {
     dispatcher: TestDispatcher,
     background_executor: BackgroundExecutor,
@@ -85,8 +89,8 @@ impl Platform for VisualTestPlatform {
         self.platform.text_system()
     }
 
-    fn run(&self, _on_finish_launching: Box<dyn 'static + FnOnce()>) {
-        panic!("VisualTestPlatform::run should not be called in tests")
+    fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
+        on_finish_launching();
     }
 
     fn quit(&self) {}

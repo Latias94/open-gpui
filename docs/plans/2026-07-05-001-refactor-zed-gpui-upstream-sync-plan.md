@@ -647,6 +647,46 @@ executed 0.25.4 workspace matrix. The separate AVIF feature-policy difference re
 other platform execution, numeric costs, external-loop/API/renderer lifetime, canonical docking
 and engine acceptance remain open. This completes the selected decoder unit, not the refresh.
 
+### Externally Driven Application Successor
+
+After `995ac857636`, reconcile official `74798c68d5c63d31e2ccca5c8f5ec0a02c90679c`
+and final target `635026fabc38440fce5e1767d125026a17b12012` ApplicationHandle/run_embedded.
+The handle owns one strong AppCell; AsyncApp remains weak. Both launch paths use the existing
+platform-run owner. The API does not turn a blocking Platform::run into a returning loop,
+create a shared renderer or replace native retirement. Preserve existing Wasm run retention;
+run_embedded relies on the returned owner instead. Respect delayed launch and nonreentrant
+same-App entry. An external host must finish shutdown/native retirement before dropping its
+last handle; handle drop itself neither pumps events nor initiates asynchronous shutdown.
+
+Integrate handle updates with the fork's existing App update transaction and AppCell post-borrow
+convergence. Official direct callback invocation must not leave fork notifications/deferred
+effects stranded. Test and VisualTest platforms invoke the launch callback and return, allowing
+normal public lifecycle consumers without a second application or Host owner. Qualify launch
+count, host updates, effects, async/background task custody, native callbacks across App borrows,
+reentry/unwind recovery and exact release. Real Windows submission through the returning visual
+test platform is distinct from production Windows externally driven-loop support: stock Windows
+Platform::run remains blocking and process-owning. Include independently locked public API
+consumption, affected library/component/native regressions, compiler-floor/build/Clippy/format
+and existing import/document/API checks. Other native targets, engine GPU integration, numeric
+costs, remaining closure differences and complete R11/R12 remain open.
+
+The direct official update body reproduces both defer-only and nested-batch failures (0/2)
+before the transaction adaptation. Corrected owner tests pass 10/10; the selected actual Windows
+visual-test consumer plus owners passes 11/11. Review catches no confirmed P1/P2. The record
+keeps two fixture corrections for active transaction depth/nonterminal shutdown and the public
+Pixels conversion compile correction. Native evidence binds four stateful text/quad submissions
+and GPU captures to exact generations, with effects observed before polling, background await,
+visual timer, typed busy-input refusal, queued frame delivery and complete observed owner
+retirement. It does not qualify all GPU/vsync resources, real OS input/timing or production
+Windows externally driven-loop support.
+The final affected runtime/public cohort passes 1,339/1,339, with four existing interactive
+Windows cases skipped; affected components/docking/Canvas pass 2,964/2,964 and independently
+locked public consumers pass 14/14 without skips. Locked workspace/consumer checks, affected
+correctness Clippy and actual Windows Rust 1.92.0 framework/consumer all-target/all-feature
+checks pass. Root/consumer formatting and existing import/document/release/API scans complete
+the unit. The candidate queue retains the distinct display/hot-reload and owning-asset-load
+successors; this is not full closure refresh or engine external-loop integration.
+
 ## Maintained Baseline Before Engine Adaptation
 
 Finish a bounded framework refresh against the recorded November 5 Zed revision before expanding

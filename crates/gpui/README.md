@@ -17,6 +17,35 @@ open_gpui_platform = { package = "open-gpui-platform", version = "0.2.0" }
 
 Everything in Open GPUI starts with an `Application`. You can create one with `open_gpui_platform::application()`, and kick off your application by passing a callback to `Application::run()`. Inside this callback, you can create a new window with `App::open_window()`, and register your first root view.
 
+## Application Lifetime Under An External Loop
+
+Use `Application::run_embedded` when the supplied Platform's `run` method returns control to
+the host. Retain its `ApplicationHandle` for application ownership and enter it with
+`handle.update(|cx| ...)`. An update batches nested entity work and flushes effects before
+returning, using the same transaction as async App updates. `handle.to_async()` supplies a
+weak AsyncApp for work across await points; it does not retain the application or cancel
+tasks automatically when the last strong owner disappears.
+
+The handle stays on its owning thread. Reentering it while that App is borrowed panics;
+callbacks should use their current App context. A panic restores transaction bookkeeping,
+but does not roll back already queued work or user state. Finish shutdown and drive native
+window retirement before releasing the last application owner. Public `App::shutdown`
+settles the existing shutdown fence; dropping the handle neither invokes shutdown nor pumps
+an external event loop. Shutdown barriers during preparation and terminal native quit remain
+the existing lifecycle contracts.
+
+Launch can complete asynchronously after `run_embedded` returns. Its pending platform
+callback may itself retain the App, so handle drop is not a launch-cancellation protocol.
+The API still calls the supplied `Platform::run`: stock desktop implementations can block,
+and the production Windows implementation owns process exit. Select an explicitly returning
+platform for an external loop. This interface supplies no shared GPU or native window handle
+attachment. Test-support's VisualTestPlatform returns after launch and delegates native
+windows to its supplied backend; its host drives both the simulated dispatcher and native
+messages. That test facility is not a production Windows external-loop backend.
+
+See the [external-loop qualification](../../docs/verification.md#externally-driven-application-lifetime)
+for actual consumers and platform limits.
+
 ## What This Crate Owns
 
 `open-gpui` owns the application, window, element, entity, input, text, accessibility, and rendering-facing API that applications use directly. It does not choose a backend by itself; use `open-gpui-platform` for target-specific application construction.
