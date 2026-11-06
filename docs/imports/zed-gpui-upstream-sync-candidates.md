@@ -234,8 +234,16 @@ framework consumer and needs its own disposition rather than implicit exclusion.
    [qualification](../verification.md#unified-profiler-foundation) separate official baseline,
    fork candidate/input/reset/unwind adaptations, inherited trace/action corrections, complete
    public/native consumers, the unchanged-size benchmark fixture and unmeasured overhead.
-2. Native lifecycle observation: multi-subscriber wake `7a7c3e1d2f` and sleep/window visibility
-   `3db02c2c77`. App/window/context and every platform backend must agree before journal filtering.
+2. Qualified native lifecycle observation: multi-subscriber wake `7a7c3e1d2f` and sleep/window
+   visibility `3db02c2c77`. The [successor](../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#sleep-wake-and-presentation-visibility-successor)
+   preserves the complete official mechanism through existing native ingress and reusable public
+   owners. Implementation `8b283cb151b070d7d5851a531a86e6d6d67196cb` removes the singleton
+   wake slot and provides public test-context controls. Framework/public/gallery/native 1,446,
+   component/docking/Canvas 2,966, disabled Core/public 1,113 and independent enabled/disabled
+   28/26 pass. Actual Windows compiler-floor checks pass. The
+   [qualification](../verification.md#sleep-wake-and-presentation-visibility) distinguishes
+   official mechanisms, fork ingress/SetWindowPos adaptations, source-only foreign backends,
+   portable production compilation and the remaining physical-power/browser/cost scope.
 3. Foreground journal and hang detection: `1861e58f98`, trigger rules `97b1e64a17`,
    sleep/visibility `f0fb48c71a` and unnotified suspend `7232ba04ef`. Preserve bounded writer,
    independent cursors, small-poll aggregation, explicit interval boundaries and demand deadlines.

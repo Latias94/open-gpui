@@ -850,6 +850,38 @@ Run focused regressions, affected framework/component/native and independent con
 checks, correctness Clippy, actual Windows compiler-floor checks and formatting. Preserve the
 known Web test-support dependency gap and unexecuted native-platform scope.
 
+### Sleep, Wake And Presentation Visibility Successor
+
+After unified-profiler implementation `3e5a907775e9f22d0a092a0f9f27c6f1696ade0e` and its
+qualification record `a536b1d93380cc9247a7cc9576ac6b81cdb65489`, adopt official multi-subscriber
+wake `7a7c3e1d2f03195c5fa19bc890da330ad7f3abef` and sleep/window visibility
+`3db02c2c77659ad29810594e6249287ea1e791f7` against the unchanged fixed target. App owns
+independent, lifetime-bound sleep/wake subscriptions. Remove the replaced Application singleton
+wake API and its handler slot. Keep the fork's existing thread-safe native notification ingress,
+post-borrow App transaction, callback ordering and shutdown discard rules.
+
+WindowVisibility and Window/Context observers follow the official complete mechanism. Read the
+initial platform value and publish each delivered transition before observers run. Keep it
+separate from the existing native shown/mapped query and exact presentation receipts. A callback
+already emitted into native ingress must retain its ordered Hidden/Visible boundaries, including
+while App is busy. Platform-specific deferred state sampling may collapse native message bursts
+as the official backend does. Visibility observation alone must not fabricate a refresh request,
+Submitted frame, hide/reveal command or render-owner decision.
+
+Implement the mandatory platform methods across Test/VisualTest, Windows, macOS, Wayland, X11,
+headless and Web. Preserve official signal sources and their documented limits: Windows cannot
+observe general occlusion/display sleep, older Wayland compositors lack suspended state, X11
+compositors can hide obscuration, and Web reports Page Visibility. Map macOS source to the fork's
+existing objc runtime rather than silently omitting its behavior. Handle callbacks outside
+native state borrows, retirement and queued weak-owner lifetimes through existing ownership.
+
+Qualify ordinary API consumers, multi-subscription drop/reentry/unwind, busy/cross-thread and
+shutdown ordering, initial visibility, duplicate hints, Window/Context lifetimes and frame-wake
+controls. The native Windows consumer uses actual HWND state/renderer receipts and synthetic
+power-broadcast ingress without suspending the machine. Record compile, deterministic and native
+scope separately; foreign native OS execution and physical power/occlusion claims remain explicit
+limits. The later journal/hang and refresh-aware owners consume this foundation in their own units.
+
 ## Maintained Baseline Before Engine Adaptation
 
 The [unified-profiler qualification](../verification.md#unified-profiler-foundation) now records
@@ -860,9 +892,22 @@ Core 1,095 and independent enabled/disabled 20/18 keep their distinct scope. Act
 Submitted/reconstruction and both full-size Criterion smoke configurations execute. Locked
 compilation, correctness Clippy, formatting and actual Windows Rust 1.92.0 framework/Canvas/
 independent checks pass. Production wasm compiles with and without profiling; browser/native
-foreign-platform and numeric-cost qualification remain open. Continue at the queued native
-wake/sleep/visibility prerequisite rather than treating this common owner as refresh-aware
-telemetry or complete benchmark/report parity.
+foreign-platform and numeric-cost qualification remain open. This common owner alone does not
+establish refresh-aware telemetry or complete benchmark/report parity.
+
+The following [lifecycle observation qualification](../verification.md#sleep-wake-and-presentation-visibility)
+records local implementation `8b283cb151b070d7d5851a531a86e6d6d67196cb`. Official
+multi-subscriber power and WindowVisibility owners replace the singleton wake path. Fork ingress,
+post-borrow ordering and Windows SetWindowPos sampling retain their explicit consumer and tests.
+Complete framework/public/gallery/native 1,446, component/docking/Canvas 2,966, disabled
+Core/public 1,113 and independent enabled/disabled 28/26 pass. Four existing interactive Windows
+cases remain skipped in the full runtime cohort. Actual native hide/show/minimize/restore,
+strictly newer Submitted recovery and exact retirement execute without suspending the machine.
+Locked checks, correctness Clippy, formatting and actual Windows Rust 1.92.0 framework/Canvas/
+consumer checks pass. Production wasm compilation remains separate from browser/test-support
+and native foreign-platform execution. Continue at foreground journal/hang detection and the
+GPUI monitor, followed by frame-signal, refresh-aware and power/cadence owners. Numeric costs,
+canonical docking, complete fixed-target refresh and engine adoption remain open.
 
 Finish a bounded framework refresh against the recorded November 5 Zed revision before expanding
 Nara-specific UI implementation. The five correctness units are the first dependency-ordered

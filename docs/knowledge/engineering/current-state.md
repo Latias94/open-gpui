@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-06T21:23:00+08:00
+timestamp: 2026-11-06T22:35:00+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -302,6 +302,24 @@ verified_by:
   Windows Rust 1.92.0 affected-framework/Canvas/consumer checks pass. Production wasm compilation
   is separate from browser execution and the unchanged Web test-support dependency gap.
 
+- The sleep/wake and presentation-visibility successor is qualified at
+  `8b283cb151b070d7d5851a531a86e6d6d67196cb`. Official multi-subscriber App power and
+  Window/Context visibility observations replace the singleton wake path. All backend sources
+  adopt mandatory platform methods; fork adaptations retain native cross-thread/post-borrow
+  ordering, exact retirement and SetWindowPos sampling. Public test-context consumers exercise
+  the supported simulation APIs. Complete runtime/public/gallery/native passes 1,446/1,446,
+  with four preexisting interactive Windows skips; UI/component/docking/Canvas passes
+  2,966/2,966. Disabled Core/public 1,113 and independent enabled/disabled 28/26 pass without
+  skips. The native trajectory executes real HWND reveal/hide/show/minimize/restore, requires a
+  newer nonempty Submitted receipt and retires exact callbacks/platform resources. Synthetic
+  power messages do not suspend the machine. The verification guide retains compile/fixture
+  corrections, the headless Hidden planning correction and source-only foreign backend scope.
+  Locked checks, correctness Clippy, both formatting checks and actual Windows Rust 1.92.0
+  affected-framework/Canvas/consumer checks pass. Production wasm compiles with profiling off
+  and on; browser/test-support, native macOS/Linux and numeric costs stay unqualified. All nine
+  implementation/review subthreads are closed. Journal/hang/monitor, frame-signal, refresh-aware
+  and power/cadence owners remain queued.
+
 # Historical Main Integration
 
 The previous snapshot recorded `df6ae2f` on July 9. The following integration summary retains that
@@ -335,8 +353,9 @@ historical scope and is not current branch or CI qualification.
   recorded scope, together with shared-image decoding and its real public/native consumers.
   The externally driven App, owning asset-load and display-observation units are qualified within
   their recorded scope. The unified-profiler foundation is qualified within its recorded scope.
-  Continue with official multi-subscriber wake and sleep/window visibility, then foreground
-  journal/hang detection, the GPUI monitor, frame-signal provenance and refresh-aware reporting
+  Official multi-subscriber wake and sleep/window visibility are qualified within their recorded
+  scope. Continue with foreground journal/hang detection, the GPUI monitor, frame-signal
+  provenance and refresh-aware reporting
   in the candidate queue's prerequisite order. Display getters and the foundation profiler do
   not qualify complete frame pacing. Apply the maintenance skill's official-baseline rule while
   reconciling remaining image-feature/API/platform/hot-reload differences. Qualify the

@@ -2333,6 +2333,119 @@ provenance, refresh-aware measurements, power/cadence and complete upstream benc
 overlay dispositions remain queued. Complete fixed-target parity, foreign-platform execution,
 numeric costs, canonical docking, Nara GPU/View adaptation and Editor/game selection remain open.
 
+## Sleep, Wake And Presentation Visibility
+
+This successor starts after profiler implementation `3e5a907775e9f22d0a092a0f9f27c6f1696ade0e`
+and qualification `a536b1d93380cc9247a7cc9576ac6b81cdb65489`. It adopts official
+`7a7c3e1d2f03195c5fa19bc890da330ad7f3abef` and
+`3db02c2c77659ad29810594e6249287ea1e791f7`, using the final source at fixed target
+`635026fabc38440fce5e1767d125026a17b12012`. App owns multiple sleep/wake subscriptions;
+Window owns cached presentation visibility and Window/Context observers. Mandatory platform
+signals retain their documented backend limits. Native shown/mapped state and accepted/Submitted
+authority remain separate.
+
+Fork integration keeps thread-safe native receipt and ordered App/Window post-borrow delivery.
+Already emitted lifecycle boundaries are not coalesced. The obsolete Application singleton wake
+slot is removed; its old singleton replacement test moves to the still-supported reopen handler,
+while new sleep/wake cases require independent subscriptions and ordinary drop/detach behavior.
+Visibility observation adds no implicit frame wake or telemetry/presentation authority.
+
+Local implementation `8b283cb151b070d7d5851a531a86e6d6d67196cb` is qualified within the
+scope below. Synthetic native power messages do not suspend the machine; source migration and
+portable compilation cannot qualify foreign native power/occlusion or browser behavior. The
+chronological failures and corrections below retain their original checkpoints.
+
+The first all-feature Core production-library check passes. Initial focused test compilation
+stops at four new fixture accesses to TestAppContext's private platform field; they now use its
+existing accessor. Independent App/ingress review also catches two omitted official public test
+entry points. TestAppContext::simulate_window_visibility_change and
+VisualTestContext::simulate_visibility_change now forward through the existing simulation and
+queue-drain convention. A separate public integration executes both interfaces and observer
+lifetimes without core-private access. Bounded re-review closes that omission.
+
+An initial headless instruction incorrectly assumes Visible. Exact official-source comparison
+identifies Hidden in both introduction and fixed target; the final source and assertion follow
+Hidden, preserving the existing shown/mapped false query. This is a corrected planning mistake,
+not a retained fork behavior or an executed platform regression result.
+
+The next test compile rejects a fixture capturing a borrowed TestPlatform inside a static
+observer. It now captures the existing owned cross-thread ingress handle for that reentrant
+notification. The first executed Core/public/native selection reaches 30/31
+(`dece21c7-ffe8-4ddb-a1d5-589b71961761`), with 1,329 unrelated cases filtered out. App lifecycle,
+public simulation, visibility lifetime/order and actual native power notifications pass. Native
+visibility reaches a real minimize transition but Window's `is_minimized` query still returns
+false. Subsequent source diagnosis finds the fixture created a permanently hidden window and
+manually showed it without completing the normal initial-presentation owner. Pending initial
+placement correctly projects its intended state. WM_SIZE already notifies WindowStateChanged
+before its minimized early return. The corrected fixture uses normal first presentation and
+registers its observer while the root is still hidden; minimize/restore assertions remain intact.
+No WM_SIZE state-publication defect or visibility-getter facts workaround is claimed.
+
+Independent Windows review additionally identifies fork-specific SetWindowPos show/hide commits
+that need visibility sampling through WM_WINDOWPOSCHANGED. Its source path already documents
+that WM_SHOWWINDOW/WM_SIZE are not guaranteed. The native successor adds that actual entry point.
+Restore acceptance also needs a generation lower bound captured immediately before its explicit
+refresh, so a submission from before minimization cannot satisfy the control. These findings
+retain the official deferred native sampling mechanism and the fork's exact presentation custody.
+Foreign-backend source review finds no confirmed P1/P2; it establishes no foreign-platform runtime
+qualification.
+
+The Windows wrapper exposes `contains` rather than bitflags' `intersects`; the first correction
+compile rejects the latter. The owner now checks the two flags explicitly. Corrected native
+power/visibility passes 2/2 (`78e95916-ba27-4185-89d0-d66af8fb3268`), with 1,356 unrelated
+cases filtered out. It executes actual initial SetWindowPos reveal, explicit SetWindowPos
+hide/show, ShowWindow minimize/restore, unchanged hints, busy-App order, exact retirement and
+reconstruction. Restore requires a strictly newer nonempty Submitted receipt. Synthetic power
+messages enter the real hidden platform HWND, with shared registration, multiple subscribers,
+unsubscribe and exact shutdown release checks; no machine power state changes.
+
+The complete profiling-disabled Core library and public lifecycle integration pass 1,113/1,113
+(`602fd512-6845-49e5-ae30-f21c38530f81`), without skips. Core/WGPU/Web production libraries
+compile for wasm32-unknown-unknown with profiling both off and on. This is compile evidence,
+separate from browser event execution and the unchanged Web test-support dependency limitation.
+
+Independent final source review confirms the complete App/Window/Context/native integration,
+including the SetWindowPos adaptation and strict restore receipt, without an open P1/P2.
+All nine implementation/review subthreads are closed. No numerical cost or native foreign-platform
+result follows from the source review.
+
+The complete enabled framework/public/gallery/native cohort passes 1,446/1,446
+(`937a6285-4dc2-4bd2-9c8a-f0501087a2cd`), with four preexisting interactive Windows cases
+skipped. It includes both public lifecycle integrations and 209 executed Windows cases. The
+all-feature UI core/components/docking/Canvas cohort passes 2,966/2,966
+(`8ff746a3-2341-43c3-b4da-f9cb7853e799`) across 25 binaries, without skips. Ordinary-consumer
+all-feature tests pass 28/28 (`8e307102-6d48-40b0-ba6d-d1eb2da83abc`); the no-default-features
+configuration passes 26/26 (`a528ca0d-c831-4f19-886c-3fbc4e491533`), both without skips. Their
+independent lockfile and manifests are unchanged. The eight lifecycle tests distinguish ordinary
+API compilation from standalone enum/subscription execution; actual App/Window delivery is
+covered by the separate framework and public test-context consumers.
+
+Locked workspace all-target and independent-consumer all-target/all-feature checks pass on Rust
+1.95.0. Correctness Clippy passes for Core/WGPU/Windows/Canvas/Web all targets and features;
+existing warnings are not a warning-free qualification. Actual Windows Rust 1.92.0 affected
+Core/WGPU/Windows/Canvas and independently locked consumer checks pass, both all targets and
+features. Root and independent formatting checks pass against the committed runtime source:
+
+```text
+cargo +1.95.0 check --locked --workspace --all-targets
+cargo +1.95.0 check --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --all-targets --all-features
+cargo +1.95.0 clippy --locked -p open-gpui -p open-gpui-wgpu -p open-gpui-windows -p open-gpui-canvas -p open-gpui-web --all-targets --all-features -- -D clippy::correctness
+cargo +1.92.0 check --locked -p open-gpui -p open-gpui-wgpu -p open-gpui-windows -p open-gpui-canvas --all-features --all-targets
+cargo +1.92.0 check --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --all-targets --all-features
+cargo +1.95.0 fmt --all -- --check
+cargo +1.95.0 fmt --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --all -- --check
+```
+
+All Cargo runs are serial with one build job and the existing Nara target. Existing import,
+public-API, document-link and release-document scans pass. Workflow YAML parses, and its lifecycle
+public-test and independent feature commands retain the intended targets and serial settings.
+No remote CI or publication is claimed. This closes the lifecycle observation prerequisite;
+foreground journal/hang detection/monitor, frame-signal provenance, refresh-aware measurement,
+power/cadence, complete benchmark/report/debug-overlay reconciliation, hot reload and remaining
+fixed-target differences stay open. Native macOS/Linux, browser/test-support, physical suspend,
+general Windows occlusion, numerical costs, canonical docking U4-U9 and Nara rendering/Editor
+adoption retain their separate unqualified scopes.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:
