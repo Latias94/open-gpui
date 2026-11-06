@@ -1040,7 +1040,7 @@ impl StateInner {
         let mut rendered_focused_item = false;
 
         let available_item_space = size(
-            available_width.map_or(AvailableSpace::MinContent, |width| {
+            available_width.map_or(AvailableSpace::MaxContent, |width| {
                 AvailableSpace::Definite(width)
             }),
             AvailableSpace::MinContent,
@@ -1684,6 +1684,10 @@ impl open_gpui_sum_tree::SeekTarget<'_, ListItemSummary, ListItemSummary> for He
         self.0.partial_cmp(&other.height).unwrap()
     }
 }
+
+#[cfg(test)]
+#[path = "list/text_measurement_tests.rs"]
+mod text_measurement_tests;
 
 #[cfg(test)]
 mod test {

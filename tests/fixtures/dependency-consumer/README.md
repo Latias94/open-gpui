@@ -4,8 +4,8 @@ This application is its own Cargo workspace. It consumes Open GPUI through path 
 without inheriting the repository workspace's dependency resolution or lockfile. Its own
 `Cargo.lock` records the consumer resolution.
 
-The application pins Taffy 0.10.0, WGPU 30.0.1, and, on macOS, Core Foundation 0.10.1 to exercise
-compatible dependency choices independently of the library workspace. Keep these exact pins in
+The application pins Taffy 0.15.0, WGPU 30.0.1, and, on macOS, Core Foundation 0.10.1 to exercise
+application-owned dependency choices independently of the library workspace. Keep these exact pins in
 the application fixture; library dependencies should allow compatible patch releases. The direct
 WGPU dependency requests only its `std` feature for API types.
 
@@ -82,3 +82,9 @@ native reconstruction consumers; these tests do not establish renderer performan
 ```text
 cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --all-features --test window_text --test-threads=1 --no-fail-fast --no-tests fail
 ```
+
+The optional `grid_layout` test consumes the shared GridTemplateMinSize type and fluent
+row/column content sizing through the public style API. It remains direct API evidence;
+actual measured grid/text/root painting and native submission have separate framework consumers.
+The independent application does not enable stack growth unless it explicitly requests the
+framework's `stacker` feature.

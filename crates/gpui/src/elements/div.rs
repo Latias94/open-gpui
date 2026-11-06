@@ -31,7 +31,6 @@ use open_gpui_collections::HashMap;
 use open_gpui_core_util::ResultExt;
 use open_gpui_refineable::Refineable;
 use smallvec::SmallVec;
-use stacksafe::{StackSafe, stacksafe};
 use std::{
     any::{Any, TypeId},
     cell::{Cell, RefCell},
@@ -46,6 +45,11 @@ use std::{
 };
 
 use super::ImageCacheProvider;
+
+#[cfg(feature = "stacker")]
+type StackSafe<T> = stacksafe::StackSafe<T>;
+#[cfg(not(feature = "stacker"))]
+type StackSafe<T> = T;
 
 mod accessibility;
 mod scroll;
@@ -2338,8 +2342,11 @@ impl InteractiveElement for Div {
 
 impl ParentElement for Div {
     fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
+        #[cfg(feature = "stacker")]
         self.children
-            .extend(elements.into_iter().map(StackSafe::new))
+            .extend(elements.into_iter().map(StackSafe::new));
+        #[cfg(not(feature = "stacker"))]
+        self.children.extend(elements);
     }
 }
 
@@ -2375,7 +2382,7 @@ impl Element for Div {
         !self.interactivity.accessibility.has_explicit_actions()
     }
 
-    #[stacksafe]
+    #[cfg_attr(feature = "stacker", stacksafe::stacksafe)]
     fn request_layout(
         &mut self,
         global_id: Option<&GlobalElementId>,
@@ -2411,7 +2418,7 @@ impl Element for Div {
         (layout_id, DivFrameState { child_layout_ids })
     }
 
-    #[stacksafe]
+    #[cfg_attr(feature = "stacker", stacksafe::stacksafe)]
     fn prepaint(
         &mut self,
         global_id: Option<&GlobalElementId>,
@@ -2506,7 +2513,7 @@ impl Element for Div {
         )
     }
 
-    #[stacksafe]
+    #[cfg_attr(feature = "stacker", stacksafe::stacksafe)]
     fn paint(
         &mut self,
         global_id: Option<&GlobalElementId>,

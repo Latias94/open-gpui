@@ -695,7 +695,7 @@ impl UniformList {
             return Size::default();
         };
         let available_space = size(
-            list_width.map_or(AvailableSpace::MinContent, |width| {
+            list_width.map_or(AvailableSpace::MaxContent, |width| {
                 AvailableSpace::Definite(width)
             }),
             AvailableSpace::MinContent,
@@ -740,6 +740,10 @@ impl InteractiveElement for UniformList {
         &mut self.interactivity
     }
 }
+
+#[cfg(test)]
+#[path = "uniform_list/text_measurement_tests.rs"]
+mod text_measurement_tests;
 
 #[cfg(test)]
 mod test {

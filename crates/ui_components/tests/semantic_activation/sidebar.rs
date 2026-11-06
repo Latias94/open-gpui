@@ -1,5 +1,6 @@
 use super::*;
 
+use open_gpui::px;
 use open_gpui_ui_components::sidebar::SidebarItem;
 use open_gpui_ui_components::{Sidebar, SidebarActivation, SidebarCollapseMode, SidebarSection};
 
@@ -806,6 +807,9 @@ fn sidebar_selectors_and_handlers_cannot_collide_across_component_ids(
             let first = self.first.clone();
             let second = self.second.clone();
             div()
+                .grid()
+                .grid_cols(2)
+                .grid_rows(2)
                 .child(
                     Sidebar::new("a", "Duplicate navigation")
                         .section(
@@ -876,6 +880,12 @@ fn sidebar_selectors_and_handlers_cannot_collide_across_component_ids(
     let unique_bounds = cx
         .debug_bounds(unique)
         .expect("unique item should expose its own selector");
+    let viewport = cx.update(|window, _| window.viewport_size());
+    for bounds in [duplicate_bounds, unique_bounds] {
+        assert!(bounds.left() >= px(0.) && bounds.top() >= px(0.));
+        assert!(bounds.right() <= viewport.width && bounds.bottom() <= viewport.height);
+    }
+    assert!(!duplicate_bounds.intersects(&unique_bounds));
     cx.simulate_click(unique_bounds.center(), Modifiers::none());
     assert!(first.borrow().is_empty());
     assert_eq!(second.borrow().as_slice(), &["x"]);

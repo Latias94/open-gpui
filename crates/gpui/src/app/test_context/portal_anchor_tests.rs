@@ -901,8 +901,12 @@ fn portal_anchor_captures_target_scopes_independent_of_wrapper_order(cx: &mut Te
     let inert = resolve_committed(cx, handle).expect("the inner-scoped target should commit");
     assert_eq!(inert.presentation(), SubtreePresentation::Inert);
     assert_eq!(
+        inert.geometry().layout_bounds(),
+        Bounds::new(point(px(20.0), px(30.0)), size(px(100.0), px(50.0)))
+    );
+    assert_eq!(
         inert.geometry().displayed_bounds(),
-        Bounds::new(point(px(100.0), px(50.0)), size(px(200.0), px(200.0)))
+        Bounds::new(point(px(120.0), px(80.0)), size(px(200.0), px(200.0)))
     );
 
     cx.update_window_entity(&view, |view, _, cx| {

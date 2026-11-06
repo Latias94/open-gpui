@@ -19,7 +19,7 @@ open_gpui_docking = { package = "open-gpui-docking", path = "../../../crates/gpu
 open_gpui_wgpu = { package = "open-gpui-wgpu", path = "../../../crates/gpui_wgpu", default-features = false, optional = true }
 
 # Application-owned pins exercise compatible patch choices outside the library lockfile.
-taffy = "=0.10.0"
+taffy = "=0.15.0"
 wgpu = { version = "=30.0.1", default-features = false, features = ["std"] }
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]

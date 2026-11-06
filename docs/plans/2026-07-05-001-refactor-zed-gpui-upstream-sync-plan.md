@@ -536,6 +536,59 @@ consumer checks pass. Independent cache and consumer rereviews close their confi
 findings. This closes the selected ownership unit without completing Taffy/platform refresh,
 canonical docking, measured costs or engine adoption.
 
+### Taffy, Text Measurement And Root/Grid Successor
+
+After `1f01e811c101`, reconcile official `91fdd55889`, `b05f40c554`, `31ceaf7908`,
+`cdf33ac25e`, `b488c4e814`, `b0da438545`, `5ccbbbd88f` and `41d72f6c1d` against the same
+fixed target. Treat the dependency and sizing corrections as one consumer unit. Use Taffy
+0.15.0 in both qualification lockfiles, retain a compatible 0.15 library requirement and
+the independently owned application pin, and adopt the final explicit backend feature set.
+Do not pull unrelated dependency updates into this unit.
+
+Adopt the official leaf-layout callback and alignment types while retaining existing logical/
+device-pixel conversion, authored stroke rounding, cached bounds and explicit relative
+positioning. Text must not answer an unconstrained probe with a previously truncated size;
+nonwrapped truncation must use actual shaped overflow before per-character cutting. Unknown
+list widths use the official MaxContent probe. The target does not itself implement a general
+new word-based MinContent text algorithm; distinguish its executed correction from that wider
+capability rather than inventing or claiming it here.
+
+Window and prompt roots fill only auto dimensions. Explicit/percentage dimensions, min/max
+constraints and the original anchored/tooltip/drag/deferred shrink-wrap paths retain their
+own behavior. Add official row min/max-content methods and rename TemplateColumnMinSize to
+GridTemplateMinSize without an alias. Follow the official opt-in stacker policy across Div's
+request/prepaint/paint and Taffy's measured callbacks; qualify both feature configurations.
+Do not describe removal of mandatory stack growth as an unlimited-depth guarantee.
+
+Use same-element constrained/unconstrained/final measurement regressions, actual kerning-width
+and all three text-overflow directions, complete list/grid consumers, root auto/explicit sizing,
+shared font/source/candidate custody and public/custom Element paint. Real Cosmic headless,
+independent-lockfile API and actual Windows Submitted/reconstruction evidence remain distinct.
+Retain original notification/teardown assertions and observe notified successors before any
+forced refresh. Existing pixel snapping, clips, candidate admission and atlas ownership remain
+under their current owners. Run affected Core/platform/component/docking/Canvas suites, locked
+workspace and independent checks, correctness Clippy, actual Rust 1.92 checks, both formatting
+checks and existing import/document/release/API scans. Numeric speedup, other native platforms,
+canonical docking and engine adoption remain separate open scope.
+
+Independent review reproduces a further untruncated-cache defect in both the starting fork
+and official target: a finite wrapped result answers a later MaxContent probe. The existing
+cache now requires exact wrap-width equality alongside both official truncation guards.
+Keep that correction explicitly fork-owned. The native exact-fit consumer installs the
+bundled font with explicit kerning and requires the existing per-character wrapper to cut
+all three exact-fit strings before actual StyledText is allowed to prove full-source paint.
+This avoids borrowing Cosmic's kerning evidence for a native descriptor with no such effect.
+
+The [qualification](../verification.md#taffy-text-measurement-and-rootgrid-sizing) records
+corrected Core/WGPU/Windows plus five public text/layout trajectories at 1,312/1,312 with four
+existing interactive Windows cases skipped; the stacker-disabled owner/portal cohort passes
+33/33. Affected components/docking/Canvas pass 2,964/2,964 and independently locked public
+text/grid tests pass 9/9 without skips. Locked workspace/consumer compilation, correctness
+Clippy and actual Windows Rust 1.92.0 framework/consumer checks pass. The record retains
+the inherited-cache red result and fixture corrections; bounded independent reviews close
+confirmed findings. This completes the selected layout unit, not complete framework refresh,
+other platform execution, measured costs, canonical docking or engine adoption.
+
 ## Maintained Baseline Before Engine Adaptation
 
 Finish a bounded framework refresh against the recorded November 5 Zed revision before expanding

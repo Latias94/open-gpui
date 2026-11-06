@@ -104,6 +104,8 @@ mod prompts;
 #[doc(hidden)]
 pub mod retained_visual;
 #[cfg(test)]
+mod root_layout_tests;
+#[cfg(test)]
 mod underline_tests;
 
 use self::a11y::A11y;
@@ -8247,7 +8249,13 @@ impl Window {
         };
 
         // Layout all root elements.
+        let scale_factor = self.scale_factor();
         let mut root_element = self.root.as_ref().unwrap().clone().into_any();
+        let root_layout_id = root_element.request_layout(self, cx);
+        self.layout_engine
+            .as_mut()
+            .unwrap()
+            .stretch_auto_size_to_fill(root_layout_id, root_size, scale_factor);
         root_element.prepaint_as_root(Point::default(), root_size.into(), self, cx);
 
         #[cfg(any(feature = "inspector", debug_assertions))]
@@ -8258,6 +8266,11 @@ impl Window {
         let mut prompt_element = None;
         if let Some(prompt) = self.prompt.take() {
             let mut element = prompt.view.any_view().into_any();
+            let prompt_layout_id = element.request_layout(self, cx);
+            self.layout_engine
+                .as_mut()
+                .unwrap()
+                .stretch_auto_size_to_fill(prompt_layout_id, root_size, scale_factor);
             element.prepaint_as_root(Point::default(), root_size.into(), self, cx);
             prompt_element = Some(element);
             self.prompt = Some(prompt);
@@ -11684,8 +11697,11 @@ impl Window {
     /// this variant takes a function that is invoked during layout so you can use arbitrary logic to
     /// determine the element's size. One place this is used internally is when measuring text.
     ///
-    /// The given closure is invoked at layout time with the known dimensions and available space and
-    /// returns a `Size`.
+    /// The closure receives pass-dependent optional known dimensions and available-space
+    /// constraints in logical pixels. Known dimensions do not guarantee resolved style or
+    /// content-box sizes; Taffy 0.15 supplies `None` on both axes during final layout.
+    /// Definite available space already accounts for padding, border and scrollbar gutters.
+    /// Return the measured content size; Taffy applies authored dimensions and box constraints.
     ///
     /// This method should only be called as part of the request_layout or prepaint phase of element drawing.
     pub fn request_measured_layout<F>(&mut self, style: Style, measure: F) -> LayoutId

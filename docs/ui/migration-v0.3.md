@@ -99,6 +99,36 @@ aliases. Materialize the complete source and use `shape_line` or `layout_line`. 
 always retains its source; an empty placeholder is no longer a supported cache-hit representation.
 The ordinary content cache supplies layout reuse across these source-preserving calls.
 
+## Layout Measurement And Root Sizing
+
+The framework now uses Taffy 0.15. Applications that directly pin Taffy must update their
+dependency choice when they require the same backend version. The framework requirement
+allows compatible 0.15 patches; its qualification lockfile records the fixed version.
+Custom measured Elements keep receiving logical known dimensions and available-space
+constraints. The adapter uses Taffy's leaf-layout result so padding, border and authored
+dimensions remain part of that computation.
+Known dimensions are optional and pass-dependent; they do not promise resolved style or
+content-box dimensions. Taffy 0.15 supplies None for both during PerformLayout. Definite
+available-space values already account for padding, border and scrollbar gutters. Return
+the measured content size; Taffy applies authored dimensions and box constraints afterward.
+
+Window and prompt roots fill auto dimensions from the viewport. Explicit lengths and
+percentages retain their meaning, and min/max constraints still apply. Set root dimensions
+explicitly when required. Anchored, tooltip, drag and independently measured subtrees keep
+their existing sizing path. Replace TemplateColumnMinSize with GridTemplateMinSize; no alias
+remains. Use grid_rows_min_content or grid_rows_max_content for content-based row sizing,
+matching the existing column APIs.
+
+The upstream `stacker` feature is opt-in. Enable it when the application requires the
+framework's stack-growth wrappers for element phases and measured callbacks. Default builds
+use the ordinary call stack; neither configuration promises arbitrary tree depth.
+
+Text measurement records whether a prior result was constrained for truncation before
+reusing it for an unconstrained query. Nonwrapped text is shaped first to decide actual
+overflow, avoiding exact-fit truncation caused by unkerned character-width sums. Unknown
+list widths use MaxContent. These corrections do not add a general word-based MinContent
+text algorithm or establish measured layout performance.
+
 ## Cosmic Paragraph Separators
 
 Cosmic 0.19.0 receives each `Bidi_Class=B` paragraph and separator separately, avoiding its

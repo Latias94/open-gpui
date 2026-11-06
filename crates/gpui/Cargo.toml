@@ -41,6 +41,7 @@ screen-capture = [
 ]
 windows-manifest = ["dep:embed-resource"]
 input-latency-histogram = ["dep:hdrhistogram"]
+stacker = ["dep:stacksafe"]
 
 [lib]
 path = "src/gpui.rs"
@@ -96,10 +97,18 @@ serde_json.workspace = true
 slotmap.workspace = true
 smallvec.workspace = true
 async-channel.workspace = true
-stacksafe.workspace = true
+stacksafe = { workspace = true, optional = true }
 strum.workspace = true
 open_gpui_sum_tree.workspace = true
-taffy = "0.10"
+taffy = { version = "0.15", default-features = false, features = [
+    "std",
+    "taffy_tree",
+    "flexbox",
+    "grid",
+    "block_layout",
+    "float_layout",
+    "content_size",
+] }
 thiserror.workspace = true
 open_gpui_core_util.workspace = true
 hdrhistogram = { workspace = true, optional = true }

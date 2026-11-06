@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-06T13:22:00+08:00
+timestamp: 2026-11-06T14:27:00+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -178,6 +178,25 @@ verified_by:
   guide owns exact scope, final checks and red history; numeric costs and other platforms
   remain unqualified. Both formatting checks and existing import/document/release/API scans pass.
 
+- The Taffy/text/root/grid successor now adopts official 0.15 leaf/alignment APIs, truncated
+  measurement isolation, actual shaped-overflow checking, MaxContent list probes, auto window/
+  prompt roots and row-sizing APIs. Stack growth is opt-in across both owners. A reproduced
+  ordinary-wrap cache defect shared with the official target now requires exact wrap-width
+  equality. One portal fixture now verifies the authored absolute root inset and existing
+  local-transform result rather than assuming a zero root origin. Corrected Core/WGPU/Windows
+  plus five public trajectories pass 1,312/1,312, with four existing interactive Windows cases
+  skipped; the stacker-disabled owner/portal cohort passes 33/33. Native bundled-font kerning,
+  actual Submitted successors and exact reconstruction/release retain their source scope.
+  Affected components/docking/Canvas pass 2,964/2,964 and independently locked public text/grid
+  tests pass 9/9 without skips. A full-height multi-Sidebar test now declares visible grid
+  allocation while retaining physical-input and identity isolation. Independent reviews close
+  production, native-oracle, portal and Sidebar-fixture findings. Locked workspace/consumer
+  compilation and correctness Clippy pass on Rust 1.95.0; actual Windows Rust 1.92.0 affected
+  framework/consumer all-target/all-feature checks also pass. The verification guide retains
+  initial failures and scope. No general word-based MinContent, numeric cost improvement,
+  other native platform or engine integration follows. Both formatting checks and existing
+  import/document/release/API scans pass.
+
 # Historical Main Integration
 
 The previous snapshot recorded `df6ae2f` on July 9. The following integration summary retains that
@@ -207,7 +226,8 @@ historical scope and is not current branch or CI qualification.
   queue retains font/text/layout/API, image decoding, external-run-loop and platform differences.
   Font prewarming, available-family names and glyph-raster qualification are complete within the
   recorded Windows/software scope, as are source-fragment/layer/underline and window-local
-  text ownership. Continue Taffy/intrinsic/root/grid/stack and platform differences. Qualify the
+  text ownership. The Taffy/intrinsic/root/grid/stack successor is qualified within its
+  recorded scope. Continue remaining image/API/platform/external-loop differences. Qualify the
   prepared CoreText selection/cascade work on macOS when that platform is available. The
   DirectWrite successor now
   has separate existing-family and installed-fallback evidence rather than borrowing the

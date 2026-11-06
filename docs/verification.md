@@ -35,7 +35,7 @@ processes. It does not mutate the parent shell environment.
 
 The separately locked [dependency consumer](../tests/fixtures/dependency-consumer/README.md)
 compiles the public framework, native platform, components and docking together with application-
-selected Taffy 0.10.0 and WGPU 30.0.1. Its optional `wgpu-renderer` feature also compiles the actual
+selected Taffy 0.15.0 and WGPU 30.0.1. Its optional `wgpu-renderer` feature also compiles the actual
 WGPU renderer under that selected patch. On macOS it additionally selects Core Foundation 0.10.1.
 The library accepts compatible versions; the application and workspace lockfiles retain their own
 resolved versions.
@@ -1546,6 +1546,131 @@ this unit.
 Native Submitted, headless accepted paint and direct Noop API execution remain separate evidence. Removed locks
 and fewer cache paths do not establish a CPU, allocation, frame-tail or process-memory result.
 Other platforms, Taffy/API migration, canonical docking and engine adoption remain open.
+
+## Taffy, Text Measurement And Root/Grid Sizing
+
+This successor starts from Open-GPUI `1f01e811c101e5a81e52e955942f6a24a8974902` against fixed
+Zed `635026fabc38440fce5e1767d125026a17b12012`. Official `91fdd55889`, `b05f40c554`,
+`31ceaf7908`, `cdf33ac25e` and `b488c4e814` supply dependency/alignment/leaf-measurement
+changes, truncated-cache invalidation, exact shaped-overflow checking and unknown-list-width
+MaxContent probes. Official `b0da438545`, `5ccbbbd88f` and `41d72f6c1d` supply auto window/
+prompt root sizing, shared row/column type and row methods, and opt-in stack growth. The
+fork retains its pixel conversion, stroke rounding, Rc text snapshots, clips, font generations
+and candidate/atlas custody. No new cache, layout or render owner is introduced.
+
+Both lockfiles now select Taffy 0.15.0. The compatible library requirement initially lets
+Cargo select 0.15.1; a second explicit update returns it to the recorded target version.
+Only the required dependency closure changes. The independent application explicitly pins
+0.15.0; its default graph drops the stack-growth packages and old Taffy parsing/grid closure.
+The official stacker feature is available without becoming a default dependency.
+
+The first focused compile finds a missing Position import in a new style test, corrected
+without production changes. The next run executes **14/18**: four new fixture failures
+expose incorrect test assumptions. Auto list-row roots need explicit full width for finite
+constraints, Taffy 0.15 PerformLayout passes None known dimensions with adjusted content
+available-space, and standalone element measurement must occur within the existing draw
+lifecycle. The fixtures now declare those actual constraints/phases while retaining unknown
+width source/materialization, logical content-box sizes, all root axes and shrink-wrap checks.
+Corrected focused run **18/18** passes, with 1,010 unrelated Core cases filtered:
+`79b4946b-1e88-4701-98b9-3a8b9a7b95a0`. The target does not supply a general word-based
+MinContent text algorithm; this unit must not claim one.
+
+The first real-Cosmic/Windows selected cohort passes **11/11**, with 276 unrelated cases
+filtered: `fd54c3f9-c66d-4840-a977-d8bf8b31daeb`. The new public consumer proves actual
+per-character width exceeds the shaped exact-fit width, then remeasures the same element
+at tiny, MaxContent and final widths before painting all three truncation directions.
+Its notify observation has no compensating refresh/draw. Actual Windows layout/paint,
+nonempty Submitted generations and exact reconstruction/retirement pass alongside the
+original native font, Unicode and wrapper reconstruction consumers. This precedes the
+separately reviewed inherited untruncated-cache correction and is not the final full result.
+
+Independent production review then identifies a second constraint-blind branch shared by the
+starting fork and fixed official target: an ordinary wrapped result can answer a later
+unconstrained query because the current wrap width is None. Run
+`0844d941-1b7a-4915-9e4d-2f9f2bcaf8f1` reproduces **0/1**: a MaxContent request after 60px
+wrapping returns **60x384** instead of the fresh owner's **672x24**. The same existing cache
+now requires exact wrap-width equality in addition to both official truncation guards.
+The regression retains full source and alternates 60px/MaxContent/120px/MaxContent on one
+element. This is an explicit fork correction, distinct from the official migration.
+
+Consumer review finds the initial Segoe UI descriptor does not exercise kerning on this
+DirectWrite path, so its exact-fit result cannot detect removal of the shaped-width guard.
+The native fixture now installs bundled IBM Plex Sans, explicitly enables kern and disables
+liga/clig/calt. It requires isolated width to exceed the actual device-ceil shaped width and
+the existing wrapper to alter all three exact-fit strings before actual StyledText paint
+must retain the complete source. This stronger precondition executes successfully in the
+first complete run; the original native notify, reconstruction and exact retirement checks
+remain unchanged.
+
+That first complete run, `1f8199e6-fb90-4782-8548-726e2a5800b2`, executes **1,311 passed /
+1 failed** out of 1,312, with four existing interactive Windows cases skipped. The only
+failure is an existing portal fixture whose absolute root's authored left/top are now
+honored by Taffy 0.15. The backend's root-layout implementation explicitly defines absolute
+roots through its out-of-flow positioning owner. The test now requires untransformed
+(20,30,100,50) and transformed (120,80,200,200), rather than dropping the authored origin
+and expecting (100,50,200,200). Original inert/hidden/linkage assertions remain. This adapts
+an old expectation to the backend's official positioning contract, without changing portal
+or transform production code.
+
+The corrected complete all-feature Core/WGPU/Windows libraries plus five public text/layout
+consumers pass **1,312/1,312**, with four existing interactive Windows cases skipped:
+`daaf38c4-ab41-455a-9c6b-444697e207ad`. This is Core 1,029, WGPU 79, Windows 199 and five
+public trajectories across eight binaries. It executes the inherited ordinary-wrap fix,
+corrected portal geometry, the strengthened native kerning precondition and all original
+font/cached/deferred/source/notification/reconstruction assertions. Production, consumer and
+bounded portal-fixture reviews close their confirmed findings; their static scope remains
+separate from main-thread execution.
+
+The stack-growth-disabled Core selection passes **33/33**, with 995 unrelated/feature-specific
+cases filtered: `5ecf7a95-3e27-42b4-ad73-bfa0b8a6574b`. It uses `--no-default-features
+--features test-support` and includes all new owner/style/root tests plus the portal cohort.
+The complete all-feature run above enables stacker. This qualifies both declared execution
+configurations within these workloads, not unlimited-depth safety or a speed comparison.
+
+The first affected component/docking/Canvas run, `3062c6f7-c3a5-4516-98fd-9b04ed53c152`,
+executes **2,963 passed / 1 failed** out of 2,964 without skips. The only failure is the
+Sidebar identity test: four h_full sidebars in one block root now each consume the viewport
+height, so the second item is below the visible window. Its fixture now lays out the four
+sidebars in a 2x2 grid and requires the two clicked item bounds to be inside the viewport
+and disjoint. Encoded identity selectors, disabled duplicate behavior and exact handler
+isolation remain unchanged. A missing px import in those new bounds assertions is corrected
+before the rerun; no Sidebar production behavior is changed.
+
+The corrected affected component/docking/Canvas cohort passes **2,964/2,964** across 25
+binaries without skips: `b956374e-3098-44b8-a015-c56aa2d3ab73`. A bounded independent review
+confirms the grid restores the original physical-input premise while preserving all identity
+assertions; no additional P1/P2 remains in that adjustment.
+
+The independently locked public fonts/wrapping/layers/window/grid consumer passes **9/9**
+across five binaries without skips: `dce2c7df-2ac0-43f1-a2fa-23719840a7bb`. The new grid
+cases check public row/column declarations and direct Noop source layout/overflow without
+launching an App/Window. Existing Cosmic fonts and retained glyph-byte/lifetime tests keep
+their real-font software scope. WGPU remains the application's independently selected
+30.0.1 while Taffy is explicitly selected at 0.15.0.
+
+Locked workspace/all-target and independently locked all-target/all-feature compilation pass
+on Windows 11 with Rust 1.95.0. Affected Core/WGPU/Windows all-target/all-feature correctness
+Clippy passes. Existing warning categories remain outside this correctness gate. All Cargo
+commands are serial, use one build job and reuse the Nara target.
+
+Actual Rust 1.92.0 affected Core/WGPU/Windows and independently locked consumer all-target/
+all-feature checks also pass on Windows. The fixed official workspace compiler pin remains
+separate from this executed extracted-framework floor. No Linux/macOS/browser compilation
+or runtime qualification is inferred from Windows checks.
+
+Final root and independent workspace formatting checks pass under Rust 1.95.0. Existing built
+import-boundary, document-link, release-document and public-API scans pass after documentation
+closure, as does whitespace validation. The final formatting pass changes spelling/layout
+only; the qualified product and fixture behavior is unchanged. No remote CI or publication
+occurs in this unit.
+
+Public Cosmic headless paint, direct independent API checks and actual Windows nonempty
+Submitted frames keep separate scope. The selected consumers exercise repeated constrained/
+intrinsic/final measurement, all three overflow directions, actual kerning-sensitive exact
+fit, narrower overflow, content grid geometry, automatic notified frames, root reconstruction
+and exact release. Source inspection or dependency release notes do not establish numeric
+CPU, allocation, P99 or process-retention improvement. Other platforms, canonical docking,
+engine View integration and complete R11/R12 remain open.
 
 ## Focused Product Gates
 

@@ -76,6 +76,8 @@ use windows::core::{PCWSTR, w};
 mod native_cache_dependency_tests;
 #[path = "native_font_installation_tests.rs"]
 mod native_font_installation_tests;
+#[path = "native_intrinsic_layout_tests.rs"]
+mod native_intrinsic_layout_tests;
 #[path = "native_paint_tests.rs"]
 mod native_paint_tests;
 #[path = "native_pending_input_tests.rs"]
