@@ -244,10 +244,19 @@ framework consumer and needs its own disposition rather than implicit exclusion.
    [qualification](../verification.md#sleep-wake-and-presentation-visibility) distinguishes
    official mechanisms, fork ingress/SetWindowPos adaptations, source-only foreign backends,
    portable production compilation and the remaining physical-power/browser/cost scope.
-3. Foreground journal and hang detection: `1861e58f98`, trigger rules `97b1e64a17`,
+3. Qualified foreground journal and hang detection: `1861e58f98`, trigger rules `97b1e64a17`,
    sleep/visibility `f0fb48c71a` and unnotified suspend `7232ba04ef`. Preserve bounded writer,
    independent cursors, small-poll aggregation, explicit interval boundaries and demand deadlines.
-4. GPUI-owned hang monitor `0f9c923e67`, including `4c0ead4a3e` and `d284cbbc87` test
+   The [complete successor](../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#foreground-journal-and-hang-monitor-successor)
+   imports the official coherent checkpoint through `d284cbbc87`, including the monitor below.
+   Local implementation `8493e9eb1cad7c3336fa99b4b8749c5be1d6c7c5` retains all 45 official
+   test scenarios and public/module consumers. The [qualification](../verification.md#foreground-journal-and-hang-monitor)
+   records complete runtime/public/gallery/native 1,531, components/docking/Canvas 2,966,
+   disabled Core/public 1,114 and independent enabled/disabled 32/26 passing. Native Submitted/
+   reconstruction, actual Windows Rust 1.92.0, stable wasm and existing nightly shared-memory
+   compilation retain separate scopes. Measurement-v2 and later final-target signal/refresh
+   changes remain distinct; accepted backlog, pending publisher tails and numeric costs stay open.
+4. Qualified GPUI-owned hang monitor `0f9c923e67`, including `4c0ead4a3e` and `d284cbbc87` test
    corrections, App shutdown flush and background ownership. Source detection is post-hoc;
    it is not a watchdog for work that never returns.
 5. Platform frame-signal provenance `cd4fc8de4c` and nonempty completed-skip sealing

@@ -2446,6 +2446,183 @@ fixed-target differences stay open. Native macOS/Linux, browser/test-support, ph
 general Windows occlusion, numerical costs, canonical docking U4-U9 and Nara rendering/Editor
 adoption retain their separate unqualified scopes.
 
+## Foreground Journal And Hang Monitor
+
+This successor starts after lifecycle implementation `8b283cb151b070d7d5851a531a86e6d6d67196cb`
+and qualification `8554f9e765b4fe3369480fcba2d0580ec008bd18`. The fixed target remains
+`635026fabc38440fce5e1767d125026a17b12012`. The complete official journal/detector/monitor
+checkpoint is `d284cbbc87b55d659303106ced627c8612369827`: introduction `1861e58f98`, journal
+consumer support `7316cf7745`, trigger rules `97b1e64a17`, lifecycle filtering `f0fb48c71a`,
+unnotified suspend `7232ba04ef`, monitor `0f9c923e67` and corrections `4c0ead4a3e`/`d284cbbc87`.
+Its measurement-v2 mechanism is distinct from the queued final-target signal/skip and
+refresh-aware measurement-v3 successors.
+
+Local implementation `8493e9eb1cad7c3336fa99b4b8749c5be1d6c7c5` is qualified within the
+complete scope and limits below. It is a local commit without publication.
+
+The official bounded ring, pending publisher, independent collectors, loss/discontinuity markers,
+short-poll aggregation, explicit boundaries, frame-demand deadline, suspend clocks and detector
+rules are imported through their existing profiler owners. All 45 official test entry points
+remain; source preservation alone is not an executed result. App installs the foreground-thread
+stream and optionally owns a monitor whose flush joins the existing bounded quit work. Actual
+Window input, invalidation, visibility, accepted drawing and native submission feed that stream.
+Ordinary consumers require no Nara document, ECS, history or private Host dependency.
+
+Fork integration retains accepted/refused/unwinding candidates, exact Submitted correlation,
+pending input reset and old-scene retries. Scoped task/action and Window activity guards close
+the official bare begin/end unwind limitation while restoring enclosing task/action state. Native
+wrappers and Web use the same owner. Official inherited foreground-idle APIs and Web idle
+callbacks are reconciled; deterministic schedulers remain excluded from native runnable counting.
+Current dirty demand is re-registered after a submission when newer dirty/presentation work
+remains. No new render, scheduling, shutdown or telemetry owner is introduced.
+
+The first locked production check stops before compilation because the root lockfile is missing
+the Web idle helper's existing dependency edge. Core's target-specific libc edge and Web's
+existing core-util helper edge are now explicit in the relevant lockfiles, with no package version
+updates. The corrected all-feature Core production-library check passes in 38.43 seconds. Focused
+execution, independent review and complete consumer/platform qualification remain in progress.
+Results and corrections below must keep compilation, test-platform, native Windows and unexecuted
+foreign/browser/physical-power/numerical-cost scope separate.
+
+The first focused run executes 128 tests: 124 pass and four new public consumers fail. The
+official module scenarios, profiler RAII/candidate tests, executor controls and existing lifecycle
+tests pass at that checkpoint. The public fixture assumes native simulated input leaves drawing
+pending, but the native input bridge can draw synchronously. It also constructs an inactive window,
+so repeated immediate forced callbacks can enter inactive-frame throttling. The corrected public
+fixture uses actual activation and direct public Window input for its independently controlled
+input/draw/presentation phases. It retains the original event-order, collector and detector
+assertions; corrected execution is still pending.
+
+Independent review also identifies two fork integration gaps: re-registering failed presentation
+retries can renew the same demand's deadline, and canceling focus-only work can leave stale journal
+demand. Both need real Window controls and an owning correction. A separate inherited monitor
+configuration issue admits zero or unrepresentable polling intervals; public admission now returns
+InvalidInterval before spawning or occupying the App slot. These changes require their subsequent
+tests and review closure, not just source confirmation.
+
+The official publisher can retain a tail entry while a reader owns its target slot; it retries on
+the next foreground publication. Monitor Flush polls finalized entries and waits for that callback,
+without guaranteeing that every offered publisher entry has finalized. Public API documentation
+keeps this limit explicit. The review's hypothetical contended-tail scenario was not executed and
+is not an added complete-drain guarantee or a claim of lossless shutdown logging.
+
+The corrected fixture first needs its AppContext trait import restored after switching away from
+typed entity updates; drawing while a typed root update is checked out attempts to borrow that
+same root again. A subsequent compile stops at the newly coordinated unqueued-task guard API
+before that API lands. Neither compile failure is a behavior regression result. The final red
+selection executes 15 tests (`2dcf5a91-9f4b-4a49-8ddf-f31afddebb7f`): 12 pass, and the
+three intended demand regressions fail at their actual behavioral assertions. All seven public
+consumers, both foreground queue controls and the three demand counter-controls pass.
+
+The owning corrections preserve failed-attempt deadlines, clear only genuinely canceled
+focus-only diagnostic demand and retain actual failed presentation work without successful
+presentation boundaries or demand consumption. Journal writer/sealer/property controls and
+Window/RAII cases cover those distinctions. The corrected focused cohort passes 144/144
+(`edc3bbf2-715a-4750-8b23-4f1867bbea99`), with 1,086 unrelated tests filtered out. The Web
+single-thread background/timer paths also need explicit unqueued task custody: such work still
+records its full poll but must not consume another foreground task's queue count. The real
+scheduler two-queued-task control passes, together with nested unqueued unwind recovery.
+
+The first native selection passes power and visibility but fails the existing profiler trace at
+the reconstructed window's initial draw (`a6cef8ee-375f-4596-92f8-bcb1b38a308e`, 2/3).
+A diagnostic-only rerun (`34e05480-8ba4-4a43-a6c1-ee7849e3024b`, 0/1) confirms the exact
+reconstruction callsite. That initial draw occurs while hidden, and the newly adopted official
+visibility rules intentionally discard its dirty timestamp. Reconstruction now retains exact
+initial Submitted/lifetime assertions and additionally traces an explicit visible redraw with
+the complete dirty/draw/present timestamp oracle. Corrected native execution remains pending.
+
+Final scheduler review identifies an inherited counting gap when a late foreground wake reaches
+a closed native queue. Both ordinary and idle regressions use the real PlatformScheduler and
+queue: a detached local task polls Pending, the receiver closes, a worker wakes it, and native-style
+rejection forgets the !Send future without polling or destroying it on the worker. A new executor
+on the same thread must still reach Idle. Both fail at that exact final assertion
+(`dae7c78d-6e04-4d4c-9207-71ba16f49a08`, 0/2).
+
+The existing dispatcher interface now needs explicit admission: only synchronous refusal settles
+the scheduler's captured originating counter; a failed wake after successful insertion remains
+admitted. Web mailbox-to-browser registration also retains its later rejection settlement on the
+foreground thread. This is a fork library-lifetime correction to the official counting mechanism,
+not a new execution queue. Accepted but never-polled backlog and complete platform queue
+retirement remain separate from immediate refusal; the existing queue/native finalization does
+not yet establish a complete drain guarantee. Those limits must remain visible after the
+confirmed refusal regression is corrected.
+
+The final scoped admission/RAII/demand/public selection passes 146/146
+(`0f2f568a-3602-45c2-9864-bdc74d74f15f`), with 1,086 unrelated cases filtered out. Both
+closed-queue red controls now pass without changing their assertions. Corrected native
+profiler/power/visibility passes 3/3 (`28a22b05-4722-4f13-aabc-c0b0fff7afeb`), with 210
+unrelated cases filtered out. The actual Submitted trajectory observes independent journal
+cursors, precise input kinds, original paint/submission timestamps, visible reconstructed redraw,
+shutdown-return callback completion, background thread identity and callback-capture release.
+Core/WGPU/Web production libraries compile for wasm32-unknown-unknown with profiling off and on.
+The added browser callback admission tests are source-only, not browser execution or a resolution
+of the existing Web test-support dependency gap.
+
+Final independent correction review leaves no confirmed open P1/P2. All ten implementation/review
+subthreads are closed. Broad runtime/component/independent and final static/compiler-floor
+qualification continue against frozen source. The turn crossed into November 7 local time;
+earlier chronological results above retain their November 6 checkpoints.
+
+The complete all-feature framework/public/gallery/native cohort passes 1,531/1,531
+(`61f4dcc2-8233-43bb-92b4-cd1d4c4b3203`) across 13 binaries, with four preexisting interactive
+Windows cases skipped. It includes all 45 original module scenarios, the strengthened writer
+model, closed-queue/unqueued and Window demand controls, seven public journal consumers and
+the actual native Submitted/monitor/reconstruction trajectory. Component/docking/Canvas,
+independent feature configurations and final static/compiler-floor checks remain in progress.
+
+The all-feature UI core/components/docking/Canvas cohort then passes 2,966/2,966
+(`f37f6edc-426d-4f04-88c9-9d0cd8176299`) across 25 binaries, without skips. The next
+independent-consumer step stops in locked metadata because its separate lockfile also needs the
+Web helper's core-util edge. Adding that already resolved package reference changes no versions
+or production source. Independent enabled/disabled and Core feature-off verification continue;
+the successful runtime/component cohorts do not need repetition for that lock-only correction.
+
+The independently locked all-feature consumer passes 32/32
+(`1942c3b8-e139-47a5-b451-aa1ef1629997`); its no-default-features configuration passes 26/26
+(`faecbc45-bc9a-4131-88a8-301ea8d650cc`), both without skips. The complete profiling-disabled
+Core and public lifecycle cohort passes 1,114/1,114
+(`7711f140-2ce9-4bc8-a1be-7bc1afdaa778`), without skips. The new disabled guard case confirms
+that normal/unqueued task scopes remain zero-sized and do not register timing buffers, including
+unwind. Package versions, sources and checksums are unchanged in both lockfiles; only existing
+Core libc and Web core-util edges are added. Final locked compilation, correctness Clippy,
+Windows compiler-floor and formatting checks continue against the same production source.
+
+Locked workspace/independent compilation, affected Core/WGPU/Windows/Canvas/Web correctness
+Clippy and both formatting checks now pass on Rust 1.95.0. Actual Windows Rust 1.92.0 affected
+framework/Canvas and independently locked consumer all-target/all-feature checks pass. These
+commands retain their distinct scopes:
+
+```text
+cargo +1.95.0 check --locked --workspace --all-targets
+cargo +1.95.0 check --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --all-targets --all-features
+cargo +1.95.0 clippy --locked -p open-gpui -p open-gpui-wgpu -p open-gpui-windows -p open-gpui-canvas -p open-gpui-web --all-targets --all-features -- -D clippy::correctness
+cargo +1.92.0 check --locked -p open-gpui -p open-gpui-wgpu -p open-gpui-windows -p open-gpui-canvas --all-features --all-targets
+cargo +1.92.0 check --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --all-targets --all-features
+cargo +1.95.0 fmt --all -- --check
+cargo +1.95.0 fmt --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --all -- --check
+```
+
+An additional stable wasm `multithreaded` check stops in the unchanged wasm_thread 0.3.3
+dependency's nightly-only `stdarch_wasm_atomic_wait` feature. The existing `hello_web` toolchain
+and shared-memory/build-std configuration already require nightly. A separate production check
+uses that exact configuration with the installed `rustc 1.98.0-nightly (57d06900f 2026-05-27)`;
+it passes in 3m 24s. This compiles the multithreaded mailbox branch with its actual shared-memory
+dependencies and does not change the normal compiler floor or imply browser execution:
+
+```text
+cargo +nightly --config crates/gpui_web/examples/hello_web/.cargo/config.toml check --locked -p open-gpui -p open-gpui-wgpu -p open-gpui-web --no-default-features --features open-gpui/profiler,open-gpui-web/multithreaded --target wasm32-unknown-unknown --lib
+```
+
+Existing import/document/release/public-API scans, workflow YAML/serial command checks, final
+formatting and Git whitespace checks pass. No hosted CI or remote publication is claimed.
+Foreground journal/detector/monitor and the restored idle prerequisite are complete within this
+checkpoint's qualification. Platform frame-signal/completed-skip, refresh-aware v3, power/cadence,
+complete benchmark/report/debug-overlay comparison, hot reload and remaining fixed-target
+differences remain queued. Native macOS/Linux, browser test execution, physical suspend,
+numerical costs, accepted-backlog retirement, complete publisher-tail drain, canonical docking
+U4-U9 and Nara rendering/Editor/game adoption retain their own unqualified scopes. This does not
+complete the fixed-target refresh or Nara R11/R12.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:

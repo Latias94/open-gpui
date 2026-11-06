@@ -882,6 +882,56 @@ power-broadcast ingress without suspending the machine. Record compile, determin
 scope separately; foreign native OS execution and physical power/occlusion claims remain explicit
 limits. The later journal/hang and refresh-aware owners consume this foundation in their own units.
 
+### Foreground Journal And Hang Monitor Successor
+
+After lifecycle implementation `8b283cb151b070d7d5851a531a86e6d6d67196cb` and its
+qualification `8554f9e765b4fe3369480fcba2d0580ec008bd18`, adopt the complete official
+foreground journal, detector and background monitor through coherent checkpoint
+`d284cbbc87b55d659303106ced627c8612369827`. It includes the introduction `1861e58f98`,
+benchmark-consumer journal support `7316cf7745`, trigger rules `97b1e64a17`, lifecycle
+filtering `f0fb48c71a`, unnotified-suspend detection `7232ba04ef`, monitor `0f9c923e67`
+and both monitor/test corrections `4c0ead4a3e` and `d284cbbc87`. The cycle target remains
+`635026fabc38440fce5e1767d125026a17b12012`. Later frame-signal/skip and refresh-aware
+measurement changes retain their queued owners; this unit does not claim final measurement-v3
+parity from the checkpoint's complete measurement-v2 mechanism.
+
+Preserve the official bounded writer/ring, independent collector cursors and discontinuity
+reporting, short-poll aggregation, explicit presentation/idle/power boundaries, frame-demand
+deadlines, suspend clocks and drop rules. App construction installs the foreground-thread stream;
+Window/Context and platform scheduler hooks feed the existing owners. An opt-in monitor owns its
+dedicated thread and callback. Its shutdown flush joins the existing bounded quit-observer work,
+including panic recovery, without another shutdown, job or telemetry manager. Ordinary public
+consumers remain independent of Nara documents, history, ECS and private Host interfaces.
+
+Restore the inherited official foreground idle API and Web idle callbacks through their existing
+executor/dispatcher owners, including timeout fallback and scoped deadline state. Keep the
+deterministic scheduler exclusion explicit: it does not invoke native task hooks. Real native,
+Web, delayed and background runnable wrappers use the shared profiler's scoped task guard;
+only queued foreground work contributes to foreground-busy accounting. No new scheduler or
+cross-platform idle policy replaces the official backend contract.
+
+Native closed-queue late wakes require explicit admission from the existing dispatcher methods.
+Settle the captured originating count only on refusal; accepting work and failing its wake remains
+admission. Web asynchronous callback registration settles a later rejection on the foreground
+thread. Preserve native !Send fallback custody and never reset shared counts to hide outstanding
+work. This correction does not establish full accepted-backlog retirement or lossless final
+publisher drain. Those remaining platform/publisher boundaries retain their explicit qualification
+limits and later owning work.
+
+Reconcile the fork's exact accepted and Submitted lifecycle rather than restoring the official
+backend's implicit-success assumption. Input names, action/task work, candidate refusal and
+unwind, old-scene retry, visibility/power interruption and final callback release need concrete
+controls. Already qualified input reset, latency, native receipts and reconstruction assertions
+remain intact. Balance turn/runnable custody on library unwind and reentry; official bare
+begin/end assumptions cannot silently disable idle boundaries after a caught panic.
+
+Run the original official unit/property/integration scenarios, complete public consumers,
+profiling-enabled/disabled framework and independently locked consumers, and the extended actual
+Windows Submitted trajectory. Record source/compile/deterministic/native distinctions, initial
+failures, independent review, actual Windows compiler-floor checks and unchanged foreign native,
+browser/test-support, physical-suspend, numerical-cost and engine-adoption limits. Detection is
+post-hoc and observes completed work; it does not detect a task that never returns.
+
 ## Maintained Baseline Before Engine Adaptation
 
 The [unified-profiler qualification](../verification.md#unified-profiler-foundation) now records
@@ -905,9 +955,25 @@ cases remain skipped in the full runtime cohort. Actual native hide/show/minimiz
 strictly newer Submitted recovery and exact retirement execute without suspending the machine.
 Locked checks, correctness Clippy, formatting and actual Windows Rust 1.92.0 framework/Canvas/
 consumer checks pass. Production wasm compilation remains separate from browser/test-support
-and native foreign-platform execution. Continue at foreground journal/hang detection and the
-GPUI monitor, followed by frame-signal, refresh-aware and power/cadence owners. Numeric costs,
-canonical docking, complete fixed-target refresh and engine adoption remain open.
+and native foreign-platform execution. The following journal/monitor owner has its complete
+qualification below. Numeric costs, canonical docking, complete fixed-target refresh and engine
+adoption remain open.
+
+The [foreground journal/monitor qualification](../verification.md#foreground-journal-and-hang-monitor)
+records local implementation `8493e9eb1cad7c3336fa99b4b8749c5be1d6c7c5`, through official
+checkpoint `d284cbbc87`. It retains the bounded writer, independent cursors, explicit boundaries,
+short-poll aggregation, lifecycle/suspend filtering and opt-in background monitor with bounded
+shutdown flush. Scoped unwind, exact Submitted/failed work, canceled demand and native/Web
+admission corrections remain explicit fork adaptations. Complete runtime/public/gallery/native
+1,531, components/docking/Canvas 2,966, disabled Core/public 1,114 and independent enabled/
+disabled 32/26 pass. Four existing interactive Windows cases remain skipped in the runtime
+cohort. Locked checks, correctness Clippy, formatting and actual Windows Rust 1.92.0 framework/
+Canvas/consumer checks pass. Stable wasm profiling on/off and the existing nightly shared-memory
+production configuration compile. Browser/native foreign-platform execution, physical suspend,
+numeric costs and complete backlog/publisher retirement retain separate unqualified scope.
+Continue at official frame-signal/completed-skip, refresh-aware v3 and power/cadence owners;
+complete benchmark/report/debug-overlay comparison and conditional hot reload remain queued.
+This prerequisite changes no engine default and does not complete the fixed-target refresh.
 
 Finish a bounded framework refresh against the recorded November 5 Zed revision before expanding
 Nara-specific UI implementation. The five correctness units are the first dependency-ordered

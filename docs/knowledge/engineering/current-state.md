@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-06T22:35:00+08:00
+timestamp: 2026-11-07T01:13:00+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -320,6 +320,25 @@ verified_by:
   implementation/review subthreads are closed. Journal/hang/monitor, frame-signal, refresh-aware
   and power/cadence owners remain queued.
 
+- The foreground journal/detector/monitor successor is qualified at
+  `8493e9eb1cad7c3336fa99b4b8749c5be1d6c7c5`, through official checkpoint `d284cbbc87`.
+  All 45 original tests remain, alongside public consumers, writer model, scoped unwind and
+  exact accepted/Submitted controls. Fork corrections preserve canceled demand, failed submission
+  work, queued/unqueued task custody and late closed-queue refusal settlement. Public monitor
+  configuration rejects invalid intervals; shutdown Flush waits for a finalized-stream poll and
+  callback within existing bounded quit work. Complete runtime/public/gallery/native passes
+  1,531/1,531, with four preexisting interactive Windows skips. Components/docking/Canvas
+  passes 2,966/2,966; disabled Core/public passes 1,114/1,114; independent enabled/disabled
+  passes 32/32 and 26/26 without skips. Actual native Submitted, two collector cursors, visible
+  reconstruction and monitor off-thread Flush/callback release execute. Locked checks,
+  correctness Clippy, both formatting checks and actual Windows Rust 1.92.0 framework/Canvas/
+  consumer checks pass. Stable wasm profiling on/off compiles; optional multithreaded wasm uses
+  the existing nightly/shared-memory configuration and also compiles. The verification record
+  retains initial failures, real red regressions, exact corrections and ordinary-versus-nightly
+  scope. All ten implementation/review subthreads are closed. Browser/native foreign-platform
+  execution, physical suspend, numeric costs, accepted-but-unpolled backlog, pending publisher
+  tail drain, full fixed-target refresh, docking U4-U9 and engine adoption remain open.
+
 # Historical Main Integration
 
 The previous snapshot recorded `df6ae2f` on July 9. The following integration summary retains that
@@ -354,8 +373,8 @@ historical scope and is not current branch or CI qualification.
   The externally driven App, owning asset-load and display-observation units are qualified within
   their recorded scope. The unified-profiler foundation is qualified within its recorded scope.
   Official multi-subscriber wake and sleep/window visibility are qualified within their recorded
-  scope. Continue with foreground journal/hang detection, the GPUI monitor, frame-signal
-  provenance and refresh-aware reporting
+  scope, together with the complete foreground journal/detector/monitor checkpoint. Continue with
+  frame-signal provenance/completed-skip, refresh-aware v3 and power/cadence
   in the candidate queue's prerequisite order. Display getters and the foundation profiler do
   not qualify complete frame pacing. Apply the maintenance skill's official-baseline rule while
   reconciling remaining image-feature/API/platform/hot-reload differences. Qualify the
