@@ -4,7 +4,6 @@ use std::{
     cell::LazyCell,
     collections::{HashMap, VecDeque},
     hash::{DefaultHasher, Hash, Hasher},
-    hint::cold_path,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -20,6 +19,10 @@ pub(crate) use actions::{save_action_timing, update_running_action};
 use serde::{Deserialize, Serialize};
 
 use crate::{SharedString, TasksIncluded};
+
+#[cold]
+#[inline(never)]
+fn cold_path() {}
 
 #[doc(hidden)]
 pub fn get_all_timings(included: open_gpui::TasksIncluded) -> Vec<open_gpui::ThreadTaskTimings> {

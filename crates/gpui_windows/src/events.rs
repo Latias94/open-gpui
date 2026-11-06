@@ -1170,8 +1170,11 @@ impl WindowsWindowInner {
             WM_NCMBUTTONUP => {
                 self.handle_nc_mouse_up_msg(handle, MouseButton::Middle, wparam, lparam)
             }
-            _ if let Some(message) = decode_client_mouse_button_message(msg, wparam) => {
-                self.handle_client_mouse_button_msg(handle, message, lparam)
+            WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN | WM_XBUTTONDOWN | WM_LBUTTONUP
+            | WM_RBUTTONUP | WM_MBUTTONUP | WM_XBUTTONUP => {
+                decode_client_mouse_button_message(msg, wparam).and_then(|message| {
+                    self.handle_client_mouse_button_msg(handle, message, lparam)
+                })
             }
             WM_MOUSEWHEEL => self.handle_mouse_wheel_msg(handle, wparam, lparam),
             WM_MOUSEHWHEEL => self.handle_mouse_horizontal_wheel_msg(handle, wparam, lparam),

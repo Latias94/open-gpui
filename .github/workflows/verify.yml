@@ -19,6 +19,29 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  msrv-windows:
+    name: msrv (windows, Rust 1.92)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      CARGO_BUILD_JOBS: 1
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install minimum Rust toolchain
+        uses: dtolnay/rust-toolchain@1.92.0
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check framework on minimum Rust
+        run: cargo +1.92.0 check --locked -p open-gpui -p open-gpui-wgpu -p open-gpui-windows --all-features --all-targets -j 1
+
+      - name: Check independent consumer on minimum Rust
+        run: cargo +1.92.0 check --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --all-targets --all-features --target-dir target -j 1
+
   verify:
     name: verify (${{ matrix.name }})
     runs-on: ${{ matrix.os }}

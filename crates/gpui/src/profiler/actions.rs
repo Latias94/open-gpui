@@ -1,7 +1,6 @@
-use std::{
-    hint::cold_path,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
+
+use super::cold_path;
 
 use itertools::Itertools;
 
