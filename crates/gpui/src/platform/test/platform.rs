@@ -69,6 +69,7 @@ pub(crate) struct TestPlatform {
     open_urls_callback: RefCell<Option<Box<dyn FnMut(Vec<String>)>>>,
     reopen_callback: RefCell<Option<Box<dyn FnMut()>>>,
     system_wake_callback: RefCell<Option<NativeAppNotificationHandler>>,
+    system_sleep_callback: RefCell<Option<NativeAppNotificationHandler>>,
     defer_next_launch: Cell<bool>,
     will_open_app_menu_callback: RefCell<Option<Box<dyn FnMut()>>>,
     app_menu_action_callback: RefCell<Option<Box<dyn FnMut(&dyn crate::Action)>>>,
@@ -195,6 +196,7 @@ impl TestPlatform {
             open_urls_callback: Default::default(),
             reopen_callback: Default::default(),
             system_wake_callback: Default::default(),
+            system_sleep_callback: Default::default(),
             defer_next_launch: Cell::new(false),
             will_open_app_menu_callback: Default::default(),
             app_menu_action_callback: Default::default(),
@@ -610,6 +612,15 @@ impl TestPlatform {
         callback();
     }
 
+    pub(crate) fn simulate_system_sleep(&self) {
+        let callback = self
+            .system_sleep_callback
+            .borrow()
+            .clone()
+            .expect("system sleep callback must be installed during App initialization");
+        callback();
+    }
+
     pub(crate) fn simulate_open_urls(&self, urls: Vec<String>) {
         let mut callback = self
             .open_urls_callback
@@ -691,6 +702,13 @@ impl Platform for TestPlatform {
         assert!(
             self.system_wake_callback.replace(Some(callback)).is_none(),
             "system wake callback must be installed exactly once"
+        );
+    }
+
+    fn on_system_sleep(&self, callback: NativeAppNotificationHandler) {
+        assert!(
+            self.system_sleep_callback.replace(Some(callback)).is_none(),
+            "system sleep callback must be installed exactly once"
         );
     }
 

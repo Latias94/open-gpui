@@ -90,6 +90,8 @@ mod native_intrinsic_layout_tests;
 mod native_paint_tests;
 #[path = "native_pending_input_tests.rs"]
 mod native_pending_input_tests;
+#[path = "native_power_visibility_tests.rs"]
+mod native_power_visibility_tests;
 #[cfg(feature = "profiler")]
 #[path = "native_profiler_tests.rs"]
 mod native_profiler_tests;

@@ -130,7 +130,31 @@ pub(crate) struct PlatformHandlers {
     pub(crate) validate_app_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
     pub(crate) keyboard_layout_change: Option<Box<dyn FnMut()>>,
     pub(crate) displays_changed: Option<Box<dyn FnMut()>>,
+    pub(crate) system_sleep: Option<NativeAppNotificationHandler>,
     pub(crate) system_wake: Option<NativeAppNotificationHandler>,
+}
+
+impl PlatformHandlers {
+    pub(crate) fn system_power_callback(
+        &self,
+        event: SystemPowerEvent,
+    ) -> Option<NativeAppNotificationHandler> {
+        match event {
+            SystemPowerEvent::Sleep => self.system_sleep.clone(),
+            SystemPowerEvent::Wake => self.system_wake.clone(),
+        }
+    }
+}
+
+/// A logind `PrepareForSleep` signal forwarded to the client's event loop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    not(all(target_os = "linux", any(feature = "wayland", feature = "x11"))),
+    allow(dead_code)
+)]
+pub(crate) enum SystemPowerEvent {
+    Sleep,
+    Wake,
 }
 
 pub(crate) struct LinuxCommon {
@@ -144,8 +168,8 @@ pub(crate) struct LinuxCommon {
     pub(crate) signal: LoopSignal,
     pub(crate) menus: Vec<OwnedMenu>,
     #[cfg(all(target_os = "linux", any(feature = "wayland", feature = "x11")))]
-    wake_sender: Sender<()>,
-    wake_listener_started: bool,
+    power_sender: Sender<SystemPowerEvent>,
+    power_listener_started: bool,
 }
 
 impl LinuxCommon {
@@ -154,12 +178,12 @@ impl LinuxCommon {
     ) -> (
         Self,
         PriorityQueueCalloopReceiver<RunnableVariant>,
-        calloop::channel::Channel<()>,
+        calloop::channel::Channel<SystemPowerEvent>,
     ) {
         let (main_sender, main_receiver) = PriorityQueueCalloopReceiver::new();
-        let (wake_sender, wake_receiver) = calloop::channel::channel();
+        let (power_sender, power_receiver) = calloop::channel::channel();
         #[cfg(not(all(target_os = "linux", any(feature = "wayland", feature = "x11"))))]
-        let _ = wake_sender;
+        let _ = power_sender;
 
         #[cfg(any(feature = "wayland", feature = "x11"))]
         let text_system = Arc::new(crate::linux::CosmicTextSystem::new("IBM Plex Sans"));
@@ -183,42 +207,37 @@ impl LinuxCommon {
             signal,
             menus: Vec::new(),
             #[cfg(all(target_os = "linux", any(feature = "wayland", feature = "x11")))]
-            wake_sender,
-            wake_listener_started: false,
+            power_sender,
+            power_listener_started: false,
         };
 
-        (common, main_receiver, wake_receiver)
+        (common, main_receiver, power_receiver)
     }
 
-    pub(crate) fn start_wake_listener(&mut self) {
-        if self.wake_listener_started {
+    pub(crate) fn start_power_listener(&mut self) {
+        if self.power_listener_started {
             return;
         }
 
         #[cfg(all(target_os = "linux", any(feature = "wayland", feature = "x11")))]
         smol::spawn({
-            let wake_sender = self.wake_sender.clone();
+            let power_sender = self.power_sender.clone();
             async move {
-                if let Err(error) = listen_for_system_wake(wake_sender).await {
-                    log::debug!("failed to listen for system wake events: {error:?}");
+                if let Err(error) = listen_for_system_power_events(power_sender).await {
+                    log::debug!("failed to listen for system sleep/wake events: {error:?}");
                 }
             }
         })
         .detach();
 
-        self.wake_listener_started = true;
-    }
-
-    pub(crate) fn handle_system_wake(&mut self) {
-        let callback = self.callbacks.system_wake.clone();
-        if let Some(callback) = callback {
-            callback();
-        }
+        self.power_listener_started = true;
     }
 }
 
 #[cfg(all(target_os = "linux", any(feature = "wayland", feature = "x11")))]
-async fn listen_for_system_wake(wake_sender: Sender<()>) -> anyhow::Result<()> {
+async fn listen_for_system_power_events(
+    power_sender: Sender<SystemPowerEvent>,
+) -> anyhow::Result<()> {
     use futures::StreamExt as _;
 
     let connection = ashpd::zbus::Connection::system().await?;
@@ -232,10 +251,12 @@ async fn listen_for_system_wake(wake_sender: Sender<()>) -> anyhow::Result<()> {
     let mut sleep_events = proxy.receive_signal("PrepareForSleep").await?;
 
     while let Some(message) = sleep_events.next().await {
-        let sleeping = message.body().deserialize::<bool>()?;
-        if !sleeping {
-            wake_sender.send(()).ok();
-        }
+        let event = if message.body().deserialize::<bool>()? {
+            SystemPowerEvent::Sleep
+        } else {
+            SystemPowerEvent::Wake
+        };
+        power_sender.send(event).ok();
     }
 
     Ok(())
@@ -600,10 +621,17 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
         });
     }
 
+    fn on_system_sleep(&self, callback: NativeAppNotificationHandler) {
+        self.inner.with_common(|common| {
+            common.callbacks.system_sleep = Some(callback);
+            common.start_power_listener();
+        });
+    }
+
     fn on_system_wake(&self, callback: NativeAppNotificationHandler) {
         self.inner.with_common(|common| {
             common.callbacks.system_wake = Some(callback);
-            common.start_wake_listener();
+            common.start_power_listener();
         });
     }
 
@@ -1259,6 +1287,65 @@ pub(super) fn compositor_gpu_hint_from_dev_t(
 mod tests {
     use super::*;
     use open_gpui::{Point, px};
+
+    #[test]
+    fn system_power_callbacks_keep_event_order_and_cross_thread_custody() {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let mut callbacks = PlatformHandlers::default();
+        assert!(
+            callbacks
+                .system_power_callback(SystemPowerEvent::Sleep)
+                .is_none()
+        );
+        assert!(
+            callbacks
+                .system_power_callback(SystemPowerEvent::Wake)
+                .is_none()
+        );
+
+        callbacks.system_sleep = Some(Arc::new({
+            let sender = sender.clone();
+            move || sender.send("sleep").unwrap()
+        }));
+        assert!(
+            callbacks
+                .system_power_callback(SystemPowerEvent::Wake)
+                .is_none()
+        );
+        callbacks.system_wake = Some(Arc::new({
+            let sender = sender.clone();
+            move || sender.send("wake").unwrap()
+        }));
+
+        let sleep = callbacks
+            .system_power_callback(SystemPowerEvent::Sleep)
+            .unwrap();
+        let wake = callbacks
+            .system_power_callback(SystemPowerEvent::Wake)
+            .unwrap();
+        callbacks.system_sleep = Some(Arc::new({
+            let sender = sender.clone();
+            move || sender.send("replacement sleep").unwrap()
+        }));
+        let replacement = callbacks
+            .system_power_callback(SystemPowerEvent::Sleep)
+            .unwrap();
+        drop(callbacks);
+
+        std::thread::spawn(move || {
+            sleep();
+            wake();
+            replacement();
+        })
+        .join()
+        .unwrap();
+        drop(sender);
+
+        assert_eq!(
+            receiver.into_iter().collect::<Vec<_>>(),
+            ["sleep", "wake", "replacement sleep"]
+        );
+    }
 
     #[test]
     fn test_is_within_click_distance() {

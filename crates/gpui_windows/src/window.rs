@@ -812,6 +812,8 @@ pub struct WindowsWindowState {
     pub last_reported_modifiers: Cell<Option<Modifiers>>,
     pub last_reported_capslock: Cell<Option<Capslock>>,
     pub hovered: Cell<bool>,
+    pub last_visibility: Cell<Option<WindowVisibility>>,
+    visibility_report_pending: Cell<bool>,
     /// Last logical client position carried by an exact native pointer callback.
     pub(crate) last_client_pointer_position: Cell<Option<Point<Pixels>>>,
     pub direct_manipulation: DirectManipulationHandler,
@@ -1050,6 +1052,8 @@ impl WindowsWindowState {
             last_reported_modifiers: Cell::new(last_reported_modifiers),
             last_reported_capslock: Cell::new(last_reported_capslock),
             hovered: Cell::new(hovered),
+            last_visibility: Cell::new(None),
+            visibility_report_pending: Cell::new(false),
             last_client_pointer_position: Cell::new(None),
             renderer: RefCell::new(renderer),
             click_state,
@@ -1200,6 +1204,78 @@ impl WindowsWindowState {
 }
 
 impl WindowsWindowInner {
+    /// Reports native presentation visibility for this exact live HWND owner.
+    /// Windows cannot detect full occlusion or display sleep through this signal.
+    pub(crate) fn visibility(self: &Rc<Self>) -> WindowVisibility {
+        if !self.accepts_generation_bound_message(self.registration.generation())
+            || RegisteredWindowAuthority::capture(self).is_err()
+        {
+            return WindowVisibility::Hidden;
+        }
+        if unsafe { IsWindowVisible(self.hwnd).as_bool() && !IsIconic(self.hwnd).as_bool() } {
+            WindowVisibility::Visible
+        } else {
+            WindowVisibility::Hidden
+        }
+    }
+
+    pub(crate) fn report_visibility(self: &Rc<Self>) {
+        if self.state.last_visibility.get().is_none()
+            || self.state.visibility_report_pending.get()
+            || self.presentation_shutdown_claimed()
+            || !self.accepts_generation_bound_message(self.registration.generation())
+        {
+            return;
+        }
+        let Ok(authority) = RegisteredWindowAuthority::capture(self) else {
+            return;
+        };
+        let authority = authority.downgrade();
+        self.state.visibility_report_pending.set(true);
+        self.executor
+            .spawn(async move {
+                let Some(authority) = authority.upgrade() else {
+                    return;
+                };
+                let this = &authority.window;
+                let finish_report = open_gpui_util::defer(|| {
+                    this.state.visibility_report_pending.set(false);
+                    if this.state.last_visibility.get().is_none()
+                        || this.presentation_shutdown_claimed()
+                        || !this.accepts_generation_bound_message(this.registration.generation())
+                        || !authority.is_current()
+                    {
+                        this.state.last_visibility.set(None);
+                        this.state.callbacks.visibility_change.take();
+                    }
+                });
+                if this.state.last_visibility.get().is_none()
+                    || this.presentation_shutdown_claimed()
+                    || !this.accepts_generation_bound_message(this.registration.generation())
+                    || !authority.is_current()
+                {
+                    return;
+                }
+                let visibility = this.visibility();
+                if this.state.last_visibility.get() == Some(visibility) {
+                    return;
+                }
+                let notified =
+                    with_windows_callback(&this.state.callbacks.visibility_change, |callback| {
+                        this.state.last_visibility.set(Some(visibility));
+                        callback(visibility);
+                    });
+                drop(finish_report);
+                if notified.is_some()
+                    && this.state.last_visibility.get().is_some()
+                    && this.state.last_visibility.get() != Some(this.visibility())
+                {
+                    this.report_visibility();
+                }
+            })
+            .detach();
+    }
+
     pub(crate) fn set_display_binding(&self, display: WindowsDisplay, topology_generation: u64) {
         let previous = self.state.display.replace(display);
         self.state
@@ -1392,6 +1468,8 @@ impl WindowsWindowInner {
     }
 
     fn retire_native_callbacks(&self) {
+        self.state.last_visibility.set(None);
+        self.state.callbacks.visibility_change.take();
         self.state.input_handler.terminate();
         self.state.callbacks.input.terminate();
         self.state.callbacks.should_close.terminate();
@@ -7321,6 +7399,7 @@ pub(crate) struct Callbacks {
     pub(crate) modifiers_changed: Cell<Option<Rc<dyn Fn(ModifiersChangedEvent)>>>,
     pub(crate) active_status_change:
         Cell<Option<Rc<dyn Fn(PlatformWindowActiveStatusObservation)>>>,
+    pub(crate) visibility_change: Cell<Option<Box<dyn FnMut(WindowVisibility)>>>,
     pub(crate) hovered_status_change: Cell<Option<Rc<dyn Fn(bool)>>>,
     pub(crate) resize: Cell<Option<Rc<dyn Fn(Size<Pixels>, f32)>>>,
     pub(crate) moved: Cell<Option<Rc<dyn Fn()>>>,
@@ -7635,6 +7714,8 @@ impl rwh::HasDisplayHandle for WindowsWindow {
 
 impl Drop for WindowsWindow {
     fn drop(&mut self) {
+        self.state.last_visibility.set(None);
+        self.state.callbacks.visibility_change.take();
         let _ = self.0.destroy_native_window();
         if self.0.is_native_window_terminal() {
             return;
@@ -8378,6 +8459,10 @@ impl PlatformWindow for WindowsWindow {
         !self.state.interaction_is_quiesced() && self.0.hwnd == unsafe { GetForegroundWindow() }
     }
 
+    fn visibility(&self) -> WindowVisibility {
+        self.0.visibility()
+    }
+
     fn is_hovered(&self) -> bool {
         self.state.hovered.get()
     }
@@ -8467,6 +8552,19 @@ impl PlatformWindow for WindowsWindow {
             .callbacks
             .active_status_change
             .set(Some(Rc::from(callback)));
+    }
+
+    fn on_visibility_change(&self, callback: Box<dyn FnMut(WindowVisibility)>) {
+        if self.0.presentation_shutdown_claimed()
+            || !self
+                .0
+                .accepts_generation_bound_message(self.0.registration.generation())
+            || RegisteredWindowAuthority::capture(&self.0).is_err()
+        {
+            return;
+        }
+        self.state.last_visibility.set(Some(self.0.visibility()));
+        self.state.callbacks.visibility_change.set(Some(callback));
     }
 
     fn on_hover_status_change(&self, callback: Box<dyn Fn(bool)>) {

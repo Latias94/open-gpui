@@ -19,7 +19,7 @@ use crate::{
     WindowParams, WindowPlacementState, WindowPlatformFacts, WindowPresentationShutdownTicket,
     WindowProvisionalPlacementNativeFacts, WindowProvisionalPlacementOutcome,
     WindowProvisionalPlacementRequest, WindowProvisionalRevealNativeFacts,
-    WindowProvisionalRevealZOrder, WindowProvisionalSession,
+    WindowProvisionalRevealZOrder, WindowProvisionalSession, WindowVisibility,
 };
 #[cfg(test)]
 use crate::{
@@ -30,6 +30,7 @@ use open_gpui_collections::{HashMap, VecDeque};
 use parking_lot::Mutex;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::{
+    cell::{Cell, RefCell},
     rc::{Rc, Weak},
     sync::{
         self, Arc,
@@ -38,6 +39,79 @@ use std::{
 };
 
 static NEXT_EMERGENCY_PRESENTATION_SHUTDOWN_GENERATION: AtomicU64 = AtomicU64::new(1);
+
+#[derive(Default)]
+struct TestWindowVisibilityCallback {
+    callback: RefCell<Option<Box<dyn FnMut(WindowVisibility)>>>,
+    pending: RefCell<VecDeque<WindowVisibility>>,
+    delivering: Cell<bool>,
+    terminated: Cell<bool>,
+}
+
+impl TestWindowVisibilityCallback {
+    fn set(&self, callback: Box<dyn FnMut(WindowVisibility)>) {
+        if !self.terminated.get() {
+            self.callback.replace(Some(callback));
+        }
+    }
+
+    fn call(&self, visibility: WindowVisibility) {
+        if self.terminated.get() {
+            return;
+        }
+        self.pending.borrow_mut().push_back(visibility);
+        if self.delivering.replace(true) {
+            return;
+        }
+        let mut delivery = TestWindowVisibilityCallbackDelivery {
+            slot: self,
+            callback: None,
+        };
+        while !self.terminated.get() {
+            let visibility = self.pending.borrow_mut().pop_front();
+            let Some(visibility) = visibility else {
+                break;
+            };
+            delivery.callback = self.callback.take();
+            let Some(callback) = delivery.callback.as_mut() else {
+                self.pending.borrow_mut().push_front(visibility);
+                break;
+            };
+            callback(visibility);
+            delivery.restore_callback();
+        }
+    }
+
+    fn terminate(&self) {
+        self.terminated.set(true);
+        self.pending.borrow_mut().clear();
+        self.callback.take();
+    }
+}
+
+struct TestWindowVisibilityCallbackDelivery<'a> {
+    slot: &'a TestWindowVisibilityCallback,
+    callback: Option<Box<dyn FnMut(WindowVisibility)>>,
+}
+
+impl TestWindowVisibilityCallbackDelivery<'_> {
+    fn restore_callback(&mut self) {
+        if !self.slot.terminated.get() {
+            let mut callback = self.slot.callback.borrow_mut();
+            if callback.is_none() {
+                *callback = self.callback.take();
+            }
+        }
+        self.callback.take();
+    }
+}
+
+impl Drop for TestWindowVisibilityCallbackDelivery<'_> {
+    fn drop(&mut self) {
+        self.restore_callback();
+        self.slot.delivering.set(false);
+    }
+}
 
 fn test_display_observation(state: &TestWindowState) -> Option<PlatformPhysicalDisplayObservation> {
     let id = state.display.as_ref()?.id();
@@ -90,8 +164,11 @@ pub(crate) struct TestWindowState {
     hit_test_window_control_callback: Option<Box<dyn FnMut() -> Option<WindowControlArea>>>,
     input_callback: PlatformInputCallbackSlot,
     active_status_change_callback: Option<Rc<dyn Fn(PlatformWindowActiveStatusObservation)>>,
+    visibility: WindowVisibility,
+    visibility_callback: Option<Rc<TestWindowVisibilityCallback>>,
     hover_status_change_callback: Option<Rc<dyn Fn(bool)>>,
     request_frame_callback: Option<Rc<dyn Fn(RequestFrameOptions)>>,
+    frame_wake_count: usize,
     defer_frame_requests: bool,
     deferred_frame_request: Option<RequestFrameOptions>,
     resize_callback: Option<Rc<dyn Fn(Size<Pixels>, f32)>>,
@@ -351,8 +428,11 @@ impl TestWindow {
                 hit_test_window_control_callback: None,
                 input_callback: PlatformInputCallbackSlot::default(),
                 active_status_change_callback: None,
+                visibility: WindowVisibility::Visible,
+                visibility_callback: None,
                 hover_status_change_callback: None,
                 request_frame_callback: None,
+                frame_wake_count: 0,
                 resize_callback: None,
                 moved_callback: None,
                 display_changed_callback: None,
@@ -891,6 +971,26 @@ impl TestWindow {
         callback(observation);
     }
 
+    /// Updates the presentation signal and delivers a native visibility notification.
+    pub fn simulate_visibility_change(&self, visibility: WindowVisibility) {
+        let callback = {
+            let mut state = self.0.lock();
+            if state.closed {
+                return;
+            }
+            state.visibility = visibility;
+            state.visibility_callback.clone()
+        };
+        if let Some(callback) = callback {
+            callback.call(visibility);
+        }
+    }
+
+    /// Returns the number of frame requests made to this platform window.
+    pub fn frame_wake_count(&self) -> usize {
+        self.0.lock().frame_wake_count
+    }
+
     #[cfg(test)]
     pub(crate) fn reserve_reentrant_pointer_cancel_for_test(
         &self,
@@ -1126,7 +1226,14 @@ impl TestWindow {
     }
 
     fn close(&self) -> bool {
-        let (input_callback, input_handler, mut native_drop_callback, callback, retired_callbacks) = {
+        let (
+            input_callback,
+            input_handler,
+            visibility_callback,
+            mut native_drop_callback,
+            callback,
+            retired_callbacks,
+        ) = {
             let mut state = self.0.lock();
             if state.closed {
                 return false;
@@ -1134,6 +1241,7 @@ impl TestWindow {
             state.closed = true;
             state.mapped = false;
             state.is_active = false;
+            state.visibility = WindowVisibility::Hidden;
             state.pending_mutations.clear();
             state.mutation_generations.clear();
             state.next_mutation_dispatches.clear();
@@ -1170,6 +1278,7 @@ impl TestWindow {
             (
                 state.input_callback.clone(),
                 state.input_handler.clone(),
+                state.visibility_callback.take(),
                 state.native_drop_callback.take(),
                 callback,
                 (
@@ -1190,6 +1299,9 @@ impl TestWindow {
         };
         input_callback.terminate();
         input_handler.terminate();
+        if let Some(callback) = visibility_callback {
+            callback.terminate();
+        }
         drop(retired_callbacks);
         if let Some(callback) = native_drop_callback.as_mut() {
             callback();
@@ -1478,6 +1590,10 @@ impl PlatformWindow for TestWindow {
         self.0.lock().mapped
     }
 
+    fn visibility(&self) -> WindowVisibility {
+        self.0.lock().visibility
+    }
+
     fn platform_facts(&self) -> WindowPlatformFacts {
         window_platform_facts(&self.0.lock())
     }
@@ -1756,6 +1872,7 @@ impl PlatformWindow for TestWindow {
     fn request_frame(&self, options: RequestFrameOptions) {
         let deferred = {
             let mut state = self.0.lock();
+            state.frame_wake_count += 1;
             if state.defer_frame_requests {
                 let pending = state.deferred_frame_request.take();
                 state.deferred_frame_request =
@@ -1795,6 +1912,20 @@ impl PlatformWindow for TestWindow {
         if !state.closed {
             state.active_status_change_callback = Some(Rc::from(callback));
         }
+    }
+
+    fn on_visibility_change(&self, callback: Box<dyn FnMut(WindowVisibility)>) {
+        let slot = {
+            let mut state = self.0.lock();
+            if state.closed {
+                return;
+            }
+            state
+                .visibility_callback
+                .get_or_insert_with(|| Rc::new(TestWindowVisibilityCallback::default()))
+                .clone()
+        };
+        slot.set(callback);
     }
 
     fn on_hover_status_change(&self, callback: Box<dyn Fn(bool)>) {

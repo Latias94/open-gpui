@@ -349,9 +349,11 @@ fn display_callbacks_wait_for_a_busy_app_and_keep_native_fifo(cx: &mut TestAppCo
         let delivered = delivered.clone();
         move |app| app.observe_displays(move |_, _| delivered.borrow_mut().push("display"))
     });
-    Application(cx.app.clone()).on_system_wake({
-        let delivered = delivered.clone();
-        move |_| delivered.borrow_mut().push("wake")
+    let _wake = cx.read(|app| {
+        app.on_system_wake({
+            let delivered = delivered.clone();
+            move |_| delivered.borrow_mut().push("wake")
+        })
     });
     let simulator = cx.clone();
     cx.update(|app| {

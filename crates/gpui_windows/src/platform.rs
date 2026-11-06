@@ -623,6 +623,7 @@ struct PlatformCallbacks {
     will_open_app_menu: Cell<Option<Box<dyn FnMut()>>>,
     validate_app_menu_command: Cell<Option<Box<dyn FnMut(&dyn Action) -> bool>>>,
     keyboard_layout_change: Cell<Option<Box<dyn FnMut()>>>,
+    system_sleep: Cell<Option<NativeAppNotificationHandler>>,
     system_wake: Cell<Option<NativeAppNotificationHandler>>,
     displays_changed: Cell<Option<Box<dyn FnMut()>>>,
 }
@@ -782,6 +783,22 @@ impl WindowsPlatform {
         };
         construction_guard.commit();
         Ok(platform)
+    }
+
+    fn ensure_suspend_resume_notification(&self) {
+        if self.native_finalization_started.get() {
+            return;
+        }
+        let mut notification = self.suspend_resume_notification.borrow_mut();
+        if notification.is_none() {
+            *notification = unsafe {
+                RegisterSuspendResumeNotification(
+                    HANDLE(self.handle.0),
+                    DEVICE_NOTIFY_WINDOW_HANDLE,
+                )
+                .log_err()
+            };
+        }
     }
 
     fn begin_native_finalization(&self) {
@@ -2406,20 +2423,14 @@ impl Platform for WindowsPlatform {
         self.inner.state.callbacks.reopen.set(Some(callback));
     }
 
+    fn on_system_sleep(&self, callback: NativeAppNotificationHandler) {
+        self.inner.state.callbacks.system_sleep.set(Some(callback));
+        self.ensure_suspend_resume_notification();
+    }
+
     fn on_system_wake(&self, callback: NativeAppNotificationHandler) {
         self.inner.state.callbacks.system_wake.set(Some(callback));
-
-        let mut notification = self.suspend_resume_notification.borrow_mut();
-        if notification.is_none() {
-            *notification = unsafe {
-                // SAFETY: self.handle is the platform window that receives WM_POWERBROADCAST.
-                RegisterSuspendResumeNotification(
-                    HANDLE(self.handle.0),
-                    DEVICE_NOTIFY_WINDOW_HANDLE,
-                )
-                .log_err()
-            };
-        }
+        self.ensure_suspend_resume_notification();
     }
 
     fn set_menus(&self, menus: Vec<Menu>, _keymap: &Keymap) {
@@ -3368,11 +3379,12 @@ impl WindowsPlatformInner {
     }
 
     fn handle_power_broadcast(&self, wparam: WPARAM) -> Option<isize> {
-        if wparam.0 as u32 == PBT_APMRESUMEAUTOMATIC {
-            let _ = with_windows_shared_callback(&self.state.callbacks.system_wake, |callback| {
-                callback()
-            });
-        }
+        let callback = match wparam.0 as u32 {
+            PBT_APMSUSPEND => &self.state.callbacks.system_sleep,
+            PBT_APMRESUMEAUTOMATIC => &self.state.callbacks.system_wake,
+            _ => return Some(1),
+        };
+        let _ = with_windows_shared_callback(callback, |callback| callback());
         Some(1)
     }
 

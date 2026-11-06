@@ -20,7 +20,8 @@ use open_gpui::{
     PreparedPlatformPresentationShutdown, PromptButton, PromptLevel, RequestFrameOptions, Scene,
     Size, WindowActivationPolicy, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
     WindowControlArea, WindowControls, WindowCoordinateSpace, WindowCreationFacts,
-    WindowDecorations, WindowParams, WindowPlatformFacts, WindowPresentationShutdownTicket, px,
+    WindowDecorations, WindowParams, WindowPlatformFacts, WindowPresentationShutdownTicket,
+    WindowVisibility, px,
 };
 use open_gpui_wgpu::{WgpuContext, WgpuRenderer, WgpuSurfaceConfig, WgpuSurfaceShutdownProgress};
 use wasm_bindgen::prelude::*;
@@ -30,6 +31,7 @@ pub(crate) struct WebWindowCallbacks {
     pub(crate) request_frame: Option<Rc<dyn Fn(RequestFrameOptions)>>,
     pub(crate) input: PlatformInputCallbackSlot,
     pub(crate) active_status_change: Option<Rc<dyn Fn(PlatformWindowActiveStatusObservation)>>,
+    pub(crate) visibility_change: Option<Box<dyn FnMut(WindowVisibility)>>,
     pub(crate) hover_status_change: Option<Rc<dyn Fn(bool)>>,
     pub(crate) resize: Option<Rc<dyn Fn(Size<Pixels>, f32)>>,
     pub(crate) moved: Option<Rc<dyn Fn()>>,
@@ -48,6 +50,7 @@ pub(crate) struct WebWindowMutableState {
     pub(crate) input_handler: PlatformInputHandlerSlot,
     pub(crate) is_fullscreen: bool,
     pub(crate) is_active: bool,
+    pub(crate) visibility: WindowVisibility,
     pub(crate) is_hovered: bool,
     pub(crate) mouse_position: Point<Pixels>,
     pub(crate) modifiers: Modifiers,
@@ -211,6 +214,7 @@ impl WebWindow {
             input_handler: PlatformInputHandlerSlot::default(),
             is_fullscreen: false,
             is_active: false,
+            visibility: document_visibility(&browser_window),
             is_hovered: false,
             mouse_position: Point::default(),
             modifiers: Modifiers::default(),
@@ -261,6 +265,7 @@ impl WebWindow {
         let resize_observer_closure = Self::create_resize_observer_closure(Rc::clone(&inner));
         let resize_observer =
             web_sys::ResizeObserver::new(resize_observer_closure.as_ref().unchecked_ref()).ok();
+        let event_listeners = Some(inner.register_event_listeners());
 
         Ok(Self {
             inner,
@@ -269,7 +274,7 @@ impl WebWindow {
             _raf_closure: raf_closure,
             _resize_observer: resize_observer,
             _resize_observer_closure: resize_observer_closure,
-            event_listeners: None,
+            event_listeners,
         })
     }
 
@@ -409,14 +414,33 @@ impl WebWindowInner {
         }
     }
 
+    pub(crate) fn sync_dom_visibility(&self) {
+        let visibility = document_visibility(&self.browser_window);
+        let changed = {
+            let mut state = self.state.borrow_mut();
+            std::mem::replace(&mut state.visibility, visibility) != visibility
+        };
+        self.sync_dom_activation();
+        if !changed || self.interaction_gate.is_quiesced() {
+            return;
+        }
+
+        let callback = self.callbacks.borrow_mut().visibility_change.take();
+        if let Some(mut callback) = callback {
+            callback(visibility);
+            if !self.interaction_gate.is_quiesced() {
+                self.callbacks
+                    .borrow_mut()
+                    .visibility_change
+                    .get_or_insert(callback);
+            }
+        }
+    }
+
     pub(crate) fn sync_dom_activation(&self) {
         let is_active = !self.interaction_gate.is_quiesced()
             && self.browser_window.document().is_some_and(|document| {
-                let is_visible = js_sys::Reflect::get(&document, &"visibilityState".into())
-                    .ok()
-                    .and_then(|state| state.as_string())
-                    .as_deref()
-                    == Some("visible");
+                let is_visible = document_visibility(&self.browser_window).is_visible();
                 let document_has_focus = document.has_focus().unwrap_or(false);
                 let input_element: &web_sys::Element = self.input_element.as_ref();
                 let input_has_focus = document.active_element().as_ref() == Some(input_element);
@@ -682,6 +706,21 @@ impl WebWindowInner {
     }
 }
 
+/// Reads Page Visibility independently of focus or mapping; a missing API reads as visible.
+fn document_visibility(browser_window: &web_sys::Window) -> WindowVisibility {
+    let is_visible = browser_window
+        .document()
+        .and_then(|document| js_sys::Reflect::get(&document, &"visibilityState".into()).ok())
+        .and_then(|value| value.as_string())
+        .is_none_or(|state| state == "visible");
+
+    if is_visible {
+        WindowVisibility::Visible
+    } else {
+        WindowVisibility::Hidden
+    }
+}
+
 fn current_appearance(browser_window: &web_sys::Window) -> WindowAppearance {
     let is_dark = browser_window
         .match_media("(prefers-color-scheme: dark)")
@@ -771,6 +810,9 @@ fn cursor_style_to_css(style: CursorStyle) -> &'static str {
 
 impl Drop for WebWindow {
     fn drop(&mut self) {
+        self.inner.interaction_gate.quiesce();
+        self.inner.callbacks.borrow_mut().visibility_change = None;
+        self.event_listeners.take();
         let can_release_surface = self
             .inner
             .state
@@ -819,7 +861,6 @@ impl Drop for WebWindow {
             parent.remove_child(&self.inner.root_element).ok();
         }
         self.inner.is_mapped.set(false);
-        self.event_listeners.take();
         if let Some(callback) = close_callback {
             callback();
         }
@@ -949,7 +990,6 @@ impl PlatformWindow for WebWindow {
             self.inner.observe_canvas(observer);
             self.inner.watch_dpr_changes(observer);
         }
-        self.event_listeners = Some(self.inner.register_event_listeners());
         self.inner.start_raf();
 
         Ok(())
@@ -969,6 +1009,10 @@ impl PlatformWindow for WebWindow {
 
     fn is_visible(&self) -> bool {
         self.inner.is_mapped.get()
+    }
+
+    fn visibility(&self) -> WindowVisibility {
+        self.inner.state.borrow().visibility
     }
 
     fn platform_facts(&self) -> WindowPlatformFacts {
@@ -1101,6 +1145,12 @@ impl PlatformWindow for WebWindow {
 
     fn on_hover_status_change(&self, callback: Box<dyn Fn(bool)>) {
         self.inner.callbacks.borrow_mut().hover_status_change = Some(Rc::from(callback));
+    }
+
+    fn on_visibility_change(&self, callback: Box<dyn FnMut(WindowVisibility)>) {
+        if !self.inner.interaction_gate.is_quiesced() {
+            self.inner.callbacks.borrow_mut().visibility_change = Some(callback);
+        }
     }
 
     fn on_resize(&self, callback: Box<dyn Fn(Size<Pixels>, f32)>) {

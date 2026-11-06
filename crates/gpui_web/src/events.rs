@@ -225,7 +225,7 @@ impl WebWindowInner {
         Some(WebEventListener::register(
             target,
             "visibilitychange",
-            move |_event: JsValue| this.sync_dom_activation(),
+            move |_event: JsValue| this.sync_dom_visibility(),
         ))
     }
 
@@ -1074,11 +1074,29 @@ mod tests {
     };
 
     use super::{
-        ClickState, WebInteractionGate, WebPointerButtonChange, WebPointerCaptureCommand,
-        WebPointerCaptureState, WebPointerEventData, WebPointerInputBoundary, WebPointerMotionKind,
-        pointer_button_change_to_platform_input,
+        ClickState, WebEventListener, WebInteractionGate, WebPointerButtonChange,
+        WebPointerCaptureCommand, WebPointerCaptureState, WebPointerEventData,
+        WebPointerInputBoundary, WebPointerMotionKind, pointer_button_change_to_platform_input,
     };
     use crate::window::WebWindowCallbacks;
+
+    #[test]
+    fn visibility_listener_is_unregistered_on_drop() {
+        let target = web_sys::EventTarget::new().unwrap();
+        let calls = Rc::new(Cell::new(0));
+        let listener = WebEventListener::register(&target, "visibilitychange", {
+            let calls = calls.clone();
+            move |_| calls.set(calls.get() + 1)
+        });
+        let event = web_sys::Event::new("visibilitychange").unwrap();
+
+        target.dispatch_event(&event).unwrap();
+        assert_eq!(calls.get(), 1);
+
+        drop(listener);
+        target.dispatch_event(&event).unwrap();
+        assert_eq!(calls.get(), 1);
+    }
 
     #[test]
     fn click_count_is_scoped_to_the_changed_button() {

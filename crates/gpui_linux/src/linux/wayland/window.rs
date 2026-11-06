@@ -44,7 +44,8 @@ use open_gpui::{
     ResizeEdge, Scene, Size, Tiling, WindowActivationPolicy, WindowAppearance,
     WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls,
     WindowCreationFacts, WindowDecorations, WindowKind, WindowParams,
-    WindowPresentationShutdownTicket, layer_shell::LayerShellNotSupportedError, px, size,
+    WindowPresentationShutdownTicket, WindowVisibility, layer_shell::LayerShellNotSupportedError,
+    px, size,
 };
 use open_gpui_wgpu::{
     CompositorGpuHint, WgpuRenderer, WgpuSurfaceConfig, WgpuSurfaceShutdownProgress, wgpu,
@@ -55,6 +56,7 @@ pub(crate) struct Callbacks {
     request_frame: Option<Rc<dyn Fn(RequestFrameOptions)>>,
     input: PlatformInputCallbackSlot,
     active_status_change: Option<Rc<dyn Fn(PlatformWindowActiveStatusObservation)>>,
+    visibility_change: Option<Box<dyn FnMut(WindowVisibility)>>,
     hover_status_change: Option<Rc<dyn Fn(bool)>>,
     resize: Option<Rc<dyn Fn(Size<Pixels>, f32)>>,
     moved: Option<Rc<dyn Fn()>>,
@@ -233,6 +235,7 @@ struct InProgressConfigure {
     fullscreen: bool,
     maximized: bool,
     resizing: bool,
+    visibility: WindowVisibility,
     tiling: Tiling,
 }
 
@@ -256,6 +259,9 @@ pub struct WaylandWindowState {
     background_appearance: WindowBackgroundAppearance,
     fullscreen: bool,
     maximized: bool,
+    /// Only xdg-shell v6 toplevels report suspension.
+    /// Older compositors and layer shell stay visible.
+    visibility: WindowVisibility,
     tiling: Tiling,
     window_bounds: Bounds<Pixels>,
     client: WaylandClientStatePtr,
@@ -676,6 +682,7 @@ impl WaylandWindowState {
             background_appearance: WindowBackgroundAppearance::Opaque,
             fullscreen: false,
             maximized: false,
+            visibility: WindowVisibility::Visible,
             tiling: Tiling::default(),
             window_bounds: creation.restore_bounds().unwrap_or(creation.bounds),
             in_progress_configure: None,
@@ -918,6 +925,7 @@ impl WaylandWindowStatePtr {
     fn terminate_callback_slots(&self) {
         self.state.borrow().interaction_gate.quiesce();
         self.callbacks.borrow_mut().display_changed = None;
+        self.callbacks.borrow_mut().visibility_change = None;
         let (input_callback, should_close) = {
             let callbacks = self.callbacks.borrow();
             (callbacks.input.clone(), callbacks.should_close.clone())
@@ -1042,12 +1050,17 @@ impl WaylandWindowStatePtr {
                     state.fullscreen = configure.fullscreen;
                     state.maximized = configure.maximized;
                     state.tiling = configure.tiling;
+                    let visibility_changed = state.visibility != configure.visibility;
+                    state.visibility = configure.visibility;
                     // Limit interactive resizes to once per vblank
                     if configure.resizing && state.resize_throttle {
                         state.surface_state.ack_configure(serial);
                         drop(state);
                         if state_changed {
                             self.emit_window_state_change();
+                        }
+                        if visibility_changed {
+                            self.report_visibility(configure.visibility);
                         }
                         return;
                     } else if configure.resizing {
@@ -1069,6 +1082,9 @@ impl WaylandWindowStatePtr {
                     drop(state);
                     if state_changed {
                         self.emit_window_state_change();
+                    }
+                    if visibility_changed {
+                        self.report_visibility(configure.visibility);
                     }
                     if let Some(size) = configure.size {
                         self.resize(size);
@@ -1155,6 +1171,7 @@ impl WaylandWindowStatePtr {
                 let mut fullscreen = false;
                 let mut maximized = false;
                 let mut resizing = false;
+                let mut visibility = WindowVisibility::Visible;
 
                 for state in states {
                     match state {
@@ -1165,6 +1182,9 @@ impl WaylandWindowStatePtr {
                             fullscreen = true;
                         }
                         xdg_toplevel::State::Resizing => resizing = true,
+                        xdg_toplevel::State::Suspended => {
+                            visibility = WindowVisibility::Hidden;
+                        }
                         xdg_toplevel::State::TiledTop => {
                             tiling.top = true;
                         }
@@ -1193,6 +1213,7 @@ impl WaylandWindowStatePtr {
                     fullscreen,
                     maximized,
                     resizing,
+                    visibility,
                     tiling,
                 });
 
@@ -1254,6 +1275,7 @@ impl WaylandWindowStatePtr {
                     fullscreen: false,
                     maximized: false,
                     resizing: false,
+                    visibility: WindowVisibility::Visible,
                     tiling: Tiling::default(),
                 });
                 drop(state);
@@ -1489,6 +1511,22 @@ impl WaylandWindowStatePtr {
         }
         if focus && interaction_gate.is_quiesced() {
             self.state.borrow_mut().hovered = false;
+        }
+    }
+
+    fn report_visibility(&self, visibility: WindowVisibility) {
+        if self.interaction_is_quiesced() {
+            return;
+        }
+        let callback = self.callbacks.borrow_mut().visibility_change.take();
+        if let Some(mut callback) = callback {
+            callback(visibility);
+            if !self.interaction_is_quiesced() {
+                self.callbacks
+                    .borrow_mut()
+                    .visibility_change
+                    .get_or_insert(callback);
+            }
         }
     }
 
@@ -1846,6 +1884,10 @@ impl PlatformWindow for WaylandWindow {
         !state.interaction_gate.is_quiesced() && state.active
     }
 
+    fn visibility(&self) -> WindowVisibility {
+        self.borrow().visibility
+    }
+
     fn is_hovered(&self) -> bool {
         let state = self.borrow();
         !state.interaction_gate.is_quiesced() && state.hovered
@@ -1912,6 +1954,12 @@ impl PlatformWindow for WaylandWindow {
 
     fn on_hover_status_change(&self, callback: Box<dyn Fn(bool)>) {
         self.0.callbacks.borrow_mut().hover_status_change = Some(Rc::from(callback));
+    }
+
+    fn on_visibility_change(&self, callback: Box<dyn FnMut(WindowVisibility)>) {
+        if !self.0.interaction_is_quiesced() {
+            self.0.callbacks.borrow_mut().visibility_change = Some(callback);
+        }
     }
 
     fn on_resize(&self, callback: Box<dyn Fn(Size<Pixels>, f32)>) {

@@ -78,6 +78,7 @@ pub enum NativeBoundaryKind {
 pub enum NativeCallbackKind {
     OpenUrls,
     Reopen,
+    SystemSleep,
     SystemWake,
     KeyboardLayoutChanged,
     ThermalStateChanged,
@@ -92,6 +93,7 @@ pub enum NativeCallbackKind {
     InitialPresentationFailed,
     RequestFrame,
     ActiveChanged,
+    VisibilityChanged,
     ModifiersChanged,
     HoverChanged,
     Resized,

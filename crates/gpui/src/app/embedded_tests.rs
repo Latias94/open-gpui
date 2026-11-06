@@ -134,11 +134,13 @@ fn embedded_panicking_update_recovers_and_defers_are_not_implicitly_rolled_back(
 fn embedded_native_callback_waits_for_the_host_borrow_then_runs_once() {
     let (app, platform, dispatcher) = application();
     let delivered = Rc::new(Cell::new(0));
-    app.on_system_wake({
-        let delivered = delivered.clone();
-        move |_| delivered.set(delivered.get() + 1)
-    });
     let handle = app.run_embedded(|_| {});
+    let _subscription = handle.update(|cx| {
+        cx.on_system_wake({
+            let delivered = delivered.clone();
+            move |_| delivered.set(delivered.get() + 1)
+        })
+    });
     handle.update(|_| {
         platform.simulate_system_wake();
         assert_eq!(delivered.get(), 0);

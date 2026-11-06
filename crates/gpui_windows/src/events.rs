@@ -1124,6 +1124,11 @@ impl WindowsWindowInner {
                 self.state.advance_native_placement_epoch();
                 if lparam.0 != 0 {
                     let window_pos = unsafe { &*(lparam.0 as *const WINDOWPOS) };
+                    if window_pos.flags.contains(SWP_SHOWWINDOW)
+                        || window_pos.flags.contains(SWP_HIDEWINDOW)
+                    {
+                        self.report_visibility();
+                    }
                     // SetWindowPos(SWP_SHOWWINDOW) is a native visibility commit, but it does
                     // not reliably produce a separate WM_SHOWWINDOW or WM_SIZE notification.
                     // Resume parked recovery from the committed WINDOWPOS without waking on
@@ -1262,6 +1267,7 @@ impl WindowsWindowInner {
     }
 
     fn handle_size_msg(self: &Rc<Self>, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
+        self.report_visibility();
         // Don't resize the renderer when the window is minimized, but record that it was minimized so
         // that on restore the swap chain can be recreated via `update_drawable_size_even_if_unchanged`.
         if wparam.0 == SIZE_MINIMIZED as usize {
@@ -2317,6 +2323,7 @@ impl WindowsWindowInner {
         handle: HWND,
         wparam: WPARAM,
     ) -> Option<isize> {
+        self.report_visibility();
         if wparam.0 == 1 {
             self.draw_window(handle, false);
             self.resume_provisional_activation_z_order_recovery_if_ready();

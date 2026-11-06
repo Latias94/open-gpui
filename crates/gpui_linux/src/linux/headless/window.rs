@@ -23,6 +23,7 @@ use open_gpui::{
     PreparedPlatformPresentationShutdown, PromptButton, PromptLevel, RequestFrameOptions, Scene,
     Size, TileId, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
     WindowCreationFacts, WindowParams, WindowPlatformFacts, WindowPresentationShutdownTicket,
+    WindowVisibility,
 };
 
 struct HeadlessWindowState {
@@ -213,6 +214,11 @@ impl PlatformWindow for HeadlessWindow {
         false
     }
 
+    /// Headless windows present no frames: `draw` discards every scene.
+    fn visibility(&self) -> WindowVisibility {
+        WindowVisibility::Hidden
+    }
+
     fn is_hovered(&self) -> bool {
         false
     }
@@ -285,6 +291,8 @@ impl PlatformWindow for HeadlessWindow {
 
     fn on_hover_status_change(&self, _callback: Box<dyn Fn(bool)>) {}
 
+    fn on_visibility_change(&self, _callback: Box<dyn FnMut(WindowVisibility)>) {}
+
     fn on_resize(&self, _callback: Box<dyn Fn(Size<Pixels>, f32)>) {}
 
     fn on_moved(&self, _callback: Box<dyn Fn()>) {}
@@ -356,6 +364,8 @@ mod display_tests {
         assert_eq!(window.content_size(), bounds.size);
         assert_eq!(window.scale_factor(), 1.0);
         assert!(window.is_maximized());
+        assert_eq!(window.visibility(), WindowVisibility::Hidden);
+        assert!(!window.is_visible());
     }
 }
 

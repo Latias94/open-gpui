@@ -128,6 +128,69 @@ separate Windows ingress/lifecycle consumer qualify those respective paths:
 cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --all-features --test displays --test-threads=1 --no-fail-fast --no-tests fail
 ```
 
+## Lifecycle and visibility consumer
+
+The `lifecycle` integration test target consumes the public lifecycle and presentation visibility
+APIs without `test-support`. Its source baseline is official Zed at
+[`635026fabc38440fce5e1767d125026a17b12012`](https://github.com/zed-industries/zed/tree/635026fabc38440fce5e1767d125026a17b12012),
+including the subscription mechanism from
+[`7a7c3e1d2f`](https://github.com/zed-industries/zed/commit/7a7c3e1d2f03195c5fa19bc890da330ad7f3abef)
+and the sleep/visibility mechanism from
+[`3db02c2c77`](https://github.com/zed-industries/zed/commit/3db02c2c77659ad29810594e6249287ea1e791f7).
+
+Three tests contain typed, deliberately unexecuted closures. They check that downstream code can
+register multiple `App::on_system_wake` subscriptions and an `App::on_system_sleep` subscription
+through `&App`, with owned mutable callbacks receiving `&mut App`. These return `Subscription`;
+the former single-handler `Application::on_system_wake` setter is replaced by the App API.
+Window consumers read `visibility()` and `is_visible()` and register a callback receiving
+`(WindowVisibility, &mut Window, &mut App)`. Entity consumers register through `&Context<T>` with
+callbacks receiving `(&mut T, WindowVisibility, &mut Window, &mut Context<T>)`.
+
+The backend closure consumes `&dyn Platform` and `&dyn PlatformWindow`; it does not implement a
+mock backend. Custom backends must implement `Platform::on_system_sleep`,
+`PlatformWindow::visibility`, and `PlatformWindow::on_visibility_change`; none has a default.
+The fork's native sleep/wake ingress uses `NativeAppNotificationHandler`, an
+`Arc<dyn Fn() + Send + Sync>`, rather than upstream's boxed mutable notification callback.
+The platform window callback remains `Box<dyn FnMut(WindowVisibility)>`. The backend must provide
+an initial visibility value and report transitions on the main thread outside a window update.
+
+Keep returned App, Window, and Context subscriptions alive for as long as observation is needed.
+Dropping a subscription cancels its callback. `detach()` consumes the handle without cancelling
+observation; a detached observer remains tied to its emitter's lifetime, and Context observers
+weakly reference their entity. `Subscription::join` groups two cancellation lifetimes, including
+detaching both. Sleep handlers have little time before suspension and should save state or cancel
+work. The five executable controls cover `WindowVisibility::{Visible, Hidden}.is_visible()` and
+real `Subscription::new` values: cancellation once on drop, no cancellation on detach, both joined
+cancellations on drop, and neither joined cancellation on detach, including release of captures.
+They do not prove delivery or cleanup of registered App, Window, or Context observers.
+
+Visibility describes the platform's presentation signal, independently of native shown/mapped
+state or focus. The source contracts have these limits; this consumer does not execute them:
+
+- macOS uses `NSWindow.occlusionState` to report occlusion and other presentation changes.
+- Windows uses shown/minimized state; a fully covered window stays `Visible`, and display sleep
+  does not produce a visibility change.
+- Wayland uses the xdg-shell v6 `suspended` state; older compositors never report `Hidden`.
+- X11 uses mapped state and `VisibilityNotify`; compositing generally prevents full-occlusion
+  reports.
+- Web uses Page Visibility for background tabs and minimized browser windows; browsers provide
+  no corresponding system sleep/wake notification.
+
+The public `headless()` constructor still uses the native platform loop. On Windows that loop
+blocks and exits the process; its returning test constructor requires `test-support`. This target
+therefore does not start an App, construct a Window, or synthesize an application owner or window
+identity. Run it separately with the existing lockfile and root build directory:
+
+```text
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --test lifecycle --jobs 1 --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+Passing this target establishes public API compilation and the five standalone controls only.
+It does not qualify native power ingress, observer delivery/order/deduplication, visibility
+transitions, frame scheduling, renderer submission, native `Submitted`, or performance. Those
+require separate framework owner and real platform consumers. No profiler feature or lockfile
+change is needed for this target.
+
 ## Profiler consumer
 
 The optional `profiler` feature forwards directly to `open_gpui/profiler`; it does not enable

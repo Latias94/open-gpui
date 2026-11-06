@@ -79,6 +79,28 @@ pub use app_menu::*;
 pub use keyboard::*;
 pub use keystroke::*;
 
+/// Whether the platform is presenting a window's frames.
+///
+/// This differs from the native shown/mapped state. macOS uses NSWindow occlusion state;
+/// Windows uses the shown and minimized state and cannot report full occlusion or display
+/// sleep. Wayland uses xdg-shell v6 suspended state, which older compositors cannot report.
+/// X11 uses mapped state and VisibilityNotify, whose obscured indication is generally
+/// unavailable with compositing. Web uses the document's Page Visibility state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowVisibility {
+    /// At least part of the window can be presented according to the platform's signal.
+    Visible,
+    /// The platform reports that no part of the window is being presented.
+    Hidden,
+}
+
+impl WindowVisibility {
+    /// Whether the platform currently reports visible presentation.
+    pub fn is_visible(self) -> bool {
+        self == Self::Visible
+    }
+}
+
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) use test::*;
 
@@ -3661,6 +3683,9 @@ pub trait Platform: 'static {
 
     fn on_quit(&self, callback: Box<dyn FnMut()>);
     fn on_reopen(&self, callback: Box<dyn FnMut()>);
+    /// Registers the native callback invoked when the system is about to sleep.
+    fn on_system_sleep(&self, callback: NativeAppNotificationHandler);
+    /// Registers the native callback invoked when the system resumes from sleep.
     fn on_system_wake(&self, callback: NativeAppNotificationHandler);
 
     fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap);
@@ -5306,6 +5331,8 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         answers: &[PromptButton],
     ) -> Option<oneshot::Receiver<usize>>;
     fn is_active(&self) -> bool;
+    /// Returns the current presentation visibility, independently of the shown/mapped state.
+    fn visibility(&self) -> WindowVisibility;
     fn is_hovered(&self) -> bool;
     fn accepts_pointer_input(&self) -> bool {
         true
@@ -5420,6 +5447,8 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_input(&self, callback: PlatformInputCallback);
     fn on_modifiers_changed(&self, _callback: Box<dyn Fn(ModifiersChangedEvent)>) {}
     fn on_active_status_change(&self, callback: Box<dyn Fn(PlatformWindowActiveStatusObservation)>);
+    /// Registers presentation visibility transitions outside any window update.
+    fn on_visibility_change(&self, callback: Box<dyn FnMut(WindowVisibility)>);
     fn on_hover_status_change(&self, callback: Box<dyn Fn(bool)>);
     fn on_resize(&self, callback: Box<dyn Fn(Size<Pixels>, f32)>);
     fn on_moved(&self, callback: Box<dyn Fn()>);

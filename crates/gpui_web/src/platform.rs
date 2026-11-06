@@ -299,6 +299,9 @@ impl Platform for WebPlatform {
         self.callbacks.borrow_mut().reopen = Some(callback);
     }
 
+    /// Browsers expose Page Visibility, but no system sleep or wake notification.
+    fn on_system_sleep(&self, _callback: NativeAppNotificationHandler) {}
+
     fn on_system_wake(&self, _callback: NativeAppNotificationHandler) {}
 
     fn set_menus(&self, _menus: Vec<Menu>, _keymap: &Keymap) {}

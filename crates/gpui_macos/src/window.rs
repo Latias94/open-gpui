@@ -38,8 +38,12 @@ use open_gpui::{
     PromptLevel, RequestFrameOptions, SharedString, Size, SystemWindowTab, WindowActivationPolicy,
     WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
     WindowCreationFacts, WindowId, WindowKind, WindowParams, WindowPresentationShutdownTicket,
-    point, px, size,
+    WindowVisibility, point, px, size,
 };
+
+mod visibility;
+
+use visibility::MacWindowVisibilityObserver;
 
 use core_foundation::base::{CFRelease, CFTypeRef};
 use core_foundation_sys::base::CFEqual;
@@ -1598,6 +1602,7 @@ struct MacWindowState {
     request_frame_callback: Option<Rc<dyn Fn(RequestFrameOptions)>>,
     event_callback: PlatformInputCallbackSlot,
     activate_callback: Option<Rc<dyn Fn(PlatformWindowActiveStatusObservation)>>,
+    visibility_observer: MacWindowVisibilityObserver,
     resize_callback: Option<Rc<dyn Fn(Size<Pixels>, f32)>>,
     moved_callback: Option<Rc<dyn Fn()>>,
     display_changed_callback: Option<Box<dyn FnMut()>>,
@@ -1667,6 +1672,7 @@ impl MacWindowState {
         PlatformInputCallbackSlot,
         PlatformInputHandlerSlot,
         PlatformShouldCloseCallbackSlot,
+        MacWindowVisibilityObserver,
     ) {
         self.closed.store(true, Ordering::Release);
         self.interaction_quiesced.store(true, Ordering::Release);
@@ -1687,6 +1693,7 @@ impl MacWindowState {
             self.event_callback.clone(),
             self.input_handler.clone(),
             self.should_close_callback.clone(),
+            mem::take(&mut self.visibility_observer),
         )
     }
 
@@ -2760,9 +2767,17 @@ impl MacWindow {
         self.2 = true;
         self.3.take();
 
-        let (event_callback, input_handler, should_close_callback, window, foreground_executor) = {
+        let (
+            event_callback,
+            input_handler,
+            should_close_callback,
+            visibility_observer,
+            window,
+            foreground_executor,
+        ) = {
             let mut state = self.0.lock();
-            let (event_callback, input_handler, should_close_callback) = state.mark_closed();
+            let (event_callback, input_handler, should_close_callback, visibility_observer) =
+                state.mark_closed();
             state.renderer.destroy();
             let window = state.native_window;
             unsafe {
@@ -2772,6 +2787,7 @@ impl MacWindow {
                 event_callback,
                 input_handler,
                 should_close_callback,
+                visibility_observer,
                 window,
                 state.foreground_executor.clone(),
             )
@@ -2779,6 +2795,7 @@ impl MacWindow {
         event_callback.terminate();
         input_handler.terminate();
         should_close_callback.terminate();
+        drop(visibility_observer);
         unsafe {
             detach_native_transient_relationships(window);
         }
@@ -2999,6 +3016,7 @@ impl MacWindow {
                     request_frame_callback: None,
                     event_callback: PlatformInputCallbackSlot::default(),
                     activate_callback: None,
+                    visibility_observer: MacWindowVisibilityObserver::default(),
                     resize_callback: None,
                     moved_callback: None,
                     display_changed_callback: None,
@@ -4160,6 +4178,10 @@ impl PlatformWindow for MacWindow {
         unsafe { self.0.as_ref().lock().native_window.isVisible() == YES }
     }
 
+    fn visibility(&self) -> WindowVisibility {
+        window_visibility(&self.0.lock())
+    }
+
     fn platform_facts(&self) -> open_gpui::WindowPlatformFacts {
         let state = self.0.as_ref().lock();
         let observation = state.committed_native_observation();
@@ -4640,6 +4662,18 @@ impl PlatformWindow for MacWindow {
     }
 
     fn on_hover_status_change(&self, _: Box<dyn Fn(bool)>) {}
+
+    fn on_visibility_change(&self, callback: Box<dyn FnMut(WindowVisibility)>) {
+        let previous = {
+            let mut state = self.0.lock();
+            if state.is_closed() {
+                return;
+            }
+            let visibility = window_visibility(&state);
+            state.visibility_observer.set(visibility, callback)
+        };
+        drop(previous);
+    }
 
     fn on_resize(&self, callback: Box<dyn Fn(Size<Pixels>, f32)>) {
         let mut lock = self.0.as_ref().lock();
@@ -5456,9 +5490,61 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
     }
 }
 
+fn window_visibility(state: &MacWindowState) -> WindowVisibility {
+    if state.is_closed() {
+        return WindowVisibility::Hidden;
+    }
+    let is_visible = unsafe {
+        state
+            .native_window
+            .occlusionState()
+            .contains(NSWindowOcclusionState::NSWindowOcclusionStateVisible)
+    };
+    if is_visible {
+        WindowVisibility::Visible
+    } else {
+        WindowVisibility::Hidden
+    }
+}
+
+fn report_visibility(window_state: &Arc<Mutex<MacWindowState>>) {
+    let executor = {
+        let state = window_state.lock();
+        if state.is_closed() || !state.visibility_observer.is_registered() {
+            return;
+        }
+        state.foreground_executor.clone()
+    };
+    let window_state = Arc::downgrade(window_state);
+    executor
+        .spawn(async move {
+            let Some(window_state) = window_state.upgrade() else {
+                return;
+            };
+            let (mut callback, visibility) = {
+                let mut state = window_state.lock();
+                if state.is_closed() {
+                    return;
+                }
+                let visibility = window_visibility(&state);
+                let Some(callback) = state.visibility_observer.take_transition(visibility) else {
+                    return;
+                };
+                (callback, visibility)
+            };
+            let mut panic_boundary = MacWindowCallbackPanicBoundary::default();
+            panic_boundary.deliver(|| callback(visibility));
+            let superseded = window_state.lock().visibility_observer.restore(callback);
+            panic_boundary.deliver(|| drop(superseded));
+            panic_boundary.isolate_at_native_boundary("a macOS window visibility callback");
+            report_visibility(&window_state);
+        })
+        .detach();
+}
+
 extern "C" fn window_did_change_occlusion_state(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
-    let lock = &mut *window_state.lock();
+    let mut lock = window_state.lock();
     if lock.is_closed() {
         return;
     }
@@ -5474,6 +5560,8 @@ extern "C" fn window_did_change_occlusion_state(this: &Object, _: Sel, _: id) {
             lock.stop_display_link();
         }
     }
+    drop(lock);
+    report_visibility(&window_state);
 }
 
 extern "C" fn window_did_resize(this: &Object, selector: Sel, _: id) {
@@ -5817,7 +5905,13 @@ extern "C" fn window_should_close(this: &Object, _: Sel, _: id) -> BOOL {
 
 extern "C" fn close_window(this: &Object, _: Sel) {
     unsafe {
-        let (event_callback, input_handler, should_close_callback, close_callback) = {
+        let (
+            event_callback,
+            input_handler,
+            should_close_callback,
+            visibility_observer,
+            close_callback,
+        ) = {
             let window_state = get_window_state(this);
             let mut lock = window_state.as_ref().lock();
             let shutdown = lock.presentation_shutdown_authority.lock().ticket();
@@ -5829,11 +5923,13 @@ extern "C" fn close_window(this: &Object, _: Sel) {
                     snapshot.generation(),
                 );
             }
-            let (event_callback, input_handler, should_close_callback) = lock.mark_closed();
+            let (event_callback, input_handler, should_close_callback, visibility_observer) =
+                lock.mark_closed();
             (
                 event_callback,
                 input_handler,
                 should_close_callback,
+                visibility_observer,
                 lock.close_callback.take(),
             )
         };
@@ -5841,6 +5937,7 @@ extern "C" fn close_window(this: &Object, _: Sel) {
         event_callback.terminate();
         input_handler.terminate();
         should_close_callback.terminate();
+        drop(visibility_observer);
         detach_native_transient_relationships(this as *const Object as id);
         if let Some(callback) = close_callback {
             callback();

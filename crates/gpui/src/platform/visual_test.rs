@@ -236,6 +236,8 @@ impl Platform for VisualTestPlatform {
 
     fn on_system_wake(&self, _callback: NativeAppNotificationHandler) {}
 
+    fn on_system_sleep(&self, _callback: NativeAppNotificationHandler) {}
+
     fn set_menus(&self, _menus: Vec<Menu>, _keymap: &Keymap) {}
 
     fn get_menus(&self) -> Option<Vec<OwnedMenu>> {

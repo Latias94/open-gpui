@@ -42,7 +42,7 @@ use crate::{
     WindowProvisionalRevealTicket, WindowProvisionalSemanticsOutcome,
     WindowProvisionalSemanticsPresentTransition, WindowProvisionalSemanticsSnapshot,
     WindowProvisionalSemanticsTicket, WindowProvisionalSession, WindowProvisionalSessionPhase,
-    WindowTextSystem,
+    WindowTextSystem, WindowVisibility,
     geometry::{
         ClipStackSnapshot, ResolvedClip, ResolvedSubtreeTransform, SubtreeGeometryError,
         SubtreeGeometryValidity,
@@ -113,6 +113,9 @@ pub mod retained_visual;
 mod root_layout_tests;
 #[cfg(test)]
 mod underline_tests;
+mod visibility;
+#[cfg(test)]
+mod visibility_tests;
 
 use self::a11y::A11y;
 pub use self::a11y::{
@@ -1876,6 +1879,9 @@ pub struct Window {
     pub(crate) appearance_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) button_layout_observers: SubscriberSet<(), AnyObserver>,
     active: Rc<Cell<bool>>,
+    visibility: WindowVisibility,
+    pub(crate) visibility_observers:
+        SubscriberSet<(), Box<dyn FnMut(WindowVisibility, &mut Window, &mut App) -> bool>>,
     hovered: Rc<Cell<bool>>,
     pub(crate) needs_present: Rc<Cell<bool>>,
     /// Tracks recent input event timestamps to determine if input is arriving at a high rate.
@@ -2678,6 +2684,12 @@ impl Window {
                 cx.enqueue_window_active_changed(handle.window_id(), observation);
             }
         }));
+        platform_window.on_visibility_change(Box::new({
+            let cx = cx.to_async();
+            move |visibility| {
+                cx.enqueue_window_visibility_changed(handle.window_id(), visibility);
+            }
+        }));
         platform_window.on_modifiers_changed(Box::new({
             let cx = cx.to_async();
             move |event| {
@@ -2799,6 +2811,7 @@ impl Window {
         let scale_factor = platform_facts.scale_factor;
         let appearance = platform_window.appearance();
         let active = Rc::new(Cell::new(platform_facts.is_active));
+        let visibility = platform_window.visibility();
         let hovered = Rc::new(Cell::new(platform_window.is_hovered()));
 
         interaction_authority.bind_platform(platform_window.interaction_quiescence());
@@ -2911,6 +2924,8 @@ impl Window {
             appearance_observers: SubscriberSet::new(),
             button_layout_observers: SubscriberSet::new(),
             active,
+            visibility,
+            visibility_observers: SubscriberSet::new(),
             hovered,
             needs_present,
             input_rate_tracker,

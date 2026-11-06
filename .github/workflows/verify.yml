@@ -182,15 +182,20 @@ jobs:
         shell: pwsh
         run: cargo nextest run --locked -p open-gpui --no-default-features --features test-support --lib -E 'test(profiler) | test(draw_unwind)' -j 1 --test-threads=1 --no-fail-fast --no-tests fail
 
+      - name: Test lifecycle public surface
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: cargo nextest run --locked -p open-gpui --all-features --test lifecycle -j 1 --test-threads=1 --no-fail-fast --no-tests fail
+
       - name: Test profiler-enabled independent consumer
         if: matrix.name == 'windows'
         shell: pwsh
-        run: cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --all-features --test profiler --target-dir target -j 1 --test-threads=1 --no-fail-fast --no-tests fail
+        run: cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --all-features --test profiler --test lifecycle --target-dir target -j 1 --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Test instrumentation-disabled independent consumer
         if: matrix.name == 'windows'
         shell: pwsh
-        run: cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test profiler --target-dir target -j 1 --test-threads=1 --no-fail-fast --no-tests fail
+        run: cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test profiler --test lifecycle --target-dir target -j 1 --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Run native WGPU package tests
         if: matrix.name == 'windows'

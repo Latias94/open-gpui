@@ -97,6 +97,10 @@ impl NativeCrossThreadIngress {
         self.stage_app_event(StagedNativeAppEvent::SystemWake);
     }
 
+    pub(crate) fn system_sleep(&self) {
+        self.stage_app_event(StagedNativeAppEvent::SystemSleep);
+    }
+
     pub(crate) fn thermal_state_changed(&self) {
         self.stage_app_event(StagedNativeAppEvent::ThermalStateChanged);
     }
@@ -218,6 +222,7 @@ enum StagedNativeEvent {
 }
 
 enum StagedNativeAppEvent {
+    SystemSleep,
     SystemWake,
     ThermalStateChanged,
 }
@@ -237,6 +242,9 @@ enum StagedNativeAccessibilityEvent {
 impl StagedNativeEnvelope {
     fn into_native_event(self) -> NativeEventEnvelope {
         let target = match self.event {
+            StagedNativeEvent::App(StagedNativeAppEvent::SystemSleep) => {
+                NativeEventTarget::App(NativeAppEvent::SystemSleep)
+            }
             StagedNativeEvent::App(StagedNativeAppEvent::SystemWake) => {
                 NativeEventTarget::App(NativeAppEvent::SystemWake)
             }
@@ -274,6 +282,7 @@ impl StagedNativeEnvelope {
         match &self.event {
             StagedNativeEvent::App(event) => {
                 let kind = match event {
+                    StagedNativeAppEvent::SystemSleep => NativeCallbackKind::SystemSleep,
                     StagedNativeAppEvent::SystemWake => NativeCallbackKind::SystemWake,
                     StagedNativeAppEvent::ThermalStateChanged => {
                         NativeCallbackKind::ThermalStateChanged
@@ -1738,6 +1747,11 @@ impl NativeEventEnvelope {
                     Err(_) => NativeEventDisposition::StaleWindow,
                 }
             }
+            NativeWindowEvent::VisibilityChanged(visibility) => {
+                deliver_window_event(app, window_id, ingress_sequence, |window, app| {
+                    window.update_visibility(visibility, app)
+                })
+            }
             NativeWindowEvent::ButtonLayoutChanged => deliver_window_event(
                 app,
                 window_id,
@@ -1895,6 +1909,7 @@ impl NativeEventEnvelope {
 pub(super) enum NativeAppEvent {
     OpenUrls(Vec<String>),
     Reopen,
+    SystemSleep,
     SystemWake,
     WillOpenAppMenu,
     AppMenuAction(Box<dyn Action>),
@@ -1919,10 +1934,16 @@ impl NativeAppEvent {
                 }
                 NativeEventDrainControl::Continue
             }
+            Self::SystemSleep => {
+                app.system_sleep_observers
+                    .clone()
+                    .retain(&(), |callback| callback(app));
+                NativeEventDrainControl::Continue
+            }
             Self::SystemWake => {
-                if let Some(app_cell) = app.this.upgrade() {
-                    app_cell.dispatch_system_wake(app);
-                }
+                app.system_wake_observers
+                    .clone()
+                    .retain(&(), |callback| callback(app));
                 NativeEventDrainControl::Continue
             }
             Self::WillOpenAppMenu => {
@@ -1965,6 +1986,7 @@ impl NativeAppEvent {
             Self::DisplaysChanged => Some(NativeAppEventCoalesceDomain::Displays),
             Self::OpenUrls(_)
             | Self::Reopen
+            | Self::SystemSleep
             | Self::SystemWake
             | Self::WillOpenAppMenu
             | Self::AppMenuAction(_)
@@ -1976,6 +1998,7 @@ impl NativeAppEvent {
         match self {
             Self::OpenUrls(_) => NativeCallbackKind::OpenUrls,
             Self::Reopen => NativeCallbackKind::Reopen,
+            Self::SystemSleep => NativeCallbackKind::SystemSleep,
             Self::SystemWake => NativeCallbackKind::SystemWake,
             Self::WillOpenAppMenu => NativeCallbackKind::WillOpenAppMenu,
             Self::AppMenuAction(_) => NativeCallbackKind::AppMenuAction,
@@ -2082,6 +2105,7 @@ pub(super) enum NativeWindowEvent {
         activation_generation: u64,
     },
     ActiveChanged(PlatformWindowActiveStatusObservation),
+    VisibilityChanged(crate::WindowVisibility),
     PointerCanceled(ReservedPointerCancel),
     ModifiersChanged(ModifiersChangedEvent),
     AppearanceChanged,
@@ -2124,6 +2148,7 @@ impl NativeWindowEvent {
             #[cfg(not(target_family = "wasm"))]
             Self::AccessibilityAction { .. } | Self::AccessibilityActiveChanged { .. } => None,
             Self::ActiveChanged(_)
+            | Self::VisibilityChanged(_)
             | Self::PointerCanceled(_)
             | Self::ModifiersChanged(_)
             | Self::InitialPresentationCompleted
@@ -2163,6 +2188,7 @@ impl NativeWindowEvent {
                 )),
             ),
             Self::ActiveChanged(_) => (NativeCallbackKind::ActiveChanged, None),
+            Self::VisibilityChanged(_) => (NativeCallbackKind::VisibilityChanged, None),
             Self::PointerCanceled(reservation) => reservation.diagnostic_metadata(),
             Self::ModifiersChanged(_) => (NativeCallbackKind::ModifiersChanged, None),
             Self::AppearanceChanged => (NativeCallbackKind::AppearanceChanged, None),

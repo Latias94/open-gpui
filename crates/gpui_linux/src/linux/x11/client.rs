@@ -18,7 +18,7 @@ use open_gpui_http_client::Url;
 use open_gpui_util::ResultExt as _;
 use smallvec::SmallVec;
 use std::{
-    cell::RefCell,
+    cell::{RefCell, RefMut},
     collections::{BTreeMap, HashSet},
     ops::Deref,
     path::PathBuf,
@@ -70,7 +70,7 @@ use open_gpui::{
     AnyWindowHandle, Bounds, ClipboardItem, CursorStyle, DevicePixels, DisplayId, FileDropEvent,
     Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, Pixels, PlatformDisplay,
     PlatformInput, PlatformKeyboardLayout, PlatformWindow, Point, RequestFrameOptions, ScrollDelta,
-    Size, TouchPhase, WindowButtonLayout, WindowKind, WindowParams, point, px,
+    Size, TouchPhase, WindowButtonLayout, WindowKind, WindowParams, WindowVisibility, point, px,
 };
 use open_gpui_wgpu::{CompositorGpuHint, GpuContext};
 
@@ -100,6 +100,15 @@ pub(crate) struct WindowRef {
 impl WindowRef {
     pub fn handle(&self) -> AnyWindowHandle {
         self.window.state.borrow().handle
+    }
+
+    /// Compositing window managers generally do not report fully obscured windows.
+    fn visibility(&self) -> WindowVisibility {
+        if self.is_mapped && self.last_visibility != Visibility::FULLY_OBSCURED {
+            WindowVisibility::Visible
+        } else {
+            WindowVisibility::Hidden
+        }
     }
 }
 
@@ -400,7 +409,7 @@ impl X11Client {
     pub(crate) fn new() -> anyhow::Result<Self> {
         let event_loop = EventLoop::try_new()?;
 
-        let (common, main_receiver, wake_receiver) = LinuxCommon::new(event_loop.get_signal());
+        let (common, main_receiver, power_receiver) = LinuxCommon::new(event_loop.get_signal());
 
         let handle = event_loop.handle();
 
@@ -427,13 +436,21 @@ impl X11Client {
             })?;
 
         handle
-            .insert_source(wake_receiver, |event, _, client: &mut X11Client| {
-                if let calloop::channel::Event::Msg(()) = event {
-                    client.0.borrow_mut().common.handle_system_wake();
+            .insert_source(power_receiver, |event, _, client: &mut X11Client| {
+                if let calloop::channel::Event::Msg(event) = event {
+                    let callback = client
+                        .0
+                        .borrow()
+                        .common
+                        .callbacks
+                        .system_power_callback(event);
+                    if let Some(callback) = callback {
+                        callback();
+                    }
                 }
             })
             .map_err(|err| {
-                anyhow!("Failed to initialize event loop handling of wake events: {err:?}")
+                anyhow!("Failed to initialize event loop handling of sleep/wake events: {err:?}")
             })?;
 
         let (xcb_connection, x_root_index) = XCBConnection::connect(None)?;
@@ -897,39 +914,17 @@ impl X11Client {
     fn handle_event(&self, event: Event) -> Option<()> {
         match event {
             Event::UnmapNotify(event) => {
-                let window = {
-                    let mut state = self.0.borrow_mut();
-                    let window = state.windows.get_mut(&event.window).map(|window_ref| {
-                        window_ref.is_mapped = false;
-                        window_ref.window.clone()
-                    });
-                    state.update_refresh_loop(event.window);
-                    window
-                };
-                if let Some(window) = window {
-                    window.set_mapped(false);
-                }
+                handle_visibility_changed(self.0.borrow_mut(), event.window, Some(false));
             }
             Event::MapNotify(event) => {
-                let window = {
-                    let mut state = self.0.borrow_mut();
-                    let window = state.windows.get_mut(&event.window).map(|window_ref| {
-                        window_ref.is_mapped = true;
-                        window_ref.window.clone()
-                    });
-                    state.update_refresh_loop(event.window);
-                    window
-                };
-                if let Some(window) = window {
-                    window.set_mapped(true);
-                }
+                handle_visibility_changed(self.0.borrow_mut(), event.window, Some(true));
             }
             Event::VisibilityNotify(event) => {
                 let mut state = self.0.borrow_mut();
                 if let Some(window_ref) = state.windows.get_mut(&event.window) {
                     window_ref.last_visibility = event.state;
                 }
-                state.update_refresh_loop(event.window);
+                handle_visibility_changed(state, event.window, None);
             }
             Event::ClientMessage(event) => {
                 let window = self.get_window(event.window)?;
@@ -2202,8 +2197,7 @@ impl X11ClientState {
         let Some(window_ref) = self.windows.get_mut(&x_window) else {
             return;
         };
-        let is_visible = window_ref.is_mapped
-            && !matches!(window_ref.last_visibility, Visibility::FULLY_OBSCURED);
+        let is_visible = window_ref.visibility().is_visible();
         match (is_visible, window_ref.refresh_state.take()) {
             (false, refresh_state @ Some(RefreshState::Hidden { .. }))
             | (false, refresh_state @ None)
@@ -2459,6 +2453,27 @@ pub fn mode_refresh_rate(mode: &randr::ModeInfo) -> Duration {
     let micros = 1_000_000_000 / millihertz;
     log::info!("Refreshing every {}ms", micros / 1_000);
     Duration::from_micros(micros)
+}
+
+/// Releases the client borrow before window callbacks can re-enter the platform.
+fn handle_visibility_changed(
+    mut state: RefMut<'_, X11ClientState>,
+    x_window: xproto::Window,
+    mapped: Option<bool>,
+) {
+    if let Some(mapped) = mapped
+        && let Some(window_ref) = state.windows.get_mut(&x_window)
+    {
+        window_ref.is_mapped = mapped;
+    }
+    state.update_refresh_loop(x_window);
+    let Some(window_ref) = state.windows.get(&x_window) else {
+        return;
+    };
+    let visibility = window_ref.visibility();
+    let window = window_ref.window.clone();
+    drop(state);
+    window.set_visibility(visibility, mapped);
 }
 
 fn fp3232_to_f32(value: xinput::Fp3232) -> f32 {

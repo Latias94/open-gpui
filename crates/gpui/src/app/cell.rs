@@ -627,7 +627,6 @@ pub struct AppCell {
     shutdown_completion_queued: Cell<Option<u64>>,
     open_urls_handler: NativeAppHandlerSlot<OpenUrlsHandler>,
     reopen_handler: NativeAppHandlerSlot<AppHandler>,
-    system_wake_handler: NativeAppHandlerSlot<AppHandler>,
     platform_input_leases: RefCell<Vec<u64>>,
     input_handler_leases: RefCell<Vec<u64>>,
 }
@@ -667,7 +666,6 @@ impl AppCell {
             shutdown_completion_queued: Cell::new(None),
             open_urls_handler: NativeAppHandlerSlot::default(),
             reopen_handler: NativeAppHandlerSlot::default(),
-            system_wake_handler: NativeAppHandlerSlot::default(),
             platform_input_leases: RefCell::new(Vec::new()),
             input_handler_leases: RefCell::new(Vec::new()),
         }
@@ -713,10 +711,6 @@ impl AppCell {
         self.reopen_handler.set(handler);
     }
 
-    pub(super) fn set_system_wake_handler(&self, handler: Box<AppHandler>) {
-        self.system_wake_handler.set(handler);
-    }
-
     pub(super) fn dispatch_open_urls(&self, urls: Vec<String>, app: &mut App) {
         if let Some(mut handler) = self.open_urls_handler.checkout() {
             (handler.callback_mut())(urls, app);
@@ -725,12 +719,6 @@ impl AppCell {
 
     pub(super) fn dispatch_reopen(&self, app: &mut App) {
         if let Some(mut handler) = self.reopen_handler.checkout() {
-            (handler.callback_mut())(app);
-        }
-    }
-
-    pub(super) fn dispatch_system_wake(&self, app: &mut App) {
-        if let Some(mut handler) = self.system_wake_handler.checkout() {
             (handler.callback_mut())(app);
         }
     }

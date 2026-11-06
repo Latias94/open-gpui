@@ -79,6 +79,8 @@ mod native_event_ingress;
 mod native_platform_commands;
 mod native_query_snapshot;
 mod native_window_activation;
+#[cfg(test)]
+mod power_tests;
 #[cfg(any(test, feature = "test-support"))]
 mod test_app;
 #[cfg(any(test, feature = "test-support"))]
@@ -380,17 +382,6 @@ impl Application {
         F: 'static + FnMut(&mut App),
     {
         self.0.set_reopen_handler(Box::new(callback));
-        self
-    }
-
-    /// Invokes a handler when the system wakes from sleep.
-    ///
-    /// Replaces the previously registered handler, if any.
-    pub fn on_system_wake<F>(&self, callback: F) -> &Self
-    where
-        F: 'static + FnMut(&mut App),
-    {
-        self.0.set_system_wake_handler(Box::new(callback));
         self
     }
 
@@ -805,6 +796,8 @@ pub struct App {
     missing_glyph_task: RefCell<Option<Task<()>>>,
     missing_glyph_callback: Rc<missing_glyphs::MissingGlyphCallbackSlot>,
     pub(crate) thermal_state_observers: SubscriberSet<(), Handler>,
+    pub(crate) system_sleep_observers: SubscriberSet<(), Handler>,
+    pub(crate) system_wake_observers: SubscriberSet<(), Handler>,
     display_observers: SubscriberSet<(), displays::DisplayHandler>,
     displays: HashMap<DisplayId, displays::DisplayState>,
     pub(crate) release_listeners: SubscriberSet<EntityId, ReleaseListener>,
@@ -991,6 +984,8 @@ impl App {
                 missing_glyph_task: RefCell::new(None),
                 missing_glyph_callback: Rc::default(),
                 thermal_state_observers: SubscriberSet::new(),
+                system_sleep_observers: SubscriberSet::new(),
+                system_wake_observers: SubscriberSet::new(),
                 display_observers: SubscriberSet::new(),
                 displays: displays::read_displays(platform.as_ref()),
                 global_observers: SubscriberSet::new(),
@@ -1062,6 +1057,10 @@ impl App {
         }));
 
         let native_app_ingress = app.native_application_ingress();
+        platform.on_system_sleep(Arc::new({
+            let native_app_ingress = native_app_ingress.clone();
+            move || native_app_ingress.system_sleep()
+        }));
         platform.on_system_wake(Arc::new({
             let native_app_ingress = native_app_ingress.clone();
             move || native_app_ingress.system_wake()
@@ -1856,6 +1855,43 @@ impl App {
         F: 'static + FnMut(&mut App),
     {
         let (subscription, activate) = self.thermal_state_observers.insert(
+            (),
+            Box::new(move |cx| {
+                callback(cx);
+                true
+            }),
+        );
+        activate();
+        subscription
+    }
+
+    /// Invokes a handler when the system is about to sleep.
+    ///
+    /// Handlers should record state or cancel work within the short time before suspension.
+    /// Retain the returned subscription to receive notifications.
+    pub fn on_system_sleep<F>(&self, mut callback: F) -> Subscription
+    where
+        F: 'static + FnMut(&mut App),
+    {
+        let (subscription, activate) = self.system_sleep_observers.insert(
+            (),
+            Box::new(move |cx| {
+                callback(cx);
+                true
+            }),
+        );
+        activate();
+        subscription
+    }
+
+    /// Invokes a handler when the system wakes from sleep.
+    ///
+    /// Each retained subscription receives notifications independently.
+    pub fn on_system_wake<F>(&self, mut callback: F) -> Subscription
+    where
+        F: 'static + FnMut(&mut App),
+    {
+        let (subscription, activate) = self.system_wake_observers.insert(
             (),
             Box::new(move |cx| {
                 callback(cx);
@@ -5037,11 +5073,13 @@ mod test {
     }
 
     #[crate::test]
-    fn application_on_system_wake_runs_callback(cx: &mut TestAppContext) {
+    fn app_on_system_wake_runs_retained_callback(cx: &mut TestAppContext) {
         let wake_count = Rc::new(Cell::new(0));
-        super::Application(cx.app.clone()).on_system_wake({
-            let wake_count = wake_count.clone();
-            move |_| wake_count.set(wake_count.get() + 1)
+        let _subscription = cx.read(|app| {
+            app.on_system_wake({
+                let wake_count = wake_count.clone();
+                move |_| wake_count.set(wake_count.get() + 1)
+            })
         });
 
         cx.simulate_system_wake();
@@ -5066,9 +5104,11 @@ mod test {
             let observed = observed.clone();
             move |_| observed.borrow_mut().push("reopen".to_string())
         });
-        application.on_system_wake({
-            let observed = observed.clone();
-            move |_| observed.borrow_mut().push("wake".to_string())
+        let _subscription = cx.read(|app| {
+            app.on_system_wake({
+                let observed = observed.clone();
+                move |_| observed.borrow_mut().push("wake".to_string())
+            })
         });
 
         let simulator = cx.clone();
@@ -5096,22 +5136,22 @@ mod test {
     ) {
         let observed = Rc::new(RefCell::new(Vec::new()));
         let app = Rc::downgrade(&cx.app);
-        super::Application(cx.app.clone()).on_system_wake({
+        super::Application(cx.app.clone()).on_reopen({
             let observed = observed.clone();
             move |_| {
                 observed.borrow_mut().push("old");
                 let app = app
                     .upgrade()
                     .expect("test application must outlive its native handler");
-                super::Application(app).on_system_wake({
+                super::Application(app).on_reopen({
                     let observed = observed.clone();
                     move |_| observed.borrow_mut().push("new")
                 });
             }
         });
 
-        cx.simulate_system_wake();
-        cx.simulate_system_wake();
+        cx.simulate_reopen();
+        cx.simulate_reopen();
 
         assert_eq!(*observed.borrow(), ["old", "new"]);
     }
@@ -5169,9 +5209,11 @@ mod test {
     #[crate::test]
     fn quit_barrier_discards_later_native_application_callbacks(cx: &mut TestAppContext) {
         let wake_count = Rc::new(Cell::new(0));
-        super::Application(cx.app.clone()).on_system_wake({
-            let wake_count = wake_count.clone();
-            move |_| wake_count.set(wake_count.get() + 1)
+        let _subscription = cx.read(|app| {
+            app.on_system_wake({
+                let wake_count = wake_count.clone();
+                move |_| wake_count.set(wake_count.get() + 1)
+            })
         });
 
         let app = cx.app.clone();

@@ -164,6 +164,11 @@ unsafe fn build_classes() {
             );
 
             decl.add_method(
+                sel!(onSystemSleep:),
+                on_system_sleep as extern "C" fn(&mut Object, Sel, id),
+            );
+
+            decl.add_method(
                 sel!(onSystemWake:),
                 on_system_wake as extern "C" fn(&mut Object, Sel, id),
             );
@@ -183,6 +188,7 @@ pub struct MacPlatform(Mutex<MacPlatformState>, MacNativeNotificationCallbacks);
 #[derive(Default)]
 struct MacNativeNotificationCallbacks {
     thermal_state_change: OnceLock<NativeAppNotificationHandler>,
+    system_sleep: OnceLock<NativeAppNotificationHandler>,
     system_wake: OnceLock<NativeAppNotificationHandler>,
 }
 
@@ -199,7 +205,7 @@ pub(crate) struct MacPlatformState {
     reopen: Option<Box<dyn FnMut()>>,
     on_keyboard_layout_change: Option<Box<dyn FnMut()>>,
     on_displays_changed: Option<Box<dyn FnMut()>>,
-    system_wake_observer_registered: bool,
+    system_power_observers_registered: bool,
     quit: Option<Box<dyn FnMut()>>,
     menu_command: Option<Box<dyn FnMut(&dyn Action)>>,
     validate_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
@@ -253,7 +259,7 @@ impl MacPlatform {
                 dock_menu: None,
                 on_keyboard_layout_change: None,
                 on_displays_changed: None,
-                system_wake_observer_registered: false,
+                system_power_observers_registered: false,
                 menus: None,
                 keyboard_mapper,
                 cursor_visible: Arc::new(AtomicBool::new(true)),
@@ -264,6 +270,21 @@ impl MacPlatform {
 
     fn display_topology(&self) -> MacDisplayTopologyHandle {
         self.0.lock().display_topology.clone()
+    }
+
+    fn ensure_system_power_observers(&self) {
+        if self.0.lock().system_power_observers_registered {
+            return;
+        }
+
+        unsafe {
+            let app: id = msg_send![APP_CLASS, sharedApplication];
+            let delegate: id = msg_send![app, delegate];
+            if delegate != nil {
+                register_system_power_observers(delegate);
+                self.0.lock().system_power_observers_registered = true;
+            }
+        }
     }
 
     fn request_display_topology_refresh(&self) {
@@ -1189,26 +1210,20 @@ impl Platform for MacPlatform {
         self.0.lock().reopen = Some(callback);
     }
 
+    fn on_system_sleep(&self, callback: NativeAppNotificationHandler) {
+        assert!(
+            self.1.system_sleep.set(callback).is_ok(),
+            "system sleep callback must be installed exactly once"
+        );
+        self.ensure_system_power_observers();
+    }
+
     fn on_system_wake(&self, callback: NativeAppNotificationHandler) {
         assert!(
             self.1.system_wake.set(callback).is_ok(),
             "system wake callback must be installed exactly once"
         );
-        let state = self.0.lock();
-        if state.system_wake_observer_registered {
-            return;
-        }
-        drop(state);
-
-        unsafe {
-            // SAFETY: APP_CLASS is registered during startup and returns the shared NSApplication.
-            let app: id = msg_send![APP_CLASS, sharedApplication];
-            let delegate: id = msg_send![app, delegate];
-            if delegate != nil {
-                register_system_wake_observer(delegate);
-                self.0.lock().system_wake_observer_registered = true;
-            }
-        }
+        self.ensure_system_power_observers();
     }
 
     fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>) {
@@ -1540,12 +1555,13 @@ extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
         let observer = this as *mut Object as id;
         let platform = get_mac_platform(this);
         platform.refresh_display_topology_now();
-        let observes_system_wake = platform.1.system_wake.get().is_some();
+        let observes_system_power =
+            platform.1.system_sleep.get().is_some() || platform.1.system_wake.get().is_some();
         let callback = {
             let mut state = platform.0.lock();
-            if observes_system_wake && !state.system_wake_observer_registered {
-                register_system_wake_observer(observer);
-                state.system_wake_observer_registered = true;
+            if observes_system_power && !state.system_power_observers_registered {
+                register_system_power_observers(observer);
+                state.system_power_observers_registered = true;
             }
             state.finish_launching.take()
         };
@@ -1555,11 +1571,17 @@ extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
     }
 }
 
-unsafe fn register_system_wake_observer(observer: id) {
+/// The observer must be the app delegate implementing `onSystemSleep:` and `onSystemWake:`.
+unsafe fn register_system_power_observers(observer: id) {
     unsafe {
-        // SAFETY: observer is an Objective-C object implementing onSystemWake:.
         let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
         let workspace_center: *mut Object = msg_send![workspace, notificationCenter];
+        let sleep_name = ns_string("NSWorkspaceWillSleepNotification");
+        let _: () = msg_send![workspace_center, addObserver: observer
+            selector: sel!(onSystemSleep:)
+            name: sleep_name
+            object: nil
+        ];
         let wake_name = ns_string("NSWorkspaceDidWakeNotification");
         let _: () = msg_send![workspace_center, addObserver: observer
             selector: sel!(onSystemWake:)
@@ -1611,6 +1633,18 @@ extern "C" fn on_thermal_state_change(this: &mut Object, _: Sel, _: id) {
     let callback = unsafe {
         get_mac_notification_callbacks(this)
             .thermal_state_change
+            .get()
+            .cloned()
+    };
+    if let Some(callback) = callback {
+        callback();
+    }
+}
+
+extern "C" fn on_system_sleep(this: &mut Object, _: Sel, _: id) {
+    let callback = unsafe {
+        get_mac_notification_callbacks(this)
+            .system_sleep
             .get()
             .cloned()
     };

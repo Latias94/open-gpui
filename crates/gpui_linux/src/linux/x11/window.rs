@@ -17,7 +17,7 @@ use open_gpui::{
     PromptLevel, RequestFrameOptions, ResizeEdge, ScaledPixels, Scene, Size, Task, Tiling,
     WindowActivationPolicy, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
     WindowControlArea, WindowCreationFacts, WindowDecorations, WindowKind, WindowParams,
-    WindowPresentationShutdownTicket, px,
+    WindowPresentationShutdownTicket, WindowVisibility, px,
 };
 use open_gpui_wgpu::{
     CompositorGpuHint, WgpuRenderer, WgpuSurfaceConfig, WgpuSurfaceShutdownProgress,
@@ -422,6 +422,7 @@ pub struct Callbacks {
     request_frame: Option<Rc<dyn Fn(RequestFrameOptions)>>,
     input: PlatformInputCallbackSlot,
     active_status_change: Option<Rc<dyn Fn(PlatformWindowActiveStatusObservation)>>,
+    visibility_change: Option<Box<dyn FnMut(WindowVisibility)>>,
     hovered_status_change: Option<Rc<dyn Fn(bool)>>,
     resize: Option<Rc<dyn Fn(Size<Pixels>, f32)>>,
     moved: Option<Rc<dyn Fn()>>,
@@ -465,6 +466,8 @@ pub struct X11WindowState {
     mapped: bool,
     interaction_gate: WindowInteractionGate,
     active: bool,
+    /// The client's mapped state combined with its last `VisibilityNotify` observation.
+    visibility: WindowVisibility,
     hovered: bool,
     fullscreen: bool,
     client_side_decorations_supported: bool,
@@ -1462,6 +1465,7 @@ impl X11WindowState {
                 atoms: *atoms,
                 input_handler: PlatformInputHandlerSlot::default(),
                 active: false,
+                visibility: WindowVisibility::Hidden,
                 hovered: false,
                 fullscreen: false,
                 maximized_vertical: false,
@@ -1677,8 +1681,10 @@ impl X11WindowStatePtr {
     }
 
     fn terminate_callback_slots(&self) {
+        self.state.borrow().interaction_gate.quiesce();
         let (input_callback, should_close) = {
-            let callbacks = self.callbacks.borrow();
+            let mut callbacks = self.callbacks.borrow_mut();
+            callbacks.visibility_change = None;
             (callbacks.input.clone(), callbacks.should_close.clone())
         };
         let (input_handler, sync_task, abandoned_sync_submission) = {
@@ -2073,20 +2079,37 @@ impl X11WindowStatePtr {
             .detach();
     }
 
-    pub(crate) fn set_mapped(&self, mapped: bool) {
-        let changed = {
+    pub(crate) fn set_visibility(&self, visibility: WindowVisibility, mapped: Option<bool>) {
+        let (mapped_changed, visibility_changed) = {
             let mut state = self.state.borrow_mut();
-            let hidden = !mapped;
-            if state.hidden == hidden && state.mapped == mapped {
-                false
-            } else {
+            let mapped_changed = if let Some(mapped) = mapped {
+                let hidden = !mapped;
+                let changed = state.hidden != hidden || state.mapped != mapped;
                 state.hidden = hidden;
                 state.mapped = mapped;
-                true
-            }
+                changed
+            } else {
+                false
+            };
+            let visibility_changed =
+                std::mem::replace(&mut state.visibility, visibility) != visibility;
+            (mapped_changed, visibility_changed)
         };
-        if changed {
+        if mapped_changed {
             self.emit_window_state_change();
+        }
+        if !visibility_changed || self.interaction_is_quiesced() {
+            return;
+        }
+        let callback = self.callbacks.borrow_mut().visibility_change.take();
+        if let Some(mut callback) = callback {
+            callback(visibility);
+            if !self.interaction_is_quiesced() {
+                self.callbacks
+                    .borrow_mut()
+                    .visibility_change
+                    .get_or_insert(callback);
+            }
         }
     }
 
@@ -2726,6 +2749,10 @@ impl PlatformWindow for X11Window {
         state.active && !state.interaction_gate.is_quiesced()
     }
 
+    fn visibility(&self) -> WindowVisibility {
+        self.0.state.borrow().visibility
+    }
+
     fn is_hovered(&self) -> bool {
         let state = self.0.state.borrow();
         state.hovered && !state.interaction_gate.is_quiesced()
@@ -2842,6 +2869,12 @@ impl PlatformWindow for X11Window {
 
     fn on_hover_status_change(&self, callback: Box<dyn Fn(bool)>) {
         self.0.callbacks.borrow_mut().hovered_status_change = Some(Rc::from(callback));
+    }
+
+    fn on_visibility_change(&self, callback: Box<dyn FnMut(WindowVisibility)>) {
+        if !self.0.interaction_is_quiesced() {
+            self.0.callbacks.borrow_mut().visibility_change = Some(callback);
+        }
     }
 
     fn on_resize(&self, callback: Box<dyn Fn(Size<Pixels>, f32)>) {

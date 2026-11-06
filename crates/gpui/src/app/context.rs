@@ -2,7 +2,7 @@ use crate::{
     AnyView, AnyWindowHandle, AppContext, AsyncApp, DispatchPhase, Effect, EntityId, EventEmitter,
     FocusClaimOutcome, FocusHandle, FocusOutEvent, Focusable, Global, KeystrokeObserver, Priority,
     Reservation, SubscriberSet, Subscription, Task, WeakEntity, WeakFocusHandle, Window,
-    WindowHandle,
+    WindowHandle, WindowVisibility,
 };
 use anyhow::Result;
 use futures::FutureExt;
@@ -471,6 +471,27 @@ impl<'a, T: 'static> Context<'a, T> {
             (),
             Box::new(move |window, cx| {
                 view.update(cx, |view, cx| callback(view, window, cx))
+                    .is_ok()
+            }),
+        );
+        activate();
+        subscription
+    }
+
+    /// Registers an entity-bound callback when the window's visibility changes.
+    ///
+    /// See [`Window::observe_window_visibility`] and [`WindowVisibility`]. The
+    /// callback is removed when this entity is no longer available.
+    pub fn observe_window_visibility(
+        &self,
+        window: &mut Window,
+        mut callback: impl FnMut(&mut T, WindowVisibility, &mut Window, &mut Context<T>) + 'static,
+    ) -> Subscription {
+        let view = self.weak_entity();
+        let (subscription, activate) = window.visibility_observers.insert(
+            (),
+            Box::new(move |visibility, window, cx| {
+                view.update(cx, |view, cx| callback(view, visibility, window, cx))
                     .is_ok()
             }),
         );
