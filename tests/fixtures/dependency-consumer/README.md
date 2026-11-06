@@ -118,3 +118,12 @@ the framework's owner and actual multi-window consumers supply that separate evi
 ```text
 cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --all-features --test asset_cache --test-threads=1 --no-fail-fast --no-tests fail
 ```
+
+The optional `displays` tests type-check App, Window and Context display subscriptions without
+test-support or engine-private types, and execute public refresh-rate conversion controls.
+They do not launch an App or establish native display changes. Framework owner tests and the
+separate Windows ingress/lifecycle consumer qualify those respective paths:
+
+```text
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --all-features --test displays --test-threads=1 --no-fail-fast --no-tests fail
+```

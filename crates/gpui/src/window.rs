@@ -89,6 +89,7 @@ mod asset_cache_tests;
 mod bring_into_view;
 #[cfg(test)]
 mod cache_dependency_tests;
+mod displays;
 #[cfg(test)]
 mod element_arena_tests;
 #[cfg(test)]
@@ -1790,7 +1791,8 @@ pub struct Window {
     window_capabilities: PlatformWindowCapabilities,
     window_mutation_authority: Arc<WindowPlatformMutationAuthority>,
     window_mutations: WindowMutationState,
-    display_id: Option<DisplayId>,
+    pub(crate) display_id: Option<DisplayId>,
+    pub(crate) display_observers: SubscriberSet<(), AnyObserver>,
     sprite_atlas: Arc<dyn PlatformAtlas>,
     text_system: Rc<WindowTextSystem>,
     text_rendering_mode: Rc<Cell<TextRenderingMode>>,
@@ -2081,6 +2083,10 @@ struct WindowShouldCloseHandlerSlot {
 }
 
 impl WindowShouldCloseHandlerSlot {
+    fn is_checked_out(&self) -> bool {
+        self.state.borrow().checked_out_generation.is_some()
+    }
+
     fn set(&self, callback: WindowShouldCloseCallback) {
         let replaced = {
             let mut state = self.state.borrow_mut();
@@ -2830,6 +2836,7 @@ impl Window {
         }
 
         let native_closed = Rc::new(Cell::new(false));
+        let should_close_handler = WindowShouldCloseHandlerSlot::default();
         platform_window.on_close(Box::new({
             let window_id = handle.window_id();
             let cx = cx.to_async();
@@ -2842,7 +2849,10 @@ impl Window {
         platform_window.on_should_close(Box::new({
             let window_id = handle.window_id();
             let cx = cx.to_async();
-            move || cx.dispatch_window_should_close(window_id)
+            let should_close_handler = should_close_handler.clone();
+            move || {
+                !should_close_handler.is_checked_out() && cx.dispatch_window_should_close(window_id)
+            }
         }));
         platform_window.on_request_frame(Box::new({
             let cx = cx.to_async();
@@ -2861,6 +2871,10 @@ impl Window {
             move || {
                 cx.enqueue_window_moved(handle.window_id());
             }
+        }));
+        platform_window.on_display_changed(Box::new({
+            let cx = cx.to_async();
+            move || cx.enqueue_window_display_changed(handle.window_id())
         }));
         platform_window.on_window_state_change(Box::new({
             let cx = cx.to_async();
@@ -3024,7 +3038,7 @@ impl Window {
             removed: false,
             native_closed,
             removal_state: WindowRemovalState::Open,
-            should_close_handler: WindowShouldCloseHandlerSlot::default(),
+            should_close_handler,
             platform_window,
             platform_command_sink,
             initial_presentation_command: Some(
@@ -3050,6 +3064,7 @@ impl Window {
             window_mutation_authority: Arc::default(),
             window_mutations: WindowMutationState::default(),
             display_id,
+            display_observers: SubscriberSet::new(),
             sprite_atlas,
             text_system,
             text_rendering_mode: cx.text_rendering_mode.clone(),
@@ -6141,7 +6156,6 @@ impl Window {
         }
         self.viewport_size = facts.content_size;
         self.scale_factor = facts.scale_factor;
-        self.display_id = facts.display_id;
         self.active.set(facts.is_active);
         self.platform_facts = facts;
     }

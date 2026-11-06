@@ -1503,6 +1503,7 @@ impl<O: Copy + PartialEq> MacWindowPendingObservationEvents<O> {
 struct MacWindowNativeObservationChanges {
     renderer_geometry_changed: bool,
     moved: bool,
+    display_changed: bool,
     minimized_or_maximized_changed: bool,
     state_changed: bool,
 }
@@ -1530,6 +1531,7 @@ impl MacWindowNativeObservationChanges {
                 current.bounds.origin,
                 &current.display,
             ),
+            display_changed: previous.display.id() != current.display.id(),
             minimized_or_maximized_changed,
             state_changed: minimized_or_maximized_changed
                 || previous.is_fullscreen != current.is_fullscreen
@@ -1598,6 +1600,7 @@ struct MacWindowState {
     activate_callback: Option<Rc<dyn Fn(PlatformWindowActiveStatusObservation)>>,
     resize_callback: Option<Rc<dyn Fn(Size<Pixels>, f32)>>,
     moved_callback: Option<Rc<dyn Fn()>>,
+    display_changed_callback: Option<Box<dyn FnMut()>>,
     window_state_change_callback: Option<Rc<dyn Fn()>>,
     should_close_callback: PlatformShouldCloseCallbackSlot,
     close_callback: Option<Box<dyn FnOnce()>>,
@@ -1676,6 +1679,7 @@ impl MacWindowState {
         self.activate_callback = None;
         self.resize_callback = None;
         self.moved_callback = None;
+        self.display_changed_callback = None;
         self.window_state_change_callback = None;
         self.appearance_changed_callback = None;
         self.display_topology_subscription.take();
@@ -2997,6 +3001,7 @@ impl MacWindow {
                     activate_callback: None,
                     resize_callback: None,
                     moved_callback: None,
+                    display_changed_callback: None,
                     window_state_change_callback: None,
                     should_close_callback: PlatformShouldCloseCallbackSlot::default(),
                     close_callback: None,
@@ -3544,6 +3549,9 @@ fn deliver_window_observation_effect_batch(
         changes
     };
 
+    if changes.display_changed {
+        report_window_display_changed(window_state);
+    }
     if changes.renderer_geometry_changed {
         panic_boundary.deliver(|| notify_window_resize(window_state));
     }
@@ -3712,6 +3720,33 @@ fn notify_window_moved(window_state: &Arc<Mutex<MacWindowState>>) {
         callback
     };
     callback();
+}
+
+fn report_window_display_changed(window_state: &Arc<Mutex<MacWindowState>>) {
+    let weak_window_state = Arc::downgrade(window_state);
+    DispatchQueue::main().exec_async(move || {
+        let Some(window_state) = weak_window_state.upgrade() else {
+            return;
+        };
+        let callback = {
+            let mut state = window_state.lock();
+            if state.is_closed() {
+                return;
+            }
+            state.display_changed_callback.take()
+        };
+        if let Some(mut callback) = callback {
+            let mut panic_boundary = MacWindowCallbackPanicBoundary::default();
+            panic_boundary.deliver(&mut callback);
+            {
+                let mut state = window_state.lock();
+                if !state.is_closed() {
+                    state.display_changed_callback.get_or_insert(callback);
+                }
+            }
+            panic_boundary.isolate_at_native_boundary("a macOS window display-change callback");
+        }
+    });
 }
 
 fn notify_window_state_changed(window_state: &Arc<Mutex<MacWindowState>>) {
@@ -4617,6 +4652,13 @@ impl PlatformWindow for MacWindow {
         let mut lock = self.0.as_ref().lock();
         if !lock.is_closed() {
             lock.moved_callback = Some(Rc::from(callback));
+        }
+    }
+
+    fn on_display_changed(&self, callback: Box<dyn FnMut()>) {
+        let mut state = self.0.lock();
+        if !state.is_closed() {
+            state.display_changed_callback = Some(callback);
         }
     }
 

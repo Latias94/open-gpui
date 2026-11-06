@@ -37,6 +37,10 @@ impl X11Display {
 }
 
 impl PlatformDisplay for X11Display {
+    fn refresh_interval(&self) -> Option<std::time::Duration> {
+        None
+    }
+
     fn id(&self) -> DisplayId {
         DisplayId::new(self.x_screen_index as u64)
     }

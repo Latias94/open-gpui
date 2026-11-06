@@ -739,6 +739,74 @@ independent-consumer all-target/all-feature checks pass. The root lockfile adds 
 gallery dev-dependency names; the independent lockfile and all dependency versions stay unchanged.
 No complete refresh, browser contention, numeric cost or engine integration claim follows.
 
+### Connected Displays And Window Association Successor
+
+After `1855a94c5eeb7e0a97e69479232211827efc3942`, adopt the complete official mechanism
+introduced by `f495dd0f77b69e287ed72c1168dc02965f08be7d` and retained by fixed target
+`635026fabc38440fce5e1767d125026a17b12012`. App owns connected-display bounds and refresh
+interval observation; Window owns its display association. Platform hints reread the collection,
+deduplicate spurious changes and publish ready App state before observers. Both launch paths
+initialize the collection after platform connection. Preserve the official public DisplayEvent,
+DisplayChanges, refresh getter and App/Window/Context subscription interfaces.
+
+Reconcile the fork's exact immutable display topology and committed window facts through their
+existing owners. Use the ordered native ingress for busy-App callbacks and window retirement;
+do not introduce another topology registry or native callback path. Earlier bounds/terminal-facts
+publication must not swallow a display association notification. Windows uses a hidden top-level
+platform HWND so global topology and session-end notifications also arrive without app windows.
+Map final-target macOS and Wayland support to the existing platform owners; X11/Web retain unknown
+refresh intervals and Linux headless reports no displays. Unexecuted backend source is not native
+qualification.
+
+Retain official add/remove/property-change and unknown-destination regressions. Exercise exact
+callback readiness, subscriptions/entity release, no-display and launch population, busy-App
+ordering/unwind and closed-window retirement through deterministic provider and real Windows
+ingress consumers. Synthetic WM_DISPLAYCHANGE does not establish actual OS hotplug or a changed
+physical refresh mode. Run focused and complete affected framework/public/component consumers,
+locked checks, correctness Clippy, actual Windows compiler-floor checks, formatting and existing
+document/import/API scans. Numeric frame/input costs, other native platforms, engine adaptation
+and canonical docking remain separate scope.
+
+Official `4f6d97b9de7d9f167da8b7832eeecea22c5a9efa` adds refresh-aware frame-pacing
+telemetry and its application consumers. Queue that complete owner separately; introducing the
+display getter does not adopt or qualify the telemetry mechanism.
+
+The complete focused owner/provider/topology/native selection passes 36/36 without skips
+(`e605a3ad-fb9d-4204-b8c6-5aafe621fae8`). It retains the original official tracking scenario,
+ready complete App state, prior bounds facts, observer unwind, unknown-target App-driven window
+replacement, native zero-window broadcasts, actual Submitted frames and exact retirement.
+The [verification record](../verification.md#connected-displays-and-window-association) retains
+the initial new-fixture compile/drain failures and the reproduced official reciprocal-overflow
+correction. Bounded Core/Windows, foreign-backend and acceptance reviews leave no confirmed
+P1/P2. Complete affected consumer/build/compiler-floor qualification follows separately.
+
+The first full runtime run exposes a fork-specific deferred-close reentry loop and an initial
+geometry-wake fixture that discarded new platform notifications. Both reproduce before correction.
+Native queries now consult the existing Window close-handler slot across asynchronous delivery;
+the geometry fixture settles startup through real message dispatch before its unchanged exact
+wake assertions. All 18 App/Window scenarios, the two display native/provider consumers and
+both previously failing native cases pass 22/22 after correction. The follow-up review leaves
+no confirmed P1/P2; the full affected cohorts are rerun against that corrected owner.
+
+Corrected complete runtime/public/gallery passes 1,388/1,388 with four existing interactive
+Windows skips; components/docking/Canvas pass 2,964/2,964 without skips. The independent
+consumer exposes bitflags still being optional under Wayland in the fork; the official target
+requires it for shared public display types. Core now adopts that required dependency and retires
+the optional feature, with no version/lockfile change or changed dependency union in the already
+qualified cohorts. Independent public consumers then pass 18/18 without test-support or skips.
+
+Locked workspace/independent compilation and affected correctness Clippy pass on Rust 1.95.0.
+Actual Windows Rust 1.92.0 framework/consumer all-target/all-feature checks pass, together with
+root and independent-consumer formatting checks. Compiler-floor and declaration changes remain
+explicit rather than inferred from the upstream workspace. The record distinguishes foreign
+backend source adaptation from executed native scope; no physical monitor configuration changed.
+
+An additional wasm32-unknown-unknown production-library check passes for Web and its Core/WGPU
+closure. The test-target check stops in unchanged wait-timeout test-support dependency before
+the backend. Retain that concrete dependency/platform gap, including the fork's proptest 1.10.0
+pin versus fixed-target 1.12.0, in the remaining audit; production compilation is not browser or
+test-support qualification. Existing import/document/release/API scans pass.
+
 ## Maintained Baseline Before Engine Adaptation
 
 Finish a bounded framework refresh against the recorded November 5 Zed revision before expanding

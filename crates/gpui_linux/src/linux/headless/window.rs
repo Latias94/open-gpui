@@ -10,53 +10,24 @@ use std::sync::Arc;
 
 use open_gpui_collections::HashMap;
 use parking_lot::Mutex;
-use uuid::Uuid;
 
 use open_gpui::{
     AtlasAccess, AtlasAccessDiagnostic, AtlasAccessOutcome, AtlasKey, AtlasRemoveDiagnostic,
     AtlasRemoveOutcome, AtlasTextureId, AtlasTextureInstanceId, AtlasTextureLeaseEpoch,
-    AtlasTextureLeaseError, AtlasTile, Bounds, Capslock, CursorStyle, DevicePixels, DisplayId,
-    GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInputCallback,
-    PlatformInputHandler, PlatformInputHandlerSlot, PlatformPresentationShutdownOutcome,
-    PlatformWindow, PlatformWindowActiveStatusObservation, PlatformWindowCommand,
-    PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome,
+    AtlasTextureLeaseError, AtlasTile, Bounds, Capslock, CursorStyle, DevicePixels, GpuSpecs,
+    Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInputCallback,
+    PlatformInputCallbackSlot, PlatformInputHandler, PlatformInputHandlerSlot,
+    PlatformPresentationShutdownOutcome, PlatformWindow, PlatformWindowActiveStatusObservation,
+    PlatformWindowCommand, PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome,
     PlatformWindowInteractionQuiescence, PlatformWindowPresentOutcome, Point,
     PreparedPlatformPresentationShutdown, PromptButton, PromptLevel, RequestFrameOptions, Scene,
     Size, TileId, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
-    WindowCreationFacts, WindowParams, WindowPlatformFacts, WindowPresentationShutdownTicket, px,
+    WindowCreationFacts, WindowParams, WindowPlatformFacts, WindowPresentationShutdownTicket,
 };
-
-#[derive(Debug)]
-pub(crate) struct HeadlessDisplay {
-    bounds: Bounds<Pixels>,
-}
-
-impl HeadlessDisplay {
-    pub(crate) fn new() -> Self {
-        Self {
-            bounds: Bounds::from_corners(Point::default(), Point::new(px(1920.), px(1080.))),
-        }
-    }
-}
-
-impl PlatformDisplay for HeadlessDisplay {
-    fn id(&self) -> DisplayId {
-        DisplayId::new(0)
-    }
-
-    fn uuid(&self) -> anyhow::Result<Uuid> {
-        Ok(Uuid::nil())
-    }
-
-    fn bounds(&self) -> Bounds<Pixels> {
-        self.bounds
-    }
-}
 
 struct HeadlessWindowState {
     bounds: Bounds<Pixels>,
     window_bounds: WindowBounds,
-    display: Rc<dyn PlatformDisplay>,
     input_callback: PlatformInputCallbackSlot,
     input_handler: PlatformInputHandlerSlot,
     title: Option<String>,
@@ -105,12 +76,11 @@ impl raw_window_handle::HasDisplayHandle for HeadlessWindow {
 }
 
 impl HeadlessWindow {
-    pub(crate) fn new(params: WindowParams, display: Rc<dyn PlatformDisplay>) -> Self {
+    pub(crate) fn new(params: WindowParams) -> Self {
         let window_bounds = params.window_bounds;
         Self(Rc::new(RefCell::new(HeadlessWindowState {
             bounds: window_bounds.get_bounds(),
             window_bounds,
-            display,
             input_callback: PlatformInputCallbackSlot::default(),
             input_handler: PlatformInputHandlerSlot::default(),
             title: None,
@@ -200,7 +170,7 @@ impl PlatformWindow for HeadlessWindow {
     }
 
     fn display(&self) -> Option<Rc<dyn PlatformDisplay>> {
-        Some(self.0.borrow().display.clone())
+        None
     }
 
     fn mouse_position(&self) -> Point<Pixels> {
@@ -319,6 +289,8 @@ impl PlatformWindow for HeadlessWindow {
 
     fn on_moved(&self, _callback: Box<dyn Fn()>) {}
 
+    fn on_display_changed(&self, _callback: Box<dyn FnMut()>) {}
+
     fn on_should_close(&self, _callback: Box<dyn FnMut() -> bool>) {}
 
     fn on_hit_test_window_control(&self, _callback: Box<dyn FnMut() -> Option<WindowControlArea>>) {
@@ -346,6 +318,44 @@ impl PlatformWindow for HeadlessWindow {
 
     fn gpu_specs(&self) -> Option<GpuSpecs> {
         None
+    }
+}
+
+#[cfg(test)]
+mod display_tests {
+    use super::*;
+    use open_gpui::{WindowActivationPolicy, WindowKind, point, px, size};
+
+    #[test]
+    fn headless_window_keeps_placement_without_a_physical_display() {
+        let bounds = Bounds::new(point(px(-120.0), px(30.0)), size(px(960.0), px(720.0)));
+        let window = HeadlessWindow::new(WindowParams {
+            window_bounds: WindowBounds::Maximized(bounds),
+            bounds,
+            titlebar: None,
+            kind: WindowKind::Normal,
+            is_movable: true,
+            is_resizable: true,
+            is_minimizable: true,
+            accepts_pointer_input: true,
+            focus_on_appearing: false,
+            activation_policy: WindowActivationPolicy::default(),
+            transient_for: None,
+            show: false,
+            provisional_session: None,
+            icon: None,
+            display_id: None,
+            window_min_size: None,
+        });
+
+        assert!(window.display().is_none());
+        assert_eq!(window.platform_facts().display_id, None);
+        assert_eq!(window.platform_facts().physical_geometry, None);
+        assert_eq!(window.bounds(), bounds);
+        assert_eq!(window.window_bounds(), WindowBounds::Maximized(bounds));
+        assert_eq!(window.content_size(), bounds.size);
+        assert_eq!(window.scale_factor(), 1.0);
+        assert!(window.is_maximized());
     }
 }
 

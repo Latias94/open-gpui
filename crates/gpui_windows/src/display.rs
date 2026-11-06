@@ -1,5 +1,5 @@
 use smallvec::SmallVec;
-use std::{error::Error, fmt, rc::Rc, sync::Arc};
+use std::{error::Error, fmt, rc::Rc, sync::Arc, time::Duration};
 use uuid::Uuid;
 use windows::{
     Win32::{
@@ -17,7 +17,7 @@ use windows::{
 
 use open_gpui::{
     Bounds, DevicePixels, DisplayId, Pixels, PlatformDisplay, PlatformDisplaySnapshot,
-    PlatformPhysicalDisplayObservation, Point, point, size,
+    PlatformPhysicalDisplayObservation, Point, point, refresh_interval_from_hz, size,
 };
 
 /// Detached facts for one display in a committed Windows topology publication.
@@ -32,6 +32,7 @@ pub(crate) struct WindowsDisplay {
     visible_bounds: Bounds<Pixels>,
     physical_bounds: Bounds<DevicePixels>,
     physical_visible_bounds: Bounds<DevicePixels>,
+    refresh_interval: Option<Duration>,
     uuid: Uuid,
 }
 
@@ -628,6 +629,7 @@ impl WindowsNativeDisplayRow {
             visible_bounds: physical_visible_bounds.to_pixels(scale_factor),
             physical_bounds,
             physical_visible_bounds,
+            refresh_interval: refresh_interval_for_device(&info.szDevice),
             uuid,
         };
         if display.physical_observation(1).is_none() {
@@ -717,6 +719,28 @@ impl PlatformDisplay for WindowsDisplay {
     fn visible_bounds(&self) -> Bounds<Pixels> {
         self.visible_bounds
     }
+
+    fn refresh_interval(&self) -> Option<Duration> {
+        self.refresh_interval
+    }
+}
+
+fn refresh_interval_for_device(device_name: &[u16; 32]) -> Option<Duration> {
+    let mut mode = DEVMODEW {
+        dmSize: std::mem::size_of::<DEVMODEW>() as u16,
+        ..Default::default()
+    };
+    let found = unsafe {
+        EnumDisplaySettingsW(
+            PCWSTR(device_name.as_ptr()),
+            ENUM_CURRENT_SETTINGS,
+            &mut mode,
+        )
+    };
+    if !found.as_bool() || mode.dmDisplayFrequency <= 1 {
+        return None;
+    }
+    refresh_interval_from_hz(f64::from(mode.dmDisplayFrequency))
 }
 
 fn available_monitors() -> Result<SmallVec<[HMONITOR; 4]>, WindowsDisplayTopologyFailure> {
@@ -830,13 +854,13 @@ fn native_collection_failure(error: impl fmt::Display) -> WindowsDisplayTopology
 
 #[cfg(test)]
 mod tests {
-    use std::rc::Rc;
+    use std::{rc::Rc, time::Duration};
 
     use super::{
         WindowsDisplay, WindowsDisplayTopologyAuthority, WindowsDisplayTopologyCandidate,
         WindowsDisplayTopologyFailure, WindowsDisplayTopologyRefresh, WindowsNativeDisplayRow,
     };
-    use open_gpui::{Bounds, DevicePixels, DisplayId, point, px, size};
+    use open_gpui::{Bounds, DevicePixels, DisplayId, PlatformDisplay as _, point, px, size};
     use smallvec::smallvec;
     use uuid::Uuid;
     use windows::Win32::Graphics::Gdi::HMONITOR;
@@ -870,6 +894,7 @@ mod tests {
                 point(DevicePixels(origin_x), DevicePixels(0)),
                 size(DevicePixels(work_width), DevicePixels(1_040)),
             ),
+            refresh_interval: Some(Duration::from_secs(1) / 60),
             uuid: Uuid::from_u128(provenance),
         }
     }
@@ -983,6 +1008,121 @@ mod tests {
                 .expect("the secondary display should remain published")
                 .physical_visible_bounds,
             changed_secondary.physical_visible_bounds
+        );
+    }
+
+    #[test]
+    fn refresh_rate_only_changes_publish_an_immutable_topology_generation() {
+        let primary = display(1, 0, 1_920, 1.0, 1);
+        let secondary = display(2, -1_920, 1_920, 1.5, 2);
+        let mut authority = WindowsDisplayTopologyAuthority::new(candidate(primary, secondary));
+        let previous = authority.exact_snapshot().unwrap();
+        let previous_projection = previous.platform_snapshot().displays();
+        let mut changed_secondary = secondary;
+        changed_secondary.refresh_interval = Some(Duration::from_secs(1) / 144);
+        let changed = candidate(primary, changed_secondary);
+
+        assert_eq!(
+            refresh(&mut authority, Ok(changed.clone())),
+            WindowsDisplayTopologyRefresh::Published {
+                previous_generation: 1,
+                generation: 2,
+            }
+        );
+        let current = authority.exact_snapshot().unwrap();
+        let current_projection = current.platform_snapshot().displays();
+        let current_secondary = current_projection
+            .iter()
+            .find(|display| display.id() == secondary.display_id)
+            .unwrap();
+        assert_eq!(
+            current_secondary.refresh_interval(),
+            changed_secondary.refresh_interval
+        );
+        assert_eq!(current_secondary.bounds(), secondary.bounds());
+        assert_eq!(
+            current_secondary.visible_bounds(),
+            secondary.visible_bounds()
+        );
+        assert_eq!(current_secondary.uuid().unwrap(), secondary.uuid().unwrap());
+        assert_eq!(
+            previous_projection
+                .iter()
+                .find(|display| display.id() == secondary.display_id)
+                .unwrap()
+                .refresh_interval(),
+            secondary.refresh_interval
+        );
+        assert_eq!(
+            previous
+                .physical_observation(secondary.display_id)
+                .unwrap()
+                .topology_generation(),
+            1
+        );
+        assert_eq!(
+            current
+                .physical_observation(secondary.display_id)
+                .unwrap()
+                .topology_generation(),
+            2
+        );
+        assert_eq!(
+            refresh(&mut authority, Ok(changed)),
+            WindowsDisplayTopologyRefresh::Unchanged { generation: 2 }
+        );
+        assert!(Rc::ptr_eq(
+            current_secondary,
+            &authority
+                .exact_snapshot()
+                .unwrap()
+                .platform_snapshot()
+                .displays()
+                .into_iter()
+                .find(|display| display.id() == secondary.display_id)
+                .unwrap()
+        ));
+    }
+
+    #[test]
+    fn unknown_refresh_interval_replaces_the_last_known_rate_without_partial_publication() {
+        let primary = display(1, 0, 1_920, 1.0, 1);
+        let secondary = display(2, -1_920, 1_920, 1.5, 2);
+        let mut authority = WindowsDisplayTopologyAuthority::new(candidate(primary, secondary));
+        let previous = authority.retained_snapshot();
+        let mut unknown_secondary = secondary;
+        unknown_secondary.refresh_interval = None;
+
+        assert!(matches!(
+            refresh(
+                &mut authority,
+                Err(WindowsDisplayTopologyFailure::UnstableDuringCollection)
+            ),
+            WindowsDisplayTopologyRefresh::RetainedAfterFailure { generation: 1, .. }
+        ));
+        assert!(authority.exact_snapshot().is_err());
+        assert_eq!(authority.retained_snapshot(), previous);
+        assert_eq!(
+            refresh(&mut authority, Ok(candidate(primary, unknown_secondary))),
+            WindowsDisplayTopologyRefresh::Published {
+                previous_generation: 1,
+                generation: 2,
+            }
+        );
+        let current = authority.exact_snapshot().unwrap();
+        assert_eq!(
+            current
+                .display(secondary.display_id)
+                .unwrap()
+                .refresh_interval(),
+            None
+        );
+        assert_eq!(
+            previous
+                .display(secondary.display_id)
+                .unwrap()
+                .refresh_interval(),
+            secondary.refresh_interval
         );
     }
 

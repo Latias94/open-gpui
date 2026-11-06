@@ -58,6 +58,7 @@ pub(crate) struct Callbacks {
     hover_status_change: Option<Rc<dyn Fn(bool)>>,
     resize: Option<Rc<dyn Fn(Size<Pixels>, f32)>>,
     moved: Option<Rc<dyn Fn()>>,
+    display_changed: Option<Box<dyn FnMut()>>,
     window_state_change: Option<Rc<dyn Fn()>>,
     should_close: PlatformShouldCloseCallbackSlot,
     close: Option<Box<dyn FnOnce()>>,
@@ -741,7 +742,10 @@ impl WaylandWindowState {
 
     pub fn primary_output_scale(&mut self) -> i32 {
         let mut scale = 1;
-        let mut current_output = self.display.take();
+        let mut current_output = self
+            .display
+            .take()
+            .filter(|(id, _)| self.outputs.is_empty() || self.outputs.contains_key(id));
         for (id, output) in self.outputs.iter() {
             if let Some((_, output_data)) = &current_output {
                 if output.scale > output_data.scale {
@@ -754,6 +758,10 @@ impl WaylandWindowState {
         }
         self.display = current_output;
         scale
+    }
+
+    fn current_output(&self) -> Option<(ObjectId, Output)> {
+        self.display.clone().or_else(|| self.client.sole_output())
     }
 
     pub fn inset(&self) -> Pixels {
@@ -908,6 +916,8 @@ impl WaylandWindowStatePtr {
     }
 
     fn terminate_callback_slots(&self) {
+        self.state.borrow().interaction_gate.quiesce();
+        self.callbacks.borrow_mut().display_changed = None;
         let (input_callback, should_close) = {
             let callbacks = self.callbacks.borrow();
             (callbacks.input.clone(), callbacks.should_close.clone())
@@ -1279,7 +1289,10 @@ impl WaylandWindowStatePtr {
 
                 state.outputs.insert(id, output.clone());
 
+                let previous_display = state.display.as_ref().map(|(id, _)| id.clone());
                 let scale = state.primary_output_scale();
+                let display_changed =
+                    state.display.as_ref().map(|(id, _)| id) != previous_display.as_ref();
                 state.update_subpixel_layout();
 
                 // We use `PreferredBufferScale` instead to set the scale if it's available
@@ -1287,12 +1300,20 @@ impl WaylandWindowStatePtr {
                     state.surface.set_buffer_scale(scale);
                     drop(state);
                     self.rescale(scale as f32);
+                } else {
+                    drop(state);
+                }
+                if display_changed {
+                    self.report_display_changed();
                 }
             }
             wl_surface::Event::Leave { output } => {
                 state.outputs.remove(&output.id());
 
+                let previous_display = state.display.as_ref().map(|(id, _)| id.clone());
                 let scale = state.primary_output_scale();
+                let display_changed =
+                    state.display.as_ref().map(|(id, _)| id) != previous_display.as_ref();
                 state.update_subpixel_layout();
 
                 // We use `PreferredBufferScale` instead to set the scale if it's available
@@ -1300,6 +1321,11 @@ impl WaylandWindowStatePtr {
                     state.surface.set_buffer_scale(scale);
                     drop(state);
                     self.rescale(scale as f32);
+                } else {
+                    drop(state);
+                }
+                if display_changed {
+                    self.report_display_changed();
                 }
             }
             wl_surface::Event::PreferredBufferScale { factor } => {
@@ -1485,6 +1511,58 @@ impl WaylandWindowStatePtr {
     pub fn primary_output_scale(&self) -> i32 {
         self.state.borrow_mut().primary_output_scale()
     }
+
+    pub fn report_display_changed(&self) {
+        if self.interaction_is_quiesced() {
+            return;
+        }
+        let callback = self.callbacks.borrow_mut().display_changed.take();
+        if let Some(mut callback) = callback {
+            callback();
+            if !self.interaction_is_quiesced() {
+                self.callbacks
+                    .borrow_mut()
+                    .display_changed
+                    .get_or_insert(callback);
+            }
+        }
+    }
+
+    pub fn handle_output_changed(&self, id: &ObjectId, output: &Output) -> bool {
+        let mut state = self.state.borrow_mut();
+        if state.interaction_gate.is_quiesced() {
+            return false;
+        }
+        if let Some(entered) = state.outputs.get_mut(id) {
+            *entered = output.clone();
+        }
+        let previous_display = state.display.as_ref().map(|(id, _)| id.clone());
+        if let Some((display_id, display)) = &mut state.display
+            && display_id == id
+        {
+            *display = output.clone();
+        }
+        state.primary_output_scale();
+        state.update_subpixel_layout();
+        state.display.is_none()
+            || state.display.as_ref().map(|(id, _)| id) != previous_display.as_ref()
+    }
+
+    pub fn handle_output_removed(&self, id: &ObjectId) -> bool {
+        let mut state = self.state.borrow_mut();
+        if state.interaction_gate.is_quiesced() {
+            return false;
+        }
+        state.outputs.remove(id);
+        let previous_display = state.display.as_ref().map(|(id, _)| id.clone());
+        if previous_display.as_ref() == Some(id) {
+            state.display = None;
+        }
+        state.primary_output_scale();
+        state.update_subpixel_layout();
+        state.display.is_none()
+            || state.display.as_ref().map(|(id, _)| id) != previous_display.as_ref()
+    }
 }
 
 fn extract_states<'a, S: TryFrom<u32> + 'a>(states: &'a [u8]) -> impl Iterator<Item = S> + 'a
@@ -1641,8 +1719,7 @@ impl PlatformWindow for WaylandWindow {
             WindowBounds::Windowed(state.bounds.inset(state.inset()))
         };
         let display_id = state
-            .display
-            .as_ref()
+            .current_output()
             .map(|(id, _)| open_gpui::DisplayId::from(id.protocol_id() as u64));
 
         open_gpui::WindowPlatformFacts {
@@ -1712,13 +1789,13 @@ impl PlatformWindow for WaylandWindow {
 
     fn display(&self) -> Option<Rc<dyn PlatformDisplay>> {
         let state = self.borrow();
-        state.display.as_ref().map(|(id, display)| {
-            Rc::new(WaylandDisplay {
-                id: id.clone(),
-                name: display.name.clone(),
-                bounds: display.bounds.to_pixels(state.scale),
-            }) as Rc<dyn PlatformDisplay>
-        })
+        let (id, display) = state.current_output()?;
+        Some(Rc::new(WaylandDisplay {
+            id,
+            name: display.name,
+            bounds: display.bounds.to_pixels(display.scale as f32),
+            refresh_interval: display.refresh_interval,
+        }))
     }
 
     fn mouse_position(&self) -> Point<Pixels> {
@@ -1843,6 +1920,12 @@ impl PlatformWindow for WaylandWindow {
 
     fn on_moved(&self, callback: Box<dyn Fn()>) {
         self.0.callbacks.borrow_mut().moved = Some(Rc::from(callback));
+    }
+
+    fn on_display_changed(&self, callback: Box<dyn FnMut()>) {
+        if !self.0.interaction_is_quiesced() {
+            self.0.callbacks.borrow_mut().display_changed = Some(callback);
+        }
     }
 
     fn on_window_state_change(&self, callback: Box<dyn Fn()>) {

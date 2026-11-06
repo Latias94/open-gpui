@@ -138,6 +138,7 @@ pub(crate) struct WindowsPlatformInner {
     platform_handle: SafeHwnd,
     raw_window_handles: Arc<RegisteredWindows>,
     display_topology: RefCell<WindowsDisplayTopologyAuthority>,
+    displays_changed_scheduled: Cell<bool>,
     native_retirement: RefCell<WindowsNativeRetirementCoordinator>,
     #[cfg(test)]
     lifecycle_test_probe: Rc<NativeWindowLifecycleTestProbe>,
@@ -623,6 +624,7 @@ struct PlatformCallbacks {
     validate_app_menu_command: Cell<Option<Box<dyn FnMut(&dyn Action) -> bool>>>,
     keyboard_layout_change: Cell<Option<Box<dyn FnMut()>>>,
     system_wake: Cell<Option<NativeAppNotificationHandler>>,
+    displays_changed: Cell<Option<Box<dyn FnMut()>>>,
 }
 
 impl WindowsPlatformState {
@@ -704,7 +706,7 @@ impl WindowsPlatform {
         };
         let result = unsafe {
             CreateWindowExW(
-                WINDOW_EX_STYLE(0),
+                WS_EX_TOOLWINDOW,
                 PLATFORM_WINDOW_CLASS_NAME,
                 None,
                 WINDOW_STYLE(0),
@@ -712,7 +714,7 @@ impl WindowsPlatform {
                 0,
                 0,
                 0,
-                Some(HWND_MESSAGE),
+                None,
                 None,
                 None,
                 Some(&raw const context as *const _),
@@ -2167,15 +2169,17 @@ impl Platform for WindowsPlatform {
     }
 
     fn display_snapshot(&self) -> PlatformDisplaySnapshot {
-        // Message-only windows do not receive WM_DISPLAYCHANGE/WM_SETTINGCHANGE broadcasts.
-        // With no top-level window alive, synchronously refresh before publishing the snapshot so
-        // a tray/global action can open the first replacement window against current topology.
-        if self.raw_window_handles.read().is_empty() {
-            self.inner.refresh_display_topology_now();
-        }
         self.inner
             .retained_display_topology_snapshot()
             .platform_snapshot()
+    }
+
+    fn on_displays_changed(&self, callback: Box<dyn FnMut()>) {
+        self.inner
+            .state
+            .callbacks
+            .displays_changed
+            .set(Some(callback));
     }
 
     #[cfg(feature = "screen-capture")]
@@ -2647,6 +2651,7 @@ impl WindowsPlatformInner {
                     anyhow!("collecting the initial Windows display topology: {error}")
                 })?,
             ),
+            displays_changed_scheduled: Cell::new(false),
             native_retirement: RefCell::new(WindowsNativeRetirementCoordinator::default()),
             #[cfg(test)]
             lifecycle_test_probe: context.lifecycle_test_probe.clone(),
@@ -2715,10 +2720,10 @@ impl WindowsPlatformInner {
 
     fn finish_display_topology_refresh(&self, refresh: &WindowsDisplayTopologyRefresh) {
         match refresh {
-            WindowsDisplayTopologyRefresh::Published { generation, .. }
-            | WindowsDisplayTopologyRefresh::Unchanged { generation } => {
+            WindowsDisplayTopologyRefresh::Published { .. }
+            | WindowsDisplayTopologyRefresh::Unchanged { .. } => {
                 self.cancel_display_topology_retry();
-                self.notify_windows_of_display_topology(*generation);
+                self.schedule_displays_changed();
             }
             WindowsDisplayTopologyRefresh::RetainedAfterFailure {
                 generation,
@@ -2733,6 +2738,37 @@ impl WindowsPlatformInner {
             }
             WindowsDisplayTopologyRefresh::Superseded { .. } => {}
         }
+    }
+
+    fn schedule_displays_changed(&self) {
+        if self.displays_changed_scheduled.replace(true) {
+            return;
+        }
+        if let Err(error) = unsafe {
+            PostMessageW(
+                Some(self.platform_handle.as_raw()),
+                WM_GPUI_DISPLAYS_CHANGED,
+                WPARAM(self.validation_number),
+                LPARAM(0),
+            )
+        } {
+            self.displays_changed_scheduled.set(false);
+            log::error!("cannot schedule a Windows display-change notification: {error}");
+            self.schedule_display_topology_retry();
+        }
+    }
+
+    fn handle_displays_changed(&self) -> Option<isize> {
+        self.displays_changed_scheduled.set(false);
+        let Ok(snapshot) = self.exact_display_topology_snapshot() else {
+            return Some(0);
+        };
+        self.with_callback(
+            |callbacks| &callbacks.displays_changed,
+            |callback| callback(),
+        );
+        self.notify_windows_of_display_topology(snapshot.generation());
+        Some(0)
     }
 
     fn cancel_display_topology_retry(&self) {
@@ -2766,8 +2802,7 @@ impl WindowsPlatformInner {
         if self.display_topology.borrow().is_degraded() {
             self.refresh_display_topology_now();
         } else {
-            let generation = self.retained_display_topology_snapshot().generation();
-            self.notify_windows_of_display_topology(generation);
+            self.schedule_displays_changed();
         }
         Some(0)
     }
@@ -3176,11 +3211,31 @@ impl WindowsPlatformInner {
             | WM_GPUI_DOCK_MENU_ACTION
             | WM_GPUI_KEYBOARD_LAYOUT_CHANGED
             | WM_GPUI_GPU_DEVICE_LOST
-            | WM_GPUI_REFRESH_DISPLAY_TOPOLOGY => self.handle_gpui_events(msg, wparam, lparam),
+            | WM_GPUI_REFRESH_DISPLAY_TOPOLOGY
+            | WM_GPUI_DISPLAYS_CHANGED => self.handle_gpui_events(msg, wparam, lparam),
             WM_TIMER if wparam.0 == DISPLAY_TOPOLOGY_RETRY_TIMER_ID => {
                 self.handle_display_topology_retry()
             }
             WM_POWERBROADCAST => self.handle_power_broadcast(wparam),
+            WM_DISPLAYCHANGE => {
+                self.request_display_topology_refresh();
+                Some(0)
+            }
+            WM_SETTINGCHANGE
+                if system_setting_changes_display_topology(SYSTEM_PARAMETERS_INFO_ACTION(
+                    wparam.0 as u32,
+                )) =>
+            {
+                self.request_display_topology_refresh();
+                Some(0)
+            }
+            WM_QUERYENDSESSION => Some(1),
+            WM_ENDSESSION => {
+                if wparam.0 != 0 {
+                    self.handle_end_session();
+                }
+                Some(0)
+            }
             _ => None,
         };
         if let Some(result) = handled {
@@ -3206,8 +3261,15 @@ impl WindowsPlatformInner {
             WM_GPUI_KEYBOARD_LAYOUT_CHANGED => self.handle_keyboard_layout_change(),
             WM_GPUI_GPU_DEVICE_LOST => self.handle_device_lost(),
             WM_GPUI_REFRESH_DISPLAY_TOPOLOGY => self.handle_display_topology_refresh(),
+            WM_GPUI_DISPLAYS_CHANGED => self.handle_displays_changed(),
             _ => unreachable!(),
         }
+    }
+
+    fn handle_end_session(&self) {
+        self.with_callback(|callbacks| &callbacks.quit, |callback| callback());
+        log::logger().flush();
+        unsafe { PostQuitMessage(0) };
     }
 
     #[inline]
@@ -5556,8 +5618,9 @@ mod tests {
         let registered_window = platform
             .window_from_hwnd(native_window)
             .expect("native test window should retain its registered authority");
-        platform.inner.run_foreground_task();
-        while take_foreground_wake(&platform).is_some() {}
+        super::native_test_support::pump_messages_until_idle(
+            "event-driven geometry initial display and foreground delivery",
+        );
         let initial = committed_window_facts(&mut app, window);
         let mut outer_bounds = RECT::default();
         unsafe { GetWindowRect(native_window, &mut outer_bounds) }

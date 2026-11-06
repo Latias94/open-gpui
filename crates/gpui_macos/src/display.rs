@@ -5,7 +5,7 @@ use self::native::{MacNativeDisplayBatch, MacNativeDisplayRow};
 use cocoa::base::id;
 use open_gpui::{Bounds, DisplayId, Pixels, PlatformDisplay, PlatformDisplaySnapshot};
 use smallvec::SmallVec;
-use std::{rc::Rc, sync::Arc};
+use std::{rc::Rc, sync::Arc, time::Duration};
 use uuid::Uuid;
 
 pub(crate) use self::topology::{
@@ -26,6 +26,7 @@ pub(crate) struct MacDisplay {
     scale_factor: f32,
     bounds: Bounds<Pixels>,
     visible_bounds: Bounds<Pixels>,
+    refresh_interval: Option<Duration>,
 }
 
 // Native construction rejects non-finite scale factors and geometry, so equality is reflexive.
@@ -52,6 +53,10 @@ impl PlatformDisplay for MacDisplay {
 
     fn visible_bounds(&self) -> Bounds<Pixels> {
         self.visible_bounds
+    }
+
+    fn refresh_interval(&self) -> Option<Duration> {
+        self.refresh_interval
     }
 }
 
@@ -317,6 +322,7 @@ mod tests {
             scale_factor,
             bounds,
             visible_bounds: Bounds::new(bounds.origin, size(px(visible_width), px(1_040.0))),
+            refresh_interval: None,
         }
     }
 

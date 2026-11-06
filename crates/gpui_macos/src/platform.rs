@@ -198,6 +198,7 @@ pub(crate) struct MacPlatformState {
     find_pasteboard: Pasteboard,
     reopen: Option<Box<dyn FnMut()>>,
     on_keyboard_layout_change: Option<Box<dyn FnMut()>>,
+    on_displays_changed: Option<Box<dyn FnMut()>>,
     system_wake_observer_registered: bool,
     quit: Option<Box<dyn FnMut()>>,
     menu_command: Option<Box<dyn FnMut(&dyn Action)>>,
@@ -251,6 +252,7 @@ impl MacPlatform {
                 finish_launching: None,
                 dock_menu: None,
                 on_keyboard_layout_change: None,
+                on_displays_changed: None,
                 system_wake_observer_registered: false,
                 menus: None,
                 keyboard_mapper,
@@ -707,6 +709,23 @@ impl Platform for MacPlatform {
     }
 
     fn run(&self, on_finish_launching: Box<dyn FnOnce()>) {
+        let display_notification_lifetime = Arc::new(());
+        let notification_lifetime = Arc::downgrade(&display_notification_lifetime);
+        let platform_address = self as *const Self as usize;
+        let _display_subscription =
+            self.display_topology()
+                .subscribe_displays_changed(Arc::new(move |_| {
+                    let notification = Box::new(MacDisplaysChangedNotification {
+                        platform: platform_address as *const MacPlatform,
+                        lifetime: notification_lifetime.clone(),
+                    });
+                    unsafe {
+                        DispatchQueue::main().exec_async_f(
+                            Box::into_raw(notification) as *mut c_void,
+                            report_mac_displays_changed,
+                        );
+                    }
+                }));
         let mut state = self.0.lock();
         if state.headless {
             drop(state);
@@ -834,6 +853,10 @@ impl Platform for MacPlatform {
 
     fn display_snapshot(&self) -> PlatformDisplaySnapshot {
         self.display_topology().retained_platform_snapshot()
+    }
+
+    fn on_displays_changed(&self, callback: Box<dyn FnMut()>) {
+        self.0.lock().on_displays_changed = Some(callback);
     }
 
     #[cfg(feature = "screen-capture")]
@@ -1618,6 +1641,32 @@ extern "C" fn complete_scheduled_display_topology_refresh(context: *mut c_void) 
     let request_epoch = display_topology.begin_scheduled_refresh();
     if let Some(request_epoch) = request_epoch {
         complete_mac_display_topology_refresh((*display_topology).clone(), request_epoch);
+    }
+}
+
+struct MacDisplaysChangedNotification {
+    platform: *const MacPlatform,
+    lifetime: std::sync::Weak<()>,
+}
+
+extern "C" fn report_mac_displays_changed(context: *mut c_void) {
+    let notification = unsafe { Box::from_raw(context as *mut MacDisplaysChangedNotification) };
+    let Some(_lifetime) = notification.lifetime.upgrade() else {
+        return;
+    };
+    let platform = unsafe { &*notification.platform };
+    let callback = platform.0.lock().on_displays_changed.take();
+    if let Some(mut callback) = callback {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| callback()));
+        platform
+            .0
+            .lock()
+            .on_displays_changed
+            .get_or_insert(callback);
+        if let Err(panic) = result {
+            std::mem::forget(panic);
+            log::error!("isolated a panic from a macOS display-change callback");
+        }
     }
 }
 

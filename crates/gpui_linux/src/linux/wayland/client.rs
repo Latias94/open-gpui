@@ -72,7 +72,7 @@ use xkbcommon::xkb::ffi::XKB_KEYMAP_FORMAT_TEXT_V1;
 use xkbcommon::xkb::{self, KEYMAP_COMPILE_NO_FLAGS, Keycode};
 
 use super::{
-    display::WaylandDisplay,
+    display::{WaylandDisplay, refresh_interval_from_millihertz},
     window::{ImeInput, WaylandTransientOwner, WaylandWindowStatePtr},
 };
 
@@ -190,17 +190,31 @@ pub struct InProgressOutput {
     position: Option<Point<DevicePixels>>,
     size: Option<Size<DevicePixels>>,
     subpixel: Option<wl_output::Subpixel>,
+    refresh_interval: Option<Duration>,
 }
 
 impl InProgressOutput {
+    fn set_mode(&mut self, flags: WEnum<wl_output::Mode>, width: i32, height: i32, refresh: i32) {
+        if let WEnum::Value(flags) = flags
+            && flags.contains(wl_output::Mode::Current)
+        {
+            self.size = Some(size(DevicePixels(width), DevicePixels(height)));
+            self.refresh_interval = refresh_interval_from_millihertz(refresh);
+        }
+    }
+
     fn complete(&self) -> Option<Output> {
         if let Some((position, size)) = self.position.zip(self.size) {
             let scale = self.scale.unwrap_or(1);
+            if scale <= 0 || size.width.0 <= 0 || size.height.0 <= 0 {
+                return None;
+            }
             Some(Output {
                 name: self.name.clone(),
                 scale,
                 bounds: Bounds::new(position, size),
                 subpixel: self.subpixel,
+                refresh_interval: self.refresh_interval,
             })
         } else {
             None
@@ -214,6 +228,7 @@ pub struct Output {
     pub scale: i32,
     pub bounds: Bounds<DevicePixels>,
     pub subpixel: Option<wl_output::Subpixel>,
+    pub refresh_interval: Option<Duration>,
 }
 
 pub(crate) struct WaylandClientState {
@@ -239,6 +254,7 @@ pub(crate) struct WaylandClientState {
     outputs: HashMap<ObjectId, Output>,
     in_progress_outputs: HashMap<ObjectId, InProgressOutput>,
     wl_outputs: HashMap<ObjectId, wl_output::WlOutput>,
+    output_globals: HashMap<u32, ObjectId>,
     keyboard_layout: LinuxKeyboardLayout,
     keymap_state: Option<xkb::State>,
     compose_state: Option<xkb::compose::State>,
@@ -343,6 +359,33 @@ impl WaylandClientStatePtr {
         self.0
             .upgrade()
             .expect("The pointer should always be valid when dispatching in wayland")
+    }
+
+    fn report_displays_changed(&self) {
+        let Some(client) = self.0.upgrade() else {
+            return;
+        };
+        let callback = client.borrow_mut().common.callbacks.displays_changed.take();
+        if let Some(mut callback) = callback {
+            callback();
+            client
+                .borrow_mut()
+                .common
+                .callbacks
+                .displays_changed
+                .get_or_insert(callback);
+        }
+    }
+
+    pub fn sole_output(&self) -> Option<(ObjectId, Output)> {
+        let client = self.0.upgrade()?;
+        let state = client.try_borrow().ok()?;
+        let mut outputs = state.outputs.iter();
+        let (id, output) = outputs.next()?;
+        if outputs.next().is_some() {
+            return None;
+        }
+        Some((id.clone(), output.clone()))
     }
 
     pub fn get_serial(&self, kind: SerialKind) -> u32 {
@@ -693,7 +736,8 @@ impl WaylandClient {
     pub(crate) fn new() -> Self {
         let conn = Connection::connect_to_env().unwrap();
 
-        let (globals, event_queue) = registry_queue_init::<WaylandClientStatePtr>(&conn).unwrap();
+        let (globals, mut event_queue) =
+            registry_queue_init::<WaylandClientStatePtr>(&conn).unwrap();
         let qh = event_queue.handle();
 
         let mut seat: Option<wl_seat::WlSeat> = None;
@@ -701,6 +745,8 @@ impl WaylandClient {
         let mut in_progress_outputs = HashMap::default();
         #[allow(clippy::mutable_key_type)]
         let mut wl_outputs: HashMap<ObjectId, wl_output::WlOutput> = HashMap::default();
+        #[allow(clippy::mutable_key_type)]
+        let mut output_globals = HashMap::default();
         globals.contents().with_list(|list| {
             for global in list {
                 match &global.interface[..] {
@@ -720,6 +766,7 @@ impl WaylandClient {
                             (),
                         );
                         in_progress_outputs.insert(output.id(), InProgressOutput::default());
+                        output_globals.insert(global.name, output.id());
                         wl_outputs.insert(output.id(), output);
                     }
                     _ => {}
@@ -846,6 +893,7 @@ impl WaylandClient {
             outputs: HashMap::default(),
             in_progress_outputs,
             wl_outputs,
+            output_globals,
             windows: HashMap::default(),
             common,
             keyboard_layout: LinuxKeyboardLayout::new(UNKNOWN_KEYBOARD_LAYOUT_NAME),
@@ -899,6 +947,12 @@ impl WaylandClient {
             event_loop: Some(event_loop),
             ime_enabled: None,
         }));
+
+        let mut pointer = WaylandClientStatePtr(Rc::downgrade(&state));
+        event_queue
+            .roundtrip(&mut pointer)
+            .map_err(|error| anyhow::anyhow!("failed to receive initial Wayland state: {error}"))
+            .log_err();
 
         WaylandSource::new(conn, event_queue)
             .insert(handle)
@@ -966,6 +1020,7 @@ impl LinuxClient for WaylandClient {
                     id: id.clone(),
                     name: output.name.clone(),
                     bounds: output.bounds.to_pixels(output.scale as f32),
+                    refresh_interval: output.refresh_interval,
                 }) as Rc<dyn PlatformDisplay>
             })
             .collect()
@@ -982,6 +1037,7 @@ impl LinuxClient for WaylandClient {
                         id: object_id.clone(),
                         name: output.name.clone(),
                         bounds: output.bounds.to_pixels(output.scale as f32),
+                        refresh_interval: output.refresh_interval,
                     }) as Rc<dyn PlatformDisplay>
                 })
             })
@@ -1355,12 +1411,35 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientStat
                     state
                         .in_progress_outputs
                         .insert(output.id(), InProgressOutput::default());
+                    state.output_globals.insert(name, output.id());
                     state.wl_outputs.insert(output.id(), output);
                 }
                 _ => {}
             },
-            wl_registry::Event::GlobalRemove { name: _ } => {
+            wl_registry::Event::GlobalRemove { name } => {
                 // TODO: handle global removal
+                let Some(id) = state.output_globals.remove(&name) else {
+                    return;
+                };
+                let was_complete = state.outputs.remove(&id).is_some();
+                state.in_progress_outputs.remove(&id);
+                if let Some(output) = state.wl_outputs.remove(&id)
+                    && output.version() >= wl_output::REQ_RELEASE_SINCE
+                {
+                    output.release();
+                }
+                let windows = state.windows.values().cloned().collect::<Vec<_>>();
+                drop(state);
+                let changed_windows = windows
+                    .into_iter()
+                    .filter(|window| window.handle_output_removed(&id))
+                    .collect::<Vec<_>>();
+                if was_complete {
+                    this.report_displays_changed();
+                }
+                for window in changed_windows {
+                    window.report_display_changed();
+                }
             }
             _ => {}
         }
@@ -1468,14 +1547,30 @@ impl Dispatch<wl_output::WlOutput, ()> for WaylandClientStatePtr {
                     in_progress_output.subpixel = Some(subpixel);
                 }
             }
-            wl_output::Event::Mode { width, height, .. } => {
-                in_progress_output.size = Some(size(DevicePixels(width), DevicePixels(height)))
+            wl_output::Event::Mode {
+                flags,
+                width,
+                height,
+                refresh,
+            } => {
+                in_progress_output.set_mode(flags, width, height, refresh);
             }
             wl_output::Event::Done => {
-                if let Some(complete) = in_progress_output.complete() {
-                    state.outputs.insert(output.id(), complete);
+                let Some(complete) = in_progress_output.complete() else {
+                    return;
+                };
+                let id = output.id();
+                state.outputs.insert(id.clone(), complete.clone());
+                let windows = state.windows.values().cloned().collect::<Vec<_>>();
+                drop(state);
+                let changed_windows = windows
+                    .into_iter()
+                    .filter(|window| window.handle_output_changed(&id, &complete))
+                    .collect::<Vec<_>>();
+                this.report_displays_changed();
+                for window in changed_windows {
+                    window.report_display_changed();
                 }
-                state.in_progress_outputs.remove(&output.id());
             }
             _ => {}
         }
@@ -2813,6 +2908,101 @@ impl Dispatch<XdgDialogV1, ()> for WaylandClientStatePtr {
         _conn: &Connection,
         _qhandle: &QueueHandle<Self>,
     ) {
+    }
+}
+
+#[cfg(test)]
+mod output_tests {
+    use super::*;
+
+    fn described_output() -> InProgressOutput {
+        let mut output = InProgressOutput {
+            name: Some("DP-1".into()),
+            position: Some(point(DevicePixels(-1_920), DevicePixels(240))),
+            scale: Some(2),
+            subpixel: Some(wl_output::Subpixel::HorizontalRgb),
+            ..InProgressOutput::default()
+        };
+        output.set_mode(WEnum::Value(wl_output::Mode::Current), 1_920, 1_080, 60_000);
+        output
+    }
+
+    #[test]
+    fn only_current_modes_change_display_properties() {
+        let mut pending = described_output();
+        let published = pending.complete().unwrap();
+        pending.set_mode(
+            WEnum::Value(wl_output::Mode::Preferred),
+            3_840,
+            2_160,
+            144_000,
+        );
+        assert_eq!(pending.complete(), Some(published.clone()));
+        pending.set_mode(WEnum::Unknown(u32::MAX), 3_840, 2_160, 144_000);
+        assert_eq!(pending.complete(), Some(published));
+    }
+
+    #[test]
+    fn incremental_refresh_scale_and_geometry_batches_preserve_other_properties() {
+        let mut pending = described_output();
+        let original = pending.complete().unwrap();
+        pending.set_mode(WEnum::Value(wl_output::Mode::Current), 1_920, 1_080, 59_940);
+        let refresh_changed = pending.complete().unwrap();
+        assert_eq!(refresh_changed.bounds, original.bounds);
+        assert_eq!(refresh_changed.name, original.name);
+        assert_eq!(refresh_changed.scale, original.scale);
+        assert_eq!(refresh_changed.subpixel, original.subpixel);
+        assert_eq!(
+            refresh_changed.refresh_interval,
+            refresh_interval_from_millihertz(59_940)
+        );
+        assert_ne!(refresh_changed.refresh_interval, original.refresh_interval);
+
+        pending.scale = Some(1);
+        let scale_changed = pending.complete().unwrap();
+        assert_eq!(scale_changed.scale, 1);
+        assert_eq!(
+            scale_changed.refresh_interval,
+            refresh_changed.refresh_interval
+        );
+        assert_eq!(scale_changed.bounds, refresh_changed.bounds);
+
+        pending.position = Some(point(DevicePixels(120), DevicePixels(-1_080)));
+        let moved = pending.complete().unwrap();
+        assert_eq!(moved.bounds.origin, pending.position.unwrap());
+        assert_eq!(moved.bounds.size, original.bounds.size);
+        assert_eq!(moved.refresh_interval, refresh_changed.refresh_interval);
+        assert_eq!(
+            original.bounds.origin,
+            point(DevicePixels(-1_920), DevicePixels(240))
+        );
+        assert_eq!(original.scale, 2);
+
+        pending.set_mode(WEnum::Value(wl_output::Mode::Current), 1_920, 1_080, 0);
+        assert_eq!(pending.complete().unwrap().refresh_interval, None);
+    }
+
+    #[test]
+    fn incomplete_or_invalid_descriptions_are_not_published() {
+        let mut pending = InProgressOutput::default();
+        assert_eq!(pending.complete(), None);
+        pending.set_mode(
+            WEnum::Value(wl_output::Mode::Preferred),
+            1_920,
+            1_080,
+            60_000,
+        );
+        pending.position = Some(Point::default());
+        assert_eq!(pending.complete(), None);
+        pending.set_mode(WEnum::Value(wl_output::Mode::Current), 1_920, 1_080, 0);
+        let complete = pending.complete().unwrap();
+        assert_eq!(complete.scale, 1);
+        assert_eq!(complete.refresh_interval, None);
+        pending.scale = Some(0);
+        assert_eq!(pending.complete(), None);
+        pending.scale = Some(1);
+        pending.set_mode(WEnum::Value(wl_output::Mode::Current), -1, 1_080, 60_000);
+        assert_eq!(pending.complete(), None);
     }
 }
 

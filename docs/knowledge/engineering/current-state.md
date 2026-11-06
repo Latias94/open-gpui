@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-06T17:31:00+08:00
+timestamp: 2026-11-06T18:52:00+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -260,6 +260,27 @@ verified_by:
   pass, as does the maintenance skill validator. That skill's local `bf3e0d2f7c6` clarification
   makes official mechanisms the default baseline and requires evidence for retained differences.
 
+- The connected-display successor adopts official App/Window observation, refresh intervals
+  and both launch initializations after owning-assets `1855a94c5ee`. It reuses the fork's
+  immutable topology, committed facts and ordered native ingress. Windows has a hidden top-level
+  broadcast recipient with no app windows. The verification guide retains the initial fixture
+  failures, official Hz reciprocal-overflow correction and reproduced deferred-close reentry
+  defect in the fork. Existing Window close-handler custody now protects queued native queries;
+  the geometry fixture establishes its baseline after actual startup delivery. Corrected focused
+  follow-up passes 22/22; full runtime/public/gallery passes 1,388/1,388 with four existing
+  interactive Windows skips. Components/docking/Canvas pass 2,964/2,964 and independently locked
+  public consumers pass 18/18 without skips. The latter exposes and qualifies promoting bitflags
+  from optional Wayland activation to the official required Core dependency. Versions and both
+  lockfiles remain unchanged. Locked compilation, affected correctness Clippy, formatting and
+  actual Windows Rust 1.92.0 framework/consumer all-target/all-feature checks pass. All eight
+  implementation/review subthreads are closed. Foreign-backend source, synthetic WM ingress,
+  detached association/property fixtures and actual Submitted frames retain their separate
+  scopes; physical mode/hotplug changes, native non-Windows execution and numerical costs remain
+  unqualified. Production Core/WGPU/Web compile on wasm32-unknown-unknown; Web test-target
+  compilation stops in unchanged wait-timeout test-support dependency. The verification record
+  retains that gap and the proptest pin comparison. Refresh-aware telemetry remains queued
+  rather than implied by the getter.
+
 # Historical Main Integration
 
 The previous snapshot recorded `df6ae2f` on July 9. The following integration summary retains that
@@ -291,9 +312,10 @@ historical scope and is not current branch or CI qualification.
   recorded Windows/software scope, as are source-fragment/layer/underline and window-local
   text ownership. The Taffy/intrinsic/root/grid/stack successor is qualified within its
   recorded scope, together with shared-image decoding and its real public/native consumers.
-  The externally driven App and owning asset-load units are qualified within their recorded
-  scope. Apply the maintenance skill's official-baseline rule while reconciling remaining
-  image-feature/API/platform/display/hot-reload differences. Qualify the
+  The externally driven App, owning asset-load and display-observation units are qualified within
+  their recorded scope. Reconcile the official refresh-aware telemetry owner next; display getters
+  do not qualify frame pacing. Apply the maintenance skill's official-baseline rule while
+  reconciling remaining image-feature/API/platform/hot-reload differences. Qualify the
   prepared CoreText selection/cascade work on macOS when that platform is available. The
   DirectWrite successor now
   has separate existing-family and installed-fallback evidence rather than borrowing the

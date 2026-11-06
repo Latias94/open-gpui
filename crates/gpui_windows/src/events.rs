@@ -33,6 +33,7 @@ pub(crate) const WM_GPUI_GPU_DEVICE_LOST: u32 = WM_USER + 7;
 pub(crate) const WM_GPUI_KEYDOWN: u32 = WM_USER + 8;
 pub(crate) const WM_GPUI_REFRESH_DISPLAY_TOPOLOGY: u32 = WM_USER + 9;
 pub(crate) const WM_GPUI_DISPLAY_TOPOLOGY_PUBLISHED: u32 = WM_USER + 10;
+pub(crate) const WM_GPUI_DISPLAYS_CHANGED: u32 = WM_USER + 11;
 
 const SIZE_MOVE_LOOP_TIMER_ID: usize = 1;
 
@@ -1238,8 +1239,7 @@ impl WindowsWindowInner {
                 && let Ok(snapshot) = coordinator.exact_display_topology_snapshot()
                 && let Some(display) = snapshot.display_for_native_monitor(monitor)
             {
-                self.state
-                    .set_display_binding(display, snapshot.generation());
+                self.set_display_binding(display, snapshot.generation());
             }
         }
         let _ = with_windows_shared_callback(&self.state.callbacks.moved, |callback| callback());
@@ -2061,8 +2061,7 @@ impl WindowsWindowInner {
         let Some(new_display) = snapshot.display_for_native_monitor(new_monitor) else {
             return Some(0);
         };
-        self.state
-            .set_display_binding(new_display, snapshot.generation());
+        self.set_display_binding(new_display, snapshot.generation());
         let _ = with_windows_shared_callback(&self.state.callbacks.moved, |callback| callback());
         Some(0)
     }
@@ -2872,7 +2871,9 @@ fn notify_frame_changed(handle: HWND) {
     }
 }
 
-fn system_setting_changes_display_topology(action: SYSTEM_PARAMETERS_INFO_ACTION) -> bool {
+pub(crate) fn system_setting_changes_display_topology(
+    action: SYSTEM_PARAMETERS_INFO_ACTION,
+) -> bool {
     matches!(action, SPI_SETWORKAREA | SPI_SETLOGICALDPIOVERRIDE)
 }
 

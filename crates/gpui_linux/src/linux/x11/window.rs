@@ -2852,6 +2852,8 @@ impl PlatformWindow for X11Window {
         self.0.callbacks.borrow_mut().moved = Some(Rc::from(callback));
     }
 
+    fn on_display_changed(&self, _callback: Box<dyn FnMut()>) {}
+
     fn on_window_state_change(&self, callback: Box<dyn Fn()>) {
         self.0.callbacks.borrow_mut().window_state_change = Some(Rc::from(callback));
     }

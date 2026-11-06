@@ -60,6 +60,10 @@ impl WebDisplay {
 }
 
 impl PlatformDisplay for WebDisplay {
+    fn refresh_interval(&self) -> Option<std::time::Duration> {
+        None
+    }
+
     fn id(&self) -> DisplayId {
         self.id
     }

@@ -1986,6 +1986,152 @@ clarification passes its existing validator. Verification uses serial one-job Ca
 shared target; no remote publication or CI execution is part of this record. Full fixed-target
 closure, canonical docking, Nara adoption and complete R11/R12 remain open.
 
+## Connected Displays And Window Association
+
+This successor starts from `1855a94c5eeb7e0a97e69479232211827efc3942` and adopts official
+`f495dd0f77b69e287ed72c1168dc02965f08be7d` as retained by fixed target
+`635026fabc38440fce5e1767d125026a17b12012`. App caches connected-display bounds and
+refresh intervals, reports added/removed/changed properties and publishes the complete state
+before observers. Window tracks its association through the dedicated display callback;
+Window/Context observers read the cached interval. Both launch paths reread after platform
+connection. The public interfaces follow the official mechanism.
+
+Fork adaptations use the existing immutable PlatformDisplaySnapshot and ordered native App/
+Window ingress and the existing SubscriberSet storage. Dedicated association reads retain the
+official PlatformWindow::display authority; its event separately refreshes coherent committed
+window facts, which continue to own geometry and placement receipts. Bounds updates no longer
+consume the separate display association transition. Windows replaces
+its message-only platform HWND with a hidden top-level tool window, removes the no-app-window
+synchronous scan workaround and routes global broadcasts through the existing topology owner.
+Refresh intervals participate in immutable topology publication. Native callbacks execute after
+that publication and outside mutable topology borrows. Native creation still validates its exact
+display generation.
+
+The focused owner/provider cohort covers the official unknown-destination-before-App-callback
+scenario, additions/removals/both change bits, spurious hints, ready complete App state,
+displayless windows, subscriptions/entity release, busy-App FIFO, observer reentry/unwind,
+closed windows and both initially empty launch paths. The first compile finds one missing trait
+import in the extracted App owner and one test importing the public reexport instead of its
+module-private Application constructor; both are corrected. The first runtime selection passes
+6/16 (`3fae9e37-f4fa-4601-afc6-1cafc9ccdf55`). New provider helpers and adapted official
+tests had assumed synchronous callbacks rather than the fork's ordered ingress. They now drain
+through the existing TestAppContext convention, while busy-App tests retain their explicit
+pending assertions. The dedicated display event also reads and commits one coherent platform
+facts snapshot without consuming its separate association transition in bounds handling.
+
+The expanded owner/provider/rate selection passes 19/21
+(`7c045f72-b801-4470-82d6-dc7496e8330b`): all 16 App/Window scenarios pass. One new direct
+provider call still needs its explicit drain. The other failure reproduces a defect in the
+official shared Hz helper: a tiny positive finite rate has an unrepresentable reciprocal, and
+Duration::from_secs_f64 panics. Duration::try_from_secs_f64 now returns None for that input while
+preserving ordinary/unknown-rate behavior and representable rounded intervals. Those shared
+helper tests are cross-platform rather than hidden inside the existing Linux-only layout tests.
+An earlier narrow rate filter only reran the no-refresh owner case before that placement was
+corrected; it supplied no Hz-helper result. Subsequent qualification is recorded below.
+
+Bounded Core/Windows and foreign-backend production reviews find no confirmed additional P1/P2.
+Their suggested two-phase retirement control is now an actual owner regression: an App display
+observer closes the original window and opens a replacement before the second phase; the
+original sequence settles once as stale/closed and neither window receives that callback.
+The Windows compile corrects a new fixture's unsupported WINDOW_STYLE::intersects call to the
+existing bit-mask idiom. The expanded selection passes 35/36
+(`cfbf5d44-9b1f-421c-9f92-919081c999b5`), including all 22 Core and 12 topology cases.
+The native zero-window fixture had sampled diagnostics before draining the deliberately queued
+App callback. It now pumps the existing foreground/native loop outside its busy-App portions;
+pending/FIFO/retirement assertions inside the active borrow remain unchanged.
+
+The corrected expanded selection passes 36/36 without skips
+(`e605a3ad-fb9d-4204-b8c6-5aafe621fae8`). The actual Windows trajectory checks the hidden
+top-level platform HWND before creating any app window, exact current-monitor rereads, unchanged
+publication generation for spurious broadcasts, one queued App notification, a real nonempty
+accepted/Submitted frame, ordered busy-App sequences and exact native window retirement. A
+detached Rust association fixture supplies a deterministic unknown ID without changing the OS
+monitor; a separate TestAppContext fixture establishes changed properties and cached readiness.
+The platform HWND and text/backend/OLE owners release after the final window. Bounded acceptance
+review leaves no confirmed P1/P2 or false native-property claim. All seven implementation/review
+subthreads are closed at that checkpoint.
+
+The first complete runtime/public/gallery run passes 1,385/1,387 with four existing interactive
+Windows skips (`aff9ea23-5a9f-4bcf-bf18-6787a1e6edea`). Existing nested native close and
+event-driven geometry wake consumers fail; an unchanged focused rerun reproduces both failures
+(`c44bc365-2141-43a8-b40f-0e7fc75b7975`, 0/2). The new official display hint can make a
+native close asynchronous before its user callback executes. In the fork, that releases the
+platform should-close slot before the user callback sends a nested WM_CLOSE. The nested query
+then queues another user callback indefinitely. This is an exposed fork boundary defect, not
+evidence against official display observation. The platform closure now reads the existing
+WindowShouldCloseHandlerSlot's checked-out state before dispatch; both synchronous and deferred
+paths share the same handler owner and unwind/generation cleanup. A Core pressure case requires
+one denied nested query, one handler call and a later independent close remaining available.
+
+The geometry fixture's initial one-shot foreground drain discarded posted wakes without
+dispatching the new platform notification. It now settles startup using the existing real
+message pump before establishing its initial baseline. All subsequent exact coalesced/rearmed
+wake, committed latest geometry and no-polling assertions remain. Its helper visibility changes
+are confined to the test module. A new bounded production review and corrected runs follow.
+
+The corrected 18 App/Window scenarios, two display native/provider cases and both original
+failing native consumers pass 22/22 (`2bae6661-5c87-412a-8e0c-07ec2beeea39`). The bounded
+follow-up review finds no confirmed P1/P2 in the shared close-slot or startup-fixture changes.
+All eight implementation/review subthreads are now closed. Complete consumer qualification
+reruns against this owning correction rather than reusing the earlier partial full result.
+
+The corrected complete all-feature Core/WGPU/Windows/platform libraries, six public text/layout/
+image consumers and actual gallery example pass 1,388/1,388 across 11 binaries, with four
+existing interactive Windows cases skipped (`722129ab-e723-40a9-a7a3-c6ff451f6239`). This
+includes the new close-slot regression and reruns existing native input, cache, atlas, image,
+font, geometry and retirement consumers against the final correction.
+
+Affected UI core/components/docking/Canvas libraries and integrations pass 2,964/2,964 across
+25 binaries without skips (`865d1baa-d538-4a8b-8256-e59f8deb0a48`). The independently
+locked consumer then finds a manifest prerequisite hidden by the root feature unions: fork
+Core still made bitflags optional under Wayland, while public DisplayChanges now needs it
+unconditionally. The fixed target declares it as a normal dependency. Core now does the same,
+retiring the implicit optional bitflags feature and its Wayland activation. This changes neither
+resolved version nor the already-enabled dependency union of the completed runtime/component
+cohorts. The independent consumer is rerun without enabling test-support; it must compile through
+the ordinary dependency boundary rather than add a consumer feature workaround.
+
+The corrected independently locked public consumers pass 18/18 across nine binaries without
+skips (`75a75c4b-33f4-4fca-b03a-9d0dc1e4c378`). Both lockfiles and all dependency versions
+remain unchanged. The two display consumers type-check owned App/Window/Context callbacks
+without test-support and execute normal/fractional/invalid/unrepresentable Hz controls; they
+do not launch an App or qualify OS display changes.
+
+Locked workspace all-target and independently locked consumer all-target/all-feature checks
+pass on Rust 1.95.0, as does affected Core/WGPU/Windows/platform all-target/all-feature
+correctness Clippy. Actual Windows Rust 1.92.0 checks pass for those four framework packages
+and the independent consumer, both all-target/all-feature. Existing warnings in legacy docking
+and test support remain outside this unit; no warning-free-workspace claim follows. The
+mandatory bitflags declaration does not increase the compiler floor or change either lockfile.
+
+Root and independently locked formatting checks pass. Existing import-boundary, document-link,
+release-document and public-API scans pass through the built xtask without another Cargo process.
+All Cargo work is serial, one job, and reuses Nara's target; no clean or remote publication occurs.
+
+The installed wasm32-unknown-unknown target supplies an additional compile-only check. Web's
+test-target check fails in unchanged test-support dependency wait-timeout 0.2.1 because that
+target has no imp module; it never reaches the new backend implementation. The pre-unit
+manifests already enabled Core test-support/proptest through Web dev dependencies. The
+separate production-library check then passes:
+
+```text
+cargo +1.95.0 check --locked -p open-gpui-web --target wasm32-unknown-unknown --lib
+```
+
+This qualifies production Core/WGPU/Web compilation, not browser execution or test-support.
+The remaining dependency/platform audit must reconcile the fork's proptest 1.10.0 pin with
+the fixed target's 1.12.0 and retain appropriate Windows/native test capabilities; a version
+number alone does not establish a fix for the Web test dependency closure. No dependency
+version is changed by this experiment. Native macOS/Linux and physical hotplug/refresh-mode
+qualification remain open, alongside numeric costs and full framework/engine adoption.
+
+Synthetic WM_DISPLAYCHANGE exercises real Windows ingress without changing the user's monitor
+configuration. It cannot establish physical hotplug, changed OS refresh modes or frame pacing.
+Non-Windows source migration, native platform execution and numerical costs are separate claims.
+Official refresh-aware profiler/reporting successor `4f6d97b9de7d9f167da8b7832eeecea22c5a9efa`
+remains queued; the display getter alone does not adopt it. Complete fixed-target reconciliation,
+canonical docking, Nara adaptation and full R11/R12 remain open.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:

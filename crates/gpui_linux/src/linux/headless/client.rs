@@ -4,7 +4,7 @@ use std::rc::Rc;
 use calloop::{EventLoop, LoopHandle};
 use open_gpui_util::ResultExt;
 
-use crate::linux::headless::window::{HeadlessDisplay, HeadlessWindow};
+use crate::linux::headless::window::HeadlessWindow;
 use crate::linux::{LinuxClient, LinuxCommon, LinuxKeyboardLayout};
 use open_gpui::{
     AnyWindowHandle, DisplayId, PlatformDisplay, PlatformKeyboardLayout, PlatformWindow,
@@ -16,7 +16,6 @@ pub struct HeadlessClientState {
     pub(crate) _loop_handle: LoopHandle<'static, HeadlessClient>,
     pub(crate) event_loop: Option<calloop::EventLoop<'static, HeadlessClient>>,
     pub(crate) common: LinuxCommon,
-    pub(crate) display: Rc<dyn PlatformDisplay>,
 }
 
 #[derive(Clone)]
@@ -50,7 +49,6 @@ impl HeadlessClient {
             event_loop: Some(event_loop),
             _loop_handle: handle,
             common,
-            display: Rc::new(HeadlessDisplay::new()),
         })))
     }
 }
@@ -65,16 +63,15 @@ impl LinuxClient for HeadlessClient {
     }
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
-        vec![self.0.borrow().display.clone()]
+        Vec::new()
     }
 
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
-        Some(self.0.borrow().display.clone())
+        None
     }
 
-    fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>> {
-        let display = self.0.borrow().display.clone();
-        (display.id() == id).then_some(display)
+    fn display(&self, _id: DisplayId) -> Option<Rc<dyn PlatformDisplay>> {
+        None
     }
 
     #[cfg(feature = "screen-capture")]
@@ -118,10 +115,7 @@ impl LinuxClient for HeadlessClient {
         _handle: AnyWindowHandle,
         params: WindowParams,
     ) -> anyhow::Result<Box<dyn PlatformWindow>> {
-        Ok(Box::new(HeadlessWindow::new(
-            params,
-            self.0.borrow().display.clone(),
-        )))
+        Ok(Box::new(HeadlessWindow::new(params)))
     }
 
     fn compositor_name(&self) -> &'static str {
@@ -153,5 +147,18 @@ impl LinuxClient for HeadlessClient {
             .expect("App is already running");
 
         event_loop.run(None, &mut self.clone(), |_| {}).log_err();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn headless_client_has_no_physical_displays() {
+        let client = HeadlessClient::new();
+        assert!(client.displays().is_empty());
+        assert!(client.primary_display().is_none());
+        assert!(client.display(DisplayId::new(0)).is_none());
     }
 }

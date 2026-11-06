@@ -306,6 +306,18 @@ impl MacDisplayTopologyHandle {
         MacDisplayTopologyAuthority::refresh_candidate_from_native()
     }
 
+    pub(crate) fn subscribe_displays_changed(
+        &self,
+        listener: MacDisplayTopologyListener,
+    ) -> MacDisplayTopologySubscription {
+        let mut shared = self.0.lock();
+        shared.listeners.insert(0, listener);
+        MacDisplayTopologySubscription {
+            shared: Arc::downgrade(&self.0),
+            listener_id: 0,
+        }
+    }
+
     /// Registers one generation observer without a publication race.
     ///
     /// The listener is invoked once with the current retained generation after the registry lock is
@@ -628,6 +640,7 @@ mod tests {
             scale_factor,
             bounds,
             visible_bounds: Bounds::new(bounds.origin, size(px(visible_width), px(1_040.0))),
+            refresh_interval: None,
         }
     }
 
@@ -961,6 +974,116 @@ mod tests {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<MacDisplayTopologyHandle>();
         assert_send_sync::<MacDisplayTopologySubscription>();
+    }
+
+    #[test]
+    fn refresh_rate_changes_publish_without_mutating_retained_display_facts() {
+        let primary = display(1, 0.0, 0.0, 2.0, 1_880.0);
+        let secondary = display(2, 1_920.0, 0.0, 1.0, 1_920.0);
+        let mut authority =
+            MacDisplayTopologyAuthority::from_initial_candidate(Ok(candidate(primary, secondary)));
+        let retained = authority.retained_snapshot().unwrap();
+        let updated = MacDisplay {
+            refresh_interval: Some(Duration::from_nanos(8_333_333)),
+            ..secondary
+        };
+
+        assert!(matches!(
+            refresh(&mut authority, Ok(candidate(primary, updated))),
+            MacDisplayTopologyRefresh::Published {
+                previous_generation: Some(1),
+                generation: 2,
+            }
+        ));
+        assert_eq!(retained.display(secondary.id()), Some(secondary));
+        assert_eq!(
+            retained.display(secondary.id()).unwrap().refresh_interval(),
+            None
+        );
+        let published = authority.exact_snapshot().unwrap();
+        assert_eq!(published.display(updated.id()), Some(updated));
+        assert_eq!(
+            published.display(updated.id()).unwrap().bounds(),
+            secondary.bounds()
+        );
+        assert_eq!(published.platform_snapshot().generation(), Some(2));
+
+        let unknown = MacDisplay {
+            refresh_interval: None,
+            ..updated
+        };
+        assert!(matches!(
+            refresh(&mut authority, Ok(candidate(primary, unknown))),
+            MacDisplayTopologyRefresh::Published { generation: 3, .. }
+        ));
+        assert_eq!(published.display(updated.id()), Some(updated));
+    }
+
+    #[test]
+    fn app_display_notification_precedes_window_jobs_and_waits_for_complete_publication() {
+        let primary = display(1, 0.0, 0.0, 2.0, 1_880.0);
+        let secondary = display(2, 1_920.0, 0.0, 1.0, 1_920.0);
+        let handle = MacDisplayTopologyHandle::from_authority(
+            MacDisplayTopologyAuthority::from_initial_candidate(Ok(candidate(primary, secondary))),
+        );
+        let notifications = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let window_notifications = notifications.clone();
+        let _window_subscription = handle
+            .subscribe_publications(
+                1,
+                Arc::new(move |generation| {
+                    window_notifications.lock().push(("window", generation));
+                }),
+            )
+            .unwrap();
+        notifications.lock().clear();
+        let app_notifications = notifications.clone();
+        let weak_topology = handle.downgrade();
+        let app_subscription = handle.subscribe_displays_changed(Arc::new(move |generation| {
+            assert_eq!(
+                weak_topology
+                    .upgrade()
+                    .unwrap()
+                    .exact_snapshot()
+                    .unwrap()
+                    .generation(),
+                generation
+            );
+            app_notifications.lock().push(("app", generation));
+        }));
+
+        let request = handle.request_refresh();
+        handle.begin_scheduled_refresh().unwrap();
+        assert!(matches!(
+            handle.finish_refresh(
+                request.request_epoch,
+                Err(MacDisplayTopologyFailure::UnstableDuringCollection),
+            ),
+            MacDisplayTopologyRefresh::RetainedAfterFailure {
+                generation: Some(1),
+                ..
+            }
+        ));
+        assert!(notifications.lock().is_empty());
+
+        let changed = MacDisplay {
+            refresh_interval: Some(Duration::from_nanos(6_944_444)),
+            ..secondary
+        };
+        let request = handle.request_refresh();
+        handle.begin_scheduled_refresh().unwrap();
+        handle.finish_refresh(request.request_epoch, Ok(candidate(primary, changed)));
+        assert_eq!(
+            notifications.lock().as_slice(),
+            &[("app", 2), ("window", 2)]
+        );
+
+        drop(app_subscription);
+        notifications.lock().clear();
+        let request = handle.request_refresh();
+        handle.begin_scheduled_refresh().unwrap();
+        handle.finish_refresh(request.request_epoch, Ok(candidate(primary, changed)));
+        assert_eq!(notifications.lock().as_slice(), &[("window", 2)]);
     }
 
     #[test]

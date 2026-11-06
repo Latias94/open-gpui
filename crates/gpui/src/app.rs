@@ -65,6 +65,9 @@ mod bench_context;
 mod cell;
 mod context;
 #[cfg(test)]
+mod display_tests;
+mod displays;
+#[cfg(test)]
 mod embedded_tests;
 mod entity_map;
 #[cfg(any(test, feature = "test-support"))]
@@ -351,6 +354,7 @@ impl Application {
         let platform = self.0.borrow().platform.clone();
         platform.run(Box::new(move || {
             let cx = &mut *this.borrow_mut();
+            cx.displays_changed();
             on_finish_launching(cx);
         }));
     }
@@ -801,6 +805,8 @@ pub struct App {
     missing_glyph_task: RefCell<Option<Task<()>>>,
     missing_glyph_callback: Rc<missing_glyphs::MissingGlyphCallbackSlot>,
     pub(crate) thermal_state_observers: SubscriberSet<(), Handler>,
+    display_observers: SubscriberSet<(), displays::DisplayHandler>,
+    displays: HashMap<DisplayId, displays::DisplayState>,
     pub(crate) release_listeners: SubscriberSet<EntityId, ReleaseListener>,
     pub(crate) global_observers: SubscriberSet<TypeId, Handler>,
     pub(crate) quit_observers: SubscriberSet<(), QuitHandler>,
@@ -985,6 +991,8 @@ impl App {
                 missing_glyph_task: RefCell::new(None),
                 missing_glyph_callback: Rc::default(),
                 thermal_state_observers: SubscriberSet::new(),
+                display_observers: SubscriberSet::new(),
+                displays: displays::read_displays(platform.as_ref()),
                 global_observers: SubscriberSet::new(),
                 quit_observers: SubscriberSet::new(),
                 restart_observers: SubscriberSet::new(),
@@ -1038,6 +1046,17 @@ impl App {
             move || {
                 if let Some(app) = app.upgrade() {
                     app.enqueue_native_app_event(native_event_ingress::NativeAppEvent::Reopen);
+                }
+            }
+        }));
+
+        platform.on_displays_changed(Box::new({
+            let app = Rc::downgrade(&app);
+            move || {
+                if let Some(app) = app.upgrade() {
+                    app.enqueue_native_app_event(
+                        native_event_ingress::NativeAppEvent::DisplaysChanged,
+                    );
                 }
             }
         }));

@@ -1717,6 +1717,27 @@ impl NativeEventEnvelope {
             | NativeWindowEvent::WindowStateChanged => {
                 deliver_window_event(app, window_id, ingress_sequence, Window::bounds_changed)
             }
+            NativeWindowEvent::DisplayChanged => {
+                match app.update_window_id_from_native(
+                    window_id,
+                    ingress_sequence,
+                    |_, window, _| window.update_display_association(),
+                ) {
+                    Ok(Some(display_id)) => {
+                        if display_id.is_some_and(|id| !app.knows_display(id)) {
+                            app.displays_changed();
+                        }
+                        deliver_window_event(
+                            app,
+                            window_id,
+                            ingress_sequence,
+                            Window::notify_display_observers,
+                        )
+                    }
+                    Ok(None) => NativeEventDisposition::Delivered,
+                    Err(_) => NativeEventDisposition::StaleWindow,
+                }
+            }
             NativeWindowEvent::ButtonLayoutChanged => deliver_window_event(
                 app,
                 window_id,
@@ -1879,6 +1900,7 @@ pub(super) enum NativeAppEvent {
     AppMenuAction(Box<dyn Action>),
     KeyboardLayoutChanged,
     ThermalStateChanged,
+    DisplaysChanged,
     Quit,
 }
 
@@ -1925,6 +1947,10 @@ impl NativeAppEvent {
                     .retain(&(), move |callback| (callback)(app));
                 NativeEventDrainControl::Continue
             }
+            Self::DisplaysChanged => {
+                app.displays_changed();
+                NativeEventDrainControl::Continue
+            }
             Self::Quit => {
                 app.shutdown_from_native_quit();
                 NativeEventDrainControl::Continue
@@ -1936,6 +1962,7 @@ impl NativeAppEvent {
         match self {
             Self::KeyboardLayoutChanged => Some(NativeAppEventCoalesceDomain::KeyboardLayout),
             Self::ThermalStateChanged => Some(NativeAppEventCoalesceDomain::ThermalState),
+            Self::DisplaysChanged => Some(NativeAppEventCoalesceDomain::Displays),
             Self::OpenUrls(_)
             | Self::Reopen
             | Self::SystemWake
@@ -1954,6 +1981,7 @@ impl NativeAppEvent {
             Self::AppMenuAction(_) => NativeCallbackKind::AppMenuAction,
             Self::KeyboardLayoutChanged => NativeCallbackKind::KeyboardLayoutChanged,
             Self::ThermalStateChanged => NativeCallbackKind::ThermalStateChanged,
+            Self::DisplaysChanged => NativeCallbackKind::DisplaysChanged,
             Self::Quit => NativeCallbackKind::Quit,
         }
     }
@@ -2062,6 +2090,7 @@ pub(super) enum NativeWindowEvent {
     Resized,
     Moved,
     WindowStateChanged,
+    DisplayChanged,
     ButtonLayoutChanged,
     CloseRequested,
     Closed,
@@ -2090,6 +2119,7 @@ impl NativeWindowEvent {
                 Some(NativeWindowEventCoalesceDomain::Bounds)
             }
             Self::ButtonLayoutChanged => Some(NativeWindowEventCoalesceDomain::ButtonLayout),
+            Self::DisplayChanged => Some(NativeWindowEventCoalesceDomain::Display),
             Self::RequestFrame(_) => Some(NativeWindowEventCoalesceDomain::Frame),
             #[cfg(not(target_family = "wasm"))]
             Self::AccessibilityAction { .. } | Self::AccessibilityActiveChanged { .. } => None,
@@ -2145,6 +2175,7 @@ impl NativeWindowEvent {
             Self::Resized => (NativeCallbackKind::Resized, None),
             Self::Moved => (NativeCallbackKind::Moved, None),
             Self::WindowStateChanged => (NativeCallbackKind::WindowStateChanged, None),
+            Self::DisplayChanged => (NativeCallbackKind::DisplayChanged, None),
             Self::ButtonLayoutChanged => (NativeCallbackKind::ButtonLayoutChanged, None),
             Self::CloseRequested => (NativeCallbackKind::ShouldClose, None),
             Self::Closed => (NativeCallbackKind::Closed, None),
@@ -2196,12 +2227,14 @@ enum NativeEventCoalesceKey {
 enum NativeAppEventCoalesceDomain {
     KeyboardLayout,
     ThermalState,
+    Displays,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NativeWindowEventCoalesceDomain {
     Appearance,
     Bounds,
+    Display,
     ButtonLayout,
     Frame,
 }

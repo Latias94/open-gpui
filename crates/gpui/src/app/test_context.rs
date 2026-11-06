@@ -1,7 +1,7 @@
 use crate::{
     Action, AnyView, AnyWindowHandle, App, AppCell, AppContext, AsyncApp, AvailableSpace,
     BackgroundExecutor, BorrowAppContext, Bounds, Capslock, ClipboardItem, CursorStyle,
-    DispatchEventResult, DrawPhase, Drawable, Element, Empty, EntityId, EventEmitter,
+    DispatchEventResult, DisplayId, DrawPhase, Drawable, Element, Empty, EntityId, EventEmitter,
     ForegroundExecutor, Global, InputEvent, Keystroke, Modifiers, ModifiersChangedEvent,
     MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, Pixels, Platform,
     PlatformPointerCaptureReleaseOutcome, PlatformWindowCreationCapabilities,
@@ -532,6 +532,77 @@ impl TestAppContext {
     pub fn simulate_window_resize(&self, window_handle: AnyWindowHandle, size: Size<Pixels>) {
         self.test_window(window_handle).simulate_resize(size);
         self.run_until_parked();
+    }
+
+    /// Simulates connecting a display and reports its initial refresh interval.
+    pub fn simulate_display_added(
+        &self,
+        display_id: DisplayId,
+        refresh_interval: Option<Duration>,
+    ) {
+        self.test_platform
+            .simulate_display_added(display_id, refresh_interval);
+        self.run_until_parked();
+    }
+
+    /// Simulates disconnecting a display.
+    pub fn simulate_display_removed(&self, display_id: DisplayId) {
+        self.test_platform.simulate_display_removed(display_id);
+        self.run_until_parked();
+    }
+
+    /// Simulates a connected display changing its refresh interval.
+    pub fn simulate_display_refresh_interval_change(
+        &self,
+        display_id: DisplayId,
+        refresh_interval: Option<Duration>,
+    ) {
+        self.test_platform
+            .simulate_display_refresh_interval_change(display_id, refresh_interval);
+        self.run_until_parked();
+    }
+
+    /// Simulates a connected display changing its desktop bounds.
+    pub fn simulate_display_bounds_change(&self, display_id: DisplayId, bounds: Bounds<Pixels>) {
+        self.test_platform
+            .simulate_display_bounds_change(display_id, bounds);
+        self.run_until_parked();
+    }
+
+    /// Simulates one display publication changing both bounds and refresh interval.
+    pub fn simulate_display_properties_change(
+        &self,
+        display_id: DisplayId,
+        bounds: Bounds<Pixels>,
+        refresh_interval: Option<Duration>,
+    ) {
+        self.test_platform
+            .simulate_display_properties_change(display_id, bounds, refresh_interval);
+        self.run_until_parked();
+    }
+
+    /// Reports the current display publication without changing its properties.
+    pub fn simulate_displays_changed(&self) {
+        self.test_platform.simulate_displays_changed();
+        self.run_until_parked();
+    }
+
+    /// Simulates a window moving to another display independently of resize callbacks.
+    pub fn simulate_window_move_to_display(&self, window: AnyWindowHandle, display_id: DisplayId) {
+        self.test_window(window)
+            .simulate_move_to_display(display_id);
+        self.run_until_parked();
+    }
+
+    /// Simulates a platform window reporting no associated display.
+    pub fn simulate_window_no_display(&self, window: AnyWindowHandle) {
+        self.test_window(window).simulate_no_display();
+        self.run_until_parked();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_platform(&self) -> &TestPlatform {
+        &self.test_platform
     }
 
     /// Simulates the platform minimizing a window and publishing coherent window facts.
@@ -1951,6 +2022,9 @@ mod transform_tests;
 
 #[cfg(test)]
 mod clip_tests;
+
+#[cfg(test)]
+mod display_tests;
 
 #[cfg(test)]
 mod tests {

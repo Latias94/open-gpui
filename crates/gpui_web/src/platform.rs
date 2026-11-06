@@ -180,6 +180,8 @@ impl Platform for WebPlatform {
         Some(self.active_display.clone())
     }
 
+    fn on_displays_changed(&self, _callback: Box<dyn FnMut()>) {}
+
     fn active_window(&self) -> Option<AnyWindowHandle> {
         *self.active_window.borrow()
     }

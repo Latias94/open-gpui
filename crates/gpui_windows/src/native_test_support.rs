@@ -76,6 +76,8 @@ use windows::core::{PCWSTR, w};
 mod native_asset_cache_tests;
 #[path = "native_cache_dependency_tests.rs"]
 mod native_cache_dependency_tests;
+#[path = "native_display_observation_tests.rs"]
+mod native_display_observation_tests;
 #[path = "native_embedded_app_tests.rs"]
 mod native_embedded_app_tests;
 #[path = "native_font_installation_tests.rs"]
@@ -124,7 +126,7 @@ struct DispatchedMessage {
 }
 
 #[derive(Default)]
-struct MessageTrace {
+pub(super) struct MessageTrace {
     dispatched: Vec<DispatchedMessage>,
 }
 
@@ -251,7 +253,7 @@ fn pump_system_input_until(
     }
 }
 
-fn pump_messages_until_idle(description: &str) -> MessageTrace {
+pub(super) fn pump_messages_until_idle(description: &str) -> MessageTrace {
     let mut trace = MessageTrace::default();
     for _ in 0..MAX_MESSAGE_PUMP_ATTEMPTS {
         if !dispatch_one_message(&mut trace) {

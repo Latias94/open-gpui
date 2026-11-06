@@ -1133,11 +1133,6 @@ impl WindowsWindowState {
         self.native_placement_epoch.get()
     }
 
-    pub(crate) fn set_display_binding(&self, display: WindowsDisplay, topology_generation: u64) {
-        self.display.set(display);
-        self.display_topology_generation.set(topology_generation);
-    }
-
     pub(crate) fn accepts_pointer_input(&self) -> bool {
         self.accepts_pointer_input.get()
     }
@@ -1205,6 +1200,17 @@ impl WindowsWindowState {
 }
 
 impl WindowsWindowInner {
+    pub(crate) fn set_display_binding(&self, display: WindowsDisplay, topology_generation: u64) {
+        let previous = self.state.display.replace(display);
+        self.state
+            .display_topology_generation
+            .set(topology_generation);
+        if previous.display_id != display.display_id {
+            let _ =
+                with_windows_callback(&self.state.callbacks.display_changed, |callback| callback());
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn native_pointer_physical_frame_for_test(
         &self,
@@ -2991,8 +2997,7 @@ impl WindowsWindowInner {
         let display = snapshot
             .display(display_observation.display_id())
             .context("the restored provisional display is no longer available")?;
-        self.state
-            .set_display_binding(display, snapshot.generation());
+        self.set_display_binding(display, snapshot.generation());
         self.state.scale_factor.set(restored.scale_factor());
         Ok(())
     }
@@ -5251,8 +5256,7 @@ impl WindowsWindowInner {
         let display = snapshot
             .display(display_observation.display_id())
             .context("restored native display is no longer available")?;
-        self.state
-            .set_display_binding(display, snapshot.generation());
+        self.set_display_binding(display, snapshot.generation());
         self.state
             .scale_factor
             .set(physical_geometry.scale_factor());
@@ -5336,8 +5340,7 @@ impl WindowsWindowInner {
         let display = display_snapshot
             .display(display_observation.display_id())
             .context("restored registered native display is no longer available")?;
-        self.state
-            .set_display_binding(display, display_snapshot.generation());
+        self.set_display_binding(display, display_snapshot.generation());
         self.state
             .scale_factor
             .set(physical_geometry.scale_factor());
@@ -5598,8 +5601,7 @@ impl WindowsWindowInner {
             WindowOpenState::Windowed | WindowOpenState::Fullscreen => SW_SHOWNORMAL.0 as u32,
             WindowOpenState::Maximized => SW_SHOWMAXIMIZED.0 as u32,
         };
-        self.state
-            .set_display_binding(display, display_observation.topology_generation());
+        self.set_display_binding(display, display_observation.topology_generation());
         self.state.scale_factor.set(settled_geometry.scale_factor());
         Ok(())
     }
@@ -5958,8 +5960,7 @@ impl WindowsWindowInner {
                 && let Ok(snapshot) = coordinator.exact_display_topology_snapshot()
                 && let Some(display) = snapshot.display(display_id)
             {
-                self.state
-                    .set_display_binding(display, snapshot.generation());
+                self.set_display_binding(display, snapshot.generation());
             }
 
             let window_bounds = current_facts.window_bounds;
@@ -7323,6 +7324,7 @@ pub(crate) struct Callbacks {
     pub(crate) hovered_status_change: Cell<Option<Rc<dyn Fn(bool)>>>,
     pub(crate) resize: Cell<Option<Rc<dyn Fn(Size<Pixels>, f32)>>>,
     pub(crate) moved: Cell<Option<Rc<dyn Fn()>>>,
+    pub(crate) display_changed: Cell<Option<Box<dyn FnMut()>>>,
     pub(crate) window_state_change: Cell<Option<Rc<dyn Fn()>>>,
     pub(crate) window_mutation_observation:
         Cell<Option<Rc<dyn Fn(PlatformWindowMutationObservation)>>>,
@@ -8481,6 +8483,10 @@ impl PlatformWindow for WindowsWindow {
 
     fn on_moved(&self, callback: Box<dyn Fn()>) {
         self.state.callbacks.moved.set(Some(Rc::from(callback)));
+    }
+
+    fn on_display_changed(&self, callback: Box<dyn FnMut()>) {
+        self.state.callbacks.display_changed.set(Some(callback));
     }
 
     fn on_window_state_change(&self, callback: Box<dyn Fn()>) {

@@ -3553,6 +3553,9 @@ pub trait Platform: 'static {
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>>;
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>>;
+    /// Registers a main-thread hint that connected displays or their properties may have changed.
+    /// GPUI rereads the complete display collection and ignores spurious hints.
+    fn on_displays_changed(&self, callback: Box<dyn FnMut()>);
     /// Returns one immutable display publication for callers that must resolve several display
     /// facts coherently.
     #[doc(hidden)]
@@ -3833,6 +3836,10 @@ pub trait PlatformDisplay: Debug {
     /// Get the bounds for this display
     fn bounds(&self) -> Bounds<Pixels>;
 
+    /// Returns the time between refreshes, or `None` when unavailable. Variable refresh rate
+    /// displays report their maximum rate. GPUI caches this value for window observers.
+    fn refresh_interval(&self) -> Option<Duration>;
+
     /// Get the visible bounds for this display, excluding taskbar/dock areas.
     /// This is the usable area where windows can be placed without being obscured.
     /// Defaults to the full display bounds if not overridden.
@@ -3904,6 +3911,43 @@ pub struct ScreenCaptureFrame(pub PlatformScreenCaptureFrame);
 /// An opaque identifier for a hardware display
 #[derive(PartialEq, Eq, Hash, Copy, Clone)]
 pub struct DisplayId(pub(crate) u64);
+
+/// A change to connected displays, reported by [`App::observe_displays`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum DisplayEvent {
+    /// A display was connected.
+    Added(DisplayId),
+    /// A display was disconnected. The platform moves its windows to another display.
+    Removed(DisplayId),
+    /// A connected display's properties changed.
+    Changed {
+        /// The display that changed.
+        id: DisplayId,
+        /// The properties that changed.
+        changes: DisplayChanges,
+    },
+}
+
+bitflags::bitflags! {
+    /// Properties reported by [`DisplayEvent::Changed`].
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub struct DisplayChanges: u8 {
+        /// [`PlatformDisplay::bounds`] changed.
+        const BOUNDS = 1 << 0;
+        /// [`PlatformDisplay::refresh_interval`] changed.
+        const REFRESH_INTERVAL = 1 << 1;
+    }
+}
+
+/// Converts a positive finite refresh rate to its interval, returning `None` for unknown rates.
+pub fn refresh_interval_from_hz(hertz: f64) -> Option<Duration> {
+    if hertz.is_finite() && hertz > 0.0 {
+        Duration::try_from_secs_f64(1.0 / hertz).ok()
+    } else {
+        None
+    }
+}
 
 impl DisplayId {
     /// Create a new `DisplayId` from a raw platform display identifier.
@@ -5379,6 +5423,9 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_hover_status_change(&self, callback: Box<dyn Fn(bool)>);
     fn on_resize(&self, callback: Box<dyn Fn(Size<Pixels>, f32)>);
     fn on_moved(&self, callback: Box<dyn Fn()>);
+    /// Registers a main-thread hint that the window moved to another display. Calls may be
+    /// spurious; GPUI reconciles the association before notifying observers.
+    fn on_display_changed(&self, callback: Box<dyn FnMut()>);
     /// Registers a callback for externally observed window-state changes that need not resize or
     /// move the window, such as minimization.
     ///
@@ -8780,6 +8827,34 @@ mod presentation_shutdown_tests {
         assert!(!ticket.acknowledge_native_terminal());
         assert!(!ticket.snapshot().quiesced());
         assert!(ticket.snapshot().protocol_violation());
+    }
+}
+
+#[cfg(test)]
+mod display_refresh_tests {
+    use super::*;
+
+    #[test]
+    fn test_refresh_interval_from_hz() {
+        assert_eq!(
+            refresh_interval_from_hz(50.0),
+            Some(Duration::from_millis(20))
+        );
+        assert_eq!(
+            refresh_interval_from_hz(120.0),
+            Some(Duration::from_secs(1) / 120)
+        );
+        for unknown in [0.0, -60.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert_eq!(refresh_interval_from_hz(unknown), None);
+        }
+    }
+
+    #[test]
+    fn refresh_interval_rejects_unrepresentable_positive_rates() {
+        for rate in [f64::from_bits(1), f64::MIN_POSITIVE, 1e-20] {
+            assert_eq!(refresh_interval_from_hz(rate), None);
+        }
+        assert_eq!(refresh_interval_from_hz(f64::MAX), Some(Duration::ZERO));
     }
 }
 

@@ -1,8 +1,9 @@
+use super::display::TestDisplayChangeCallback;
 use crate::{
     A11yCallbacks, AnyWindowHandle, AtlasAccess, AtlasAccessDiagnostic, AtlasAccessOutcome,
     AtlasKey, AtlasRemoveDiagnostic, AtlasRemoveOutcome, AtlasTextureId, AtlasTextureInstanceId,
     AtlasTextureLeaseEpoch, AtlasTextureLeaseError, AtlasTile, Bounds, CursorStyle, DevicePixels,
-    DispatchEventResult, GpuSpecs, Pixels, Platform, PlatformAtlas, PlatformDisplay,
+    DispatchEventResult, DisplayId, GpuSpecs, Pixels, Platform, PlatformAtlas, PlatformDisplay,
     PlatformHeadlessRenderer, PlatformInput, PlatformInputCallback, PlatformInputCallbackSlot,
     PlatformInputHandler, PlatformInputHandlerSlot, PlatformNativePointerPhysicalFrame,
     PlatformNativeWindowRetirementOutcome, PlatformPhysicalDisplayObservation,
@@ -22,8 +23,7 @@ use crate::{
 };
 #[cfg(test)]
 use crate::{
-    DisplayId, NativePointerCancelReservation, PointerCancelReason,
-    WindowProvisionalPlacementPurpose,
+    NativePointerCancelReservation, PointerCancelReason, WindowProvisionalPlacementPurpose,
 };
 use image::RgbaImage;
 use open_gpui_collections::{HashMap, VecDeque};
@@ -40,12 +40,14 @@ use std::{
 static NEXT_EMERGENCY_PRESENTATION_SHUTDOWN_GENERATION: AtomicU64 = AtomicU64::new(1);
 
 fn test_display_observation(state: &TestWindowState) -> Option<PlatformPhysicalDisplayObservation> {
+    let id = state.display.as_ref()?.id();
+    let snapshot = state.platform.upgrade()?.display_snapshot();
+    let display = snapshot.find_display(id)?;
     PlatformPhysicalDisplayObservation::try_new(
-        1,
-        state.display.id(),
-        state.display.bounds().to_device_pixels(state.scale_factor),
-        state
-            .display
+        snapshot.generation()?,
+        display.id(),
+        display.bounds().to_device_pixels(state.scale_factor),
+        display
             .visible_bounds()
             .to_device_pixels(state.scale_factor),
         state.scale_factor,
@@ -72,7 +74,7 @@ pub(crate) struct TestWindowState {
     native_pointer_capture_release_prepare_history: Vec<u64>,
     native_pointer_capture_release_history: Vec<u64>,
     pub(crate) handle: AnyWindowHandle,
-    display: Rc<dyn PlatformDisplay>,
+    display: Option<Rc<dyn PlatformDisplay>>,
     #[cfg(test)]
     requested_display_id: Option<DisplayId>,
     pub(crate) title: Option<String>,
@@ -94,6 +96,7 @@ pub(crate) struct TestWindowState {
     deferred_frame_request: Option<RequestFrameOptions>,
     resize_callback: Option<Rc<dyn Fn(Size<Pixels>, f32)>>,
     moved_callback: Option<Rc<dyn Fn()>>,
+    display_changed_callback: Option<Rc<TestDisplayChangeCallback>>,
     window_state_change_callback: Option<Rc<dyn Fn()>>,
     mutation_observation_callback: Option<Rc<dyn Fn(PlatformWindowMutationObservation)>>,
     input_handler: PlatformInputHandlerSlot,
@@ -306,7 +309,7 @@ impl TestWindow {
         handle: AnyWindowHandle,
         params: WindowParams,
         platform: Weak<TestPlatform>,
-        display: Rc<dyn PlatformDisplay>,
+        display: Option<Rc<dyn PlatformDisplay>>,
         renderer: Option<Box<dyn PlatformHeadlessRenderer>>,
         map_error: Option<String>,
         close_during_map: bool,
@@ -352,6 +355,7 @@ impl TestWindow {
                 request_frame_callback: None,
                 resize_callback: None,
                 moved_callback: None,
+                display_changed_callback: None,
                 window_state_change_callback: None,
                 mutation_observation_callback: None,
                 input_handler: PlatformInputHandlerSlot::default(),
@@ -797,6 +801,42 @@ impl TestWindow {
         callback(size, scale_factor);
     }
 
+    pub fn simulate_move_to_display(&self, display_id: DisplayId) {
+        let platform = self.0.lock().platform.upgrade();
+        let display = platform
+            .and_then(|platform| {
+                platform
+                    .displays()
+                    .into_iter()
+                    .find(|display| display.id() == display_id)
+            })
+            .unwrap_or_else(|| Rc::new(crate::TestDisplay::with_id(display_id)));
+        self.simulate_display(Some(display));
+    }
+
+    pub fn simulate_no_display(&self) {
+        self.simulate_display(None);
+    }
+
+    fn simulate_display(&self, display: Option<Rc<dyn PlatformDisplay>>) {
+        self.set_display(display);
+        let callback = self.0.lock().display_changed_callback.clone();
+        if let Some(callback) = callback {
+            callback.call();
+        }
+    }
+
+    pub(crate) fn set_display(&self, display: Option<Rc<dyn PlatformDisplay>>) {
+        let mut state = self.0.lock();
+        if state.closed {
+            return;
+        }
+        state.display = display;
+        state.physical_display_observation = state
+            .physical_client_bounds
+            .and_then(|_| test_display_observation(&state));
+    }
+
     pub(crate) fn set_physical_client_geometry(
         &self,
         bounds: Option<Bounds<DevicePixels>>,
@@ -1140,6 +1180,7 @@ impl TestWindow {
                     state.request_frame_callback.take(),
                     state.resize_callback.take(),
                     state.moved_callback.take(),
+                    state.display_changed_callback.take(),
                     state.window_state_change_callback.take(),
                     state.mutation_observation_callback.take(),
                     state.platform_command_callback.take(),
@@ -1608,7 +1649,7 @@ impl PlatformWindow for TestWindow {
     }
 
     fn display(&self) -> Option<std::rc::Rc<dyn crate::PlatformDisplay>> {
-        Some(self.0.lock().display.clone())
+        self.0.lock().display.clone()
     }
 
     fn mouse_position(&self) -> Point<Pixels> {
@@ -1777,6 +1818,16 @@ impl PlatformWindow for TestWindow {
         }
     }
 
+    fn on_display_changed(&self, callback: Box<dyn FnMut()>) {
+        let mut state = self.0.lock();
+        if !state.closed {
+            let slot = state
+                .display_changed_callback
+                .get_or_insert_with(|| Rc::new(TestDisplayChangeCallback::default()));
+            slot.set(callback);
+        }
+    }
+
     fn on_window_state_change(&self, callback: Box<dyn Fn()>) {
         let mut state = self.0.lock();
         if !state.closed {
@@ -1901,7 +1952,7 @@ fn window_platform_facts(state: &TestWindowState) -> WindowPlatformFacts {
         display_id: state
             .physical_display_observation
             .map(PlatformPhysicalDisplayObservation::display_id)
-            .or_else(|| Some(state.display.id())),
+            .or_else(|| state.display.as_ref().map(|display| display.id())),
         is_minimized: state.is_minimized,
         is_maximized: state.is_maximized,
         is_fullscreen: state.is_fullscreen,

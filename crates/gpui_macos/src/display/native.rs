@@ -4,7 +4,7 @@ use super::{
 use crate::ns_string;
 use cocoa::{
     appkit::NSScreen,
-    base::{id, nil},
+    base::{BOOL, YES, id, nil},
     foundation::{NSArray, NSDictionary, NSRect},
 };
 use core_foundation::base::CFRelease;
@@ -14,9 +14,9 @@ use core_graphics::{
     geometry::CGRect,
 };
 use objc::{msg_send, sel, sel_impl};
-use open_gpui::{Bounds, Pixels, point, px, size};
+use open_gpui::{Bounds, Pixels, point, px, refresh_interval_from_hz, size};
 use smallvec::SmallVec;
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 use uuid::Uuid;
 
 #[derive(Clone, Copy, Debug)]
@@ -67,10 +67,30 @@ impl MacNativeDisplayRow {
                 scale_factor,
                 bounds,
                 visible_bounds,
+                refresh_interval: unsafe { native_refresh_interval(screen, native_display_id) },
             },
             is_primary,
         })
     }
+}
+
+unsafe fn native_refresh_interval(
+    screen: id,
+    native_display_id: CGDirectDisplayID,
+) -> Option<Duration> {
+    let supports_maximum: BOOL =
+        unsafe { msg_send![screen, respondsToSelector: sel!(maximumFramesPerSecond)] };
+    let screen_hertz = if supports_maximum == YES {
+        let frames_per_second: isize = unsafe { msg_send![screen, maximumFramesPerSecond] };
+        frames_per_second as f64
+    } else {
+        0.0
+    };
+    refresh_interval_from_hz(screen_hertz).or_else(|| {
+        CGDisplay::new(native_display_id)
+            .display_mode()
+            .and_then(|mode| refresh_interval_from_hz(mode.refresh_rate()))
+    })
 }
 
 #[derive(Clone, Debug)]

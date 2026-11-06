@@ -1,15 +1,17 @@
+use super::display::TestDisplayChangeCallback;
 use crate::{
-    AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DevicePixels,
-    DummyKeyboardMapper, ForegroundExecutor, Keymap, MouseButton, NativeAppNotificationHandler,
-    NoopTextSystem, PathPromptOptions, Platform, PlatformDisplay, PlatformDisplaySnapshot,
-    PlatformFocusedWindow, PlatformHeadlessRenderer, PlatformHoveredWindow, PlatformKeyboardLayout,
-    PlatformKeyboardMapper, PlatformNativeDragHysteresis, PlatformTextSystem,
-    PlatformWindowActivationSupport, PlatformWindowCapabilities, PlatformWindowCommandOutcome,
-    PlatformWindowCreationCapabilities, PlatformWindowHitStack, PlatformWindowMutationCapabilities,
-    Point, PromptButton, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream,
-    SourceMetadata, Task, TestDisplay, TestWindow, ThermalState, WindowAppearance,
-    WindowCoordinateSpace, WindowCreationSupport, WindowInitialPresentationOrder,
-    WindowMutationSupport, WindowParams, size,
+    AnyWindowHandle, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle, DevicePixels,
+    DisplayId, DummyKeyboardMapper, ForegroundExecutor, Keymap, MouseButton,
+    NativeAppNotificationHandler, NoopTextSystem, PathPromptOptions, Pixels, Platform,
+    PlatformDisplay, PlatformDisplaySnapshot, PlatformFocusedWindow, PlatformHeadlessRenderer,
+    PlatformHoveredWindow, PlatformKeyboardLayout, PlatformKeyboardMapper,
+    PlatformNativeDragHysteresis, PlatformTextSystem, PlatformWindowActivationSupport,
+    PlatformWindowCapabilities, PlatformWindowCommandOutcome, PlatformWindowCreationCapabilities,
+    PlatformWindowHitStack, PlatformWindowMutationCapabilities, Point, PromptButton,
+    ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, SourceMetadata, Task,
+    TestDisplay, TestWindow, ThermalState, WindowAppearance, WindowCoordinateSpace,
+    WindowCreationSupport, WindowInitialPresentationOrder, WindowMutationSupport, WindowParams,
+    size,
 };
 use anyhow::Result;
 use futures::channel::oneshot;
@@ -20,6 +22,7 @@ use std::{
     path::{Path, PathBuf},
     rc::{Rc, Weak},
     sync::Arc,
+    time::Duration,
 };
 
 /// TestPlatform implements the Platform trait for use in tests.
@@ -46,7 +49,9 @@ pub(crate) struct TestPlatform {
         RefCell<Option<VecDeque<PlatformWindowCommandOutcome>>>,
     next_window_close_during_initial_presentation: RefCell<bool>,
     next_window_defer_frame_requests: RefCell<bool>,
-    active_display: Rc<dyn PlatformDisplay>,
+    displays: RefCell<Vec<TestDisplay>>,
+    displays_changed_callback: TestDisplayChangeCallback,
+    display_generation: Cell<u64>,
     display_snapshot_query_count: Cell<usize>,
     active_cursor: Mutex<CursorStyle>,
     pressed_mouse_buttons: Mutex<Option<Vec<MouseButton>>>,
@@ -163,7 +168,9 @@ impl TestPlatform {
             screen_capture_sources: Default::default(),
             active_cursor: Default::default(),
             pressed_mouse_buttons: Default::default(),
-            active_display: Rc::new(TestDisplay::new()),
+            displays: RefCell::new(vec![TestDisplay::new()]),
+            displays_changed_callback: TestDisplayChangeCallback::default(),
+            display_generation: Cell::new(1),
             display_snapshot_query_count: Cell::new(0),
             active_window: Default::default(),
             focused_window_available: RefCell::new(true),
@@ -206,6 +213,117 @@ impl TestPlatform {
 
     pub(crate) fn set_pointer_input_mutation_supported(&self, supported: bool) {
         *self.pointer_input_mutation_supported.borrow_mut() = supported;
+    }
+
+    pub(crate) fn connect_display(
+        &self,
+        display_id: DisplayId,
+        refresh_interval: Option<Duration>,
+    ) {
+        let mut displays = self.displays.borrow_mut();
+        if let Some(display) = displays
+            .iter_mut()
+            .find(|display| display.id() == display_id)
+        {
+            if display.refresh_interval == refresh_interval {
+                return;
+            }
+            display.refresh_interval = refresh_interval;
+        } else {
+            let mut display = TestDisplay::with_id(display_id);
+            display.refresh_interval = refresh_interval;
+            displays.push(display);
+        }
+        self.advance_display_generation();
+    }
+
+    pub(crate) fn simulate_display_added(
+        &self,
+        display_id: DisplayId,
+        refresh_interval: Option<Duration>,
+    ) {
+        self.connect_display(display_id, refresh_interval);
+        self.simulate_displays_changed();
+    }
+
+    pub(crate) fn simulate_display_removed(&self, display_id: DisplayId) {
+        let mut displays = self.displays.borrow_mut();
+        let previous_len = displays.len();
+        displays.retain(|display| display.id() != display_id);
+        if displays.len() != previous_len {
+            self.advance_display_generation();
+        }
+        drop(displays);
+        self.simulate_displays_changed();
+    }
+
+    pub(crate) fn simulate_display_refresh_interval_change(
+        &self,
+        display_id: DisplayId,
+        refresh_interval: Option<Duration>,
+    ) {
+        let mut displays = self.displays.borrow_mut();
+        if let Some(display) = displays
+            .iter_mut()
+            .find(|display| display.id() == display_id)
+            && display.refresh_interval != refresh_interval
+        {
+            display.refresh_interval = refresh_interval;
+            self.advance_display_generation();
+        }
+        drop(displays);
+        self.simulate_displays_changed();
+    }
+
+    pub(crate) fn simulate_display_bounds_change(
+        &self,
+        display_id: DisplayId,
+        bounds: Bounds<Pixels>,
+    ) {
+        let mut displays = self.displays.borrow_mut();
+        if let Some(display) = displays
+            .iter_mut()
+            .find(|display| display.id() == display_id)
+            && display.bounds != bounds
+        {
+            display.bounds = bounds;
+            self.advance_display_generation();
+        }
+        drop(displays);
+        self.simulate_displays_changed();
+    }
+
+    pub(crate) fn simulate_display_properties_change(
+        &self,
+        display_id: DisplayId,
+        bounds: Bounds<Pixels>,
+        refresh_interval: Option<Duration>,
+    ) {
+        let mut displays = self.displays.borrow_mut();
+        if let Some(display) = displays
+            .iter_mut()
+            .find(|display| display.id() == display_id)
+            && (display.bounds != bounds || display.refresh_interval != refresh_interval)
+        {
+            display.bounds = bounds;
+            display.refresh_interval = refresh_interval;
+            self.advance_display_generation();
+        }
+        drop(displays);
+        self.simulate_displays_changed();
+    }
+
+    pub(crate) fn simulate_displays_changed(&self) {
+        self.displays_changed_callback.call();
+    }
+
+    fn advance_display_generation(&self) {
+        self.display_generation.set(
+            self.display_generation
+                .get()
+                .checked_add(1)
+                .expect("test display publication generation exhausted"),
+        );
     }
 
     #[cfg(test)]
@@ -617,22 +735,31 @@ impl Platform for TestPlatform {
     }
 
     fn displays(&self) -> Vec<std::rc::Rc<dyn crate::PlatformDisplay>> {
-        vec![self.active_display.clone()]
+        self.displays
+            .borrow()
+            .iter()
+            .map(|display| Rc::new(display.clone()) as Rc<dyn PlatformDisplay>)
+            .collect()
     }
 
     fn primary_display(&self) -> Option<std::rc::Rc<dyn crate::PlatformDisplay>> {
-        Some(self.active_display.clone())
+        self.displays
+            .borrow()
+            .first()
+            .map(|display| Rc::new(display.clone()) as Rc<dyn PlatformDisplay>)
+    }
+
+    fn on_displays_changed(&self, callback: Box<dyn FnMut()>) {
+        self.displays_changed_callback.set(callback);
     }
 
     fn display_snapshot(&self) -> PlatformDisplaySnapshot {
         self.display_snapshot_query_count
             .set(self.display_snapshot_query_count.get() + 1);
-        PlatformDisplaySnapshot::try_new(
-            Some(1),
-            vec![self.active_display.clone()],
-            Some(self.active_display.id()),
-        )
-        .expect("test platform display publication must be valid")
+        let displays = self.displays();
+        let primary = displays.first().map(|display| display.id());
+        PlatformDisplaySnapshot::try_new(Some(self.display_generation.get()), displays, primary)
+            .expect("test platform display publication must be valid")
     }
 
     fn is_screen_capture_supported(&self) -> bool {
@@ -779,11 +906,19 @@ impl Platform for TestPlatform {
         params: WindowParams,
     ) -> anyhow::Result<Box<dyn crate::PlatformWindow>> {
         let renderer = self.headless_renderer_factory.as_ref().and_then(|f| f());
+        let display = params
+            .display_id
+            .and_then(|id| {
+                self.displays()
+                    .into_iter()
+                    .find(|display| display.id() == id)
+            })
+            .or_else(|| self.primary_display());
         let window = TestWindow::new(
             handle,
             params,
             self.weak.clone(),
-            self.active_display.clone(),
+            display,
             renderer,
             self.next_window_map_error.borrow_mut().take(),
             self.next_window_close_during_map.replace(false),

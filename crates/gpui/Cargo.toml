@@ -30,9 +30,7 @@ test-support = [
 ]
 inspector = ["open_gpui_macros/inspector"]
 leak-detection = ["backtrace"]
-wayland = [
-    "bitflags",
-]
+wayland = []
 x11 = [
     "scap?/x11",
 ]
@@ -52,7 +50,7 @@ accesskit.workspace = true
 anyhow.workspace = true
 async-task = "4.7"
 backtrace = { workspace = true, optional = true }
-bitflags = { workspace = true, optional = true }
+bitflags.workspace = true
 
 open_gpui_collections.workspace = true
 ctor.workspace = true
