@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-06T16:20:00+08:00
+timestamp: 2026-11-06T17:31:00+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -238,6 +238,28 @@ verified_by:
   claim follows. The queue now separately records display observation, conditional hot reload
   and the target's owning asset-load migration; they are not implied by this entry point.
 
+- The owning asset-load successor adopts official CachedLoad, foreground publication and
+  deduplicated interested views. App fetch returns Option output; opaque image entries replace
+  Shared handles and per-use completion tasks across Window, retain-all and the actual gallery
+  LRU. The direct official publication reproduces a fork-specific busy-App panic; waiting on
+  existing AppCell releases before the complete App transaction preserves entry identity and
+  cancellation. Owner/image/LRU/candidate/native focused cases pass 22/22 after recorded
+  fixture/oracle corrections. Actual native consumers submit both windows automatically from
+  one load, retain passive no-redraw assertions and release the image before App shutdown.
+  The previously dormant gallery now has an explicit platform example with actual capacity-one/
+  two cancellation and two-window animated-disposal tests. Bounded production/consumer reviews
+  leave no confirmed P1/P2; all six subthreads are closed. Complete affected runtime/public/
+  gallery passes 1,361/1,361 with four existing interactive Windows cases skipped; components/
+  docking/Canvas pass 2,964/2,964 and independently locked public consumers pass 16/16 without
+  skips. Locked workspace/consumer checks and affected correctness Clippy pass on Rust 1.95.0;
+  actual Windows Rust 1.92.0 affected-framework/consumer all-target/all-feature checks also pass.
+  The independent lock and every dependency version remain unchanged; root lock changes only
+  declare existing gallery dev dependencies. The verification record owns
+  exact results and the separate native initialization, explicit candidate retry and platform/
+  performance limits. Root/consumer formatting and existing import/document/release/API scans
+  pass, as does the maintenance skill validator. That skill's local `bf3e0d2f7c6` clarification
+  makes official mechanisms the default baseline and requires evidence for retained differences.
+
 # Historical Main Integration
 
 The previous snapshot recorded `df6ae2f` on July 9. The following integration summary retains that
@@ -269,8 +291,9 @@ historical scope and is not current branch or CI qualification.
   recorded Windows/software scope, as are source-fragment/layer/underline and window-local
   text ownership. The Taffy/intrinsic/root/grid/stack successor is qualified within its
   recorded scope, together with shared-image decoding and its real public/native consumers.
-  The externally driven App unit is qualified within its recorded scope. Reconcile owning
-  asset loads and the remaining image-feature/API/platform/display/hot-reload differences. Qualify the
+  The externally driven App and owning asset-load units are qualified within their recorded
+  scope. Apply the maintenance skill's official-baseline rule while reconciling remaining
+  image-feature/API/platform/display/hot-reload differences. Qualify the
   prepared CoreText selection/cascade work on macOS when that platform is available. The
   DirectWrite successor now
   has separate existing-family and installed-fallback evidence rather than borrowing the

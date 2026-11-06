@@ -4475,12 +4475,17 @@ version = "0.2.0"
 name = "open-gpui-platform"
 version = "0.2.0"
 dependencies = [
+ "async-channel",
  "console_error_panic_hook",
+ "env_logger",
+ "futures",
  "open-gpui",
  "open-gpui-linux",
  "open-gpui-macos",
+ "open-gpui-reqwest-client",
  "open-gpui-web",
  "open-gpui-windows",
+ "wasm-bindgen",
 ]
 
 [[package]]

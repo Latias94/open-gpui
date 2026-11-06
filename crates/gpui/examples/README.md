@@ -49,6 +49,11 @@ cargo run -p open-gpui --example hello_world
 - `painting` demonstrates custom drawing with paths and canvas.
 - `svg` shows SVG rendering.
 
+The maintained `image_gallery` target belongs to `open-gpui-platform` so its backend dependencies
+stay outside the core framework. Run it with
+`cargo run -p open-gpui-platform --example image_gallery`. Its actual custom LRU cache tests run
+with `cargo nextest run -p open-gpui-platform --all-features --example image_gallery`.
+
 ## Windows and application behavior
 
 - `move_entity_between_windows` shows moving an entity between windows.

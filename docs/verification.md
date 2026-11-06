@@ -1864,6 +1864,128 @@ is not compositor display, numeric costs or shared engine rendering evidence. Ot
 platforms, complete closure reconciliation, canonical docking, Nara integration and R11/R12
 remain open.
 
+## Owning Asset Loads And View Completion
+
+This unit starts from `e4364085634906472d23dab0efe0b9305fab7a04` and reconciles official
+`5896274168e06663568f42b5bae142162936e0a6` and its cleanup at fixed target
+`635026fabc38440fce5e1767d125026a17b12012`. The official `CachedLoad` owns one background
+load and one foreground publication task. A loading entry deduplicates interested entity IDs;
+a loaded entry retains its result. App::fetch_asset now returns Option output without
+subscribing, Window::use_asset registers each interested view and Window::get_asset remains
+non-subscribing. Opaque ImageCacheItem new/get/use_image replaces ImageLoadingTask and the
+public Loading/Loaded variants. Retain-all and the actual gallery LRU use that same owner;
+existing image-disposal and decoder contracts remain.
+
+The direct official publication body passes the initial multi-window notification and pending
+window-load cancellation cases, but the active-App-borrow case panics with `RefCell already
+borrowed`: nextest `b6e076ff-4dac-45e4-877e-dcc1d4e34188` reports 2/3. This is a fork-specific
+modal-loop integration difference, not proof of the same failure in official GPUI. The adapted
+foreground task uses the existing AppCell borrow-release waiters, checks entry identity only
+inside the acquired App update and publishes/flushes notifications through the complete
+transaction. It holds only weak App/entry references while waiting. Eviction drops the entry's
+publication task, including a ready result waiting for a borrow, without retaining a replacement.
+The new crate-private AsyncApp helper supplies that concrete App-only update; it creates no
+cache, scheduler, native event or mutation owner. App release and terminal quitting stop the
+publication rather than panicking or spinning.
+
+The first adapted owner/image selection passes 15/16
+(`e3e46165-d0bb-400c-9b9c-246dc8d4ba6d`). Only the new released-App fixture fails before
+its release step: BackgroundExecutor::tick delegates to the complete test scheduler and can
+already run foreground publication. The fixture now uses TestDispatcher::tick(true) to finish
+only background work, retaining its pending-publication, App lifetime and exact result-release
+assertions. No production behavior or acceptance assertion is weakened by that correction.
+
+Corrected owner/image tests and the new actual Windows consumer pass 17/17 without skips
+(`d263dbbe-b2db-4d35-a94a-14beb7ef755b`). The native consumer uses two real windows over
+the returning visual host and one shared held asset. Both views register twice but each receives
+one completion notification; both automatically publish accepted/nonempty Submitted image
+frames without compensating notify, refresh or draw. Matching generation diagnostics and GPU
+readback retain the exact image identity and color. Passive fetch/get, cancellation/replacement
+and cached errors use a separate resource. Removing the active cache and atlas keys retains
+the accepted native frame through its existing texture lease; both windows then retire through
+the actual registered lifecycle and final App/text/platform owners release.
+
+Bounded production review finds no confirmed correctness defects. Its added pressure cases
+cover waited-update unwind and terminal shutdown before publication. Bounded consumer review
+identifies an oracle gap: entity notification counts alone would miss an accidental global
+refresh during passive completion. The native successor snapshots render/paint counts after
+initial frame opportunities, processes further native frame opportunities after both passive
+success and replacement failure, and requires those counts to remain unchanged. It also
+checks active image release after native windows are gone while App is still alive. These
+assertions retain the original notification, exact submission, pixels and retirement controls.
+The native cancellation/replacement branch is passive; subscribed replacement is covered by
+the owner tests, and existing candidate-refusal cohorts retain their distinct scope.
+
+Source inspection also finds the gallery example dormant under core's `autoexamples = false`.
+The migrated source is now an explicit `image_gallery` example of `open-gpui-platform`, with
+the existing backend dependency and narrowly scoped dev dependencies. This avoids a core-to-
+platform dependency cycle and does not reenable unrelated dormant examples. Its actual custom
+LRU has capacity-one/two held-load cancellation, replacement and two-window animated-frame
+disposal tests. Compile and execute that target explicitly:
+
+```text
+cargo nextest run --locked -p open-gpui-platform --all-features --example image_gallery --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+An initial expanded compile catches one new fixture reading App's private quitting field. The
+terminal-shutdown control instead reads the existing public test-support settlement fact,
+preserving encapsulation and its no-publication, zero-notification and exact result-release
+assertions. Root lockfile changes only add the gallery's existing dev dependency names to
+the platform package; no dependency versions change. Full offline Cargo metadata requests a
+missing non-host AccessKit package; locked metadata with `--no-deps` verifies the declared
+example target without downloading unrelated platform source. This is not a product-test
+failure or non-Windows compilation evidence.
+
+The expanded selection passes 21/22 (`7e6a53d8-035d-43ec-be79-8207ed16164d`): all owner,
+unwind/terminal, actual LRU and candidate-refusal cases pass. The strengthened native
+no-redraw count detects one extra root render after passive success. Its baseline had not
+established the initialization isolation already used by the native cache-dependency fixture.
+The successor uses pointer/activation-disabled windows, verifies those actual native facts,
+and establishes one explicitly refreshed accepted/nonempty Submitted initialization per window
+while every result is still held. Only then does it snapshot passive counts. No notify,
+refresh or draw is added after releasing a result, and all no-redraw equality, submission,
+pixel, lease and retirement assertions remain. The candidate test separately requires exact
+old scene/generation/dependencies on refusal and a notified accepted retry with the same result
+identity; its retry is explicit rather than claimed as automatic recovery.
+
+The corrected expanded selection passes 22/22 without skips
+(`b99f01c8-d52c-4e2b-a7bc-7941ed30d15e`). This includes the strengthened native passive
+no-redraw and pre-App-drop image-release controls, actual gallery LRU tests, candidate refusal/
+notified retry and all owning cache/borrow/lifetime cases.
+
+Bounded production and consumer reviews leave no confirmed P1/P2 outstanding; the consumer
+review closes its original no-redraw oracle finding after source rereview and the 22/22 run.
+All six implementation/review subthreads are closed. Native capture is offscreen renderer
+evidence with observed native lifecycle, not compositor display or OS-input qualification;
+these windows deliberately disable pointer/activation changes during passive measurements.
+The independently locked asset consumers type-check public APIs without launching an App
+or enabling test-support. Browser main-thread contention, non-Windows execution, numeric
+CPU/allocation/P99/process retention and engine rendering are not established by this unit.
+
+The complete all-feature Core/WGPU/Windows/platform libraries, six public text/layout/image
+consumers and actual gallery example pass 1,361/1,361 across 11 binaries, with four existing
+interactive Windows cases skipped (`a71a5ca9-380b-44fb-b369-4017115ac51d`). This reruns the
+existing text/image, cached replay, input, atlas and native lifecycle consumers against the
+final owning asset source rather than borrowing the preceding App unit's results.
+Affected UI core/components/docking/Canvas libraries and integrations pass 2,964/2,964 across
+25 binaries without skips (`a3b6f799-ee52-4e9c-bf6a-eb718c966486`).
+Independently locked public consumers pass 16/16 across eight binaries without skips
+(`a6590e6e-e6d5-468a-910e-33da27022346`). The two new asset consumers type-check Option
+outputs and opaque new/get/use_image signatures; actual asynchronous/cancellation/native
+behavior is established separately above.
+Locked workspace all-target and independently locked consumer all-target/all-feature checks
+pass on Rust 1.95.0, as does affected Core/WGPU/Windows/platform all-target/all-feature
+correctness Clippy. Actual Windows Rust 1.92.0 checks pass for those four framework packages
+and the independently locked consumer, both all-target/all-feature. The new gallery target
+participates in framework compilation rather than remaining dormant source. Its first MSRV
+build compiles the existing native TLS dependency closure serially; no compiler-floor increase
+or dependency-version update is required. The independent lockfile remains unchanged.
+Root and independent-consumer formatting checks pass, as do existing import-boundary,
+document-link, release-document and public-API scans. The maintenance skill's official-baseline
+clarification passes its existing validator. Verification uses serial one-job Cargo and Nara's
+shared target; no remote publication or CI execution is part of this record. Full fixed-target
+closure, canonical docking, Nara adoption and complete R11/R12 remain open.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:

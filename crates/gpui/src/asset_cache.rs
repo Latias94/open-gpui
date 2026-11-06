@@ -1,11 +1,71 @@
-use crate::{App, SharedString, SharedUri};
+use crate::{App, EntityId, SharedString, SharedUri, Task};
 use futures::{Future, TryFutureExt};
+use open_gpui_collections::FxHashSet;
 
+use std::cell::RefCell;
 use std::fmt::Debug;
 use std::hash::{BuildHasher, Hash};
 use std::marker::PhantomData;
+use std::mem;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::Arc;
+
+pub(crate) struct CachedLoad<T> {
+    state: Rc<RefCell<CachedLoadState<T>>>,
+    _task: Task<()>,
+}
+
+enum CachedLoadState<T> {
+    Loading(FxHashSet<EntityId>),
+    Loaded(T),
+}
+
+impl<T: Clone + Send + 'static> CachedLoad<T> {
+    pub(crate) fn new(future: impl Future<Output = T> + Send + 'static, cx: &App) -> Self {
+        let state = Rc::new(RefCell::new(CachedLoadState::Loading(FxHashSet::default())));
+        let task = cx.background_executor().spawn(future);
+        let task = cx.spawn({
+            let state = Rc::downgrade(&state);
+            async move |cx| {
+                let result = task.await;
+                _ = cx
+                    .update_when_available(move |cx| {
+                        let Some(state) = state.upgrade() else {
+                            return;
+                        };
+                        let previous =
+                            mem::replace(&mut *state.borrow_mut(), CachedLoadState::Loaded(result));
+                        let CachedLoadState::Loading(views) = previous else {
+                            unreachable!("a cached load completes only once");
+                        };
+                        for view in views {
+                            cx.notify(view);
+                        }
+                    })
+                    .await;
+            }
+        });
+        Self { state, _task: task }
+    }
+
+    pub(crate) fn get(&self) -> Option<T> {
+        match &*self.state.borrow() {
+            CachedLoadState::Loading(_) => None,
+            CachedLoadState::Loaded(result) => Some(result.clone()),
+        }
+    }
+
+    pub(crate) fn use_by(&self, view: EntityId) -> Option<T> {
+        match &mut *self.state.borrow_mut() {
+            CachedLoadState::Loading(views) => {
+                views.insert(view);
+                None
+            }
+            CachedLoadState::Loaded(result) => Some(result.clone()),
+        }
+    }
+}
 
 /// An enum representing
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
@@ -80,3 +140,6 @@ where
 pub fn hash<T: Hash>(data: &T) -> u64 {
     open_gpui_collections::FxBuildHasher.hash_one(data)
 }
+
+#[cfg(test)]
+mod tests;

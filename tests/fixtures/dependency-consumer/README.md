@@ -108,3 +108,13 @@ Windows windows:
 ```text
 cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --all-features --test embedded_app --test-threads=1 --no-fail-fast --no-tests fail
 ```
+
+The optional `asset_cache` tests type-check the Option-returning App fetch and opaque owning
+image-entry APIs without test-support. A downstream custom image cache can start an entry,
+subscribe each current view with `use_image` and inspect a published result with `get`.
+They do not launch an App or qualify cancellation, notification, native frames or performance;
+the framework's owner and actual multi-window consumers supply that separate evidence:
+
+```text
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --all-features --test asset_cache --test-threads=1 --no-fail-fast --no-tests fail
+```

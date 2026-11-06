@@ -51,7 +51,6 @@ use crate::{
 };
 use anyhow::{Context as _, Result, anyhow};
 use derive_more::{Deref, DerefMut};
-use futures::FutureExt;
 use futures::channel::oneshot;
 #[cfg(feature = "input-latency-histogram")]
 use hdrhistogram::Histogram;
@@ -85,6 +84,8 @@ use std::{
 use uuid::Uuid;
 
 pub(crate) mod a11y;
+#[cfg(test)]
+mod asset_cache_tests;
 mod bring_into_view;
 #[cfg(test)]
 mod cache_dependency_tests;
@@ -9938,25 +9939,7 @@ impl Window {
     /// Note that the multiple calls to this method will only result in one `Asset::load` call at a
     /// time.
     pub fn use_asset<A: Asset>(&mut self, source: &A::Source, cx: &mut App) -> Option<A::Output> {
-        let (task, is_first) = cx.fetch_asset::<A>(source);
-        task.clone().now_or_never().or_else(|| {
-            if is_first {
-                let entity_id = self.current_view();
-                self.spawn(cx, {
-                    let task = task.clone();
-                    async move |cx| {
-                        task.await;
-
-                        cx.on_next_frame(move |_, cx| {
-                            cx.notify(entity_id);
-                        });
-                    }
-                })
-                .detach();
-            }
-
-            None
-        })
+        cx.asset_entry::<A>(source).use_by(self.current_view())
     }
 
     /// Asynchronously load an asset, if the asset hasn't finished loading or doesn't exist this will return None.
@@ -9965,8 +9948,7 @@ impl Window {
     /// Note that the multiple calls to this method will only result in one `Asset::load` call at a
     /// time.
     pub fn get_asset<A: Asset>(&mut self, source: &A::Source, cx: &mut App) -> Option<A::Output> {
-        let (task, _) = cx.fetch_asset::<A>(source);
-        task.now_or_never()
+        cx.fetch_asset::<A>(source)
     }
     /// Obtain the current element offset. This method should only be called during the
     /// prepaint phase of element drawing.

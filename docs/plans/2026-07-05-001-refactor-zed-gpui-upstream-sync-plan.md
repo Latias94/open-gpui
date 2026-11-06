@@ -17,6 +17,12 @@ The owner has resumed maintenance in `F:/SourceCodes/Rust/open-gpui`, whose insp
 that branch's unfinished canonical-docking work. The July units below retain their historical
 requirements; they are not proof of parity with current Zed.
 
+The November 6 owner clarification selects the
+[sync skill's official-baseline rule](../../.agents/skills/open-gpui-upstream-sync/SKILL.md#integrate-through-existing-owners):
+retain official framework behavior by default, refactor fork-owned adaptations around that base,
+and build reusable additions through ordinary public modules. The candidate queue records the
+reason and verification for each retained difference; unfinished official mechanisms stay visible.
+
 The [candidate queue](../imports/zed-gpui-upstream-sync-candidates.md#november-5-maintained-framework-successor)
 now records upstream `635026fabc38440fce5e1767d125026a17b12012` and five complete
 correctness units: arena custody, TextSystem lifetime, cached-view dependencies, text layout and
@@ -687,6 +693,52 @@ checks pass. Root/consumer formatting and existing import/document/release/API s
 the unit. The candidate queue retains the distinct display/hot-reload and owning-asset-load
 successors; this is not full closure refresh or engine external-loop integration.
 
+### Owning Asset-Load Successor
+
+After `e4364085634`, reconcile official `5896274168e06663568f42b5bae142162936e0a6`
+and its final-target cleanup against `635026fabc38440fce5e1767d125026a17b12012`.
+Adopt the official owning `CachedLoad`: one background load, one foreground publication task,
+deduplicated interested entity identities and cached success/error. Entries own cancellation;
+eviction must prevent an old completion from publishing into a replacement. Results become
+visible only after foreground publication. Replace the old public shared-future tuple and
+`ImageLoadingTask` rather than preserving compatibility handles. Migrate App, Window,
+ImageCacheItem, retain-all and the gallery's real LRU consumer together.
+
+The fork's AppCell permits native modal loops to poll foreground tasks while an App update is
+borrowed. Reuse its borrow-release waiting and complete update transaction for publication;
+do not add another cache, executor or notification owner. Preserve accepted-candidate dependency
+tracking and refusal/recovery. Plain fetch/get must not subscribe a view. Every pending use
+must register its interested view, even when another window began the load. Cache replacement,
+pending cancellation and foreground notification must retain exact entry identity.
+
+Retain the official owner regressions and add the fork's active-borrow, released-App and actual
+multi-window consumption controls. Qualify image-entry removal/disposal, custom image-cache API
+consumption, automatic accepted successors, native Submitted generations and exact retirement.
+Run focused tests before affected framework/public/component/native consumers, independently
+locked API checks, compilation, correctness Clippy, actual Windows compiler-floor checks,
+formatting and existing import/document/API scans. Official browser contention motivation is
+not a locally measured performance result. Other platforms, numeric costs, full upstream refresh,
+canonical docking, Nara integration and complete R11/R12 remain open.
+
+The direct official publication reproduces the fork's borrowed-App panic (2/3); waiting through
+the existing AppCell release mechanism corrects that boundary. The expanded final focused
+selection passes 22/22, including unwind/terminal shutdown, exact pending replacement, real
+retain-all/LRU disposal, cached candidate refusal/retry and actual Windows two-view automatic
+Submitted frames. The native no-redraw oracle retains the initial failed count and the existing
+native-cache fixture's initialization/input isolation correction. Core's disabled automatic
+examples had hidden the migrated gallery from compilation; the actual source is now an explicit
+platform example with bounded dev dependencies and tests, preserving the core dependency
+direction. The [verification record](../verification.md#owning-asset-loads-and-view-completion)
+owns executed results and their limits.
+
+Complete affected runtime/public/gallery passes 1,361/1,361 with four existing interactive
+Windows cases skipped; components/docking/Canvas pass 2,964/2,964 and independently locked
+public consumers pass 16/16 without skips. Locked workspace/consumer checks and affected
+correctness Clippy pass on Rust 1.95.0. Actual Windows Rust 1.92.0 affected-framework and
+independent-consumer all-target/all-feature checks pass. The root lockfile adds only existing
+gallery dev-dependency names; the independent lockfile and all dependency versions stay unchanged.
+No complete refresh, browser contention, numeric cost or engine integration claim follows.
+
 ## Maintained Baseline Before Engine Adaptation
 
 Finish a bounded framework refresh against the recorded November 5 Zed revision before expanding
@@ -697,11 +749,10 @@ differences as ported, already equivalent or intentionally divergent with a reas
 scope. A newly observed upstream HEAD starts a later maintenance cycle rather than silently
 moving this cycle's target.
 
-Port complete mechanisms and their prerequisites within the extracted framework closure. Do not
-merge the Zed application or replace local framework files wholesale. Keep a local difference
-only when a concrete framework consumer or an Accepted contract requires it; remove obsolete
-fork mechanisms when the upstream owner can serve that consumer. Package renaming, independent
-dependencies and unfinished docking work remain explicit integration inputs.
+Port complete mechanisms and their prerequisites within the extracted framework closure under
+the skill's official-baseline rule. Respect the Zed application boundary and reconcile relocated
+owners semantically. Package renaming, independent dependencies and unfinished docking work remain
+explicit integration inputs rather than reasons to preserve an obsolete fork mechanism.
 
 The exit record must identify the upstream target, resulting fork revision, remaining deliberate
 differences, actual compiler/dependency requirements, independent-consumer result and affected

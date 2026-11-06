@@ -34,6 +34,33 @@ impl AsyncApp {
             .expect("app was released before async operation completed")
     }
 
+    pub(crate) async fn update_when_available<R>(
+        &mut self,
+        update: impl FnOnce(&mut App) -> R,
+    ) -> Result<R> {
+        let mut update = Some(update);
+        loop {
+            let app = self.app.upgrade().context("app was released")?;
+            let borrow_released = match app.try_borrow_mut() {
+                Ok(mut app) => {
+                    if app.quitting {
+                        bail!("app is quitting");
+                    }
+                    return Ok(app.update(
+                        update
+                            .take()
+                            .expect("async App update must execute exactly once"),
+                    ));
+                }
+                Err(_) => app.wait_for_app_borrow_release(),
+            };
+            drop(app);
+            borrow_released
+                .await
+                .context("app was released while waiting for its active borrow")?;
+        }
+    }
+
     // Native modal loops may poll GPUI-owned foreground tasks while their initiating App update
     // still owns the RefCell borrow. Wait for distinct releases instead of spinning or discarding
     // the one-shot window update.

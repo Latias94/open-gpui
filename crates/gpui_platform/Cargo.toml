@@ -17,6 +17,11 @@ workspace = true
 [lib]
 path = "src/gpui_platform.rs"
 
+[[example]]
+name = "image_gallery"
+path = "../gpui/examples/image_gallery.rs"
+test = true
+
 [features]
 default = []
 font-kit = ["open_gpui_macos/font-kit"]
@@ -43,3 +48,12 @@ open_gpui_linux.workspace = true
 [target.'cfg(target_family = "wasm")'.dependencies]
 open_gpui_web.workspace = true
 console_error_panic_hook = "0.1.7"
+
+[target.'cfg(target_family = "wasm")'.dev-dependencies]
+wasm-bindgen.workspace = true
+
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
+async-channel.workspace = true
+env_logger.workspace = true
+futures.workspace = true
+open_gpui_reqwest_client.workspace = true
