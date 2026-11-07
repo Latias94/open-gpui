@@ -1,5 +1,7 @@
 //! Profiler regressions exercised through real windows and the test platform renderer.
 
+mod refresh;
+
 use super::cached_paint_atlas_tests::RejectOnceAtlas;
 use crate::{
     AnyWindowHandle, App, AppCell, AppContext as _, AtlasTextureKind, Context, FocusHandle, Hsla,

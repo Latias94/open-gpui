@@ -271,6 +271,37 @@ In addition to the systems above, Open GPUI provides a range of smaller services
 
 Currently, the best way to learn about these APIs is to read the Open GPUI examples and the framework source. This repository is a fork of Zed GPUI, but it is maintained as an independent Open GPUI workspace.
 
+## Frame And Hang Measurement
+
+Enable the `profiler` feature to read `Window::frame_duration_snapshot` and
+`Window::input_latency_snapshot`. Aggregates are collected independently of trace retention.
+Frame-duration reports include `by_refresh_interval`, grouping the window's accepted draws and
+submitted frames by the display interval captured for each draw. Each group reports on-time,
+late and unmeasured frames, missed refreshes, draw/work histograms and input-response statistics.
+Use `histogram_bucket_counts` with the public duration/work bounds when formatting a report.
+
+Frame work runs from the later of the captured frame signal and first invalidation to the start
+of platform submission. A missing signal leaves work unmeasured. Lateness uses the display
+interval with the official 120-Hz lower bound, or the 60-Hz fallback when refresh is unknown;
+missed refreshes use the actual known interval. This differs from input latency, which continues
+through submission completion. A successful retry uses its accepted scene's original timing;
+refused candidates and unsuccessful submissions do not complete a frame measurement.
+
+Read `App::foreground_journal` for independent event collectors and the public
+`profiler::hang::HangDetector`, or retain the handle from `App::start_hang_monitor` for background
+polling. Measurement version 3 separates threshold, late-frame and blocking-work incidents and
+reports active-use time. View contributors identify the actual view type and request-layout,
+prepaint or paint phase, excluding nested view time. Detection reports completed intervals;
+the journal is bounded and exposes discontinuities to readers.
+
+Raw input-activity controls follow the existing dispatch lifecycle, including nested dispatch,
+rollback and unwind. They let active-time accounting distinguish inactive gaps from an input
+handler still running. They do not add work or seal an interval; completed input events keep their
+ordinary work and latency meaning.
+
+The [measurement qualification](../../docs/verification.md#refresh-aware-frame-and-hang-measurement-v3)
+records executed consumer/platform scope separately from source inspection and numeric overhead.
+
 ## Verification
 
 For focused changes in this crate, run:

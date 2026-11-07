@@ -93,7 +93,9 @@ fn downstream_public_interval_values_preserve_nested_work_and_conversion_metadat
         (input.start_time(), snapshot.interval_end())
     );
     let converted = SerializedHangIncident::convert(start, &incident, 1, None);
+    assert_eq!(MEASUREMENT_VERSION, 3);
     assert_eq!(converted.measurement_version, MEASUREMENT_VERSION);
+    assert!(!converted.during_active_use);
     assert_eq!(converted.phase, "startup");
     assert_eq!(converted.sealed_by, "idle");
     assert_eq!(converted.start_ms, 1.0);
@@ -107,18 +109,30 @@ fn downstream_public_interval_values_preserve_nested_work_and_conversion_metadat
     assert_eq!(converted.event_count, 2);
     assert!(!converted.journal_discontinuous);
 
-    let budget = HangIncident::detect(
+    assert!(
+        HangIncident::detect(
+            snapshot.clone(),
+            Duration::from_millis(7),
+            Duration::from_micros(6500),
+        )
+        .is_none(),
+        "folded and nested occupancy cannot qualify as one blocking event"
+    );
+    let blocking = HangIncident::detect(
         snapshot.clone(),
         Duration::from_millis(7),
-        Duration::from_micros(6500),
+        Duration::from_millis(6),
     )
-    .expect("nested spans must count once toward the public budget");
-    assert_eq!(budget.trigger, HangTrigger::Budget);
-    let capped = SerializedHangIncident::convert(start, &budget, 1, Some(start));
+    .expect("one input event reaches the blocking-work budget");
+    assert_eq!(blocking.trigger, HangTrigger::BlockingWork);
+    assert_eq!(blocking.contributors.len(), 1);
+    let nested = HangIncident::detect(snapshot.clone(), Duration::from_millis(2), Duration::MAX)
+        .expect("both nested events reach the threshold independently");
+    let capped = SerializedHangIncident::convert(start, &nested, 1, Some(start));
     assert_eq!(capped.phase, "steady");
     assert_eq!(capped.contributors.len(), 1);
     assert_eq!(capped.contributors_elided, 1);
-    let uncapped = SerializedHangIncident::convert(start, &budget, usize::MAX, Some(start));
+    let uncapped = SerializedHangIncident::convert(start, &nested, usize::MAX, Some(start));
     assert!(matches!(
         uncapped.contributors.as_slice(),
         [
@@ -139,7 +153,7 @@ fn downstream_public_interval_values_preserve_nested_work_and_conversion_metadat
         HangIncident::detect(
             snapshot,
             Duration::from_millis(7),
-            Duration::from_micros(6501)
+            Duration::from_micros(6001)
         )
         .is_none()
     );
@@ -155,6 +169,7 @@ fn downstream_monitor_signature_typechecks_without_spawning_a_thread() {
         app.start_hang_monitor(config, move |poll: HangMonitorPoll| {
             reasons.push(poll.reason);
             let _: Vec<HangIncident> = poll.incidents;
+            let _: Duration = poll.active_time;
             let _ = poll.first_present_at;
         })
     };

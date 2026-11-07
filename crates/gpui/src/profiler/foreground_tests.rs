@@ -49,6 +49,9 @@ mod enabled {
             invalidations: 3,
             draw_start: start + Duration::from_millis(2),
             draw_end: start + Duration::from_millis(4),
+            refresh_interval: None,
+            signal_at: None,
+            phases: DrawPhases::default(),
         });
     }
 

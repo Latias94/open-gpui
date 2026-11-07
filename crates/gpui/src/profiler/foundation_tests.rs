@@ -126,6 +126,9 @@ mod enabled {
             invalidations: 3,
             draw_start: start + Duration::from_millis(2),
             draw_end: start + Duration::from_millis(4),
+            refresh_interval: None,
+            signal_at: None,
+            phases: DrawPhases::default(),
         });
     }
 
@@ -135,6 +138,7 @@ mod enabled {
             kind: "test_input",
             covering_draw: None,
             measurement_generation: profiler.input_measurement_generation,
+            _input_activity: journal::input_activity("test_input", started_at),
             _turn: journal::foreground_turn(),
         });
     }

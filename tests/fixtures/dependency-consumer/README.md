@@ -450,3 +450,89 @@ logical close; a backend weak-state probe need not expire until App itself is dr
 or invoking a weak frame waker must not increase that state's strong owner count or reschedule
 a terminal window. The commands above are verification instructions, not a record that
 these targets have been compiled or executed.
+
+## Refresh-aware measurement v3 consumers
+
+The `refresh_measurements` integration target consumes the public frame-pacing and foreground
+measurement successor from official Zed
+[`4f6d97b9de`](https://github.com/zed-industries/zed/commit/4f6d97b9de7d9f167da8b7832eeecea22c5a9efa),
+as present in the fixed cycle source
+[`635026fabc`](https://github.com/zed-industries/zed/tree/635026fabc38440fce5e1767d125026a17b12012).
+The measurement version is `3`. A frame's work starts at the later of its captured signal and
+first invalidation and ends at the start of platform submission. Its lateness budget uses the
+display refresh interval with the 120 Hz floor, or the 60 Hz fallback when the display interval
+is unknown. Missed refreshes use the real interval. A missing frame signal leaves work
+unmeasured even when the display interval is known; an unknown display interval can still have
+measured work when a signal is available, but has no missed-refresh count.
+
+This independent fixture keeps ordinary dependency features and its existing lockfile. It adds
+no dependency or `test-support` requirement. Its timing-value controls call public work,
+budget, lateness, and missed-refresh methods, including equality boundaries and the faster
+display budget floor. Owned `WindowProfiler` draw scopes exercise per-refresh snapshots and
+`RefreshIntervalFrames::since` without fabricating successful presentations. Public histogram
+controls check inclusive duration/percentage buckets and the final overflow bucket. View values
+pass through `ForegroundEvent::View`, `IntervalSealer`, threshold detection, and v3 conversion
+with type names, phase names, nesting depth, and exclusive self time. The migrated
+`foreground_journal` control retains occupancy, conversion, contributor caps, and nesting
+assertions while replacing cumulative `Budget` qualification with single-event `BlockingWork`.
+Disabled-feature controls execute nested public task guards and verify that timing snapshots,
+collectors, aggregate accessors, and trace controls remain empty or no-op.
+
+The fork's raw `InputActivity` controls describe existing dispatch lifecycle for bounded active-
+time accounting, including nested input and unwind. The independent consumer supplies those
+public values to the sealer and verifies that they create neither work nor a sealed interval.
+Completed input events retain work/latency meaning. Actual guard lifetime, chronological union
+accounting, suspend/loss and native delivery have separate owner and platform coverage.
+
+The explicitly named `_window_type_only` and `_active_time_type_only` closures are deliberately
+unexecuted. They consume actual Window/report signatures and detector active-time access,
+including every per-refresh field. Their bodies are compilation contracts, not evidence of
+window drawing, active use, or submission. Synthetic `FrameTiming` values use an ID only to
+test arithmetic; they never construct presentation facts, successful outcomes, or submitted
+generations. The separate existing `profiler` target preserves its input snapshot diagnostics
+and ordinary trace/aggregate controls.
+
+Run the independent targets separately in both instrumentation configurations:
+
+```text
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --test refresh_measurements --test profiler --jobs 1 --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --features profiler --test refresh_measurements --test profiler --test foreground_journal --jobs 1 --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+The separate crate-external `crates/gpui/tests/refresh_measurements.rs` target uses the existing
+TestPlatform through public `TestAppContext` and `VisualTestContext`. It defers startup frame
+requests, activates each window, and prepares the initial scene through visual-context updates
+without borrowing the typed root across a draw. It then exercises these actual workflows:
+
+- A public next-frame callback dispatches mouse input through a rendered handler, changes the
+  scene, and reaches draw, platform submission, journal collection, hang detection, v3
+  serialization, and per-refresh reports. The display changes between 60 Hz, 240 Hz, unknown,
+  and 30 Hz through public display helpers. Input diagnostics, all per-refresh counters,
+  histograms, buckets, and exact accepted/submitted/nonempty generations are checked while
+  tracing is disabled. Captured signals are explicit `LocalSchedule` simulation values.
+- Scheduled callbacks with no captured timestamp submit real accepted scenes while preserving
+  unmeasured frame counts and empty work histograms. A measured no-render skip followed by a
+  direct draw must also remain unmeasured; the skipped callback cannot lend its signal to
+  later work. A compositor callback parks without adding another frame sample.
+- Deferred and rejected attempts retain the accepted scene and pending input. Changing the
+  display refresh rate during retry cannot alter that scene's original refresh interval,
+  signal, draw timestamps, invalidations, or phase durations. The eventual test-platform
+  submission must complete the exact accepted generation once, with outcome counters intact.
+- Slow nested real views become named v3 contributors and exclude child work from parent
+  self time. A measured slow frame produces `LateFrame`; an unmeasured frame with one slow
+  input handler produces `BlockingWork`. Deliberate input marks these detector incidents as
+  occurring during active use. Draw contributors carry all three phase durations.
+
+```text
+cargo nextest run -p open-gpui --no-default-features --features test-support,profiler --test refresh_measurements --jobs 1 --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+These commands are verification instructions, not an execution or compilation record. Runtime
+coverage is TestPlatform callback delivery and its own submitted scenes, not native frame-source
+capture, native submitted receipts, compositor timing, GPU output, display scanout, or
+performance. Short sleeps make selected real view/input work observable; exact lateness for
+ordinary frames is checked against their captured timing rather than a wall-clock speed claim.
+Scheduled helpers do not capture a timestamp or accept custom signal options; explicit
+`simulate_frame(RequestFrameOptions)` delivers captured simulation signals through the same
+public test-platform callback. Busy/reentrant backend delivery and native timing need their
+own owner verification. This fixture does not start an App or monitor thread.

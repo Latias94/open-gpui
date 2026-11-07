@@ -36,6 +36,7 @@ struct ViewCacheKey {
 pub struct AnyView {
     entity: AnyEntity,
     render: fn(&AnyView, &mut Window, &mut App) -> AnyElement,
+    view_type_name: &'static str,
     cached_style: Option<Rc<StyleRefinement>>,
 }
 
@@ -44,6 +45,7 @@ impl<V: Render> From<Entity<V>> for AnyView {
         AnyView {
             entity: value.into_any(),
             render: any_view::render::<V>,
+            view_type_name: std::any::type_name::<V>(),
             cached_style: None,
         }
     }
@@ -70,6 +72,7 @@ impl AnyView {
         AnyWeakView {
             entity: self.entity.downgrade(),
             render: self.render,
+            view_type_name: self.view_type_name,
         }
     }
 
@@ -81,6 +84,7 @@ impl AnyView {
             Err(entity) => Err(Self {
                 entity,
                 render: self.render,
+                view_type_name: self.view_type_name,
                 cached_style: self.cached_style,
             }),
         }
@@ -124,23 +128,39 @@ impl Element for AnyView {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        window.with_rendered_view(self.entity_id(), |window| {
-            // Cached view reuse does not replay accessibility nodes or action routing.
-            let caching_disabled = window.is_inspector_picking(cx) || window.a11y.is_active();
-            match self.cached_style.as_ref() {
-                Some(style) if !caching_disabled && window.subtree_presentation().paints() => {
-                    let mut root_style = Style::default();
-                    root_style.refine(style);
-                    let layout_id = window.request_layout(root_style, None, cx);
-                    (layout_id, None)
+        #[cfg(feature = "profiler")]
+        let view_type_name = self.view_type_name;
+        let draw = move |window: &mut Window, cx: &mut App| {
+            let view = self;
+            window.with_rendered_view(view.entity_id(), |window| {
+                // Cached view reuse does not replay accessibility nodes or action routing.
+                let caching_disabled = window.is_inspector_picking(cx) || window.a11y.is_active();
+                match view.cached_style.as_ref() {
+                    Some(style) if !caching_disabled && window.subtree_presentation().paints() => {
+                        let mut root_style = Style::default();
+                        root_style.refine(style);
+                        let layout_id = window.request_layout(root_style, None, cx);
+                        (layout_id, None)
+                    }
+                    _ => {
+                        let mut element = (view.render)(view, window, cx);
+                        let layout_id = element.request_layout(window, cx);
+                        (layout_id, Some(element))
+                    }
                 }
-                _ => {
-                    let mut element = (self.render)(self, window, cx);
-                    let layout_id = element.request_layout(window, cx);
-                    (layout_id, Some(element))
-                }
-            }
-        })
+            })
+        };
+        #[cfg(feature = "profiler")]
+        {
+            window.profile_view_phase(
+                view_type_name,
+                crate::profiler::ViewPhase::RequestLayout,
+                cx,
+                draw,
+            )
+        }
+        #[cfg(not(feature = "profiler"))]
+        draw(window, cx)
     }
 
     fn prepaint(
@@ -153,79 +173,95 @@ impl Element for AnyView {
         cx: &mut App,
     ) -> Option<AnyElement> {
         window.set_view_id(self.entity_id());
-        window.with_rendered_view(self.entity_id(), |window| {
-            if let Some(mut element) = element.take() {
-                element.prepaint(window, cx);
-                return Some(element);
-            }
+        #[cfg(feature = "profiler")]
+        let view_type_name = self.view_type_name;
+        let draw = move |window: &mut Window, cx: &mut App| {
+            let view = self;
+            window.with_rendered_view(view.entity_id(), |window| {
+                if let Some(mut element) = element.take() {
+                    element.prepaint(window, cx);
+                    return Some(element);
+                }
 
-            window.with_element_state::<AnyViewState, _>(
-                global_id.unwrap(),
-                |element_state, window| {
-                    let clip_stack = window.clip_stack();
-                    let text_style = window.text_style();
-                    let opacity = window.element_opacity();
-                    let subtree_presentation = window.subtree_presentation();
-                    let subtree_transform = window.subtree_transform();
+                window.with_element_state::<AnyViewState, _>(
+                    global_id.unwrap(),
+                    |element_state, window| {
+                        let clip_stack = window.clip_stack();
+                        let text_style = window.text_style();
+                        let opacity = window.element_opacity();
+                        let subtree_presentation = window.subtree_presentation();
+                        let subtree_transform = window.subtree_transform();
 
-                    if let Some(mut element_state) = element_state
-                        && element_state.cache_key.bounds == bounds
-                        && element_state.cache_key.clip_stack == clip_stack
-                        && element_state.cache_key.text_style == text_style
-                        && element_state.cache_key.opacity.to_bits() == opacity.to_bits()
-                        && element_state.cache_key.subtree_presentation == subtree_presentation
-                        && element_state.cache_key.subtree_transform == subtree_transform
-                        && window.can_reuse_paint(&element_state.paint_range)
-                        && !window.dirty_views.contains(&self.entity_id())
-                        && !window.refreshing
-                        && !window.portal_anchor_dependency_invalidates_view(self.entity_id())
-                        && !window.portal_anchor_capture_requires_fresh_prepaint()
-                        && !window.reveal_target_capture_requires_fresh_prepaint()
-                    {
+                        if let Some(mut element_state) = element_state
+                            && element_state.cache_key.bounds == bounds
+                            && element_state.cache_key.clip_stack == clip_stack
+                            && element_state.cache_key.text_style == text_style
+                            && element_state.cache_key.opacity.to_bits() == opacity.to_bits()
+                            && element_state.cache_key.subtree_presentation == subtree_presentation
+                            && element_state.cache_key.subtree_transform == subtree_transform
+                            && window.can_reuse_paint(&element_state.paint_range)
+                            && !window.dirty_views.contains(&view.entity_id())
+                            && !window.refreshing
+                            && !window.portal_anchor_dependency_invalidates_view(view.entity_id())
+                            && !window.portal_anchor_capture_requires_fresh_prepaint()
+                            && !window.reveal_target_capture_requires_fresh_prepaint()
+                        {
+                            let prepaint_start = window.prepaint_index();
+                            window.reuse_prepaint(element_state.prepaint_range.clone());
+                            cx.entities
+                                .extend_accessed(&element_state.accessed_entities);
+                            let prepaint_end = window.prepaint_index();
+                            element_state.prepaint_range = prepaint_start..prepaint_end;
+
+                            return (None, element_state);
+                        }
+
+                        let refreshing = mem::replace(&mut window.refreshing, true);
                         let prepaint_start = window.prepaint_index();
-                        window.reuse_prepaint(element_state.prepaint_range.clone());
-                        cx.entities
-                            .extend_accessed(&element_state.accessed_entities);
+                        let (mut element, accessed_entities) = cx.detect_accessed_entities(|cx| {
+                            let mut element = (view.render)(view, window, cx);
+                            let root_layout_id = element.request_layout(window, cx);
+                            element.layout_as_root(bounds.size.into(), window, cx);
+                            window.register_portal_anchor_root_layout_alias(root_layout_id);
+                            window.register_reveal_target_root_layout_alias(root_layout_id);
+                            element.prepaint_at(bounds.origin, window, cx);
+                            element
+                        });
+
                         let prepaint_end = window.prepaint_index();
-                        element_state.prepaint_range = prepaint_start..prepaint_end;
+                        window.refreshing = refreshing;
 
-                        return (None, element_state);
-                    }
-
-                    let refreshing = mem::replace(&mut window.refreshing, true);
-                    let prepaint_start = window.prepaint_index();
-                    let (mut element, accessed_entities) = cx.detect_accessed_entities(|cx| {
-                        let mut element = (self.render)(self, window, cx);
-                        let root_layout_id = element.request_layout(window, cx);
-                        element.layout_as_root(bounds.size.into(), window, cx);
-                        window.register_portal_anchor_root_layout_alias(root_layout_id);
-                        window.register_reveal_target_root_layout_alias(root_layout_id);
-                        element.prepaint_at(bounds.origin, window, cx);
-                        element
-                    });
-
-                    let prepaint_end = window.prepaint_index();
-                    window.refreshing = refreshing;
-
-                    (
-                        Some(element),
-                        AnyViewState {
-                            accessed_entities,
-                            prepaint_range: prepaint_start..prepaint_end,
-                            paint_range: PaintIndex::default()..PaintIndex::default(),
-                            cache_key: ViewCacheKey {
-                                bounds,
-                                clip_stack,
-                                text_style,
-                                opacity,
-                                subtree_presentation,
-                                subtree_transform,
+                        (
+                            Some(element),
+                            AnyViewState {
+                                accessed_entities,
+                                prepaint_range: prepaint_start..prepaint_end,
+                                paint_range: PaintIndex::default()..PaintIndex::default(),
+                                cache_key: ViewCacheKey {
+                                    bounds,
+                                    clip_stack,
+                                    text_style,
+                                    opacity,
+                                    subtree_presentation,
+                                    subtree_transform,
+                                },
                             },
-                        },
-                    )
-                },
+                        )
+                    },
+                )
+            })
+        };
+        #[cfg(feature = "profiler")]
+        {
+            window.profile_view_phase(
+                view_type_name,
+                crate::profiler::ViewPhase::Prepaint,
+                cx,
+                draw,
             )
-        })
+        }
+        #[cfg(not(feature = "profiler"))]
+        draw(window, cx)
     }
 
     fn paint(
@@ -238,59 +274,71 @@ impl Element for AnyView {
         window: &mut Window,
         cx: &mut App,
     ) {
-        window.with_rendered_view(self.entity_id(), |window| {
-            let caching_disabled = window.is_inspector_picking(cx) || window.a11y.is_active();
-            if self.cached_style.is_some() && !caching_disabled {
-                window.with_atlas_texture_lease_paint_scope(|window| {
-                    window.with_element_state::<AnyViewState, _>(
-                        global_id.unwrap(),
-                        |element_state, window| {
-                            let mut element_state = element_state.unwrap();
+        #[cfg(feature = "profiler")]
+        let view_type_name = self.view_type_name;
+        let draw = move |window: &mut Window, cx: &mut App| {
+            let view = self;
+            window.with_rendered_view(view.entity_id(), |window| {
+                let caching_disabled = window.is_inspector_picking(cx) || window.a11y.is_active();
+                if view.cached_style.is_some() && !caching_disabled {
+                    window.with_atlas_texture_lease_paint_scope(|window| {
+                        window.with_element_state::<AnyViewState, _>(
+                            global_id.unwrap(),
+                            |element_state, window| {
+                                let mut element_state = element_state.unwrap();
 
-                            let paint_start = window.paint_index();
-                            let opacity = window.element_opacity();
+                                let paint_start = window.paint_index();
+                                let opacity = window.element_opacity();
 
-                            let paint_succeeded = if let Some(element) = element {
-                                let refreshing = mem::replace(&mut window.refreshing, true);
-                                let ((), accessed_entities) =
-                                    cx.detect_accessed_entities(|cx| element.paint(window, cx));
-                                element_state.accessed_entities.extend(accessed_entities);
-                                window.refreshing = refreshing;
-                                if element_state.cache_key.opacity.to_bits() != opacity.to_bits() {
-                                    window.record_opacity_rebuild_view(
-                                        self.entity_id(),
-                                        &element_state.prepaint_range,
-                                    );
-                                }
-                                element_state.cache_key.opacity = opacity;
-                                true
-                            } else {
-                                let reused = window.reuse_paint(element_state.paint_range.clone());
-                                if reused
-                                    && element_state.cache_key.opacity.to_bits()
+                                let paint_succeeded = if let Some(element) = element {
+                                    let refreshing = mem::replace(&mut window.refreshing, true);
+                                    let ((), accessed_entities) =
+                                        cx.detect_accessed_entities(|cx| element.paint(window, cx));
+                                    element_state.accessed_entities.extend(accessed_entities);
+                                    window.refreshing = refreshing;
+                                    if element_state.cache_key.opacity.to_bits()
                                         != opacity.to_bits()
-                                {
-                                    window.request_animation_frame();
+                                    {
+                                        window.record_opacity_rebuild_view(
+                                            view.entity_id(),
+                                            &element_state.prepaint_range,
+                                        );
+                                    }
+                                    element_state.cache_key.opacity = opacity;
+                                    true
+                                } else {
+                                    let reused =
+                                        window.reuse_paint(element_state.paint_range.clone());
+                                    if reused
+                                        && element_state.cache_key.opacity.to_bits()
+                                            != opacity.to_bits()
+                                    {
+                                        window.request_animation_frame();
+                                    }
+                                    reused
+                                };
+
+                                if paint_succeeded {
+                                    let paint_end = window.paint_index();
+                                    element_state.paint_range = paint_start..paint_end;
+                                } else {
+                                    let view_id = view.entity_id();
+                                    window.on_next_frame(move |_, cx| cx.notify(view_id));
                                 }
-                                reused
-                            };
 
-                            if paint_succeeded {
-                                let paint_end = window.paint_index();
-                                element_state.paint_range = paint_start..paint_end;
-                            } else {
-                                let view_id = self.entity_id();
-                                window.on_next_frame(move |_, cx| cx.notify(view_id));
-                            }
-
-                            ((), element_state)
-                        },
-                    )
-                })
-            } else {
-                element.as_mut().unwrap().paint(window, cx);
-            }
-        });
+                                ((), element_state)
+                            },
+                        )
+                    })
+                } else {
+                    element.as_mut().unwrap().paint(window, cx);
+                }
+            });
+        };
+        #[cfg(feature = "profiler")]
+        window.profile_view_phase(view_type_name, crate::profiler::ViewPhase::Paint, cx, draw);
+        #[cfg(not(feature = "profiler"))]
+        draw(window, cx);
     }
 }
 
@@ -314,6 +362,7 @@ impl IntoElement for AnyView {
 pub struct AnyWeakView {
     entity: AnyWeakEntity,
     render: fn(&AnyView, &mut Window, &mut App) -> AnyElement,
+    view_type_name: &'static str,
 }
 
 impl AnyWeakView {
@@ -323,6 +372,7 @@ impl AnyWeakView {
         Some(AnyView {
             entity,
             render: self.render,
+            view_type_name: self.view_type_name,
             cached_style: None,
         })
     }
@@ -333,6 +383,7 @@ impl<V: 'static + Render> From<WeakEntity<V>> for AnyWeakView {
         AnyWeakView {
             entity: view.into(),
             render: any_view::render::<V>,
+            view_type_name: std::any::type_name::<V>(),
         }
     }
 }

@@ -16,7 +16,7 @@ use std::cell::{RefCell, UnsafeCell};
 use std::collections::{HashMap, VecDeque};
 use std::mem::MaybeUninit;
 use std::sync::{
-    Arc,
+    Arc, Weak,
     atomic::{AtomicU64, AtomicUsize, Ordering},
 };
 use std::time::Duration;
@@ -24,7 +24,7 @@ use std::time::Duration;
 use open_gpui_core_util::ResultExt;
 use open_gpui_scheduler::Instant;
 
-use super::{ActionTiming, FrameTiming, PresentTiming, TaskTiming};
+use super::{ActionTiming, FrameTiming, PresentTiming, TaskTiming, ViewTiming};
 use crate::{App, WindowId, WindowVisibility};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -84,6 +84,8 @@ pub enum ForegroundEvent {
     Input(InputTiming),
     /// A completed window draw.
     Draw(FrameTiming),
+    /// One phase of drawing a view, recorded during the draw that contains it.
+    View(ViewTiming),
     /// Work spent submitting a frame to the platform.
     Present(PresentTiming),
     /// Aggregate of task polls below [`TASK_POLL_FLOOR`], flushed before the
@@ -100,6 +102,7 @@ impl ForegroundEvent {
             Self::Action(timing) => timing.start,
             Self::Input(timing) => timing.start,
             Self::Draw(timing) => timing.draw_start,
+            Self::View(timing) => timing.start,
             Self::Present(timing) => timing.present_start,
             Self::SmallPolls(flush) => flush.since,
         }
@@ -112,6 +115,7 @@ impl ForegroundEvent {
             Self::Action(timing) => timing.end,
             Self::Input(timing) => timing.end,
             Self::Draw(timing) => timing.draw_end,
+            Self::View(timing) => timing.end,
             Self::Present(timing) => timing.present_end,
             Self::SmallPolls(flush) => flush.until,
         }
@@ -280,6 +284,18 @@ pub enum FrameStateChange {
     },
 }
 
+/// A change to whether deliberate input is being dispatched on the foreground.
+///
+/// Nested dispatches publish only the outermost start and final end. These
+/// records describe activity without retaining foreground work or sealing an interval.
+#[derive(Debug, Copy, Clone)]
+pub struct InputActivity {
+    /// When the active state changed.
+    pub at: Instant,
+    /// Whether at least one deliberate input dispatch is in progress.
+    pub active: bool,
+}
+
 /// One item retained in the foreground journal.
 #[derive(Debug, Copy, Clone)]
 pub enum ForegroundJournalEntry {
@@ -291,6 +307,8 @@ pub enum ForegroundJournalEntry {
     FrameState(FrameStateChange),
     /// A callback entering the foreground; not work or an interval boundary.
     PlatformSignal(PlatformSignal),
+    /// A deliberate-input lifecycle change; not work or an interval boundary.
+    InputActivity(InputActivity),
     /// A nested frame request deferred while an enclosing draw was still running.
     ReentrantFrameSkipped {
         /// The window whose nested frame request was deferred.
@@ -468,6 +486,7 @@ struct ForegroundJournalWriter {
     foreground_runnables: ForegroundRunnableCounter,
     publisher: JournalPublisher,
     turn_depth: usize,
+    input_activity_depth: usize,
     windows: HashMap<WindowId, WindowFrameState>,
     power: PowerState,
     power_changed_at: Option<Instant>,
@@ -483,6 +502,7 @@ impl ForegroundJournalWriter {
             foreground_runnables,
             publisher,
             turn_depth: 0,
+            input_activity_depth: 0,
             windows: HashMap::new(),
             power: PowerState::Awake,
             power_changed_at: None,
@@ -495,6 +515,30 @@ impl ForegroundJournalWriter {
 
     fn begin_turn(&mut self) {
         self.turn_depth += 1;
+    }
+
+    fn begin_input_activity(&mut self, at: Instant) {
+        self.input_activity_depth += 1;
+        if self.input_activity_depth == 1 {
+            self.record_marker(ForegroundJournalEntry::InputActivity(InputActivity {
+                at,
+                active: true,
+            }));
+        }
+    }
+
+    fn end_input_activity(&mut self, at: Instant) {
+        let Some(depth) = self.input_activity_depth.checked_sub(1) else {
+            debug_assert!(false, "input activity must begin before it ends");
+            return;
+        };
+        self.input_activity_depth = depth;
+        if depth == 0 {
+            self.record_marker(ForegroundJournalEntry::InputActivity(InputActivity {
+                at,
+                active: false,
+            }));
+        }
     }
 
     // Idle boundaries require a retained event since the last boundary, not
@@ -999,6 +1043,51 @@ pub(crate) fn foreground_turn() -> ForegroundTurnGuard {
     ForegroundTurnGuard
 }
 
+/// Ends a deliberate input dispatch exactly once, including during unwinding.
+/// A retired journal's guard cannot change a replacement writer's activity.
+#[must_use]
+pub(crate) struct InputActivityGuard {
+    journal: Option<Weak<JournalRing>>,
+    _not_send: std::marker::PhantomData<std::rc::Rc<()>>,
+}
+
+impl InputActivityGuard {
+    pub(crate) fn finish(mut self, ended_at: Instant) {
+        self.end(ended_at);
+    }
+
+    fn end(&mut self, ended_at: Instant) {
+        let Some(owner) = self.journal.take() else {
+            return;
+        };
+        with_journal(|journal| {
+            if std::ptr::eq(owner.as_ptr(), Arc::as_ptr(&journal.publisher.ring)) {
+                journal.end_input_activity(ended_at);
+            }
+        });
+    }
+}
+
+impl Drop for InputActivityGuard {
+    fn drop(&mut self) {
+        self.end(Instant::now());
+    }
+}
+
+pub(crate) fn input_activity(kind: &'static str, started_at: Instant) -> InputActivityGuard {
+    let mut owner = None;
+    if super::input_is_deliberate(kind) {
+        with_journal(|journal| {
+            journal.begin_input_activity(started_at);
+            owner = Some(Arc::downgrade(&journal.publisher.ring));
+        });
+    }
+    InputActivityGuard {
+        journal: owner,
+        _not_send: std::marker::PhantomData,
+    }
+}
+
 pub(crate) fn begin_foreground_turn() {
     // Observing before the turn's work takes its start time means a suspend
     // detected here never invalidates the work that follows it.
@@ -1039,6 +1128,10 @@ pub(crate) fn record_action(timing: ActionTiming) {
 
 pub(crate) fn record_input(timing: InputTiming) {
     with_journal(|journal| journal.record_event(ForegroundEvent::Input(timing)));
+}
+
+pub(crate) fn record_view(timing: ViewTiming) {
+    with_journal(|journal| journal.record_event(ForegroundEvent::View(timing)));
 }
 
 pub(crate) fn record_draw(timing: FrameTiming) {
@@ -1434,22 +1527,12 @@ impl IntervalSealer {
         let mut snapshots = Vec::new();
         for entry in entries {
             match entry {
-                ForegroundJournalEntry::Event(event) => {
-                    if self.is_empty() {
-                        self.interval_start = self.interval_start.max(event.start_time());
-                    }
-                    match event {
-                        ForegroundEvent::SmallPolls(flush) => self.push_small_polls(flush),
-                        event => self.push_event(event),
-                    }
-                }
+                ForegroundJournalEntry::Event(event) => match event {
+                    ForegroundEvent::SmallPolls(flush) => self.push_small_polls(flush),
+                    event => self.push_event(event),
+                },
                 ForegroundJournalEntry::Boundary(boundary) => {
                     if let IntervalBoundary::Presented(presented) = boundary {
-                        if self.is_empty() {
-                            self.interval_start = self
-                                .interval_start
-                                .max(presented.presentation.present_start);
-                        }
                         self.push_event(ForegroundEvent::Present(presented.presentation));
                     }
                     if self.is_empty() {
@@ -1463,6 +1546,7 @@ impl IntervalSealer {
                 // dirty timing, but the sealer has no use for them.
                 ForegroundJournalEntry::FrameState(_)
                 | ForegroundJournalEntry::PlatformSignal(_)
+                | ForegroundJournalEntry::InputActivity(_)
                 | ForegroundJournalEntry::ReentrantFrameSkipped { .. } => {}
                 ForegroundJournalEntry::Discontinuity { lost } => self.note_lost(lost),
             }
@@ -1502,8 +1586,17 @@ impl IntervalSealer {
 
     fn seal(&mut self, boundary: IntervalBoundary) -> FrameSnapshot {
         let ended = boundary.end_time();
+        let interval_start = self
+            .events
+            .iter()
+            .map(ForegroundEvent::start_time)
+            .chain(self.small_polls.iter().map(|flush| flush.since))
+            .min()
+            .map_or(self.interval_start, |first_work| {
+                self.interval_start.max(first_work)
+            });
         let snapshot = FrameSnapshot {
-            interval_start: self.interval_start,
+            interval_start,
             boundary,
             events: std::mem::take(&mut self.events),
             small_polls: std::mem::take(&mut self.small_polls),
@@ -1522,6 +1615,239 @@ mod tests {
 
     use super::*;
     use crate::{WindowId, profiler::YieldTime};
+
+    #[test]
+    fn input_activity_guards_publish_only_absolute_outermost_transitions() {
+        let (journal, _guard) = install_test_foreground_journal(32, 4);
+        let mut collector = journal.collector();
+        let base = Instant::now();
+        let at = |seconds| base + Duration::from_secs(seconds);
+        let outer = input_activity("key_down", at(1));
+        let child = input_activity("mouse_down", at(2));
+        for kind in ["mouse_move", "mouse_exited", "mouse_pressure"] {
+            input_activity(kind, at(2)).finish(at(3));
+        }
+        child.finish(at(3));
+        with_journal(|writer| assert_eq!(writer.input_activity_depth, 1));
+        outer.finish(at(200));
+        with_journal(|writer| assert_eq!(writer.input_activity_depth, 0));
+        let entries = collector.collect_unseen().entries;
+        assert!(matches!(
+            entries.as_slice(),
+            [
+                ForegroundJournalEntry::InputActivity(InputActivity { at: start, active: true }),
+                ForegroundJournalEntry::InputActivity(InputActivity { at: end, active: false }),
+            ] if *start == at(1) && *end == at(200)
+        ));
+        assert!(IntervalSealer::new(base).push_entries(entries).is_empty());
+        for kind in ["mouse_move", "mouse_exited", "mouse_pressure"] {
+            input_activity(kind, at(201)).finish(at(202));
+        }
+        assert!(collector.collect_unseen().entries.is_empty());
+    }
+
+    #[test]
+    fn input_activity_markers_preserve_folded_polls_and_pending_demand() {
+        let (mut writer, mut collector) = test_journal(ForegroundRunnableCounter::new());
+        let base = Instant::now();
+        let at = |micros| base + Duration::from_micros(micros);
+        let window = WindowId::from(1);
+        writer.record_frame_pending(window, base);
+        collector.collect_unseen();
+        writer.begin_turn();
+        writer.fold_small_poll(task_timing(at(1), at(51)));
+        writer.begin_input_activity(at(52));
+        writer.end_input_activity(at(53));
+        assert!(!writer.retained_since_boundary);
+        assert!(writer.small_polls.is_some());
+        assert_eq!(writer.windows[&window].dirty_at, Some(base));
+        let entries = collector.collect_unseen().entries;
+        assert_eq!(entries.len(), 2);
+        assert!(
+            entries
+                .iter()
+                .all(|entry| matches!(entry, ForegroundJournalEntry::InputActivity(_)))
+        );
+        assert!(IntervalSealer::new(base).push_entries(entries).is_empty());
+        writer.clear_frame_pending(window);
+        writer.end_turn(at(54));
+        assert!(writer.small_polls.is_none());
+        assert!(collector.collect_unseen().entries.is_empty());
+    }
+
+    #[test]
+    fn unwinding_input_activity_exits_before_its_foreground_turn() {
+        struct InputScope {
+            _activity: InputActivityGuard,
+            _turn: ForegroundTurnGuard,
+        }
+
+        let (journal, _guard) = install_test_foreground_journal(32, 4);
+        let mut collector = journal.collector();
+        let unwind = std::panic::catch_unwind(|| {
+            let turn = foreground_turn();
+            let start = Instant::now();
+            let _scope = InputScope {
+                _activity: input_activity("key_down", start),
+                _turn: turn,
+            };
+            record_action(ActionTiming {
+                name: "test::UnwindingInput",
+                start,
+                end: Instant::now(),
+            });
+            panic!("unwind input activity");
+        });
+        assert!(unwind.is_err());
+        with_journal(|writer| {
+            assert_eq!(writer.input_activity_depth, 0);
+            assert_eq!(writer.turn_depth, 0);
+        });
+        let entries = collector.collect_unseen().entries;
+        assert!(matches!(
+            entries.as_slice(),
+            [
+                ForegroundJournalEntry::InputActivity(InputActivity { at: start, active: true }),
+                ForegroundJournalEntry::Event(ForegroundEvent::Action(_)),
+                ForegroundJournalEntry::InputActivity(InputActivity { at: end, active: false }),
+                ForegroundJournalEntry::Boundary(IntervalBoundary::Idle { ended_at }),
+            ] if start <= end && end <= ended_at
+        ));
+        input_activity("key_down", Instant::now()).finish(Instant::now());
+        assert_eq!(collector.collect_unseen().entries.len(), 2);
+    }
+
+    #[test]
+    fn a_retired_guard_cannot_exit_a_replacement_journals_input() {
+        for finish_explicitly in [false, true] {
+            let (retired, retired_installation) = install_test_foreground_journal(16, 4);
+            let mut retired_collector = retired.collector();
+            let retired_input = input_activity("key_down", Instant::now());
+            drop(retired_installation);
+            let (replacement, _installation) = install_test_foreground_journal(16, 4);
+            let mut replacement_collector = replacement.collector();
+            let current_input = input_activity("key_down", Instant::now());
+            if finish_explicitly {
+                retired_input.finish(Instant::now());
+            } else {
+                drop(retired_input);
+            }
+            with_journal(|writer| assert_eq!(writer.input_activity_depth, 1));
+            current_input.finish(Instant::now());
+            with_journal(|writer| assert_eq!(writer.input_activity_depth, 0));
+            assert!(matches!(
+                retired_collector.collect_unseen().entries.as_slice(),
+                [ForegroundJournalEntry::InputActivity(InputActivity {
+                    active: true,
+                    ..
+                })]
+            ));
+            assert!(matches!(
+                replacement_collector.collect_unseen().entries.as_slice(),
+                [
+                    ForegroundJournalEntry::InputActivity(InputActivity { active: true, .. }),
+                    ForegroundJournalEntry::InputActivity(InputActivity { active: false, .. }),
+                ]
+            ));
+        }
+    }
+
+    #[test]
+    fn an_input_guard_resumes_its_restored_writer_without_changing_the_nested_writer() {
+        let (outer, _outer_installation) = install_test_foreground_journal(16, 4);
+        let mut outer_collector = outer.collector();
+        let outer_input = input_activity("key_down", Instant::now());
+        {
+            let (inner, _inner_installation) = install_test_foreground_journal(16, 4);
+            let mut inner_collector = inner.collector();
+            input_activity("mouse_down", Instant::now()).finish(Instant::now());
+            assert_eq!(inner_collector.collect_unseen().entries.len(), 2);
+            with_journal(|writer| assert_eq!(writer.input_activity_depth, 0));
+        }
+        with_journal(|writer| assert_eq!(writer.input_activity_depth, 1));
+        outer_input.finish(Instant::now());
+        with_journal(|writer| assert_eq!(writer.input_activity_depth, 0));
+        assert!(matches!(
+            outer_collector.collect_unseen().entries.as_slice(),
+            [
+                ForegroundJournalEntry::InputActivity(InputActivity { active: true, .. }),
+                ForegroundJournalEntry::InputActivity(InputActivity { active: false, .. }),
+            ]
+        ));
+    }
+
+    #[test]
+    fn input_activity_controls_survive_power_interruption_without_becoming_work() {
+        let (journal, _guard) = install_test_foreground_journal(16, 4);
+        let mut collector = journal.collector();
+        let base = Instant::now();
+        let at = |seconds| base + Duration::from_secs(seconds);
+        let input = input_activity("key_down", at(1));
+        with_journal(|writer| writer.power_transition(PowerState::Suspended, at(100)));
+        input.finish(at(200));
+        let entries = collector.collect_unseen().entries;
+        assert!(matches!(
+            entries.as_slice(),
+            [
+                ForegroundJournalEntry::InputActivity(InputActivity { at: start, active: true }),
+                ForegroundJournalEntry::Boundary(IntervalBoundary::PowerTransition { ended_at }),
+                ForegroundJournalEntry::InputActivity(InputActivity { at: end, active: false }),
+            ] if *start == at(1) && *ended_at == at(100) && *end == at(200)
+        ));
+        assert!(IntervalSealer::new(base).push_entries(entries).is_empty());
+    }
+
+    #[test]
+    fn nested_view_phases_preserve_completion_order_without_double_counting_occupancy() {
+        let (journal, _guard) = install_test_foreground_journal(32, 4);
+        let mut collector = journal.collector();
+        let start = Instant::now();
+        let at = |ms: u64| start + Duration::from_millis(ms);
+        let window_id = WindowId::from(1);
+        let child = ViewTiming {
+            name: "test::Child",
+            phase: crate::profiler::ViewPhase::RequestLayout,
+            start: at(2),
+            end: at(5),
+            self_duration: Duration::from_millis(3),
+        };
+        let parent = ViewTiming {
+            name: "test::Parent",
+            start: at(1),
+            end: at(8),
+            self_duration: Duration::from_millis(4),
+            ..child
+        };
+        let frame = FrameTiming {
+            draw_start: at(0),
+            ..frame_timing(window_id, at(0), at(10))
+        };
+        record_view(child);
+        record_view(parent);
+        record_draw(frame);
+        let entries = collector.collect_unseen().entries;
+        assert!(matches!(
+            entries.as_slice(),
+            [
+                ForegroundJournalEntry::Event(ForegroundEvent::View(child)),
+                ForegroundJournalEntry::Event(ForegroundEvent::View(parent)),
+                ForegroundJournalEntry::Event(ForegroundEvent::Draw(_)),
+            ] if child.name == "test::Child" && parent.name == "test::Parent"
+        ));
+        let mut sealer = IntervalSealer::new(start);
+        assert!(sealer.push_entries(entries).is_empty());
+        record_present(presentation_timing(window_id, at(10)), Some(frame));
+        let snapshots = sealer.push_entries(collector.collect_unseen().entries);
+        let [snapshot] = snapshots.as_slice() else {
+            panic!("expected one presented snapshot, got {snapshots:?}");
+        };
+        assert_eq!(snapshot.occupancy(), Duration::from_millis(10));
+        assert_eq!(snapshot.interval_start, start);
+        assert_eq!(snapshot.events[0].start_time(), at(2));
+        assert_eq!(snapshot.events[0].end_time(), at(5));
+        assert_eq!(snapshot.events[1].duration(), Duration::from_millis(7));
+        assert_eq!(snapshot.events.len(), 4);
+    }
 
     #[test]
     fn platform_signals_are_journaled_without_sealing_or_occupying_time() {
@@ -1693,6 +2019,9 @@ mod tests {
             invalidations: 1,
             draw_start: start,
             draw_end: start + Duration::from_millis(20),
+            refresh_interval: None,
+            signal_at: None,
+            phases: Default::default(),
         };
         record_draw(frame);
         record_present(presentation_timing(window_id, frame.draw_end), Some(frame));
@@ -1975,6 +2304,9 @@ mod tests {
             invalidations: 1,
             draw_start: start + Duration::from_millis(3),
             draw_end: start + Duration::from_millis(4),
+            refresh_interval: None,
+            signal_at: None,
+            phases: Default::default(),
         };
         let presentation = PresentTiming {
             window_id: frame.window_id,
@@ -2807,12 +3139,12 @@ mod tests {
         let mut completed_at_micros = 1u64;
         specifications
             .iter()
-            .map(|(advance, span, kind)| {
+            .flat_map(|(advance, span, kind)| {
                 completed_at_micros += u64::from(*advance) + 1;
                 let started_at_micros = completed_at_micros.saturating_sub(u64::from(*span));
                 let start = origin + Duration::from_micros(started_at_micros);
                 let end = origin + Duration::from_micros(completed_at_micros);
-                match kind % 7 {
+                let entry = match kind % 7 {
                     0 => input_entry(start, end),
                     1 => ForegroundJournalEntry::Event(ForegroundEvent::Action(ActionTiming {
                         name: "test.action",
@@ -2839,7 +3171,14 @@ mod tests {
                         start,
                         end,
                     )),
-                }
+                };
+                [
+                    entry,
+                    ForegroundJournalEntry::InputActivity(InputActivity {
+                        at: end,
+                        active: kind % 2 == 0,
+                    }),
+                ]
             })
             .collect()
     }
@@ -2852,6 +3191,7 @@ mod tests {
             ForegroundEvent::Draw(_) => 3,
             ForegroundEvent::Present(_) => 4,
             ForegroundEvent::SmallPolls(_) => 5,
+            ForegroundEvent::View(_) => 6,
         };
         NormalizedEvent {
             kind,
@@ -2929,35 +3269,15 @@ mod tests {
 
         for entry in entries {
             match *entry {
-                ForegroundJournalEntry::Event(event) => {
-                    let event_start = event.start_time().duration_since(origin).as_micros() as u64;
-                    if events.is_empty()
-                        && small_polls.is_empty()
-                        && dropped_events == 0
-                        && !journal_discontinuous
-                    {
-                        interval_start = interval_start.max(event_start);
+                ForegroundJournalEntry::Event(event) => match event {
+                    ForegroundEvent::SmallPolls(flush) => {
+                        small_polls.push(normalize_small_polls(origin, flush));
                     }
-                    match event {
-                        ForegroundEvent::SmallPolls(flush) => {
-                            small_polls.push(normalize_small_polls(origin, flush));
-                        }
-                        event => events.push(normalize_event(origin, event)),
-                    }
-                }
+                    event => events.push(normalize_event(origin, event)),
+                },
                 ForegroundJournalEntry::Boundary(boundary) => {
                     if let IntervalBoundary::Presented(presented) = boundary {
                         let present = ForegroundEvent::Present(presented.presentation);
-                        if events.is_empty()
-                            && small_polls.is_empty()
-                            && dropped_events == 0
-                            && !journal_discontinuous
-                        {
-                            interval_start =
-                                interval_start
-                                    .max(present.start_time().duration_since(origin).as_micros()
-                                        as u64);
-                        }
                         events.push(normalize_event(origin, present));
                     }
 
@@ -2970,8 +3290,18 @@ mod tests {
                     {
                         interval_start = interval_start.max(interval_end);
                     } else {
+                        let mut first_work = None;
+                        for event in &events {
+                            first_work =
+                                Some(first_work.map_or(event.start, |at: u64| at.min(event.start)));
+                        }
+                        for flush in &small_polls {
+                            first_work =
+                                Some(first_work.map_or(flush.since, |at| at.min(flush.since)));
+                        }
                         snapshots.push(NormalizedSnapshot {
-                            interval_start,
+                            interval_start: first_work
+                                .map_or(interval_start, |at| interval_start.max(at)),
                             boundary_kind: match boundary {
                                 IntervalBoundary::Idle { .. } => 0,
                                 IntervalBoundary::Presented(_) => 1,
@@ -2989,6 +3319,7 @@ mod tests {
                 }
                 ForegroundJournalEntry::FrameState(_)
                 | ForegroundJournalEntry::PlatformSignal(_)
+                | ForegroundJournalEntry::InputActivity(_)
                 | ForegroundJournalEntry::ReentrantFrameSkipped { .. } => {}
                 ForegroundJournalEntry::Discontinuity { lost } => {
                     dropped_events += lost;
@@ -3064,6 +3395,10 @@ mod tests {
     #[derive(Debug, Clone, PartialEq, Eq)]
     enum WriterEntry {
         Input(u64),
+        InputActivity {
+            at: u64,
+            active: bool,
+        },
         SmallPolls {
             count: u64,
             total_micros: u64,
@@ -3100,6 +3435,7 @@ mod tests {
     #[derive(Default)]
     struct ModelWriter {
         turn_depth: usize,
+        input_activity_depth: usize,
         runnables: usize,
         pending_frames: HashMap<u64, u64>,
         retained_since_boundary: bool,
@@ -3204,6 +3540,10 @@ mod tests {
                 ForegroundJournalEntry::Event(ForegroundEvent::Input(timing)) => {
                     WriterEntry::Input(at(timing.end))
                 }
+                ForegroundJournalEntry::InputActivity(activity) => WriterEntry::InputActivity {
+                    at: at(activity.at),
+                    active: activity.active,
+                },
                 ForegroundJournalEntry::Event(ForegroundEvent::SmallPolls(flush)) => {
                     WriterEntry::SmallPolls {
                         count: flush.summary.count,
@@ -3526,6 +3866,23 @@ mod tests {
                 let window_id = WindowId::from(u64::from(operation.argument % 4));
                 let window = window_id.as_u64();
 
+                let was_active = model.input_activity_depth > 0;
+                match operation.argument % 4 {
+                    0 => {
+                        writer.begin_input_activity(at);
+                        model.input_activity_depth += 1;
+                    }
+                    1 if was_active => {
+                        writer.end_input_activity(at);
+                        model.input_activity_depth -= 1;
+                    }
+                    _ => {}
+                }
+                let active = model.input_activity_depth > 0;
+                if was_active != active {
+                    model.entries.push(WriterEntry::InputActivity { at: at_micros, active });
+                }
+
                 match operation.kind % 11 {
                     0 => {
                         writer.begin_turn();
@@ -3597,6 +3954,7 @@ mod tests {
                     std::mem::take(&mut model.entries)
                 );
                 prop_assert_eq!(writer.turn_depth, model.turn_depth);
+                prop_assert_eq!(writer.input_activity_depth, model.input_activity_depth);
                 prop_assert_eq!(writer.retained_since_boundary, model.retained_since_boundary);
                 let pending: HashMap<_, _> = writer
                     .windows
@@ -3652,6 +4010,9 @@ mod tests {
             invalidations: 1,
             draw_start: draw_end,
             draw_end,
+            refresh_interval: None,
+            signal_at: None,
+            phases: Default::default(),
         }
     }
 

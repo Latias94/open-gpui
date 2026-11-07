@@ -3,6 +3,8 @@
 //! Synthetic PlatformInput values enter the production native pointer/key callback and rendered
 //! listeners. Paint receipts identify the source and candidate accepted by the real renderer.
 //! Window creation and bounded message pumping qualify trace ordering around native submission.
+//! Refresh-aware reports use the callback's captured signal and the window's observed refresh
+//! interval. A controlled view delay only makes attribution observable through this native path.
 //! This does not qualify OS input injection, compositor scanout, physical display changes, or
 //! performance overhead.
 
@@ -11,6 +13,7 @@ use crate::native_test_observation::{
     NativeWindowTestMessageDisposition, NativeWindowTestObservation,
 };
 use open_gpui::profiler::{
+    FRAME_BUDGET_FLOOR, UNKNOWN_REFRESH_FRAME_BUDGET, VIEW_TIMING_FLOOR, ViewPhase,
     hang::{HangMonitorConfig, HangMonitorPollReason},
     journal::{
         ForegroundEvent, ForegroundJournalCollector, ForegroundJournalEntry, IntervalBoundary,
@@ -49,6 +52,8 @@ struct NativeProfilerPaint {
     previous_revision: u64,
     painted_at: Instant,
     pending_inputs: u64,
+    refresh_interval: Option<Duration>,
+    controlled_view_work: Option<(Instant, Instant)>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -61,10 +66,18 @@ struct NativeProfilerRoot {
     focus: FocusHandle,
     source: NativeProfilerSource,
     paints: Rc<RefCell<Vec<NativeProfilerPaint>>>,
+    measured_source: Option<NativeProfilerSource>,
 }
 
 impl Render for NativeProfilerRoot {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let controlled_view_work = if self.measured_source == Some(self.source) {
+            let start = Instant::now();
+            std::thread::sleep(Duration::from_millis(1));
+            Some((start, Instant::now()))
+        } else {
+            None
+        };
         let source = self.source;
         let paints = self.paints.clone();
         div()
@@ -94,7 +107,7 @@ impl Render for NativeProfilerRoot {
             .child(
                 canvas(
                     |_, _, _| {},
-                    move |bounds, (), window, _| {
+                    move |bounds, (), window, cx| {
                         let color = rgb(0x285c80
                             + source.pointer_inputs * 0x100
                             + source.key_inputs * 0x10000
@@ -106,6 +119,8 @@ impl Render for NativeProfilerRoot {
                             previous_revision: window.rendered_frame_revision(),
                             painted_at: Instant::now(),
                             pending_inputs: window.input_latency_snapshot().pending_input_count,
+                            refresh_interval: window.refresh_interval(cx),
+                            controlled_view_work,
                         });
                     },
                 )
@@ -144,6 +159,7 @@ impl NativeProfilerWindow {
                                 focus,
                                 source: NativeProfilerSource::default(),
                                 paints: paints.clone(),
+                                measured_source: None,
                             }
                         })
                     },
@@ -454,8 +470,9 @@ fn assert_native_profiler_trace(
     collector: &mut FrameTimingCollector,
     submitted_generation: u64,
     paint: &NativeProfilerPaint,
+    before: &FrameDurationSnapshot,
     frame: &FrameDurationSnapshot,
-) -> open_gpui::PresentTiming {
+) -> (FrameTiming, open_gpui::PresentTiming) {
     let events = collector.collect_unseen();
     assert!(
         !events.is_empty(),
@@ -463,6 +480,8 @@ fn assert_native_profiler_trace(
     );
     let mut pending_draw: Option<(FrameTiming, NativeProfilerPaint)> = None;
     let mut matching_present = None;
+    let mut matching_draw = None;
+    let mut presented_frames = Vec::new();
     let mut previous_candidate = None;
     for event in &events {
         match event {
@@ -487,6 +506,18 @@ fn assert_native_profiler_trace(
                 assert!(draw.invalidations > 0);
                 assert!(dirty_at <= draw.draw_start);
                 assert!(draw.draw_start <= draw.draw_end);
+                assert_eq!(draw.refresh_interval, source.refresh_interval);
+                if let Some(at) = draw.signal_at {
+                    assert!(consumer.signals.borrow().iter().any(|callback| {
+                        callback.options.signal_at == Some(at)
+                            && at <= callback.entered_at
+                            && callback.entered_at <= draw.draw_start
+                    }));
+                }
+                assert!(
+                    draw.phases.request_layout + draw.phases.prepaint + draw.phases.paint
+                        <= draw.draw_duration()
+                );
                 let operations = consumer.operations.borrow();
                 assert!(
                     operations
@@ -507,6 +538,38 @@ fn assert_native_profiler_trace(
                 assert_eq!(present.window_id, draw.window_id);
                 assert!(draw.draw_end <= present.present_start);
                 assert!(present.present_start <= present.present_end);
+                let work_start = draw.signal_at.map(|signal_at| {
+                    draw.dirty_at
+                        .map_or(signal_at, |dirty_at| dirty_at.max(signal_at))
+                });
+                assert_eq!(draw.work_start(), work_start);
+                let work = work_start.map(|start| {
+                    assert!(start <= draw.draw_start);
+                    present.present_start.duration_since(start)
+                });
+                assert_eq!(draw.work(present.present_start), work);
+                assert_eq!(
+                    draw.budget(),
+                    draw.refresh_interval
+                        .map_or(UNKNOWN_REFRESH_FRAME_BUDGET, |interval| {
+                            interval.max(FRAME_BUDGET_FLOOR)
+                        })
+                );
+                assert_eq!(
+                    draw.is_late(present.present_start),
+                    work.map(|duration| duration > draw.budget())
+                );
+                assert_eq!(
+                    draw.missed_refreshes(present.present_start),
+                    draw.refresh_interval
+                        .filter(|interval| !interval.is_zero())
+                        .zip(work)
+                        .map(|(interval, work)| {
+                            u64::try_from(work.as_nanos().div_ceil(interval.as_nanos()).max(1) - 1)
+                                .expect("bounded native missed refreshes")
+                        })
+                );
+                presented_frames.push((draw, *present, source.pending_inputs > 0));
                 let operations = consumer.operations.borrow();
                 assert!(operations.iter().any(|(start, end)| {
                     *start <= present.present_start && present.present_end <= *end
@@ -527,6 +590,7 @@ fn assert_native_profiler_trace(
                         Some(submitted_generation)
                     );
                     assert!(matching_present.replace(*present).is_none());
+                    assert!(matching_draw.replace(draw).is_none());
                 }
             }
         }
@@ -535,8 +599,125 @@ fn assert_native_profiler_trace(
         pending_draw.is_none(),
         "the latest accepted draw must have a submission"
     );
+    assert_native_refresh_report(&events, &presented_frames, before, frame);
     assert!(collector.collect_unseen().is_empty());
-    matching_present.expect("the exact accepted nonempty source must have a traced submission")
+    let draw = matching_draw.expect("the exact Submitted source must have an accepted draw");
+    let present =
+        matching_present.expect("the exact accepted nonempty source must have a traced submission");
+    assert!(
+        draw.signal_at.is_some(),
+        "public refresh/input demand must produce a measured frame through the native callback"
+    );
+    eprintln!(
+        "native measurement v3: window={:?}, generation={submitted_generation}, refresh={:?}, \
+         signal={:?}, work_to_present_start={:?}, submission={:?}, phases={:?}, inputs={}",
+        draw.window_id,
+        draw.refresh_interval,
+        draw.signal_at,
+        draw.work(present.present_start),
+        present.present_duration(),
+        draw.phases,
+        paint.pending_inputs,
+    );
+    (draw, present)
+}
+
+/// Official 4f6d97b9de7d9f167da8b7832eeecea22c5a9efa, retained at fixed target
+/// 635026fabc38440fce5e1767d125026a17b12012: reports end work at submission start.
+/// Reconstruct report deltas only from actual accepted draws and their native submissions.
+fn assert_native_refresh_report(
+    events: &[FrameEvent],
+    presented: &[(FrameTiming, open_gpui::PresentTiming, bool)],
+    before: &FrameDurationSnapshot,
+    after: &FrameDurationSnapshot,
+) {
+    assert!(!after.by_refresh_interval.is_empty());
+    for (index, frames) in after.by_refresh_interval.iter().enumerate() {
+        assert!(
+            after.by_refresh_interval[..index]
+                .iter()
+                .all(|earlier| earlier.refresh_interval != frames.refresh_interval)
+        );
+        let delta = before
+            .by_refresh_interval
+            .iter()
+            .find(|earlier| earlier.refresh_interval == frames.refresh_interval)
+            .map_or_else(|| frames.clone(), |earlier| frames.since(earlier));
+        let draws = events
+            .iter()
+            .filter_map(|event| match event {
+                FrameEvent::Draw(draw) if draw.refresh_interval == frames.refresh_interval => {
+                    Some(draw)
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let submissions = presented
+            .iter()
+            .filter(|(draw, _, _)| draw.refresh_interval == frames.refresh_interval)
+            .collect::<Vec<_>>();
+        assert_eq!(delta.frames_drawn, draws.len() as u64);
+        assert_eq!(delta.draw_duration.len(), delta.frames_drawn);
+        for draw in draws {
+            let nanos =
+                u64::try_from(draw.draw_duration().as_nanos()).expect("bounded native draw");
+            assert!(delta.draw_duration.count_at(nanos) > 0);
+        }
+        let measured = submissions
+            .iter()
+            .filter_map(|(draw, present, input)| {
+                let work = draw.work(present.present_start)?;
+                Some((
+                    u64::try_from(work.as_nanos()).expect("bounded native frame work"),
+                    work > draw.budget(),
+                    *input,
+                ))
+            })
+            .collect::<Vec<_>>();
+        let count = |late: bool, input_only: bool| {
+            measured
+                .iter()
+                .filter(|(_, is_late, input)| *is_late == late && (!input_only || *input))
+                .count() as u64
+        };
+        assert_eq!(delta.frames_on_time, count(false, false));
+        assert_eq!(delta.frames_late, count(true, false));
+        assert_eq!(delta.input_frames_on_time, count(false, true));
+        assert_eq!(delta.input_frames_late, count(true, true));
+        assert_eq!(
+            delta.frames_unmeasured,
+            (submissions.len() - measured.len()) as u64
+        );
+        assert_eq!(
+            delta.missed_refreshes,
+            submissions
+                .iter()
+                .map(|(draw, present, _)| {
+                    draw.missed_refreshes(present.present_start).unwrap_or(0)
+                })
+                .sum::<u64>()
+        );
+        for (histogram, input_only) in [(&delta.work, false), (&delta.input_work, true)] {
+            let expected = measured
+                .iter()
+                .filter(|(_, _, input)| !input_only || *input)
+                .map(|(nanos, _, _)| *nanos)
+                .collect::<Vec<_>>();
+            assert_eq!(histogram.len(), expected.len() as u64);
+            for nanos in &expected {
+                assert_eq!(
+                    histogram.count_at(*nanos),
+                    expected
+                        .iter()
+                        .filter(|other| {
+                            histogram.lowest_equivalent(**other)
+                                == histogram.lowest_equivalent(*nanos)
+                        })
+                        .count() as u64
+                );
+            }
+        }
+    }
 }
 
 #[test]
@@ -655,6 +836,16 @@ fn native_profiler_tracks_input_submission_redraw_and_reconstructed_window() {
 
     assert!(profiler::set_trace_enabled(true));
     assert!(profiler::trace_enabled());
+    app.update_for_test(|cx| {
+        consumer.handle.update(cx, |root, _, _| {
+            root.measured_source = Some(NativeProfilerSource {
+                pointer_inputs: root.source.pointer_inputs + 1,
+                key_inputs: root.source.key_inputs + 1,
+                ..root.source
+            });
+        })
+    })
+    .expect("the next input-driven render must retain the controlled view work");
     let (input_start, input_end) = consumer.input(&mut app);
     source.pointer_inputs += 1;
     source.key_inputs += 1;
@@ -667,20 +858,29 @@ fn native_profiler_tracks_input_submission_redraw_and_reconstructed_window() {
         traced_input.events_per_frame_histogram.max(),
         paint.pending_inputs
     );
-    let presented = assert_native_profiler_trace(
+    let (draw, presented) = assert_native_profiler_trace(
         &consumer,
         &mut collector,
         traced_generation,
         &paint,
+        &reset_frame,
         &traced_frame,
     );
     assert_native_foreground_journal(
         &consumer,
         &mut journal_collector,
         &mut independent_collector,
+        draw,
         presented,
         &paint,
+        &traced_frame,
     );
+    app.update_for_test(|cx| {
+        consumer
+            .handle
+            .update(cx, |root, _, _| root.measured_source = None)
+    })
+    .expect("the exact input source attribution control must be released");
     assert!(input_start <= input_end && input_end <= paint.painted_at);
     let minimum_latency = u64::try_from(presented.present_end.duration_since(input_end).as_nanos())
         .expect("bounded native input latency lower bound");
@@ -695,7 +895,7 @@ fn native_profiler_tracks_input_submission_redraw_and_reconstructed_window() {
     );
 
     consumer.settle(&mut app);
-    let (settled_input, _) = consumer.snapshot(&mut app);
+    let (settled_input, settled_frame) = consumer.snapshot(&mut app);
     let followup_events = collector.collect_unseen();
     assert!(followup_events.iter().all(|event| match event {
         FrameEvent::Draw(timing) => timing.window_id == consumer.handle.window_id(),
@@ -730,6 +930,7 @@ fn native_profiler_tracks_input_submission_redraw_and_reconstructed_window() {
         &mut collector,
         redraw_generation,
         &paint,
+        &settled_frame,
         &redraw_frame,
     );
     let retired_id = consumer.handle.window_id();
@@ -743,7 +944,7 @@ fn native_profiler_tracks_input_submission_redraw_and_reconstructed_window() {
         rebuilt.wait_for_submission(&mut app, NativeProfilerSource::default(), 0);
     rebuilt.settle(&mut app);
     assert!(collector.collect_unseen().is_empty());
-    let (initial_rebuilt_input, _) = rebuilt.snapshot(&mut app);
+    let (initial_rebuilt_input, initial_rebuilt_frame) = rebuilt.snapshot(&mut app);
     assert_native_profiler_outcomes(&initial_rebuilt_input);
     assert!(profiler::set_trace_enabled(true));
     app.update_for_test(|cx| {
@@ -771,6 +972,7 @@ fn native_profiler_tracks_input_submission_redraw_and_reconstructed_window() {
         &mut collector,
         rebuilt_generation,
         &rebuilt_paint,
+        &initial_rebuilt_frame,
         &rebuilt_frame,
     );
     assert!(profiler::set_trace_enabled(false));
@@ -828,8 +1030,10 @@ fn assert_native_foreground_journal(
     consumer: &NativeProfilerWindow,
     collector: &mut ForegroundJournalCollector,
     independent: &mut ForegroundJournalCollector,
+    draw: FrameTiming,
     presented: open_gpui::PresentTiming,
     paint: &NativeProfilerPaint,
+    frame_report: &FrameDurationSnapshot,
 ) {
     let drained = collector.collect_unseen();
     let second = independent.collect_unseen();
@@ -885,7 +1089,44 @@ fn assert_native_foreground_journal(
             && frame.frame.draw_start <= paint.painted_at
             && paint.painted_at <= frame.frame.draw_end
     }));
+    let accepted = drained
+        .entries
+        .iter()
+        .find_map(|entry| {
+            let ForegroundJournalEntry::Boundary(IntervalBoundary::Presented(frame)) = entry else {
+                return None;
+            };
+            (frame.frame.window_id == draw.window_id
+                && frame.presentation.present_start == presented.present_start)
+                .then_some(frame)
+        })
+        .expect("the exact Submitted frame must retain its refresh-aware journal boundary");
+    assert_eq!(accepted.frame.draw_start, draw.draw_start);
+    assert_eq!(accepted.frame.draw_end, draw.draw_end);
+    assert_eq!(accepted.frame.signal_at, draw.signal_at);
+    assert_eq!(accepted.frame.refresh_interval, draw.refresh_interval);
+    assert_eq!(accepted.frame.phases, draw.phases);
+    let at = draw
+        .signal_at
+        .expect("the native input frame must have an actual captured signal");
     let callbacks = consumer.signals.borrow();
+    assert!(
+        drained.entries.iter().any(|entry| {
+            let ForegroundJournalEntry::PlatformSignal(signal) = entry else {
+                return false;
+            };
+            signal.window_id == draw.window_id
+                && signal.signal_at == Some(at)
+                && signal.handled_at <= draw.draw_start
+                && callbacks.iter().any(|callback| {
+                    callback.options.signal_at == signal.signal_at
+                        && callback.options.signal_source == signal.source
+                        && at <= callback.entered_at
+                        && callback.entered_at <= signal.handled_at
+                })
+        }),
+        "the accepted measured frame must retain the raw callback timestamp/source pair"
+    );
     let matching_signals = drained
         .entries
         .iter()
@@ -908,6 +1149,96 @@ fn assert_native_foreground_journal(
         matching_signals > 0,
         "native callbacks must reach the raw platform-signal journal"
     );
+    let views = |entries: &[ForegroundJournalEntry]| {
+        entries
+            .iter()
+            .filter_map(|entry| match entry {
+                ForegroundJournalEntry::Event(ForegroundEvent::View(view)) => Some((
+                    view.name,
+                    view.phase,
+                    view.start,
+                    view.end,
+                    view.self_duration,
+                )),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let observed_views = views(&drained.entries);
+    assert_eq!(observed_views, views(&second.entries));
+    let (work_start, work_end) = paint
+        .controlled_view_work
+        .expect("the accepted input frame must contain the controlled render work");
+    assert!(
+        observed_views.iter().any(|(name, phase, start, end, own)| {
+            *name == std::any::type_name::<NativeProfilerRoot>()
+                && *phase == ViewPhase::RequestLayout
+                && draw.draw_start <= *start
+                && *start <= work_start
+                && work_end <= *end
+                && *end <= draw.draw_end
+                && *own >= VIEW_TIMING_FLOOR
+                && *own >= work_end.duration_since(work_start)
+                && *own <= end.duration_since(*start)
+                && *own <= draw.phases.request_layout
+        }),
+        "actual native view attribution must contain its own controlled request-layout work"
+    );
+    let paints = consumer.paints.borrow();
+    let bootstrap = drained
+        .entries
+        .iter()
+        .find_map(|entry| {
+            let ForegroundJournalEntry::Event(ForegroundEvent::Draw(frame)) = entry else {
+                return None;
+            };
+            (frame.window_id == consumer.handle.window_id()
+                && paints.iter().any(|receipt| {
+                    receipt.previous_revision == 0
+                        && frame.draw_start <= receipt.painted_at
+                        && receipt.painted_at <= frame.draw_end
+                }))
+            .then_some(frame)
+        })
+        .expect("the real bootstrap draw must retain its native paint receipt");
+    let bootstrap_submission = drained
+        .entries
+        .iter()
+        .filter_map(|entry| match entry {
+            ForegroundJournalEntry::Event(ForegroundEvent::Present(present)) => Some(present),
+            ForegroundJournalEntry::Boundary(IntervalBoundary::Presented(frame)) => {
+                Some(&frame.presentation)
+            }
+            _ => None,
+        })
+        .filter(|present| {
+            present.window_id == bootstrap.window_id && bootstrap.draw_end <= present.present_start
+        })
+        .min_by_key(|present| present.present_start)
+        .expect("the bootstrap draw must reach the actual native submission");
+    assert_eq!(bootstrap.signal_at, None);
+    assert_eq!(bootstrap.work_start(), None);
+    assert_eq!(bootstrap.work(bootstrap_submission.present_start), None);
+    assert_eq!(bootstrap.is_late(bootstrap_submission.present_start), None);
+    assert_eq!(
+        bootstrap.missed_refreshes(bootstrap_submission.present_start),
+        None
+    );
+    for frames in &frame_report.by_refresh_interval {
+        let unmeasured = drained
+            .entries
+            .iter()
+            .filter(|entry| {
+                matches!(entry,
+                    ForegroundJournalEntry::Boundary(IntervalBoundary::Presented(frame))
+                        if frame.frame.window_id == consumer.handle.window_id()
+                            && frame.frame.refresh_interval == frames.refresh_interval
+                            && frame.frame.signal_at.is_none()
+                )
+            })
+            .count() as u64;
+        assert_eq!(frames.frames_unmeasured, unmeasured);
+    }
     assert!(collector.collect_unseen().entries.is_empty());
     assert!(independent.collect_unseen().entries.is_empty());
 }

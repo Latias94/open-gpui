@@ -936,10 +936,140 @@ pub struct FrameTiming {
     pub draw_start: Instant,
     /// When the draw finished.
     pub draw_end: Instant,
+    /// The refresh interval of the window's display when the frame was drawn,
+    /// or `None` when the platform doesn't report it.
+    pub refresh_interval: Option<Duration>,
+    /// When the platform's frame signal for this frame fired, or `None` when
+    /// the platform doesn't report it. Coalesced signals report the first.
+    pub signal_at: Option<Instant>,
+    /// How long each phase of the draw took.
+    pub phases: DrawPhases,
+}
+
+/// How long each phase of a window draw took.
+#[cfg(feature = "profiler")]
+#[derive(Debug, Copy, Clone, Default, PartialEq, Eq)]
+pub struct DrawPhases {
+    /// Rendering views into elements and requesting their layout.
+    pub request_layout: Duration,
+    /// Computing layout and prepainting elements, including deferred draws,
+    /// prompts, drags, and tooltips.
+    pub prepaint: Duration,
+    /// Painting elements into the scene.
+    pub paint: Duration,
+}
+
+/// A phase of drawing a view.
+#[cfg(feature = "profiler")]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum ViewPhase {
+    /// Rendering the view and requesting its layout.
+    RequestLayout,
+    /// Prepainting the view's elements. Views whose cached elements are
+    /// stale also render and lay out here.
+    Prepaint,
+    /// Painting the view's elements.
+    Paint,
 }
 
 #[cfg(feature = "profiler")]
+impl ViewPhase {
+    /// The phase's name, e.g. `"prepaint"`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::RequestLayout => "request_layout",
+            Self::Prepaint => "prepaint",
+            Self::Paint => "paint",
+        }
+    }
+}
+
+/// Views whose own work in one draw phase takes less than this aren't
+/// recorded, keeping the journal's per-frame cost bounded while still naming
+/// the views that make a frame late.
+#[cfg(feature = "profiler")]
+pub const VIEW_TIMING_FLOOR: Duration = Duration::from_micros(500);
+
+/// One phase of drawing one view, recorded when its own work took at least
+/// [`VIEW_TIMING_FLOOR`].
+#[cfg(feature = "profiler")]
+#[derive(Debug, Copy, Clone)]
+pub struct ViewTiming {
+    /// The view's type name.
+    pub name: &'static str,
+    /// The draw phase.
+    pub phase: ViewPhase,
+    /// When the view's phase began.
+    pub start: Instant,
+    /// When the view's phase ended.
+    pub end: Instant,
+    /// The phase's duration excluding views nested inside it, so a parent
+    /// view isn't blamed for its children's work.
+    pub self_duration: Duration,
+}
+
+/// The least work a frame can take before it counts as late: one refresh
+/// at 120 Hz. Frames rarely fit a single refresh on faster displays yet, so
+/// judging them by it would count nearly every frame as late and hide
+/// regressions; missed refreshes still measure against the real interval.
+#[cfg(feature = "profiler")]
+pub const FRAME_BUDGET_FLOOR: Duration = Duration::from_nanos(8_333_333);
+
+/// The work a frame can take before it counts as late when its display's
+/// refresh interval is unknown: one refresh at 60 Hz, the most common rate,
+/// so frames on faster displays may be judged leniently but none too strictly.
+#[cfg(feature = "profiler")]
+pub const UNKNOWN_REFRESH_FRAME_BUDGET: Duration = Duration::from_nanos(16_666_667);
+
+#[cfg(feature = "profiler")]
 impl FrameTiming {
+    /// When the frame's work began: the later of its signal and its first
+    /// invalidation, since waiting for the platform's frame signal isn't work,
+    /// however late it fires. `None` without a frame signal.
+    pub fn work_start(&self) -> Option<Instant> {
+        let signal_at = self.signal_at?;
+        Some(
+            self.dirty_at
+                .map_or(signal_at, |dirty_at| dirty_at.max(signal_at)),
+        )
+    }
+
+    /// The main-thread time from [`FrameTiming::work_start`] until the frame
+    /// was submitted at `submitted_at`: the start of its submission, which may
+    /// consist mostly of waiting for the display to free a buffer.
+    pub fn work(&self, submitted_at: Instant) -> Option<Duration> {
+        Some(submitted_at.saturating_duration_since(self.work_start()?))
+    }
+
+    /// Whether the frame's work, submitted at `submitted_at`, exceeded
+    /// [`FrameTiming::budget`], when its work is known.
+    pub fn is_late(&self, submitted_at: Instant) -> Option<bool> {
+        Some(self.work(submitted_at)? > self.budget())
+    }
+
+    /// The work a frame can take before it counts as late: one refresh
+    /// interval, but no less than [`FRAME_BUDGET_FLOOR`], or
+    /// [`UNKNOWN_REFRESH_FRAME_BUDGET`] when the interval is unknown.
+    pub fn budget(&self) -> Duration {
+        self.refresh_interval
+            .filter(|interval| !interval.is_zero())
+            .map_or(UNKNOWN_REFRESH_FRAME_BUDGET, |interval| {
+                interval.max(FRAME_BUDGET_FLOOR)
+            })
+    }
+
+    /// How many refreshes the frame missed when submitted at `submitted_at`:
+    /// zero when its work fit within one refresh interval. A zero interval is
+    /// unavailable, just like an unknown refresh interval.
+    pub fn missed_refreshes(&self, submitted_at: Instant) -> Option<u64> {
+        let refresh_interval = self
+            .refresh_interval
+            .filter(|interval| !interval.is_zero())?;
+        let work = self.work(submitted_at)?;
+        let refreshes = work.as_nanos().div_ceil(refresh_interval.as_nanos()).max(1);
+        Some(u64::try_from(refreshes - 1).unwrap_or(u64::MAX))
+    }
+
     /// Time spent drawing the frame.
     pub fn draw_duration(&self) -> Duration {
         self.draw_end.duration_since(self.draw_start)
@@ -997,6 +1127,164 @@ pub struct FrameDurationSnapshot {
     pub draw_duration_histogram: Histogram<u64>,
     /// Intervals between newly submitted animation frames, in nanoseconds.
     pub present_interval_histogram: Histogram<u64>,
+    /// The same frames, split by the refresh interval of the window's display
+    /// when they were drawn.
+    pub by_refresh_interval: Vec<RefreshIntervalFrames>,
+}
+
+/// Upper bounds, in milliseconds, of the duration buckets in
+/// [`RefreshIntervalFrames`]. Each bucket counts values up to and including its
+/// bound; a final bucket counts everything longer.
+#[cfg(feature = "profiler")]
+pub const FRAME_DURATION_BUCKETS_MS: [u64; 9] = [4, 8, 16, 33, 50, 100, 250, 500, 1000];
+
+/// Upper bounds, in percent of the display's real refresh interval, of the
+/// work-per-frame buckets in [`RefreshIntervalFrames`]. Each bucket counts
+/// values up to and including its bound; a final bucket counts everything
+/// more. Whether a frame was on time is judged by [`FrameTiming::budget`]
+/// instead, which never drops below [`FRAME_BUDGET_FLOOR`], so on displays
+/// faster than 120 Hz frames above 100% can still be on time.
+#[cfg(feature = "profiler")]
+pub const FRAME_WORK_BUCKETS_PERCENT: [u64; 7] = [25, 50, 75, 100, 150, 200, 400];
+
+/// Counts `histogram`'s values above the previous bound and up to and
+/// including each of `upper_bounds`, plus a final count of the values above
+/// the last bound.
+#[cfg(feature = "profiler")]
+pub fn histogram_bucket_counts(
+    histogram: &Histogram<u64>,
+    upper_bounds: impl IntoIterator<Item = u64>,
+) -> Vec<u64> {
+    let mut counted = 0;
+    let mut counts: Vec<u64> = upper_bounds
+        .into_iter()
+        .map(|bound| {
+            let cumulative = histogram.count_between(0, bound);
+            let count = cumulative.saturating_sub(counted);
+            counted = counted.max(cumulative);
+            count
+        })
+        .collect();
+    counts.push(histogram.len().saturating_sub(counted));
+    counts
+}
+
+/// Statistics for the frames a window drew and presented while its display had
+/// one refresh interval.
+///
+/// A frame is on time when its [`FrameTiming::work`] fit within
+/// [`FrameTiming::budget`].
+#[cfg(feature = "profiler")]
+#[derive(Clone, Debug)]
+pub struct RefreshIntervalFrames {
+    /// The display's refresh interval, or `None` when the platform doesn't
+    /// report it. Missed refreshes require a known interval.
+    pub refresh_interval: Option<Duration>,
+    /// Frames drawn, whether or not they were presented.
+    pub frames_drawn: u64,
+    /// Draw durations, in nanoseconds.
+    pub draw_duration: Histogram<u64>,
+    /// Presented frames whose work fit within [`FrameTiming::budget`].
+    pub frames_on_time: u64,
+    /// Presented frames whose work exceeded [`FrameTiming::budget`].
+    pub frames_late: u64,
+    /// Refreshes that on-time and late frames missed in total, when the
+    /// refresh interval is known.
+    pub missed_refreshes: u64,
+    /// Presented frames without a frame signal to measure their work from.
+    pub frames_unmeasured: u64,
+    /// Work of on-time and late frames, in nanoseconds.
+    pub work: Histogram<u64>,
+    /// Of `frames_on_time`, the frames that responded to input.
+    pub input_frames_on_time: u64,
+    /// Of `frames_late`, the frames that responded to input.
+    pub input_frames_late: u64,
+    /// Work of on-time and late frames that responded to input, in
+    /// nanoseconds.
+    pub input_work: Histogram<u64>,
+}
+
+#[cfg(feature = "profiler")]
+impl RefreshIntervalFrames {
+    fn new(refresh_interval: Option<Duration>, empty_histogram: &Histogram<u64>) -> Self {
+        Self {
+            refresh_interval,
+            frames_drawn: 0,
+            draw_duration: empty_histogram.clone(),
+            frames_on_time: 0,
+            frames_late: 0,
+            missed_refreshes: 0,
+            frames_unmeasured: 0,
+            work: empty_histogram.clone(),
+            input_frames_on_time: 0,
+            input_frames_late: 0,
+            input_work: empty_histogram.clone(),
+        }
+    }
+
+    /// The frames recorded since `earlier`, a previous snapshot of the same
+    /// statistics.
+    pub fn since(&self, earlier: &Self) -> Self {
+        let subtract = |current: &Histogram<u64>, earlier: &Histogram<u64>| {
+            let mut delta = current.clone();
+            match delta.subtract(earlier) {
+                Ok(()) => delta,
+                Err(error) => {
+                    log::error!("failed to subtract frame histograms: {error}");
+                    current.clone()
+                }
+            }
+        };
+        Self {
+            refresh_interval: self.refresh_interval,
+            frames_drawn: self.frames_drawn.saturating_sub(earlier.frames_drawn),
+            draw_duration: subtract(&self.draw_duration, &earlier.draw_duration),
+            frames_on_time: self.frames_on_time.saturating_sub(earlier.frames_on_time),
+            frames_late: self.frames_late.saturating_sub(earlier.frames_late),
+            missed_refreshes: self
+                .missed_refreshes
+                .saturating_sub(earlier.missed_refreshes),
+            frames_unmeasured: self
+                .frames_unmeasured
+                .saturating_sub(earlier.frames_unmeasured),
+            work: subtract(&self.work, &earlier.work),
+            input_frames_on_time: self
+                .input_frames_on_time
+                .saturating_sub(earlier.input_frames_on_time),
+            input_frames_late: self
+                .input_frames_late
+                .saturating_sub(earlier.input_frames_late),
+            input_work: subtract(&self.input_work, &earlier.input_work),
+        }
+    }
+
+    fn record_presented_frame(
+        &mut self,
+        frame: &FrameTiming,
+        presentation: &PresentTiming,
+        responded_to_input: bool,
+    ) {
+        let submitted_at = presentation.present_start;
+        let (Some(work), Some(is_late)) = (frame.work(submitted_at), frame.is_late(submitted_at))
+        else {
+            self.frames_unmeasured += 1;
+            return;
+        };
+        record_duration(&mut self.work, work);
+        if responded_to_input {
+            record_duration(&mut self.input_work, work);
+        }
+        self.missed_refreshes = self
+            .missed_refreshes
+            .saturating_add(frame.missed_refreshes(submitted_at).unwrap_or(0));
+        if is_late {
+            self.frames_late += 1;
+            self.input_frames_late += u64::from(responded_to_input);
+        } else {
+            self.frames_on_time += 1;
+            self.input_frames_on_time += u64::from(responded_to_input);
+        }
+    }
 }
 
 /// A point-in-time snapshot of input latency and actual window presentation diagnostics.
@@ -1046,18 +1334,34 @@ pub struct InputLatencyRefreshCallsite {
 }
 
 #[cfg(feature = "profiler")]
+pub(crate) fn input_is_deliberate(kind: &str) -> bool {
+    !matches!(kind, "mouse_move" | "mouse_exited" | "mouse_pressure")
+}
+
+#[cfg(feature = "profiler")]
 enum WindowActivity {
     Input {
         started_at: Instant,
         kind: &'static str,
         covering_draw: Option<(Instant, usize)>,
         measurement_generation: u64,
+        _input_activity: journal::InputActivityGuard,
         _turn: journal::ForegroundTurnGuard,
     },
     Draw {
         started_at: Instant,
+        refresh_interval: Option<Duration>,
+        signal_at: Option<Instant>,
+        phases: DrawPhases,
+        view_depth: usize,
         _turn: journal::ForegroundTurnGuard,
     },
+}
+
+#[cfg(feature = "profiler")]
+struct ActiveViewTiming {
+    start: Instant,
+    nested: Duration,
 }
 
 #[cfg(feature = "profiler")]
@@ -1073,6 +1377,7 @@ struct PendingFrame {
 #[must_use]
 pub(crate) struct DrawCheckpoint {
     activity_depth: usize,
+    view_depth: usize,
     pending_frame: Option<PendingFrame>,
     input_measurement_generation: u64,
 }
@@ -1101,6 +1406,11 @@ pub struct WindowProfiler {
     last_present_at: Option<Instant>,
     animating_at_last_present: bool,
     pending_frame: Option<PendingFrame>,
+    refresh_interval: Option<Duration>,
+    frame_signal_at: Option<Instant>,
+    by_refresh_interval: Vec<RefreshIntervalFrames>,
+    empty_histogram: Histogram<u64>,
+    active_views: SmallVec<[ActiveViewTiming; 16]>,
     drawn_frame_count: u64,
     present_attempt_count: u64,
     submitted_present_count: u64,
@@ -1145,6 +1455,12 @@ impl WindowProfiler {
             last_present_at: None,
             animating_at_last_present: false,
             pending_frame: None,
+            refresh_interval: None,
+            frame_signal_at: None,
+            by_refresh_interval: Vec::new(),
+            empty_histogram: Histogram::new(3)
+                .map_err(|error| anyhow::anyhow!("Failed to create frame histogram: {error}"))?,
+            active_views: SmallVec::new(),
             drawn_frame_count: 0,
             present_attempt_count: 0,
             submitted_present_count: 0,
@@ -1166,11 +1482,14 @@ impl WindowProfiler {
     /// retain individual input event names.
     pub fn begin_input(&mut self, kind: &'static str) {
         let turn = journal::foreground_turn();
+        let started_at = Instant::now();
+        let input_activity = journal::input_activity(kind, started_at);
         self.active_activities.push(WindowActivity::Input {
-            started_at: Instant::now(),
+            started_at,
             kind,
             covering_draw: None,
             measurement_generation: self.input_measurement_generation,
+            _input_activity: input_activity,
             _turn: turn,
         });
     }
@@ -1220,16 +1539,19 @@ impl WindowProfiler {
             kind,
             covering_draw,
             measurement_generation,
+            _input_activity: input_activity,
             _turn,
         }) = self.active_activities.pop()
         else {
             unreachable!("checked the current input activity");
         };
+        let ended_at = Instant::now();
+        input_activity.finish(ended_at);
         if !journal::power_interrupted_since(started_at) {
             journal::record_input(journal::InputTiming {
                 kind,
                 start: started_at,
-                end: Instant::now(),
+                end: ended_at,
                 caused_invalidation,
             });
         }
@@ -1292,6 +1614,19 @@ impl WindowProfiler {
         drop(handler);
     }
 
+    /// Records when the frame signal for the frame the next draw will produce
+    /// fired. Coalesced signals report the first. This never changes a pending
+    /// accepted frame or a draw already in progress.
+    pub fn record_frame_signal(&mut self, signal_at: Option<Instant>) {
+        self.frame_signal_at = signal_at;
+    }
+
+    /// Sets the refresh interval of the window's display, which frames drawn
+    /// from now on are attributed to. Zero means the interval is unavailable.
+    pub fn set_refresh_interval(&mut self, refresh_interval: Option<Duration>) {
+        self.refresh_interval = refresh_interval.filter(|interval| !interval.is_zero());
+    }
+
     /// Begins a candidate draw without replacing the previous accepted pending frame.
     pub fn begin_draw(&mut self) {
         let turn = journal::foreground_turn();
@@ -1299,8 +1634,73 @@ impl WindowProfiler {
         journal::record_frame_pending(self.window_id, started_at);
         self.active_activities.push(WindowActivity::Draw {
             started_at,
+            refresh_interval: self.refresh_interval,
+            signal_at: self.frame_signal_at.take(),
+            phases: DrawPhases::default(),
+            view_depth: self.active_views.len(),
             _turn: turn,
         });
+    }
+
+    /// Records the phases of the window draw in progress.
+    pub fn record_draw_phases(&mut self, phases: DrawPhases) {
+        if let Some(WindowActivity::Draw {
+            phases: draw_phases,
+            ..
+        }) = self
+            .active_activities
+            .iter_mut()
+            .rfind(|activity| matches!(activity, WindowActivity::Draw { .. }))
+        {
+            *draw_phases = phases;
+        }
+    }
+
+    /// Records the start of one phase of drawing a view, returning its start
+    /// time to pass to [`WindowProfiler::end_view`].
+    pub fn begin_view(&mut self) -> Instant {
+        let start = Instant::now();
+        self.active_views.push(ActiveViewTiming {
+            start,
+            nested: Duration::ZERO,
+        });
+        start
+    }
+
+    /// Records the end of a view phase begun at `start`, journaling it when
+    /// its own work reached [`VIEW_TIMING_FLOOR`]. Call this once per scope,
+    /// including during unwind, before aborting an enclosing draw.
+    pub fn end_view(&mut self, start: Instant, name: &'static str, phase: ViewPhase) {
+        self.end_view_at(start, name, phase, Instant::now());
+    }
+
+    fn end_view_at(&mut self, start: Instant, name: &'static str, phase: ViewPhase, end: Instant) {
+        if !self
+            .active_views
+            .last()
+            .is_some_and(|view| view.start == start)
+        {
+            debug_assert!(false, "view phase must be the current view scope");
+            return;
+        }
+        let view = self
+            .active_views
+            .pop()
+            .expect("checked the current view scope");
+        let duration = end.saturating_duration_since(start);
+        if let Some(parent) = self.active_views.last_mut() {
+            parent.nested = parent.nested.saturating_add(duration);
+        }
+        let self_duration = duration.saturating_sub(view.nested);
+        if self_duration >= VIEW_TIMING_FLOOR && !journal::power_interrupted_since(start) {
+            journal::record_view(ViewTiming {
+                name,
+                phase,
+                start,
+                end,
+                self_duration,
+            });
+        }
     }
 
     /// Captures state before a draw attempt that may refuse or unwind before beginning a draw.
@@ -1309,6 +1709,7 @@ impl WindowProfiler {
     pub(crate) fn checkpoint_draw(&self) -> DrawCheckpoint {
         DrawCheckpoint {
             activity_depth: self.active_activities.len(),
+            view_depth: self.active_views.len(),
             pending_frame: self.pending_frame,
             input_measurement_generation: self.input_measurement_generation,
         }
@@ -1330,6 +1731,7 @@ impl WindowProfiler {
             return Duration::ZERO;
         }
         if self.active_activities.len() != checkpoint.activity_depth + 1
+            || self.active_views.len() != checkpoint.view_depth
             || !matches!(
                 self.active_activities.last(),
                 Some(WindowActivity::Draw { .. })
@@ -1348,6 +1750,8 @@ impl WindowProfiler {
     /// Input measurements reset during the attempt remain cleared after rollback.
     pub(crate) fn abort_draw_checkpoint(&mut self, checkpoint: DrawCheckpoint) {
         self.truncate_activities(checkpoint.activity_depth);
+        self.truncate_views(checkpoint.view_depth);
+        self.frame_signal_at = None;
         self.pending_frame = checkpoint.pending_frame;
         if checkpoint.input_measurement_generation != self.input_measurement_generation
             && let Some(pending) = self.pending_frame.as_mut()
@@ -1379,6 +1783,10 @@ impl WindowProfiler {
         }
         let Some(WindowActivity::Draw {
             started_at: draw_start,
+            refresh_interval,
+            signal_at,
+            phases,
+            view_depth,
             _turn,
         }) = self.active_activities.pop()
         else {
@@ -1390,7 +1798,11 @@ impl WindowProfiler {
             invalidations,
             draw_start,
             draw_end: Instant::now(),
+            refresh_interval,
+            signal_at,
+            phases,
         };
+        self.truncate_views(view_depth);
         let duration = timing.draw_duration();
         if !journal::power_interrupted_since(draw_start) {
             self.record_draw_timing(timing);
@@ -1413,6 +1825,7 @@ impl WindowProfiler {
             .rposition(|activity| matches!(activity, WindowActivity::Draw { .. }))
         {
             self.truncate_activities(index);
+            self.frame_signal_at = None;
         }
     }
 
@@ -1448,6 +1861,10 @@ impl WindowProfiler {
                 pending.timing.dirty_at = pending
                     .timing
                     .dirty_at
+                    .filter(|at| journal::frame_sample_is_valid(self.window_id, *at));
+                pending.timing.signal_at = pending
+                    .timing
+                    .signal_at
                     .filter(|at| journal::frame_sample_is_valid(self.window_id, *at));
                 pending
             });
@@ -1486,6 +1903,8 @@ impl WindowProfiler {
         self.pending_input_count = self.pending_input_count.saturating_sub(pending.input_count);
         self.first_input_at = self.input_after_draw_at.take();
         let frame = pending.timing;
+        self.frames_for(frame.refresh_interval)
+            .record_presented_frame(&frame, &present_timing, pending.first_input_at.is_some());
         if let Some(dirty_at) = frame.dirty_at {
             record_duration(
                 &mut self.dirty_to_present_histogram,
@@ -1597,6 +2016,7 @@ impl WindowProfiler {
             dirty_to_present_histogram: self.dirty_to_present_histogram.clone(),
             draw_duration_histogram: self.draw_duration_histogram.clone(),
             present_interval_histogram: self.present_interval_histogram.clone(),
+            by_refresh_interval: self.by_refresh_interval.clone(),
         }
     }
 
@@ -1630,9 +2050,15 @@ impl WindowProfiler {
         self.refresh_callsites.clear();
     }
 
-    fn record_draw_timing(&mut self, timing: FrameTiming) {
+    fn record_draw_timing(&mut self, mut timing: FrameTiming) {
         self.discard_stale_input_samples();
+        timing.signal_at = timing
+            .signal_at
+            .filter(|at| journal::frame_sample_is_valid(self.window_id, *at));
         record_duration(&mut self.draw_duration_histogram, timing.draw_duration());
+        let frames = self.frames_for(timing.refresh_interval);
+        frames.frames_drawn += 1;
+        record_duration(&mut frames.draw_duration, timing.draw_duration());
         self.drawn_frame_count += 1;
         self.pending_frame = Some(PendingFrame {
             timing,
@@ -1642,6 +2068,24 @@ impl WindowProfiler {
         self.input_after_draw_at = None;
         record_frame_event(FrameEvent::Draw(timing));
         journal::record_draw(timing);
+    }
+
+    fn frames_for(&mut self, refresh_interval: Option<Duration>) -> &mut RefreshIntervalFrames {
+        let index = match self
+            .by_refresh_interval
+            .iter()
+            .position(|frames| frames.refresh_interval == refresh_interval)
+        {
+            Some(index) => index,
+            None => {
+                self.by_refresh_interval.push(RefreshIntervalFrames::new(
+                    refresh_interval,
+                    &self.empty_histogram,
+                ));
+                self.by_refresh_interval.len() - 1
+            }
+        };
+        &mut self.by_refresh_interval[index]
     }
 
     fn discard_stale_input_samples(&mut self) {
@@ -1665,7 +2109,21 @@ impl WindowProfiler {
 
     fn truncate_activities(&mut self, depth: usize) {
         while self.active_activities.len() > depth {
-            self.active_activities.pop();
+            if let Some(WindowActivity::Draw { view_depth, .. }) = self.active_activities.pop() {
+                self.truncate_views(view_depth);
+            }
+        }
+    }
+
+    fn truncate_views(&mut self, depth: usize) {
+        let end = Instant::now();
+        while self.active_views.len() > depth {
+            let view = self.active_views.pop().expect("view depth checked");
+            if let Some(parent) = self.active_views.last_mut() {
+                parent.nested = parent
+                    .nested
+                    .saturating_add(end.saturating_duration_since(view.start));
+            }
         }
     }
 }
@@ -1766,3 +2224,6 @@ mod foundation_tests;
 
 #[cfg(test)]
 mod foreground_tests;
+
+#[cfg(all(test, feature = "profiler"))]
+mod refresh_tests;

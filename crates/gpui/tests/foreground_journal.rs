@@ -258,7 +258,7 @@ fn public_collectors_and_detector_observe_input_draw_and_present_independently(
         detector.first_present_at(),
     ))
     .unwrap();
-    assert_eq!(json["measurement_version"], 2);
+    assert_eq!(json["measurement_version"], 3);
     assert_eq!(json["sealed_by"], "present");
     assert_eq!(json["trigger"], "threshold");
     let contributors = json["contributors"].as_array().unwrap();

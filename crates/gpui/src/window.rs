@@ -7152,12 +7152,17 @@ impl Window {
     ) {
         #[cfg(feature = "profiler")]
         let _foreground_turn = profiler::journal::foreground_turn();
+        #[cfg(feature = "profiler")]
+        self.window_profiler
+            .record_frame_signal(request_frame_options.signal_at);
         let dirty_before = self.invalidator.is_dirty();
         let force_before = request_frame_options.force_render || self.deferred_force_render;
         let accepted_before = self.presentation_state.frame_accepted_generation;
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             self.native_frame_requested_inner(request_frame_options, cx);
         }));
+        #[cfg(feature = "profiler")]
+        self.window_profiler.record_frame_signal(None);
         if let Err(panic) = outcome {
             let recovery = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 if self.presentation_is_allowed()
@@ -7547,6 +7552,8 @@ impl Window {
     pub fn draw(&mut self, cx: &mut App) -> ArenaClearNeeded {
         #[cfg(feature = "profiler")]
         {
+            let refresh_interval = self.refresh_interval(cx);
+            self.window_profiler.set_refresh_interval(refresh_interval);
             let checkpoint = self.window_profiler.checkpoint_draw();
             let frame_dirty = self.invalidator.take_frame_dirty();
             let previous_generation = self.rendered_frame.generation;
@@ -8333,6 +8340,23 @@ impl Window {
         self.window_profiler.frame_duration_snapshot()
     }
 
+    #[cfg(feature = "profiler")]
+    pub(crate) fn profile_view_phase<R>(
+        &mut self,
+        name: &'static str,
+        phase: profiler::ViewPhase,
+        cx: &mut App,
+        draw: impl FnOnce(&mut Self, &mut App) -> R,
+    ) -> R {
+        let start = self.window_profiler.begin_view();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| draw(self, cx)));
+        self.window_profiler.end_view(start, name, phase);
+        match result {
+            Ok(result) => result,
+            Err(panic) => std::panic::resume_unwind(panic),
+        }
+    }
+
     fn draw_roots(
         &mut self,
         cx: &mut App,
@@ -8368,8 +8392,12 @@ impl Window {
 
         // Layout all root elements.
         let scale_factor = self.scale_factor();
+        #[cfg(feature = "profiler")]
+        let request_layout_start = Instant::now();
         let mut root_element = self.root.as_ref().unwrap().clone().into_any();
         let root_layout_id = root_element.request_layout(self, cx);
+        #[cfg(feature = "profiler")]
+        let prepaint_start = Instant::now();
         self.layout_engine
             .as_mut()
             .unwrap()
@@ -8426,6 +8454,8 @@ impl Window {
         self.mouse_hit_test = self.next_frame.hit_test(self.mouse_position);
 
         // Now actually paint the elements.
+        #[cfg(feature = "profiler")]
+        let paint_start = Instant::now();
         self.invalidator.set_phase(DrawPhase::Paint);
         root_element.paint(self, cx);
 
@@ -8455,6 +8485,14 @@ impl Window {
 
         #[cfg(any(feature = "inspector", debug_assertions))]
         self.paint_inspector_hitbox(cx);
+
+        #[cfg(feature = "profiler")]
+        self.window_profiler
+            .record_draw_phases(profiler::DrawPhases {
+                request_layout: prepaint_start.duration_since(request_layout_start),
+                prepaint: paint_start.duration_since(prepaint_start),
+                paint: Instant::now().duration_since(paint_start),
+            });
 
         // Paint can invalidate a transform that qualified during prepaint. Commit focus only
         // after those late validity results are known, then resolve accessibility from the same
