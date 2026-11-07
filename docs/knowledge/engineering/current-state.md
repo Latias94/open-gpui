@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-07T01:13:00+08:00
+timestamp: 2026-11-07T10:04:00+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -339,6 +339,22 @@ verified_by:
   execution, physical suspend, numeric costs, accepted-but-unpolled backlog, pending publisher
   tail drain, full fixed-target refresh, docking U4-U9 and engine adoption remain open.
 
+- The platform-signal/completed-skip successor is qualified locally at
+  `5811543bebe10657b9f99b42bfadb214e7dad999` against official `cd4fc8de4c` and `36b6d0951f`.
+  The final Core/Windows library/public cohort passes 1,482/1,482 with four existing interactive
+  skips. The earlier WGPU/gallery selection contributes 228 passing cases and one fixture skip;
+  the verification guide retains its initial clipboard failure, unchanged isolated pass and later
+  complete Windows success, plus the interrupted first final run. Components/docking/Canvas
+  pass 2,966/2,966; disabled Core/public 1,122/1,122 and independent enabled/disabled 38/38 and
+  29/29 pass without skips. Locked checks, correctness Clippy, formatting, actual Windows Rust
+  1.92.0 and stable wasm on/off plus existing nightly shared-memory compilation pass.
+  The source audit identifies inherited official demand-driven prerequisite `eb354c8d50` and X11
+  direct Expose/recovery work; these have a complete owning successor before cross-platform
+  refresh-aware measurement. Signal capture does not approve a permanent rejection of those
+  official mechanisms. All eight implementation/review subthreads are closed. Native foreign
+  platforms, browser execution, numerical costs and complete fixed-target refresh remain open;
+  no engine default changes.
+
 # Historical Main Integration
 
 The previous snapshot recorded `df6ae2f` on July 9. The following integration summary retains that
@@ -374,7 +390,8 @@ historical scope and is not current branch or CI qualification.
   their recorded scope. The unified-profiler foundation is qualified within its recorded scope.
   Official multi-subscriber wake and sleep/window visibility are qualified within their recorded
   scope, together with the complete foreground journal/detector/monitor checkpoint. Continue with
-  frame-signal provenance/completed-skip, refresh-aware v3 and power/cadence
+  the official demand-driven platform-loop prerequisite after the qualified frame-signal/
+  completed-skip unit, then refresh-aware v3 and power/cadence
   in the candidate queue's prerequisite order. Display getters and the foundation profiler do
   not qualify complete frame pacing. Apply the maintenance skill's official-baseline rule while
   reconciling remaining image-feature/API/platform/hot-reload differences. Qualify the

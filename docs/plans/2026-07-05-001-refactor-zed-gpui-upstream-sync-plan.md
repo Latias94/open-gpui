@@ -932,6 +932,85 @@ failures, independent review, actual Windows compiler-floor checks and unchanged
 browser/test-support, physical-suspend, numerical-cost and engine-adoption limits. Detection is
 post-hoc and observes completed work; it does not detect a task that never returns.
 
+### Platform Frame Signals And Completed Skips Successor
+
+After journal implementation `8493e9eb1cad7c3336fa99b4b8749c5be1d6c7c5` and its
+qualification `84407f27ffacac0f2f5945c61220eb7567e7ac54`, adopt the complete official
+platform-signal and completed-skip mechanism from `cd4fc8de4c` and `36b6d0951f`.
+The fixed cycle target remains `635026fabc38440fce5e1767d125026a17b12012`.
+Keep refresh-aware measurement v3 and later power/cadence policies in their dependency-ordered
+successors. Official mechanisms are the baseline; reconcile fork modifications first and retain
+an adaptation only for its concrete public/platform contract and verification.
+
+Preserve the atomic earliest timestamp/source pair, feature-disabled zero capture/storage,
+backend clock provenance, raw callback-arrival markers and nonempty completed-skip boundaries.
+Native/local source labels describe the actual scheduling path. Raw signals and reentrant
+deferrals are neither foreground work nor interval boundaries. A completed no-render or throttle
+decision may seal retained work but must not satisfy pending frame demand or flush folded-only
+polls on every idle refresh.
+
+Use the existing Window callback and native ingress owners. Record arrival before borrowing App;
+coalescing combines required/force flags without separating the first known timestamp from its
+source. The fork queues reentrant requests until borrow release, preserving force/presentation
+requirements instead of dropping them. Existing arena scope state can identify an arrival during
+a draw without another draw or scheduler owner. Recovery bypasses, refused/unwound candidates,
+old-scene retries and exact Submitted outcomes retain their current qualification contracts.
+Reconcile the inherited throttle helper with the official required-presentation bypass and
+high-rate-input exemption from inactive throttling; high-rate input still permits thermal limits.
+Keep later configurable power/cadence policy outside this prerequisite.
+
+Windows signals belong to the exact registered HWND generation; hiding, minimizing and retirement
+drain stale observations. Preserve the registered-window authority rather than replacing it with
+an upstream registry lacking the fork's lifetime contract. Other backend adaptations keep their
+existing leases and post-borrow ordering. Clock conversion is bounded and falls back explicitly
+when its platform timestamp cannot be used. Later Metal/power policy is not part of this unit.
+
+The source audit also exposes official demand-driven prerequisite
+`eb354c8d504071bdb79110a7a5c9d374c2864113`, including Wayland FrameLoop, queued ping time,
+scheduled retry deadlines, related Core scheduling and Web completion-hook removal. Complete that mechanism
+through existing owners before claiming cross-platform refresh-aware telemetry; current clock
+capture does not approve a permanent fork divergence. Reconcile X11's direct Expose/recovery
+delivery against `ae99a867d7` and `f25434f3c5` in the same platform-loop successor. This unit's
+Core/Windows qualification and source-only clock adaptation do not close those backend loops.
+
+Qualify official writer/sealer scenarios, ingress coalescing, actual callback/draw/skip behavior,
+pending demand, enabled/disabled public and independently locked consumers, and the Windows
+Submitted/retirement trajectory. Run affected runtime/component/platform cohorts, compiler-floor
+and portable production checks serially. Record initial failures, independent review and actual
+scope separately from source-only foreign backends, browser execution and numerical timing costs.
+
+### Demand-Driven Platform Loop Prerequisite
+
+The frame-signal audit identifies an inherited mechanism missing before the fixed-target refresh:
+official `eb354c8d504071bdb79110a7a5c9d374c2864113` replaces the continuous Wayland completion
+pump with explicit schedule/wake/park and retries. Adopt this complete prerequisite, its
+`cd4fc8de4c` timestamp additions and relevant fixes through `635026fabc` before advancing the
+cross-platform refresh-aware measurement claim. Reconcile X11 direct Expose dispatch
+`ae99a867d7` and recovery handling `f25434f3c5` in the same owner comparison.
+
+Use official `PlatformWindow::schedule_frame`, App effect-flush demand and Window callback
+rescheduling through the existing owners. Dirty state, accepted scenes awaiting presentation and
+next-frame callbacks independently create demand; callbacks queued during a frame must schedule
+a successor before parking. Preserve refused candidates, deferred force, mandatory presentation,
+visibility and shutdown. Distinguish frame scheduling from the fork's post-borrow native
+maintenance command; adopting the official scheduler hook must not drop exact native callback
+retirement or introduce a second command/queue owner. Remove the superseded completion-driven
+scheduling hook once its consumers are migrated rather than retain an alias for convenience.
+
+Wayland must retain the full FrameLoop state machine, source-bound enqueue/deadline timestamps,
+compositor callback admission, presentation failure/retry and stopped/parked behavior. Keep its
+native leases and structured teardown. X11 should process an Expose after draining native events,
+outside the client borrow, preserve forced scene reconstruction after GPU recovery and distinguish
+that native callback from its local refresh timer. Web's removal of the old no-op completion hook
+does not alone establish a new RAF parking policy; compare its actual final-target behavior.
+
+Retain the original official public TestWindow parked-loop regressions and async refresh test.
+Add fork refusal/reentry/retirement controls through the existing test platform, then independent
+public consumers without Nara types. Run affected enabled/disabled Core, component and native
+Windows workflows, portable production and compiler-floor checks. Source-only Linux/macOS and
+unexecuted browser scope remain explicit until native evidence is available. This prerequisite
+is queued implementation, not a qualified platform-loop replacement or a numeric power result.
+
 ## Maintained Baseline Before Engine Adaptation
 
 The [unified-profiler qualification](../verification.md#unified-profiler-foundation) now records
@@ -974,6 +1053,24 @@ numeric costs and complete backlog/publisher retirement retain separate unqualif
 Continue at official frame-signal/completed-skip, refresh-aware v3 and power/cadence owners;
 complete benchmark/report/debug-overlay comparison and conditional hot reload remain queued.
 This prerequisite changes no engine default and does not complete the fixed-target refresh.
+
+The following [platform-signal/completed-skip qualification](../verification.md#platform-frame-signals-and-completed-skips)
+records local implementation `5811543bebe10657b9f99b42bfadb214e7dad999`, adopting official
+`cd4fc8de4c` and `36b6d0951f`. Atomic capture, raw arrivals and nonempty completed skips retain
+their separate meaning; fork ingress, exact native registration/retirement and required-presentation
+adaptations have public and native evidence. Final Core/Windows library/public passes 1,482/1,482
+with four existing interactive skips; earlier WGPU/gallery contributes 228 passing cases and one
+fixture-regeneration skip. The record preserves the initial clipboard failure, unchanged isolated
+pass, interrupted final run and later complete Windows success. Components/docking/Canvas
+2,966, disabled Core/public 1,122 and independent enabled/disabled 38/29 pass without skips.
+Locked checks, correctness Clippy, formatting, actual Windows Rust 1.92.0 and stable wasm on/off
+plus the existing nightly shared-memory production configuration pass. Source-only foreign clocks
+do not qualify native Linux/macOS or browser execution; numerical costs remain unmeasured.
+Continue with the complete official demand-driven platform-loop prerequisite and X11 Expose/
+recovery, then refresh-aware v3, power/cadence and later MetalFrameSource. Publisher-tail and
+accepted-backlog lifetime gaps, benchmark/report/debug-overlay evolution, hot reload, canonical
+docking and engine GPU/View adoption remain open. This unit changes no engine default or full
+refresh completion state.
 
 Finish a bounded framework refresh against the recorded November 5 Zed revision before expanding
 Nara-specific UI implementation. The five correctness units are the first dependency-ordered

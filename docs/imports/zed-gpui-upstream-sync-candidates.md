@@ -262,6 +262,25 @@ framework consumer and needs its own disposition rather than implicit exclusion.
 5. Platform frame-signal provenance `cd4fc8de4c` and nonempty completed-skip sealing
    `36b6d0951f`: shared atomic first timestamp/source, actual backend clock conversion and
    feature-disabled zero-capture behavior. Display observation `f495dd0f77` is already qualified.
+   The [complete successor](../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#platform-frame-signals-and-completed-skips-successor)
+   is qualified locally at `5811543bebe10657b9f99b42bfadb214e7dad999` through existing frame,
+   journal and platform owners. Its [qualification](../verification.md#platform-frame-signals-and-completed-skips)
+   records final Core/Windows 1,482, components/docking/Canvas 2,966, disabled Core/public 1,122
+   and independent enabled/disabled 38/29 passing. Four interactive native skips and the earlier
+   gallery fixture skip remain explicit; WGPU/gallery contributes 228 passing cases. Initial
+   clipboard failure, unchanged rerun, interrupted run and final success retain separate records.
+   Actual Windows Rust 1.92.0 and production wasm configurations compile; native foreign-platform,
+   browser, numerical-cost and remaining platform-loop scope are unqualified.
+   Source reconciliation exposes the inherited demand-driven prerequisite
+   `eb354c8d504071bdb79110a7a5c9d374c2864113`: complete Wayland FrameLoop/ping/retry/deadline
+   and the related Core scheduling contract/Web completion-hook removal must follow through
+   their existing owners before complete cross-platform refresh-aware telemetry can be claimed.
+   Current clock capture is not
+   a disposition to reject that official mechanism. X11's direct Expose/recovery path also needs
+   its source reconciliation against `ae99a867d7` and `f25434f3c5`; a delivered timer timestamp
+   alone does not establish native Expose provenance.
+   The [platform-loop prerequisite](../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#demand-driven-platform-loop-prerequisite)
+   owns the complete source/candidate/retirement reconciliation and removal of superseded hooks.
 6. Refresh-aware frame/view/hang measurement `4f6d97b9de`: real signal/dirty work start,
    submission-start cutoff, per-refresh histograms, missed refreshes, view self-time and
    measurement-version-3 trigger/active-use rules. Do not infer timing fidelity or overhead from

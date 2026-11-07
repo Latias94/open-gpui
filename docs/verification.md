@@ -2623,6 +2623,180 @@ numerical costs, accepted-backlog retirement, complete publisher-tail drain, can
 U4-U9 and Nara rendering/Editor/game adoption retain their own unqualified scopes. This does not
 complete the fixed-target refresh or Nara R11/R12.
 
+## Platform Frame Signals And Completed Skips
+
+This successor starts at journal qualification
+`84407f27ffacac0f2f5945c61220eb7567e7ac54` and adopts official
+`cd4fc8de4ca8548cca2567352b87bcaaec13328f` with the nonempty-skip correction
+`36b6d0951f`. The fixed target remains
+`635026fabc38440fce5e1767d125026a17b12012`. Measurement v3, final-target power/cadence
+and the later macOS MetalFrameSource retain separate owners.
+
+The public options and shared atomic accumulator preserve the official captured time/source
+pair. Disabled capture does not evaluate its closure; disabled accumulators have no timestamp
+storage or atomic work. Journal raw signal/reentrant markers retain callback arrival metadata
+without contributing work or sealing intervals. Completed no-render/inactive/thermal skips
+seal only retained work, retain pending demand and do not flush folded-only polls at idle refreshes.
+The shared atomic keeps official encoding semantics: timestamps before its origin saturate to
+that origin, representable offsets are bounded, and equal encoded timestamps prefer native source.
+The ingress merge separately retains the earlier request on equal or unavailable timestamps.
+These paths preserve source/time custody without promising lossless arbitrary-clock ordering.
+
+The Window callback records arrival before accessing App. The fork's existing native ingress
+retains reentrant requests and merges force/presentation requirements, keeping the earliest known
+timestamp and its matching source. Equal timestamps retain ingress order. Existing active arena
+scope state identifies a draw-time arrival without another draw-state owner. Delayed delivery
+does not create another raw signal. Completed skips follow existing native-frame completion;
+failed/refused/unwound draw attempts are not relabeled as no-render skips. Recovery and exact
+Submitted receipts remain authoritative. The inherited throttle helper is reconciled with official
+required-presentation bypass and high-rate-input exemption from inactive throttling, while thermal
+throttling remains available.
+
+Windows associates the signal with the exact registered HWND/WindowId/generation. VSync records
+after its actual compositor wait or fallback sleep and before redraw invalidation. Local requests
+retain local provenance. Visibility, minimization and retirement drain stale captures. Foreign
+backend source comparison and portable production compilation are separate from native execution.
+
+The macOS source includes the official per-display registry prerequisite `96ce8f2a05`, host-clock
+conversion, first-signal retention and stop cleanup, using the existing CoreVideo clock bindings.
+The fork retains structured startup errors, queued activation timestamps, transaction depth and
+native retirement. Wayland retains the official wrapping millisecond conversion, 60-second
+plausibility bound and receipt-time fallback; its existing local executor request captures enqueue
+time. The official demand-driven ping/retry and later cadence state machine remain queued rather
+than being inferred from that timestamp support. X11's existing Expose path joins its timed refresh
+and the delivered timer carries its calloop deadline/local source. Web RAF keeps the official
+unavailable captured timestamp with native provenance; explicit local requests capture before their
+post-borrow microtask. An initially drafted Web RAF clock conversion was removed to preserve the
+official baseline without an independently qualified consumer. Headless has no fabricated native
+signal. Five original foreign-clock regression bodies and a fork queued-activation regression are
+source-preserved; they have not executed on this Windows host.
+
+Initial integration compilation exposed two calls resolving to the raw `HasWindowHandle` trait
+instead of the framework identity accessor. Both journal paths now use the existing exact Window
+handle. The corrected locked all-feature Core library check passes on Rust 1.95.0. Behavioral,
+native, independent-consumer and compiler-floor qualification are in progress; no broader result
+is established by that compilation.
+
+The first Core signal/ingress/journal/hang/frame/candidate selection passes 93/93
+(`0bbda82b-30b9-4536-a696-26a0fa890432`), with 1,147 unrelated cases filtered out.
+The Windows native/registry/VSync selection passes 6/6
+(`2861eda8-53e1-4506-884f-d563ffb15ea8`), with 212 unrelated cases filtered out. It includes
+real Submitted frames, hidden/minimized recovery, delayed retirement, released signal ownership,
+stale registrations and an actual background VSync capture before foreground delivery.
+
+An initial public command selected nonexistent integration-target names and stopped before
+running tests. The corrected journal/lifecycle/frame-signals selection runs 13 tests, with 12
+passing and one closure/Idle fixture failure (`8b8b2087-6e83-4e14-8af7-a6744071701d`). Its
+no-op deterministic task does not invoke the real scheduler's profiler turn hooks. The fixture
+now opens a second fully submitted control window before the pending-demand scenario and dispatches
+real noninvalidating input after closing the first; exact Closed, released root, no-redraw and Idle
+assertions remain. This is a public callback observation correction rather than a weaker close
+or journal contract. Final public execution remains pending.
+
+The corrected public frame-signal trajectory passes 4/4
+(`1a07af7a-40e3-4e1d-8857-651dac1755da`), without skips. It retains both inactive required
+presentation and activation/default-request recovery, exact accepted/submitted generations,
+deferred-scene demand and close/retirement assertions. Final source review also corrects native/
+Web local-request adapters to preserve an already captured timestamp/source pair instead of
+retagging a known native time as local; only absent times receive a new local capture. The
+existing backend request hook documents that custody. Independent Core, Windows and foreign
+platform reviews leave no confirmed open P1/P2 in their scoped snapshots. All eight
+implementation/review subthreads are closed. Complete affected qualification follows below.
+
+The complete Core library plus journal/lifecycle/frame public targets pass 1,253/1,253
+(`cbf7720c-08a4-40d4-ad33-2c4beed596d2`), without skips. The expanded WGPU/Windows/gallery
+library-and-integration selection runs 442 tests: 441 pass and the unchanged global clipboard
+round-trip fails while reading its final metadata-bearing value as `None`
+(`b2fbfbcf-f24e-426a-8558-78953200085a`). The five preexisting skips are four interactive
+Windows-authority cases and the gallery fixture-regeneration command. All executed frame-signal,
+native Submitted/reconstruction/retirement and ordinary gallery interaction scenarios pass.
+The clipboard failure's cause is not established; it remains recorded while an unchanged isolated
+rerun checks reproducibility. The stopped serial sequence has not yet executed the subsequent
+component or independent-consumer gates.
+
+The isolated clipboard rerun passes 1/1 with source and assertions unchanged
+(`12624f95-69c6-4ca7-b79d-96abb95e53aa`), filtering 217 unrelated cases. This establishes
+that the failure did not reproduce in that rerun, not a diagnosed cause or a clean 442-test
+single-run result. Keep the initial failure and the successful unchanged rerun together. The
+remaining serial component, independent and feature-disabled gates resume without repeating
+the already successful gallery/native scenarios.
+
+The UI core/components/docking/Canvas cohort passes 2,966/2,966 across 25 binaries
+(`27941d1b-a476-4d00-b14b-54ff9e203b4e`), without skips. Existing test-support unused-token
+warnings remain unchanged. Before final qualification, the main integration also restores the
+official and previous fork behavior of sampling high-rate input again after next-frame callbacks
+for the presentation decision; a cached pre-callback sample must not stand in for current state.
+The later final Core/native checks cover this small source follow-up. Independent enabled/
+disabled consumers, feature-off Core, portable and compiler-floor checks continue serially.
+
+The independently locked ordinary consumer passes 38/38 with all features
+(`418ecbcf-de96-4267-a39e-92ed48e59c82`) and 29/29 with no default features
+(`84903976-50f2-4f3f-826a-c7d2109a5d70`), both across 14 binaries without skips.
+The new frame-signal target executes six enabled or three disabled API/value controls; its two
+explicitly typed backend/journal closures remain unexecuted signature checks. Disabled capture
+evaluates its closure zero times and the accumulator has zero timestamp-storage size. Existing
+consumer dependencies, package versions and checksums are unchanged; both lockfiles add only
+the existing scheduler package references required by Windows and macOS.
+
+Profiling-disabled Core plus public lifecycle passes 1,122/1,122
+(`163e56ee-955d-4c40-82f7-313bde5f26b2`), without skips, including the final source's
+disabled timestamp-capture/storage controls. Final all-feature Core/Windows public integration,
+workspace/consumer compilation, correctness Clippy, compiler-floor and portable checks follow.
+
+The first final-source Core/Windows public run is interrupted after 1,401 of 1,482 cases,
+without a final Summary (`open-gpui-frame-signals-core-native-qualified.log`). On continuation,
+the owned session is unavailable and no Cargo/rustc process remains; the log's last write is
+02:42 local. That partial output is not a completed qualification, and the subsequent queued
+compilation/Clippy steps did not run. A fresh serial run reuses the existing build products and
+keeps this interruption separate from test failures.
+
+The resumed complete final-source Core/Windows library and public integration selection passes
+1,482/1,482 across 12 binaries (`9f7394cf-ed21-4f9e-95b4-1d34111f056a`), with four preexisting
+interactive Windows cases skipped. It includes all new Core, public and native signal controls,
+the original journal/monitor/retirement cohorts, actual Submitted/reconstruction, the negative
+public-surface compile cases and the unchanged clipboard round-trip. This completed run follows
+the final high-rate-input sampling correction; the interrupted output above supplies no completion
+claim. Earlier WGPU/gallery and component results retain their separately recorded scope.
+
+Locked workspace/all-target and independent-consumer/all-target/all-feature checks pass on
+Rust 1.95.0. Affected Core/WGPU/Windows/Canvas/Web all-target/all-feature Clippy passes with
+`-D clippy::correctness`; preexisting style/unused warnings remain warnings. Both root and
+independent-consumer `cargo fmt --all -- --check` pass. Existing import-boundary, document-link,
+release-document and public-API scans pass, and the three frame-signal workflow consumer commands
+parse as valid YAML with serial test execution. No hosted CI execution is claimed. Actual
+Windows Rust 1.92.0 and portable production compilation remain the final checks below.
+
+Actual Windows Rust 1.92.0 affected Core/WGPU/Windows/Canvas all-target/all-feature and
+independently locked consumer all-target/all-feature checks pass. Stable Rust 1.95.0 Core/WGPU/
+Web production libraries compile for wasm32-unknown-unknown with profiling disabled. The enabled
+configuration and existing nightly shared-memory configuration continue separately; successful
+Windows or portable compilation establishes neither Linux/macOS native execution nor browser
+callback/timing qualification.
+
+Stable production wasm also compiles with profiling enabled. The existing nightly shared-memory/
+build-std configuration compiles its multithreaded mailbox branch, using the same commands and
+toolchains already qualified by the preceding journal unit. These results are production compile
+evidence, not browser/test-support execution. No normal compiler-floor, dependency version or
+platform-release claim changes.
+
+The scoped implementation is committed locally as
+`5811543bebe10657b9f99b42bfadb214e7dad999`. Final Core/Windows is 1,482/1,482; the earlier
+WGPU/gallery selection contributes 228 passing cases with one fixture-regeneration skip, separate
+from its recorded clipboard failure and the later complete Windows success. Component/docking/
+Canvas is 2,966/2,966, disabled Core/public 1,122/1,122, independent enabled/disabled 38/38 and
+29/29. Compiler-floor, production wasm, locked compilation, correctness Clippy, formatting and
+existing scans retain their exact scope above. All eight implementation/review subthreads are
+closed. No push, hosted CI, branch movement, engine-default switch or performance measurement
+is part of this qualification.
+
+Continue with the complete official demand-driven platform-loop prerequisite `eb354c8d50` and
+X11 Expose/recovery reconciliation, then refresh-aware measurement v3, power/cadence and later
+macOS MetalFrameSource. Native Linux/macOS, browser execution, general occlusion/physical-power
+and numerical-cost evidence remain unqualified. Complete publisher-tail drain and accepted queue
+backlog retirement, benchmark/report/debug-overlay evolution, hot reload, canonical docking U4-U9
+and Nara GPU/View adoption remain separate open scope. This unit does not complete fixed-target
+parity or Nara R11/R12.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:
