@@ -236,6 +236,7 @@ struct NativeImageSubmission {
     capture: WindowFrameCapture,
 }
 
+#[track_caller]
 fn wait_for_image_submission(
     app: &mut Application,
     handle: WindowHandle<NativeImageRoot>,
@@ -244,135 +245,207 @@ fn wait_for_image_submission(
     previous: u64,
     mut wanted: impl FnMut(&[ImagePaintDiagnostic; 2]) -> bool,
 ) -> NativeImageSubmission {
+    let phase = std::panic::Location::caller();
     let mut submitted = None;
-    pump_messages_until_with_delay(
-        "native image consumer accepted nonempty Submitted frame and RGBA capture",
-        Duration::from_millis(5),
-        || {
-            submitted = app
-                .update_for_test(|cx| {
-                    handle.update(cx, |view, window, cx| {
-                        let facts = window.presentation_facts();
-                        let attempt = facts.latest_present_attempt?;
-                        let paint = view.counters.last_paint.get()?;
-                        let diagnostics = window.submitted_frame_diagnostics_for_test()?;
-                        if attempt.generation <= previous
-                            || attempt.outcome != PlatformWindowPresentOutcome::Submitted
-                            || !attempt.contained_valid_primitives
-                            || facts.initial_presentation
-                                != WindowInitialPresentationStatus::Completed
-                            || !facts.native_visible
-                            || facts.frame_accepted_generation != Some(attempt.generation)
-                            || facts.present_submitted_generation != Some(attempt.generation)
-                            || facts.non_empty_presented_generation != Some(attempt.generation)
-                            || window.rendered_frame_revision() != attempt.generation
-                            || diagnostics.generation() != attempt.generation
-                            || view.version != version
-                            || paint.window_id != handle.window_id()
-                            || paint.version != version
-                            || paint.previous_revision.checked_add(1) != Some(attempt.generation)
-                            || !paint.active
-                            || !window.is_window_active()
-                            || unsafe { GetActiveWindow() } != registration.as_raw()
-                            || unsafe { GetForegroundWindow() } != registration.as_raw()
-                            || diagnostics.image_paint_diagnostics().len() != 2
-                        {
-                            return None;
-                        }
-                        let paints = diagnostics.image_paint_diagnostics().to_vec();
-                        let encoded = view.encoded.clone().get_render_image(window, cx)?;
-                        let embedded = window
-                            .get_asset::<ImgResourceLoader>(&view.embedded, cx)?
-                            .expect("the embedded Img resource must decode successfully");
-                        assert_native_decoded_image(&encoded, version);
-                        assert_native_decoded_image(&embedded, version);
-                        assert_ne!(encoded.id, embedded.id);
-                        let images = [encoded.as_ref(), embedded.as_ref()].map(|image| {
-                            let matching = paints
-                                .iter()
-                                .filter(|paint| paint.image.image_id == image.id)
-                                .copied()
-                                .collect::<Vec<_>>();
-                            assert_eq!(matching.len(), 1, "each actual Img must paint once");
-                            let diagnostic = matching[0];
-                            assert_eq!(diagnostic.frame_generation, attempt.generation);
-                            assert!(diagnostic.image.frame_index < image.frame_count());
-                            assert_eq!(diagnostic.atlas_access.image, Some(diagnostic.image));
-                            assert_eq!(diagnostic.atlas_access.tile, Some(diagnostic.tile));
-                            assert_eq!(
-                                diagnostic.atlas_access.texture_id,
-                                Some(diagnostic.tile.texture_id)
-                            );
-                            assert_eq!(
-                                diagnostic.atlas_access.size,
-                                Some(image.size(diagnostic.image.frame_index))
-                            );
-                            assert!(matches!(
-                                diagnostic.atlas_access.outcome,
-                                AtlasAccessOutcome::Inserted | AtlasAccessOutcome::Hit
+    let mut waiting_on = "first submission sample";
+    let mut last_state = None;
+    let wait = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pump_messages_until_with_delay(
+            "native image consumer accepted nonempty Submitted frame and RGBA capture",
+            Duration::from_millis(5),
+            || {
+                submitted = app
+                    .update_for_test(|cx| {
+                        handle.update(cx, |view, window, cx| {
+                            let facts = window.presentation_facts();
+                            let diagnostics = window.submitted_frame_diagnostics_for_test();
+                            let rendered = window.rendered_frame_revision();
+                            let active = window.is_window_active();
+                            let native_active = unsafe { GetActiveWindow() };
+                            let foreground = unsafe { GetForegroundWindow() };
+                            last_state = Some((
+                                facts,
+                                (rendered, view.version, view.counters.last_paint.get()),
+                                (view.counters.renders.get(), view.counters.paints.get()),
+                                (active, native_active, foreground),
+                                (cx.power_mode(), cx.thermal_state()),
+                                diagnostics.as_ref().map(|diagnostics| {
+                                    (
+                                        diagnostics.generation(),
+                                        diagnostics
+                                            .image_paint_diagnostics()
+                                            .iter()
+                                            .take(2)
+                                            .map(|paint| paint.image)
+                                            .collect::<Vec<_>>(),
+                                    )
+                                }),
                             ));
-                            assert!(diagnostic.bounds.size.width.0 > 0.);
-                            assert!(diagnostic.bounds.size.height.0 > 0.);
-                            let expected_height = if version == 0 { 64. } else { 128. };
-                            assert!(
-                                (diagnostic.bounds.size.width.0 - 64. * window.scale_factor())
+                            waiting_on = "presentation attempt";
+                            let attempt = facts.latest_present_attempt?;
+                            waiting_on = "paint observation";
+                            let paint = view.counters.last_paint.get()?;
+                            waiting_on = "submitted diagnostics";
+                            let diagnostics = diagnostics?;
+                            let conditions = [
+                                (attempt.generation > previous, "new generation"),
+                                (
+                                    attempt.outcome == PlatformWindowPresentOutcome::Submitted,
+                                    "Submitted outcome",
+                                ),
+                                (attempt.contained_valid_primitives, "nonempty primitives"),
+                                (
+                                    facts.initial_presentation
+                                        == WindowInitialPresentationStatus::Completed,
+                                    "initial presentation",
+                                ),
+                                (facts.native_visible, "native visibility"),
+                                (
+                                    facts.frame_accepted_generation == Some(attempt.generation),
+                                    "accepted generation",
+                                ),
+                                (
+                                    facts.present_submitted_generation == Some(attempt.generation),
+                                    "Submitted generation",
+                                ),
+                                (
+                                    facts.non_empty_presented_generation
+                                        == Some(attempt.generation),
+                                    "nonempty generation",
+                                ),
+                                (rendered == attempt.generation, "rendered revision"),
+                                (
+                                    diagnostics.generation() == attempt.generation,
+                                    "diagnostic generation",
+                                ),
+                                (view.version == version, "root source version"),
+                                (paint.window_id == handle.window_id(), "paint WindowId"),
+                                (paint.version == version, "paint source version"),
+                                (
+                                    paint.previous_revision.checked_add(1)
+                                        == Some(attempt.generation),
+                                    "paint revision",
+                                ),
+                                (paint.active, "active paint"),
+                                (active, "active framework window"),
+                                (native_active == registration.as_raw(), "active native HWND"),
+                                (foreground == registration.as_raw(), "foreground HWND"),
+                                (
+                                    diagnostics.image_paint_diagnostics().len() == 2,
+                                    "both image paints",
+                                ),
+                            ];
+                            if let Some((_, condition)) =
+                                conditions.into_iter().find(|(ready, _)| !ready)
+                            {
+                                waiting_on = condition;
+                                return None;
+                            }
+                            let paints = diagnostics.image_paint_diagnostics().to_vec();
+                            waiting_on = "encoded image availability";
+                            let encoded = view.encoded.clone().get_render_image(window, cx)?;
+                            waiting_on = "embedded image availability";
+                            let embedded = window
+                                .get_asset::<ImgResourceLoader>(&view.embedded, cx)?
+                                .expect("the embedded Img resource must decode successfully");
+                            assert_native_decoded_image(&encoded, version);
+                            assert_native_decoded_image(&embedded, version);
+                            assert_ne!(encoded.id, embedded.id);
+                            let images = [encoded.as_ref(), embedded.as_ref()].map(|image| {
+                                let matching = paints
+                                    .iter()
+                                    .filter(|paint| paint.image.image_id == image.id)
+                                    .copied()
+                                    .collect::<Vec<_>>();
+                                assert_eq!(matching.len(), 1, "each actual Img must paint once");
+                                let diagnostic = matching[0];
+                                assert_eq!(diagnostic.frame_generation, attempt.generation);
+                                assert!(diagnostic.image.frame_index < image.frame_count());
+                                assert_eq!(diagnostic.atlas_access.image, Some(diagnostic.image));
+                                assert_eq!(diagnostic.atlas_access.tile, Some(diagnostic.tile));
+                                assert_eq!(
+                                    diagnostic.atlas_access.texture_id,
+                                    Some(diagnostic.tile.texture_id)
+                                );
+                                assert_eq!(
+                                    diagnostic.atlas_access.size,
+                                    Some(image.size(diagnostic.image.frame_index))
+                                );
+                                assert!(matches!(
+                                    diagnostic.atlas_access.outcome,
+                                    AtlasAccessOutcome::Inserted | AtlasAccessOutcome::Hit
+                                ));
+                                assert!(diagnostic.bounds.size.width.0 > 0.);
+                                assert!(diagnostic.bounds.size.height.0 > 0.);
+                                let expected_height = if version == 0 { 64. } else { 128. };
+                                assert!(
+                                    (diagnostic.bounds.size.width.0 - 64. * window.scale_factor())
+                                        .abs()
+                                        <= 1.
+                                );
+                                assert!(
+                                    (diagnostic.bounds.size.height.0
+                                        - expected_height * window.scale_factor())
                                     .abs()
-                                    <= 1.
+                                        <= 1.
+                                );
+                                diagnostic
+                            });
+                            waiting_on = "requested animation phase";
+                            if !wanted(&images) {
+                                return None;
+                            }
+                            waiting_on = "exact scene RGBA capture";
+                            let capture = window.capture_frame();
+                            assert_eq!(capture.metadata.window_id, handle.window_id());
+                            assert_eq!(
+                                capture.metadata.framework_frame_generation,
+                                attempt.generation
                             );
-                            assert!(
-                                (diagnostic.bounds.size.height.0
-                                    - expected_height * window.scale_factor())
-                                .abs()
-                                    <= 1.
+                            assert_eq!(capture.metadata.scale_factor, window.scale_factor());
+                            assert!(capture.metadata.scale_factor.is_finite());
+                            assert!(capture.metadata.scale_factor > 0.);
+                            assert_eq!(
+                                capture.metadata.logical_viewport_size,
+                                window.viewport_size()
                             );
-                            diagnostic
-                        });
-                        if !wanted(&images) {
-                            return None;
-                        }
-                        let capture = window.capture_frame();
-                        assert_eq!(capture.metadata.window_id, handle.window_id());
-                        assert_eq!(
-                            capture.metadata.framework_frame_generation,
-                            attempt.generation
-                        );
-                        assert_eq!(capture.metadata.scale_factor, window.scale_factor());
-                        assert!(capture.metadata.scale_factor.is_finite());
-                        assert!(capture.metadata.scale_factor > 0.);
-                        assert_eq!(
-                            capture.metadata.logical_viewport_size,
-                            window.viewport_size()
-                        );
-                        assert_eq!(
-                            capture.metadata.physical_viewport_size,
-                            window
-                                .viewport_size()
-                                .to_device_pixels(window.scale_factor())
-                        );
-                        assert!(capture.unsupported_reason.is_none(), "{capture:?}");
-                        let rgba = capture
-                            .image
-                            .as_ref()
-                            .expect("real DirectX image scene pixels");
-                        assert_eq!(
-                            rgba.dimensions(),
-                            (
-                                capture.metadata.physical_viewport_size.width.0 as u32,
-                                capture.metadata.physical_viewport_size.height.0 as u32,
-                            )
-                        );
-                        Some(NativeImageSubmission {
-                            generation: attempt.generation,
-                            images,
-                            decoded: [Arc::downgrade(&encoded), Arc::downgrade(&embedded)],
-                            capture,
+                            assert_eq!(
+                                capture.metadata.physical_viewport_size,
+                                window
+                                    .viewport_size()
+                                    .to_device_pixels(window.scale_factor())
+                            );
+                            assert!(capture.unsupported_reason.is_none(), "{capture:?}");
+                            let rgba = capture
+                                .image
+                                .as_ref()
+                                .expect("real DirectX image scene pixels");
+                            assert_eq!(
+                                rgba.dimensions(),
+                                (
+                                    capture.metadata.physical_viewport_size.width.0 as u32,
+                                    capture.metadata.physical_viewport_size.height.0 as u32,
+                                )
+                            );
+                            Some(NativeImageSubmission {
+                                generation: attempt.generation,
+                                images,
+                                decoded: [Arc::downgrade(&encoded), Arc::downgrade(&embedded)],
+                                capture,
+                            })
                         })
                     })
-                })
-                .expect("the native image window must remain live until submission");
-            submitted.is_some()
-        },
-    );
+                    .expect("the native image window must remain live until submission");
+                submitted.is_some()
+            },
+        )
+    }));
+    if let Err(panic) = wait {
+        eprintln!(
+            "image submission failed at {phase}: version={version}; previous={previous}; target={registration:?}; waiting_on={waiting_on}; last_state=(facts, (rendered, version, paint), (renders, paints), (active, native_active, foreground), (power, thermal), (diagnostic_generation, images)) {last_state:?}"
+        );
+        std::panic::resume_unwind(panic);
+    }
     submitted.expect("the actual Img paints and capture must belong to the exact Submitted frame")
 }
 

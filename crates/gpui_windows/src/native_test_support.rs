@@ -6785,13 +6785,40 @@ fn real_hwnd_activation_terminal_is_exact_and_first_terminal_wins() {
             .expect("native activation target should remain live")
     });
     platform.inner.run_foreground_task();
-    pump_messages_until("deterministic programmatic activation success", || {
-        deterministic_activation_ticket.snapshot().status()
-            == WindowActivationStatus::Terminal(WindowActivationTerminal::Activated)
-            && unsafe {
-                GetForegroundWindow() == hwnd && GetActiveWindow() == hwnd && GetFocus() == hwnd
-            }
-    });
+    let activation_wait = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pump_messages_until("deterministic programmatic activation success", || {
+            deterministic_activation_ticket.snapshot().status()
+                == WindowActivationStatus::Terminal(WindowActivationTerminal::Activated)
+                && unsafe {
+                    GetForegroundWindow() == hwnd && GetActiveWindow() == hwnd && GetFocus() == hwnd
+                }
+        });
+    }));
+    if let Err(panic) = activation_wait {
+        let ticket = deterministic_activation_ticket.snapshot();
+        let foreground_at_failure = unsafe { GetForegroundWindow() };
+        let active_at_failure = unsafe { GetActiveWindow() };
+        let focus_at_failure = unsafe { GetFocus() };
+        let diagnostics = app
+            .update_for_test(|cx| cx.native_boundary_diagnostics(deterministic_activation_cursor));
+        let generation = Some(NativeBoundaryGeneration::WindowActivation(
+            ticket.request_generation(),
+        ));
+        let terminal = diagnostics
+            .terminal
+            .iter()
+            .filter(|entry| entry.target == target && entry.domain_generation == generation)
+            .collect::<Vec<_>>();
+        let pending = diagnostics
+            .pending
+            .iter()
+            .filter(|entry| entry.target == target && entry.domain_generation == generation)
+            .collect::<Vec<_>>();
+        eprintln!(
+            "activation wait failed: ticket={ticket:?}; target_hwnd={hwnd:?}; foreground={foreground_at_failure:?}; active={active_at_failure:?}; focus={focus_at_failure:?}; terminal={terminal:?}; pending={pending:?}"
+        );
+        std::panic::resume_unwind(panic);
+    }
     pump_messages_until_idle("deterministic programmatic activation success follow-up");
     let deterministic_activation_snapshot = deterministic_activation_ticket.snapshot();
     let deterministic_activation_delta =
