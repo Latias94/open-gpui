@@ -1570,6 +1570,23 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self
     }
 
+    /// Contribute synthetic accessibility nodes — nodes that don't correspond
+    /// to any element — as children of this element's a11y node. For example,
+    /// text runs describing an editor's text content.
+    ///
+    /// The closure is called after this element is prepainted, and only if it
+    /// contributed a node to the accessibility tree (i.e. it has an id and a
+    /// [`role`][StatefulInteractiveElement::role]).
+    ///
+    /// See [`Element::a11y_synthetic_children`] for details.
+    fn a11y_synthetic_children(
+        mut self,
+        f: impl FnOnce(&mut crate::A11ySubtreeBuilder) + 'static,
+    ) -> Self {
+        self.interactivity().a11y_synthetic_children = Some(Box::new(f));
+        self
+    }
+
     /// Set the selected state for this element.
     fn aria_selected(mut self, selected: bool) -> Self {
         self.interactivity().accessibility.selected = Some(selected);
@@ -2378,6 +2395,23 @@ impl Element for Div {
         self.interactivity.write_a11y_info(node);
     }
 
+    fn a11y_synthetic_children(
+        &mut self,
+        prepaint: &mut Self::PrepaintState,
+        builder: &mut crate::A11ySubtreeBuilder,
+    ) {
+        if prepaint.1.as_ref().is_some_and(|clip| !clip.is_valid()) {
+            return;
+        }
+        let _validity = prepaint
+            .1
+            .as_ref()
+            .map(|clip| builder.enter_geometry_validity(clip.geometry_validity()));
+        if let Some(f) = self.interactivity.a11y_synthetic_children.take() {
+            f(builder);
+        }
+    }
+
     fn infer_a11y_scroll_into_view(&self) -> bool {
         !self.interactivity.accessibility.has_explicit_actions()
     }
@@ -2627,6 +2661,7 @@ pub struct Interactivity {
     pub(crate) tab_stop: Option<bool>,
 
     accessibility: InteractivityAccessibility,
+    pub(crate) a11y_synthetic_children: Option<Box<dyn FnOnce(&mut crate::A11ySubtreeBuilder)>>,
 
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) source_location: Option<&'static core::panic::Location<'static>>,
@@ -4837,6 +4872,14 @@ where
 
     fn write_a11y_info(&self, node: &mut accesskit::Node) {
         self.element.write_a11y_info(node);
+    }
+
+    fn a11y_synthetic_children(
+        &mut self,
+        prepaint: &mut Self::PrepaintState,
+        builder: &mut crate::A11ySubtreeBuilder,
+    ) {
+        self.element.a11y_synthetic_children(prepaint, builder);
     }
 
     fn infer_a11y_scroll_into_view(&self) -> bool {

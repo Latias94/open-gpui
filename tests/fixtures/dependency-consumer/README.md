@@ -694,3 +694,52 @@ cargo nextest run --locked -p open-gpui-wgpu --all-features --test measured_text
 
 These commands describe the intended gates; actual results and limits are recorded in the
 [query/List qualification](../../../docs/verification.md#measured-text-queries-rem-units-and-list-autoscroll).
+
+## Synthetic accessibility and explicit tree inspection consumer
+
+The `accessibility_tree` integration target consumes `A11ySubtreeBuilder`, the custom
+`Element::a11y_synthetic_children` hook, the `Stateful<Div>` callback, and
+`Window::debug_a11y_tree_json(&self) -> Option<String>` through the independent consumer's
+existing dependency graph. AccessKit types come from `open_gpui::accesskit`; this target adds no
+direct AccessKit dependency and does not enable `test-support`.
+
+Both fixture tests are explicitly type-only. Their custom element and deliberately unexecuted
+closures check parent-scoped hash keys, `NodeId` results, Boolean insertion results, mutable parent
+nodes, prepared text runs and selections, an owned `FnOnce + 'static` capture, and inspection
+through a shared Window reference. They do not start an App, activate accessibility, invoke the
+synthetic hook, publish a tree, or execute the inspection closure.
+
+The separate crate-external framework target uses the existing `TestAppContext` and
+`VisualTestContext` activation, final platform tree history, and real accessibility action ingress.
+It exercises the custom Element and Div/Stateful hook delegation, UTF-8 text runs and relations,
+source order, parent metadata, release-build duplicate rejection, stable IDs, notification-driven
+changes, deactivation/reactivation, root replacement/reconstruction, and weak owner release. Its JSON checks
+compare the complete exported node set and child order with the actual accepted platform tree;
+repeated inspection must not render, activate accessibility, schedule frames or publish updates.
+Creator provenance is required only with `cfg(debug_assertions)` and absent in release builds.
+Additional public controls exercise invalid own-overflow clips, late paint invalidation and
+irreversible quiescence during accepted publication. Complete parent/deferred rollback and
+actual atlas refusal/recovery retain their existing internal owners and separate evidence.
+
+The JSON schema follows official Zed
+[`2268045a11`](https://github.com/zed-industries/zed/commit/2268045a11), within the cycle target
+[`635026fabc38440fce5e1767d125026a17b12012`](https://github.com/zed-industries/zed/tree/635026fabc38440fce5e1767d125026a17b12012),
+with accepted `frame.frame_generation` and activation `frame.activation_generation` added.
+`frame.frame_number` counts captured publications. This API is an explicitly requested raw developer
+export, including accessible text and window title. It returns `None` before publication and after
+deactivation or close. Automatic announcement diagnostics and DevTools captures retain their
+separate redacted contracts.
+
+Run the independent signature target and the framework runtime target separately, reusing the
+existing lockfiles and root build directory, with one Cargo process at a time:
+
+```text
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --test accessibility_tree --jobs 1 --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run -p open-gpui --features test-support --test accessibility_tree --jobs 1 --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run -p open-gpui --release --features test-support --test accessibility_tree --jobs 1 --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+These commands are verification instructions, not execution results. The framework runtime tests
+use TestPlatform and do not establish native screen-reader behavior or native GPU presentation.
+Actual results and configuration limits belong to the
+[qualification record](../../../docs/verification.md#synthetic-accessibility-and-explicit-published-tree-inspection).

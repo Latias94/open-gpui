@@ -127,7 +127,7 @@ mod visibility_tests;
 
 use self::a11y::A11y;
 pub use self::a11y::{
-    AccessibilityAnnouncement, AccessibilityAnnouncementClearReason,
+    A11ySubtreeBuilder, AccessibilityAnnouncement, AccessibilityAnnouncementClearReason,
     AccessibilityAnnouncementDiagnostic, AccessibilityAnnouncementDropReason,
     AccessibilityAnnouncementLifecycle, AccessibilityAnnouncementOutcome,
     AccessibilityAnnouncementPoliteness, AccessibilityAnnouncementRequestId,
@@ -956,6 +956,10 @@ pub struct PreparedSubtreeClip {
 impl PreparedSubtreeClip {
     pub(crate) fn is_valid(&self) -> bool {
         self.validity.is_valid()
+    }
+
+    pub(crate) fn geometry_validity(&self) -> SubtreeGeometryValidity {
+        self.validity.clone()
     }
 }
 
@@ -2547,6 +2551,7 @@ impl Window {
             .as_ref()
             .map(WindowProvisionalSession::claim_opening)
             .transpose()?;
+        let window_title = titlebar.as_ref().and_then(|bar| bar.title.clone());
         let platform_window = cx.platform.open_window_with_display_snapshot(
             handle,
             WindowParams {
@@ -3002,11 +3007,15 @@ impl Window {
             pointer_cancel_session_already_settled: false,
             #[cfg(any(feature = "inspector", debug_assertions))]
             inspector: None,
-            a11y: A11y::new(
-                a11y_active_state,
-                accessibility_force_disabled,
-                handle.window_id(),
-            ),
+            a11y: {
+                let mut a11y = A11y::new(
+                    a11y_active_state,
+                    accessibility_force_disabled,
+                    handle.window_id(),
+                );
+                a11y.window_title = window_title;
+                a11y
+            },
         })
     }
 
@@ -6773,6 +6782,16 @@ impl Window {
         self.a11y.is_active()
     }
 
+    /// Serialize the last accepted, published accessibility tree for explicit inspection.
+    ///
+    /// The JSON contains semantic text and window titles. Reading does not activate
+    /// accessibility, redraw the window, or record the result in automatic diagnostics.
+    /// Returns `None` until publication and after activation replacement or deactivation.
+    /// Debug builds also include the creating elements' provenance.
+    pub fn debug_a11y_tree_json(&self) -> Option<String> {
+        self.a11y.debug_tree_json()
+    }
+
     /// Queues a transient, window-scoped accessibility announcement.
     ///
     /// An accepted outcome means only that the request entered the bounded queue. If its
@@ -6880,6 +6899,7 @@ impl Window {
 
     /// Updates the window's title at the platform level.
     pub fn set_window_title(&mut self, title: &str) {
+        self.a11y.window_title = Some(title.to_owned().into());
         self.platform_window.set_title(title);
     }
 
@@ -7904,7 +7924,17 @@ impl Window {
                         "Sending a11y tree update: {} nodes",
                         tree_update.nodes.len()
                     );
-                    self.a11y.publish(&tree_update, activation_generation);
+                    self.a11y.publish(
+                        &tree_update,
+                        activation_generation,
+                        a11y::debug::FrameDebugInfo {
+                            viewport_size: self.viewport_size,
+                            scale_factor: self.scale_factor,
+                            tab_stop_count: self.rendered_frame.tab_stops.tab_stop_count(),
+                            frame_generation: self.rendered_frame.generation,
+                            activation_generation,
+                        },
+                    );
                     self.platform_window.a11y_tree_update(tree_update);
                 }
             })),
@@ -15207,6 +15237,19 @@ mod cached_paint_atlas_tests {
             let publication_commits = self.publication_callbacks.clone();
             let publication_discards = self.publication_callbacks.clone();
             div()
+                .id("atlas-candidate-a11y-owner")
+                .role(accesskit::Role::Group)
+                .aria_label("Atlas candidate owner")
+                .a11y_synthetic_children(move |builder| {
+                    let id = builder.synthetic_node_id("candidate-content");
+                    let mut node = accesskit::Node::new(accesskit::Role::Label);
+                    node.set_value(if enabled {
+                        "recovered candidate"
+                    } else {
+                        "baseline candidate"
+                    });
+                    assert!(builder.push_child(id, node));
+                })
                 .relative()
                 .w(px(128.0))
                 .h(px(96.0))
@@ -15326,6 +15369,7 @@ mod cached_paint_atlas_tests {
             committed_listener_count,
             committed_image_diagnostics,
             committed_a11y_revision,
+            committed_a11y_json,
         ) = cx.update(|window, _| {
             (
                 window.rendered_frame.generation,
@@ -15338,6 +15382,7 @@ mod cached_paint_atlas_tests {
                     .count(),
                 window.rendered_frame.image_paint_diagnostics.len(),
                 window.a11y.published_revision_for_test(),
+                window.debug_a11y_tree_json(),
             )
         });
         let committed_renders = cached_renders.get();
@@ -15383,6 +15428,11 @@ mod cached_paint_atlas_tests {
                 committed_a11y_revision,
                 "a rejected candidate must not replace published accessibility authority"
             );
+            assert_eq!(
+                window.debug_a11y_tree_json(),
+                committed_a11y_json,
+                "a rejected atlas candidate must not replace the explicit published snapshot"
+            );
             assert!(window.refresh_pending_for_test());
             assert_eq!(
                 window.last_atlas_frame_rejection,
@@ -15409,6 +15459,16 @@ mod cached_paint_atlas_tests {
             assert_eq!(atlas.lease_attempts(), 2);
             assert_eq!(window.rendered_frame.generation, committed_generation + 1);
             if accessibility_active {
+                let json = window
+                    .debug_a11y_tree_json()
+                    .expect("accepted accessibility publication");
+                assert!(json.contains("recovered candidate"));
+                assert!(!json.contains("baseline candidate"));
+                let snapshot: serde_json::Value = serde_json::from_str(&json).unwrap();
+                assert_eq!(
+                    snapshot["frame"]["frame_generation"],
+                    committed_generation + 1
+                );
                 assert_eq!(
                     window.a11y.published_revision_for_test(),
                     Some(

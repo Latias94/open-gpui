@@ -164,6 +164,15 @@ pub const LIVE_BUSY_TOGGLE_SELECTOR: &str = "button:focus-a11y-live-busy:root";
 pub const LIVE_ALERT_TOGGLE_SELECTOR: &str = "button:focus-a11y-live-alert-toggle:root";
 /// Stable selector for the application-global announcement control.
 pub const WINDOW_ANNOUNCEMENT_SELECTOR: &str = "button:focus-a11y-window-announce:root";
+/// Component id for explicitly copying the window's published accessibility tree.
+pub const TREE_INSPECTION_COPY_CONTROL_ID: &str = "focus-a11y-copy-tree";
+/// Stable selector for the explicit accessibility tree copy control.
+pub const TREE_INSPECTION_COPY_SELECTOR: &str = "button:focus-a11y-copy-tree:root";
+/// Feedback shown after copying an available published accessibility tree.
+pub const TREE_INSPECTION_COPIED_TEXT: &str = "Accessibility tree JSON copied to clipboard.";
+/// Feedback shown when no active, published accessibility tree is available.
+pub const TREE_INSPECTION_UNAVAILABLE_TEXT: &str =
+    "No accessibility tree is available. Connect assistive technology and try again.";
 
 const TEXT_INPUT_COMPONENT_IDS: &[&str] = &[TEXT_INPUT_COMPONENT_ID];
 const TEXTAREA_FIELD_COMPONENT_IDS: &[&str] = &[TEXTAREA_FIELD_COMPONENT_ID, TEXTAREA_COMPONENT_ID];
@@ -349,6 +358,7 @@ pub(crate) struct FocusA11yPageState {
     live_status_revision: u64,
     live_busy: bool,
     live_alert_visible: bool,
+    tree_inspection_feedback: &'static str,
 }
 
 impl Default for FocusA11yPageState {
@@ -364,6 +374,7 @@ impl Default for FocusA11yPageState {
             live_status_revision: 0,
             live_busy: false,
             live_alert_visible: false,
+            tree_inspection_feedback: "Copies the published tree, including accessible text, to your clipboard.",
         }
     }
 }
@@ -570,6 +581,20 @@ impl FocusA11yPageState {
     /// Toggles the assertive alert region.
     pub(crate) fn toggle_live_alert(&mut self) -> bool {
         self.live_alert_visible = !self.live_alert_visible;
+        true
+    }
+
+    /// Returns feedback for the explicit tree copy control without retaining tree content.
+    pub(crate) fn tree_inspection_feedback(&self) -> &'static str {
+        self.tree_inspection_feedback
+    }
+
+    /// Updates the explicit inspection result without storing the copied payload.
+    pub(crate) fn set_tree_inspection_feedback(&mut self, message: &'static str) -> bool {
+        if self.tree_inspection_feedback == message {
+            return false;
+        }
+        self.tree_inspection_feedback = message;
         true
     }
 }

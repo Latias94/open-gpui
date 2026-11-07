@@ -219,6 +219,27 @@
 //! [`.on_click()`][StatefulInteractiveElement::on_click] adds an
 //! [`AccessibleAction::Click`] handler that calls the click handler.
 //!
+//! ## Synthetic children
+//!
+//! A custom [`Element`] can implement [`Element::a11y_synthetic_children`] to expose
+//! semantic children without constructing corresponding visual elements. The callback
+//! runs after prepaint for an element with an ID and role. [`A11ySubtreeBuilder`]
+//! derives child IDs from the parent and a caller key, appends leaf nodes, and permits
+//! parent metadata changes. Stateful divs expose the same builder as a one-shot callback.
+//! Synthetic nodes participate in the existing subtree filtering and candidate acceptance.
+//!
+//! ## Explicit tree inspection
+//!
+//! [`Window::debug_a11y_tree_json`] serializes the last accepted tree published by the
+//! Window. It includes raw semantic text and window titles; debug builds also report
+//! the creating view, element and source location. Reading does not enable accessibility
+//! or trigger a redraw. Inactive or replaced activations have no readable snapshot until
+//! a fresh tree is published. The Foundation Gallery provides an explicit copy control.
+//!
+//! The capture counter and accepted frame generation do not prove native submission or
+//! consumption by assistive technology. Automatic DevTools exports and announcement
+//! diagnostics retain their separate redacted metadata contracts.
+//!
 //! ## Testing final accessibility output
 //!
 //! Tests built with the `test-support` feature can activate accessibility on a

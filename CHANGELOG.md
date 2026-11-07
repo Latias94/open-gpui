@@ -73,6 +73,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Changed
 
+- Custom elements and stateful divs can append synthetic accessibility children and update parent semantics after prepaint. `Window::debug_a11y_tree_json` exposes the complete last accepted published tree for explicit developer inspection, including raw text and window titles; debug builds add element/view/source provenance. Activation replacement and window shutdown clear the snapshot. Automatic diagnostic exports remain redacted.
 - List autoscroll requests extending above their source row walk earlier rows and clamp at the start instead of committing negative row offsets. Scroll changes still wait for the source candidate's acceptance.
 - `TextLayout::line_layout_for_index` now requires measurement only; prepaint is no longer required. `TextLayout::line_layouts` returns owned shared layouts in source order. `Rems` adds `ZERO`, `from_pixels` using the current Window rem size, and `AddAssign`; `open-gpui-util` exposes `parse_os_release` with the upstream ID/version parsing behavior.
 - Frame pacing uses the longest applicable configured limit and preserves a stable cadence across small callback delays, while mandatory presentation bypasses limits. Idle callbacks do not consume frame slots. Public power-mode queries and observers report platform state through the existing application lifecycle.

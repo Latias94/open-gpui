@@ -12,7 +12,7 @@ pub struct ViewElement<V: View> {
     view: Option<V>,
     entity_id: Option<EntityId>,
     cached_style: Option<StyleRefinement>,
-    #[cfg(feature = "profiler")]
+    #[cfg(any(feature = "profiler", debug_assertions))]
     view_type_name: &'static str,
     #[cfg(debug_assertions)]
     source: &'static core::panic::Location<'static>,
@@ -26,13 +26,16 @@ impl<V: View> ViewElement<V> {
     }
 
     #[track_caller]
-    #[cfg_attr(not(feature = "profiler"), expect(unused_variables))]
+    #[cfg_attr(
+        not(any(feature = "profiler", debug_assertions)),
+        expect(unused_variables)
+    )]
     pub(super) fn with_type_name(view: V, view_type_name: &'static str) -> Self {
         Self {
             entity_id: view.entity_id(),
             view: Some(view),
             cached_style: None,
-            #[cfg(feature = "profiler")]
+            #[cfg(any(feature = "profiler", debug_assertions))]
             view_type_name,
             #[cfg(debug_assertions)]
             source: core::panic::Location::caller(),
@@ -81,6 +84,11 @@ impl<V: View> Element for ViewElement<V> {
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         if let Some(entity_id) = self.entity_id {
+            #[cfg(debug_assertions)]
+            window
+                .a11y
+                .view_type_names
+                .insert(entity_id, self.view_type_name);
             #[cfg(feature = "profiler")]
             let view_type_name = self.view_type_name;
             let draw = move |window: &mut Window, cx: &mut App| {

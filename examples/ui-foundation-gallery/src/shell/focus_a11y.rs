@@ -290,4 +290,48 @@ pub(super) fn render_focus_a11y_live_region_scenario(
                     })),
                 ),
         )
+        .child(render_focus_a11y_tree_inspection(shell, tokens, cx))
+}
+
+fn render_focus_a11y_tree_inspection(
+    shell: &GalleryShell,
+    tokens: ThemeTokens,
+    cx: &mut Context<GalleryShell>,
+) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .child(
+            div()
+                .text_sm()
+                .font_weight(open_gpui::FontWeight::BOLD)
+                .child("Accessibility tree inspection"),
+        )
+        .child(
+            Button::new(
+                pages::focus_a11y::TREE_INSPECTION_COPY_CONTROL_ID,
+                "Copy accessibility tree JSON",
+            )
+            .variant(ButtonVariant::Secondary)
+            .with_size(Size::Small)
+            .tokens(tokens)
+            .on_activate(cx.processor(|this, _, window, cx| {
+                let message = if let Some(json) = window.debug_a11y_tree_json() {
+                    cx.write_to_clipboard(open_gpui::ClipboardItem::new_string(json));
+                    pages::focus_a11y::TREE_INSPECTION_COPIED_TEXT
+                } else {
+                    pages::focus_a11y::TREE_INSPECTION_UNAVAILABLE_TEXT
+                };
+                this.mutate_focus_a11y(|state| state.set_tree_inspection_feedback(message), cx);
+            })),
+        )
+        .child(
+            StatusCue::new(
+                "focus-a11y-tree-inspection-feedback",
+                shell.focus_a11y.tree_inspection_feedback(),
+            )
+            .intent(FeedbackIntent::Info)
+            .tokens(tokens),
+        )
 }

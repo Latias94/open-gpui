@@ -10,9 +10,10 @@ contract for live updates. Components could either leave status changes silent o
 hidden labels, and native speech calls. A window-global notification also had no lifecycle boundary
 for activation generations, queue pressure, focus independence, or window teardown.
 
-The platform adapter owns delivery to assistive technology, while GPUI owns the committed tree. A
-diagnostic path must not retain ordinary announcement text: the test platform may capture the final
-tree, but production diagnostics and DevTools histories are durable artifact surfaces.
+The platform adapter owns delivery to assistive technology, while GPUI owns the committed tree.
+Automatic announcement diagnostics and DevTools histories must not retain ordinary announcement
+text. Explicit developer inspection of the published accessibility tree is a separate, content-
+bearing operation, as is the platform adapter's delivery of that tree.
 
 ## Decision
 
@@ -46,6 +47,25 @@ Diagnostics retain only window, request, sequence, politeness, and lifecycle met
 no message, length, hash, summary, or derived text. Window teardown clears pending and retained
 payloads at the first closing transition.
 
+### Explicit Published-Tree Inspection
+
+The November 7 upstream reconciliation preserves the complete developer inspection mechanism from
+Zed `2268045a119030735f762e5afaf59da0bda869f4`, including raw semantic strings and debug-only
+node provenance. `Window::debug_a11y_tree_json` reads the last accepted, published tree without
+activating accessibility or triggering layout. Its snapshot is owned by the same Window A11y
+authority, replaced only with a matching published tree and cleared on activation replacement,
+deactivation, interaction quiescence or close. Candidate construction or refusal cannot replace it.
+Its frame metadata distinguishes the accepted frame generation from the diagnostic capture count;
+it does not assert native submission or assistive-technology consumption.
+
+This explicit inspection API can contain ordinary labels, values, titles and announcement text
+already present in that published tree. It does not reveal masked password data absent from the
+tree. An application may display or copy the result in response to an explicit developer action.
+GPUI does not automatically log, save, transmit or feed this content to DevTools. The existing
+typed announcement metadata and automatic diagnostic/export contracts remain unchanged. This
+clarification extends the earlier blanket diagnostic wording rather than substituting a redacted
+tree for the official inspection capability.
+
 ## Consequences
 
 - Feedback, Toast, Command status, Field errors, Tree loading hints, and VirtualizedList status rows
@@ -68,7 +88,10 @@ tests cover rollback, deferred/cache replay, presentation suppression, queue cap
 retention/removal, repeated text, activation generations, two-window isolation, focus independence,
 and close. Gallery tests drive the actual controls and final tree. A unique runtime canary appears
 in the test platform's committed tree and is absent from typed diagnostics, DevTools capture,
-history, diff, export, inspector, report, artifact, and fixtures.
+history, diff, export, inspector, report, artifact, and fixtures. Separate explicit-inspection tests
+prove that the same published canary is available only through the content-bearing Window reader
+and deliberate copy action, while the automatic artifacts remain redacted. Publication rejection,
+rollback, lifecycle clearing and debug/release provenance are separate inspection acceptance gates.
 
 ## Related Documents
 

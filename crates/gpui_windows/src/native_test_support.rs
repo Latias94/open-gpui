@@ -72,6 +72,8 @@ use windows::Win32::{
 };
 use windows::core::{PCWSTR, w};
 
+#[path = "native_accessibility_tree_tests.rs"]
+mod native_accessibility_tree_tests;
 #[path = "native_asset_cache_tests.rs"]
 mod native_asset_cache_tests;
 #[path = "native_cache_dependency_tests.rs"]

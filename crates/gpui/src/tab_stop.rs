@@ -89,6 +89,13 @@ impl Default for TabStopMap {
 }
 
 impl TabStopMap {
+    pub fn tab_stop_count(&self) -> usize {
+        self.by_id
+            .values()
+            .filter(|node| node.tab_stop && node.is_active())
+            .count()
+    }
+
     pub fn insert_scoped(
         &mut self,
         focus_handle: &FocusHandle,

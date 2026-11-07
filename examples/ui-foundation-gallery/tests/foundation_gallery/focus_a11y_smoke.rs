@@ -733,3 +733,290 @@ fn focus_a11y_password_set_value_never_exposes_accessible_free_text(
     );
     assert_tree_excludes_text(&updated, UPDATED_CANARY);
 }
+
+fn copied_a11y_node(json: &serde_json::Value, id: accesskit::NodeId) -> &serde_json::Value {
+    let accesskit_id = id.0.to_string();
+    json["nodes"]
+        .as_object()
+        .expect("explicit tree JSON should contain the published nodes")
+        .values()
+        .find(|node| node["accesskit_id"].as_str() == Some(accesskit_id.as_str()))
+        .unwrap_or_else(|| panic!("explicit tree JSON is missing accessibility node {id:?}"))
+}
+
+#[open_gpui::test]
+fn focus_a11y_explicit_tree_copy_preserves_clipboard_when_tree_is_unavailable(
+    test_cx: &mut open_gpui::TestAppContext,
+) {
+    const CLIPBOARD_SENTINEL: &str = "gallery-tree-inspection-existing-clipboard";
+    test_cx.write_to_clipboard(open_gpui::ClipboardItem::new_string(
+        CLIPBOARD_SENTINEL.to_owned(),
+    ));
+    let cx = open_gallery_page(test_cx, GalleryPage::FocusAccessibility);
+    assert!(
+        cx.update(|window, _| window.debug_a11y_tree_json())
+            .is_none()
+    );
+
+    {
+        let mut probe = StoryRuntimeProbe::new(cx);
+        probe.scroll_page_to(pages::focus_a11y::TREE_INSPECTION_COPY_SELECTOR);
+        probe.assert_rendered(
+            pages::focus_a11y::TREE_INSPECTION_COPY_SELECTOR,
+            "explicit accessibility tree copy control",
+        );
+        probe.click(pages::focus_a11y::TREE_INSPECTION_COPY_SELECTOR);
+        probe.settle();
+    }
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|item| item.text()),
+        Some(CLIPBOARD_SENTINEL.to_owned())
+    );
+    assert!(!cx.update(|window, _| window.is_accessibility_active()));
+    assert!(cx.accessibility_tree_update_history().is_empty());
+    assert!(
+        cx.update(|window, _| window.debug_a11y_tree_json())
+            .is_none()
+    );
+
+    assert!(cx.activate_accessibility());
+    let active = cx
+        .latest_accessibility_tree_update()
+        .expect("activation should publish the inspection feedback");
+    let (_, feedback) = a11y_node_with_role_and_label(
+        &active,
+        accesskit::Role::Status,
+        pages::focus_a11y::TREE_INSPECTION_UNAVAILABLE_TEXT,
+    );
+    assert_eq!(
+        feedback.value(),
+        Some(pages::focus_a11y::TREE_INSPECTION_UNAVAILABLE_TEXT)
+    );
+    assert!(
+        cx.update(|window, _| window.debug_a11y_tree_json())
+            .is_some()
+    );
+
+    assert!(cx.deactivate_accessibility());
+    let history_len = cx.accessibility_tree_update_history().len();
+    assert!(
+        cx.update(|window, _| window.debug_a11y_tree_json())
+            .is_none()
+    );
+    {
+        let mut probe = StoryRuntimeProbe::new(cx);
+        probe.click(pages::focus_a11y::TREE_INSPECTION_COPY_SELECTOR);
+        probe.settle();
+    }
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|item| item.text()),
+        Some(CLIPBOARD_SENTINEL.to_owned()),
+        "a deactivated tree must not overwrite the clipboard with stale or fabricated JSON"
+    );
+    assert!(!cx.update(|window, _| window.is_accessibility_active()));
+    assert!(
+        cx.update(|window, _| window.debug_a11y_tree_json())
+            .is_none()
+    );
+    assert_eq!(cx.accessibility_tree_update_history().len(), history_len);
+}
+
+#[open_gpui::test]
+fn focus_a11y_explicit_tree_copy_contains_current_semantics_without_exporting_them_to_devtools(
+    test_cx: &mut open_gpui::TestAppContext,
+) {
+    const CANARY: &str = "gallery-explicit-tree-authored-text-canary-019f4ad7";
+    const CLIPBOARD_SENTINEL: &str = "gallery-explicit-tree-existing-clipboard";
+
+    test_cx.write_to_clipboard(open_gpui::ClipboardItem::new_string(
+        CLIPBOARD_SENTINEL.to_owned(),
+    ));
+    let (shell, cx) = open_gallery_page_with_shell(test_cx, GalleryPage::FocusAccessibility);
+    assert!(cx.activate_accessibility());
+    let initial = cx
+        .latest_accessibility_tree_update()
+        .expect("Focus/A11y page should publish an inspectable tree");
+    let (input_id, _) = a11y_node_with_role_and_label(
+        &initial,
+        accesskit::Role::TextInput,
+        pages::focus_a11y::TEXT_INPUT_LABEL,
+    );
+    assert!(cx.dispatch_accessibility_action(action_request(
+        accesskit::Action::SetValue,
+        input_id,
+        Some(accesskit::ActionData::Value(CANARY.into())),
+    )));
+    settle(cx);
+
+    {
+        let mut probe = StoryRuntimeProbe::new(cx);
+        probe.scroll_page_to(pages::focus_a11y::TEXTAREA_FIELD_ERROR_TOGGLE_SELECTOR);
+        probe.click(pages::focus_a11y::TEXTAREA_FIELD_ERROR_TOGGLE_SELECTOR);
+        probe.scroll_page_to(pages::focus_a11y::LIVE_STATUS_UPDATE_SELECTOR);
+        probe.click(pages::focus_a11y::LIVE_STATUS_UPDATE_SELECTOR);
+        probe.scroll_page_to(pages::focus_a11y::TREE_INSPECTION_COPY_SELECTOR);
+        probe.settle();
+    }
+    let published = cx
+        .latest_accessibility_tree_update()
+        .expect("the edited UI should have a current published tree");
+    assert_eq!(a11y_node_by_id(&published, input_id).value(), Some(CANARY));
+    let (error_id, error) = a11y_node_with_role_and_label(
+        &published,
+        accesskit::Role::Alert,
+        pages::focus_a11y::TEXTAREA_FIELD_ERROR,
+    );
+    let (status_id, status) = a11y_node_with_role_and_label(
+        &published,
+        accesskit::Role::Status,
+        pages::focus_a11y::LIVE_STATUS_UPDATE_ONE_TEXT,
+    );
+    let (password_id, password) = a11y_node_with_role_and_label(
+        &published,
+        accesskit::Role::PasswordInput,
+        pages::focus_a11y::PASSWORD_LABEL,
+    );
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|item| item.text()),
+        Some(CLIPBOARD_SENTINEL.to_owned()),
+        "activation and rendering must not automatically copy the accessibility tree"
+    );
+
+    {
+        let mut probe = StoryRuntimeProbe::new(cx);
+        probe.click(pages::focus_a11y::TREE_INSPECTION_COPY_SELECTOR);
+        probe.settle();
+    }
+    let clipboard_json = cx
+        .read_from_clipboard()
+        .and_then(|item| item.text())
+        .expect("the actual inspection button should copy published tree JSON");
+    let copied: serde_json::Value =
+        serde_json::from_str(&clipboard_json).expect("explicit tree copy should be valid JSON");
+    let nodes = copied["nodes"].as_object().expect("published tree nodes");
+    let copied_ids = nodes
+        .values()
+        .map(|node| {
+            node["accesskit_id"]
+                .as_str()
+                .expect("published AccessKit node identity")
+                .to_owned()
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    let published_ids = published
+        .nodes
+        .iter()
+        .map(|(id, _)| id.0.to_string())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(copied_ids, published_ids);
+    assert_eq!(nodes.len(), published.nodes.len());
+    assert_eq!(
+        copied["frame"]["node_count"].as_u64(),
+        Some(published.nodes.len() as u64)
+    );
+    let root = copied["root"].as_str().expect("published root identity");
+    let published_root = published
+        .tree
+        .as_ref()
+        .expect("published tree root")
+        .root
+        .0
+        .to_string();
+    assert_eq!(
+        nodes[root]["accesskit_id"].as_str(),
+        Some(published_root.as_str())
+    );
+
+    let copied_input = &copied_a11y_node(&copied, input_id)["aria"];
+    assert_eq!(copied_input["role"].as_str(), Some("TextInput"));
+    assert_eq!(
+        copied_input["label"].as_str(),
+        Some(pages::focus_a11y::TEXT_INPUT_LABEL)
+    );
+    assert_eq!(copied_input["value"].as_str(), Some(CANARY));
+    assert_eq!(
+        copied_a11y_node(&copied, error_id)["aria"]["value"].as_str(),
+        error.value()
+    );
+    assert_eq!(
+        copied_a11y_node(&copied, status_id)["aria"]["value"].as_str(),
+        status.value()
+    );
+    assert_eq!(
+        copied_a11y_node(&copied, password_id)["aria"]["value"].as_str(),
+        password.value()
+    );
+    assert!(clipboard_json.contains(CANARY));
+    assert!(!clipboard_json.contains(pages::focus_a11y::PASSWORD_REDACTION_CANARY));
+    #[cfg(debug_assertions)]
+    assert!(nodes.values().any(|node| {
+        node["source_location"]
+            .as_str()
+            .is_some_and(|source| !source.is_empty())
+    }));
+    #[cfg(not(debug_assertions))]
+    assert!(nodes.values().all(|node| {
+        ["element_id", "view", "source_location", "synthetic"]
+            .iter()
+            .all(|field| node.get(*field).is_none())
+    }));
+
+    let after_copy = cx.latest_accessibility_tree_update().unwrap();
+    a11y_node_with_role_and_label(
+        &after_copy,
+        accesskit::Role::Status,
+        pages::focus_a11y::TREE_INSPECTION_COPIED_TEXT,
+    );
+    let diagnostics =
+        cx.update(|window, _| window.accessibility_announcement_diagnostics().to_vec());
+    assert!(!format!("{diagnostics:?}").contains(CANARY));
+
+    cx.update(|window, app| {
+        shell.update(app, |shell, cx| shell.refresh_devtools(window, cx));
+    });
+    settle(cx);
+    let inspector = cx.update(|_, app| shell.read(app).devtools_workbench().inspector_state());
+    let artifacts = cx.update(|_, app| shell.read(app).devtools_workbench().artifacts());
+    for (channel, output) in [
+        (
+            "live capture",
+            serde_json::to_string(&inspector.current_capture()).unwrap(),
+        ),
+        (
+            "Inspector detail",
+            serde_json::to_string(&inspector.selected_detail_json().unwrap()).unwrap(),
+        ),
+        (
+            "Inspector copy",
+            inspector.copy_selected_detail().unwrap().pretty_json,
+        ),
+        (
+            "diff",
+            serde_json::to_string(inspector.diff_rows()).unwrap(),
+        ),
+        (
+            "session export",
+            serde_json::to_string(&artifacts.session_export).unwrap(),
+        ),
+        ("report", serde_json::to_string(&artifacts.report).unwrap()),
+        ("report markdown", artifacts.report.to_markdown()),
+        (
+            "session artifact",
+            artifacts.session_record.to_pretty_json().unwrap(),
+        ),
+        (
+            "report artifact",
+            artifacts.report_record.to_pretty_json().unwrap(),
+        ),
+    ] {
+        assert!(
+            !output.contains(CANARY),
+            "{channel} must not retain authored text from the explicit clipboard copy"
+        );
+    }
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|item| item.text()),
+        Some(clipboard_json),
+        "automatic diagnostics must not replace the explicit inspection clipboard output"
+    );
+}

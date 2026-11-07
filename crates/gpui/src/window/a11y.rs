@@ -107,6 +107,10 @@ use std::{
     },
 };
 
+pub(crate) mod debug;
+#[cfg(test)]
+mod synthetic_tests;
+
 /// The fixed AccessKit node ID used for the root of every window's a11y tree.
 pub(crate) const ROOT_NODE_ID: NodeId = NodeId(0);
 
@@ -463,6 +467,12 @@ pub(crate) struct A11y {
     active_this_frame: bool,
     activation_generation_this_frame: u64,
     pub(crate) nodes: A11yNodeBuilder,
+    pub(crate) window_title: Option<SharedString>,
+    #[cfg(debug_assertions)]
+    pub(crate) view_type_names: FxHashMap<crate::EntityId, &'static str>,
+    debug: debug::A11yDebug,
+    debug_activation_generation: Option<u64>,
+    debug_disabled: bool,
     candidate_focus_ids: Vec<(NodeId, FocusId, Option<SubtreeGeometryValidity>)>,
     candidate_node_geometry: Vec<(
         NodeId,
@@ -507,6 +517,12 @@ impl A11y {
             active_this_frame: false,
             activation_generation_this_frame: 0,
             nodes: A11yNodeBuilder::new(),
+            window_title: None,
+            #[cfg(debug_assertions)]
+            view_type_names: FxHashMap::default(),
+            debug: debug::A11yDebug::default(),
+            debug_activation_generation: None,
+            debug_disabled: false,
             candidate_focus_ids: Vec::new(),
             candidate_node_geometry: Vec::new(),
             candidate_action_listeners: Vec::new(),
@@ -530,6 +546,13 @@ impl A11y {
         let (active, generation) = requested_state(&self.active_state);
         self.active_this_frame = !self.force_disabled && active;
         self.activation_generation_this_frame = generation;
+        if !self.active_this_frame
+            || self
+                .debug_activation_generation
+                .is_some_and(|current| current != generation)
+        {
+            self.clear_debug_tree();
+        }
         self.reconcile_announcement_generation(self.active_this_frame, generation);
     }
 
@@ -543,11 +566,19 @@ impl A11y {
 
     /// Clear per-frame state and push the root node to start a new frame.
     pub(crate) fn begin_frame(&mut self) {
+        #[cfg(debug_assertions)]
+        self.view_type_names.clear();
         self.candidate_focus_ids.clear();
         self.candidate_node_geometry.clear();
         self.candidate_action_listeners.clear();
         self.staged_announcement_nodes.clear();
         self.nodes.begin_frame();
+        if let Some(title) = &self.window_title {
+            self.nodes
+                .current_node_mut()
+                .unwrap()
+                .set_label(title.to_string());
+        }
     }
 
     /// Finalize the tree and produce a [`TreeUpdate`] for the platform adapter.
@@ -564,13 +595,37 @@ impl A11y {
         self.staged_announcement_nodes.clear();
     }
 
+    pub(crate) fn debug_tree_json(&self) -> Option<String> {
+        let (active, generation) = requested_state(&self.active_state);
+        if self.debug_disabled
+            || self.force_disabled
+            || !active
+            || self.debug_activation_generation != Some(generation)
+        {
+            return None;
+        }
+        self.debug.to_json()
+    }
+
+    fn clear_debug_tree(&mut self) {
+        self.debug.clear();
+        self.debug_activation_generation = None;
+        #[cfg(debug_assertions)]
+        self.view_type_names.clear();
+    }
+
     #[cfg(test)]
     pub(crate) fn published_revision_for_test(&self) -> Option<u64> {
         self.published.as_ref().map(|published| published.revision)
     }
 
     /// Replace action routing with the exact tree and frame state delivered to the platform.
-    pub(crate) fn publish(&mut self, update: &TreeUpdate, activation_generation: u64) {
+    pub(crate) fn publish(
+        &mut self,
+        update: &TreeUpdate,
+        activation_generation: u64,
+        frame: debug::FrameDebugInfo,
+    ) {
         let mut published = self.published.take().unwrap_or_default();
         published.action_masks.clear();
         for (id, node) in &update.nodes {
@@ -639,6 +694,40 @@ impl A11y {
         published.activation_generation = activation_generation;
         self.published = Some(published);
         self.commit_announcements(activation_generation);
+        if self.debug_disabled {
+            self.clear_debug_tree();
+            return;
+        }
+        let gpui_focus = update
+            .nodes
+            .iter()
+            .any(|(id, _)| *id == self.nodes.focus)
+            .then_some(self.nodes.focus);
+        let active_descendant = gpui_focus.and_then(|focus| {
+            update
+                .nodes
+                .iter()
+                .find(|(id, _)| *id == focus)
+                .and_then(|(_, node)| node.active_descendant())
+        });
+        self.debug.capture(
+            update,
+            gpui_focus,
+            active_descendant,
+            self.window_title.as_ref(),
+            frame,
+        );
+        #[cfg(debug_assertions)]
+        {
+            let retained = update
+                .nodes
+                .iter()
+                .map(|(id, _)| *id)
+                .collect::<FxHashSet<_>>();
+            self.nodes.node_info.retain(|id, _| retained.contains(id));
+            self.debug.capture_node_info(&self.nodes.node_info);
+        }
+        self.debug_activation_generation = Some(activation_generation);
     }
 
     pub(crate) fn enqueue_announcement(
@@ -713,11 +802,15 @@ impl A11y {
     }
 
     pub(crate) fn clear_announcements_for_window_close(&mut self) {
+        self.debug_disabled = true;
+        self.clear_debug_tree();
         self.clear_announcements(AccessibilityAnnouncementClearReason::WindowClosed);
         self.announcement_generation = None;
     }
 
     pub(crate) fn clear_announcements_for_interaction_quiescence(&mut self) {
+        self.debug_disabled = true;
+        self.clear_debug_tree();
         self.clear_announcements(AccessibilityAnnouncementClearReason::InteractionQuiesced);
         self.announcement_generation = None;
     }
@@ -843,6 +936,13 @@ impl A11y {
     }
 
     fn reconcile_announcement_generation(&mut self, active: bool, generation: u64) {
+        if !active
+            || self
+                .debug_activation_generation
+                .is_some_and(|current| current != generation)
+        {
+            self.clear_debug_tree();
+        }
         if !active {
             if self.announcement_generation.is_some() || !self.announcements.is_empty() {
                 self.clear_announcements(
@@ -1127,6 +1227,73 @@ fn announcement_node_id(
     NodeId(hasher.finish())
 }
 
+/// Builder API for synthetic children. See [`crate::Element::a11y_synthetic_children`].
+pub struct A11ySubtreeBuilder<'a> {
+    parent_id: NodeId,
+    nodes: &'a mut A11yNodeBuilder,
+    #[cfg(debug_assertions)]
+    creator: debug::NodeCreator,
+}
+
+impl<'a> A11ySubtreeBuilder<'a> {
+    pub(crate) fn enter_geometry_validity(
+        &mut self,
+        validity: SubtreeGeometryValidity,
+    ) -> AccessibilityGeometryValidityGuard {
+        self.nodes.enter_geometry_validity(Some(validity))
+    }
+
+    pub(crate) fn new(parent_id: NodeId, nodes: &'a mut A11yNodeBuilder) -> Self {
+        Self {
+            parent_id,
+            nodes,
+            #[cfg(debug_assertions)]
+            creator: debug::NodeCreator::default(),
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    pub(crate) fn with_creator(mut self, creator: debug::NodeCreator) -> Self {
+        self.creator = creator;
+        self
+    }
+
+    /// Derive a stable child ID from its parent's ID and a key unique within that parent.
+    pub fn synthetic_node_id(&self, key: impl Hash) -> NodeId {
+        let mut hasher = std::hash::DefaultHasher::default();
+        self.parent_id.0.hash(&mut hasher);
+        key.hash(&mut hasher);
+        NodeId(hasher.finish())
+    }
+
+    /// Append a synthetic leaf node, returning whether it was admitted to this subtree.
+    ///
+    /// Duplicate IDs are rejected, with an assertion in debug builds.
+    pub fn push_child(&mut self, id: NodeId, node: accesskit::Node) -> bool {
+        let pushed = self.nodes.push_leaf(id, node);
+        #[cfg(debug_assertions)]
+        if pushed {
+            self.nodes.record_node_info(
+                id,
+                debug::NodeDebugInfo {
+                    synthetic: true,
+                    view: self.creator.view,
+                    element_id: self.creator.element_id.clone(),
+                    source_location: self.creator.source_location,
+                },
+            );
+        }
+        pushed
+    }
+
+    /// Mutate the creating element's accessibility node after its prepaint has completed.
+    pub fn parent_node(&mut self) -> &mut accesskit::Node {
+        self.nodes
+            .current_node_mut()
+            .expect("A11ySubtreeBuilder exists only while its element's node is on the stack")
+    }
+}
+
 pub(crate) struct A11yNodeBuilder {
     ids_stack: SmallVec<[NodeId; 16]>,
     nodes_stack: SmallVec<[accesskit::Node; 16]>,
@@ -1153,12 +1320,14 @@ pub(crate) struct A11yNodeBuilder {
     focus_validity: Option<SubtreeGeometryValidity>,
     #[cfg(debug_assertions)]
     has_set_focus: bool,
+    #[cfg(debug_assertions)]
+    node_info: FxHashMap<NodeId, debug::NodeDebugInfo>,
 }
 
 struct A11yNodeBuilderCheckpoint {
     stack_depth: usize,
     top_id: Option<NodeId>,
-    top_children_len: usize,
+    top_node: Option<accesskit::Node>,
     all_nodes_len: usize,
     scope_depth: usize,
     geometry_validity_depth: usize,
@@ -1305,6 +1474,8 @@ impl A11yNodeBuilder {
             focus_validity: None,
             #[cfg(debug_assertions)]
             has_set_focus: false,
+            #[cfg(debug_assertions)]
+            node_info: FxHashMap::default(),
         }
     }
 
@@ -1312,10 +1483,7 @@ impl A11yNodeBuilder {
         A11yNodeBuilderCheckpoint {
             stack_depth: self.ids_stack.len(),
             top_id: self.ids_stack.last().copied(),
-            top_children_len: self
-                .nodes_stack
-                .last()
-                .map_or(0, |node| node.children().len()),
+            top_node: self.nodes_stack.last().cloned(),
             all_nodes_len: self.all_nodes.len(),
             scope_depth: self.scope_stack.borrow().len(),
             geometry_validity_depth: self.geometry_validity_stack.borrow().len(),
@@ -1349,8 +1517,13 @@ impl A11yNodeBuilder {
         for (id, _, _) in &self.memberships[checkpoint.memberships_len..] {
             self.seen_ids.remove(id);
             self.deferred_child_orders.remove(id);
+            #[cfg(debug_assertions)]
+            self.node_info.remove(id);
         }
-        self.rollback_parent_child_mutations(checkpoint.parent_child_mutations_len);
+        self.rollback_parent_child_mutations(
+            checkpoint.parent_child_mutations_len,
+            checkpoint.top_id,
+        );
         self.all_nodes.truncate(checkpoint.all_nodes_len);
         self.memberships.truncate(checkpoint.memberships_len);
         self.modal_restrictions
@@ -1360,15 +1533,10 @@ impl A11yNodeBuilder {
             self.ids_stack.truncate(checkpoint.stack_depth);
             self.nodes_stack.truncate(checkpoint.stack_depth);
             self.node_validity_stack.truncate(checkpoint.stack_depth);
-            if let Some(top) = self.nodes_stack.last_mut() {
-                debug_assert!(top.children().len() >= checkpoint.top_children_len);
-                if top.children().len() > checkpoint.top_children_len {
-                    if checkpoint.top_children_len == 0 {
-                        top.clear_children();
-                    } else {
-                        top.set_children(top.children()[..checkpoint.top_children_len].to_vec());
-                    }
-                }
+            if let Some(saved) = checkpoint.top_node
+                && let Some(top) = self.nodes_stack.last_mut()
+            {
+                *top = saved;
             }
         }
 
@@ -1445,6 +1613,23 @@ impl A11yNodeBuilder {
         true
     }
 
+    pub(crate) fn push_leaf(&mut self, id: NodeId, node: accesskit::Node) -> bool {
+        if !self.push(id, node) {
+            return false;
+        }
+        self.pop();
+        true
+    }
+
+    pub(crate) fn current_node_mut(&mut self) -> Option<&mut accesskit::Node> {
+        self.nodes_stack.last_mut()
+    }
+
+    #[cfg(debug_assertions)]
+    pub(crate) fn record_node_info(&mut self, id: NodeId, info: debug::NodeDebugInfo) {
+        self.node_info.insert(id, info);
+    }
+
     /// Pop the current node off the stack and finalize it into the all_nodes
     /// list.
     pub(crate) fn pop(&mut self) {
@@ -1461,11 +1646,14 @@ impl A11yNodeBuilder {
 
     /// Push the root node to start a new frame.
     fn begin_frame(&mut self) {
+        #[cfg(debug_assertions)]
+        self.node_info.clear();
         self.all_nodes.clear();
         self.ids_stack.clear();
         self.nodes_stack.clear();
         self.node_validity_stack.clear();
         self.seen_ids.clear();
+        self.seen_ids.insert(ROOT_NODE_ID);
         self.scope_stack.borrow_mut().clear();
         self.geometry_validity_stack.borrow_mut().clear();
         self.clip_owner_scope_depths.borrow_mut().clear();
@@ -1897,12 +2085,19 @@ impl A11yNodeBuilder {
         parent.set_children(children);
     }
 
-    fn rollback_parent_child_mutations(&mut self, checkpoint_len: usize) {
+    fn rollback_parent_child_mutations(
+        &mut self,
+        checkpoint_len: usize,
+        restored_parent: Option<NodeId>,
+    ) {
         while self.parent_child_mutations.len() > checkpoint_len {
             let mutation = self
                 .parent_child_mutations
                 .pop()
                 .expect("mutation length was checked");
+            if restored_parent == Some(mutation.parent_id) || !self.has_node(mutation.parent_id) {
+                continue;
+            }
             let parent = self
                 .ids_stack
                 .iter()
@@ -2478,7 +2673,7 @@ mod tests {
                 .iter()
                 .all(|action| !node.supports_action(*action))
         }));
-        a11y.publish(&committed, generation);
+        a11y.publish(&committed, generation, Default::default());
         assert!(
             a11y.announcements
                 .iter()
@@ -2496,7 +2691,7 @@ mod tests {
         a11y.begin_frame();
         let removed = a11y.end_frame();
         assert!(removed.nodes.iter().all(|(_, node)| node.live().is_none()));
-        a11y.publish(&removed, generation);
+        a11y.publish(&removed, generation, Default::default());
         assert!(a11y.announcements.is_empty());
         assert!(!a11y.take_announcement_followup_refresh_required());
     }
@@ -2538,7 +2733,7 @@ mod tests {
         a11y.begin_frame();
         let committed = a11y.end_frame();
         let generation = a11y.activation_generation();
-        a11y.publish(&committed, generation);
+        a11y.publish(&committed, generation, Default::default());
         assert!(matches!(
             a11y.announcements.front(),
             Some(QueuedAnnouncement::Retained(_))
@@ -2641,7 +2836,7 @@ mod tests {
             node_id,
             Action::Click
         ));
-        a11y.publish(&initial, initial_generation);
+        a11y.publish(&initial, initial_generation, Default::default());
         assert!(a11y.accepts_action(
             initial_generation,
             accesskit::TreeId::ROOT,
@@ -2671,7 +2866,7 @@ mod tests {
             node_id,
             Action::Click
         ));
-        a11y.publish(&reactivated, reactivated_generation);
+        a11y.publish(&reactivated, reactivated_generation, Default::default());
         assert!(!a11y.accepts_action(
             initial_generation,
             accesskit::TreeId::ROOT,
@@ -2699,7 +2894,7 @@ mod tests {
             node_id,
             Action::Click
         ));
-        a11y.publish(&repeated, repeated_generation);
+        a11y.publish(&repeated, repeated_generation, Default::default());
         assert!(a11y.accepts_action(
             repeated_generation,
             accesskit::TreeId::ROOT,
@@ -2730,7 +2925,7 @@ mod tests {
         a11y.record_action_listener(node_id, Action::Click, listener());
         let first = a11y.end_frame();
         let generation = a11y.activation_generation();
-        a11y.publish(&first, generation);
+        a11y.publish(&first, generation, Default::default());
         let (first_revision, first_listeners) = a11y
             .take_published_action_listeners(node_id)
             .expect("first publication should expose its listeners");
@@ -2739,7 +2934,7 @@ mod tests {
         begin_candidate(&mut a11y);
         a11y.record_action_listener(node_id, Action::Click, listener());
         let second = a11y.end_frame();
-        a11y.publish(&second, generation);
+        a11y.publish(&second, generation, Default::default());
         a11y.restore_published_action_listeners(first_revision, node_id, first_listeners);
 
         let (_, current_listeners) = a11y
@@ -2770,7 +2965,7 @@ mod tests {
             }
             let update = a11y.end_frame();
             let generation = a11y.activation_generation();
-            a11y.publish(&update, generation);
+            a11y.publish(&update, generation, Default::default());
         };
 
         publish_frame(&mut a11y);
@@ -2887,7 +3082,7 @@ mod tests {
 
         let update = a11y.end_frame();
         let generation = a11y.activation_generation();
-        a11y.publish(&update, generation);
+        a11y.publish(&update, generation, Default::default());
         assert!(a11y.take_published_action_listeners(outer_id).is_some());
         assert!(a11y.take_published_action_listeners(inner_id).is_none());
 

@@ -89,7 +89,7 @@ open_gpui_web = { package = "open-gpui-web", version = "0.2.0", path = "crates/g
 open_gpui_wgpu = { package = "open-gpui-wgpu", version = "0.2.0", path = "crates/gpui_wgpu" }
 open_gpui_windows = { package = "open-gpui-windows", version = "0.2.0", path = "crates/gpui_windows", default-features = false }
 
-accesskit = "0.24.0"
+accesskit = { version = "0.24.0", features = ["enumn"] }
 accesskit_macos = "0.26.0"
 accesskit_unix = "0.21.0"
 accesskit_windows = "0.32.1"
