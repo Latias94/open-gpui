@@ -26,6 +26,7 @@ struct WindowInvalidatorInner {
     update_count: usize,
     #[cfg(feature = "profiler")]
     frame_dirty: FrameDirtyAccumulator,
+    platform_waker: Option<Rc<dyn Fn()>>,
 }
 
 #[derive(Clone)]
@@ -48,6 +49,7 @@ impl WindowInvalidator {
                 update_count: 0,
                 #[cfg(feature = "profiler")]
                 frame_dirty: FrameDirtyAccumulator::default(),
+                platform_waker: None,
             })),
         }
     }
@@ -59,9 +61,15 @@ impl WindowInvalidator {
         if inner.draw_phase == DrawPhase::None {
             #[cfg(feature = "profiler")]
             Self::record_frame_dirty(&mut inner);
+            let became_dirty = !inner.dirty;
             inner.dirty = true;
             inner.focus_only_dirty = false;
+            let waker = became_dirty.then(|| inner.platform_waker.clone()).flatten();
+            drop(inner);
             cx.push_effect(Effect::Notify { emitter: entity });
+            if let Some(waker) = waker {
+                waker();
+            }
             true
         } else {
             if inner.draw_phase == DrawPhase::Focus {
@@ -81,6 +89,7 @@ impl WindowInvalidator {
 
     pub fn set_dirty(&self, dirty: bool) {
         let mut inner = self.inner.borrow_mut();
+        let became_dirty = dirty && !inner.dirty;
         inner.dirty = dirty;
         inner.focus_only_dirty = false;
         if dirty {
@@ -88,10 +97,16 @@ impl WindowInvalidator {
             #[cfg(feature = "profiler")]
             Self::record_frame_dirty(&mut inner);
         }
+        let waker = became_dirty.then(|| inner.platform_waker.clone()).flatten();
+        drop(inner);
+        if let Some(waker) = waker {
+            waker();
+        }
     }
 
     pub fn set_focus_only_dirty(&self) {
         let mut inner = self.inner.borrow_mut();
+        let became_dirty = !inner.dirty;
         if !inner.dirty {
             inner.dirty = true;
             inner.focus_only_dirty = inner.dirty_views.is_empty();
@@ -101,6 +116,28 @@ impl WindowInvalidator {
         inner.update_count += 1;
         #[cfg(feature = "profiler")]
         Self::record_frame_dirty(&mut inner);
+        let waker = became_dirty.then(|| inner.platform_waker.clone()).flatten();
+        drop(inner);
+        if let Some(waker) = waker {
+            waker();
+        }
+    }
+
+    pub fn set_platform_waker(&self, waker: Option<Rc<dyn Fn()>>) {
+        let mut inner = self.inner.borrow_mut();
+        inner.platform_waker = waker;
+        let waker = inner.dirty.then(|| inner.platform_waker.clone()).flatten();
+        drop(inner);
+        if let Some(waker) = waker {
+            waker();
+        }
+    }
+
+    pub fn wake_platform(&self) {
+        let waker = self.inner.borrow().platform_waker.clone();
+        if let Some(waker) = waker {
+            waker();
+        }
     }
 
     #[cfg(feature = "profiler")]

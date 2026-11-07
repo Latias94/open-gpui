@@ -4026,7 +4026,7 @@ pub enum ResizeEdge {
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PlatformWindowCommand {
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
     CompleteNativeFrame,
     CompleteInitialPresentation {
         activate: bool,
@@ -5580,6 +5580,13 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     /// a missing timestamp captures a local-scheduling pair only with profiling enabled.
     #[doc(hidden)]
     fn request_frame(&self, _options: RequestFrameOptions) {}
+    /// Returns a weak wakeup for the backend's frame-request source, when available.
+    ///
+    /// The wakeup may run while App is borrowed. It must use the existing backend callback
+    /// path without borrowing App or drawing, and must not retain the owning Window or App.
+    fn frame_waker(&self) -> Option<Rc<dyn Fn()>> {
+        None
+    }
     fn on_request_frame(&self, callback: Box<dyn Fn(RequestFrameOptions)>);
     fn on_input(&self, callback: PlatformInputCallback);
     fn on_modifiers_changed(&self, _callback: Box<dyn Fn(ModifiersChangedEvent)>) {}
@@ -5627,7 +5634,8 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     /// Any non-[`PlatformWindowPresentOutcome::Submitted`] outcome must not be reported as
     /// presented by GPUI.
     fn draw(&self, scene: &Scene) -> PlatformWindowPresentOutcome;
-    fn completed_frame(&self) {}
+    /// Requests a future frame callback when work is pending, including on a parked source.
+    fn schedule_frame(&self) {}
     /// Returns native frame maintenance to execute after releasing the application borrow.
     #[doc(hidden)]
     fn native_frame_completed_command(&self) -> Option<PlatformWindowCommand> {

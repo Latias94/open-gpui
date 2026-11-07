@@ -85,6 +85,8 @@ use uuid::Uuid;
 
 pub(crate) mod a11y;
 #[cfg(test)]
+mod accepted_frame_scheduling_tests;
+#[cfg(test)]
 mod asset_cache_tests;
 mod bring_into_view;
 #[cfg(test)]
@@ -98,6 +100,8 @@ mod element_arena_tests;
 mod font_installation_tests;
 mod frame_journal;
 mod frame_pump;
+#[cfg(test)]
+mod frame_scheduling_tests;
 #[cfg(all(test, feature = "profiler"))]
 mod frame_signal_tests;
 mod input_dispatch;
@@ -1856,7 +1860,7 @@ pub struct Window {
     bring_into_view_resolutions: Vec<BringIntoViewResolution>,
     pub(crate) next_tooltip_id: TooltipId,
     pub(crate) tooltip_bounds: Option<TooltipBounds>,
-    next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>>,
+    pub(crate) next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>>,
     requested_animation_views: Rc<RefCell<FxHashSet<EntityId>>>,
     hover_style_hitboxes: RefCell<(u64, FxHashSet<HitboxId>)>,
     exact_frame_submission_present_callbacks: Vec<ExactFrameSubmissionPresentCallback>,
@@ -2660,6 +2664,7 @@ impl Window {
                 cx.enqueue_window_frame_requested(handle.window_id(), request_frame_options);
             }
         }));
+        invalidator.set_platform_waker(platform_window.frame_waker());
         platform_window.on_resize(Box::new({
             let cx = cx.to_async();
             move |_, _| {
@@ -5828,6 +5833,8 @@ impl Window {
     /// Schedule the given closure to be run directly after the current frame is rendered.
     pub fn on_next_frame(&self, callback: impl FnOnce(&mut Window, &mut App) + 'static) {
         RefCell::borrow_mut(&self.next_frame_callbacks).push(Box::new(callback));
+        self.platform_window.schedule_frame();
+        self.invalidator.wake_platform();
     }
 
     /// Drains callbacks queued with [`Self::on_next_frame`] for deterministic tests.
@@ -7132,8 +7139,7 @@ impl Window {
         self.capslock
     }
 
-    fn complete_frame(&self) {
-        self.platform_window.completed_frame();
+    fn complete_native_frame(&self) {
         if let Some(command) = self.platform_window.native_frame_completed_command() {
             self.platform_command_sink.enqueue(command);
         }
@@ -7146,6 +7152,51 @@ impl Window {
     ) {
         #[cfg(feature = "profiler")]
         let _foreground_turn = profiler::journal::foreground_turn();
+        let dirty_before = self.invalidator.is_dirty();
+        let force_before = request_frame_options.force_render || self.deferred_force_render;
+        let accepted_before = self.presentation_state.frame_accepted_generation;
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.native_frame_requested_inner(request_frame_options, cx);
+        }));
+        if let Err(panic) = outcome {
+            let recovery = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                if self.presentation_is_allowed()
+                    && (dirty_before || force_before)
+                    && self.presentation_state.frame_accepted_generation == accepted_before
+                {
+                    self.invalidator.set_dirty(true);
+                    self.deferred_force_render |= force_before;
+                }
+                self.schedule_pending_frame();
+            }));
+            let completion = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                self.complete_native_frame();
+            }));
+            if recovery.is_err() || completion.is_err() {
+                log::error!("frame recovery failed while preserving the original callback panic");
+            }
+            std::panic::resume_unwind(panic);
+        }
+        self.complete_native_frame();
+    }
+
+    fn schedule_pending_frame(&self) {
+        if self.presentation_is_allowed()
+            && (self.invalidator.is_dirty()
+                || self.needs_present.get()
+                || !self.next_frame_callbacks.borrow().is_empty()
+                || self.deferred_force_render)
+        {
+            self.platform_window.schedule_frame();
+            self.invalidator.wake_platform();
+        }
+    }
+
+    fn native_frame_requested_inner(
+        &mut self,
+        request_frame_options: RequestFrameOptions,
+        cx: &mut App,
+    ) {
         let renderer_repaint_pending = self.renderer_repaint_is_pending();
         let initial_presentation_pending = self.fresh_initial_presentation_is_pending();
         let provisional_presentation_pending = request_frame_options.require_presentation
@@ -7188,7 +7239,8 @@ impl Window {
             min_frame_interval.map(|(interval, _)| interval),
         ) {
             self.deferred_force_render |= force_render;
-            self.complete_frame();
+            self.platform_window.schedule_frame();
+            self.invalidator.wake_platform();
             #[cfg(feature = "profiler")]
             if let Some((_, limit)) = min_frame_interval {
                 profiler::journal::record_frame_skipped(
@@ -7213,7 +7265,6 @@ impl Window {
         }
 
         if !self.presentation_is_allowed() {
-            self.complete_frame();
             return;
         }
 
@@ -7246,14 +7297,12 @@ impl Window {
                 && self.fresh_initial_presentation_is_deferred_retry()
                 && !self.begin_initial_presentation_retry(cx)
             {
-                self.complete_frame();
                 return;
             }
             self.present(cx);
         }
 
         if !self.presentation_is_allowed() {
-            self.complete_frame();
             return;
         }
         self.finish_fresh_initial_presentation_if_ready(cx);
@@ -7273,7 +7322,7 @@ impl Window {
             self.request_renderer_repaint_frame();
         }
 
-        self.complete_frame();
+        self.schedule_pending_frame();
         #[cfg(feature = "profiler")]
         if !should_draw {
             profiler::journal::record_frame_skipped(

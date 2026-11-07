@@ -93,7 +93,6 @@ const MAX_HOVERED_WINDOW_TREE_NODES: usize = 256;
 pub(crate) struct WindowRef {
     window: X11WindowStatePtr,
     refresh_state: Option<RefreshState>,
-    expose_event_received: bool,
     last_visibility: Visibility,
     is_mapped: bool,
 }
@@ -765,13 +764,6 @@ impl X11Client {
                 break;
             }
 
-            for window in windows_to_refresh.into_iter() {
-                let mut state = self.0.borrow_mut();
-                if let Some(window) = state.windows.get_mut(&window) {
-                    window.expose_event_received = true;
-                }
-            }
-
             for event in events.into_iter() {
                 let mut state = self.0.borrow_mut();
                 if !state.has_xim() {
@@ -819,6 +811,23 @@ impl X11Client {
                         drop(state);
                         self.handle_event(event);
                     }
+                }
+            }
+
+            for x_window in windows_to_refresh {
+                let window = self
+                    .0
+                    .borrow()
+                    .windows
+                    .get(&x_window)
+                    .and_then(|window| window.is_mapped.then(|| window.window.clone()));
+                if let Some(window) = window {
+                    window.refresh(RequestFrameOptions {
+                        require_presentation: true,
+                        force_render: false,
+                        signal_at: None,
+                        signal_source: FrameRequestSource::NativeCallback,
+                    });
                 }
             }
         }
@@ -1867,7 +1876,6 @@ impl LinuxClient for X11Client {
         let window_ref = WindowRef {
             window: window.0.clone(),
             refresh_state: None,
-            expose_event_received: false,
             last_visibility: Visibility::UNOBSCURED,
             is_mapped: false,
         };
@@ -2283,15 +2291,13 @@ impl X11ClientState {
             .insert_source(calloop::timer::Timer::immediate(), {
                 move |mut instant, (), client| {
                     let xcb_connection = {
-                        let mut state = client.0.borrow_mut();
+                        let state = client.0.borrow();
                         let xcb_connection = state.xcb_connection.clone();
-                        if let Some(window) = state.windows.get_mut(&x_window) {
-                            let expose_event_received = window.expose_event_received;
-                            window.expose_event_received = false;
+                        if let Some(window) = state.windows.get(&x_window) {
                             let window = window.window.clone();
                             drop(state);
                             window.refresh(RequestFrameOptions {
-                                require_presentation: expose_event_received,
+                                require_presentation: false,
                                 force_render: false,
                                 signal_at: PlatformFrameSignal::capture(|| instant),
                                 signal_source: FrameRequestSource::LocalSchedule,

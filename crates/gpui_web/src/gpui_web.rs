@@ -4,6 +4,8 @@ mod dispatcher;
 mod display;
 #[cfg(target_family = "wasm")]
 mod events;
+#[cfg(any(target_family = "wasm", test))]
+mod frame_loop;
 #[cfg(target_family = "wasm")]
 mod http_client;
 #[cfg(target_family = "wasm")]

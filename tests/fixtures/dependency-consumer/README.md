@@ -369,3 +369,84 @@ frame-source timing, reentrant backend callback delivery, compositor behavior, G
 native `Submitted` receipts, thermal-state transitions, performance or disabled-path codegen
 qualification. The commands are verification instructions; this section records no compilation
 or execution result. These controls add no fixture dependencies.
+
+## Demand-driven frame scheduling consumer
+
+The `frame_scheduling` integration target consumes demand-driven scheduling from official Zed
+[`eb354c8d50`](https://github.com/zed-industries/zed/commit/eb354c8d504071bdb79110a7a5c9d374c2864113),
+as present in the fixed cycle source
+[`635026fabc`](https://github.com/zed-industries/zed/tree/635026fabc38440fce5e1767d125026a17b12012).
+The fork keeps its existing presentation outcomes and exact accepted/submitted generation facts.
+It replaces `PlatformWindow::completed_frame` with `schedule_frame`, while native frame
+maintenance remains a separate backend responsibility. `schedule_frame` defaults to a no-op;
+`frame_waker` defaults to `None` and returns `Option<Rc<dyn Fn()>>` when a backend supplies one.
+A supplied waker must be safe to call while App is borrowed, use the existing backend callback
+path without borrowing App or drawing, and avoid retaining the owning Window or App.
+
+This independent target keeps the consumer lockfile and ordinary dependency features. It adds
+no dependency, fake platform, application owner, or `test-support` requirement. Its explicitly
+typed `_backend_type_only` closure is deliberately unexecuted: it consumes `&dyn PlatformWindow`,
+the scheduling method, the optional shared waker, and the actual
+`Box<dyn Fn(RequestFrameOptions)>` callback signature. `_window_type_only` similarly checks
+`Window::on_next_frame`, a callback queued from a callback, `Window::refresh`,
+`App::refresh_windows`, and `AsyncApp::refresh`. It destructures every public
+`WindowPresentationFacts` and `WindowPresentAttemptFacts` field without constructing identities
+or reporting a fabricated presentation. These closures establish compilation contracts only;
+they do not execute the platform defaults or prove callback delivery and effect flushing.
+
+Actual weak-backend release is verified through the framework's existing TestWindow owner, rather
+than a consumer-owned closure that exercises only standard-library reference counting. Run the
+signature target in both instrumentation configurations, separately, with the existing lockfile:
+
+```text
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --test frame_scheduling --jobs 1 --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --features profiler --test frame_scheduling --jobs 1 --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+The separate crate-external `crates/gpui/tests/frame_scheduling.rs` target requires
+`test-support` and runs with profiling either disabled or enabled. It uses the existing
+TestPlatform through public `TestAppContext` and `VisualTestContext`, activates actual test
+windows, and draws through `VisualTestContext::update` without borrowing the root view across
+the draw. It defers the next window's frame requests before opening it, so hidden initial
+presentation cannot consume the startup ticks automatically. The first scheduled tick submits
+the accepted scene; the second delivers its compositor callback and parks the source while
+preserving the initial exact presentation facts. `simulate_scheduled_frame` delivers only
+existing backend demand; it must return
+`false` after parking. A successful test-platform `Submitted` leaves one compositor callback,
+whose delivery must park without another render or presentation. The workflows cover:
+
+- Root notification and window refresh waking a parked source, followed by submission of the
+  exact scene already drawn by test-mode effect flushing.
+- `AsyncApp::refresh` flushing immediately before it returns, drawing both parked windows,
+  scheduling both sources, and eventually submitting each accepted generation.
+- Noninvalidating next-frame callbacks waking a parked source and queuing a callback mid-frame
+  for a separate scheduled turn. Neither callback requests a new draw or submission; complete
+  presentation facts and render counts must stay unchanged before the source parks again.
+- Repeated `Deferred` and `Rejected` renderer outcomes retaining scheduled demand and the same
+  accepted scene without advancing submitted/nonempty generations. Restoring `Submitted` must
+  submit that exact generation and then park after its compositor callback.
+- A real image-paint candidate refused by a controlled atlas lease failure. The existing public
+  test-support atlas setter installs that CPU test atlas; refusal preserves every presentation
+  fact and keeps scheduling retries. Allowing the lease must accept and submit the next exact
+  generation. This tests candidate refusal rather than GPU residency or a renderer failure.
+- Logical close releasing the queued callback's captures and root entity before a held native
+  terminal callback is released. A later application refresh and terminal delivery must not
+  redraw or restore that window.
+
+```text
+cargo nextest run -p open-gpui --no-default-features --features test-support --test frame_scheduling --jobs 1 --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run -p open-gpui --no-default-features --features test-support,profiler --test frame_scheduling --jobs 1 --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+These framework scenarios qualify TestPlatform scheduling and its simulated compositor callback,
+not native compositor commits, Wayland fullscreen behavior, GPU output, actual native
+`Submitted` receipts, physical refresh timing, thermal throttling, or performance. The public
+scheduled-frame helpers resolve their window by borrowing App; injecting a callback during a
+busy App update therefore needs a retained real platform callback handle obtained beforehand.
+This target does not expose an engine hook or claim busy/reentrant callback qualification.
+Root/callback release across logical close is observable here; backend waker detachment has
+separate owner coverage. App-owned initial-presentation tasks can retain backend state after
+logical close; a backend weak-state probe need not expire until App itself is dropped. Retaining
+or invoking a weak frame waker must not increase that state's strong owner count or reschedule
+a terminal window. The commands above are verification instructions, not a record that
+these targets have been compiled or executed.

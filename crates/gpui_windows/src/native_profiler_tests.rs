@@ -1161,12 +1161,128 @@ fn native_frame_signals_preserve_coalescing_visibility_retirement_and_vsync_orig
         SendMessageW(rebuilt.registration.as_raw(), WM_PAINT, None, None);
     }
     wait_for_native_platform_signal(&rebuilt, &mut collector, Some(captured.0), captured.1);
+
+    rebuilt.settle(&mut app);
+    let previous_generation = rebuilt
+        .wait_for_submission(&mut app, NativeProfilerSource::default(), 0)
+        .0;
+    let async_app = app.update_for_test(|cx| cx.to_async());
+    let paints_before_refresh = rebuilt.paints.borrow().len();
+    let signals_before_refresh = rebuilt.signals.borrow().len();
+    async_app.refresh();
+    pump_messages_until_with_delay(
+        "public async refresh reaches the production native paint callback",
+        Duration::from_millis(5),
+        || rebuilt.paints.borrow().len() > paints_before_refresh,
+    );
+    assert!(
+        rebuilt.signals.borrow().len() > signals_before_refresh,
+        "public async refresh must reach the production frame callback without a private request"
+    );
+    let refreshed_generation = rebuilt
+        .wait_for_submission(
+            &mut app,
+            NativeProfilerSource::default(),
+            previous_generation,
+        )
+        .0;
+
+    let callback_runs = Rc::new(RefCell::new(Vec::new()));
+    app.update_for_test(|cx| {
+        rebuilt.handle.update(cx, |_, window, _| {
+            let callback_runs = callback_runs.clone();
+            window.on_next_frame(move |window, _| {
+                assert!(callback_runs.borrow().is_empty());
+                callback_runs
+                    .borrow_mut()
+                    .push((1_u8, window.rendered_frame_revision()));
+                window.refresh();
+                window.on_next_frame(move |window, _| {
+                    assert_eq!(callback_runs.borrow().len(), 1);
+                    callback_runs
+                        .borrow_mut()
+                        .push((2_u8, window.rendered_frame_revision()));
+                    window.refresh();
+                });
+            });
+        })
+    })
+    .expect("the live native consumer must accept public next-frame callbacks");
+    assert!(callback_runs.borrow().is_empty());
+    pump_messages_until_with_delay(
+        "public next-frame callback runs through the native frame pump",
+        Duration::from_millis(5),
+        || !callback_runs.borrow().is_empty(),
+    );
+    assert_eq!(
+        callback_runs.borrow().as_slice(),
+        &[(1, refreshed_generation)],
+        "a callback queued mid-frame must wait for a successor frame"
+    );
+    let callback_generation = rebuilt
+        .wait_for_submission(
+            &mut app,
+            NativeProfilerSource::default(),
+            refreshed_generation,
+        )
+        .0;
+    pump_messages_until_with_delay(
+        "callback queued mid-frame runs through a successor native frame",
+        Duration::from_millis(5),
+        || callback_runs.borrow().len() == 2,
+    );
+    assert_eq!(
+        callback_runs.borrow().as_slice(),
+        &[(1, refreshed_generation), (2, callback_generation)]
+    );
+    rebuilt.wait_for_submission(
+        &mut app,
+        NativeProfilerSource::default(),
+        callback_generation,
+    );
+    let signals_after_callbacks = rebuilt.signals.borrow().len();
+    pump_messages_until_with_delay(
+        "continuous native VSync after public frame demand completes",
+        Duration::from_millis(5),
+        || rebuilt.signals.borrow().len() >= signals_after_callbacks + 2,
+    );
+    assert_eq!(
+        callback_runs.borrow().as_slice(),
+        &[(1, refreshed_generation), (2, callback_generation)],
+        "continued native VSync must not rerun either one-shot callback"
+    );
+
+    let pending_callback_capture = Rc::new(());
+    let pending_callback_weak = Rc::downgrade(&pending_callback_capture);
+    let pending_callback_calls = Rc::new(Cell::new(0_u32));
+    app.update_for_test(|cx| {
+        rebuilt.handle.update(cx, |_, window, _| {
+            let pending_callback_calls = pending_callback_calls.clone();
+            window.on_next_frame(move |_, _| {
+                let _keep_alive = &pending_callback_capture;
+                pending_callback_calls.set(pending_callback_calls.get() + 1);
+            });
+        })
+    })
+    .expect("the native consumer must retain a pending callback until retirement");
+    assert!(pending_callback_weak.upgrade().is_some());
+    assert_eq!(pending_callback_calls.get(), 0);
     rebuilt.retire(&mut app, &platform, &observation);
+    assert!(
+        pending_callback_weak.upgrade().is_none(),
+        "exact native retirement must release pending next-frame callback captures"
+    );
+    assert_eq!(pending_callback_calls.get(), 0);
     drop(app);
     drop(platform);
     pump_messages_until_with_delay(
         "frame-signal platform retirement",
         Duration::from_millis(5),
         || unsafe { !IsWindow(Some(platform_hwnd)).as_bool() },
+    );
+    assert_eq!(pending_callback_calls.get(), 0);
+    assert_eq!(
+        callback_runs.borrow().as_slice(),
+        &[(1, refreshed_generation), (2, callback_generation)]
     );
 }

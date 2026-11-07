@@ -169,6 +169,8 @@ pub(crate) struct TestWindowState {
     hover_status_change_callback: Option<Rc<dyn Fn(bool)>>,
     request_frame_callback: Option<Rc<dyn Fn(RequestFrameOptions)>>,
     frame_wake_count: usize,
+    frame_scheduled: bool,
+    frame_callback_pending: bool,
     defer_frame_requests: bool,
     deferred_frame_request: Option<RequestFrameOptions>,
     resize_callback: Option<Rc<dyn Fn(Size<Pixels>, f32)>>,
@@ -433,6 +435,8 @@ impl TestWindow {
                 hover_status_change_callback: None,
                 request_frame_callback: None,
                 frame_wake_count: 0,
+                frame_scheduled: false,
+                frame_callback_pending: false,
                 resize_callback: None,
                 moved_callback: None,
                 display_changed_callback: None,
@@ -736,7 +740,7 @@ impl TestWindow {
                 self.0.lock().activation_count += 1;
                 self.activate_for_test();
             }
-            #[cfg(target_os = "windows")]
+            #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
             PlatformWindowCommand::CompleteNativeFrame => {}
             PlatformWindowCommand::ShowWindowMenu(_)
             | PlatformWindowCommand::StartWindowMove
@@ -1239,6 +1243,8 @@ impl TestWindow {
                 return false;
             }
             state.closed = true;
+            state.frame_scheduled = false;
+            state.frame_callback_pending = false;
             state.mapped = false;
             state.is_active = false;
             state.visibility = WindowVisibility::Hidden;
@@ -1434,6 +1440,35 @@ impl TestWindow {
         drop(lock);
         callback(options);
         true
+    }
+
+    /// Delivers one requested frame or pending compositor callback without an idle tick.
+    pub fn simulate_scheduled_frame(&self) -> bool {
+        let callback = {
+            let mut state = self.0.lock();
+            if state.closed || state.presentation_shutdown_ticket.is_some() {
+                state.frame_scheduled = false;
+                state.frame_callback_pending = false;
+                return false;
+            }
+            if !state.frame_scheduled {
+                return false;
+            }
+            let Some(callback) = state.request_frame_callback.clone() else {
+                return false;
+            };
+            state.frame_scheduled = false;
+            state.frame_callback_pending = false;
+            callback
+        };
+        callback(RequestFrameOptions::default());
+        true
+    }
+
+    /// Returns whether a requested frame or compositor callback remains scheduled.
+    pub fn frame_scheduled(&self) -> bool {
+        let state = self.0.lock();
+        !state.closed && state.presentation_shutdown_ticket.is_none() && state.frame_scheduled
     }
 }
 
@@ -1890,6 +1925,33 @@ impl PlatformWindow for TestWindow {
         let _ = self.simulate_frame(options);
     }
 
+    fn frame_waker(&self) -> Option<Rc<dyn Fn()>> {
+        let window = Rc::downgrade(&self.0);
+        Some(Rc::new(move || {
+            let Some(window) = window.upgrade() else {
+                return;
+            };
+            let mut state = window.lock();
+            if state.closed || state.presentation_shutdown_ticket.is_some() {
+                return;
+            }
+            state.frame_wake_count += 1;
+            if !state.frame_callback_pending {
+                state.frame_scheduled = true;
+            }
+        }))
+    }
+
+    fn schedule_frame(&self) {
+        let mut state = self.0.lock();
+        if !state.closed
+            && state.presentation_shutdown_ticket.is_none()
+            && !state.frame_callback_pending
+        {
+            state.frame_scheduled = true;
+        }
+    }
+
     fn on_request_frame(&self, callback: Box<dyn Fn(RequestFrameOptions)>) {
         let mut state = self.0.lock();
         if !state.closed {
@@ -2005,6 +2067,10 @@ impl PlatformWindow for TestWindow {
         }
         let close_on_next_present = std::mem::take(&mut state.close_on_next_present);
         let outcome = state.present_outcome;
+        state.frame_scheduled = true;
+        if outcome == PlatformWindowPresentOutcome::Submitted {
+            state.frame_callback_pending = true;
+        }
         drop(state);
         if close_on_next_present {
             self.close();

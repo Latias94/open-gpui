@@ -421,7 +421,7 @@ impl AsyncApp {
     pub fn refresh(&self) {
         let app = self.app();
         let mut lock = app.borrow_mut();
-        lock.refresh_windows();
+        lock.update(|cx| cx.refresh_windows());
     }
 
     /// Get an executor which can be used to spawn futures in the background.

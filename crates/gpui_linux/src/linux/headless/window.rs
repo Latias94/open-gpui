@@ -110,6 +110,9 @@ impl PlatformWindow for HeadlessWindow {
                 return PlatformWindowCommandOutcome::Rejected;
             }
             match command {
+                PlatformWindowCommand::CompleteNativeFrame => {
+                    PlatformWindowCommandOutcome::Accepted
+                }
                 PlatformWindowCommand::CompleteInitialPresentation { .. } => {
                     PlatformWindowCommandOutcome::Accepted
                 }

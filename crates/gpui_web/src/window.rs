@@ -1,4 +1,5 @@
 use crate::display::WebDisplay;
+use crate::frame_loop::WebFrameLoop;
 use crate::platform::set_body_cursor;
 use crate::{
     events::{WebEventListener, WebEventListeners, WebInteractionGate, is_mac_platform},
@@ -81,8 +82,7 @@ pub(crate) struct WebWindowInner {
     accepts_pointer_input: bool,
     is_mapped: Cell<bool>,
     initial_presentation_completed: Cell<bool>,
-    raf_running: Cell<bool>,
-    raf_id: Cell<Option<i32>>,
+    frame_loop: WebFrameLoop,
     raf_function: RefCell<Option<js_sys::Function>>,
     mql_handle: RefCell<Option<MqlHandle>>,
     pending_physical_size: Cell<Option<(u32, u32)>>,
@@ -251,8 +251,7 @@ impl WebWindow {
             accepts_pointer_input: params.accepts_pointer_input,
             is_mapped: Cell::new(false),
             initial_presentation_completed: Cell::new(false),
-            raf_running: Cell::new(false),
-            raf_id: Cell::new(None),
+            frame_loop: WebFrameLoop::default(),
             raf_function: RefCell::new(None),
             mql_handle: RefCell::new(None),
             pending_physical_size: Cell::new(None),
@@ -331,6 +330,12 @@ impl WebWindow {
                 dpr_f32,
             );
             inner.dispatch_resize(new_size, dpr_f32);
+            inner.dispatch_request_frame(RequestFrameOptions {
+                require_presentation: true,
+                force_render: true,
+                signal_at: None,
+                signal_source: FrameRequestSource::NativeCallback,
+            });
         })
     }
 }
@@ -540,19 +545,16 @@ impl WebWindowInner {
             let Some(this) = this.upgrade() else {
                 return;
             };
-            this.raf_id.set(None);
-            if !this.raf_running.get() {
+            if !this.frame_loop.frame_started() {
                 return;
             }
 
             this.dispatch_request_frame(RequestFrameOptions {
-                require_presentation: true,
+                require_presentation: false,
                 force_render: false,
                 signal_at: None,
                 signal_source: FrameRequestSource::NativeCallback,
             });
-
-            this.schedule_raf();
         });
 
         closure
@@ -564,28 +566,24 @@ impl WebWindowInner {
     }
 
     fn start_raf(&self) {
-        if self.raf_running.replace(true) {
-            return;
-        }
-        self.schedule_raf();
+        self.frame_loop.start();
+        self.wake_frame_loop();
     }
 
-    fn schedule_raf(&self) {
-        let Some(function) = self.raf_function.borrow().as_ref().cloned() else {
-            return;
-        };
-        match self.browser_window.request_animation_frame(&function) {
-            Ok(id) => self.raf_id.set(Some(id)),
-            Err(error) => {
-                self.raf_running.set(false);
-                log::error!("failed to schedule requestAnimationFrame: {error:?}");
-            }
-        }
+    fn wake_frame_loop(&self) {
+        self.frame_loop.wake(|| {
+            let function = self.raf_function.borrow().as_ref().cloned()?;
+            self.browser_window
+                .request_animation_frame(&function)
+                .map_err(|error| {
+                    log::error!("failed to schedule requestAnimationFrame: {error:?}");
+                })
+                .ok()
+        });
     }
 
     fn stop_raf(&self) {
-        self.raf_running.set(false);
-        if let Some(id) = self.raf_id.take() {
+        if let Some(id) = self.frame_loop.stop() {
             self.browser_window.cancel_animation_frame(id).ok();
         }
         self.raf_function.borrow_mut().take();
@@ -1130,6 +1128,15 @@ impl PlatformWindow for WebWindow {
         self.inner.state.borrow().is_fullscreen
     }
 
+    fn frame_waker(&self) -> Option<Rc<dyn Fn()>> {
+        let inner = Rc::downgrade(&self.inner);
+        Some(Rc::new(move || {
+            if let Some(inner) = inner.upgrade() {
+                inner.wake_frame_loop();
+            }
+        }))
+    }
+
     fn request_frame(&self, mut options: RequestFrameOptions) {
         if options.signal_at.is_none() {
             options.signal_at = PlatformFrameSignal::capture(Instant::now);
@@ -1240,10 +1247,6 @@ impl PlatformWindow for WebWindow {
             return PlatformWindowPresentOutcome::Rejected;
         }
         state.renderer.draw(scene)
-    }
-
-    fn completed_frame(&self) {
-        // On web, presentation happens automatically via wgpu surface present
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {

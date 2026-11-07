@@ -9,6 +9,7 @@ use std::{
 use ashpd::WindowIdentifier;
 use calloop::{
     EventLoop, LoopHandle,
+    ping::Ping,
     timer::{TimeoutAction, Timer},
 };
 use calloop_wayland_source::WaylandSource;
@@ -92,16 +93,16 @@ use crate::linux::{
 };
 use open_gpui::{
     AnyWindowHandle, Bounds, Capslock, CursorStyle, DevicePixels, DisplayId, FileDropEvent,
-    ForegroundExecutor, FrameRequestSource, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
-    MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay, PlatformFocusedWindow,
-    PlatformFrameSignal, PlatformHoveredWindow, PlatformInput, PlatformKeyboardLayout,
-    PlatformViewportCapabilities, PlatformWindow, PlatformWindowActivationSupport,
-    PlatformWindowActiveStatusObservation, PlatformWindowCapabilities,
-    PlatformWindowCreationCapabilities, PlatformWindowMutationCapabilities, Point, ScrollDelta,
-    ScrollWheelEvent, SharedString, Size, TouchPhase, WindowButtonLayout, WindowCoordinateSpace,
-    WindowCreationSupport, WindowInitialPresentationOrder, WindowKind, WindowMutationSupport,
-    WindowParams, point, profiler, px, size,
+    ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent,
+    MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection,
+    Pixels, PlatformDisplay, PlatformFocusedWindow, PlatformFrameSignal, PlatformHoveredWindow,
+    PlatformInput, PlatformKeyboardLayout, PlatformViewportCapabilities, PlatformWindow,
+    PlatformWindowActivationSupport, PlatformWindowActiveStatusObservation,
+    PlatformWindowCapabilities, PlatformWindowCreationCapabilities,
+    PlatformWindowMutationCapabilities, Point, ScrollDelta, ScrollWheelEvent, SharedString, Size,
+    TouchPhase, WindowButtonLayout, WindowCoordinateSpace, WindowCreationSupport,
+    WindowInitialPresentationOrder, WindowKind, WindowMutationSupport, WindowParams, point,
+    profiler, px, size,
 };
 use open_gpui_wgpu::{CompositorGpuHint, GpuContext};
 use wayland_protocols::wp::linux_dmabuf::zv1::client::{
@@ -112,6 +113,10 @@ use wayland_protocols::wp::linux_dmabuf::zv1::client::{
 const MIN_KEYCODE: u32 = 8;
 
 const UNKNOWN_KEYBOARD_LAYOUT_NAME: SharedString = SharedString::new_static("unknown");
+
+/// Pacing for retry ticks: a fixed 60Hz interval. Retries only occur for throttled or
+/// failed-present frames, so matching the output's actual refresh rate wouldn't be observable.
+const FRAME_RETRY_INTERVAL: Duration = Duration::from_micros(16_667);
 
 #[derive(Clone)]
 pub struct Globals {
@@ -136,6 +141,7 @@ pub struct Globals {
     pub dialog: Option<xdg_wm_dialog_v1::XdgWmDialogV1>,
     pub system_bell: Option<xdg_system_bell_v1::XdgSystemBellV1>,
     pub executor: ForegroundExecutor,
+    pub frame_ping: Ping,
 }
 
 impl Globals {
@@ -144,6 +150,7 @@ impl Globals {
         executor: ForegroundExecutor,
         qh: QueueHandle<WaylandClientStatePtr>,
         seat: wl_seat::WlSeat,
+        frame_ping: Ping,
     ) -> Self {
         let dialog_v = XdgWmDialogV1::interface().version;
         Globals {
@@ -179,6 +186,7 @@ impl Globals {
             system_bell: globals.bind(&qh, 1..=1, ()).ok(),
             executor,
             qh,
+            frame_ping,
         }
     }
 }
@@ -359,6 +367,51 @@ impl WaylandClientStatePtr {
         self.0
             .upgrade()
             .expect("The pointer should always be valid when dispatching in wayland")
+    }
+
+    pub fn dispatch_scheduled_frames(&self) {
+        let Some(client) = self.0.upgrade() else {
+            return;
+        };
+        // Release the client borrow before ticking: the tick re-enters GPUI, which can
+        // borrow the client again (e.g. IME updates).
+        let windows = client
+            .borrow()
+            .windows
+            .values()
+            .cloned()
+            .collect::<Vec<WaylandWindowStatePtr>>();
+        for window in windows {
+            window.scheduled_frame_fired();
+        }
+    }
+
+    /// Queue a retry tick for `surface_id` one refresh interval from now. An immediate
+    /// retry would spin against the frame-rate throttle that deferred the draw in the
+    /// first place.
+    pub fn schedule_frame_retry(&self, surface_id: &ObjectId) -> Option<Instant> {
+        let client = self.0.upgrade()?;
+        let loop_handle = client.borrow().loop_handle.clone();
+        let surface_id = surface_id.clone();
+        let this = self.clone();
+        let timer = Timer::from_duration(FRAME_RETRY_INTERVAL);
+        let deadline = timer.current_deadline()?;
+        match loop_handle.insert_source(timer, move |deadline, _, _| {
+            let Some(client) = this.0.upgrade() else {
+                return TimeoutAction::Drop;
+            };
+            let window = get_window(&mut client.borrow_mut(), &surface_id);
+            if let Some(window) = window {
+                window.retry_timer_fired(deadline);
+            }
+            TimeoutAction::Drop
+        }) {
+            Ok(_) => Some(deadline),
+            Err(err) => {
+                log::error!("Failed to schedule frame retry: {err}");
+                None
+            }
+        }
     }
 
     fn report_displays_changed(&self) {
@@ -817,12 +870,21 @@ impl WaylandClient {
         let compositor_gpu = detect_compositor_gpu();
         let gpu_context = Rc::new(RefCell::new(None));
 
+        let (frame_ping, frame_ping_source) =
+            calloop::ping::make_ping().expect("Failed to create the frame ping");
+        handle
+            .insert_source(frame_ping_source, |_, _, client| {
+                client.dispatch_scheduled_frames();
+            })
+            .unwrap();
+
         let seat = seat.unwrap();
         let globals = Globals::new(
             globals,
             common.foreground_executor.clone(),
             qh.clone(),
             seat.clone(),
+            frame_ping,
         );
 
         let data_device = globals
@@ -1493,7 +1555,7 @@ impl Dispatch<WlCallback, ObjectId> for WaylandClientStatePtr {
         };
         drop(state);
 
-        window.frame(signal_at, FrameRequestSource::NativeCallback);
+        window.frame_callback_fired(signal_at);
     }
 }
 

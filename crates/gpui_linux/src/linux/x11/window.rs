@@ -421,6 +421,7 @@ pub(crate) fn x11_supports_toplevel_creation_state(kind: &WindowKind) -> bool {
 #[derive(Default)]
 pub struct Callbacks {
     request_frame: Option<Rc<dyn Fn(RequestFrameOptions)>>,
+    force_render_after_recovery: bool,
     input: PlatformInputCallbackSlot,
     active_status_change: Option<Rc<dyn Fn(PlatformWindowActiveStatusObservation)>>,
     visibility_change: Option<Box<dyn FnMut(WindowVisibility)>>,
@@ -432,6 +433,18 @@ pub struct Callbacks {
     close: Option<Box<dyn FnOnce()>>,
     appearance_changed: Option<Rc<dyn Fn()>>,
     button_layout_changed: Option<Rc<dyn Fn()>>,
+}
+
+fn dispatch_frame_request(callbacks: &RefCell<Callbacks>, mut options: RequestFrameOptions) {
+    let callback = {
+        let mut callbacks = callbacks.borrow_mut();
+        let Some(callback) = callbacks.request_frame.clone() else {
+            return;
+        };
+        options.force_render |= std::mem::take(&mut callbacks.force_render_after_recovery);
+        callback
+    };
+    callback(options);
 }
 
 pub struct X11WindowState {
@@ -545,6 +558,7 @@ impl X11WindowCommandTarget {
         }
 
         match command {
+            PlatformWindowCommand::CompleteNativeFrame => PlatformWindowCommandOutcome::Accepted,
             PlatformWindowCommand::CompleteInitialPresentation { activate } => {
                 if state.initial_presentation_completed {
                     return PlatformWindowCommandOutcome::Accepted;
@@ -2130,10 +2144,14 @@ impl X11WindowStatePtr {
     }
 
     pub fn refresh(&self, request_frame_options: RequestFrameOptions) {
-        let callback = self.callbacks.borrow().request_frame.clone();
-        if let Some(fun) = callback {
-            fun(request_frame_options);
+        let blocks_frame = {
+            let state = self.state.borrow();
+            state.destroyed || state.renderer.presentation_shutdown_active()
+        };
+        if blocks_frame {
+            return;
         }
+        dispatch_frame_request(&self.callbacks, request_frame_options);
     }
 
     pub fn handle_input(&self, input: PlatformInput) {
@@ -2876,10 +2894,7 @@ impl PlatformWindow for X11Window {
                 if blocks_frame {
                     return;
                 }
-                let callback = callbacks.borrow().request_frame.clone();
-                if let Some(callback) = callback {
-                    callback(options);
-                }
+                dispatch_frame_request(&callbacks, options);
             })
             .detach();
     }
@@ -2948,7 +2963,8 @@ impl PlatformWindow for X11Window {
         let outcome = {
             let mut inner = self.0.state.borrow_mut();
 
-            if inner.renderer.device_lost() {
+            let recovering = inner.renderer.device_lost();
+            let outcome = if recovering {
                 let raw_window = RawWindow {
                     connection: as_raw_xcb_connection::AsRawXcbConnection::as_raw_xcb_connection(
                         &*self.0.xcb,
@@ -2966,7 +2982,13 @@ impl PlatformWindow for X11Window {
                 }
             } else {
                 inner.renderer.draw(scene)
+            };
+
+            if recovering || outcome == PlatformWindowPresentOutcome::RepaintRequired {
+                self.0.callbacks.borrow_mut().force_render_after_recovery = true;
             }
+
+            outcome
         };
 
         if outcome == PlatformWindowPresentOutcome::Submitted {
@@ -3178,6 +3200,190 @@ impl PlatformWindow for X11Window {
         if let Some(adapter) = state.accesskit_adapter.as_mut() {
             adapter.set_root_window_bounds(outer, inner);
         }
+    }
+}
+
+#[cfg(test)]
+mod frame_request_tests {
+    use super::*;
+    use std::cell::Cell;
+
+    fn expose_request() -> RequestFrameOptions {
+        RequestFrameOptions {
+            require_presentation: true,
+            force_render: false,
+            signal_at: None,
+            signal_source: FrameRequestSource::NativeCallback,
+        }
+    }
+
+    fn refresh_request() -> RequestFrameOptions {
+        let deadline = Instant::now() + Duration::from_millis(16);
+        RequestFrameOptions {
+            require_presentation: false,
+            force_render: false,
+            signal_at: PlatformFrameSignal::capture(|| deadline),
+            signal_source: FrameRequestSource::LocalSchedule,
+        }
+    }
+
+    #[test]
+    fn callbacks_preserve_native_expose_and_local_refresh_provenance() {
+        let received = Rc::new(RefCell::new(Vec::new()));
+        let callbacks = RefCell::new(Callbacks {
+            request_frame: Some(Rc::new({
+                let received = received.clone();
+                move |options| received.borrow_mut().push(options)
+            })),
+            ..Callbacks::default()
+        });
+        let requests = [
+            expose_request(),
+            refresh_request(),
+            RequestFrameOptions {
+                signal_at: Some(Instant::now()),
+                ..expose_request()
+            },
+        ];
+
+        for request in requests {
+            dispatch_frame_request(&callbacks, request);
+        }
+
+        assert_eq!(received.borrow().as_slice(), &requests);
+    }
+
+    #[test]
+    fn recovery_is_consumed_once_by_the_first_expose_or_refresh_callback() {
+        let expose = expose_request();
+        let refresh = refresh_request();
+        for requests in [[expose, refresh], [refresh, expose]] {
+            for already_forced in [false, true] {
+                let received = Rc::new(RefCell::new(Vec::new()));
+                let callbacks = RefCell::new(Callbacks {
+                    request_frame: Some(Rc::new({
+                        let received = received.clone();
+                        move |options| received.borrow_mut().push(options)
+                    })),
+                    force_render_after_recovery: true,
+                    ..Callbacks::default()
+                });
+                let mut first = requests[0];
+                first.force_render = already_forced;
+
+                dispatch_frame_request(&callbacks, first);
+                assert!(!callbacks.borrow().force_render_after_recovery);
+                dispatch_frame_request(&callbacks, requests[1]);
+
+                first.force_render = true;
+                assert_eq!(received.borrow().as_slice(), &[first, requests[1]]);
+                assert!(!callbacks.borrow().force_render_after_recovery);
+            }
+        }
+    }
+
+    #[test]
+    fn recovery_waits_for_a_registered_callback() {
+        let callbacks = RefCell::new(Callbacks {
+            force_render_after_recovery: true,
+            ..Callbacks::default()
+        });
+
+        dispatch_frame_request(&callbacks, expose_request());
+        dispatch_frame_request(&callbacks, refresh_request());
+        assert!(callbacks.borrow().force_render_after_recovery);
+
+        let received = Rc::new(RefCell::new(Vec::new()));
+        callbacks.borrow_mut().request_frame = Some(Rc::new({
+            let received = received.clone();
+            move |options| received.borrow_mut().push(options)
+        }));
+        let mut request = expose_request();
+        dispatch_frame_request(&callbacks, request);
+        request.force_render = true;
+
+        assert_eq!(received.borrow().as_slice(), &[request]);
+        assert!(!callbacks.borrow().force_render_after_recovery);
+    }
+
+    #[test]
+    fn callbacks_run_after_borrow_release_and_keep_their_replacements() {
+        let callbacks = Rc::new(RefCell::new(Callbacks::default()));
+        let original_calls = Rc::new(Cell::new(0));
+        let replacement_calls = Rc::new(Cell::new(0));
+        let replacement: Rc<dyn Fn(RequestFrameOptions)> = Rc::new({
+            let replacement_calls = replacement_calls.clone();
+            move |_| replacement_calls.set(replacement_calls.get() + 1)
+        });
+        callbacks.borrow_mut().request_frame = Some(Rc::new({
+            let callbacks = Rc::downgrade(&callbacks);
+            let original_calls = original_calls.clone();
+            move |options: RequestFrameOptions| {
+                assert!(options.force_render);
+                let callbacks = callbacks.upgrade().expect("callback owner is alive");
+                let mut callbacks = callbacks
+                    .try_borrow_mut()
+                    .expect("callback delivery must release the callbacks borrow");
+                assert!(!callbacks.force_render_after_recovery);
+                callbacks.request_frame = Some(replacement.clone());
+                original_calls.set(original_calls.get() + 1);
+            }
+        }));
+        callbacks.borrow_mut().force_render_after_recovery = true;
+
+        dispatch_frame_request(&callbacks, expose_request());
+        dispatch_frame_request(&callbacks, refresh_request());
+
+        assert_eq!(original_calls.get(), 1);
+        assert_eq!(replacement_calls.get(), 1);
+    }
+
+    #[test]
+    fn recovery_raised_during_delivery_survives_until_the_next_callback() {
+        let callbacks = Rc::new(RefCell::new(Callbacks::default()));
+        let received = Rc::new(RefCell::new(Vec::new()));
+        callbacks.borrow_mut().request_frame = Some(Rc::new({
+            let callbacks = Rc::downgrade(&callbacks);
+            let received = received.clone();
+            move |options: RequestFrameOptions| {
+                let mut received = received.borrow_mut();
+                received.push(options.force_render);
+                if received.len() == 1 {
+                    let callbacks = callbacks.upgrade().expect("callback owner is alive");
+                    callbacks.borrow_mut().force_render_after_recovery = true;
+                }
+            }
+        }));
+        callbacks.borrow_mut().force_render_after_recovery = true;
+
+        dispatch_frame_request(&callbacks, expose_request());
+        assert!(callbacks.borrow().force_render_after_recovery);
+        dispatch_frame_request(&callbacks, refresh_request());
+        dispatch_frame_request(&callbacks, expose_request());
+
+        assert_eq!(received.borrow().as_slice(), &[true, true, false]);
+        assert!(!callbacks.borrow().force_render_after_recovery);
+    }
+
+    #[test]
+    fn removing_a_callback_during_delivery_does_not_restore_it() {
+        let callbacks = Rc::new(RefCell::new(Callbacks::default()));
+        let calls = Rc::new(Cell::new(0));
+        callbacks.borrow_mut().request_frame = Some(Rc::new({
+            let callbacks = Rc::downgrade(&callbacks);
+            let calls = calls.clone();
+            move |_| {
+                let callbacks = callbacks.upgrade().expect("callback owner is alive");
+                callbacks.borrow_mut().request_frame = None;
+                calls.set(calls.get() + 1);
+            }
+        }));
+
+        dispatch_frame_request(&callbacks, expose_request());
+        dispatch_frame_request(&callbacks, refresh_request());
+
+        assert_eq!(calls.get(), 1);
+        assert!(callbacks.borrow().request_frame.is_none());
     }
 }
 

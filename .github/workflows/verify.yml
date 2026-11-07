@@ -175,27 +175,27 @@ jobs:
       - name: Test profiler-enabled core contracts
         if: matrix.name == 'windows'
         shell: pwsh
-        run: cargo nextest run --locked -p open-gpui --all-features --lib -E 'test(profiler) | test(draw_unwind)' -j 1 --test-threads=1 --no-fail-fast --no-tests fail
+        run: cargo nextest run --locked -p open-gpui --all-features --lib -E 'test(profiler) | test(draw_unwind) | test(frame_scheduling)' -j 1 --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Test instrumentation-disabled core contracts
         if: matrix.name == 'windows'
         shell: pwsh
-        run: cargo nextest run --locked -p open-gpui --no-default-features --features test-support --lib -E 'test(profiler) | test(draw_unwind)' -j 1 --test-threads=1 --no-fail-fast --no-tests fail
+        run: cargo nextest run --locked -p open-gpui --no-default-features --features test-support --lib --test frame_scheduling -E 'test(profiler) | test(draw_unwind) | test(frame_scheduling) | binary(frame_scheduling)' -j 1 --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Test lifecycle and journal public surfaces
         if: matrix.name == 'windows'
         shell: pwsh
-        run: cargo nextest run --locked -p open-gpui --all-features --test lifecycle --test foreground_journal --test frame_signals -j 1 --test-threads=1 --no-fail-fast --no-tests fail
+        run: cargo nextest run --locked -p open-gpui --all-features --test lifecycle --test foreground_journal --test frame_signals --test frame_scheduling -j 1 --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Test profiler-enabled independent consumer
         if: matrix.name == 'windows'
         shell: pwsh
-        run: cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --all-features --test profiler --test lifecycle --test foreground_journal --test frame_signals --target-dir target -j 1 --test-threads=1 --no-fail-fast --no-tests fail
+        run: cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --all-features --test profiler --test lifecycle --test foreground_journal --test frame_signals --test frame_scheduling --target-dir target -j 1 --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Test instrumentation-disabled independent consumer
         if: matrix.name == 'windows'
         shell: pwsh
-        run: cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test profiler --test lifecycle --test foreground_journal --test frame_signals --target-dir target -j 1 --test-threads=1 --no-fail-fast --no-tests fail
+        run: cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test profiler --test lifecycle --test foreground_journal --test frame_signals --test frame_scheduling --target-dir target -j 1 --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Run native WGPU package tests
         if: matrix.name == 'windows'

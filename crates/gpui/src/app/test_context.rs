@@ -651,6 +651,18 @@ impl TestAppContext {
         self.test_window(window).set_present_outcome(outcome);
     }
 
+    /// Delivers a scheduled backend callback and advances pending deterministic work.
+    pub fn simulate_window_scheduled_frame(&self, window: AnyWindowHandle) -> bool {
+        let delivered = self.test_window(window).simulate_scheduled_frame();
+        self.run_until_parked();
+        delivered
+    }
+
+    /// Returns whether the test backend still has a frame or compositor callback scheduled.
+    pub fn window_frame_scheduled(&self, window: AnyWindowHandle) -> bool {
+        self.test_window(window).frame_scheduled()
+    }
+
     /// Applies the latest queued mutation in one domain and emits its observed terminal facts.
     pub fn flush_window_mutation(
         &self,
@@ -1534,6 +1546,16 @@ impl VisualTestContext {
         let handled = self.test_window(self.window).simulate_frame(options);
         self.background_executor.run_until_parked();
         handled
+    }
+
+    /// Delivers one scheduled frame without introducing a callback while the source is parked.
+    pub fn simulate_scheduled_frame(&mut self) -> bool {
+        self.cx.simulate_window_scheduled_frame(self.window)
+    }
+
+    /// Returns whether this window's backend has pending frame or compositor callback demand.
+    pub fn frame_scheduled(&self) -> bool {
+        self.cx.window_frame_scheduled(self.window)
     }
 
     /// Activates accessibility for this test window.
