@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-08T00:06:15+08:00
+timestamp: 2026-11-08T02:43:00+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -476,6 +476,24 @@ verified_by:
   properties, initial-tree delivery and enabled/author-ID differences. Full refresh, AT/foreign
   native/browser execution, numerical costs, hot reload, docking and Nara adoption remain open.
 
+- The composite-focus/keyboard successor is implemented locally at
+  `53decdc64a2d182fad1fbf00ababcd2b55a906e7`, after
+  `156d0b8c1835108223bcf9fdd1f7d7c39a396013`, against the unchanged fixed target.
+  Complete official descendant focus, keyboard activation, Tab-group and missing-node mechanisms
+  reuse existing final-tree, focus and accepted-publication owners. Concrete local rollback and
+  refused-arm regressions precede the fixes. Focused owner/public 104, profiler-disabled affected
+  111, complete Core/public/WGPU/Windows 1,770 and UI core/components/docking/Canvas 2,966 pass;
+  four existing interactive Windows cases remain skipped. Actual native composite callback,
+  Submitted and exact release evidence stays distinct from OS/AT consumption. Seven threads are
+  closed. Independently locked type-only controls pass 4/4 in each feature mode, and the actual
+  Gallery selection passes 13/13. Locked workspace/consumer checks, affected correctness Clippy,
+  actual Windows Rust 1.92 and stable production wasm compilation in both profiling modes pass.
+  Root/independent formatting, existing static scans and workflow YAML parsing pass. No owned
+  Cargo remains active; no remote publication occurs.
+  The next coherent owner completes remaining property/configuration/initial-tree mechanisms,
+  followed by benchmark/report and hot reload. Full refresh, numerical budgets, canonical docking
+  U4-U9 and Nara renderer/View adoption remain open.
+
 # Historical Main Integration
 
 The previous snapshot recorded `df6ae2f` on July 9. The following integration summary retains that
@@ -516,8 +534,9 @@ historical scope and is not current branch or CI qualification.
   foreign native qualification open and retain the earlier Windows failure evidence alongside the
   later complete passing View cohort. The List/TextLayout/Rems/utility successor is now qualified
   within its recorded scope. Synthetic children and explicit published-tree inspection are now
-  qualified within their recorded scope. Continue the complete composite-widget focus/keyboard
-  owner, remaining official property/configuration/initial-tree mechanisms and the complete
+  qualified within their recorded scope. Composite-widget focus/keyboard implementation and
+  scoped runtime/compiler/ordinary-consumer qualification are recorded above. Continue the
+  remaining official property/configuration/initial-tree mechanisms and complete
   benchmark/report/hot-reload owners in the candidate queue's prerequisite order. Display
   getters and the foundation profiler do
   not qualify complete frame pacing. Apply the maintenance skill's official-baseline rule while

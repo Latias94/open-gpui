@@ -3734,6 +3734,143 @@ tail-latency budgets, canonical docking U4-U9 and Nara GPU/View selection remain
 threads close and no owned Cargo process remains active. Documentation closure needs document
 checks rather than another runtime cycle when no source changes follow.
 
+## Composite Focus And Keyboard Continuity
+
+The November 8 successor starts at `156d0b8c1835108223bcf9fdd1f7d7c39a396013`, against
+unchanged fixed Zed `635026fabc38440fce5e1767d125026a17b12012`. Official framework
+sources are `83d4847462e57a6f72dc314abea05d57d3bdcfb6` and
+`2268045a119030735f762e5afaf59da0bda869f4`. Their composite-focus declaration,
+real focused-ancestor gate, focus-generation keyboard arm, tab-group insertion and missing
+focus-node diagnostics are the baseline. Settings/product migrations remain outside the
+framework closure; property/configuration and synchronous initial activation-tree behavior
+remain separate successors.
+
+The implementation is committed locally at `53decdc64a2d182fad1fbf00ababcd2b55a906e7`.
+Qualification reuses Nara's ordinary target serially with one build job. No dependency,
+lockfile, declared compiler floor or engine default changes in this unit.
+
+The fork resolves active descendants from the final surviving semantic topology, after source
+validity, late geometry, modal filtering and deferred parentage. Its explicit accessibility-only
+focus override does not grant real keyboard ancestry and retains priority when different from
+the real focus. Inspection retains the original semantic focus separately from the selected
+active descendant. Diagnostics retain only focus identity and static missing-ID/role reasons;
+dedup/reset follows accepted publication.
+
+The fork's candidate acceptance requires two adaptations to the official keyboard mechanism.
+Actual input-time focus moves advance the Window-owned generation immediately, preserving ABA
+invalidation between draws. Provisional candidate focus advances it only when accepted; claims
+that reassert the same leaf do not count as moves. The existing key-event revision also rejects
+an intervening dispatch that an interceptor or capture listener stopped before the element.
+The official shared Enter/Space marker is retained, including adjacent Enter-down/Space-up.
+This unit does not introduce a key-identity restriction or a second focus owner.
+
+The initial all-feature production Core library check passes after rebuilding the user's
+cleared target. The first concrete owner regression executes and fails before correction
+(`dee1f37b-23cb-44e0-9df9-5c4ee4c61681`, 0/1): an enclosing failed prepaint transaction
+resurrects focus after irreversible interaction quiescence. This is a local rollback authority
+gap, not an official focus-generation behavior to remove. The actual atlas-refusal cohort then
+passes its three accepted inert/removal/same-handle-rebinding controls but fails the refused
+inert candidate (`083b5a61-36ca-480b-b3ee-abf0e3340722`, 3/4): eager suppression clears
+the arm still owned by the previous accepted frame, so the visible retry loses its click.
+
+Local rollback now preserves irreversible quiescence and its focus-claim cleanup. Window keeps
+the actual leaf last counted by its generation, separately from provisional focus intent, so
+direct or App-deferred quiescence counts the actual loss even after a candidate drops the old
+binding. Provisional-only intent does not invent a committed transition, and the established
+post-borrow cleanup schedule is preserved.
+Keyboard-arm retirement uses existing accepted prepaint publications rather than mutating shared
+accepted state while building. Complete public, native, ordinary-consumer and compiler
+qualification are still in progress.
+
+The first complete focused build exposes an unconstrained public callback event parameter;
+the consumer now names `TargetedEvent<ClickEvent>` explicitly. Source comparison also corrects
+the public consumer's overly strict cross-activation-key expectation to the official shared
+marker, retaining the orphan, intervening-key, focus-ABA and one-shot assertions. The corrected
+owner/public cohort passes 104/104 (`b7988642-48ab-4213-b3e0-d813edc2d02f`), filtering
+1,291 unrelated cases. It includes direct/cached Enter/Space atlas refusal and accepted
+retirement, App-deferred quiescence, candidate rollback/unwind, explicit override priority,
+final semantic parentage, source notification, Tab groups and exact root release.
+
+Bounded independent re-review closes the eager-arm-clear and deferred-quiescence counting
+findings without remaining confirmed P1/P2. All seven implementation/test/audit/review threads
+are closed. Static review and TestPlatform publication are separate from native Submitted,
+real assistive technology, ordinary dependency features and numerical-cost qualification.
+
+The new native Windows trajectory passes 1/1
+(`27d9d68d-bb1e-4b4c-a48b-c3f3e22b0296`), filtering 227 other Windows cases. Synthetic
+keys invoke the installed production native input callback outside App borrows; each records
+one exact delivered input and key revision. Synthetic accessibility activation, Menu/ListBox
+selection and source notification agree with the accepted tree/JSON beside nonempty actual
+Submitted generations. The trajectory retains outsider/Tab/focus-ABA/stopped-key/close-on-down
+controls, passive reads and exact HWND/native/root/App/TextSystem/OLE release. This is native
+renderer and callback execution, not OS-generated input, a real AT client, UIA event receipt,
+physical foreground focus or compositor scanout. Complete affected regression gates follow.
+
+Complete all-feature Core/WGPU/Windows library and integration tests pass 1,770/1,770
+(`1fa554ca-19dd-4d9a-b976-bcdc2e3fa02e`), with four existing interactive Windows cases
+skipped. The retired-interface compile-fail control rebuilds its separate dependencies after
+the user's target cleanup and passes without changing its assertion. All other Core/public,
+renderer and native scenarios, including the new composite trajectory, retain their assertions.
+This complete runtime cohort does not replace component, disabled, ordinary-consumer or
+compiler qualification below.
+
+Complete all-feature UI core/components/docking/Canvas library and integration tests pass
+2,966/2,966 without skips (`fbb00dd8-694d-41e9-9a71-03fc0e5e7373`). Virtualized models,
+overlay and field behavior, workspace movement and viewport lifecycle retain their original
+assertions. This regression gate neither completes canonical docking U4-U9 nor establishes a
+new Nara toolkit default or numerical-cost result.
+
+The profiler-disabled affected owner/public cohort passes 111/111 without failures
+(`1dbd6755-6af9-4a0d-8f9d-ef8d1e91ae85`), filtering 1,115 unrelated cases. All new
+focus/keyboard controls, accessibility owners, existing atlas/unwind controls and both public
+accessibility targets execute without profiling. This is an affected selection rather than a
+repeat of the full disabled Core matrix; the preceding all-feature full result retains its
+separate scope.
+
+The independently locked ordinary consumer's accessibility/composite targets pass 4/4 with
+all features (`a5b6be85-5dbe-4e24-8986-06e6e8d0a425`) and 4/4 without default features
+(`5cfdb6a9-4e2e-4d28-a587-cfe5a6ee7803`). The two new composite checks deliberately leave
+their Window/builder closures unexecuted and require neither test-support nor a direct AccessKit
+dependency. They qualify public signatures and ordinary dependency features; they do not borrow
+the real TestPlatform or Windows runtime coverage above. Both independent lock and package
+versions remain unchanged.
+
+The actual Gallery focus/accessibility selection passes 13/13
+(`f62ddf60-b6fc-4e8a-8b33-b0e7ed0a8a5f`), filtering 123 unrelated cases. Existing text
+value/selection, field help/error, live-region/busy/alert, repeated announcement, explicit tree
+copy, password and redacted-artifact workflows keep their original assertions. This is the
+affected Gallery selection, not a full Gallery or real AT gate. No runtime failure remains in
+the executed cohorts; compiler and static gates are recorded below.
+
+Locked Rust 1.95.0 whole-workspace all-target compilation and the independently locked
+consumer's all-target/all-feature compilation pass. Correctness Clippy passes all targets and
+all features for the affected Core/Windows owners with `-D clippy::correctness`. Existing style,
+test unwrap and docking dead-code warnings remain; these are not warning-free checks.
+
+Actual Windows Rust 1.92.0 all-target/all-feature checks pass for Core/Windows and the
+independently locked consumer. The declared floor remains 1.92; the fixed source's newer
+toolchain is not copied as a new requirement. These are Windows compilation gates, not
+execution on Linux/macOS or a performance claim. Production wasm and final static checks
+are recorded separately below.
+
+Stable Rust 1.95.0 production Core/WGPU/Web libraries compile for
+`wasm32-unknown-unknown` with profiling disabled and enabled. Browser/test-support execution and
+real AT are not qualified by these checks. The optional nightly shared-memory configuration and
+the non-debug whole App/native path are not rerun in this unit; earlier evidence retains its
+original source scope. No scheduler, Web dispatcher or shared-memory implementation changes.
+The rebuilt existing xtask passes import-boundary, public-API-tier, public-document-link and
+release-document scans. The edited verification workflow also parses as YAML. No hosted CI,
+remote publication or new scanner follows. Root and independently locked consumer format checks
+pass. All owned Cargo invocations have terminated; no runtime re-execution is needed for the
+following documentation-only qualification commit.
+
+Active-descendant resolution creates final ID/parent maps only when claims and a real focused
+node require them. Each claim's ancestor walk is bounded by the final node count. These
+correctness tests establish neither allocation/retention budgets nor a latency improvement;
+large composite-tree costs remain part of the separate benchmark/report owner. Non-debug
+self/multiple-claim branches remain source-covered by conditional tests but are not executed
+under a non-debug whole App configuration in this unit.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:

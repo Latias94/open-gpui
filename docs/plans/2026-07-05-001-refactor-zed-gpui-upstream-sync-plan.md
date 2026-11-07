@@ -1262,7 +1262,94 @@ owner is responsibility-equivalent; similarly named focus APIs are not. Continue
 composite-widget focus/keyboard consumer unit before benchmark/report/hot reload where its
 prerequisites permit. Do not close those official mechanisms with this synthetic/inspection unit.
 
+### Composite Focus And Keyboard Continuity Successor
+
+Start at `156d0b8c1835108223bcf9fdd1f7d7c39a396013`, against unchanged fixed Zed
+`635026fabc38440fce5e1767d125026a17b12012`. Complete the remaining composite-focus framework
+mechanisms of `83d4847462` and `2268045a11`: descendant-side active accessibility focus,
+uninterrupted keyboard activation, tab-group container ordering and missing-focus-node diagnostics.
+Keep the official focused-ancestor gate, self/multiple-claim diagnostics, focus ABA invalidation
+and regression scenarios. The fork's explicit accessibility-only focus binding remains a different
+capability; it must not supply the real keyboard ancestor required by active descendants.
+
+Use the existing final candidate focus, semantic tree, source validity, deferred parentage and
+accepted publication. Resolve active descendants from surviving final topology and actual keyboard
+focus after late paint validity, so discarded/filtered nodes and alternate accessibility focus
+cannot override it. Preserve the original GPUI focus separately from active-descendant focus in
+explicit inspection. Missing-ID/role diagnostics follow accepted publications and retain official
+per-focus dedup/reset without retaining authored content. No parallel focus or semantic owner is
+introduced.
+
+Keyboard activation uses actual focus transitions rather than the fork's all-claims revision.
+Same-focus reassertion is not a focus move. Successful input-time focus ABA cancels a held key;
+rejected candidate focus does not become an accepted transition. Existing input revisions can
+establish uninterrupted dispatch even when a different event is intercepted. Retained input state
+must remain tied to its admitted frame and element identity. Tab insertion moves inside the
+existing group scope while preserving subtree interactivity and geometry validity.
+
+Build actual public menu/listbox and native Windows consumers for navigation, activation, focus
+return, notification, reconstruction and exact owner release. Preserve source/candidate/atlas
+refusal, prepaint rollback, late geometry, hidden/modal/deferred and two-window controls. Qualify
+the ordinary independent consumer, instrumentation-off execution, affected component/Gallery/
+native cohorts, current compiler floor, wasm, formatting and static scans. Property/configuration,
+initial activation-tree, benchmark/report, hot reload, engine adoption, numerical costs and full
+fixed-target refresh keep their own complete units. Record actual failures and qualification
+before creating precise local commits.
+
+The [qualification](../verification.md#composite-focus-and-keyboard-continuity) records two
+executed owner failures before their fixes: failed local prepaint rollback resurrected quiesced
+focus, and an atlas-refused Inert candidate prematurely cleared the accepted keyboard arm.
+The corrected focused owner/public cohort passes 104/104. The fork retains the official shared
+Enter/Space marker, adds accepted publication for arm retirement, and counts actual focus through
+private Window metadata without changing App-deferred cleanup timing. Independent bounded review
+closes the direct/deferred quiescence and arm-admission findings. Complete Core/public/WGPU/
+Windows passes 1,770/1,770 with four existing interactive skips; UI core/components/docking/
+Canvas passes 2,966/2,966, disabled affected owners/public pass 111/111, independent type-only
+targets pass 4/4 in both modes and the Gallery selection passes 13/13. Locked compilation,
+affected correctness Clippy, actual Windows Rust 1.92 and stable production wasm in both profiling
+modes pass. Root/independent formatting and existing static scans pass; no whole-refresh
+completion follows.
+
+### Accessibility Properties, Configuration And Initial-Tree Successor
+
+After composite-focus qualification, finish the remaining framework slices of `83d4847462`,
+`2268045a11`, `9183ba4c5579c083b005d7f4c248d90c914fb46f` and
+`cc053a4a6fa2fd0e8793201ed9099466af1be0b1` against the same fixed target. Extend the existing
+property owner with official shortcut, numeric-step and author-identifier builders and writers;
+do not introduce a second `AriaProperties` alongside the fork's equivalent grouped owner.
+Preserve the official identifier's distinction from element identity and its documented platform
+exposure. Public final-tree and ordinary independent consumers must exercise these properties.
+
+Restore official enabled-versus-active queries and TestApp controls through the current activation
+owner. A force-disabled application stays disabled across activation requests; merely querying
+configuration must not activate a tree, subscribe, draw or change focus. Preserve official
+regressions and build real composite consumers that gate accessibility-only subscriptions using
+configuration rather than current AT attachment.
+
+Trace the complete fixed-target initial activation-tree callback and its follow-ups before
+changing the fork's sequenced-refresh adaptation. Reconcile synchronous initial response with
+exact native Window identity, checked-out App borrows, activation replacement, candidate refusal,
+title updates and retirement. Preserve a complete supported initial-tree mechanism; any retained
+timing difference needs a concrete lifecycle contract and native/public evidence. Keep initial
+response, accepted publication, Submitted frames and real AT consumption distinct.
+
+Complete that coherent property/configuration/activation unit before the independent benchmark/
+report and conditional hot-reload owners. It does not choose the engine renderer, Editor/game
+toolkit, canonical docking completion or numerical budgets.
+
 ## Maintained Baseline Before Engine Adaptation
+
+The [composite-focus qualification](../verification.md#composite-focus-and-keyboard-continuity)
+records local implementation `53decdc64a2d182fad1fbf00ababcd2b55a906e7`, finishing on
+November 8. Official composite focus, keyboard activation, Tab ordering and missing-node
+diagnostics are implemented through existing owners. Executed rollback/atlas-refusal failures
+precede their corrections. Complete Core/public/WGPU/Windows 1,770, components/docking/Canvas
+2,966, disabled affected 111, Gallery 13 and independent type-only 4/4 in each mode pass;
+four original interactive Windows cases remain skipped. Locked checks, affected correctness
+Clippy, actual Windows Rust 1.92, production wasm, formatting and existing static scans pass.
+Remaining property/configuration/initial-tree mechanisms precede benchmark/report and hot reload.
+Full refresh, numerical budgets,
+canonical docking and Nara GPU/View adoption remain open.
 
 The [synthetic/inspection qualification](../verification.md#synthetic-accessibility-and-explicit-published-tree-inspection)
 now records local implementation `751e563eb89eeb373dac41cf734bfe372b81d0e4`, finishing on
