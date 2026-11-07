@@ -7,17 +7,18 @@ use crate::linux::{
 };
 use open_gpui::{
     AnyWindowHandle, Bounds, CursorStyle, Decorations, DevicePixels, DisplayId, ForegroundExecutor,
-    GpuSpecs, Modifiers, NativeInputHandlerOutcome, Pixels, PlatformAtlas, PlatformDisplay,
-    PlatformInput, PlatformInputCallback, PlatformInputCallbackSlot, PlatformInputHandler,
-    PlatformInputHandlerSlot, PlatformNativeWindowRetirementOutcome,
-    PlatformPresentationShutdownOutcome, PlatformShouldCloseCallbackSlot, PlatformWindow,
-    PlatformWindowActiveStatusObservation, PlatformWindowCommand, PlatformWindowCommandDispatcher,
-    PlatformWindowCommandOutcome, PlatformWindowInteractionQuiescence,
-    PlatformWindowPresentOutcome, Point, PreparedPlatformPresentationShutdown, PromptButton,
-    PromptLevel, RequestFrameOptions, ResizeEdge, ScaledPixels, Scene, Size, Task, Tiling,
-    WindowActivationPolicy, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowControlArea, WindowCreationFacts, WindowDecorations, WindowKind, WindowParams,
-    WindowPresentationShutdownTicket, WindowVisibility, px,
+    FrameRequestSource, GpuSpecs, Modifiers, NativeInputHandlerOutcome, Pixels, PlatformAtlas,
+    PlatformDisplay, PlatformFrameSignal, PlatformInput, PlatformInputCallback,
+    PlatformInputCallbackSlot, PlatformInputHandler, PlatformInputHandlerSlot,
+    PlatformNativeWindowRetirementOutcome, PlatformPresentationShutdownOutcome,
+    PlatformShouldCloseCallbackSlot, PlatformWindow, PlatformWindowActiveStatusObservation,
+    PlatformWindowCommand, PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome,
+    PlatformWindowInteractionQuiescence, PlatformWindowPresentOutcome, Point,
+    PreparedPlatformPresentationShutdown, PromptButton, PromptLevel, RequestFrameOptions,
+    ResizeEdge, ScaledPixels, Scene, Size, Task, Tiling, WindowActivationPolicy, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowCreationFacts,
+    WindowDecorations, WindowKind, WindowParams, WindowPresentationShutdownTicket,
+    WindowVisibility, px,
 };
 use open_gpui_wgpu::{
     CompositorGpuHint, WgpuRenderer, WgpuSurfaceConfig, WgpuSurfaceShutdownProgress,
@@ -47,7 +48,7 @@ use std::{
     ptr::{NonNull, null_mut},
     rc::{Rc, Weak},
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use super::{
@@ -2849,6 +2850,38 @@ impl PlatformWindow for X11Window {
 
     fn is_fullscreen(&self) -> bool {
         self.0.state.borrow().fullscreen
+    }
+
+    fn request_frame(&self, mut options: RequestFrameOptions) {
+        if options.signal_at.is_none() {
+            options.signal_at = PlatformFrameSignal::capture(Instant::now);
+            options.signal_source = FrameRequestSource::LocalSchedule;
+        }
+        let executor = self.0.state.borrow().executor.clone();
+        let owner = Rc::downgrade(&self.1);
+        let state = Rc::downgrade(&self.0.state);
+        let callbacks = Rc::downgrade(&self.0.callbacks);
+        executor
+            .spawn(async move {
+                let Some(_owner) = owner.upgrade() else {
+                    return;
+                };
+                let (Some(state), Some(callbacks)) = (state.upgrade(), callbacks.upgrade()) else {
+                    return;
+                };
+                let blocks_frame = {
+                    let state = state.borrow();
+                    state.destroyed || state.renderer.presentation_shutdown_active()
+                };
+                if blocks_frame {
+                    return;
+                }
+                let callback = callbacks.borrow().request_frame.clone();
+                if let Some(callback) = callback {
+                    callback(options);
+                }
+            })
+            .detach();
     }
 
     fn on_request_frame(&self, callback: Box<dyn Fn(RequestFrameOptions)>) {

@@ -4353,6 +4353,7 @@ fn repeated_capture_release_rejection_settles_failed_after_bounded_delayed_retri
     assert!(platform_window.simulate_frame(RequestFrameOptions {
         require_presentation: true,
         force_render: true,
+        ..Default::default()
     }));
     cx.run_until_parked();
     assert_eq!(

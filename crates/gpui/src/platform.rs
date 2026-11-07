@@ -5110,6 +5110,16 @@ pub struct A11yCallbacks {
     pub deactivation: Box<dyn Fn() + Send + 'static>,
 }
 
+/// The source of a platform frame request's timestamp.
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Default)]
+pub enum FrameRequestSource {
+    /// An OS callback or compositor-paced frame request.
+    #[default]
+    NativeCallback,
+    /// A refresh timer, retry, queued wakeup, or fallback sleep paced by the app.
+    LocalSchedule,
+}
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Default)]
 #[expect(missing_docs)]
 pub struct RequestFrameOptions {
@@ -5117,6 +5127,130 @@ pub struct RequestFrameOptions {
     pub require_presentation: bool,
     /// Force refresh of all rendering states when true.
     pub force_render: bool,
+    /// When the platform first requested this frame, before main-thread dispatch.
+    ///
+    /// `None` means the captured request time is unavailable.
+    /// Coalesced requests carry their first request time, not their delivery time.
+    /// Built-in backends collect timestamps only with the `profiler` feature.
+    pub signal_at: Option<Instant>,
+    /// Distinguishes native callbacks from local scheduling requests.
+    pub signal_source: FrameRequestSource,
+}
+
+impl RequestFrameOptions {
+    /// Merges a later request's requirements and earliest known timestamp/source pair.
+    ///
+    /// A known timestamp takes precedence over an unavailable one. Equal timestamps and
+    /// two unavailable timestamps retain this request's source, preserving ingress order.
+    pub(crate) fn merge(&mut self, later: Self) {
+        self.force_render |= later.force_render;
+        self.require_presentation |= later.require_presentation;
+        let use_later_signal = match (self.signal_at, later.signal_at) {
+            (Some(first), Some(later)) => later < first,
+            (None, Some(_)) => true,
+            (Some(_), None) | (None, None) => false,
+        };
+        if use_later_signal {
+            self.signal_at = later.signal_at;
+            self.signal_source = later.signal_source;
+        }
+    }
+}
+
+/// Preserves the first platform frame request time across coalesced notifications.
+///
+/// Producers may record from a platform thread without waiting for the UI thread.
+/// The consumer drains the timestamp before dispatching the request on the UI thread.
+/// The timestamp offset and source share one atomic word so coalescing cannot
+/// mix a request's time with another request's source. The low bit encodes the
+/// source; the remaining bits encode nanoseconds from `origin`. `u64::MAX` is empty.
+/// Without the `profiler` feature, this accumulator has no timestamp storage.
+pub struct PlatformFrameSignal {
+    #[cfg(feature = "profiler")]
+    origin: Instant,
+    #[cfg(feature = "profiler")]
+    first_signal: std::sync::atomic::AtomicU64,
+}
+
+impl Default for PlatformFrameSignal {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl PlatformFrameSignal {
+    /// Creates an empty signal accumulator.
+    pub fn new() -> Self {
+        Self {
+            #[cfg(feature = "profiler")]
+            origin: Instant::now(),
+            #[cfg(feature = "profiler")]
+            first_signal: std::sync::atomic::AtomicU64::new(u64::MAX),
+        }
+    }
+
+    /// Captures a platform request timestamp only when profiling is enabled.
+    ///
+    /// The closure is not invoked in profiler-disabled builds.
+    #[inline]
+    pub fn capture(capture: impl FnOnce() -> Instant) -> Option<Instant> {
+        if cfg!(feature = "profiler") {
+            Some(capture())
+        } else {
+            None
+        }
+    }
+
+    /// Records a platform frame request, retaining the first undrained timestamp.
+    #[inline]
+    #[cfg_attr(not(feature = "profiler"), expect(unused_variables))]
+    pub fn record(&self, at: Instant, source: FrameRequestSource) {
+        #[cfg(feature = "profiler")]
+        {
+            let nanoseconds = at
+                .saturating_duration_since(self.origin)
+                .as_nanos()
+                .min(u128::from((u64::MAX >> 1) - 1)) as u64;
+            let source_bit = match source {
+                FrameRequestSource::NativeCallback => 0,
+                FrameRequestSource::LocalSchedule => 1,
+            };
+            self.first_signal.fetch_min(
+                (nanoseconds << 1) | source_bit,
+                std::sync::atomic::Ordering::Relaxed,
+            );
+        }
+    }
+
+    /// Records the current platform request time only when profiling is enabled.
+    #[inline]
+    pub fn record_now(&self, source: FrameRequestSource) {
+        if let Some(at) = Self::capture(Instant::now) {
+            self.record(at, source);
+        }
+    }
+
+    /// Drains the first platform frame request time and source, leaving the accumulator empty.
+    #[inline]
+    pub fn take(&self) -> Option<(Instant, FrameRequestSource)> {
+        #[cfg(feature = "profiler")]
+        {
+            let signal = self
+                .first_signal
+                .swap(u64::MAX, std::sync::atomic::Ordering::Relaxed);
+            (signal != u64::MAX).then(|| {
+                let source = match signal & 1 {
+                    0 => FrameRequestSource::NativeCallback,
+                    _ => FrameRequestSource::LocalSchedule,
+                };
+                (self.origin + Duration::from_nanos(signal >> 1), source)
+            })
+        }
+        #[cfg(not(feature = "profiler"))]
+        {
+            None
+        }
+    }
 }
 
 /// A cloneable, one-way native interaction gate for one platform window.
@@ -5441,6 +5575,9 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance);
     fn is_fullscreen(&self) -> bool;
     /// Requests one backend frame callback without requiring native visibility.
+    ///
+    /// Preserve a supplied captured timestamp and its source together. A backend supplying
+    /// a missing timestamp captures a local-scheduling pair only with profiling enabled.
     #[doc(hidden)]
     fn request_frame(&self, _options: RequestFrameOptions) {}
     fn on_request_frame(&self, callback: Box<dyn Fn(RequestFrameOptions)>);
@@ -8879,6 +9016,234 @@ mod presentation_shutdown_tests {
         assert!(!ticket.acknowledge_native_terminal());
         assert!(!ticket.snapshot().quiesced());
         assert!(ticket.snapshot().protocol_violation());
+    }
+}
+
+#[cfg(test)]
+mod frame_request_options_tests {
+    use super::*;
+    use FrameRequestSource::{LocalSchedule, NativeCallback};
+
+    #[test]
+    fn merged_requests_keep_requirements_and_the_earliest_known_signal_pair() {
+        let first = Instant::now();
+        let later = first + Duration::from_millis(16);
+        for (initial_signal, incoming_signal, expected_signal) in [
+            (
+                (Some(first), LocalSchedule),
+                (Some(later), NativeCallback),
+                (Some(first), LocalSchedule),
+            ),
+            (
+                (Some(later), NativeCallback),
+                (Some(first), LocalSchedule),
+                (Some(first), LocalSchedule),
+            ),
+            (
+                (None, NativeCallback),
+                (Some(first), LocalSchedule),
+                (Some(first), LocalSchedule),
+            ),
+            (
+                (Some(first), LocalSchedule),
+                (None, NativeCallback),
+                (Some(first), LocalSchedule),
+            ),
+            (
+                (None, LocalSchedule),
+                (None, NativeCallback),
+                (None, LocalSchedule),
+            ),
+            (
+                (Some(first), LocalSchedule),
+                (Some(first), NativeCallback),
+                (Some(first), LocalSchedule),
+            ),
+            (
+                (Some(first), NativeCallback),
+                (Some(first), LocalSchedule),
+                (Some(first), NativeCallback),
+            ),
+        ] {
+            let mut options = RequestFrameOptions {
+                require_presentation: true,
+                signal_at: initial_signal.0,
+                signal_source: initial_signal.1,
+                ..Default::default()
+            };
+            options.merge(RequestFrameOptions {
+                force_render: true,
+                signal_at: incoming_signal.0,
+                signal_source: incoming_signal.1,
+                ..Default::default()
+            });
+            assert!(options.require_presentation);
+            assert!(options.force_render);
+            assert_eq!((options.signal_at, options.signal_source), expected_signal);
+        }
+
+        let mut options = RequestFrameOptions::default();
+        options.merge(RequestFrameOptions::default());
+        assert_eq!(options, RequestFrameOptions::default());
+    }
+}
+
+#[cfg(test)]
+mod frame_signal_tests {
+    use super::*;
+
+    #[cfg(feature = "profiler")]
+    #[test]
+    fn coalesced_signals_retain_the_earliest_until_drained() {
+        for (first_source, later_source) in [
+            (
+                FrameRequestSource::NativeCallback,
+                FrameRequestSource::LocalSchedule,
+            ),
+            (
+                FrameRequestSource::LocalSchedule,
+                FrameRequestSource::NativeCallback,
+            ),
+        ] {
+            let signal = PlatformFrameSignal::new();
+            let first =
+                PlatformFrameSignal::capture(Instant::now).expect("profiling captures requests");
+            assert_eq!(signal.take(), None);
+            signal.record(first + Duration::from_millis(16), later_source);
+            signal.record(first, first_source);
+            signal.record(first + Duration::from_millis(32), later_source);
+            assert_eq!(signal.take(), Some((first, first_source)));
+            assert_eq!(signal.take(), None);
+            let next = first + Duration::from_millis(48);
+            signal.record(next, later_source);
+            assert_eq!(signal.take(), Some((next, later_source)));
+        }
+    }
+
+    #[cfg(not(feature = "profiler"))]
+    #[test]
+    fn disabled_profiling_does_not_capture_or_store_timestamps() {
+        let captured = PlatformFrameSignal::capture(|| {
+            panic!("profiler-disabled builds must not evaluate the capture closure");
+        });
+        assert_eq!(captured, None);
+        let signal = PlatformFrameSignal::new();
+        signal.record(Instant::now(), FrameRequestSource::LocalSchedule);
+        assert_eq!(signal.take(), None);
+    }
+
+    #[cfg(not(feature = "profiler"))]
+    #[test]
+    fn disabled_accumulator_has_no_storage_for_current_time_requests() {
+        assert_eq!(std::mem::size_of::<PlatformFrameSignal>(), 0);
+        let signal = PlatformFrameSignal::default();
+        signal.record_now(FrameRequestSource::LocalSchedule);
+        signal.record_now(FrameRequestSource::NativeCallback);
+        assert_eq!(signal.take(), None);
+    }
+
+    #[cfg(feature = "profiler")]
+    #[test]
+    fn current_time_requests_capture_their_source_and_drain_once() {
+        let signal = PlatformFrameSignal::default();
+        for source in [
+            FrameRequestSource::LocalSchedule,
+            FrameRequestSource::NativeCallback,
+        ] {
+            let before = Instant::now();
+            signal.record_now(source);
+            let after = Instant::now();
+            let (at, recorded_source) = signal.take().expect("profiling records the current time");
+            assert!(before <= at && at <= after);
+            assert_eq!(recorded_source, source);
+            assert_eq!(signal.take(), None);
+        }
+    }
+
+    #[cfg(feature = "profiler")]
+    #[test]
+    fn equal_timestamp_sources_follow_the_official_atomic_encoding() {
+        for sources in [
+            [
+                FrameRequestSource::LocalSchedule,
+                FrameRequestSource::NativeCallback,
+            ],
+            [
+                FrameRequestSource::NativeCallback,
+                FrameRequestSource::LocalSchedule,
+            ],
+        ] {
+            let signal = PlatformFrameSignal::new();
+            let at = signal.origin + Duration::from_nanos(1);
+            for source in sources {
+                signal.record(at, source);
+            }
+            assert_eq!(
+                signal.take(),
+                Some((at, FrameRequestSource::NativeCallback))
+            );
+        }
+    }
+
+    #[cfg(all(feature = "profiler", not(target_family = "wasm")))]
+    #[test]
+    fn concurrent_records_and_drains_keep_timestamp_sources_paired() {
+        let signal = PlatformFrameSignal::new();
+        let begin = std::sync::Barrier::new(3);
+        let finish = std::sync::Barrier::new(3);
+        let origin = signal.origin;
+        let observations = std::thread::scope(|scope| {
+            for source in [
+                FrameRequestSource::NativeCallback,
+                FrameRequestSource::LocalSchedule,
+            ] {
+                let signal = &signal;
+                let begin = &begin;
+                let finish = &finish;
+                scope.spawn(move || {
+                    for round in 0..128_u64 {
+                        let native_is_first = round % 2 == 0;
+                        let is_first =
+                            native_is_first == (source == FrameRequestSource::NativeCallback);
+                        let at =
+                            origin + Duration::from_nanos(round * 2 + 1 + u64::from(!is_first));
+                        begin.wait();
+                        signal.record(at, source);
+                        finish.wait();
+                    }
+                });
+            }
+            let mut observations = Vec::new();
+            for _ in 0..128 {
+                begin.wait();
+                let during_recording = signal.take();
+                finish.wait();
+                observations.push([during_recording, signal.take()]);
+            }
+            observations
+        });
+        for (round, drained) in observations.into_iter().enumerate() {
+            let first = origin + Duration::from_nanos(round as u64 * 2 + 1);
+            let first_source = if round % 2 == 0 {
+                FrameRequestSource::NativeCallback
+            } else {
+                FrameRequestSource::LocalSchedule
+            };
+            let recorded = drained.into_iter().flatten().collect::<Vec<_>>();
+            for &(at, source) in &recorded {
+                if at == first {
+                    assert_eq!(source, first_source);
+                } else {
+                    assert_eq!(at, first + Duration::from_nanos(1));
+                    assert_ne!(source, first_source);
+                }
+            }
+            assert_eq!(
+                recorded.into_iter().min_by_key(|&(at, _)| at),
+                Some((first, first_source))
+            );
+        }
+        assert_eq!(signal.take(), None);
     }
 }
 

@@ -14,12 +14,17 @@ use open_gpui::profiler::{
     hang::{HangMonitorConfig, HangMonitorPollReason},
     journal::{
         ForegroundEvent, ForegroundJournalCollector, ForegroundJournalEntry, IntervalBoundary,
+        PlatformSignal,
     },
 };
 use open_gpui::{
-    FocusHandle, FrameDurationSnapshot, FrameEvent, FrameTiming, FrameTimingCollector,
-    InputLatencySnapshot, InteractiveElement, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent,
-    MouseUpEvent, WindowHandle, WindowInitialPresentationStatus, fill, profiler, rgb,
+    FocusHandle, FrameDurationSnapshot, FrameEvent, FrameRequestSource, FrameTiming,
+    FrameTimingCollector, InputLatencySnapshot, InteractiveElement, KeyDownEvent, Keystroke,
+    MouseButton, MouseDownEvent, MouseUpEvent, RequestFrameOptions, WindowHandle,
+    WindowInitialPresentationStatus, fill, profiler, rgb,
+};
+use windows::Win32::UI::WindowsAndMessaging::{
+    SW_HIDE, SW_RESTORE, SW_SHOWMINNOACTIVE, SW_SHOWNOACTIVATE,
 };
 
 struct RestoreNativeProfilerTrace(bool);
@@ -44,6 +49,12 @@ struct NativeProfilerPaint {
     previous_revision: u64,
     painted_at: Instant,
     pending_inputs: u64,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct NativeProfilerSignal {
+    options: RequestFrameOptions,
+    entered_at: Instant,
 }
 
 struct NativeProfilerRoot {
@@ -108,6 +119,7 @@ struct NativeProfilerWindow {
     registration: RegisteredWindow,
     native: Rc<WindowsWindowInner>,
     paints: Rc<RefCell<Vec<NativeProfilerPaint>>>,
+    signals: Rc<RefCell<Vec<NativeProfilerSignal>>>,
     operations: RefCell<Vec<(Instant, Instant)>>,
 }
 
@@ -149,11 +161,31 @@ impl NativeProfilerWindow {
             .window_from_hwnd(registration.as_raw())
             .expect("the profiler consumer HWND must have a native owner");
         assert_eq!(native.registration, registration);
+        let signals = Rc::new(RefCell::new(Vec::new()));
+        let callback_signals = signals.clone();
+        let request_frame = native
+            .state
+            .callbacks
+            .request_frame
+            .take()
+            .expect("the native profiler consumer must retain its production frame callback");
+        native
+            .state
+            .callbacks
+            .request_frame
+            .set(Some(Rc::new(move |options| {
+                callback_signals.borrow_mut().push(NativeProfilerSignal {
+                    options,
+                    entered_at: Instant::now(),
+                });
+                request_frame(options);
+            })));
         Self {
             handle,
             registration,
             native,
             paints,
+            signals,
             operations: RefCell::new(vec![(started_at, Instant::now())]),
         }
     }
@@ -312,11 +344,44 @@ impl NativeProfilerWindow {
                 .read()
                 .contains(&self.registration)
         );
+        let renderer_borrow = self.native.state.renderer.borrow_mut();
         app.update_for_test(|cx| {
             self.handle
                 .update(cx, |_, window, cx| window.remove_window(cx))
         })
         .expect("the exact native profiler consumer must close");
+        assert!(unsafe { IsWindow(Some(hwnd)).as_bool() });
+        assert!(
+            platform
+                .raw_window_handles
+                .read()
+                .contains(&self.registration)
+        );
+        assert!(self.native.state.frame_signal.take().is_none());
+        platform.raw_window_handles.record_frame_signal(
+            self.registration,
+            Some(Instant::now()),
+            FrameRequestSource::NativeCallback,
+        );
+        assert!(
+            self.native.state.frame_signal.take().is_none(),
+            "shutdown claim must reject late VSync capture before native retirement"
+        );
+        let callbacks_before_retirement = self.signals.borrow().len();
+        self.native.request_frame(RequestFrameOptions {
+            signal_source: FrameRequestSource::LocalSchedule,
+            ..RequestFrameOptions::default()
+        });
+        unsafe {
+            SendMessageW(
+                hwnd,
+                crate::WM_GPUI_FORCE_UPDATE_WINDOW,
+                Some(WPARAM(self.registration.generation())),
+                None,
+            );
+        }
+        assert_eq!(self.signals.borrow().len(), callbacks_before_retirement);
+        drop(renderer_borrow);
         pump_messages_until_with_delay(
             "exact native profiler registration retirement",
             Duration::from_millis(5),
@@ -788,6 +853,26 @@ fn assert_native_foreground_journal(
     };
     let observed = markers(&drained.entries);
     assert_eq!(observed, markers(&second.entries));
+    let platform_signals = |entries: &[ForegroundJournalEntry]| {
+        entries
+            .iter()
+            .filter_map(|entry| {
+                let ForegroundJournalEntry::PlatformSignal(signal) = entry else {
+                    return None;
+                };
+                Some((
+                    signal.window_id,
+                    signal.signal_at,
+                    signal.handled_at,
+                    signal.source,
+                ))
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        platform_signals(&drained.entries),
+        platform_signals(&second.entries)
+    );
     assert!(observed.iter().any(|(kind, _, _)| *kind == "mouse_down"));
     assert!(observed.iter().any(|(kind, _, _)| *kind == "key_down"));
     assert!(drained.entries.iter().any(|entry| {
@@ -800,6 +885,288 @@ fn assert_native_foreground_journal(
             && frame.frame.draw_start <= paint.painted_at
             && paint.painted_at <= frame.frame.draw_end
     }));
+    let callbacks = consumer.signals.borrow();
+    let matching_signals = drained
+        .entries
+        .iter()
+        .filter_map(|entry| {
+            let ForegroundJournalEntry::PlatformSignal(signal) = entry else {
+                return None;
+            };
+            let at = signal.signal_at?;
+            let callback = callbacks.iter().find(|callback| {
+                signal.window_id == consumer.handle.window_id()
+                    && callback.options.signal_at == Some(at)
+                    && callback.options.signal_source == signal.source
+            })?;
+            assert!(at <= callback.entered_at);
+            assert!(callback.entered_at <= signal.handled_at);
+            Some(signal)
+        })
+        .count();
+    assert!(
+        matching_signals > 0,
+        "native callbacks must reach the raw platform-signal journal"
+    );
     assert!(collector.collect_unseen().entries.is_empty());
     assert!(independent.collect_unseen().entries.is_empty());
+}
+
+fn wait_for_native_platform_signal(
+    consumer: &NativeProfilerWindow,
+    collector: &mut ForegroundJournalCollector,
+    at: Option<Instant>,
+    source: FrameRequestSource,
+) -> PlatformSignal {
+    let mut observed = None;
+    pump_messages_until(
+        "native callback timestamp/source in the raw journal",
+        || {
+            let drained = collector.collect_unseen();
+            assert_eq!(drained.lost, 0);
+            for entry in drained.entries {
+                if let ForegroundJournalEntry::PlatformSignal(signal) = entry
+                    && signal.window_id == consumer.handle.window_id()
+                    && signal.signal_at == at
+                    && signal.source == source
+                {
+                    assert!(
+                        observed.replace(signal).is_none(),
+                        "coalesced callbacks must emit one raw signal"
+                    );
+                }
+            }
+            observed.is_some()
+        },
+    );
+    let signal = observed.expect("the exact native callback signal must reach the raw journal");
+    let callbacks = consumer.signals.borrow();
+    let callback = callbacks
+        .iter()
+        .find(|callback| {
+            callback.options.signal_at == at && callback.options.signal_source == source
+        })
+        .expect("the raw journal must retain the pair observed at the production callback");
+    if let Some(at) = at {
+        assert!(at <= callback.entered_at);
+    }
+    assert!(callback.entered_at <= signal.handled_at);
+    signal
+}
+
+/// Exercises injected timestamp/source pairs through real callbacks and submissions, then observes
+/// an actual background VSync signal before native delivery. Visibility and retirement use real
+/// HWND operations; the reused-HWND control substitutes a stale registration, not a graphics receipt.
+#[test]
+fn native_frame_signals_preserve_coalescing_visibility_retirement_and_vsync_origin() {
+    discard_stale_quit_messages();
+    let _restore_trace = RestoreNativeProfilerTrace(profiler::trace_enabled());
+    profiler::set_trace_enabled(false);
+    let (_observation_guard, observation) = begin_native_window_test_observation();
+    let platform = Rc::new(WindowsPlatform::new(false).expect("native frame-signal backend"));
+    let platform_hwnd = platform.handle;
+    let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
+    let mut collector = app.update_for_test(|cx| cx.foreground_journal().collector());
+    let consumer = NativeProfilerWindow::open(&mut app, &platform);
+    let mut source = NativeProfilerSource::default();
+    let (mut generation, _) = consumer.wait_for_submission(&mut app, source, 0);
+    consumer.settle(&mut app);
+    collector.collect_unseen();
+    consumer.native.state.frame_signal.take();
+    unsafe {
+        SendMessageW(consumer.registration.as_raw(), WM_PAINT, None, None);
+    }
+    wait_for_native_platform_signal(
+        &consumer,
+        &mut collector,
+        None,
+        FrameRequestSource::NativeCallback,
+    );
+
+    for first_source in [
+        FrameRequestSource::LocalSchedule,
+        FrameRequestSource::NativeCallback,
+    ] {
+        let later_source = match first_source {
+            FrameRequestSource::LocalSchedule => FrameRequestSource::NativeCallback,
+            FrameRequestSource::NativeCallback => FrameRequestSource::LocalSchedule,
+        };
+        consumer.native.state.frame_signal.take();
+        consumer.signals.borrow_mut().clear();
+        let first_at = Instant::now();
+        let later_at = first_at + Duration::from_nanos(1);
+        platform.raw_window_handles.record_frame_signal(
+            consumer.registration,
+            Some(later_at),
+            later_source,
+        );
+        platform.raw_window_handles.record_frame_signal(
+            consumer.registration,
+            Some(first_at),
+            first_source,
+        );
+        source.redraws += 1;
+        app.update_for_test(|cx| {
+            consumer
+                .handle
+                .update(cx, |root, window, cx| {
+                    root.source = source;
+                    window.refresh();
+                    cx.notify();
+                })
+                .expect("coalesced native frames must retain their real consumer");
+            unsafe {
+                SendMessageW(consumer.registration.as_raw(), WM_PAINT, None, None);
+                SendMessageW(
+                    consumer.registration.as_raw(),
+                    crate::WM_GPUI_FORCE_UPDATE_WINDOW,
+                    Some(WPARAM(consumer.registration.generation())),
+                    None,
+                );
+            }
+            consumer.native.request_frame(RequestFrameOptions {
+                require_presentation: true,
+                force_render: false,
+                signal_at: None,
+                signal_source: FrameRequestSource::LocalSchedule,
+            });
+        });
+        wait_for_native_platform_signal(&consumer, &mut collector, Some(first_at), first_source);
+        let callbacks = consumer.signals.borrow();
+        assert!(
+            callbacks
+                .iter()
+                .any(|callback| callback.options.force_render)
+        );
+        assert!(callbacks.iter().any(|callback| {
+            callback.options.require_presentation
+                && callback.options.signal_source == FrameRequestSource::LocalSchedule
+                && callback
+                    .options
+                    .signal_at
+                    .is_some_and(|at| first_at <= at && at <= callback.entered_at)
+        }));
+        drop(callbacks);
+        generation = consumer.wait_for_submission(&mut app, source, generation).0;
+        consumer.settle(&mut app);
+        collector.collect_unseen();
+    }
+
+    for (hide, show) in [
+        (SW_HIDE, SW_SHOWNOACTIVATE),
+        (SW_SHOWMINNOACTIVE, SW_RESTORE),
+    ] {
+        let stale_at = Instant::now();
+        platform.raw_window_handles.record_frame_signal(
+            consumer.registration,
+            Some(stale_at),
+            FrameRequestSource::NativeCallback,
+        );
+        let _ = unsafe { ShowWindow(consumer.registration.as_raw(), hide) };
+        assert!(consumer.native.state.frame_signal.take().is_none());
+        platform.raw_window_handles.record_frame_signal(
+            consumer.registration,
+            Some(stale_at),
+            FrameRequestSource::LocalSchedule,
+        );
+        assert!(consumer.native.state.frame_signal.take().is_none());
+        consumer.signals.borrow_mut().clear();
+        source.redraws += 1;
+        app.update_for_test(|cx| {
+            consumer
+                .handle
+                .update(cx, |root, window, cx| {
+                    root.source = source;
+                    window.refresh();
+                    cx.notify();
+                })
+                .expect("hidden and minimized consumers remain logically live");
+        });
+        let _ = unsafe { ShowWindow(consumer.registration.as_raw(), show) };
+        generation = consumer.wait_for_submission(&mut app, source, generation).0;
+        consumer.settle(&mut app);
+        assert!(
+            consumer
+                .signals
+                .borrow()
+                .iter()
+                .all(|callback| callback.options.signal_at != Some(stale_at))
+        );
+        let drained = collector.collect_unseen();
+        assert_eq!(drained.lost, 0);
+        assert!(drained.entries.iter().all(|entry| {
+            !matches!(entry, ForegroundJournalEntry::PlatformSignal(signal) if signal.signal_at == Some(stale_at))
+        }));
+    }
+
+    let retired_registration = consumer.registration;
+    let retired_signal = consumer.native.state.frame_signal.clone();
+    platform.raw_window_handles.record_frame_signal(
+        retired_registration,
+        Some(Instant::now()),
+        FrameRequestSource::NativeCallback,
+    );
+    consumer.retire(&mut app, &platform, &observation);
+    assert!(retired_signal.take().is_none());
+    assert_eq!(
+        Arc::strong_count(&retired_signal),
+        1,
+        "retired registrations must release their signal association"
+    );
+    platform.raw_window_handles.record_frame_signal(
+        retired_registration,
+        Some(Instant::now()),
+        FrameRequestSource::LocalSchedule,
+    );
+    assert!(retired_signal.take().is_none());
+
+    let rebuilt = NativeProfilerWindow::open(&mut app, &platform);
+    assert_ne!(
+        rebuilt.registration.generation(),
+        retired_registration.generation()
+    );
+    assert!(!Arc::ptr_eq(
+        &retired_signal,
+        &rebuilt.native.state.frame_signal
+    ));
+    rebuilt.wait_for_submission(&mut app, NativeProfilerSource::default(), 0);
+    rebuilt.settle(&mut app);
+    rebuilt.native.state.frame_signal.take();
+    let reused_hwnd_snapshot = RegisteredWindow::new(
+        rebuilt.registration.as_raw(),
+        retired_registration.generation(),
+        retired_registration.window_id(),
+    );
+    platform.raw_window_handles.record_frame_signal(
+        reused_hwnd_snapshot,
+        Some(Instant::now()),
+        FrameRequestSource::NativeCallback,
+    );
+    assert!(rebuilt.native.state.frame_signal.take().is_none());
+    collector.collect_unseen();
+
+    platform.begin_vsync_thread();
+    let captured = (0..MAX_MESSAGE_PUMP_ATTEMPTS)
+        .find_map(|_| {
+            if let Some(signal) = rebuilt.native.state.frame_signal.take() {
+                rebuilt.native.state.frame_signal.record(signal.0, signal.1);
+                Some(signal)
+            } else {
+                std::thread::sleep(Duration::from_millis(5));
+                None
+            }
+        })
+        .expect("the actual background VSync producer must capture before foreground delivery");
+    unsafe {
+        SendMessageW(rebuilt.registration.as_raw(), WM_PAINT, None, None);
+    }
+    wait_for_native_platform_signal(&rebuilt, &mut collector, Some(captured.0), captured.1);
+    rebuilt.retire(&mut app, &platform, &observation);
+    drop(app);
+    drop(platform);
+    pump_messages_until_with_delay(
+        "frame-signal platform retirement",
+        Duration::from_millis(5),
+        || unsafe { !IsWindow(Some(platform_hwnd)).as_bool() },
+    );
 }

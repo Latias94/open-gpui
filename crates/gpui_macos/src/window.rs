@@ -1,7 +1,7 @@
 use crate::{
-    BoolExt, DisplayLink, DisplayLinkError, MacDisplay, MacDisplayTopologyHandle,
-    MacDisplayTopologySnapshot, MacDisplayTopologySubscription, NSRange, NSStringExt,
-    TISCopyCurrentKeyboardInputSource, TISGetInputSourceProperty, ValidatedMacDisplayTarget,
+    BoolExt, DisplayLinkError, MacDisplay, MacDisplayTopologyHandle, MacDisplayTopologySnapshot,
+    MacDisplayTopologySubscription, NSRange, NSStringExt, TISCopyCurrentKeyboardInputSource,
+    TISGetInputSourceProperty, ValidatedMacDisplayTarget, WindowFrameSource,
     events::platform_input_from_native, kTISPropertyInputSourceIsASCIICapable,
     kTISPropertyInputSourceType, kTISTypeKeyboardInputMode, ns_string, renderer,
 };
@@ -27,18 +27,18 @@ use cocoa::{
 use image::RgbaImage;
 use open_gpui::{
     AnyWindowHandle, BackgroundExecutor, Bounds, Capslock, CursorStyle, ExternalPaths,
-    FileDropEvent, ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas,
-    PlatformDisplay, PlatformInput, PlatformInputCallback, PlatformInputCallbackSlot,
-    PlatformInputHandler, PlatformInputHandlerSlot, PlatformNativeWindowRetirementOutcome,
-    PlatformPresentationShutdownOutcome, PlatformShouldCloseCallbackSlot, PlatformWindow,
-    PlatformWindowActiveStatusObservation, PlatformWindowCommand, PlatformWindowCommandDispatcher,
-    PlatformWindowCommandOutcome, PlatformWindowInteractionQuiescence,
-    PlatformWindowPresentOutcome, Point, PreparedPlatformPresentationShutdown, PromptButton,
-    PromptLevel, RequestFrameOptions, SharedString, Size, SystemWindowTab, WindowActivationPolicy,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
-    WindowCreationFacts, WindowId, WindowKind, WindowParams, WindowPresentationShutdownTicket,
-    WindowVisibility, point, px, size,
+    FileDropEvent, ForegroundExecutor, FrameRequestSource, KeyDownEvent, Keystroke, Modifiers,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
+    PlatformAtlas, PlatformDisplay, PlatformFrameSignal, PlatformInput, PlatformInputCallback,
+    PlatformInputCallbackSlot, PlatformInputHandler, PlatformInputHandlerSlot,
+    PlatformNativeWindowRetirementOutcome, PlatformPresentationShutdownOutcome,
+    PlatformShouldCloseCallbackSlot, PlatformWindow, PlatformWindowActiveStatusObservation,
+    PlatformWindowCommand, PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome,
+    PlatformWindowInteractionQuiescence, PlatformWindowPresentOutcome, Point,
+    PreparedPlatformPresentationShutdown, PromptButton, PromptLevel, RequestFrameOptions,
+    SharedString, Size, SystemWindowTab, WindowActivationPolicy, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowCreationFacts, WindowId,
+    WindowKind, WindowParams, WindowPresentationShutdownTicket, WindowVisibility, point, px, size,
 };
 
 mod visibility;
@@ -61,6 +61,7 @@ use objc::{
     sel, sel_impl,
 };
 use objc2_app_kit::NSBeep;
+use open_gpui_scheduler::Instant;
 use parking_lot::Mutex;
 use raw_window_handle as rwh;
 use smallvec::SmallVec;
@@ -1146,6 +1147,7 @@ enum MacWindowObservationEvent {
 struct MacWindowPendingObservationEvent<O = MacWindowNativeObservation> {
     kind: MacWindowObservationEvent,
     observation: Option<O>,
+    signal_at: Option<Instant>,
 }
 
 impl<O> MacWindowPendingObservationEvent<O> {
@@ -1153,6 +1155,7 @@ impl<O> MacWindowPendingObservationEvent<O> {
         Self {
             kind,
             observation: Some(observation),
+            signal_at: None,
         }
     }
 
@@ -1160,6 +1163,7 @@ impl<O> MacWindowPendingObservationEvent<O> {
         Self {
             kind,
             observation: None,
+            signal_at: None,
         }
     }
 }
@@ -1463,6 +1467,7 @@ impl MacWindowNativeObservation {
 struct MacWindowObservationEffectEvent {
     kind: MacWindowObservationEvent,
     is_latest_active: bool,
+    signal_at: Option<Instant>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1487,6 +1492,7 @@ impl<O: Copy + PartialEq> MacWindowPendingObservationEvents<O> {
                 event: Some(MacWindowObservationEffectEvent {
                     kind: event.kind,
                     is_latest_active: Some(event_index) == last_active_event_index,
+                    signal_at: event.signal_at,
                 }),
             });
         }
@@ -1595,7 +1601,7 @@ struct MacWindowState {
     background_appearance: WindowBackgroundAppearance,
     cursor_style: CursorStyle,
     cursor_visible: Arc<AtomicBool>,
-    display_link: Option<DisplayLink>,
+    frame_source: Option<WindowFrameSource>,
     renderer: renderer::Renderer,
     presentation_shutdown_authority: Arc<Mutex<MacPresentationShutdownAuthority>>,
     display_transaction_frame_depth: MacDisplayTransactionFrameDepth,
@@ -1677,6 +1683,7 @@ impl MacWindowState {
         self.closed.store(true, Ordering::Release);
         self.interaction_quiesced.store(true, Ordering::Release);
         self.stop_display_link();
+        self.frame_source = None;
         self.synthetic_drag_counter += 1;
         self.fullscreen_transition = None;
         self.observation_commit.cancel();
@@ -1788,24 +1795,13 @@ impl MacWindowState {
             return;
         }
 
-        let display_link =
-            DisplayLink::new(display_id, self.native_view.as_ptr() as *mut c_void, step);
-        let Some(mut display_link) = display_link
-            .inspect_err(|error| self.log_display_link_start_failure(display_id, *error))
-            .ok()
-        else {
+        let native_view = self.native_view.as_ptr() as *mut c_void;
+        let source = self
+            .frame_source
+            .get_or_insert_with(|| WindowFrameSource::new(native_view, step));
+        if let Err(error) = source.start(display_id) {
+            self.log_display_link_start_failure(display_id, error);
             self.request_layer_display();
-            return;
-        };
-
-        match display_link.start() {
-            Ok(()) => {
-                self.display_link = Some(display_link);
-            }
-            Err(error) => {
-                self.log_display_link_start_failure(display_id, error);
-                self.request_layer_display();
-            }
         }
     }
 
@@ -1838,7 +1834,9 @@ impl MacWindowState {
     }
 
     fn stop_display_link(&mut self) {
-        self.display_link = None;
+        if let Some(source) = self.frame_source.as_mut() {
+            source.stop();
+        }
     }
 
     fn committed_native_observation(&self) -> MacWindowNativeObservation {
@@ -3003,7 +3001,7 @@ impl MacWindow {
                     background_appearance: WindowBackgroundAppearance::Opaque,
                     cursor_style: CursorStyle::Arrow,
                     cursor_visible,
-                    display_link: None,
+                    frame_source: None,
                     renderer: renderer::new_renderer(
                         renderer_context,
                         native_window as *mut _,
@@ -3595,6 +3593,7 @@ fn deliver_window_observation_effect_batch(
                 active_event,
                 batch.observation.is_active,
                 event.is_latest_active,
+                event.signal_at,
                 panic_boundary,
             );
             if changes.state_changed {
@@ -3644,6 +3643,7 @@ fn deliver_window_observation_effect_batch(
 enum MacRequestFrameDeliveryMode {
     DisplayTransaction,
     DisplayLinkTick,
+    LocalSchedule,
 }
 
 #[derive(Default)]
@@ -3678,6 +3678,7 @@ impl MacRequestFrameDeliveryMode {
 fn deliver_window_request_frame(
     window_state: &Arc<Mutex<MacWindowState>>,
     mode: MacRequestFrameDeliveryMode,
+    options: RequestFrameOptions,
     panic_boundary: &mut MacWindowCallbackPanicBoundary,
 ) {
     let callback = {
@@ -3695,7 +3696,7 @@ fn deliver_window_request_frame(
         callback
     };
 
-    panic_boundary.deliver(|| callback(Default::default()));
+    panic_boundary.deliver(|| callback(options));
     if mode.uses_display_transaction() {
         panic_boundary.deliver(|| {
             let mut state = window_state.lock();
@@ -4631,6 +4632,32 @@ impl PlatformWindow for MacWindow {
 
     fn is_fullscreen(&self) -> bool {
         self.0.lock().is_fullscreen()
+    }
+
+    fn request_frame(&self, mut options: RequestFrameOptions) {
+        if options.signal_at.is_none() {
+            options.signal_at = PlatformFrameSignal::capture(Instant::now);
+            options.signal_source = FrameRequestSource::LocalSchedule;
+        }
+        let window_state = Arc::downgrade(&self.0);
+        DispatchQueue::main().exec_async(move || {
+            let Some(window_state) = window_state.upgrade() else {
+                return;
+            };
+            let mut panic_boundary = MacWindowCallbackPanicBoundary::default();
+            let delivery = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                deliver_window_request_frame(
+                    &window_state,
+                    MacRequestFrameDeliveryMode::LocalSchedule,
+                    options,
+                    &mut panic_boundary,
+                );
+            }));
+            if let Err(panic) = delivery {
+                panic_boundary.retain(panic);
+            }
+            panic_boundary.isolate_at_native_boundary("a macOS scheduled frame callback");
+        });
     }
 
     fn on_request_frame(&self, callback: Box<dyn Fn(RequestFrameOptions)>) {
@@ -5752,6 +5779,7 @@ fn active_event_for_delegate_selector(selector: Sel) -> Option<MacWindowActiveEv
 }
 
 extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) {
+    let signal_at = PlatformFrameSignal::capture(Instant::now);
     let Some(event) = active_event_for_delegate_selector(selector) else {
         log::error!("received an unknown macOS key-status delegate selector");
         return;
@@ -5762,10 +5790,9 @@ extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) 
         if state.is_closed() || state.interaction_is_quiesced() {
             return;
         }
-        (
-            state.observation_target_generation(),
-            state.pending_observation_event(MacWindowObservationEvent::Active(event)),
-        )
+        let mut event = state.pending_observation_event(MacWindowObservationEvent::Active(event));
+        event.signal_at = signal_at;
+        (state.observation_target_generation(), event)
     };
     request_window_observation_commit(&window_state, target_generation, Some(event), true);
 }
@@ -5775,6 +5802,7 @@ fn deliver_window_active_event(
     event: MacWindowActiveEvent,
     observed_is_active: bool,
     event_is_latest: bool,
+    signal_at: Option<Instant>,
     panic_boundary: &mut MacWindowCallbackPanicBoundary,
 ) {
     let is_active = event.is_active();
@@ -5856,6 +5884,11 @@ fn deliver_window_active_event(
             deliver_window_request_frame(
                 window_state,
                 MacRequestFrameDeliveryMode::DisplayTransaction,
+                RequestFrameOptions {
+                    signal_at,
+                    signal_source: FrameRequestSource::NativeCallback,
+                    ..Default::default()
+                },
                 panic_boundary,
             );
         }
@@ -5989,12 +6022,18 @@ extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
 }
 
 extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
+    let signal_at = PlatformFrameSignal::capture(Instant::now);
     let window_state = unsafe { get_window_state(this) };
     let mut panic_boundary = MacWindowCallbackPanicBoundary::default();
     let delivery = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         deliver_window_request_frame(
             &window_state,
             MacRequestFrameDeliveryMode::DisplayTransaction,
+            RequestFrameOptions {
+                signal_at,
+                signal_source: FrameRequestSource::NativeCallback,
+                ..Default::default()
+            },
             &mut panic_boundary,
         );
     }));
@@ -6009,9 +6048,28 @@ extern "C" fn step(view: *mut c_void) {
     let window_state = unsafe { get_window_state(&*view) };
     let mut panic_boundary = MacWindowCallbackPanicBoundary::default();
     let delivery = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let (signal_at, signal_source) = {
+            let state = window_state.lock();
+            let Some(source) = state
+                .frame_source
+                .as_ref()
+                .filter(|source| source.is_running())
+            else {
+                return;
+            };
+            source.take_signal().map_or(
+                (None, FrameRequestSource::NativeCallback),
+                |(at, source)| (Some(at), source),
+            )
+        };
         deliver_window_request_frame(
             &window_state,
             MacRequestFrameDeliveryMode::DisplayLinkTick,
+            RequestFrameOptions {
+                signal_at,
+                signal_source,
+                ..Default::default()
+            },
             &mut panic_boundary,
         );
     }));
@@ -6835,6 +6893,33 @@ mod creation_projection_tests {
 
         panic_boundary.isolate_at_native_boundary("a test callback");
         assert_eq!(drops.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn queued_activation_effects_preserve_each_native_signal_time() {
+        let first_at = Instant::now();
+        let second_at = first_at + Duration::from_millis(25);
+        let mut first = MacWindowPendingObservationEvent::observed(
+            MacWindowObservationEvent::Active(MacWindowActiveEvent::BecameKey),
+            1_u8,
+        );
+        first.signal_at = Some(first_at);
+        let mut second = MacWindowPendingObservationEvent::unobserved(
+            MacWindowObservationEvent::Active(MacWindowActiveEvent::ResignedKey),
+        );
+        second.signal_at = Some(second_at);
+        let mut events = MacWindowPendingObservationEvents::default();
+        events.record(first);
+        events.record(second);
+
+        let batches = events.into_effect_batches(2);
+        assert_eq!(batches.len(), 2);
+        let first = batches[0].event.unwrap();
+        let second = batches[1].event.unwrap();
+        assert_eq!(first.signal_at, Some(first_at));
+        assert_eq!(second.signal_at, Some(second_at));
+        assert!(!first.is_latest_active);
+        assert!(second.is_latest_active);
     }
 
     #[test]

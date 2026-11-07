@@ -1875,12 +1875,10 @@ impl PlatformWindow for TestWindow {
             state.frame_wake_count += 1;
             if state.defer_frame_requests {
                 let pending = state.deferred_frame_request.take();
-                state.deferred_frame_request =
-                    Some(pending.map_or(options, |pending| RequestFrameOptions {
-                        require_presentation: pending.require_presentation
-                            || options.require_presentation,
-                        force_render: pending.force_render || options.force_render,
-                    }));
+                state.deferred_frame_request = Some(pending.map_or(options, |mut pending| {
+                    pending.merge(options);
+                    pending
+                }));
                 true
             } else {
                 false
@@ -3768,6 +3766,7 @@ mod window_mutation_tests {
         assert!(platform_window.simulate_frame(RequestFrameOptions {
             require_presentation: true,
             force_render: true,
+            ..Default::default()
         }));
         cx.run_until_parked();
 
@@ -4815,6 +4814,7 @@ mod window_mutation_tests {
         assert!(platform_window.simulate_frame(RequestFrameOptions {
             force_render: true,
             require_presentation: true,
+            ..Default::default()
         }));
         cx.run_until_parked();
         assert_eq!(
@@ -5298,6 +5298,7 @@ mod window_mutation_tests {
         assert!(platform_window.simulate_frame(RequestFrameOptions {
             force_render: false,
             require_presentation: true,
+            ..Default::default()
         }));
         cx.run_until_parked();
         assert_eq!(
@@ -5434,6 +5435,7 @@ mod window_mutation_tests {
         assert!(platform_window.simulate_frame(RequestFrameOptions {
             force_render: false,
             require_presentation: true,
+            ..Default::default()
         }));
         cx.run_until_parked();
         assert!(platform_window.is_native_terminal());
@@ -5491,6 +5493,7 @@ mod window_mutation_tests {
         assert!(platform_window.simulate_frame(RequestFrameOptions {
             force_render: false,
             require_presentation: true,
+            ..Default::default()
         }));
         cx.run_until_parked();
         let invalidated = semantics_ticket.snapshot();
@@ -5550,6 +5553,7 @@ mod window_mutation_tests {
         assert!(platform_window.simulate_frame(RequestFrameOptions {
             force_render: false,
             require_presentation: true,
+            ..Default::default()
         }));
         cx.run_until_parked();
         let submitted = semantics_ticket.snapshot();
@@ -5946,6 +5950,7 @@ mod window_mutation_tests {
             assert!(platform_window.simulate_frame(RequestFrameOptions {
                 force_render: true,
                 require_presentation: true,
+                ..Default::default()
             }));
             assert_eq!(
                 window.rendered_frame.generation, generation_before,

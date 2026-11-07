@@ -1195,7 +1195,7 @@ impl WindowsWindowInner {
             WM_INPUTLANGCHANGE => self.handle_input_language_changed(),
             WM_SHOWWINDOW => self.handle_window_visibility_changed(handle, wparam),
             WM_GPUI_FORCE_UPDATE_WINDOW if self.accepts_generation_bound_message(wparam.0) => {
-                self.draw_window(handle, true)
+                self.draw_window(handle, true, FrameRequestSource::LocalSchedule)
             }
             WM_GPUI_GPU_DEVICE_LOST if self.accepts_generation_bound_message(wparam.0) => {
                 self.handle_device_lost()
@@ -1271,6 +1271,7 @@ impl WindowsWindowInner {
         // Don't resize the renderer when the window is minimized, but record that it was minimized so
         // that on restore the swap chain can be recreated via `update_drawable_size_even_if_unchanged`.
         if wparam.0 == SIZE_MINIMIZED as usize {
+            self.set_frame_signal_visibility(false);
             let saved_request_frame = self.state.restore_from_minimized.take();
             if let Some(saved_request_frame) = saved_request_frame {
                 self.state
@@ -1358,18 +1359,21 @@ impl WindowsWindowInner {
 
     fn handle_timer_msg(&self, handle: HWND, wparam: WPARAM) -> Option<isize> {
         if wparam.0 == SIZE_MOVE_LOOP_TIMER_ID {
+            self.state
+                .frame_signal
+                .record_now(FrameRequestSource::LocalSchedule);
             let mut runnables = self.main_receiver.clone().try_iter();
             while let Some(Ok(runnable)) = runnables.next() {
                 WindowsDispatcher::execute_runnable(runnable);
             }
-            self.handle_paint_msg(handle)
+            self.draw_window(handle, false, FrameRequestSource::LocalSchedule)
         } else {
             None
         }
     }
 
     fn handle_paint_msg(&self, handle: HWND) -> Option<isize> {
-        self.draw_window(handle, false)
+        self.draw_window(handle, false, FrameRequestSource::NativeCallback)
     }
 
     fn handle_close_msg(&self) -> Option<isize> {
@@ -2325,7 +2329,7 @@ impl WindowsWindowInner {
     ) -> Option<isize> {
         self.report_visibility();
         if wparam.0 == 1 {
-            self.draw_window(handle, false);
+            self.draw_window(handle, false, FrameRequestSource::NativeCallback);
             self.resume_provisional_activation_z_order_recovery_if_ready();
         }
         None
@@ -2357,13 +2361,31 @@ impl WindowsWindowInner {
     /// Validates nested paints immediately and retains their frame request in core ingress.
     /// App-dependent maintenance runs through `CompleteNativeFrame` after the frame borrow ends.
     #[inline]
-    fn draw_window(&self, handle: HWND, force_render: bool) -> Option<isize> {
+    fn draw_window(
+        &self,
+        handle: HWND,
+        force_render: bool,
+        signal_source: FrameRequestSource,
+    ) -> Option<isize> {
         unsafe { ValidateRect(Some(handle), None).ok().log_err() };
+        if !self.accepts_generation_bound_message(self.registration.generation())
+            || self.presentation_shutdown_claimed()
+        {
+            self.state.frame_signal.take();
+            return Some(0);
+        }
+        let (signal_at, signal_source) = self
+            .state
+            .frame_signal
+            .take()
+            .map_or((None, signal_source), |(at, source)| (Some(at), source));
         let _ =
             with_windows_shared_callback(&self.state.callbacks.request_frame, |request_frame| {
                 request_frame(RequestFrameOptions {
                     require_presentation: false,
                     force_render,
+                    signal_at,
+                    signal_source,
                 });
             });
 

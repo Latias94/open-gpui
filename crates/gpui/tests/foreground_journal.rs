@@ -68,6 +68,7 @@ fn present_frame(visual: &mut VisualTestContext) {
     assert!(visual.simulate_frame(RequestFrameOptions {
         require_presentation: true,
         force_render: true,
+        ..Default::default()
     }));
 }
 

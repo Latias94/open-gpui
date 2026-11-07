@@ -4,6 +4,7 @@ use std::{
     ptr::NonNull,
     rc::{Rc, Weak},
     sync::Arc,
+    time::Instant,
 };
 
 use futures::channel::oneshot::Receiver;
@@ -33,12 +34,12 @@ use crate::linux::{
     interaction_gate::{WindowInteractionGate, accesskit_adapter},
 };
 use open_gpui::{
-    AnyWindowHandle, Bounds, Capslock, CursorStyle, Decorations, DevicePixels, GpuSpecs, Modifiers,
-    NativeInputHandlerOutcome, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
-    PlatformInputCallback, PlatformInputCallbackSlot, PlatformInputHandler,
-    PlatformInputHandlerSlot, PlatformPresentationShutdownOutcome, PlatformShouldCloseCallbackSlot,
-    PlatformWindow, PlatformWindowActiveStatusObservation, PlatformWindowCommand,
-    PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome,
+    AnyWindowHandle, Bounds, Capslock, CursorStyle, Decorations, DevicePixels, FrameRequestSource,
+    GpuSpecs, Modifiers, NativeInputHandlerOutcome, Pixels, PlatformAtlas, PlatformDisplay,
+    PlatformFrameSignal, PlatformInput, PlatformInputCallback, PlatformInputCallbackSlot,
+    PlatformInputHandler, PlatformInputHandlerSlot, PlatformPresentationShutdownOutcome,
+    PlatformShouldCloseCallbackSlot, PlatformWindow, PlatformWindowActiveStatusObservation,
+    PlatformWindowCommand, PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome,
     PlatformWindowInteractionQuiescence, PlatformWindowPresentOutcome, Point,
     PreparedPlatformPresentationShutdown, PromptButton, PromptLevel, RequestFrameOptions,
     ResizeEdge, Scene, Size, Tiling, WindowActivationPolicy, WindowAppearance,
@@ -965,7 +966,7 @@ impl WaylandWindowStatePtr {
         self.state.borrow_mut().cursor_style = style;
     }
 
-    pub fn frame(&self) {
+    pub fn frame(&self, signal_at: Option<Instant>, signal_source: FrameRequestSource) {
         let mut state = self.state.borrow_mut();
         if state.presentation_shutdown_blocks_surface() {
             state.clear_presentation_bookkeeping();
@@ -976,12 +977,21 @@ impl WaylandWindowStatePtr {
         state.resize_throttle = false;
         drop(state);
 
+        self.dispatch_request_frame(RequestFrameOptions {
+            force_render: false,
+            signal_at,
+            signal_source,
+            ..Default::default()
+        });
+    }
+
+    fn dispatch_request_frame(&self, options: RequestFrameOptions) {
+        if self.state.borrow().presentation_shutdown_blocks_surface() {
+            return;
+        }
         let callback = self.callbacks.borrow().request_frame.clone();
         if let Some(callback) = callback {
-            callback(RequestFrameOptions {
-                force_render: false,
-                ..Default::default()
-            });
+            callback(options);
             self.update_ime_enabled();
         }
     }
@@ -1027,6 +1037,7 @@ impl WaylandWindowStatePtr {
     }
 
     pub fn handle_xdg_surface_event(&self, event: xdg_surface::Event) {
+        let signal_at = PlatformFrameSignal::capture(Instant::now);
         if let xdg_surface::Event::Configure { serial } = event {
             {
                 let mut state = self.state.borrow_mut();
@@ -1113,7 +1124,7 @@ impl WaylandWindowStatePtr {
             if request_frame_callback {
                 state.acknowledged_first_configure = true;
                 drop(state);
-                self.frame();
+                self.frame(signal_at, FrameRequestSource::NativeCallback);
             }
         }
     }
@@ -1934,6 +1945,28 @@ impl PlatformWindow for WaylandWindow {
 
     fn is_fullscreen(&self) -> bool {
         self.borrow().fullscreen
+    }
+
+    fn request_frame(&self, mut options: RequestFrameOptions) {
+        if options.signal_at.is_none() {
+            options.signal_at = PlatformFrameSignal::capture(Instant::now);
+            options.signal_source = FrameRequestSource::LocalSchedule;
+        }
+        let executor = self.borrow().globals.executor.clone();
+        let owner = Rc::downgrade(&self.1);
+        let state = Rc::downgrade(&self.0.state);
+        let callbacks = Rc::downgrade(&self.0.callbacks);
+        executor
+            .spawn(async move {
+                let Some(_owner) = owner.upgrade() else {
+                    return;
+                };
+                let (Some(state), Some(callbacks)) = (state.upgrade(), callbacks.upgrade()) else {
+                    return;
+                };
+                WaylandWindowStatePtr { state, callbacks }.dispatch_request_frame(options);
+            })
+            .detach();
     }
 
     fn on_request_frame(&self, callback: Box<dyn Fn(RequestFrameOptions)>) {

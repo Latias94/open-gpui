@@ -52,6 +52,7 @@ libc.workspace = true
 log.workspace = true
 mach2.workspace = true
 open_gpui_media.workspace = true
+open_gpui_scheduler.workspace = true
 objc.workspace = true
 objc2.workspace = true
 objc2-app-kit.workspace = true

@@ -13,13 +13,13 @@ use crate::{
     AtlasTextureInstanceId, AtlasTextureLease, AtlasTextureLeaseError, AvailableSpace, Background,
     BorderStyle, Bounds, BoxShadow, Capslock, Context, Corners, CursorHideMode, CursorStyle,
     Decorations, DevicePixels, DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId,
-    Edges, ElementGeometry, Entity, EntityId, EventEmitter, FontId, Global, GlobalElementId,
-    GlyphId, GpuSpecs, Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent,
-    KeyUpEvent, Keystroke, KeystrokeEvent, LayoutId, Modifiers, ModifiersChangedEvent,
-    MonochromeSprite, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
-    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
-    PlatformWindowCapabilities, PlatformWindowCommand, PlatformWindowDispatch,
-    PlatformWindowInteractionQuiescence, PlatformWindowMutationObservation,
+    Edges, ElementGeometry, Entity, EntityId, EventEmitter, FontId, FrameRequestSource, Global,
+    GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler, IsZero, KeyBinding, KeyContext,
+    KeyDownEvent, KeyEvent, KeyUpEvent, Keystroke, KeystrokeEvent, LayoutId, Modifiers,
+    ModifiersChangedEvent, MonochromeSprite, MouseEvent, MouseMoveEvent, MouseUpEvent, Path,
+    Pixels, PlatformAtlas, PlatformDisplay, PlatformFrameSignal, PlatformInput,
+    PlatformInputHandler, PlatformWindow, PlatformWindowCapabilities, PlatformWindowCommand,
+    PlatformWindowDispatch, PlatformWindowInteractionQuiescence, PlatformWindowMutationObservation,
     PlatformWindowMutationTerminal, PlatformWindowMutationUnobservedTerminal,
     PlatformWindowPresentOutcome, PlatformWindowProfile, Point, PointerCancelEvent,
     PointerCancelReason, PolychromeSprite, PreparedPlatformPresentationShutdown, Primitive,
@@ -98,6 +98,8 @@ mod element_arena_tests;
 mod font_installation_tests;
 mod frame_journal;
 mod frame_pump;
+#[cfg(all(test, feature = "profiler"))]
+mod frame_signal_tests;
 mod input_dispatch;
 mod invalidator;
 #[cfg(all(test, feature = "profiler"))]
@@ -2637,6 +2639,24 @@ impl Window {
         platform_window.on_request_frame(Box::new({
             let cx = cx.to_async();
             move |request_frame_options| {
+                #[cfg(feature = "profiler")]
+                let _foreground_turn = profiler::journal::foreground_turn();
+                #[cfg(feature = "profiler")]
+                {
+                    let window_id = handle.window_id();
+                    profiler::journal::record_platform_signal(profiler::journal::PlatformSignal {
+                        window_id,
+                        signal_at: request_frame_options.signal_at,
+                        handled_at: Instant::now(),
+                        source: request_frame_options.signal_source,
+                    });
+                    if CURRENT_ELEMENT_ARENA.with(|current| current.get().is_some()) {
+                        profiler::journal::record_reentrant_frame_skipped(
+                            window_id,
+                            Instant::now(),
+                        );
+                    }
+                }
                 cx.enqueue_window_frame_requested(handle.window_id(), request_frame_options);
             }
         }));
@@ -3167,6 +3187,8 @@ impl Window {
         self.platform_window.request_frame(RequestFrameOptions {
             force_render: false,
             require_presentation: true,
+            signal_at: PlatformFrameSignal::capture(Instant::now),
+            signal_source: FrameRequestSource::LocalSchedule,
         });
         true
     }
@@ -3207,6 +3229,8 @@ impl Window {
         self.platform_window.request_frame(RequestFrameOptions {
             force_render: false,
             require_presentation: true,
+            signal_at: PlatformFrameSignal::capture(Instant::now),
+            signal_source: FrameRequestSource::LocalSchedule,
         });
         Ok(())
     }
@@ -3308,6 +3332,8 @@ impl Window {
         self.platform_window.request_frame(RequestFrameOptions {
             force_render: false,
             require_presentation: true,
+            signal_at: PlatformFrameSignal::capture(Instant::now),
+            signal_source: FrameRequestSource::LocalSchedule,
         });
         Ok(ticket)
     }
@@ -3390,6 +3416,8 @@ impl Window {
         self.platform_window.request_frame(RequestFrameOptions {
             force_render: false,
             require_presentation: true,
+            signal_at: PlatformFrameSignal::capture(Instant::now),
+            signal_source: FrameRequestSource::LocalSchedule,
         });
         Ok(())
     }
@@ -3504,6 +3532,8 @@ impl Window {
         self.platform_window.request_frame(RequestFrameOptions {
             force_render: false,
             require_presentation: true,
+            signal_at: PlatformFrameSignal::capture(Instant::now),
+            signal_source: FrameRequestSource::LocalSchedule,
         });
         Ok(ticket)
     }
@@ -3640,6 +3670,8 @@ impl Window {
         self.platform_window.request_frame(RequestFrameOptions {
             force_render: false,
             require_presentation: true,
+            signal_at: PlatformFrameSignal::capture(Instant::now),
+            signal_source: FrameRequestSource::LocalSchedule,
         });
         Ok(())
     }
@@ -3762,6 +3794,8 @@ impl Window {
         self.platform_window.request_frame(RequestFrameOptions {
             force_render: true,
             require_presentation: true,
+            signal_at: PlatformFrameSignal::capture(Instant::now),
+            signal_source: FrameRequestSource::LocalSchedule,
         });
     }
 
@@ -3769,6 +3803,8 @@ impl Window {
         self.platform_window.request_frame(RequestFrameOptions {
             force_render: false,
             require_presentation: true,
+            signal_at: PlatformFrameSignal::capture(Instant::now),
+            signal_source: FrameRequestSource::LocalSchedule,
         });
     }
 
@@ -7124,6 +7160,7 @@ impl Window {
             mem::take(&mut self.deferred_force_render) | request_frame_options.force_render;
         let force_render = fresh_frame_required
             || (requested_force_render && !(initial_presentation_pending && !fresh_frame_required));
+        let high_rate_input = self.input_rate_tracker.borrow_mut().is_high_rate();
         let min_frame_interval = if initial_presentation_pending
             || renderer_repaint_pending
             || provisional_presentation_pending
@@ -7139,14 +7176,34 @@ impl Window {
                 require_presentation: request_frame_options.require_presentation,
                 has_next_frame_callbacks: !self.next_frame_callbacks.borrow().is_empty(),
                 active: self.active.get(),
+                high_rate_input,
                 thermal_state: Some(cx.thermal_state()),
             }
             .min_frame_interval()
         };
         let now = Instant::now();
-        if frame_should_wait(now, self.last_frame_time.get(), min_frame_interval) {
+        if frame_should_wait(
+            now,
+            self.last_frame_time.get(),
+            min_frame_interval.map(|(interval, _)| interval),
+        ) {
             self.deferred_force_render |= force_render;
             self.complete_frame();
+            #[cfg(feature = "profiler")]
+            if let Some((_, limit)) = min_frame_interval {
+                profiler::journal::record_frame_skipped(
+                    self.handle.window_id(),
+                    Instant::now(),
+                    match limit {
+                        frame_pump::FrameRateLimit::Inactive => {
+                            profiler::journal::FrameSkipReason::InactiveFrameRateLimit
+                        }
+                        frame_pump::FrameRateLimit::Thermal => {
+                            profiler::journal::FrameSkipReason::ThermalFrameRateLimit
+                        }
+                    },
+                );
+            }
             return;
         }
         self.last_frame_time.set(Some(now));
@@ -7168,7 +7225,8 @@ impl Window {
         }
         .needs_present();
 
-        if self.invalidator.is_dirty() || force_render {
+        let should_draw = self.invalidator.is_dirty() || force_render;
+        if should_draw {
             measure("frame duration", || {
                 if force_render {
                     self.refresh();
@@ -7216,6 +7274,14 @@ impl Window {
         }
 
         self.complete_frame();
+        #[cfg(feature = "profiler")]
+        if !should_draw {
+            profiler::journal::record_frame_skipped(
+                self.handle.window_id(),
+                Instant::now(),
+                profiler::journal::FrameSkipReason::NoRenderNeeded,
+            );
+        }
     }
 
     fn candidate_frame_authority_checkpoint(&self) -> CandidateFrameAuthorityCheckpoint {
@@ -15778,6 +15844,7 @@ mod cached_paint_atlas_tests {
                 RequestFrameOptions {
                     force_render: true,
                     require_presentation: true,
+                    ..Default::default()
                 },
                 cx,
             );
@@ -15804,6 +15871,7 @@ mod cached_paint_atlas_tests {
                 RequestFrameOptions {
                     force_render: false,
                     require_presentation: true,
+                    ..Default::default()
                 },
                 cx,
             );
@@ -15834,6 +15902,7 @@ mod cached_paint_atlas_tests {
                 RequestFrameOptions {
                     force_render: false,
                     require_presentation: true,
+                    ..Default::default()
                 },
                 cx,
             );

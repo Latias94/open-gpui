@@ -288,3 +288,84 @@ frame-deadline expiry, a never-returning foreground watchdog, or measured overhe
 input/draw/submission, power/visibility interruption, shutdown flush and retirement belong to
 the separate `crates/gpui_windows/src/native_profiler_tests.rs` trajectory. The commands above
 are verification instructions, not a record that this gate has been compiled or executed.
+
+## Platform frame signal and skip consumer
+
+The `frame_signals` integration target consumes the official frame-request source and completed
+skip APIs introduced by
+[`cd4fc8de4c`](https://github.com/zed-industries/zed/commit/cd4fc8de4ca8548cca2567352b87bcaaec13328f)
+with the idle-interval correction from
+[`36b6d0951f`](https://github.com/zed-industries/zed/commit/36b6d0951fdee409f0957294a69360ba2e8e980e).
+These mechanisms remain part of the refresh toward
+[`635026fabc`](https://github.com/zed-industries/zed/tree/635026fabc38440fce5e1767d125026a17b12012);
+this target does not qualify later frame-latency measurements or refresh estimation.
+
+`FrameRequestSource`, both `RequestFrameOptions::signal_at` and `signal_source`, and
+`PlatformFrameSignal::{new, capture, record, take}` are available with instrumentation enabled
+or disabled. Executable controls construct the complete options value, check defaults and
+copy/equality behavior, and drain new/default accumulators without constructing a Platform.
+With `profiler`, they check that capture evaluates its closure exactly once, coalescing retains
+the earliest timestamp and its matching source in either source order, and draining permits
+another independent request. On non-Wasm hosts, scoped producer threads exercise the shared
+accumulator concurrently. Without `profiler`, capture evaluates its closure zero times,
+the accumulator has zero timestamp-storage size, and recording leaves it empty.
+
+The explicitly named `_backend_type_only` and `_journal_type_only` closures are deliberately
+unexecuted. The former checks the actual platform callback signature. The latter consumes the
+feature-gated public `PlatformSignal`, `ReentrantFrameSkipped`, `FrameSkipped`, skip reasons,
+`IntervalBoundary::FrameSkipped`, sealer and incident conversion APIs using a Window identity
+obtained only inside the closure. Its sealer and conversion calls are signature evidence,
+not executed journal or serialization controls. Separate executable comparisons preserve the
+three completed skip reasons. Signal and reentrant markers are diagnostic points, not work or
+sealing boundaries. A completed skip seals retained work without satisfying pending demand;
+idle callbacks with no retained work must not seal empty intervals.
+
+Run both fixture configurations separately, preserving its independent lockfile and sharing
+the root build directory. Neither configuration enables `test-support`:
+
+```text
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --test frame_signals --jobs 1 --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --features profiler --test frame_signals --jobs 1 --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+The separate crate-external `crates/gpui/tests/frame_signals.rs` target requires both
+`test-support` and `profiler`. It uses public TestAppContext/VisualTestContext, actual Window
+input dispatch and rendering, controlled test-platform callbacks, and actual presentation
+facts. It checks source metadata before completed skips, real input sealed without a new draw,
+raw marker behavior and a constructed reentrant marker's sealer behavior, `frame_skipped` JSON
+conversion, idle callbacks producing neither empty snapshots nor incidents, and inactive
+throttling retaining pending input, next-frame callbacks and a force-render request. In the
+same inactive trajectory, `require_presentation: true` with `force_render: true` must run the
+queued callback and submit a new exact accepted generation while the window remains inactive.
+A second pass activates that same window and consumes the retained force hint through a
+default request. Ordinary requests with neither flag still skip while callbacks are throttled;
+after successful presentation they leave only raw markers, without another draw or interval.
+Test-mode effect flushing draws dirty windows before platform delivery; accepted and submitted
+generations distinguish that real pending scene from a new callback-driven draw.
+A separate scenario requests presentation of that accepted scene while inactive, observes
+the actual `Deferred` attempt without a new draw, and checks that a completed no-render skip
+retains demand. Closing the window releases that demand and its root entity; real noninvalidating
+input on a second fully submitted window then returns the retained work to idle without another
+draw. Releasing a held native terminal
+callback must not publish a second Closed entry.
+
+The current public fixture has two limits. `VisualTestContext::simulate_frame` borrows App
+to resolve the platform window before invoking its real callback, so it cannot inject callbacks
+while App is already borrowed to exercise queued/coalesced or draw-reentrant delivery. Those
+scenarios need a retained real test-platform callback handle obtained before the busy update.
+Inactive throttling uses the production wall clock and fixed 33,333-microsecond interval;
+the throttle scenario delivers its second request immediately, but deterministic qualification
+under scheduler stalls needs a controllable frame clock or inactive interval in test support.
+The throttle request uses `force_render: true` and `require_presentation: false`, preserving
+the official presentation bypass. The callback itself does not request a refresh, so the
+activation/default-request pass checks force-hint retention independently of callback execution.
+
+```text
+cargo nextest run -p open-gpui --features test-support,profiler --test frame_signals --jobs 1 --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+These are test-platform runtime scenarios and independent public API/value controls, not native
+frame-source timing, reentrant backend callback delivery, compositor behavior, GPU output,
+native `Submitted` receipts, thermal-state transitions, performance or disabled-path codegen
+qualification. The commands are verification instructions; this section records no compilation
+or execution result. These controls add no fixture dependencies.

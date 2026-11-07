@@ -650,12 +650,21 @@ impl NativeEventIngress {
             && let Some(NativeWorkEnvelope::Event(previous)) = pending.back()
             && previous.coalesce_key() == Some(coalesce_key)
         {
-            let NativeWorkEnvelope::Event(replaced) = pending
+            let NativeWorkEnvelope::Event(mut replaced) = pending
                 .pop_back()
                 .expect("checked pending native work must still exist")
             else {
                 unreachable!("coalescing only inspects an event envelope");
             };
+            if matches!(
+                &current.target,
+                NativeEventTarget::Window {
+                    event: NativeWindowEvent::RequestFrame(_),
+                    ..
+                }
+            ) {
+                std::mem::swap(current, &mut replaced);
+            }
             current.merge_from(&replaced);
             self.diagnostics.record_terminal(
                 replaced.pending_diagnostic(),
@@ -1888,20 +1897,19 @@ impl NativeEventEnvelope {
         }
     }
 
-    fn merge_from(&mut self, replaced: &Self) {
+    fn merge_from(&mut self, other: &Self) {
         if let (
             NativeEventTarget::Window {
                 event: NativeWindowEvent::RequestFrame(current),
                 ..
             },
             NativeEventTarget::Window {
-                event: NativeWindowEvent::RequestFrame(previous),
+                event: NativeWindowEvent::RequestFrame(later),
                 ..
             },
-        ) = (&mut self.target, &replaced.target)
+        ) = (&mut self.target, &other.target)
         {
-            current.force_render |= previous.force_render;
-            current.require_presentation |= previous.require_presentation;
+            current.merge(*later);
         }
     }
 }
@@ -2327,10 +2335,145 @@ fn deliver_window_event_if(
 #[cfg(all(test, not(target_family = "wasm")))]
 mod tests {
     use super::*;
+    use crate::FrameRequestSource;
     use accesskit::{Action as AccessibleAction, ActionRequest, NodeId, TreeId};
+    use open_gpui_scheduler::Instant;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::Duration;
 
     fn assert_send_sync<T: Send + Sync>() {}
+
+    fn event_ingress() -> NativeEventIngress {
+        let dispatcher = Arc::new(crate::TestDispatcher::new(0));
+        NativeEventIngress::new(ForegroundExecutor::new(dispatcher), Weak::new())
+    }
+
+    #[test]
+    fn nested_frame_coalescing_retains_the_first_sequence_signal_and_diagnostics() {
+        let ingress = event_ingress();
+        let barrier = ingress
+            .begin_input_barrier()
+            .expect("an idle ingress admits a native input transaction");
+        let phase = ingress.phase.get();
+        let window_id = WindowId::from(1);
+        let first = Instant::now();
+        ingress.enqueue(
+            window_id,
+            NativeWindowEvent::RequestFrame(RequestFrameOptions {
+                require_presentation: true,
+                signal_at: Some(first),
+                signal_source: FrameRequestSource::LocalSchedule,
+                ..Default::default()
+            }),
+        );
+        let input_cutoff = ingress.reserve_input_sequence();
+        for offset in [16, 32] {
+            ingress.enqueue(
+                window_id,
+                NativeWindowEvent::RequestFrame(RequestFrameOptions {
+                    force_render: true,
+                    signal_at: Some(first + Duration::from_millis(offset)),
+                    signal_source: FrameRequestSource::NativeCallback,
+                    ..Default::default()
+                }),
+            );
+        }
+
+        assert_eq!(ingress.phase.get(), phase);
+        assert!(ingress.has_pending_before(input_cutoff));
+        let diagnostics =
+            ingress.diagnostics_snapshot_since(NativeBoundaryDiagnosticCursor::default());
+        assert_eq!(diagnostics.pending.len(), 1);
+        assert_eq!(diagnostics.pending[0].sequence, 0);
+        assert_eq!(
+            diagnostics.pending[0].kind,
+            NativeBoundaryKind::Callback(NativeCallbackKind::RequestFrame)
+        );
+        assert_eq!(diagnostics.terminal.len(), 2);
+        for (diagnostic, sequence) in diagnostics.terminal.iter().zip([2, 3]) {
+            assert_eq!(diagnostic.sequence, sequence);
+            assert_eq!(diagnostic.target, NativeBoundaryTarget::Window(window_id));
+            assert_eq!(
+                diagnostic.disposition,
+                NativeBoundaryDisposition::Coalesced { into_sequence: 0 }
+            );
+        }
+
+        let NativeEventPrefixPop::Event(checkout) = barrier.pop_event_before(input_cutoff.value())
+        else {
+            panic!("coalesced frame work must remain before the later input reservation");
+        };
+        assert_eq!(checkout.event.sequence(), 0);
+        let NativeEventTarget::Window {
+            window_id: retained_window,
+            event: NativeWindowEvent::RequestFrame(options),
+        } = checkout.event.target
+        else {
+            panic!("the first frame callback must retain its window authority");
+        };
+        assert_eq!(retained_window, window_id);
+        assert!(options.require_presentation);
+        assert!(options.force_render);
+        assert_eq!(options.signal_at, Some(first));
+        assert_eq!(options.signal_source, FrameRequestSource::LocalSchedule);
+    }
+
+    #[test]
+    fn frame_coalescing_respects_intervening_events_and_window_generations() {
+        let ingress = event_ingress();
+        let original_window = WindowId::from(1);
+        let replacement_window = WindowId::from((7_u64 << 32) | 1);
+        for (window_id, event) in [
+            (
+                original_window,
+                NativeWindowEvent::RequestFrame(RequestFrameOptions::default()),
+            ),
+            (original_window, NativeWindowEvent::Resized),
+            (
+                original_window,
+                NativeWindowEvent::RequestFrame(RequestFrameOptions::default()),
+            ),
+            (
+                replacement_window,
+                NativeWindowEvent::RequestFrame(RequestFrameOptions::default()),
+            ),
+            (
+                original_window,
+                NativeWindowEvent::RequestFrame(RequestFrameOptions::default()),
+            ),
+        ] {
+            ingress.enqueue(window_id, event);
+        }
+        let diagnostics =
+            ingress.diagnostics_snapshot_since(NativeBoundaryDiagnosticCursor::default());
+        assert_eq!(
+            diagnostics
+                .pending
+                .iter()
+                .map(|diagnostic| diagnostic.sequence)
+                .collect::<Vec<_>>(),
+            vec![0, 1, 2, 3, 4]
+        );
+        assert!(diagnostics.terminal.is_empty());
+    }
+
+    #[test]
+    fn non_frame_coalescing_preserves_the_latest_callback_sequence() {
+        let ingress = event_ingress();
+        let window_id = WindowId::from(1);
+        ingress.enqueue(window_id, NativeWindowEvent::AppearanceChanged);
+        ingress.enqueue(window_id, NativeWindowEvent::AppearanceChanged);
+        let diagnostics =
+            ingress.diagnostics_snapshot_since(NativeBoundaryDiagnosticCursor::default());
+        assert_eq!(diagnostics.pending.len(), 1);
+        assert_eq!(diagnostics.pending[0].sequence, 1);
+        assert_eq!(diagnostics.terminal.len(), 1);
+        assert_eq!(diagnostics.terminal[0].sequence, 0);
+        assert_eq!(
+            diagnostics.terminal[0].disposition,
+            NativeBoundaryDisposition::Coalesced { into_sequence: 1 }
+        );
+    }
 
     #[test]
     fn owned_local_task_authority_terminal_is_idempotent() {

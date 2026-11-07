@@ -6,22 +6,29 @@ const INACTIVE_FRAME_INTERVAL: Duration = Duration::from_micros(33333);
 const THERMAL_THROTTLE_FRAME_INTERVAL: Duration = Duration::from_micros(16667);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FrameRateLimit {
+    Inactive,
+    Thermal,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct FrameThrottleFacts {
     pub(crate) force_render: bool,
     pub(crate) require_presentation: bool,
     pub(crate) has_next_frame_callbacks: bool,
     pub(crate) active: bool,
+    pub(crate) high_rate_input: bool,
     pub(crate) thermal_state: Option<ThermalState>,
 }
 
 impl FrameThrottleFacts {
-    pub(crate) fn min_frame_interval(self) -> Option<Duration> {
-        if !self.force_render && !self.require_presentation && !self.has_next_frame_callbacks {
+    pub(crate) fn min_frame_interval(self) -> Option<(Duration, FrameRateLimit)> {
+        if self.require_presentation || (!self.force_render && !self.has_next_frame_callbacks) {
             None
-        } else if !self.active {
-            Some(INACTIVE_FRAME_INTERVAL)
+        } else if !self.active && !self.high_rate_input {
+            Some((INACTIVE_FRAME_INTERVAL, FrameRateLimit::Inactive))
         } else if let Some(ThermalState::Critical | ThermalState::Serious) = self.thermal_state {
-            Some(THERMAL_THROTTLE_FRAME_INTERVAL)
+            Some((THERMAL_THROTTLE_FRAME_INTERVAL, FrameRateLimit::Thermal))
         } else {
             None
         }
@@ -99,6 +106,7 @@ mod tests {
                 RequestFrameOptions {
                     force_render: true,
                     require_presentation: false,
+                    ..Default::default()
                 },
                 cx,
             );
@@ -110,6 +118,7 @@ mod tests {
                 RequestFrameOptions {
                     force_render: false,
                     require_presentation: false,
+                    ..Default::default()
                 },
                 cx,
             );
@@ -121,6 +130,7 @@ mod tests {
                 RequestFrameOptions {
                     force_render: false,
                     require_presentation: false,
+                    ..Default::default()
                 },
                 cx,
             );
@@ -136,6 +146,7 @@ mod tests {
                 require_presentation: false,
                 has_next_frame_callbacks: false,
                 active: false,
+                high_rate_input: false,
                 thermal_state: Some(ThermalState::Critical),
             }
             .min_frame_interval(),
@@ -151,10 +162,11 @@ mod tests {
                 require_presentation: false,
                 has_next_frame_callbacks: false,
                 active: false,
+                high_rate_input: false,
                 thermal_state: Some(ThermalState::Critical),
             }
             .min_frame_interval(),
-            Some(INACTIVE_FRAME_INTERVAL)
+            Some((INACTIVE_FRAME_INTERVAL, FrameRateLimit::Inactive))
         );
     }
 
@@ -162,15 +174,58 @@ mod tests {
     fn frame_throttle_limits_active_thermal_pressure() {
         assert_eq!(
             FrameThrottleFacts {
-                force_render: false,
-                require_presentation: true,
+                force_render: true,
+                require_presentation: false,
                 has_next_frame_callbacks: false,
                 active: true,
+                high_rate_input: false,
                 thermal_state: Some(ThermalState::Serious),
             }
             .min_frame_interval(),
-            Some(THERMAL_THROTTLE_FRAME_INTERVAL)
+            Some((THERMAL_THROTTLE_FRAME_INTERVAL, FrameRateLimit::Thermal))
         );
+    }
+
+    #[test]
+    fn required_presentation_bypasses_inactive_and_thermal_throttling() {
+        for active in [false, true] {
+            assert_eq!(
+                FrameThrottleFacts {
+                    force_render: true,
+                    require_presentation: true,
+                    has_next_frame_callbacks: true,
+                    active,
+                    high_rate_input: false,
+                    thermal_state: Some(ThermalState::Critical),
+                }
+                .min_frame_interval(),
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn high_rate_input_bypasses_only_the_inactive_limit() {
+        for (thermal_state, expected) in [
+            (None, None),
+            (
+                Some(ThermalState::Serious),
+                Some((THERMAL_THROTTLE_FRAME_INTERVAL, FrameRateLimit::Thermal)),
+            ),
+        ] {
+            assert_eq!(
+                FrameThrottleFacts {
+                    force_render: true,
+                    require_presentation: false,
+                    has_next_frame_callbacks: false,
+                    active: false,
+                    high_rate_input: true,
+                    thermal_state,
+                }
+                .min_frame_interval(),
+                expected
+            );
+        }
     }
 
     #[test]

@@ -1,8 +1,245 @@
+//! CoreVideo frame requests use one immortal display link per display.
+//!
+//! `CVDisplayLinkStop` does not wait for its output callback. Callback contexts
+//! therefore contain only integer display ids, and the registry retains every
+//! created link. Window subscriptions and their signals are removed under the
+//! registry lock before their dispatch sources can be cancelled or released.
+//! CoreVideo start and stop calls run outside that lock on the main thread.
+
 use core_graphics::display::CGDirectDisplayID;
 use dispatch2::{
     _dispatch_source_type_data_add, DispatchObject, DispatchQueue, DispatchRetained, DispatchSource,
 };
-use std::{error::Error, ffi::c_void, fmt};
+use open_gpui::{FrameRequestSource, PlatformFrameSignal};
+use open_gpui_scheduler::Instant;
+use std::{
+    collections::{BTreeMap, btree_map},
+    error::Error,
+    ffi::c_void,
+    fmt,
+    sync::{Arc, Mutex, MutexGuard, PoisonError},
+    time::Duration,
+};
+
+static REGISTRY: Mutex<Registry> = Mutex::new(Registry::new());
+
+struct Registry {
+    displays: BTreeMap<CGDirectDisplayID, DisplayEntry>,
+    next_subscriber_id: u64,
+}
+
+impl Registry {
+    const fn new() -> Self {
+        Self {
+            displays: BTreeMap::new(),
+            next_subscriber_id: 0,
+        }
+    }
+}
+
+struct DisplayEntry {
+    link: sys::DisplayLink,
+    running: bool,
+    subscribers: Vec<DisplayLinkSubscriber>,
+}
+
+struct DisplayLinkSubscriber {
+    id: SubscriberId,
+    frame_requests: DispatchRetained<DispatchSource>,
+    signal: Arc<PlatformFrameSignal>,
+}
+
+// SAFETY: The CoreVideo and GCD handles are thread-safe refcounted objects. The
+// registry lock serializes all entry access, and the display thread only records
+// signals and merges dispatch data through subscribers retained by that lock.
+unsafe impl Send for DisplayEntry {}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct SubscriberId(u64);
+
+fn lock_registry() -> MutexGuard<'static, Registry> {
+    REGISTRY.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+fn debug_assert_main_thread() {
+    #[cfg(debug_assertions)]
+    {
+        use objc::{class, msg_send, sel, sel_impl};
+        let is_main_thread: objc::runtime::BOOL =
+            unsafe { msg_send![class!(NSThread), isMainThread] };
+        debug_assert!(
+            is_main_thread == objc::runtime::YES,
+            "display link registry mutations must happen on the main thread"
+        );
+    }
+}
+
+unsafe extern "C" fn display_link_output_callback(
+    _display_link_out: *mut sys::CVDisplayLink,
+    current_time: *const sys::CVTimeStamp,
+    _output_time: *const sys::CVTimeStamp,
+    _flags_in: i64,
+    _flags_out: *mut i64,
+    display_id: *mut c_void,
+) -> i32 {
+    let signal_at = PlatformFrameSignal::capture(|| {
+        let current_host_time = objc2_core_video::CVGetCurrentHostTime();
+        let received_at = Instant::now();
+        let host_clock_frequency = objc2_core_video::CVGetHostClockFrequency();
+        // SAFETY: CoreVideo owns this timestamp for the lifetime of the callback.
+        let current_time = unsafe { current_time.as_ref() };
+        frame_request_instant(
+            current_time,
+            current_host_time,
+            host_clock_frequency,
+            received_at,
+        )
+    });
+    let display_id = display_id as usize as CGDirectDisplayID;
+    let registry = lock_registry();
+    if let Some(entry) = registry.displays.get(&display_id) {
+        for subscriber in &entry.subscribers {
+            if let Some(signal_at) = signal_at {
+                subscriber
+                    .signal
+                    .record(signal_at, FrameRequestSource::NativeCallback);
+            }
+            subscriber.frame_requests.merge_data(1);
+        }
+    }
+    0
+}
+
+/// Maps a CoreVideo host timestamp using a paired clock sample.
+///
+/// Invalid timestamps or clock conversions fall back to callback receipt time.
+fn frame_request_instant(
+    timestamp: Option<&sys::CVTimeStamp>,
+    current_host_time: u64,
+    host_clock_frequency: f64,
+    received_at: Instant,
+) -> Instant {
+    let Some(timestamp) = timestamp.filter(|timestamp| {
+        timestamp.version == 0 && timestamp.flags & sys::kCVTimeStampHostTimeValid != 0
+    }) else {
+        return received_at;
+    };
+    if !host_clock_frequency.is_finite() || host_clock_frequency <= 0.0 {
+        return received_at;
+    }
+    current_host_time
+        .checked_sub(timestamp.host_time)
+        .and_then(|elapsed_ticks| {
+            Duration::try_from_secs_f64(elapsed_ticks as f64 / host_clock_frequency).ok()
+        })
+        .and_then(|elapsed| received_at.checked_sub(elapsed))
+        .unwrap_or(received_at)
+}
+
+fn subscribe(
+    display_id: CGDirectDisplayID,
+    frame_requests: DispatchRetained<DispatchSource>,
+    signal: Arc<PlatformFrameSignal>,
+) -> Result<SubscriberId, DisplayLinkError> {
+    debug_assert_main_thread();
+
+    let needs_link = !lock_registry().displays.contains_key(&display_id);
+    let new_link = if needs_link {
+        // SAFETY: The callback context is an integer display id; every callback
+        // accesses only the immortal registry, including callbacks after stop.
+        Some(unsafe {
+            sys::DisplayLink::new(
+                display_id,
+                display_link_output_callback,
+                display_id as usize as *mut c_void,
+            )?
+        })
+    } else {
+        None
+    };
+
+    let (subscriber_id, link_to_start) = {
+        let mut registry = lock_registry();
+        let registry = &mut *registry;
+        let subscriber_id = SubscriberId(registry.next_subscriber_id);
+        registry.next_subscriber_id += 1;
+        let entry = match (registry.displays.entry(display_id), new_link) {
+            (btree_map::Entry::Occupied(entry), _) => entry.into_mut(),
+            (btree_map::Entry::Vacant(vacant), Some(link)) => vacant.insert(DisplayEntry {
+                link,
+                running: false,
+                subscribers: Vec::new(),
+            }),
+            (btree_map::Entry::Vacant(_), None) => {
+                return Err(DisplayLinkError::MissingDisplayLink);
+            }
+        };
+        entry.subscribers.push(DisplayLinkSubscriber {
+            id: subscriber_id,
+            frame_requests,
+            signal,
+        });
+        let link_to_start = if entry.running {
+            None
+        } else {
+            entry.running = true;
+            Some(entry.link.clone())
+        };
+        (subscriber_id, link_to_start)
+    };
+
+    if let Some(mut link) = link_to_start {
+        // SAFETY: Registry mutations are main-thread-only. CoreVideo calls run
+        // outside the registry lock to avoid a cycle with its callback thread.
+        if let Err(error) = unsafe { link.start() } {
+            let mut registry = lock_registry();
+            if let Some(entry) = registry.displays.get_mut(&display_id) {
+                entry.running = false;
+                entry.subscribers.retain(|subscriber| {
+                    if subscriber.id == subscriber_id {
+                        subscriber.signal.take();
+                        false
+                    } else {
+                        true
+                    }
+                });
+            }
+            return Err(error);
+        }
+    }
+
+    Ok(subscriber_id)
+}
+
+fn unsubscribe(display_id: CGDirectDisplayID, subscriber_id: SubscriberId) {
+    debug_assert_main_thread();
+
+    let link_to_stop = {
+        let mut registry = lock_registry();
+        let Some(entry) = registry.displays.get_mut(&display_id) else {
+            return;
+        };
+        entry
+            .subscribers
+            .retain(|subscriber| subscriber.id != subscriber_id);
+        if entry.subscribers.is_empty() && entry.running {
+            entry.running = false;
+            Some(entry.link.clone())
+        } else {
+            None
+        }
+    };
+
+    if let Some(mut link) = link_to_stop {
+        // SAFETY: The immortal link and integer context outlive straggler
+        // callbacks, which can no longer reach the removed subscriber.
+        if let Err(error) = unsafe { link.stop() }
+            && !error.is_not_running()
+        {
+            log::warn!("{error}");
+        }
+    }
+}
 
 const K_CV_RETURN_INVALID_ARGUMENT: i32 = -6661;
 const K_CV_RETURN_UNSUPPORTED: i32 = -6663;
@@ -69,34 +306,16 @@ impl fmt::Display for DisplayLinkError {
 
 impl Error for DisplayLinkError {}
 
-pub struct DisplayLink {
-    display_link: Option<sys::DisplayLink>,
+/// A per-window dispatch source subscribed to its display's immortal link.
+pub struct WindowFrameSource {
     frame_requests: DispatchRetained<DispatchSource>,
-    started: bool,
+    registration: Option<(CGDirectDisplayID, SubscriberId)>,
+    signal: Arc<PlatformFrameSignal>,
 }
 
-impl DisplayLink {
-    pub fn new(
-        display_id: CGDirectDisplayID,
-        data: *mut c_void,
-        callback: extern "C" fn(*mut c_void),
-    ) -> Result<DisplayLink, DisplayLinkError> {
-        unsafe extern "C" fn display_link_callback(
-            _display_link_out: *mut sys::CVDisplayLink,
-            _current_time: *const sys::CVTimeStamp,
-            _output_time: *const sys::CVTimeStamp,
-            _flags_in: i64,
-            _flags_out: *mut i64,
-            frame_requests: *mut c_void,
-        ) -> i32 {
-            unsafe {
-                let frame_requests = &*(frame_requests as *const DispatchSource);
-                frame_requests.merge_data(1);
-                0
-            }
-        }
-
-        unsafe {
+impl WindowFrameSource {
+    pub fn new(data: *mut c_void, callback: extern "C" fn(*mut c_void)) -> Self {
+        let frame_requests = unsafe {
             let frame_requests = DispatchSource::new(
                 &raw const _dispatch_source_type_data_add as *mut _,
                 0,
@@ -106,62 +325,42 @@ impl DisplayLink {
             frame_requests.set_context(data);
             frame_requests.set_event_handler_f(callback);
             frame_requests.resume();
-
-            let display_link = sys::DisplayLink::new(
-                display_id,
-                display_link_callback,
-                &*frame_requests as *const DispatchSource as *mut c_void,
-            )?;
-
-            Ok(Self {
-                display_link: Some(display_link),
-                frame_requests,
-                started: false,
-            })
+            frame_requests
+        };
+        Self {
+            frame_requests,
+            registration: None,
+            signal: Arc::new(PlatformFrameSignal::new()),
         }
     }
 
-    pub fn start(&mut self) -> Result<(), DisplayLinkError> {
-        unsafe {
-            self.display_link
-                .as_mut()
-                .ok_or(DisplayLinkError::MissingDisplayLink)?
-                .start()?;
-        }
-        self.started = true;
+    pub fn start(&mut self, display_id: CGDirectDisplayID) -> Result<(), DisplayLinkError> {
+        self.stop();
+        let subscriber_id =
+            subscribe(display_id, self.frame_requests.clone(), self.signal.clone())?;
+        self.registration = Some((display_id, subscriber_id));
         Ok(())
     }
 
-    pub fn stop(&mut self) -> Result<(), DisplayLinkError> {
-        if !self.started {
-            return Ok(());
+    pub fn is_running(&self) -> bool {
+        self.registration.is_some()
+    }
+
+    pub fn take_signal(&self) -> Option<(Instant, FrameRequestSource)> {
+        self.signal.take()
+    }
+
+    pub fn stop(&mut self) {
+        if let Some((display_id, subscriber_id)) = self.registration.take() {
+            unsubscribe(display_id, subscriber_id);
         }
-        unsafe {
-            self.display_link
-                .as_mut()
-                .ok_or(DisplayLinkError::MissingDisplayLink)?
-                .stop()?;
-        }
-        self.started = false;
-        Ok(())
+        self.signal.take();
     }
 }
 
-impl Drop for DisplayLink {
+impl Drop for WindowFrameSource {
     fn drop(&mut self) {
-        if let Err(error) = self.stop()
-            && !error.is_not_running()
-        {
-            log::warn!("{error}");
-        }
-        // We see occasional segfaults on the CVDisplayLink thread.
-        //
-        // It seems possible that this happens because CVDisplayLinkRelease releases the CVDisplayLink
-        // on the main thread immediately, but the background thread that CVDisplayLink uses for timers
-        // is still accessing it.
-        //
-        // We might also want to upgrade to CADisplayLink, but that requires dropping old macOS support.
-        std::mem::forget(self.display_link.take());
+        self.stop();
         self.frame_requests.cancel();
     }
 }
@@ -201,7 +400,7 @@ mod sys {
     }
 
     #[repr(C)]
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, Default)]
     pub(crate) struct CVTimeStamp {
         pub version: u32,
         pub video_time_scale: i32,
@@ -352,6 +551,60 @@ mod sys {
                 }
                 Ok(())
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn host_timestamp_preserves_request_age_at_different_clock_rates() {
+        let received_at = Instant::now();
+        for (host_time, current_host_time, frequency, age) in [
+            (4_000_000, 10_000_000, 1e9, Duration::from_millis(6)),
+            (1_760_000, 2_000_000, 24e6, Duration::from_millis(10)),
+        ] {
+            let timestamp = timestamp(host_time);
+            assert_eq!(
+                frame_request_instant(Some(&timestamp), current_host_time, frequency, received_at),
+                received_at - age,
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_host_timestamps_fall_back_to_receipt_time() {
+        let received_at = Instant::now();
+        let valid = timestamp(1_000);
+        let mut missing_host_time = valid;
+        missing_host_time.flags = 0;
+        let mut unknown_version = valid;
+        unknown_version.version = 1;
+        for timestamp in [None, Some(&missing_host_time), Some(&unknown_version)] {
+            assert_eq!(
+                frame_request_instant(timestamp, 2_000, 1e9, received_at),
+                received_at,
+            );
+        }
+        assert_eq!(
+            frame_request_instant(Some(&valid), 999, 1e9, received_at),
+            received_at,
+        );
+        for frequency in [0.0, -1.0, f64::NAN, f64::INFINITY, f64::MIN_POSITIVE] {
+            assert_eq!(
+                frame_request_instant(Some(&valid), 2_000, frequency, received_at),
+                received_at,
+            );
+        }
+    }
+
+    fn timestamp(host_time: u64) -> sys::CVTimeStamp {
+        sys::CVTimeStamp {
+            host_time,
+            flags: sys::kCVTimeStampHostTimeValid,
+            ..Default::default()
         }
     }
 }

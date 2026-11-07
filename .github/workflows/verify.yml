@@ -185,17 +185,17 @@ jobs:
       - name: Test lifecycle and journal public surfaces
         if: matrix.name == 'windows'
         shell: pwsh
-        run: cargo nextest run --locked -p open-gpui --all-features --test lifecycle --test foreground_journal -j 1 --test-threads=1 --no-fail-fast --no-tests fail
+        run: cargo nextest run --locked -p open-gpui --all-features --test lifecycle --test foreground_journal --test frame_signals -j 1 --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Test profiler-enabled independent consumer
         if: matrix.name == 'windows'
         shell: pwsh
-        run: cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --all-features --test profiler --test lifecycle --test foreground_journal --target-dir target -j 1 --test-threads=1 --no-fail-fast --no-tests fail
+        run: cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --all-features --test profiler --test lifecycle --test foreground_journal --test frame_signals --target-dir target -j 1 --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Test instrumentation-disabled independent consumer
         if: matrix.name == 'windows'
         shell: pwsh
-        run: cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test profiler --test lifecycle --test foreground_journal --target-dir target -j 1 --test-threads=1 --no-fail-fast --no-tests fail
+        run: cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test profiler --test lifecycle --test foreground_journal --test frame_signals --target-dir target -j 1 --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Run native WGPU package tests
         if: matrix.name == 'windows'

@@ -11,20 +11,21 @@ use std::{
 };
 
 use open_gpui::{
-    AnyWindowHandle, Bounds, Capslock, CursorStyle, Decorations, DevicePixels, GpuSpecs, Modifiers,
-    Pixels, PlatformAtlas, PlatformDisplay, PlatformInputCallback, PlatformInputCallbackSlot,
-    PlatformInputHandler, PlatformInputHandlerSlot, PlatformPresentationShutdownOutcome,
-    PlatformWindow, PlatformWindowActiveStatusObservation, PlatformWindowCommand,
-    PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome,
-    PlatformWindowInteractionQuiescence, PlatformWindowPresentOutcome, Point, PointerCancelReason,
-    PreparedPlatformPresentationShutdown, PromptButton, PromptLevel, RequestFrameOptions, Scene,
-    Size, WindowActivationPolicy, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowControlArea, WindowControls, WindowCoordinateSpace, WindowCreationFacts,
-    WindowDecorations, WindowParams, WindowPlatformFacts, WindowPresentationShutdownTicket,
-    WindowVisibility, px,
+    AnyWindowHandle, Bounds, Capslock, CursorStyle, Decorations, DevicePixels, FrameRequestSource,
+    GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformFrameSignal,
+    PlatformInputCallback, PlatformInputCallbackSlot, PlatformInputHandler,
+    PlatformInputHandlerSlot, PlatformPresentationShutdownOutcome, PlatformWindow,
+    PlatformWindowActiveStatusObservation, PlatformWindowCommand, PlatformWindowCommandDispatcher,
+    PlatformWindowCommandOutcome, PlatformWindowInteractionQuiescence,
+    PlatformWindowPresentOutcome, Point, PointerCancelReason, PreparedPlatformPresentationShutdown,
+    PromptButton, PromptLevel, RequestFrameOptions, Scene, Size, WindowActivationPolicy,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls,
+    WindowCoordinateSpace, WindowCreationFacts, WindowDecorations, WindowParams,
+    WindowPlatformFacts, WindowPresentationShutdownTicket, WindowVisibility, px,
 };
 use open_gpui_wgpu::{WgpuContext, WgpuRenderer, WgpuSurfaceConfig, WgpuSurfaceShutdownProgress};
 use wasm_bindgen::prelude::*;
+use web_time::Instant;
 
 #[derive(Default)]
 pub(crate) struct WebWindowCallbacks {
@@ -547,6 +548,8 @@ impl WebWindowInner {
             this.dispatch_request_frame(RequestFrameOptions {
                 require_presentation: true,
                 force_render: false,
+                signal_at: None,
+                signal_source: FrameRequestSource::NativeCallback,
             });
 
             this.schedule_raf();
@@ -1125,6 +1128,23 @@ impl PlatformWindow for WebWindow {
 
     fn is_fullscreen(&self) -> bool {
         self.inner.state.borrow().is_fullscreen
+    }
+
+    fn request_frame(&self, mut options: RequestFrameOptions) {
+        if options.signal_at.is_none() {
+            options.signal_at = PlatformFrameSignal::capture(Instant::now);
+            options.signal_source = FrameRequestSource::LocalSchedule;
+        }
+        let inner = Rc::downgrade(&self.inner);
+        wasm_bindgen_futures::spawn_local(async move {
+            let Some(inner) = inner.upgrade() else {
+                return;
+            };
+            if inner.state.borrow().renderer.presentation_shutdown_active() {
+                return;
+            }
+            inner.dispatch_request_frame(options);
+        });
     }
 
     fn on_request_frame(&self, callback: Box<dyn Fn(RequestFrameOptions)>) {

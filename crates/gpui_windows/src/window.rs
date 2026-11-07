@@ -806,6 +806,7 @@ pub struct WindowsWindowState {
     pub restore_from_minimized: Cell<Option<Rc<dyn Fn(RequestFrameOptions)>>>,
 
     pub callbacks: Callbacks,
+    pub frame_signal: Arc<PlatformFrameSignal>,
     pub input_handler: PlatformInputHandlerSlot,
     pub ime_enabled: Cell<bool>,
     pub pending_surrogate: Cell<Option<u16>>,
@@ -1046,6 +1047,7 @@ impl WindowsWindowState {
             restore_from_minimized: Cell::new(restore_from_minimized),
             min_size,
             callbacks,
+            frame_signal: Arc::new(PlatformFrameSignal::new()),
             input_handler,
             ime_enabled: Cell::new(true),
             pending_surrogate: Cell::new(pending_surrogate),
@@ -1220,6 +1222,7 @@ impl WindowsWindowInner {
     }
 
     pub(crate) fn report_visibility(self: &Rc<Self>) {
+        self.set_frame_signal_visibility(self.visibility() == WindowVisibility::Visible);
         if self.state.last_visibility.get().is_none()
             || self.state.visibility_report_pending.get()
             || self.presentation_shutdown_claimed()
@@ -1468,6 +1471,7 @@ impl WindowsWindowInner {
     }
 
     fn retire_native_callbacks(&self) {
+        self.stop_frame_signal();
         self.state.last_visibility.set(None);
         self.state.callbacks.visibility_change.take();
         self.state.input_handler.terminate();
@@ -1505,13 +1509,7 @@ impl WindowsWindowInner {
         let Some(raw_window_handles) = self.raw_window_handles.upgrade() else {
             return;
         };
-        let mut raw_window_handles = raw_window_handles.write();
-        if let Some(index) = raw_window_handles
-            .iter()
-            .position(|registered| registered.matches(self.registration))
-        {
-            raw_window_handles.remove(index);
-        }
+        raw_window_handles.unregister(self.registration);
     }
 
     fn register_with_platform(&self) -> Result<()> {
@@ -1519,15 +1517,38 @@ impl WindowsWindowInner {
             .raw_window_handles
             .upgrade()
             .context("native window registry is no longer available")?;
-        let mut registrations = registry.write();
-        anyhow::ensure!(
-            !registrations
-                .iter()
-                .any(|registered| registered.as_raw() == self.hwnd),
-            "native HWND was already registered before WM_NCCREATE committed its exact owner"
-        );
-        registrations.push(self.registration);
-        Ok(())
+        registry.register(self.registration, self.state.frame_signal.clone())
+    }
+
+    pub(crate) fn set_frame_signal_visibility(&self, visible: bool) {
+        if let Some(registry) = self.raw_window_handles.upgrade() {
+            registry.set_frame_signal_visibility(self.registration, visible);
+        }
+        if !visible {
+            self.state.frame_signal.take();
+        }
+    }
+
+    fn stop_frame_signal(&self) {
+        if let Some(registry) = self.raw_window_handles.upgrade() {
+            registry.stop_frame_signal(self.registration);
+        }
+        self.state.frame_signal.take();
+    }
+
+    pub(crate) fn request_frame(&self, mut options: RequestFrameOptions) {
+        if options.signal_at.is_none() {
+            options.signal_at = PlatformFrameSignal::capture(open_gpui_scheduler::Instant::now);
+            options.signal_source = FrameRequestSource::LocalSchedule;
+        }
+        if !self.accepts_generation_bound_message(self.registration.generation())
+            || self.presentation_shutdown_claimed()
+        {
+            return;
+        }
+        let _ = with_windows_shared_callback(&self.state.callbacks.request_frame, |callback| {
+            callback(options)
+        });
     }
 
     pub(crate) fn mark_native_window_destroying(&self) {
@@ -1795,6 +1816,7 @@ impl WindowsWindowInner {
             return current.same_authority(shutdown);
         }
         current.replace(shutdown.clone());
+        self.stop_frame_signal();
         true
     }
 
@@ -1810,6 +1832,7 @@ impl WindowsWindowInner {
             return Some(current.clone());
         }
         current.replace(candidate.clone());
+        self.stop_frame_signal();
         Some(candidate)
     }
 
@@ -8513,12 +8536,7 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn request_frame(&self, options: RequestFrameOptions) {
-        if self.0.is_native_window_terminal() {
-            return;
-        }
-        let _ = with_windows_shared_callback(&self.state.callbacks.request_frame, |callback| {
-            callback(options)
-        });
+        self.0.request_frame(options);
     }
 
     fn on_request_frame(&self, callback: Box<dyn Fn(RequestFrameOptions)>) {

@@ -36,7 +36,138 @@ use windows::{
 use crate::*;
 use open_gpui::*;
 
-pub(crate) type RegisteredWindows = RwLock<SmallVec<[RegisteredWindow; 4]>>;
+#[derive(Default)]
+pub(crate) struct RegisteredWindows {
+    windows: RwLock<SmallVec<[RegisteredWindow; 4]>>,
+    frame_signals: RwLock<SmallVec<[RegisteredFrameSignal; 4]>>,
+}
+
+struct RegisteredFrameSignal {
+    registration: RegisteredWindow,
+    signal: Arc<PlatformFrameSignal>,
+    visible: bool,
+}
+
+impl RegisteredWindows {
+    #[cfg(test)]
+    fn new(windows: SmallVec<[RegisteredWindow; 4]>) -> Self {
+        Self {
+            windows: RwLock::new(windows),
+            ..Self::default()
+        }
+    }
+
+    pub(crate) fn read(&self) -> parking_lot::RwLockReadGuard<'_, SmallVec<[RegisteredWindow; 4]>> {
+        self.windows.read()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn write(
+        &self,
+    ) -> parking_lot::RwLockWriteGuard<'_, SmallVec<[RegisteredWindow; 4]>> {
+        self.windows.write()
+    }
+
+    pub(crate) fn register(
+        &self,
+        registration: RegisteredWindow,
+        signal: Arc<PlatformFrameSignal>,
+    ) -> Result<()> {
+        let mut windows = self.windows.write();
+        anyhow::ensure!(
+            !windows
+                .iter()
+                .any(|window| window.as_raw() == registration.as_raw()),
+            "native HWND was already registered before WM_NCCREATE committed its exact owner"
+        );
+        self.frame_signals.write().push(RegisteredFrameSignal {
+            registration,
+            signal,
+            visible: false,
+        });
+        windows.push(registration);
+        Ok(())
+    }
+
+    pub(crate) fn unregister(&self, registration: RegisteredWindow) {
+        let mut windows = self.windows.write();
+        self.stop_frame_signal(registration);
+        windows.retain(|window| !window.matches(registration));
+    }
+
+    pub(crate) fn stop_frame_signal(&self, registration: RegisteredWindow) {
+        self.frame_signals.write().retain(|entry| {
+            if entry.registration.matches(registration) {
+                entry.signal.take();
+                false
+            } else {
+                true
+            }
+        });
+    }
+
+    fn stop_frame_signals(&self) {
+        let mut signals = self.frame_signals.write();
+        for entry in signals.drain(..) {
+            entry.signal.take();
+        }
+    }
+
+    pub(crate) fn set_frame_signal_visibility(
+        &self,
+        registration: RegisteredWindow,
+        visible: bool,
+    ) {
+        let mut signals = self.frame_signals.write();
+        if let Some(entry) = signals
+            .iter_mut()
+            .find(|entry| entry.registration.matches(registration))
+        {
+            entry.visible = visible;
+            if !visible {
+                entry.signal.take();
+            }
+        }
+    }
+
+    pub(crate) fn record_frame_signal(
+        &self,
+        registration: RegisteredWindow,
+        at: Option<open_gpui_scheduler::Instant>,
+        source: FrameRequestSource,
+    ) {
+        let windows = self.windows.read();
+        let mut matching = windows
+            .iter()
+            .filter(|window| window.as_raw() == registration.as_raw());
+        if matching
+            .next()
+            .is_none_or(|window| !window.matches(registration))
+            || matching.next().is_some()
+        {
+            return;
+        }
+        let signals = self.frame_signals.read();
+        let Some(entry) = signals
+            .iter()
+            .find(|entry| entry.registration.matches(registration))
+        else {
+            return;
+        };
+        if entry.visible
+            && unsafe {
+                IsWindowVisible(registration.as_raw()).as_bool()
+                    && !IsIconic(registration.as_raw()).as_bool()
+            }
+        {
+            if let Some(at) = at {
+                entry.signal.record(at, source);
+            }
+        } else {
+            entry.signal.take();
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct RegisteredWindow {
@@ -686,7 +817,7 @@ impl WindowsPlatform {
         } else {
             rand::random::<u32>() as usize
         };
-        let raw_window_handles = Arc::new(RwLock::new(SmallVec::new()));
+        let raw_window_handles = Arc::new(RegisteredWindows::default());
         let recovered_directx_devices = Arc::new(RwLock::new(None));
         let vsync_owner_live = Arc::new(RwLock::new(true));
         #[cfg(test)]
@@ -1036,7 +1167,8 @@ impl WindowsPlatform {
             .spawn(move || {
                 let vsync_provider = VSyncProvider::new();
                 loop {
-                    vsync_provider.wait_for_vsync();
+                    let signal_source = vsync_provider.wait_for_vsync();
+                    let signal_at = PlatformFrameSignal::capture(open_gpui_scheduler::Instant::now);
                     if !*vsync_owner_live.read() {
                         break;
                     }
@@ -1067,6 +1199,11 @@ impl WindowsPlatform {
                         registered_windows,
                         |registered_window| {
                             with_live_vsync_owner(&vsync_owner_live, || unsafe {
+                                all_windows.record_frame_signal(
+                                    registered_window,
+                                    signal_at,
+                                    signal_source,
+                                );
                                 let _ = RedrawWindow(
                                     Some(registered_window.as_raw()),
                                     None,
@@ -2901,6 +3038,7 @@ impl WindowsPlatformInner {
             );
             return;
         }
+        raw_window_handles.stop_frame_signals();
         for registration in registered_windows {
             coordinator.upsert(PendingNativeWindowFinalization::from_registered_window(
                 registration,
@@ -3726,6 +3864,11 @@ fn handle_gpu_device_lost(
             });
         dispatch_registered_window_snapshot(&all_windows, registered_windows, |window| {
             with_live_vsync_owner(vsync_owner_live, || unsafe {
+                all_windows.record_frame_signal(
+                    window,
+                    PlatformFrameSignal::capture(open_gpui_scheduler::Instant::now),
+                    FrameRequestSource::LocalSchedule,
+                );
                 PostMessageW(
                     Some(window.as_raw()),
                     WM_GPUI_FORCE_UPDATE_WINDOW,
@@ -4020,7 +4163,7 @@ mod tests {
         let mut entries: smallvec::SmallVec<[super::RegisteredWindow; 4]> =
             smallvec::SmallVec::new();
         entries.push(registered_window);
-        let registered_windows = Arc::new(parking_lot::RwLock::new(entries));
+        let registered_windows = Arc::new(super::RegisteredWindows::new(entries));
         let snapshot = registered_windows.read().clone();
         let (begin_removal_tx, begin_removal_rx) = mpsc::channel();
         let (removal_complete_tx, removal_complete_rx) = mpsc::channel();
@@ -4102,12 +4245,68 @@ mod tests {
         let mut entries: smallvec::SmallVec<[super::RegisteredWindow; 4]> =
             smallvec::SmallVec::new();
         entries.push(replacement);
-        let registered_windows = parking_lot::RwLock::new(entries);
+        let registered_windows = super::RegisteredWindows::new(entries);
 
         assert!(!super::registered_window_is_current(
             &registered_windows,
             snapshot
         ));
+    }
+
+    #[test]
+    fn registered_frame_signal_cleanup_preserves_exact_generation_and_releases_ownership() {
+        let registry = super::RegisteredWindows::default();
+        let window = super::RegisteredWindow::new(HWND::default(), 7, WindowId::from(77_u64));
+        let replacement = super::RegisteredWindow::new(HWND::default(), 8, WindowId::from(78_u64));
+        let signal = Arc::new(open_gpui::PlatformFrameSignal::new());
+        registry
+            .register(window, signal.clone())
+            .expect("exact registration");
+        signal.record_now(open_gpui::FrameRequestSource::NativeCallback);
+        assert_eq!(Arc::strong_count(&signal), 2);
+
+        registry.unregister(replacement);
+        assert_eq!(registry.read().as_slice(), &[window]);
+        assert_eq!(Arc::strong_count(&signal), 2);
+
+        registry.stop_frame_signal(window);
+        assert_eq!(registry.read().as_slice(), &[window]);
+        assert!(signal.take().is_none());
+        assert_eq!(Arc::strong_count(&signal), 1);
+        registry.unregister(window);
+        assert!(registry.read().is_empty());
+
+        let replacement_signal = Arc::new(open_gpui::PlatformFrameSignal::new());
+        registry
+            .register(replacement, replacement_signal.clone())
+            .expect("reused HWND registration");
+        replacement_signal.record_now(open_gpui::FrameRequestSource::LocalSchedule);
+        registry.unregister(window);
+        assert_eq!(registry.read().as_slice(), &[replacement]);
+        assert_eq!(Arc::strong_count(&replacement_signal), 2);
+        registry.unregister(replacement);
+        assert!(registry.read().is_empty());
+        assert!(replacement_signal.take().is_none());
+        assert_eq!(Arc::strong_count(&replacement_signal), 1);
+    }
+
+    #[test]
+    fn stopping_platform_frame_signals_retains_native_retirement_authority() {
+        let registry = super::RegisteredWindows::default();
+        let window = super::RegisteredWindow::new(HWND::default(), 7, WindowId::from(77_u64));
+        let signal = Arc::new(open_gpui::PlatformFrameSignal::new());
+        registry
+            .register(window, signal.clone())
+            .expect("exact registration");
+        signal.record_now(open_gpui::FrameRequestSource::NativeCallback);
+
+        registry.stop_frame_signals();
+
+        assert_eq!(registry.read().as_slice(), &[window]);
+        assert!(signal.take().is_none());
+        assert_eq!(Arc::strong_count(&signal), 1);
+        registry.unregister(window);
+        assert!(registry.read().is_empty());
     }
 
     #[test]
@@ -4118,7 +4317,7 @@ mod tests {
         let mut entries: smallvec::SmallVec<[super::RegisteredWindow; 4]> =
             smallvec::SmallVec::new();
         entries.push(different_window_id);
-        let registered_windows = parking_lot::RwLock::new(entries);
+        let registered_windows = super::RegisteredWindows::new(entries);
 
         assert!(!super::registered_window_is_current(
             &registered_windows,
@@ -4133,7 +4332,7 @@ mod tests {
         let mut entries: smallvec::SmallVec<[super::RegisteredWindow; 4]> =
             smallvec::SmallVec::new();
         entries.push(late_registration);
-        let registered_windows = parking_lot::RwLock::new(entries);
+        let registered_windows = super::RegisteredWindows::new(entries);
 
         assert!(super::registered_window_is_current(
             &registered_windows,
