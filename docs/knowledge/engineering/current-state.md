@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-07T22:12:00+08:00
+timestamp: 2026-11-08T00:06:15+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -462,6 +462,20 @@ verified_by:
   threads close; no owned Cargo remains active. See the guide for run IDs, failures and limits.
   No engine default, numerical-cost budget or complete fixed-target refresh follows.
 
+- The synthetic-accessibility/explicit-inspection successor is implemented locally at
+  `751e563eb89eeb373dac41cf734bfe372b81d0e4`. Official Element/Div/builder and complete raw
+  inspection use accepted publication with frame/activation metadata; automatic artifacts retain
+  ADR0023 redaction. Executed red controls precede deferred-parent rollback, own-clip validity,
+  irreversible-quiescence and reserved-root corrections. Final Core/public 1,412, components/
+  docking/Canvas 2,966, WGPU/affected native 96, disabled Core/public 1,203 and Gallery 13 pass.
+  Independent type-only checks pass 2/2 in each feature mode; the non-debug serializer slice
+  passes six, without claiming a release-profile whole App run. Locked workspace/consumer checks,
+  correctness Clippy, actual Windows Rust 1.92, production wasm, formatting and static scans pass.
+  All eight threads close; no owned Cargo remains active. The candidate queue separately retains
+  official active-descendant focus, keyboard continuity, tab-group ordering, missing diagnostics/
+  properties, initial-tree delivery and enabled/author-ID differences. Full refresh, AT/foreign
+  native/browser execution, numerical costs, hot reload, docking and Nara adoption remain open.
+
 # Historical Main Integration
 
 The previous snapshot recorded `df6ae2f` on July 9. The following integration summary retains that
@@ -501,9 +515,10 @@ historical scope and is not current branch or CI qualification.
   Power/cadence and MetalFrameSource implementation and scoped checks are recorded above; keep
   foreign native qualification open and retain the earlier Windows failure evidence alongside the
   later complete passing View cohort. The List/TextLayout/Rems/utility successor is now qualified
-  within its recorded scope. Continue with the published accessibility diagnostics/synthetic-child
-  owner and the
-  complete benchmark/report/hot-reload owners in the candidate queue's prerequisite order. Display
+  within its recorded scope. Synthetic children and explicit published-tree inspection are now
+  qualified within their recorded scope. Continue the complete composite-widget focus/keyboard
+  owner, remaining official property/configuration/initial-tree mechanisms and the complete
+  benchmark/report/hot-reload owners in the candidate queue's prerequisite order. Display
   getters and the foundation profiler do
   not qualify complete frame pacing. Apply the maintenance skill's official-baseline rule while
   reconciling remaining image-feature/API/platform/hot-reload differences. Qualify the

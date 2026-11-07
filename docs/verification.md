@@ -3575,6 +3575,165 @@ scope. Foreign native/browser execution, numerical frame/memory budgets, complet
 refresh, accessibility/benchmark/report/hot-reload owners, canonical docking and Nara GPU/View
 adoption remain open. Source dispositions and earlier failures retain their original scope.
 
+## Synthetic Accessibility And Explicit Published-Tree Inspection
+
+The November 7 successor starts at `aef505a3ba9c1d2e6b4fcf079f2298aa1e239235` against
+fixed Zed `635026fabc38440fce5e1767d125026a17b12012`. Official framework sources are
+`83d4847462e57a6f72dc314abea05d57d3bdcfb6` (synthetic children) and
+`2268045a119030735f762e5afaf59da0bda869f4` (complete raw JSON inspection and provenance).
+The latter's serializer is unchanged at the fixed target. Zed Settings and editor-specific
+dump actions are outside the framework closure; the Foundation Gallery supplies a real copy
+consumer through the existing clipboard authority.
+
+The implementation is committed locally at `751e563eb89eeb373dac41cf734bfe372b81d0e4`;
+final qualification finishes on November 8 on the current Windows 11 host. The fixed target
+and unknown exact original import checkout retain their earlier provenance boundaries.
+
+`Element::a11y_synthetic_children`, the stateful Div callback and `A11ySubtreeBuilder` expose
+post-prepaint semantic children and parent mutation. The fork uses its existing builder for
+leaf admission, source validity, deferred parentage, modal filtering and final reference repair.
+Prepaint rollback restores the complete current parent node because synthetic callbacks may
+change more than its child count. Debug provenance is removed on rollback and filtered against
+the final published node set. The common entity-backed View path records creating view names
+for typed and erased views; this is a fork adaptation beyond the official AnyView writer.
+
+The complete raw reader remains available in release builds. Capture happens at accepted
+publication instead of speculative `end_frame`; metadata adds accepted `frame_generation`
+and `activation_generation` without redefining the official monotonic capture `frame_number`.
+Window title and active unique tab-stop count come from their existing owners. Activation
+replacement, deactivation, interaction quiescence and close clear the retained snapshot.
+[ADR0023](adr/0023-open-gpui-live-region-announcement-authority.md#explicit-published-tree-inspection)
+distinguishes this content-bearing explicit reader/copy action from automatic redacted
+announcement diagnostics and DevTools artifacts. Reading does not activate accessibility,
+redraw, save or transmit content.
+
+The initial Rust 1.95.0 all-feature Core library check passes. Its lock update adds only
+`enumn` 0.1.14 and the AccessKit dependency edge, retaining AccessKit 0.24.1 and every existing
+resolved dependency version. Runtime, public, native, independent and release qualification is
+in progress; no platform consumption, numerical-cost or whole-refresh claim follows.
+
+Initial focused serializer/existing A11y/atlas controls pass 48/48
+(`8610d6f0-b3d1-4a81-98d2-203182cf73fe`). The first crate-external build rejects private
+Pixels field access; the consumer is corrected to its public numeric conversion. Four actual
+public workflows and the initial parent-rewrite control then pass 5/5
+(`993148ed-d539-42ee-b05f-52179234fe82`). That ordinary append control does not exercise
+the deferred-parent mutation journal and is not presented as a reproduced journal failure.
+
+Independent review identifies irreversible-quiescence recapture and Div own-overflow validity
+gaps. A stronger deferred-child control also exposes rollback attempting to remove a child
+already deleted through arbitrary parent mutation. All three concrete regressions execute and
+fail before their corrections (`f1504090-b0bb-4651-969d-2df74d0057b6`, 0/3). The owning fixes
+keep inspection disabled after irreversible close/quiescence, attach the prepared clip's
+validity to synthetic children without replacing inherited validity, and let the saved parent
+snapshot restore its complete node while prior nonsnapshotted parents retain journal rollback.
+The normal platform cleanup tree can still publish without recreating an inspection snapshot.
+
+The corrected focused cohort passes 88/88
+(`6ff300f6-8f41-4f0f-b21a-4de099876af5`), filtering 1,268 unrelated cases. It includes all new
+owner/public workflows, existing clip/A11y/atlas controls, actual late paint invalidation,
+candidate discard and atlas refusal/recovery, nested parent/provenance rollback, raw announcement
+inspection versus metadata diagnostics, lifecycle clearing, view-cache controls and draw unwind.
+Complete product/compiler/native qualification remains separate and in progress.
+
+After the reserved-root correction and public numeric conversion cleanup, the complete
+all-feature Core library and all public integration targets pass 1,412/1,412 without skips
+(`762503b7-c3f7-4ac8-98fb-9c030878e190`). This includes the root collision control, all actual
+synthetic/inspection workflows, prior candidate/unwind/focus/geometry/lifecycle/cache owners,
+and the existing retired public-surface compile-fail controls. The earlier focused/native
+results retain their pre-final-correction scope until their affected reruns below.
+
+The actual Foundation Gallery selection passes 13/13
+(`33c8a3ee-f213-49c4-9378-ebe13bb562f4`), filtering 123 unrelated cases. The two new click
+workflows preserve the clipboard when no current tree exists, copy the accepted tree's complete
+IDs/semantic values, include an explicit authored canary, preserve password masking, and leave
+the automatic DevTools capture/history/export artifacts free of that canary. Existing field,
+selection, live-region, busy/alert, repeated-text and inactive-drop workflows remain intact.
+Independent bounded correctness re-review closes the reported failures without remaining
+confirmed P1/P2, including Drawable attribution after nested View/deferred work. All eight
+implementation/test/source-audit/review threads close; their static review is separate from the
+executed test results. Native and compiler/consumer qualification is still in progress.
+
+Qualification reuses Nara's ordinary target with one build job. Before further native/Core
+linking, exact superseded Core/Gallery/Windows/independent/consumer test PDBs from this workstream
+are removed in bounded batches after checking their resolved build-directory paths and that
+their old test executables are not running. Only explicitly enumerated old symbol files are
+removed while shared-disk free space fluctuates. Source, current binaries, dependency caches,
+profiles and linker settings are retained; no Cargo clean or directory-wide removal is used.
+
+The new Windows native trajectory passes with the affected selection, 6/6
+(`2e852db6-da06-48df-9174-c82c920c6480`). It invokes the production installed activation
+handler outside App borrows, observes accepted-tree JSON beside exact nonempty Submitted
+receipts, notifies new Unicode content with stable synthetic IDs, checks passive repeated reads,
+and verifies exact HWND/native/App/text/OLE release. Activation is synthetic; no real AT client,
+UIA-event delivery, OS automation or compositor-consumption claim follows. Existing text,
+cache, profiler/signal and scene-color native trajectories retain their assertions. This run
+precedes the final reserved-root correction below; final affected checks follow separately.
+
+A final public-builder boundary control exposes that the inherited builder did not reserve
+the window root in its duplicate-ID set (`423b8813-ee5e-41d9-8fbb-f4467e189478`, 0/1).
+The fix reserves that existing root at begin_frame, so a synthetic root collision uses the
+same duplicate rejection as every other node. No second ID authority is introduced.
+
+The exact serializer source is also compiled into a temporary module test harness with
+`rustc +1.95.0 -C debug-assertions=no`, reusing the real framework geometry/shared-string and
+resolved dependencies. All six non-debug serializer tests pass, including raw semantic export
+without provenance, metadata, reference remapping and clear/counter behavior. Initial harness
+attempts expose private Pixels access and then missing Cargo-supplied native library paths;
+public numeric conversions and explicit existing native search paths correct the harness.
+This is an executed non-debug serializer slice, not a release-profile whole App/native test,
+compiler-floor result or performance measurement. Complete debug product gates follow.
+
+The retained accepted tree is a complete snapshot while accessibility is active; complete parent
+rollback can clone parent properties/children at a checkpoint. Neither this snapshot cost nor
+the capture/provenance/JSON work has a numerical allocation, retention or tail-latency budget
+from these correctness tests. Preserve that measurement scope for the benchmark/report owner.
+
+Complete all-feature UI core/components/docking/Canvas library and integration tests pass
+2,966/2,966 without skips (`159cd85d-bd1c-4d13-aba4-2fe24fd031a1`). Existing final-tree,
+virtualized collection, text/field/selection, overlay, source/payload/viewport and recovery
+contracts retain their assertions. This regression qualification does not complete canonical
+docking U4-U9 or select a Nara Editor/game-runtime toolkit.
+
+The final all-feature WGPU library/public and affected Windows selection passes 96/96
+(`0b090e30-a879-4121-a9fe-40b17291e739`), filtering 1,632 unrelated cases. WGPU contributes
+89 complete renderer/atlas/text/image/layout cases; seven native trajectories include exact
+synthetic inspection, generic View composition, Unicode layout, cached notification, frame
+signal/profiler and scene-color submission/retirement. This follows the reserved-root and
+numeric-conversion corrections. It is an affected native selection, not the full Windows or
+foreign-platform/browser gate, real screen-reader delivery or a numerical-cost qualification.
+
+Profiler-disabled Core and public accessibility/lifecycle/frame-scheduling/power/View/Rems
+consumers pass 1,203/1,203 without skips (`b4172ea9-b05e-4b33-8e09-8277f82f5cd2`). The new
+synthetic/inspection paths, source attribution, rollback/filtering, atlas recovery and lifecycle
+controls execute without requiring the profiler. Independent ordinary-consumer and compiler
+qualification follow separately; this runtime gate does not borrow their coverage.
+
+The independently locked ordinary consumer's all-target/all-feature check passes. Its two new
+type-only API checks pass with profiling enabled (`1caa97ac-a5f0-4d41-abba-c6145eccf4ec`, 2/2)
+and disabled (`2b952819-3d1f-42b1-b915-216ed21fe3f7`, 2/2), without test-support or an added
+direct AccessKit dependency. Deliberately unexecuted Window/builder closures establish public
+signatures and composition, not runtime publication. The full runtime evidence stays with the
+separate workflows above. Both lockfiles add only enumn 0.1.14 and its AccessKit edge; existing
+versions, including each lockfile's Syn patch, remain unchanged. Broader compiler checks follow.
+
+Final locked whole-workspace and independent-consumer all-target checks pass; the independent
+fixture compiles with all features and without default features. Core/WGPU/Windows/Gallery
+all-target/all-feature correctness Clippy passes. Actual Windows Rust 1.92.0 checks pass for
+Core/WGPU/Windows/Canvas and the independently locked all-target/all-feature consumer. Stable
+production wasm compiles with profiling off/on; the existing nightly shared-memory/build-std
+configuration also compiles. No RUSTC_BOOTSTRAP or compiler-floor increase is used. Root and
+independent formatting, import/API/document/release scans and Verify YAML parsing pass. These
+are local executed gates; no hosted CI run or remote publication follows.
+
+This closes the recorded synthetic-child/explicit-inspection unit in its stated scope. The
+non-debug serializer slice does not establish a release-profile whole App/native run. Initial
+activation-tree delivery and official composite focus/keyboard/tab-group/property/configuration
+mechanisms retain explicit dispositions in the candidate queue. Complete benchmark/report/hot
+reload, foreign native/browser execution, real AT consumption, numerical allocation/retention/
+tail-latency budgets, canonical docking U4-U9 and Nara GPU/View selection remain open. All eight
+threads close and no owned Cargo process remains active. Documentation closure needs document
+checks rather than another runtime cycle when no source changes follow.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:

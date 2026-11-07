@@ -1225,7 +1225,56 @@ dependency/default or complete fixed-target-refresh change follows. Continue wit
 accessibility/synthetic-child publication and benchmark/report/hot-reload owners in their recorded
 prerequisite order, alongside unqualified platform/cost/engine/docking work.
 
+### Synthetic Accessibility And Explicit Tree Inspection Successor
+
+Start at `aef505a3ba9c1d2e6b4fcf079f2298aa1e239235` against fixed Zed
+`635026fabc38440fce5e1767d125026a17b12012`. Reconcile the complete framework synthetic-child
+mechanism from `83d4847462` and explicit tree inspection from `2268045a11`, including Element,
+Drawable, Div/Stateful forwarding, builder identities/parent mutation, provenance, serialization,
+Window reader and an actual Gallery copy consumer. Keep unrelated Settings/Zed product consumers
+outside the framework closure. Source mapping alone does not close other accessibility differences.
+
+Preserve complete raw developer inspection through the existing A11y publication owner.
+[ADR 0023](../adr/0023-open-gpui-live-region-announcement-authority.md#explicit-published-tree-inspection)
+now separates that explicit capability from automatic redacted announcement/DevTools diagnostics.
+Capture only the accepted tree actually published to the platform, with frame/activation identity;
+do not capture a speculative end_frame or fabricate Submitted authority. Clear inspection state at
+the existing deactivation/replacement/quiescence/close boundaries. Debug provenance must follow
+node geometry, modal/hidden filtering and prepaint rollback. Shared entity-view attribution should
+cover typed/erased/manual backing identities as an explicit fork adaptation to the target's AnyView
+write point. Synthetic children inherit source validity, parentage and existing final-tree repair;
+arbitrary parent mutations require rollback through the same owner.
+
+Build actual custom Element, Div/Stateful and source-built Gallery consumers, ordinary independently
+locked signature/value controls, failed-candidate/lifecycle/privacy tests and debug/release output
+checks. Keep explicit clipboard content separate from automatic artifacts; preserve all existing
+announcement and password controls. Serialize Cargo and qualify affected Core/public, component,
+Gallery/DevTools and native regressions, Rust 1.92, wasm, formatting and static scans. No second
+semantic, focus, history, state or renderer owner is introduced. Full refresh, numerical budgets,
+hot reload, canonical docking and Nara GPU/View adoption remain open.
+
+The same source commits also contain separate official focus/keyboard mechanisms. Keep the
+candidate queue's bounded remainder explicit: descendant-side active focus with ancestor gating,
+KeyDown/KeyUp continuity across focus generations, tab-group container insertion, missing-node
+diagnostic dedup, missing keyboard-shortcut/numeric-step properties, initial activation title
+delivery, enabled/active distinction and author identifiers. The fork's existing grouped property
+owner is responsibility-equivalent; similarly named focus APIs are not. Continue the complete
+composite-widget focus/keyboard consumer unit before benchmark/report/hot reload where its
+prerequisites permit. Do not close those official mechanisms with this synthetic/inspection unit.
+
 ## Maintained Baseline Before Engine Adaptation
+
+The [synthetic/inspection qualification](../verification.md#synthetic-accessibility-and-explicit-published-tree-inspection)
+now records local implementation `751e563eb89eeb373dac41cf734bfe372b81d0e4`, finishing on
+November 8. Four concrete red boundaries precede the owner fixes. Final Core/public 1,412,
+components/docking/Canvas 2,966, WGPU/affected native 96, disabled Core/public 1,203 and Gallery
+13 pass; independent type-only checks pass 2/2 per feature mode and the non-debug serializer
+slice passes six. Locked checks, correctness Clippy, actual Windows Rust 1.92, production wasm,
+formatting and existing static scans pass. These gates preserve ordinary consumers and separate
+accepted publication from Submitted/AT consumption. Continue the official composite focus/
+keyboard/tab-group and remaining property/configuration mechanisms, then the complete benchmark/
+report/hot-reload owners. Full fixed-target refresh, numerical budgets, canonical docking and
+Nara GPU/View adoption remain open; this prerequisite selects no engine UI default.
 
 The [unified-profiler qualification](../verification.md#unified-profiler-foundation) now records
 local implementation `3e5a907775e9f22d0a092a0f9f27c6f1696ade0e`, its complete scoped

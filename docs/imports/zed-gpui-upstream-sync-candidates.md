@@ -68,7 +68,7 @@ official mechanism remains queued until it receives an explicit disposition.
 | `10628c3d2c` | Split | Agent search stays outside the closure. Complete upward List normalization is implemented through the existing admitted commit; scoped qualification is recorded below. |
 | `6076ce2738` | Deferred | Markdown benchmark work may be useful later but is not a correctness fix in this plan. |
 | `362035d52a` | Split | File-existence fallback stays in product path derivation. The util parser already supports parenthesized positions; its official behavioral regression is imported and qualified below. |
-| `83d4847462` | Split | Settings product migration stays outside the framework closure. Its GPUI synthetic-child callback/builder/Div mechanism is a queued framework prerequisite for the accessibility publication/diagnostic successor below; the product disposition does not reject that framework slice. |
+| `83d4847462` | Split | Settings product migration stays outside the framework closure. The complete synthetic-child callback/builder/Div mechanism is implemented and qualified below. Its separate focus/keyboard mechanisms remain explicit successors; the product disposition rejects neither framework slice. |
 | `c7ad65e468` | Split | Editor highlight consumers stay outside the closure. Complete measured TextLayout queries are implemented with owner/public/independent consumers; scoped qualification is recorded below. |
 | `1722fe63bc` | Split | Editor multi-cursor consumers stay outside the closure. Parameterized benchmark, real text-system and dispatcher/teardown mechanisms join the existing benchmark/report successor below. |
 | `138139f830` | Deferred | macOS traffic-light hitbox behavior appears mostly absorbed locally; revisit only if a focused diff proves a remaining framework regression. |
@@ -353,8 +353,8 @@ Source inspection at the fixed target identifies complete official mechanism
 Window JSON access and Zed dump/copy consumers. Its synthetic-child provenance depends on the
 framework slice of `83d4847462e57a6f72dc314abea05d57d3bdcfb6`: Element callback,
 A11ySubtreeBuilder and Div/stateful forwarding. Settings product dependencies are unnecessary.
-Queue this complete owner separately from the generic View API; an unused view-name map is not
-an implementation. Synthetic children affect runtime accessibility. Only provenance is debug-only;
+This owner is implemented locally at `751e563eb89eeb373dac41cf734bfe372b81d0e4`, separately
+from the generic View API. Synthetic children affect runtime accessibility. Only provenance is debug-only;
 the target retains tree capture and JSON access in release builds too.
 
 Use the fork's final accepted accessibility publication, existing focus/activation authority and
@@ -364,18 +364,40 @@ its send decision, and its capture counter is not a native Submitted generation.
 registration is limited to AnyView; broader typed/manual attribution would be a documented fork
 adaptation, not source parity.
 
-[ADR 0023](../adr/0023-open-gpui-live-region-announcement-authority.md) and current DevTools
-consumers prohibit retaining ordinary announcement text in diagnostic artifacts. Reconcile that
-contract in the A11y owner before introducing capture: a redacted final-tree snapshot preserves
-the existing contract but differs from the target's raw label/value/title export. Do not silently
-claim equivalence or copy raw TreeUpdate into diagnostics. Keep the public Window reader and an
-actual example/Gallery dump/copy consumer independent of Zed editor and Nara types. Acceptance
+[ADR 0023](../adr/0023-open-gpui-live-region-announcement-authority.md#explicit-published-tree-inspection)
+now distinguishes automatic diagnostic artifacts from explicit developer inspection. Preserve the
+official complete raw tree reader, including label/value/title and live-region content already
+published in that tree. Automatic announcement diagnostics and DevTools histories/exports remain
+redacted; they do not consume this reader. Keep the public Window reader and an actual
+example/Gallery copy consumer independent of Zed editor and Nara types. Acceptance
 must cover synthetic parentage, debug/release output, exact published-tree correspondence,
-rollback/rejection/filtering, activation changes and canary exclusion before the queued unit closes.
+rollback/rejection/filtering, activation changes, raw canary inclusion in explicit inspection and
+canary exclusion from automatic artifacts before the queued unit closes.
 Map frame/title/focus metadata and valid tab-stop counting to the existing owners. Official action
-enumeration uses AccessKit's enumn feature, absent from the fork's current dependency selection;
-qualify that dependency choice rather than assuming the target helper already compiles here.
-This is source-only planning, not runtime or native accessibility qualification.
+enumeration uses AccessKit's enumn feature, now enabled with only its necessary dependency edge
+in both lockfiles. The [qualification](../verification.md#synthetic-accessibility-and-explicit-published-tree-inspection)
+records four executed failure boundaries and their owner corrections, final Core/public 1,412,
+components/docking/Canvas 2,966, WGPU/affected native 96, disabled Core/public 1,203, Gallery 13,
+independent type-only 2/2 in each feature mode, and an executed six-case non-debug serializer
+slice. Locked checks, correctness Clippy, actual Windows Rust 1.92, production wasm, formatting
+and static scans pass within their recorded scope. Full AT/native-foreign/browser, numerical
+costs, engine adoption and the remaining official mechanisms below are separate work.
+
+The bounded audit keeps both product-labeled commits split by their actual mechanisms. The
+synthetic/inspection unit does not close their following surviving framework behavior:
+
+| Mechanism | Fixed-target source and current fork disposition | Owning successor |
+| --- | --- | --- |
+| Active-descendant focus | `83d4847462`: descendant-side declaration, real focused-ancestor gating, self/duplicate diagnostics and final tree focus override are missing. `track_accessibility_focus` and relation repair are different contracts. | Composite-widget focus and keyboard continuity through real menu/listbox consumers. |
+| Keyboard click continuity | `83d4847462`: KeyDown/focus-generation capture and one-shot KeyUp consumption are missing. Other keys and focus ABA must cancel the pending activation. | Same focus/keyboard owner; a KeyUp-only click is not equivalent. |
+| Tab-group ordering and missing-node diagnostics | `2268045a11`: insert the container focus handle inside its tab group; distinguish no ID/no role with per-focus diagnostic dedup/reset. Both are missing. | Same owner, preserving scoped geometry and accepted focus. |
+| Accessibility properties | The fork's `InteractivityAccessibility` already owns description/value/placeholder, equivalent in responsibility to official `AriaProperties`. `aria_keyshortcuts` and `aria_numeric_value_step` remain absent. | Complete the existing property builder/writer and public/final-tree consumers; no parallel property owner. |
+| Initial title tree | `83d4847462`: per-frame root labels and title updates are present in this unit. The fork still returns no synchronous initial tree and schedules a sequenced refresh. | Reconcile activation callback, exact native authority and first-tree visibility explicitly; retain this behavior difference until qualified. |
+| Later enabled/author-ID APIs | Fixed-target `9183ba4c55` separates enabled from active; `cc053a4a6f` adds author identifier. Both remain missing. | Separate complete public property/configuration paths; the existing active query does not close enabled semantics. |
+
+These are source-confirmed queued mechanisms, not rejected official functionality or executed
+equivalence. Continue the complete focus/keyboard unit before the benchmark/report and hot-reload
+owners when its consumer prerequisites are available.
 
 ### Framework Slices In Product-Labeled Commits
 
