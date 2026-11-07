@@ -219,6 +219,20 @@
 //! [`.on_click()`][StatefulInteractiveElement::on_click] adds an
 //! [`AccessibleAction::Click`] handler that calls the click handler.
 //!
+//! ## Composite focus
+//!
+//! Composite widgets can keep keyboard focus on a container and declare the selected
+//! descendant with [`StatefulInteractiveElement::aria_active_descendant`]. The descendant
+//! becomes the final accessibility focus only while its surviving semantic ancestors contain
+//! the real focused container. The declaration does not move keyboard focus. Use it for the
+//! selected menu or listbox item, and notify the owning view when selection changes.
+//!
+//! Self-focus declarations and conflicting selected descendants are programming errors:
+//! debug builds assert; release builds ignore self-focus and use the last qualified claim.
+//! Filtering or a window-space portal can remove the required ancestry. The explicit
+//! [`StatefulInteractiveElement::track_accessibility_focus`] override remains separate display
+//! intent and cannot authorize active descendants without real keyboard ancestry.
+//!
 //! ## Synthetic children
 //!
 //! A custom [`Element`] can implement [`Element::a11y_synthetic_children`] to expose

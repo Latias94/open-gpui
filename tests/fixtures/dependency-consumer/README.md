@@ -743,3 +743,55 @@ These commands are verification instructions, not execution results. The framewo
 use TestPlatform and do not establish native screen-reader behavior or native GPU presentation.
 Actual results and configuration limits belong to the
 [qualification record](../../../docs/verification.md#synthetic-accessibility-and-explicit-published-tree-inspection).
+
+## Composite accessibility focus and keyboard continuity consumers
+
+The `composite_focus` targets consume the composite focus mechanisms from official Zed
+[`83d4847462`](https://github.com/zed-industries/zed/commit/83d4847462) and
+[`2268045a11`](https://github.com/zed-industries/zed/commit/2268045a11), as present in the fixed
+source [`635026fabc38440fce5e1767d125026a17b12012`](https://github.com/zed-industries/zed/tree/635026fabc38440fce5e1767d125026a17b12012).
+`StatefulInteractiveElement::aria_active_descendant()` is declared on the selected descendant
+of a composite widget. Its container retains actual keyboard focus. The final AccessKit
+`TreeUpdate.focus` follows the selected descendant only while a proper ancestor is actually
+focused. Explicit inspection preserves this distinction through `gpui_focus` and
+`active_descendant_focus`.
+
+This independently locked fixture enables no `test-support` feature and adds no dependency.
+Both fixture tests are explicitly type-only: their deliberately unexecuted closures check
+composition, the no-argument fluent method, synthetic child callbacks, ordinary key handlers,
+the targeted keyboard click event, focus manipulation, container tab ordering, and shared
+Window inspection. AccessKit types come from `open_gpui::accesskit`. These checks do not start
+an App, deliver input, publish an accessibility tree, or qualify runtime behavior.
+
+The separate crate-external `crates/gpui/tests/composite_focus.rs` target uses real TestPlatform
+windows through public `TestAppContext` and `VisualTestContext` APIs:
+
+- A menu trigger opens a composite menu whose actual keyboard FocusHandle stays on its
+  container. Arrow actions and notifications from a separately owned source entity change
+  the selected descendant. Final platform tree focus and inspection JSON agree, stable item
+  identities persist, and synthetic detail children remain children of the selected items.
+- An outside control retains actual and accessibility focus while the inactive menu changes
+  its declaration. Returning focus to the menu restores its current selected descendant.
+  Removing all items clears the descendant focus, and rebuilding restores navigation.
+- An explicit `track_accessibility_focus` display override does not authorize a selected
+  descendant without real input ancestry. With no actual input focus, or with input focus on
+  an outside control, the override keeps its own display focus and the descendant is ignored.
+- Enter and Space share the official activation arm and require an uninterrupted activation
+  keydown/keyup pair. Orphan releases, intervening other key events, and an actual focus ABA
+  do not click. Reasserting the
+  same focus handle still permits a clean click. A real menu accept action closes on keydown
+  and returns focus to its trigger; the subsequent keyup cannot reopen the menu.
+- Tab from the second non-tab-stop group container enters that group's first child and then
+  advances to its second child. Root replacement and window close release exact weak owners,
+  and retained source notifications cannot render the released root.
+
+```text
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --test composite_focus --jobs 1 --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run -p open-gpui --no-default-features --features test-support --test composite_focus --jobs 1 --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run -p open-gpui --release --no-default-features --features test-support --test composite_focus --jobs 1 --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+These commands are verification instructions, not execution or compilation results. Run one
+Cargo process at a time and reuse `target`. The runtime target qualifies public consumers on
+TestPlatform; native screen-reader behavior, native GPU presentation, rejected candidates,
+atlas refusal, and late geometry invalidation require their owning verification.

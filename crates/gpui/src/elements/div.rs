@@ -52,6 +52,8 @@ type StackSafe<T> = stacksafe::StackSafe<T>;
 type StackSafe<T> = T;
 
 mod accessibility;
+#[cfg(test)]
+mod keyboard_activation_tests;
 mod scroll;
 mod tooltip;
 
@@ -1492,6 +1494,20 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self
     }
 
+    /// Report this element as focused in the accessibility tree while an ancestor holds focus.
+    ///
+    /// This implements the `aria-activedescendant` pattern for composite widgets that keep
+    /// keyboard focus on a container, such as a menu or listbox. Set this on the selected child
+    /// so assistive technology announces and highlights it as focused.
+    ///
+    /// The element must have a [`role`][Self::role] and a stable id to produce an accessibility
+    /// node. This descendant-side declaration is ignored when no ancestor holds focus. Only one
+    /// descendant of the focused ancestor may make this declaration.
+    fn aria_active_descendant(mut self) -> Self {
+        self.interactivity().report_active_descendant_focus = true;
+        self
+    }
+
     /// Set the accessible role for this element.
     ///
     /// See the [accessibility guide](crate::_accessibility) for an overview.
@@ -2380,15 +2396,7 @@ impl Element for Div {
     }
 
     fn a11y_role(&self) -> Option<accesskit::Role> {
-        if self.interactivity.accessibility.omit_node {
-            return None;
-        }
-        // Nodes with `GenericContainer` should never be reported to accesskit.
-        // Equivalent to an HTML div with no role.
-        self.interactivity
-            .accessibility
-            .override_role
-            .filter(|role| *role != accesskit::Role::GenericContainer)
+        self.interactivity.a11y_role()
     }
 
     fn write_a11y_info(&self, node: &mut accesskit::Node) {
@@ -2662,6 +2670,7 @@ pub struct Interactivity {
 
     accessibility: InteractivityAccessibility,
     pub(crate) a11y_synthetic_children: Option<Box<dyn FnOnce(&mut crate::A11ySubtreeBuilder)>>,
+    pub(crate) report_active_descendant_focus: bool,
 
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) source_location: Option<&'static core::panic::Location<'static>>,
@@ -2847,6 +2856,11 @@ impl Interactivity {
                 if let Some(global_id) = global_id {
                     let node_id = global_id.accesskit_node_id();
                     window.a11y.record_focus_id(node_id, focus_handle.id);
+                    if self.a11y_role().is_none() {
+                        window.a11y.record_focus_without_role(focus_handle.id);
+                    }
+                } else {
+                    window.a11y.record_focus_without_id(focus_handle.id);
                 }
             }
         }
@@ -2860,6 +2874,14 @@ impl Interactivity {
                 let node_id = global_id.accesskit_node_id();
                 window.a11y.record_focus_id(node_id, focus_handle.id);
             }
+        }
+        if self.report_active_descendant_focus
+            && window.a11y.is_active()
+            && let Some(global_id) = global_id
+        {
+            window
+                .a11y
+                .record_active_descendant(global_id.accesskit_node_id());
         }
         window.with_optional_element_state::<InteractiveElementState, _>(
             global_id,
@@ -2927,6 +2949,27 @@ impl Interactivity {
                         } else {
                             None
                         };
+
+                        if interactive
+                            && self.tracked_focus_handle.is_some()
+                            && (!self.click_listeners.is_empty()
+                                || !self.aux_click_listeners.is_empty()
+                                || self.drag_listener.is_some())
+                            && hitbox.as_ref().is_some_and(Hitbox::is_active)
+                            && let Some(element_state) = element_state.as_mut()
+                        {
+                            let activation = element_state
+                                .keyboard_activation
+                                .get_or_insert_with(Default::default);
+                            let pending = activation.pending.clone();
+                            window.record_prepaint_window_transaction(
+                                activation.publication,
+                                |_, _, _| {},
+                                move |_, _, _| {
+                                    pending.borrow_mut().take();
+                                },
+                            );
+                        }
 
                         if interactive && let Some(element_state) = element_state.as_mut() {
                             self.record_hover_opacity_prediction(
@@ -3227,20 +3270,19 @@ impl Interactivity {
                 if self.tab_group {
                     tab_group = self.tab_index;
                 }
-                if window.subtree_presentation().is_interactive()
-                    && let Some(focus_handle) = &self.tracked_focus_handle
-                {
-                    window
-                        .next_frame
-                        .tab_stops
-                        .insert_scoped(focus_handle, window.subtree_geometry_validity());
-                }
-
                 window.with_element_opacity(style.opacity, |window| {
                     style.paint(bounds, window, cx, |window: &mut Window, cx: &mut App| {
                         window.with_text_style(style.text_style().cloned(), |window| {
                             let paint = |window: &mut Window| {
                                 window.with_tab_group(tab_group, |window| {
+                                    if window.subtree_presentation().is_interactive()
+                                        && let Some(focus_handle) = &self.tracked_focus_handle
+                                    {
+                                        window.next_frame.tab_stops.insert_scoped(
+                                            focus_handle,
+                                            window.subtree_geometry_validity(),
+                                        );
+                                    }
                                     if let Some(hitbox) = hitbox {
                                         #[cfg(debug_assertions)]
                                         self.paint_debug_info(
@@ -3787,13 +3829,33 @@ impl Interactivity {
                     }
                 });
 
-                if is_focused {
+                if is_focused && let Some(activation) = element_state.keyboard_activation.as_ref() {
+                    let pending_keyboard_down = activation.pending.clone();
+                    window.on_key_event({
+                        let pending_keyboard_down = pending_keyboard_down.clone();
+                        move |event: &KeyDownEvent, phase, window, _cx| {
+                            if phase.bubble() {
+                                let stroke = &event.keystroke;
+                                let is_activation_key = (stroke.key == "enter"
+                                    || stroke.key == "space")
+                                    && !stroke.modifiers.modified()
+                                    && !window.default_prevented();
+                                *pending_keyboard_down.borrow_mut() =
+                                    is_activation_key.then_some(PendingKeyboardActivation {
+                                        focus_generation: window.focus_generation,
+                                        key_event_revision: window.key_event_revision(),
+                                    });
+                            }
+                        }
+                    });
+
                     // Press enter, space to trigger click, when the element is focused.
                     window.on_key_event({
                         let click_listeners = click_listeners.clone();
                         let hitbox = hitbox.clone();
                         move |event: &KeyUpEvent, phase, window, cx| {
-                            if phase.bubble() && !window.default_prevented() {
+                            if phase.bubble() {
+                                let pending = pending_keyboard_down.borrow_mut().take();
                                 let stroke = &event.keystroke;
                                 let keyboard_button = if stroke.key.eq("enter") {
                                     Some(KeyboardButton::Enter)
@@ -3805,6 +3867,12 @@ impl Interactivity {
 
                                 if let Some(button) = keyboard_button
                                     && !stroke.modifiers.modified()
+                                    && !window.default_prevented()
+                                    && pending.is_some_and(|pending| {
+                                        pending.focus_generation == window.focus_generation
+                                            && pending.key_event_revision.wrapping_add(1)
+                                                == window.key_event_revision()
+                                    })
                                 {
                                     let click_event = ClickEvent::Keyboard(KeyboardClickEvent {
                                         button,
@@ -4346,6 +4414,16 @@ impl Interactivity {
         style
     }
 
+    fn a11y_role(&self) -> Option<accesskit::Role> {
+        if self.accessibility.omit_node {
+            return None;
+        }
+        // Generic containers do not contribute an accessibility node.
+        self.accessibility
+            .override_role
+            .filter(|role| *role != accesskit::Role::GenericContainer)
+    }
+
     pub(crate) fn write_a11y_info(&self, node: &mut accesskit::Node) {
         self.accessibility.write_node(
             node,
@@ -4365,10 +4443,23 @@ pub struct InteractiveElementState {
     hover_opacity_prediction: Option<Rc<Cell<HoverOpacityPrediction>>>,
     pub(crate) hover_listener_state: Option<Rc<RefCell<bool>>>,
     pub(crate) pending_mouse_down: Option<Rc<RefCell<Option<MouseDownEvent>>>>,
+    /// Keyboard activation retained across redraws and cancelled when an accepted frame withdraws it.
+    keyboard_activation: Option<KeyboardActivationState>,
     pub(crate) scroll_handle: Option<ScrollHandle>,
     pub(crate) active_tooltip: Option<Rc<RefCell<Option<ActiveTooltip>>>>,
     pub(crate) committed_tooltip_hitbox: Option<CommittedHitbox>,
     pub(crate) drag_pointer_capture_handle: Option<PointerCaptureHandle>,
+}
+
+#[derive(Default)]
+struct KeyboardActivationState {
+    publication: PrepaintPublicationId,
+    pending: Rc<RefCell<Option<PendingKeyboardActivation>>>,
+}
+
+struct PendingKeyboardActivation {
+    focus_generation: u64,
+    key_event_revision: u64,
 }
 
 fn clear_suppressed_interaction_state(

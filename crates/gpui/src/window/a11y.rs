@@ -107,6 +107,8 @@ use std::{
     },
 };
 
+#[cfg(test)]
+mod composite_focus_tests;
 pub(crate) mod debug;
 #[cfg(test)]
 mod synthetic_tests;
@@ -473,6 +475,9 @@ pub(crate) struct A11y {
     debug: debug::A11yDebug,
     debug_activation_generation: Option<u64>,
     debug_disabled: bool,
+    last_focus_without_node: Option<FocusId>,
+    candidate_keyboard_focus: Option<FocusId>,
+    candidate_missing_focus: Vec<(FocusId, &'static str, Option<SubtreeGeometryValidity>)>,
     candidate_focus_ids: Vec<(NodeId, FocusId, Option<SubtreeGeometryValidity>)>,
     candidate_node_geometry: Vec<(
         NodeId,
@@ -502,6 +507,7 @@ pub(crate) struct A11yPrepaintCheckpoint {
     focus_ids_len: usize,
     node_bounds_len: usize,
     action_listeners_len: usize,
+    missing_focus_len: usize,
 }
 
 impl A11y {
@@ -523,6 +529,9 @@ impl A11y {
             debug: debug::A11yDebug::default(),
             debug_activation_generation: None,
             debug_disabled: false,
+            last_focus_without_node: None,
+            candidate_keyboard_focus: None,
+            candidate_missing_focus: Vec::new(),
             candidate_focus_ids: Vec::new(),
             candidate_node_geometry: Vec::new(),
             candidate_action_listeners: Vec::new(),
@@ -569,6 +578,8 @@ impl A11y {
         #[cfg(debug_assertions)]
         self.view_type_names.clear();
         self.candidate_focus_ids.clear();
+        self.candidate_keyboard_focus = None;
+        self.candidate_missing_focus.clear();
         self.candidate_node_geometry.clear();
         self.candidate_action_listeners.clear();
         self.staged_announcement_nodes.clear();
@@ -590,6 +601,8 @@ impl A11y {
 
     pub(crate) fn discard_candidate_frame(&mut self) {
         self.candidate_focus_ids.clear();
+        self.candidate_keyboard_focus = None;
+        self.candidate_missing_focus.clear();
         self.candidate_node_geometry.clear();
         self.candidate_action_listeners.clear();
         self.staged_announcement_nodes.clear();
@@ -698,18 +711,13 @@ impl A11y {
             self.clear_debug_tree();
             return;
         }
+        self.note_published_focus(update);
         let gpui_focus = update
             .nodes
             .iter()
             .any(|(id, _)| *id == self.nodes.focus)
             .then_some(self.nodes.focus);
-        let active_descendant = gpui_focus.and_then(|focus| {
-            update
-                .nodes
-                .iter()
-                .find(|(id, _)| *id == focus)
-                .and_then(|(_, node)| node.active_descendant())
-        });
+        let active_descendant = self.nodes.active_descendant;
         self.debug.capture(
             update,
             gpui_focus,
@@ -1025,34 +1033,100 @@ impl A11y {
             .push((node_id, focus_id, self.nodes.current_geometry_validity()));
     }
 
-    pub(crate) fn resolve_focus(&mut self, focus: Option<FocusId>) {
+    pub(crate) fn record_focus_without_id(&mut self, focus: FocusId) {
+        self.candidate_missing_focus.push((
+            focus,
+            "it has no element id",
+            self.nodes.current_geometry_validity(),
+        ));
+    }
+
+    pub(crate) fn record_focus_without_role(&mut self, focus: FocusId) {
+        self.candidate_missing_focus.push((
+            focus,
+            "it has an id but no role",
+            self.nodes.current_geometry_validity(),
+        ));
+    }
+
+    pub(crate) fn record_active_descendant(&mut self, node_id: NodeId) {
+        if self.nodes.has_node(node_id) {
+            let validity = self.nodes.current_geometry_validity();
+            self.nodes
+                .active_descendant_candidates
+                .push((node_id, validity));
+        }
+    }
+
+    fn note_published_focus(&mut self, update: &TreeUpdate) {
+        let Some(focus_id) = self.candidate_keyboard_focus else {
+            return;
+        };
+        if self
+            .nodes
+            .keyboard_focus
+            .is_some_and(|id| update.nodes.iter().any(|(published, _)| *published == id))
+        {
+            self.last_focus_without_node = None;
+            return;
+        }
+        if self.last_focus_without_node == Some(focus_id) {
+            return;
+        }
+        let Some((_, reason, _)) = self
+            .candidate_missing_focus
+            .iter()
+            .find(|(id, _, validity)| {
+                *id == focus_id
+                    && validity
+                        .as_ref()
+                        .is_none_or(SubtreeGeometryValidity::is_valid)
+            })
+        else {
+            return;
+        };
+        self.last_focus_without_node = Some(focus_id);
+        log::info!(
+            "a11y: focused element ({focus_id:?}) has no accessibility node \
+             ({reason}); assistive technology will announce the whole window \
+             instead. Give it both an `.id(...)` and a `.role(...)` to expose it."
+        );
+    }
+
+    fn registered_focus(
+        &self,
+        focus: FocusId,
+    ) -> Option<(NodeId, Option<SubtreeGeometryValidity>)> {
+        let mut candidates =
+            self.candidate_focus_ids
+                .iter()
+                .filter(|(node_id, focus_id, validity)| {
+                    *focus_id == focus
+                        && validity
+                            .as_ref()
+                            .is_none_or(SubtreeGeometryValidity::is_valid)
+                        && self.nodes.has_node(*node_id)
+                });
+        let (node_id, _, validity) = candidates.next()?.clone();
+        candidates.next().is_none().then_some((node_id, validity))
+    }
+
+    pub(crate) fn resolve_focus(
+        &mut self,
+        keyboard_focus: Option<FocusId>,
+        accessibility_focus: Option<FocusId>,
+    ) {
         if !self.is_active() {
             return;
         }
-        let Some(focus) = focus else {
-            return;
-        };
-
-        let resolved = {
-            let mut candidates =
-                self.candidate_focus_ids
-                    .iter()
-                    .filter(|(node_id, focus_id, validity)| {
-                        *focus_id == focus
-                            && validity
-                                .as_ref()
-                                .is_none_or(SubtreeGeometryValidity::is_valid)
-                            && self.nodes.has_node(*node_id)
-                    });
-            let first = candidates.next().cloned();
-            if candidates.next().is_some() {
-                None
-            } else {
-                first
-            }
-        };
-
-        if let Some((node_id, _, validity)) = resolved {
+        self.candidate_keyboard_focus = keyboard_focus;
+        self.nodes.keyboard_focus = keyboard_focus
+            .and_then(|focus| self.registered_focus(focus))
+            .map(|(id, _)| id);
+        if let Some((node_id, validity)) = accessibility_focus
+            .or(keyboard_focus)
+            .and_then(|focus| self.registered_focus(focus))
+        {
             self.nodes.set_focus_with_validity(node_id, validity);
         }
     }
@@ -1153,6 +1227,7 @@ impl A11y {
             focus_ids_len: self.candidate_focus_ids.len(),
             node_bounds_len: self.candidate_node_geometry.len(),
             action_listeners_len: self.candidate_action_listeners.len(),
+            missing_focus_len: self.candidate_missing_focus.len(),
         }
     }
 
@@ -1166,6 +1241,8 @@ impl A11y {
     }
 
     pub(crate) fn rollback_prepaint(&mut self, checkpoint: A11yPrepaintCheckpoint) {
+        self.candidate_missing_focus
+            .truncate(checkpoint.missing_focus_len);
         self.candidate_action_listeners
             .truncate(checkpoint.action_listeners_len);
         self.candidate_node_geometry
@@ -1318,6 +1395,9 @@ pub(crate) struct A11yNodeBuilder {
     modal_restrictions: Vec<Option<SubtreeGeometryValidity>>,
     focus: NodeId,
     focus_validity: Option<SubtreeGeometryValidity>,
+    keyboard_focus: Option<NodeId>,
+    active_descendant: Option<NodeId>,
+    active_descendant_candidates: Vec<(NodeId, Option<SubtreeGeometryValidity>)>,
     #[cfg(debug_assertions)]
     has_set_focus: bool,
     #[cfg(debug_assertions)]
@@ -1339,6 +1419,9 @@ struct A11yNodeBuilderCheckpoint {
     modal_restrictions_len: usize,
     focus: NodeId,
     focus_validity: Option<SubtreeGeometryValidity>,
+    keyboard_focus: Option<NodeId>,
+    active_descendant: Option<NodeId>,
+    active_descendant_candidates_len: usize,
     #[cfg(debug_assertions)]
     has_set_focus: bool,
 }
@@ -1472,6 +1555,9 @@ impl A11yNodeBuilder {
             modal_restrictions: Vec::new(),
             focus: ROOT_NODE_ID,
             focus_validity: None,
+            keyboard_focus: None,
+            active_descendant: None,
+            active_descendant_candidates: Vec::new(),
             #[cfg(debug_assertions)]
             has_set_focus: false,
             #[cfg(debug_assertions)]
@@ -1495,6 +1581,9 @@ impl A11yNodeBuilder {
             modal_restrictions_len: self.modal_restrictions.len(),
             focus: self.focus,
             focus_validity: self.focus_validity.clone(),
+            keyboard_focus: self.keyboard_focus,
+            active_descendant: self.active_descendant,
+            active_descendant_candidates_len: self.active_descendant_candidates.len(),
             #[cfg(debug_assertions)]
             has_set_focus: self.has_set_focus,
         }
@@ -1560,6 +1649,10 @@ impl A11yNodeBuilder {
             .truncate(checkpoint.window_portal_scope_depth);
         self.focus = checkpoint.focus;
         self.focus_validity = checkpoint.focus_validity;
+        self.keyboard_focus = checkpoint.keyboard_focus;
+        self.active_descendant = checkpoint.active_descendant;
+        self.active_descendant_candidates
+            .truncate(checkpoint.active_descendant_candidates_len);
         #[cfg(debug_assertions)]
         {
             self.has_set_focus = checkpoint.has_set_focus;
@@ -1675,6 +1768,9 @@ impl A11yNodeBuilder {
         self.node_validity_stack.push(None);
         self.focus = ROOT_NODE_ID;
         self.focus_validity = None;
+        self.keyboard_focus = None;
+        self.active_descendant = None;
+        self.active_descendant_candidates.clear();
     }
 
     pub(crate) fn enter_scope(
@@ -2245,7 +2341,78 @@ impl A11yNodeBuilder {
         self.parent_child_mutations.clear();
         self.deferred_child_orders.clear();
         self.next_deferred_order = 0;
-        Self::repair_tree_update(update)
+        let mut update = Self::repair_tree_update(update);
+        self.resolve_active_descendant(&mut update);
+        update
+    }
+
+    fn resolve_active_descendant(&mut self, update: &mut TreeUpdate) {
+        self.active_descendant = None;
+        if self.active_descendant_candidates.is_empty() {
+            return;
+        }
+        let Some(focused) = self.keyboard_focus else {
+            return;
+        };
+        let node_ids = update
+            .nodes
+            .iter()
+            .map(|(id, _)| *id)
+            .collect::<FxHashSet<_>>();
+        if !node_ids.contains(&focused) || update.focus != focused {
+            return;
+        }
+        let parents = update
+            .nodes
+            .iter()
+            .flat_map(|(parent, node)| node.children().iter().map(move |child| (*child, *parent)))
+            .collect::<FxHashMap<_, _>>();
+        for (id, validity) in &self.active_descendant_candidates {
+            if validity
+                .as_ref()
+                .is_some_and(|validity| !validity.is_valid())
+                || !node_ids.contains(id)
+            {
+                continue;
+            }
+            if *id == focused {
+                if cfg!(debug_assertions) {
+                    panic!("set_active_descendant called on the focused node");
+                }
+                log::warn!("a11y: set_active_descendant called on the focused node ({id:?})");
+                continue;
+            }
+            let mut current = *id;
+            let mut has_focused_ancestor = false;
+            for _ in 0..update.nodes.len() {
+                let Some(parent) = parents.get(&current).copied() else {
+                    break;
+                };
+                if parent == focused {
+                    has_focused_ancestor = true;
+                    break;
+                }
+                current = parent;
+            }
+            if !has_focused_ancestor {
+                continue;
+            }
+            if self
+                .active_descendant
+                .is_some_and(|existing| existing != *id)
+            {
+                if cfg!(debug_assertions) {
+                    panic!("active descendant claimed by multiple nodes in one frame");
+                }
+                log::warn!(
+                    "a11y: multiple nodes claimed the active descendant this frame; using last-wins ({id:?})"
+                );
+            }
+            self.active_descendant = Some(*id);
+        }
+        if let Some(id) = self.active_descendant {
+            update.focus = id;
+        }
     }
 
     fn filter_published_tree(
@@ -3017,7 +3184,7 @@ mod tests {
             a11y.nodes.pop();
         }
 
-        a11y.resolve_focus(Some(claimed_focus));
+        a11y.resolve_focus(Some(claimed_focus), None);
         assert_eq!(a11y.end_frame().focus, claimed_node);
     }
 
@@ -3038,7 +3205,7 @@ mod tests {
         a11y.nodes.pop();
         a11y.rollback_prepaint(checkpoint);
 
-        a11y.resolve_focus(Some(focus));
+        a11y.resolve_focus(Some(focus), None);
         assert_eq!(a11y.end_frame().focus, ROOT_NODE_ID);
     }
 

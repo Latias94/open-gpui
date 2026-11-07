@@ -78,6 +78,8 @@ mod native_accessibility_tree_tests;
 mod native_asset_cache_tests;
 #[path = "native_cache_dependency_tests.rs"]
 mod native_cache_dependency_tests;
+#[path = "native_composite_focus_tests.rs"]
+mod native_composite_focus_tests;
 #[path = "native_display_observation_tests.rs"]
 mod native_display_observation_tests;
 #[path = "native_embedded_app_tests.rs"]

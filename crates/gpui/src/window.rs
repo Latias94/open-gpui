@@ -97,6 +97,8 @@ mod draw_unwind_tests;
 #[cfg(test)]
 mod element_arena_tests;
 #[cfg(test)]
+mod focus_generation_tests;
+#[cfg(test)]
 mod font_installation_tests;
 mod frame_journal;
 mod frame_pump;
@@ -108,6 +110,8 @@ mod input_dispatch;
 mod invalidator;
 #[cfg(all(test, feature = "profiler"))]
 mod journal_tests;
+#[cfg(test)]
+mod keyboard_activation_admission_tests;
 #[cfg(test)]
 mod pending_input_tests;
 mod pointer_session;
@@ -1919,6 +1923,9 @@ pub struct Window {
     focus_claim_resolutions: Vec<FocusClaimResolution>,
     next_focus_claim_id: u64,
     focus_claim_revision: u64,
+    pub(crate) focus_generation: u64,
+    /// The actual leaf most recently counted by `focus_generation`, excluding provisional intent.
+    focus_generation_leaf: Option<FocusId>,
     prepaint_commit_phase: Rc<Cell<Option<PrepaintCommitPhase>>>,
     frame_focus_authority_sealed: bool,
     focus_followup_requested: bool,
@@ -2989,6 +2996,8 @@ impl Window {
             focus_claim_resolutions: Vec::new(),
             next_focus_claim_id: 0,
             focus_claim_revision: 0,
+            focus_generation: 0,
+            focus_generation_leaf: None,
             prepaint_commit_phase: Rc::new(Cell::new(None)),
             frame_focus_authority_sealed: false,
             focus_followup_requested: false,
@@ -4735,6 +4744,26 @@ impl Window {
         self.focus_claim_revision
     }
 
+    fn set_focus_leaf(&mut self, focus: Option<FocusId>) {
+        if self.focus != focus {
+            self.focus = focus;
+            if self
+                .candidate_frame_transaction
+                .as_ref()
+                .is_none_or(CandidateFrameTransaction::is_accepted)
+            {
+                self.update_focus_generation();
+            }
+        }
+    }
+
+    fn update_focus_generation(&mut self) {
+        if self.focus_generation_leaf != self.focus {
+            self.focus_generation_leaf = self.focus;
+            self.focus_generation = self.focus_generation.wrapping_add(1);
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn retained_focus_claim_count_for_test(&self) -> usize {
         if self.pending_focus_claim.is_some() || self.pending_blur_claim_generation.is_some() {
@@ -5033,6 +5062,7 @@ impl Window {
         self.provisional_focus_claim = None;
         self.candidate_accessibility_focus = None;
         self.focus = None;
+        self.update_focus_generation();
         self.next_frame.focus = None;
         self.sealed_focus_retry_rejection = None;
         self.focus_followup_requested = false;
@@ -5124,7 +5154,7 @@ impl Window {
                     target: focus,
                     fallback: self.focus,
                 });
-                self.focus = Some(focus);
+                self.set_focus_leaf(Some(focus));
             }
             return;
         }
@@ -5132,7 +5162,7 @@ impl Window {
             return;
         }
 
-        self.focus = Some(focus);
+        self.set_focus_leaf(Some(focus));
         self.clear_pending_keystrokes(cx);
         self.refresh_focus_authority();
     }
@@ -5204,7 +5234,7 @@ impl Window {
                 target: claim.target,
                 fallback: self.focus,
             });
-            self.focus = Some(claim.target);
+            self.set_focus_leaf(Some(claim.target));
         }
     }
 
@@ -5213,7 +5243,7 @@ impl Window {
             return;
         };
         if self.focus == Some(claim.target) {
-            self.focus = claim.fallback;
+            self.set_focus_leaf(claim.fallback);
             if self.next_frame.generation == self.rendered_frame.generation.saturating_add(1) {
                 self.next_frame.focus = claim.fallback;
             }
@@ -5243,7 +5273,7 @@ impl Window {
                     .valid_focusable_node_id(*focus)
                     .is_some()
             });
-            self.focus = fallback;
+            self.set_focus_leaf(fallback);
             self.next_frame.focus = fallback;
             if fallback != claim.fallback {
                 self.clear_pending_keystrokes(cx);
@@ -5346,7 +5376,7 @@ impl Window {
             return;
         }
         self.provisional_focus_claim = None;
-        self.focus = None;
+        self.set_focus_leaf(None);
         self.next_frame.focus = None;
         self.clear_pending_keystrokes(cx);
     }
@@ -5466,7 +5496,7 @@ impl Window {
             completion.target_generation = target_generation;
             self.pending_focus_completion = Some(completion);
         }
-        self.focus = None;
+        self.set_focus_leaf(None);
         if candidate_frame_in_progress {
             self.next_frame.focus = None;
         }
@@ -5496,7 +5526,7 @@ impl Window {
             if claim.target == dropped {
                 self.provisional_focus_claim = None;
                 if self.focus == Some(dropped) {
-                    self.focus = claim.fallback;
+                    self.set_focus_leaf(claim.fallback);
                 }
                 if self.next_frame.focus == Some(dropped) {
                     self.next_frame.focus = claim.fallback;
@@ -5509,7 +5539,7 @@ impl Window {
             }
         }
         if self.focus == Some(dropped) {
-            self.focus = None;
+            self.set_focus_leaf(None);
             self.pending_blur_claim_generation = None;
             self.clear_pending_keystrokes(cx);
             changed = true;
@@ -7839,7 +7869,7 @@ impl Window {
                 .valid_focusable_node_id(focus)
                 .is_none()
         }) {
-            self.focus = None;
+            self.set_focus_leaf(None);
             self.clear_pending_keystrokes(cx);
             self.refresh();
         }
@@ -7870,6 +7900,9 @@ impl Window {
             self.next_frame.generation
         );
         mem::swap(&mut self.rendered_frame, &mut self.next_frame);
+        if self.interaction_authority.is_admitted() {
+            self.update_focus_generation();
+        }
         self.candidate_frame_transaction
             .as_mut()
             .expect("the swapped candidate must retain its frame transaction")
@@ -7924,6 +7957,9 @@ impl Window {
                         "Sending a11y tree update: {} nodes",
                         tree_update.nodes.len()
                     );
+                    if !self.interaction_authority.is_admitted() {
+                        self.a11y.clear_announcements_for_interaction_quiescence();
+                    }
                     self.a11y.publish(
                         &tree_update,
                         activation_generation,
@@ -8546,7 +8582,7 @@ impl Window {
         // final authority.
         self.resolve_provisional_focus_claim(cx);
         self.a11y
-            .resolve_focus(self.candidate_accessibility_focus.or(self.focus));
+            .resolve_focus(self.focus, self.candidate_accessibility_focus);
 
         let stale_pointer_owner = stale_pointer_owner.map(|owner| (owner, false)).or_else(|| {
             self.stale_pointer_session_owner_in_candidate_frame(cx)
@@ -10027,17 +10063,19 @@ impl Window {
             .then(|| self.a11y.prepaint_checkpoint());
         let result = f(self);
         if result.is_err() {
-            self.next_frame.focus = candidate_focus;
-            self.focus = committed_focus;
-            self.pending_focus_claim = pending_focus_claim;
-            self.pending_focus_reveal_fence = pending_focus_reveal_fence;
-            self.pending_blur_claim_generation = pending_blur_claim_generation;
-            self.provisional_focus_claim = provisional_focus_claim;
-            self.pending_focus_completion = pending_focus_completion;
-            self.focus_claim_resolutions
-                .truncate(focus_claim_resolutions_len);
-            self.focus_claim_revision = focus_claim_revision;
-            self.requested_autoscroll = requested_autoscroll;
+            if self.interaction_authority.is_admitted() {
+                self.next_frame.focus = candidate_focus;
+                self.focus = committed_focus;
+                self.pending_focus_claim = pending_focus_claim;
+                self.pending_focus_reveal_fence = pending_focus_reveal_fence;
+                self.pending_blur_claim_generation = pending_blur_claim_generation;
+                self.provisional_focus_claim = provisional_focus_claim;
+                self.pending_focus_completion = pending_focus_completion;
+                self.focus_claim_resolutions
+                    .truncate(focus_claim_resolutions_len);
+                self.focus_claim_revision = focus_claim_revision;
+                self.requested_autoscroll = requested_autoscroll;
+            }
             self.next_frame.hitboxes.truncate(index.hitboxes_index);
             self.next_frame
                 .pointer_capture_bindings
@@ -15834,15 +15872,18 @@ mod cached_paint_atlas_tests {
         });
 
         cx.update(|window, cx| window.draw(cx).clear(cx));
-        let committed_generation = cx.update(|window, _| window.rendered_frame.generation);
+        let (committed_generation, committed_focus_generation) =
+            cx.update(|window, _| (window.rendered_frame.generation, window.focus_generation));
         remaining_requests.set(2);
         atlas.fail_next_lease();
         root.update(cx, |_, cx| cx.notify());
 
         cx.update(|window, cx| {
             assert_eq!(window.rendered_frame.generation, committed_generation);
+            assert_eq!(window.focus_generation, committed_focus_generation);
             window.draw(cx).clear(cx);
             assert_eq!(window.rendered_frame.generation, committed_generation + 1);
+            assert_eq!(window.focus_generation, committed_focus_generation + 1);
         });
         test_app.run_until_parked();
 

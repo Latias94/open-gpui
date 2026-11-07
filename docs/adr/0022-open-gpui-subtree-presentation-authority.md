@@ -2,6 +2,7 @@
 
 **Status**: Accepted
 **Date**: 2026-07-20
+**Amended**: 2026-11-08 (composite focus and keyboard activation continuity)
 
 ## Context
 
@@ -91,6 +92,21 @@ cannot use it to mutate focus or input. Native text-handler queries suppress IME
 routing only while a sequence belongs to the current focus and context. Replay revalidates that recipient
 after observer and input-listener callbacks; neither a changed target nor a retired window may
 receive the remaining sequence.
+
+An element's Enter/Space activation arm belongs to its admitted element state and the exact
+uninterrupted key dispatch. Actual focus movement invalidates it, including movement away and
+back before another frame; reasserting the same focus is not movement. Candidate focus and
+presentation changes take effect only after acceptance, while rejected or rolled-back candidates
+preserve the previously admitted arm. Irreversible interaction quiescence cannot be rolled back
+by an enclosing failed prepaint transaction. Instrumentation is not required for this behavior.
+
+Composite controls may retain keyboard focus on a container while an explicitly declared
+descendant becomes the accessibility focus. The declaration requires that container to be a real
+focused ancestor in the final surviving semantic tree. Hidden, modal-filtered, invalid, rolled-
+back and window-portal nodes do not gain ancestry from the dispatch tree or an earlier prepaint
+stack. An explicit accessibility-only focus override remains display intent and cannot grant
+keyboard ancestry. It retains priority when it names a different display focus. Missing-ID/role
+diagnostics follow accepted publication and reset their per-focus dedup only after recovery.
 An action already completed in a live window still produces its keystroke-observer report even
 when that action changes focus; that report does not authorize remaining input delivery.
 
