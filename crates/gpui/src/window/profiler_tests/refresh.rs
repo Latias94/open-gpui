@@ -49,15 +49,20 @@ impl Render for TimedParent {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         std::thread::sleep(Duration::from_millis(1));
         let child = match self.route.get() {
-            0 => self.child.clone().into_element(),
+            0 => self.child.clone().into_any_element(),
             1 => AnyView::from(self.child.clone())
                 .downgrade()
                 .upgrade()
-                .unwrap(),
-            2 => AnyWeakView::from(self.child.downgrade()).upgrade().unwrap(),
+                .unwrap()
+                .into_any_element(),
+            2 => AnyWeakView::from(self.child.downgrade())
+                .upgrade()
+                .unwrap()
+                .into_any_element(),
             _ => AnyView::from(self.child.clone())
                 .downcast::<crate::EmptyView>()
-                .unwrap_err(),
+                .unwrap_err()
+                .into_any_element(),
         };
         div()
             .size_full()

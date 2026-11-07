@@ -105,6 +105,8 @@ mod native_scene_color_tests;
 mod native_text_layout_tests;
 #[path = "native_text_pool_tests.rs"]
 mod native_text_pool_tests;
+#[path = "native_view_component_tests.rs"]
+mod native_view_component_tests;
 
 const MAX_MESSAGE_PUMP_ATTEMPTS: usize = 512;
 const MAX_STALE_QUIT_MESSAGES: usize = 16;

@@ -608,3 +608,66 @@ generations and outcomes are read from real test-platform draws and submissions,
 constructed as successful receipts. Native power notification sources, physical mode changes,
 native compositor timing, GPU output, energy savings, and performance remain unqualified by
 these consumers.
+
+## Generic View and component consumers
+
+The `view_components` targets consume the official generic View/ViewElement unit from Zed
+[`74b5207744ef95505fd75c56bf2c9d4736e931ee`](https://github.com/zed-industries/zed/commit/74b5207744ef95505fd75c56bf2c9d4736e931ee),
+including its final-target changes through
+[`635026fabc38440fce5e1767d125026a17b12012`](https://github.com/zed-industries/zed/tree/635026fabc38440fce5e1767d125026a17b12012).
+`Render` and `RenderOnce` share the public `View` contract and embed through `ViewElement`.
+The derive supports both `RenderOnce` components and ordinary manual `View` implementations,
+preserves generic parameters and where clauses, and retains the conversion caller's source
+location. Only `Entity<T: Render>` and `AnyView` expose cached embedding; a stateless or manual
+View has no public frozen-cache shortcut.
+
+This independently locked fixture uses ordinary dependency features without `test-support` or
+new dependencies. Its `view_components` target constructs a generic stateless component and a
+generic manual enum, converts both to their actual `ViewElement` types, and checks stateless
+identity and debug source locations. The deliberately unexecuted `_composition_type_only` and
+`_root_type_only` closures consume manual backing identity, direct `View::render`, public local
+state, typed/erased/weak conversion, entity-backed cached return types, pointer/keyboard/canvas
+composition, and the typed root creation signature. Those closures establish compilation
+contracts only; they do not run an App, render a frame, dispatch input, or prove cache reuse.
+
+```text
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --test view_components --jobs 1 --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --features profiler --test view_components --jobs 1 --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+The separate crate-external `crates/gpui/tests/view_components.rs` target exercises actual
+TestPlatform windows through public `TestAppContext` and `VisualTestContext` APIs:
+
+- Two instantiations of one generic `RenderOnce` component use the same local-state call site
+  with distinct type scopes. Pointer and keyboard input mutate exact independent counts, and
+  custom canvas painting reads the resulting values. Changed initialization props preserve
+  existing state; removal and reconstruction release and recreate it exactly once.
+- Manual props-bearing Views use ordinary data entities as backing identities. Parent props
+  updates and sibling reordering preserve each entity and local state, callbacks use the new
+  props, and removal/reconstruction resets only local state. Closing and dropping the remaining
+  entity owners checks exact release counts.
+- Typed, erased, and upgraded weak children render in a real typed root. Backing notifications
+  rebuild the canvas, and root replacement and close check weak release. Actual test-platform
+  accepted/submitted generations and valid primitives come from each window's presentation facts.
+- `Entity<RenderedLeaf>::cached` and `AnyView::cached` embed two independent entities in one
+  window. Parent notifications reuse both caches; notifying each backing entity rebuilds only
+  its own subtree and paints its new value. A window refresh rebuilds both, and closing releases
+  both entity owners exactly once.
+- Explicit typed, erased, cached and upgraded-weak conversions retain the caller's file/line in
+  debug builds and omit it in release builds. This is a fork diagnostic adaptation to the target's
+  internal conversion locations. The manual props workflow directly invokes the derive's
+  into_any_element override; generic child composition invokes into_element.
+- Typed entities, erased downcasts, and upgraded weak handles also become actual window roots.
+  Closing and reopening windows retains the caller-owned backing entity, while final owner
+  release and reconstruction check the new identity, rendered values, and exact release count.
+
+```text
+cargo nextest run -p open-gpui --no-default-features --features test-support --test view_components --jobs 1 --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run -p open-gpui --no-default-features --features test-support,profiler --test view_components --jobs 1 --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+These commands are verification instructions, not an execution or compilation record. Framework
+tests activate their windows, disable creation-time frame limits, and draw through the visual
+context without holding a typed root borrow. Their submission facts belong to TestPlatform;
+native compositor delivery, GPU output, foreign-platform execution, hot reload, and measured
+performance require separate qualification.

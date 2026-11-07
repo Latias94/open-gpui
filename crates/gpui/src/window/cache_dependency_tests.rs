@@ -693,10 +693,14 @@ struct DeferredOpacityRoot {
 
 impl Render for DeferredOpacityRoot {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        let mut parent = AnyView::from(self.parent.clone());
-        if self.cached_parent {
-            parent = parent.cached(StyleRefinement::default().size(px(100.)));
-        }
+        let parent = AnyView::from(self.parent.clone());
+        let parent = if self.cached_parent {
+            parent
+                .cached(StyleRefinement::default().size(px(100.)))
+                .into_any_element()
+        } else {
+            parent.into_any_element()
+        };
         div().size(px(100.)).opacity(self.opacity).child(parent)
     }
 }
@@ -838,10 +842,14 @@ struct DeferredHoverOpacityRoot {
 
 impl Render for DeferredHoverOpacityRoot {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        let mut parent = AnyView::from(self.parent.clone());
-        if self.cached_parent {
-            parent = parent.cached(StyleRefinement::default().size(px(100.)));
-        }
+        let parent = AnyView::from(self.parent.clone());
+        let parent = if self.cached_parent {
+            parent
+                .cached(StyleRefinement::default().size(px(100.)))
+                .into_any_element()
+        } else {
+            parent.into_any_element()
+        };
         div()
             .id("deferred-hover-opacity-parent")
             .w(self.width)
@@ -1125,10 +1133,14 @@ struct GroupOpacityRoot {
 
 impl Render for GroupOpacityRoot {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        let mut parent = AnyView::from(self.parent.clone());
-        if self.cached_parent {
-            parent = parent.cached(StyleRefinement::default().size(px(100.)));
-        }
+        let parent = AnyView::from(self.parent.clone());
+        let parent = if self.cached_parent {
+            parent
+                .cached(StyleRefinement::default().size(px(100.)))
+                .into_any_element()
+        } else {
+            parent.into_any_element()
+        };
         div()
             .id("cache-opacity-group-owner")
             .group("cache-opacity-group")

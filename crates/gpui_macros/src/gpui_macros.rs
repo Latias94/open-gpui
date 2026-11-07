@@ -29,8 +29,10 @@ pub fn register_action(ident: TokenStream) -> TokenStream {
     register_action::register_action(ident)
 }
 
-/// #[derive(IntoElement)] is used to create a Component out of anything that implements
-/// the `RenderOnce` trait.
+/// `#[derive(IntoElement)]` wraps a `View` in a `ViewElement` for embedding in an element tree.
+///
+/// Types implementing `RenderOnce` implement `View` automatically. Implement `View` directly
+/// when a component combines parent-supplied props with a backing entity's identity.
 #[proc_macro_derive(IntoElement)]
 pub fn derive_into_element(input: TokenStream) -> TokenStream {
     derive_into_element::derive_into_element(input)

@@ -11,11 +11,17 @@ pub fn derive_into_element(input: TokenStream) -> TokenStream {
         impl #impl_generics open_gpui::IntoElement for #type_name #type_generics
         #where_clause
         {
-            type Element = open_gpui::Component<Self>;
+            type Element = open_gpui::ViewElement<Self>;
 
             #[track_caller]
             fn into_element(self) -> Self::Element {
-                open_gpui::Component::new(self)
+                open_gpui::ViewElement::new(self)
+            }
+
+            #[track_caller]
+            #[inline(never)]
+            fn into_any_element(self) -> open_gpui::AnyElement {
+                open_gpui::Element::into_any(self.into_element())
             }
         }
     };

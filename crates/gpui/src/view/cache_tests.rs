@@ -1,4 +1,4 @@
-use super::AnyViewState;
+use super::ViewElementState;
 use crate::{
     AnyView, AppContext as _, Context, Entity, InteractiveElement as _, IntoElement,
     ParentElement as _, Pixels, Render, StyleRefinement, Styled as _, TestAppContext, Window,
@@ -34,17 +34,32 @@ impl Render for PaintReadView {
 struct PaintReadRoot {
     child: Entity<PaintReadView>,
     renders: Rc<Cell<usize>>,
+    erased: bool,
 }
 
 impl Render for PaintReadRoot {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         self.renders.set(self.renders.get() + 1);
-        AnyView::from(self.child.clone()).cached(StyleRefinement::default().size(px(100.)))
+        let style = StyleRefinement::default().size(px(100.));
+        if self.erased {
+            AnyView::from(self.child.clone())
+                .cached(style)
+                .into_any_element()
+        } else {
+            self.child.clone().cached(style).into_any_element()
+        }
     }
 }
 
 #[open_gpui::test]
 fn cached_view_paint_reads_keep_subscriptions_until_rebuilt(cx: &mut TestAppContext) {
+    cx.update(|app| app.set_quit_mode(crate::QuitMode::Explicit));
+    for erased in [false, true] {
+        assert_paint_subscriptions(cx, erased);
+    }
+}
+
+fn assert_paint_subscriptions(cx: &mut TestAppContext, erased: bool) {
     let output = Rc::new(Cell::new(0));
     let child_renders = Rc::new(Cell::new(0));
     let root_renders = Rc::new(Cell::new(0));
@@ -63,6 +78,7 @@ fn cached_view_paint_reads_keep_subscriptions_until_rebuilt(cx: &mut TestAppCont
     let window = cx.add_window(|_, _| PaintReadRoot {
         child: child.clone(),
         renders: root_renders.clone(),
+        erased,
     });
     assert_eq!(output.get(), 1);
     let initial_renders = child_renders.get();
@@ -112,6 +128,9 @@ fn cached_view_paint_reads_keep_subscriptions_until_rebuilt(cx: &mut TestAppCont
     second.update(cx, |_, cx| cx.notify());
     assert!(root_renders.get() > before_old_notify);
     assert_eq!(child_renders.get(), rebuilt_renders);
+    window
+        .update(cx, |_, window, cx| window.remove_window(cx))
+        .expect("retire the tested cache route");
 }
 
 struct OpacityChild {
@@ -257,7 +276,7 @@ fn cached_view_follows_inherited_opacity(cx: &mut TestAppContext) {
             .rendered_frame
             .element_states
             .values()
-            .filter_map(|state| state.inner.downcast_ref::<Option<AnyViewState>>())
+            .filter_map(|state| state.inner.downcast_ref::<Option<ViewElementState>>())
             .flatten();
         let state = cached_states.next().expect("cached child state");
         assert!(cached_states.next().is_none());
@@ -281,7 +300,7 @@ fn cached_view_follows_inherited_opacity(cx: &mut TestAppContext) {
             .find_map(|state| {
                 state
                     .inner
-                    .downcast_ref::<Option<AnyViewState>>()
+                    .downcast_ref::<Option<ViewElementState>>()
                     .and_then(Option::as_ref)
             })
             .expect("rebuilt cached child state");

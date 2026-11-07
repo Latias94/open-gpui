@@ -17,6 +17,36 @@ open_gpui_platform = { package = "open-gpui-platform", version = "0.2.0" }
 
 Everything in Open GPUI starts with an `Application`. You can create one with `open_gpui_platform::application()`, and kick off your application by passing a callback to `Application::run()`. Inside this callback, you can create a new window with `App::open_window()`, and register your first root view.
 
+## Views And Reusable Components
+
+`View` is the shared embedding contract for reactive views and stateless components. Continue
+implementing `Render` for an entity's persistent state, or implement `RenderOnce` for a component
+that consumes parent-supplied props. Derive `IntoElement` on a RenderOnce component to use it in
+ordinary `.child(...)` composition.
+
+Implement `View` directly when a reusable component combines props with an existing backing
+entity. Return that entity's identity from `entity_id` and consume the props in `render`; use
+`#[derive(IntoElement)]` or `ViewElement::new` to embed it. An entity identity establishes its
+reactive boundary and local element-id scope. Two siblings at the same element-tree position
+must not return the same identity. Nesting retains the parent scope. A View with no identity uses
+the stateless type-name scope in all three drawing phases.
+
+`Entity<T: Render>` and `AnyView` embed through `ViewElement`, with the concrete Render type
+retained for profiling. AnyView remains a clonable, downcastable entity handle; its weak handle
+does not keep the entity alive. Construct elements during rendering. The shared element consumes
+its View once and participates in the existing frame, input, accessibility and resource lifecycle.
+Explicit typed/erased/cached conversions preserve the caller's debug source location through
+the shared constructor; release builds omit that metadata.
+
+Use `Entity::cached(style)` or `AnyView::cached(style)` for entity-backed subtrees with a definite
+layout size. They return ViewElement values. Notification or window refresh invalidates reuse,
+alongside the existing geometry, inherited style and resource checks. Manual and stateless Views
+have no public cache shortcut. When branches have different element types, finish each branch
+with `into_any_element()`; the underlying entity identity and concrete profiling name survive.
+
+This shared render boundary does not enable hot reload by itself. The conditional reload build,
+runtime replacement and recovery workflow remains a separately selected capability.
+
 ## Application Lifetime Under An External Loop
 
 Use `Application::run_embedded` when the supplied Platform's `run` method returns control to
@@ -251,7 +281,7 @@ Open GPUI offers three different [registers](<https://en.wikipedia.org/wiki/Regi
 
 - State management and communication with `Entity`'s. Whenever you need to store application state that communicates between different parts of your application, you'll want to use Open GPUI's entities. Entities are owned by Open GPUI and are only accessible through an owned smart pointer similar to an `Rc`. See the `app::context` module for more information.
 
-- High level, declarative UI with views. All UI in Open GPUI starts with a view. A view is simply an `Entity` that can be rendered, by implementing the `Render` trait. At the start of each frame, Open GPUI will call this render method on the root view of a given window. Views build a tree of `elements`, lay them out and style them with a tailwind-style API, and then give them to Open GPUI to turn into pixels. See the `div` element for an all purpose swiss-army knife of rendering.
+- High level, declarative UI with views. A window root is an `Entity` implementing `Render`. Its tree can compose entity-backed views, props-bearing manual `View` implementations and stateless `RenderOnce` components through `ViewElement`. Views build a tree of elements, lay them out and style them with a tailwind-style API, and then give them to Open GPUI to turn into pixels. See the `div` element for general layout, styling and interaction.
 
 - Low level, imperative UI with Elements. Elements are the building blocks of UI in Open GPUI, and they provide a nice wrapper around an imperative API that provides as much flexibility and control as you need. Elements have total control over how they and their child elements are rendered and can be used for making efficient views into large lists, implement custom layouting for a code editor, and anything else you can think of. See the `element` module for more information.
 
