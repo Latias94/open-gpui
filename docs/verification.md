@@ -3456,6 +3456,125 @@ reload retains its separate build/runtime owner. Native foreign-platform/browser
 measured-cost limits remain open. Earlier complete Windows failures retain their original scope
 despite this later complete passing observation.
 
+## Measured Text Queries, Rem Units And List Autoscroll
+
+This unit starts at `18e5f46e87f919049628cd9fd1be782c0fbaf49a`, against unchanged fixed Zed
+`635026fabc38440fce5e1767d125026a17b12012`. The UI implementation is committed locally at
+`e58b8b7687aadc91408657b4e550a1b7d723c0a9`, following utility prerequisite
+`787ab55a8f68daab1dc48e2c80d12f4109028bdb`. It reconciles framework slices previously hidden
+by product-wide candidate dispositions: List `10628c3d2c`, TextLayout `c7ad65e468`, Rems/key
+regressions `ccf4058b7a`, public util parsing `479bce0995` and shell/path regressions
+`a923597341`/`362035d52a`. Product search, picker, telemetry, terminal and filesystem fallback
+consumers remain outside the imported framework closure. The separate parameterized benchmark
+owner retains its complete context/dispatcher/report prerequisites.
+
+Complete official List normalization walks preceding rows, measures uncached rows and clamps at
+the start. Fork adaptation retains PendingAutoscroll, source validity and admitted-frame commit;
+it does not restore the target's immediate prepaint mutation. The official fixed-height scenario
+and new variable-height/unmeasured/start-clamp controls first execute against the old logic.
+An initial test build fails on a missing AppContext trait import, then the corrected red cohort
+fails all three cases (`985ec1bb-a229-40f5-8633-63df26d686be`), exposing exact negative offsets
+including -500px. Production normalization is added only after that reproduction. The public
+frame-scheduling trajectory uses the existing actual atlas refusal to check public scroll and
+presentation facts before acceptance, followed by exact Submitted recovery. Its first compilation
+exposes an invalid access to the owner's crate-private direct revision. The corrected boundary
+keeps revision assertions in the List owner, including a late-invalid overshoot source, while the
+external consumer reads public facts only. No test-only public accessor is introduced.
+
+TextLayout adopts complete source-order SmallVec/Arc queries and measurement-only indexed lookup;
+the fork's Rc collection, text shaping, clip and candidate owners remain. Public software consumers
+measure before prepaint, query original UTF-8/newline/wrapped identities and paint the same
+StyledText, with notification, remeasurement, reconstruction and retained snapshots. Independently
+locked closures explicitly establish signatures rather than execution. Rems values follow the
+current Window rem size; layout and independent value/signature consumers are separate. Utility
+source and all original regressions match the fixed target; public parser consumers introduce no
+new environment policy or dependency. Independent geometry/utility and TextLayout source reviews
+report no confirmed P1/P2. Runtime and compiler qualification is in progress; source review alone
+does not qualify execution, native presentation, browser or numerical costs.
+
+The first compiled focused owner/public run passes 51/52
+(`5aa9edc0-45c5-4f8c-a3a9-4ebcfe914117`): all selected List, measured-text, key and Rems
+controls pass, while the new public recovery fixture fails its generation premise. Independent
+review traces the same sequence: the retry submits G+1; publishing the normalized scroll requests
+refresh, and TestApp's effect flush accepts G+2 without submitting it. The corrected fixture
+checks accepted G+2 versus exact Submitted/nonempty/latest-attempt G+1, then submits G+2 on the
+following callback. Committed row bounds distinguish the normalized layout from the old source.
+The generation equalities remain exact. Additional zero-height preceding-row controls and an
+internal actual-atlas rejection/recovery check retain private revision custody.
+
+The corrected focused owner/public cohort passes 54/54
+(`46b74b02-853f-4a8c-9608-07479cc932f6`), filtering 1,289 unrelated cases. This includes all
+selected List, measurement-only text, key dispatch and Rems controls, actual atlas refusal and
+exact private revision recovery, mixed/all-zero preceding rows and public G+1/G+2/G+3 publication.
+Committed row bounds place rows 0/1/2 at -10/10/30px after normalization. Utility owner/public
+tests pass 4/4 (`cc061d70-c977-44a6-87b3-8b76aa634700`), filtering 111 unrelated cases. The
+public parser case covers the official ID/version behavior including quotes and empty/whitespace
+values. These controls do not claim product terminal or file-existence fallback behavior.
+
+The first public measured-text build reaches linking but fails with MSVC LNK1140 while the drive
+has about 45 MiB free. No test executes. Only that invocation's resolved failed PDB is removed;
+the existing target and source remain. After free space recovers to about 6 GiB, the identical
+nextest command links without profile/debug/linker changes. Its first execution fails an invalid
+cross-frame unwrapped-Arc identity premise (`e4718bf2-943f-4c88-af5f-78bdc344584c`). Both the
+fixed target and fork move wrapped-cache hits without retaining the separate raw cache entry in
+that frame; a later width change may reshape while the retained old snapshot remains valid.
+The public API does not promise that raw allocation identity across frames.
+
+The corrected public trajectory retains same-width wrapped-cache identity and zero new shaping,
+same-frame query/prepaint/paint identity, and exact source, font/run/glyph/position/metric equality
+after width changes. Actual backend layout_line observations report unchanged=0 and reflow=3 in
+this finite scenario. It passes 1/1 (`923189bf-3010-4bc1-9dff-90ea687a40df`), with real Cosmic/
+Swash rasterization, notification, source replacement, refresh, reconstruction and retained
+snapshots. The existing cache policy is preserved; this is a scoped work observation rather than
+a general speedup, budget, native GPU or cross-App painting claim. Broader gates remain in progress.
+
+Complete all-feature Core library and public integrations pass 1,390/1,390 without skips
+(`c2afe594-850d-427d-9bf0-e3d0fb635226`), including the existing View, cached dependency,
+candidate/unwind, input, accessibility and lifecycle owners. Complete utility library/public tests
+pass 115/115 without skips (`323db97f-776d-4753-92e2-4eb733f03e82`). Existing import-boundary,
+public-API, document-link and release-document scans pass; the updated Verify YAML parses. Runtime
+WGPU/native and remaining consumer/compiler gates retain their separate in-progress scope.
+The independently reviewable utility implementation is committed locally at
+`787ab55a8f68daab1dc48e2c80d12f4109028bdb` after that complete utility result.
+
+Complete WGPU library/public tests pass 89/89 without skips
+(`6a487f8a-7028-45b6-a82a-cbbcfc0a633f`), including the new measured-text workflow and existing
+paragraph/layer/wrapping/window-text, image and renderer/atlas controls. The affected Windows
+native selection passes 5/5 (`fa960185-12e8-4bd8-b079-c43e9cf50c9b`), filtering 221 unrelated
+cases. It preserves native Unicode layout/redraw, cached dependencies, frame-signal/profiler and
+generic-view composition, exact submission and owner retirement. These are existing native
+regressions alongside the new software query consumer, not a new native-query or complete
+Windows-suite claim. Remaining component/independent/disabled/compiler gates are in progress.
+
+Complete affected UI core/components/docking/Canvas tests pass 2,966/2,966 without skips
+(`76c636c8-1b57-4613-b259-4882877c0873`). Existing virtualizer/list measurement, scroll,
+semantic, overlay, host/payload/viewport recovery and dependency-boundary assertions remain.
+This regression gate changes no canonical docking U4-U9 completion status.
+
+The independently locked ordinary dependency fixture passes 56/56 with all features
+(`605480f3-ed81-44c6-814c-12c591fe538d`) and 41/41 without default features
+(`e7c514da-7e12-4b6d-b1e3-5e4c63f36f35`), without skips. The new value/style/query-signature
+targets need no test-support or dependency changes. Their unexecuted Window/query closures remain
+signature controls; actual lifecycle and paint results belong to the separate workflows above.
+
+Profiler-disabled Core and the selected public lifecycle/frame-scheduling/power/View/Rems
+consumers pass 1,181/1,181 without skips (`d03b5d5f-1cd4-4991-9c0c-de20677e7df4`). The
+List source/atlas refusal and exact revision recovery, measurement-only queries and actual public
+scroll/rem-size workflows execute in this configuration too. No timing feature is required for
+the adopted behavior. All seven implementation/review agents close.
+
+Locked whole-workspace and independent-consumer all-target checks pass. Affected Core/WGPU/
+Windows/Canvas/utility all-feature correctness Clippy and actual Windows Rust 1.92.0 framework/
+consumer all-target/all-feature checks pass. Stable production wasm compiles with profiling off/on;
+the existing nightly shared-memory/build-std configuration also compiles. Root/independent fmt,
+existing import/API/document/release scans and Verify YAML parsing pass. No dependency, lockfile,
+compiler-floor or engine-default change is needed. No owned Cargo process remains active.
+
+This closes the recorded query/List unit within its exact current-host/software/native-regression
+scope. Foreign native/browser execution, numerical frame/memory budgets, complete framework
+refresh, accessibility/benchmark/report/hot-reload owners, canonical docking and Nara GPU/View
+adoption remain open. Source dispositions and earlier failures retain their original scope.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:

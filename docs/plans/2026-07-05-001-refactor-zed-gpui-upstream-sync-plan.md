@@ -1185,6 +1185,46 @@ the existing complete benchmark/report successor. Product consumers remain outsi
 These source findings change the remaining queue rather than the current View unit's acceptance;
 their implementations and independent consumers still require separate verification.
 
+### Framework Queries And List Correctness Successor
+
+Start at `18e5f46e87f919049628cd9fd1be782c0fbaf49a` against the unchanged fixed Zed target.
+Reconcile framework slices `10628c3d2c` (upward List autoscroll), `c7ad65e468` (measured
+TextLayout queries), `ccf4058b7a` (Rems helpers and key-dispatch regressions), `479bce0995`
+(os-release parsing), `a923597341` and `362035d52a` (existing shell/path regressions).
+Keep product consumers outside the closure. Parameterized benchmarks retain their complete
+threaded-harness successor and are not reduced to this utility/API unit.
+
+Use the complete official List normalization, measuring preceding rows as needed and clamping
+at the beginning. Preserve fork PendingAutoscroll, source validity and admitted-frame commit;
+normalization's speculative measurements and a refused source must not publish an autoscroll
+change. Retain the
+official fixed-height regression and add variable-height/unmeasured/start-clamp controls plus
+an actual public rejection/recovery trajectory. Public TextLayout consumers must read measured
+line layouts before prepaint, preserve source order and then paint the same layouts. Rems must
+follow the owning Window's current rem size and compose through ordinary layout. Utility parser
+and shell/path/key tests retain exact official behavior without extra product dependencies.
+
+Implement through disjoint existing owners and actual public/independently locked consumers.
+Keep source inspection, API compilation, software/TestPlatform paint, native Submitted behavior
+and measured costs separate. Serialize Cargo after worker production-stable checkpoints; reproduce
+the List defect before its correction, then run focused and affected complete owners, public text/
+component consumers, relevant native controls, compiler-floor/fmt/static gates. Update the existing
+queue and verification record with exact results and limits. No engine default or complete-refresh
+claim follows from this unit.
+
+Implemented locally through utility `787ab55a8f68daab1dc48e2c80d12f4109028bdb` and UI
+`e58b8b7687aadc91408657b4e550a1b7d723c0a9`; the
+[query/List qualification](../verification.md#measured-text-queries-rem-units-and-list-autoscroll)
+records three executed List red cases, the fixture-generation and cache/link failures, and the
+corrected outcomes. Final focused 54, complete Core/public 1,390, utility 115, WGPU 89,
+components/docking/Canvas 2,966, disabled Core/public 1,181 and independent enabled/disabled 56/41
+pass. Affected native five and locked checks, correctness Clippy, actual Rust 1.92, production wasm,
+formatting and existing static scans pass. The original cache policy remains; finite unchanged/
+reflow shaping observations are 0/3, with no general budget claim. All seven threads close. No
+dependency/default or complete fixed-target-refresh change follows. Continue with the complete
+accessibility/synthetic-child publication and benchmark/report/hot-reload owners in their recorded
+prerequisite order, alongside unqualified platform/cost/engine/docking work.
+
 ## Maintained Baseline Before Engine Adaptation
 
 The [unified-profiler qualification](../verification.md#unified-profiler-foundation) now records

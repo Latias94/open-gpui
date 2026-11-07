@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-07T20:30:00+08:00
+timestamp: 2026-11-07T22:12:00+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -443,6 +443,25 @@ verified_by:
   0023 redaction reconciliation still queued. Conditional hot reload and complete fixed-target
   refresh remain separate.
 
+- The framework query/List successor is implemented locally at
+  `e58b8b7687aadc91408657b4e550a1b7d723c0a9`, starting at
+  `18e5f46e87f919049628cd9fd1be782c0fbaf49a`. Complete official measured TextLayout queries,
+  Rems helpers, List upward normalization and utility/shell/path/key framework slices are
+  implemented with public and independently locked consumers and scoped qualification.
+  Three List red controls reproduce negative offsets before the owning correction. The first
+  focused Core/public run passes 51/52, exposing a new fixture's incorrect one-frame recovery
+  premise; the corrected focused run passes 54/54 with exact G+1/G+2/G+3 facts and zero-height/
+  private atlas revision controls. Complete Core/public passes 1,390/1,390 and utility 115/115.
+  The utility prerequisite is committed at `787ab55a8f68daab1dc48e2c80d12f4109028bdb`.
+  The actual measured-text workflow passes 1/1 after correcting an unsupported cross-frame raw
+  Arc identity premise; observed unchanged/reflow shaping is 0/3 with the official cache policy
+  preserved. Complete WGPU passes 89/89, components/docking/Canvas 2,966/2,966, disabled
+  Core/public 1,181/1,181, independent enabled/disabled 56/56 and 41/41, and affected Windows
+  native five pass. Locked workspace/consumer checks, correctness Clippy, actual Windows Rust
+  1.92.0, stable/nightly production wasm, formatting and existing static scans pass. All seven
+  threads close; no owned Cargo remains active. See the guide for run IDs, failures and limits.
+  No engine default, numerical-cost budget or complete fixed-target refresh follows.
+
 # Historical Main Integration
 
 The previous snapshot recorded `df6ae2f` on July 9. The following integration summary retains that
@@ -481,8 +500,9 @@ historical scope and is not current branch or CI qualification.
   complete demand-driven platform-loop prerequisite and refresh-aware measurement-v3 qualification.
   Power/cadence and MetalFrameSource implementation and scoped checks are recorded above; keep
   foreign native qualification open and retain the earlier Windows failure evidence alongside the
-  later complete passing View cohort. Continue with the surviving List/TextLayout/utility slices,
-  the published accessibility diagnostics/synthetic-child owner and the
+  later complete passing View cohort. The List/TextLayout/Rems/utility successor is now qualified
+  within its recorded scope. Continue with the published accessibility diagnostics/synthetic-child
+  owner and the
   complete benchmark/report/hot-reload owners in the candidate queue's prerequisite order. Display
   getters and the foundation profiler do
   not qualify complete frame pacing. Apply the maintenance skill's official-baseline rule while

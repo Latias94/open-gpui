@@ -62,14 +62,14 @@ official mechanism remains queued until it receives an explicit disposition.
 |---|---|---|
 | `2882636c06` | Rejected | The hanging-updates change was reverted upstream by `b5c2d8a13f`; do not port a reverted behavior. |
 | `b5c2d8a13f` | Rejected | Revert commit confirms `2882636c06` should not enter the candidate queue. |
-| `a923597341` | Split | Terminal product behavior stays outside the closure. Its shell-builder regression is queued below; the fork already has the tested runtime behavior. |
-| `479bce0995` | Split | Remote telemetry stays outside the closure. Public util::parse_os_release and its tests remain a framework utility omission, queued below. |
-| `ccf4058b7a` | Split | Picker product changes stay outside the closure. Public Rems helpers and key-dispatch regression tests remain queued below. |
-| `10628c3d2c` | Split | Agent search stays outside the closure. The List upward-autoscroll normalization and regression remain a framework correctness omission, queued below. |
+| `a923597341` | Split | Terminal product behavior stays outside the closure. The official shell-builder regression is imported; the fork already has the tested runtime behavior. Qualification is recorded below. |
+| `479bce0995` | Split | Remote telemetry stays outside the closure. Public util::parse_os_release and official/public tests are implemented; scoped qualification is recorded below. |
+| `ccf4058b7a` | Split | Picker product changes stay outside the closure. Public Rems helpers and complete key-dispatch regressions are implemented; scoped qualification is recorded below. |
+| `10628c3d2c` | Split | Agent search stays outside the closure. Complete upward List normalization is implemented through the existing admitted commit; scoped qualification is recorded below. |
 | `6076ce2738` | Deferred | Markdown benchmark work may be useful later but is not a correctness fix in this plan. |
-| `362035d52a` | Split | File-existence fallback stays in product path derivation. The util parser already supports parenthesized positions; its added behavioral regression remains queued below. |
+| `362035d52a` | Split | File-existence fallback stays in product path derivation. The util parser already supports parenthesized positions; its official behavioral regression is imported and qualified below. |
 | `83d4847462` | Split | Settings product migration stays outside the framework closure. Its GPUI synthetic-child callback/builder/Div mechanism is a queued framework prerequisite for the accessibility publication/diagnostic successor below; the product disposition does not reject that framework slice. |
-| `c7ad65e468` | Split | Editor highlight consumers stay outside the closure. TextLayout::line_layouts and measurement-only line lookup remain framework API/lifecycle omissions, queued below. |
+| `c7ad65e468` | Split | Editor highlight consumers stay outside the closure. Complete measured TextLayout queries are implemented with owner/public/independent consumers; scoped qualification is recorded below. |
 | `1722fe63bc` | Split | Editor multi-cursor consumers stay outside the closure. Parameterized benchmark, real text-system and dispatcher/teardown mechanisms join the existing benchmark/report successor below. |
 | `138139f830` | Deferred | macOS traffic-light hitbox behavior appears mostly absorbed locally; revisit only if a focused diff proves a remaining framework regression. |
 | `60ed56b372` | Deferred | Miscellaneous macOS process spawning fixes need a separate utility audit after U7. |
@@ -383,14 +383,14 @@ A bounded fixed-target source audit corrects seven further product-wide rejectio
 consumers stay outside the imported closure; their surviving framework slices have independent
 dispositions. None of these findings adds runtime qualification or changes the fixed target.
 
-| Source | Remaining framework work | Complete owner/acceptance |
+| Source | Framework disposition | Complete owner/acceptance |
 | --- | --- | --- |
-| `a923597341` | The shell-builder non-interactive regression is absent; the fork already omits the interactive flag. | Preserve the existing runtime and import the source regression without terminal-product dependencies. |
-| `479bce0995` | Public util::parse_os_release and tests are absent. | Preserve ID/optional VERSION_ID and quote/missing-ID behavior through an ordinary public utility consumer. No telemetry dependency is needed. |
-| `ccf4058b7a` | Rems::ZERO, from_pixels and AddAssign are absent. The key-dispatch slice adds same-depth load-order tests for behavior already present in the fork. | Migrate geometry API with public consumers and keep key-dispatch regressions through the existing resolver; no picker or product overlay is needed. |
-| `10628c3d2c` | Upward List autoscroll still permits a negative item-local offset instead of measuring/walking preceding rows and clamping at the start. | Adapt official normalization and original regression through existing PendingAutoscroll/admitted commit. Verify varying row heights and refused candidates without importing agent search. |
-| `362035d52a` | The parenthesized-position parser regression is absent; runtime parsing is present. | Record the existing `/root/Test (3)` path/row behavior. Keep product file-existence fallback outside util. |
-| `c7ad65e468` | TextLayout::line_layouts is absent and line_layout_for_index still requires prepaint bounds. | Return measured layouts in source order and support measurement-only lookup through public consumers, preserving existing text/candidate lifetime and clipping. |
+| `a923597341` | Official non-interactive regression imported; runtime already omits the interactive flag. | Existing runtime and source regression need no terminal-product dependency. |
+| `479bce0995` | Complete public util::parse_os_release and official/public tests implemented. | ID/optional VERSION_ID and quote/missing-ID behavior remain official. No telemetry dependency is needed. |
+| `ccf4058b7a` | Complete Rems::ZERO/from_pixels/AddAssign and all three same-depth key load-order scenarios implemented. | Actual public Window/layout and independent value/signature consumers preserve the existing resolver; no picker/product overlay is needed. |
+| `10628c3d2c` | Complete upward List normalization implemented; the old negative-offset branch is removed. | Existing PendingAutoscroll/admitted commit retains source and atlas rejection. Original/variable/zero-height/start-clamp controls and exact public recovery qualify the adaptation. |
+| `362035d52a` | Official parenthesized-position regression imported; runtime parsing already present. | Existing `/root/Test (3)` path/row behavior is preserved. Product file-existence fallback stays outside util. |
+| `c7ad65e468` | Complete source-order shared line queries and measurement-only indexed lookup implemented. | Owner, actual software paint and independent signature consumers preserve existing text/candidate lifetime and clipping. |
 | `1722fe63bc` | Parameterized benchmark macros, real text-system injection and threaded dispatcher/timer teardown are absent. | Extend the existing benchmark/report successor, not another harness. Reconcile phase 2 `297c4a4d78`, ThreadedDispatcher `8886dcb0d4`, existing `1f7eae7fb7` support and `3135cdf8dc` platform text-system caching against final target. |
 
 The benchmark owner includes inputs/input_name/group/sample_size validation and Criterion
@@ -399,6 +399,17 @@ outside its lock followed by waking/draining, bounded cancel/drain after App/for
 and bounds evaluation before mutable App access. Macro parameters alone do not close that owner.
 The source-only audit retains the explicit `2882636c06`/`b5c2d8a13f` revert pair's rejected
 disposition. It is a bounded correction, not a claim that all target-to-fork omissions are exhausted.
+
+The [query/List qualification](../verification.md#measured-text-queries-rem-units-and-list-autoscroll)
+records utility `787ab55a8f68daab1dc48e2c80d12f4109028bdb` and UI
+`e58b8b7687aadc91408657b4e550a1b7d723c0a9`, starting at
+`18e5f46e87f919049628cd9fd1be782c0fbaf49a`. Three executed List red controls precede its
+correction. The record retains the 51/52 fixture-generation failure and measured-text cache/link
+failures and corrections. Final focused 54, complete Core/public 1,390, utility 115, WGPU 89,
+components/docking/Canvas 2,966, disabled Core/public 1,181 and independent enabled/disabled
+56/41 pass. Affected native five, locked checks, Clippy, actual Rust 1.92, production wasm,
+formatting and static scans pass within their recorded scope. These entries do not close complete
+benchmark/report, accessibility, hot-reload, foreign-platform/browser or engine owners.
 
 ### Text And Layout Reconciliation Units
 
