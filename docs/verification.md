@@ -3871,6 +3871,158 @@ large composite-tree costs remain part of the separate benchmark/report owner. N
 self/multiple-claim branches remain source-covered by conditional tests but are not executed
 under a non-debug whole App configuration in this unit.
 
+## Accessibility Properties, Configuration And Initial Trees
+
+The November 8 successor starts at `37ceac021fec7efb5091334bc60877ba36ab75d6`, against
+unchanged fixed Zed `635026fabc38440fce5e1767d125026a17b12012`. Official sources are
+`83d4847462` (numeric step and initial root), `2268045a11` (shortcuts),
+`9183ba4c5579c083b005d7f4c248d90c914fb46f` (enabled/active and test configuration), and
+`cc053a4a6fa2fd0e8793201ed9099466af1be0b1` (author identifiers). The complete official
+builders/writers use the existing grouped property owner. The official query names replace
+the fork's `is_accessibility_active` without an alias; first-party consumers migrate together.
+Local implementation is `d9608b1a3174f17df270d6b92894539ec32654a8`.
+
+The initial callback returns the official immutable root-only creation-title snapshot before
+the existing sequenced full refresh. No synchronous App borrow, draw, action publication,
+inspection capture or successful frame receipt is inferred from that reply. A retained callback
+reads the original Window interaction authority through its shared atomic admission bit and the
+existing native-close fact. Exact unregistration invalidates admission; a native-close callback
+sets its native fact without changing queued command settlement. The existing ingress shutdown fence
+moves into its shared sequencer state so callback threads can refuse activation before native
+termination, without reordering quit observers or captured-pointer release. Backend native and
+provisional gates remain intact. Overlapping calls retain their actual admission point; no
+new registry or globally atomic native-teardown/reply transaction is introduced.
+
+The explicit raw inspector also exposes published `author_id`, an additive fork extension to
+the fixed target's serializer. Automatic DevTools artifacts remain governed by existing
+metadata allowlists. Actual public/native controls cover source-driven replacement/removal,
+passive configuration, enabled-before-attachment subscriptions, force-disabled future windows,
+root reconstruction, repeated activation/title updates and exact release. Their source alone
+does not qualify execution. The initial all-feature production Core check passes; runtime,
+native, ordinary-consumer and compiler qualification is in progress.
+
+The first affected Core/public cohort executes 147 cases, passing 145 and failing two
+(`93b39ccd-9438-4721-a714-e7bcbf950aec`). One old lifecycle history assertion omits the
+new synchronous root. The other attempts to wake the deterministic TestScheduler from a real
+OS thread, which that scheduler deliberately rejects. The corrected CPU case invokes the
+original installed callback while App/Window are borrowed; the live worker-thread/borrowed-App
+proof moves to the real Windows dispatcher. The deterministic scheduler contract is retained.
+Reserved/rollback, native-close, retained-identity, quiescence and shutdown-fence controls pass
+in the first cohort; all five new public workflows also pass. These partial results do not
+replace the corrected complete affected run.
+
+Source review also removes an unneeded property-writer divergence: absent properties retain
+preexisting custom node content, matching the official writer. Normal fresh-node reconstruction
+removes omitted source properties in the complete public workflow. Bounded independent review
+finds no confirmed P1/P2 in the shared admission, retirement and shutdown-fence adaptations.
+The initial four implementation/test/audit/review threads are closed. New synchronous replies and final
+published trees retain separate native/AT/cost evidence requirements.
+
+The corrected affected Core/public cohort passes 147/147
+(`28531cc2-d267-41c5-ab80-6f4ce0df09ab`), filtering 1,271 unrelated cases. It retains
+the original complete source-update/removal, action generation, geometry, atlas, announcement,
+composite focus and lifecycle controls. A subsequent direct atlas-refusal/initial-root control
+is added before complete regression qualification; its source is not counted as executed yet.
+
+Both affected native trajectories pass 2/2
+(`c08b9563-ab48-4c6b-b941-e549a524fcda`), filtering 226 unrelated Windows cases. The
+extended original synthetic-accessibility trajectory checks passive enabled/active queries,
+the exact synchronous creation-title root before full publication, complete authored property
+update/removal, stable node identity and newer nonempty Submitted generations. Repeated
+activation executes the original installed Send callback on a real OS worker while App and
+Window are borrowed; it returns without rendering or publishing a frame, then the Windows
+dispatcher delivers the complete live-title tree. Original provenance, source, raw inspection,
+privacy and exact HWND/native/root/App/TextSystem/OLE retirement assertions remain. This is
+synthetic activation and native callback/render execution, not a real AT/UIA client or OS input
+and compositor-consumption qualification. The prior composite-keyboard trajectory also retains
+all controls after migrating its initial-root expectation.
+
+The first complete Core/public/WGPU/Windows run executes 1,787 cases, passing 1,782 and failing
+five (`154e08d0-4a54-44fe-aac2-484c7c795f07`), with four preexisting interactive skips.
+The new actual atlas-refusal/initial-root test passes. Four failures share an old public
+inspection helper that equates platform tree count with accepted inspection capture count.
+Its corrected fixture oracle counts its live-title publications, validates every creation-root
+bootstrap separately and retains accepted empty-root reconstruction.
+
+The fifth failure is an actual native regression: early generic admission revocation at
+`on_close` changes an older queued activation's exact target-loss terminal from Closed to
+Rejected. The fix restores original command timing and shares the existing `native_closed`
+fact atomically with the Send activation callback instead. No new lifecycle owner is added.
+Direct retained accessibility replies still refuse native-terminal windows, while the exact
+queued platform command observes WindowClosed through its original dispatcher. Corrected
+focused/native and complete reruns follow; the failed cohort is not reported as qualification.
+
+The final-correction Core/public selection passes 13/13
+(`32e6cc2c-835d-45d2-bae5-ad126dc7e848`), filtering 1,392 unrelated cases. It executes the
+actual atlas refusal, native-close-before-logical-cleanup, original retained callback after
+rollback/quiescence/replacement/shutdown, and all seven original public inspection workflows,
+including accepted empty-root reconstruction. Bounded re-review finds no confirmed P1/P2 in
+the native-close correction; all six implementation/test/review threads are closed. The exact
+native terminal control and complete product/compiler matrices follow separately.
+
+The corrected actual Windows activation/inspection and exact target-loss terminal controls
+pass 2/2 (`08718bbf-037d-41a6-8076-13737f62ad9f`), filtering 226 unrelated cases. The
+original queued command now observes Closed and settles WindowClosed exactly once, while the
+retained accessibility callback still refuses a natively closed window. The production source
+is stable before the final complete regression and compiler qualification.
+
+The first full rerun on that stable production source passes 1,786/1,787
+(`e7659da6-a517-4450-8ec3-6b6bcdd0b43b`), with four preexisting skips. Every corrected
+inspection and activation-terminal scenario passes. One unchanged native mouse-leave fixture
+receives four input/hover pairs where it expects three, while preserving pair ordering. Its
+unchanged isolated rerun passes 1/1 (`32033417-c365-455c-bc48-0fcf4a2e3f37`). The cause of
+the extra native transition is undiagnosed; neither assertion nor source is changed to suppress
+it. A further complete rerun retains this earlier failure alongside its actual result.
+
+The unchanged complete Core/public/WGPU/Windows rerun passes 1,787/1,787
+(`e6f521d4-9aa9-4edd-903d-1dbc361bc1ed`), with four preexisting interactive skips. The
+mouse-leave fixture, exact native activation terminal, all original public inspection workflows,
+new property/configuration/initial-root consumers, actual atlas refusal and complete lifecycle
+cohort pass together. The earlier extra-native-event cause remains undiagnosed, rather than
+being converted into a claim that the rerun fixed it. No further product code change follows
+this complete passing result; affected component/compiler/consumer gates remain separate.
+
+The complete all-feature UI core/components/docking/Canvas library and integration cohort
+passes 2,966/2,966 (`47011b6a-e4cd-40ca-a2e8-28f9a2eb0e3e`), with no skips. Existing
+virtualized controls, final accessibility trees, text input, floating/cross-window docking,
+retirement and Canvas consumers execute against the same stable Core source. Disabled,
+ordinary-dependency, Gallery and compiler gates follow separately.
+
+The profiler-disabled affected Core/public selection passes 182/182
+(`288ba895-c674-4b40-ad97-13634308b33d`), filtering 1,061 unrelated cases. It executes
+all three public accessibility configuration/tree/composite targets, together with A11y,
+ordered native ingress, interaction authority, atlas refusal and shutdown controls. This
+runtime selection uses `test-support`; ordinary dependencies remain a separate gate.
+
+The independently locked ordinary-dependency configuration/tree/composite targets pass 6/6
+with all features (`10a3dc2c-fd8d-408b-985c-c9ec0eec9677`) and 6/6 without default features
+(`55638945-2e47-4f15-9809-04cda649cb8e`). These deliberately type-only consumers compile the
+public builders, queries, subscriptions, custom elements, synthetic children and keyboard/focus
+interfaces without test-support or a direct AccessKit dependency. Their closures are not runtime,
+input, rendering or AT qualification; those scopes retain the separate public/native evidence above.
+
+The actual Gallery focus/accessibility selection passes 13/13
+(`2d7b7998-faed-4afe-9098-3cccc06f564d`), filtering 123 unrelated cases. It retains complete
+field/tree relations, publication-driven announcements, password/privacy controls, explicit raw
+tree copy and unavailable-tree clipboard preservation after the query-name migration.
+
+Locked workspace all-target and independently locked consumer all-target/all-feature checks pass
+on Rust 1.95.0. Affected Core/Windows correctness Clippy passes. Actual Windows Rust 1.92.0
+Core/Windows and independently locked consumer all-target/all-feature checks pass, preserving the
+declared compiler floor. Stable production wasm Core/WGPU/Web checks pass with profiling off
+and on. Root/independent formatting, import-boundary, public-API-tier, public-document-link and
+release-document checks pass; the changed workflow parses as YAML. No dependency, lockfile,
+compiler-floor or remote-publication change follows. The workflow change is locally checked;
+remote CI is not executed.
+
+All six implementation/test/review threads and one subsequent read-only benchmark audit are
+closed. That audit maps missing harness/report prerequisites in the existing candidate queue
+and plan; it supplies source evidence only. The complete benchmark/report, conditional hot
+reload, numerical budgets, canonical docking U4-U9 and Nara GPU/View adoption remain open.
+This unit does not qualify real AT/UIA consumption, OS-generated input, foreign native/browser
+execution or compositor scanout. Earlier failures and the undiagnosed extra mouse transition
+remain recorded alongside the final passing results.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:

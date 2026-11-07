@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-08T02:43:00+08:00
+timestamp: 2026-11-08T04:32:45+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -494,6 +494,28 @@ verified_by:
   followed by benchmark/report and hot reload. Full refresh, numerical budgets, canonical docking
   U4-U9 and Nara renderer/View adoption remain open.
 
+- The accessibility property/configuration/initial-tree successor is implemented locally at
+  `d9608b1a3174f17df270d6b92894539ec32654a8`, after
+  `37ceac021fec7efb5091334bc60877ba36ab75d6`, against the unchanged fixed target.
+  Official shortcut/numeric-step/author-ID builders, enabled/active queries, test configuration
+  and synchronous creation-title roots reuse the existing property, A11y and ordered-ingress
+  owners. Shared original admission and native-close facts protect retained Send callbacks;
+  the existing sequencer owns the shutdown fence. An executed native regression corrected
+  premature generic admission revocation while preserving exact queued WindowClosed settlement.
+  Corrected complete Core/public/WGPU/Windows passes 1,787/1,787 with four existing interactive
+  skips. An earlier unchanged mouse-leave extra-event failure remains undiagnosed despite its
+  passing isolated and complete reruns. Six implementation/test/review threads are closed.
+  Complete UI core/components/docking/Canvas passes 2,966/2,966 and profiler-disabled affected
+  Core/public passes 182/182. Independently locked ordinary type-only controls pass 6/6 in each
+  feature mode; the actual Gallery selection passes 13/13. Locked workspace/consumer checks,
+  affected correctness Clippy, actual Windows Rust 1.92, stable production wasm in both profiling
+  modes, root/independent formatting and existing static scans pass. Workflow YAML parsing passes.
+  Initial roots, accepted full trees, native Submitted frames and real AT consumption retain
+  separate evidence requirements. One additional read-only benchmark audit is closed; its source
+  findings queue the complete harness/report prerequisites without runtime qualification. Full
+  refresh, hot reload, numerical budgets, canonical docking U4-U9 and Nara adoption remain open.
+  No owned Cargo remains active and no remote publication occurs.
+
 # Historical Main Integration
 
 The previous snapshot recorded `df6ae2f` on July 9. The following integration summary retains that
@@ -519,44 +541,23 @@ historical scope and is not current branch or CI qualification.
 
 # Next Action
 
-- Continue the coherent framework refresh beyond the five initial correctness units. The candidate
-  queue retains font/text/layout/API, image decoding, external-run-loop and platform differences.
-  Font prewarming, available-family names and glyph-raster qualification are complete within the
-  recorded Windows/software scope, as are source-fragment/layer/underline and window-local
-  text ownership. The Taffy/intrinsic/root/grid/stack successor is qualified within its
-  recorded scope, together with shared-image decoding and its real public/native consumers.
-  The externally driven App, owning asset-load and display-observation units are qualified within
-  their recorded scope. The unified-profiler foundation is qualified within its recorded scope.
-  Official multi-subscriber wake and sleep/window visibility are qualified within their recorded
-  scope, together with the complete foreground journal/detector/monitor checkpoint and the
-  complete demand-driven platform-loop prerequisite and refresh-aware measurement-v3 qualification.
-  Power/cadence and MetalFrameSource implementation and scoped checks are recorded above; keep
-  foreign native qualification open and retain the earlier Windows failure evidence alongside the
-  later complete passing View cohort. The List/TextLayout/Rems/utility successor is now qualified
-  within its recorded scope. Synthetic children and explicit published-tree inspection are now
-  qualified within their recorded scope. Composite-widget focus/keyboard implementation and
-  scoped runtime/compiler/ordinary-consumer qualification are recorded above. Continue the
-  remaining official property/configuration/initial-tree mechanisms and complete
-  benchmark/report/hot-reload owners in the candidate queue's prerequisite order. Display
-  getters and the foundation profiler do
-  not qualify complete frame pacing. Apply the maintenance skill's official-baseline rule while
-  reconciling remaining image-feature/API/platform/hot-reload differences. Qualify the
-  prepared CoreText selection/cascade work on macOS when that platform is available. The
-  DirectWrite successor now
-  has separate existing-family and installed-fallback evidence rather than borrowing the
-  missing-family installation proof.
-  Preserve the implemented font generations, App-owned reporting, GPU flag representation and
-  Windows transfer correction. Qualify the
-  remaining compiler/dependency requirements
-  before broad engine adaptation; do not overwrite the fork or reapply already-covered fixes.
-  Preserve pending-input admission, context/recipient
-  validity and completed-action observation, together with the native upload successor's
-  source/destination admission and exact-instance leases.
-  Preserve the cache successor's admitted read/opacity publication and bounded convergence,
-  including the explicit non-view/external-group notification limits. Preserve the arena successor's
-  AppCell native delivery, candidate-frame rules and explicit post-borrow command authority. Qualify touchpad
-  scroll/inertia/pinch and response timing separately; source inspection or the new HWND/IME
-  regression does not establish that input/performance parity.
+- Continue the
+  [complete benchmark harness and report owner](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#complete-benchmark-harness-and-report-successor).
+  Its November 8 source audit queues independent benchmark features, queue/timer closure,
+  ThreadedDispatcher, real text-system injection/cache, isolated platforms, context teardown,
+  scheduled frames, measurement interfaces, parameterized/seeded macros and actual consumers.
+  Existing virtual contexts and Noop text do not establish equivalent benchmark execution.
+- Apply the maintenance skill's official-baseline rule through existing owners. Preserve
+  qualified fork admission, completed-action observation, source/geometry validity, exact native
+  leases, accepted cache publication and App/post-borrow command authority while reconciling
+  the remaining mechanisms. Keep the recorded notification and publisher/backlog limits visible;
+  avoid replacing the fork or reapplying completed units.
+- Full fixed-target refresh, conditional hot reload, numerical budgets and remaining
+  image-feature/API/platform differences stay open. Qualify prepared CoreText selection/cascade
+  on macOS, foreign native/browser execution and touchpad scroll/inertia/pinch/response timing
+  on their actual platforms. Existing getters, HWND/IME regressions and source inspection do not
+  supply that execution or performance evidence. DirectWrite existing-family and installed-
+  fallback results retain their separate recorded scope.
 - Preserve and continue the canonical-docking plan; assess the actual renderer/Host seam through
   the engine consumer. Complete Editor/game-runtime selection remains consumer work rather than
   a premise that two permanent UI engines are required.

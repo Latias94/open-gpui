@@ -1337,7 +1337,70 @@ Complete that coherent property/configuration/activation unit before the indepen
 report and conditional hot-reload owners. It does not choose the engine renderer, Editor/game
 toolkit, canonical docking completion or numerical budgets.
 
+Implemented locally at `d9608b1a3174f17df270d6b92894539ec32654a8`, starting at
+`37ceac021fec7efb5091334bc60877ba36ab75d6`. The official root is an immutable creation-title
+snapshot; existing ordered ingress still owns the complete tree. Shared original admission,
+native-close facts and the existing shutdown fence protect retained callbacks while preserving
+exact queued command settlement. The [qualification](../verification.md#accessibility-properties-configuration-and-initial-trees)
+retains fixture corrections and an actual early-revocation regression before its owning fix.
+Complete Core/public/WGPU/Windows 1,787, components/docking/Canvas 2,966, disabled affected 182,
+ordinary type-only controls 6/6 in each mode and Gallery 13 pass. Four existing interactive
+skips and an earlier undiagnosed extra native mouse event remain recorded. The original native
+trajectory executes the installed Send callback on a real worker while App/Window are borrowed;
+property updates/removal and actual Submitted/release facts retain their own scope. Locked
+checks, affected correctness Clippy, actual Windows Rust 1.92, production wasm, formatting and
+static gates pass. This completes the scoped unit rather than the fixed-target refresh.
+
+### Complete Benchmark Harness And Report Successor
+
+After property/configuration/initial-tree qualification, continue the existing benchmark/report
+owner against the unchanged fixed target. The November 8 source audit maps `297c4a4d78`,
+`1722fe63bc`, `8886dcb0d4`, `3135cdf8dc`, the surviving `1f7eae7fb7` split and seeded
+benchmark follow-up `2440236055`. Existing similarly named context, dispatcher, text cache and
+Criterion entry points are incomplete equivalents. The [candidate mapping](../imports/zed-gpui-upstream-sync-candidates.md#framework-slices-in-product-labeled-commits)
+records the missing mechanisms; this is planned work, without executed qualification.
+
+Implement dependencies through their existing owners in order:
+
+1. Restore independent `bench-support`, blocked HTTP and immediate cancellation of unanswerable
+   benchmark prompts. Preserve ordinary consumers without test-support.
+2. Import complete final-sender wake/receiver-close and Linux timer-loop shutdown behavior, then
+   the official concrete `ThreadedDispatcher` through `PlatformDispatcher`. Preserve the fork's
+   admission result, scoped task timing and App shutdown fence. Execute official worker/main,
+   timer, no-lost-wake, ready-batch and cancellation regressions.
+3. Reuse the dispatcher and native text system per thread while constructing a separate platform,
+   executors, App and windows for each routine. Inject the real text system through the existing
+   TestPlatform seam. Do not cache an entire platform or equate Noop text with actual shaping.
+4. Complete final-target context, frame-callback driving, activation/resize and teardown. Query
+   bounds before a mutable App borrow. Release timers outside their lock, wake/drain their waiters,
+   then cancel/drain after App and foreground release, including timers created during cancellation.
+   The official 100-round diagnostic bounds cancellation rounds, not wall-clock duration.
+5. Reconcile the complete Bencher/measurement interface, parameterized and seeded macros, shared
+   seed calculation and final headless renderer interfaces. Preserve report/allocator mechanisms
+   through the existing profiler/benchmark owner; a plain Criterion adapter is not the final
+   `BenchMeasurement`. Keep actual renderer submission and creation-error propagation distinct
+   from configured TestWindow outcomes.
+6. Migrate the actual Canvas benchmark and add an independently consumed benchmark binary using
+   ordinary benchmark features. Execute parameter/seed/input validation, real text shaping,
+   platform isolation, exact App/foreground release and successive-routine controls. Preserve setup
+   exclusion, nested/unwind traces and accepted-versus-Submitted authority. Qualify real GPU and
+   foreign-platform paths only where executed.
+
+Qualify coherent prerequisites separately while keeping the complete benchmark/report owner open
+until its supported mechanisms and real consumers pass. Report aggregation, foreground-journal
+consumption, allocation metrics and debug overlay keep explicit acceptance; macro expansion or
+dispatcher compilation alone does not establish their behavior, numerical budgets or full refresh.
+
 ## Maintained Baseline Before Engine Adaptation
+
+The [property/configuration/initial-tree qualification](../verification.md#accessibility-properties-configuration-and-initial-trees)
+records local implementation `d9608b1a3174f17df270d6b92894539ec32654a8`, finishing on
+November 8. Remaining official properties, enabled/active configuration and synchronous initial
+roots now pass their complete scoped runtime, ordinary-consumer and compiler gates. The source
+audit above maps the next complete benchmark harness/report owner, including queue/timer closure,
+real text-system injection, isolated platforms and seeded measurement interfaces. Hot reload,
+numerical budgets, foreign native/AT/browser execution, canonical docking and Nara GPU/View
+adoption remain open; no engine UI default follows.
 
 The [composite-focus qualification](../verification.md#composite-focus-and-keyboard-continuity)
 records local implementation `53decdc64a2d182fad1fbf00ababcd2b55a906e7`, finishing on
@@ -1347,7 +1410,8 @@ precede their corrections. Complete Core/public/WGPU/Windows 1,770, components/d
 2,966, disabled affected 111, Gallery 13 and independent type-only 4/4 in each mode pass;
 four original interactive Windows cases remain skipped. Locked checks, affected correctness
 Clippy, actual Windows Rust 1.92, production wasm, formatting and existing static scans pass.
-Remaining property/configuration/initial-tree mechanisms precede benchmark/report and hot reload.
+Its remaining property/configuration/initial-tree mechanisms are qualified by the successor above.
+Benchmark/report and hot reload remain queued.
 Full refresh, numerical budgets,
 canonical docking and Nara GPU/View adoption remain open.
 

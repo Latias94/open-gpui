@@ -391,15 +391,19 @@ synthetic/inspection unit does not close their following surviving framework beh
 | Active-descendant focus | `83d4847462`: descendant-side declaration, real focused-ancestor gating, self/duplicate diagnostics and final tree focus override are implemented at `53decdc64a2d182fad1fbf00ababcd2b55a906e7`. Final surviving semantic parentage and the fork's distinct explicit display override retain their own authority. | [Composite-focus qualification](../verification.md#composite-focus-and-keyboard-continuity) records full scoped runtime, ordinary-consumer and compiler gates, with explicit AT/cost limits. |
 | Keyboard click continuity | `83d4847462`: KeyDown/focus-generation capture and one-shot KeyUp consumption are implemented. The official shared Enter/Space arm is retained. Actual focus ABA and intervening dispatch cancel it; candidate refusal preserves the admitted arm. | Same focus/keyboard owner, with actual atlas refusal and accepted retirement controls. |
 | Tab-group ordering and missing-node diagnostics | `2268045a11`: the container focus handle is inserted inside its tab group; missing ID/role uses accepted-publication per-focus diagnostic dedup/reset. | Same owner, preserving scoped geometry, actual focus and irreversible quiescence. |
-| Accessibility properties | The fork's `InteractivityAccessibility` already owns description/value/placeholder, equivalent in responsibility to official `AriaProperties`. `aria_keyshortcuts` and `aria_numeric_value_step` remain absent. | Complete the existing property builder/writer and public/final-tree consumers; no parallel property owner. |
-| Initial title tree | `83d4847462`: per-frame root labels and title updates are present in this unit. The fork still returns no synchronous initial tree and schedules a sequenced refresh. | Reconcile activation callback, exact native authority and first-tree visibility explicitly; retain this behavior difference until qualified. |
-| Later enabled/author-ID APIs | Fixed-target `9183ba4c55` separates enabled from active; `cc053a4a6f` adds author identifier. Both remain missing. | Separate complete public property/configuration paths; the existing active query does not close enabled semantics. |
+| Accessibility properties | The existing `InteractivityAccessibility` now owns the complete official shortcut/numeric-step/author-ID builders and writer; no parallel `AriaProperties` is introduced. | [Property/configuration/initial-tree qualification](../verification.md#accessibility-properties-configuration-and-initial-trees) records complete scoped runtime, public/final-tree, ordinary-consumer and compiler gates. |
+| Initial title tree | `83d4847462`: the official synchronous root-only creation-title snapshot is implemented before the existing sequenced full refresh. Retained callbacks read original admission and native-close facts; shutdown uses the existing shared sequencer fence. | Same complete qualified owner; synchronous response, accepted full tree, Submitted frame and real AT retain distinct evidence requirements. |
+| Later enabled/author-ID APIs | Official `9183ba4c55` enabled-versus-active and test configuration, plus `cc053a4a6f` author identifiers, are implemented. The fork's active-query name migrates to the official API without an alias. | Same complete public/native/ordinary-consumer unit; configuration queries remain passive. |
 
-The first three mechanisms now share the complete focus/keyboard unit; its qualification source
-records implementation, executed failures and current coverage separately. The remaining rows
-are source-confirmed queued mechanisms, not rejected official functionality or executed
-equivalence. Continue those complete property/configuration/initial-tree owners before the
-benchmark/report and hot-reload owners when their consumer prerequisites are available.
+The first three mechanisms share the qualified focus/keyboard unit. The following three are
+implemented at `d9608b1a3174f17df270d6b92894539ec32654a8`. Their qualification records complete
+Core/public/WGPU/Windows 1,787, components/docking/Canvas 2,966, disabled affected 182, ordinary
+type-only 6/6 in each mode and Gallery 13 passing, together with locked checks, actual Windows
+Rust 1.92, production wasm, formatting and static gates. Four existing interactive skips and
+the earlier undiagnosed extra native mouse event retain their recorded scope. Continue the
+complete benchmark/report and hot-reload owners; real AT, numerical costs and engine adoption
+remain open. Product-level migration stays outside the imported closure without rejecting its
+surviving official framework mechanisms.
 
 ### Framework Slices In Product-Labeled Commits
 
@@ -421,6 +425,26 @@ The benchmark owner includes inputs/input_name/group/sample_size validation and 
 bench_with_input, thread-local dispatcher reuse with per-context platform creation, timer release
 outside its lock followed by waking/draining, bounded cancel/drain after App/foreground release,
 and bounds evaluation before mutable App access. Macro parameters alone do not close that owner.
+
+The November 8 read-only follow-up maps the final target beyond those introductions. Existing
+`BenchAppContext` and virtual `TestDispatcher` do not supply the missing official concrete
+`ThreadedDispatcher`, native text-system injection/cache, scheduled-frame driving or isolated
+per-routine platforms. `1f7eae7fb7`'s blocked HTTP/trace foundations are present, but the independent
+`bench-support` feature and benchmark-only prompt cancellation remain missing. `2440236055` adds
+seeded benchmark macros and shared seed calculation; the current private test helper is not
+equivalent when `SEED` is combined with multiple iterations. The final macro also depends on
+`Criterion<BenchMeasurement>` rather than the fork's plain Criterion forwarders.
+
+`3135cdf8dc` also owns queue/dispatcher teardown fixes: final-sender drop must wake every waiting
+receiver, receivers must recheck closure after waking, and the Linux timer loop must exit on a
+closed channel. The current `queue.rs` and `gpui_linux/src/linux/dispatcher.rs` do not yet implement
+that complete behavior. Existing text and glyph caches do not replace these lifecycle fixes.
+Headless benchmark rendering also needs the official no-readback render operation and fallible
+optional renderer factory; TestWindow draw counts and simulated outcomes are not actual GPU
+submission. These findings join the existing complete benchmark/report owner and have source
+evidence only. Full report/allocator semantics, real headless GPU execution and downstream device
+reuse/loss policy retain their own implementation and qualification requirements.
+
 The source-only audit retains the explicit `2882636c06`/`b5c2d8a13f` revert pair's rejected
 disposition. It is a bounded correction, not a claim that all target-to-fork omissions are exhausted.
 
