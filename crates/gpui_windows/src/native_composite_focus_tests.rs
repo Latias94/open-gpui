@@ -187,7 +187,7 @@ fn checkpoint(
                         (root.source == expected
                             && window.focused(cx) == Some(root.focus[focus].clone())
                             && window.committed_focus(cx) == Some(root.focus[focus].clone())
-                            && window.is_accessibility_active()
+                            && window.is_a11y_active()
                             && attempt.generation > *generation
                             && attempt.outcome == PlatformWindowPresentOutcome::Submitted
                             && attempt.contained_valid_primitives
@@ -448,22 +448,23 @@ fn native_composite_focus_keyboard_continuity_and_release() {
     let requests = observe_frame_requests(&native);
     app.update_for_test(|cx| {
         handle.update(cx, |_, window, _| {
-            assert!(!window.is_accessibility_active());
+            assert!(!window.is_a11y_active());
             assert!(window.debug_a11y_tree_json().is_none());
         })
     })
     .unwrap();
-    assert!(
-        native
-            .state
-            .a11y
-            .borrow_mut()
-            .as_mut()
-            .expect("installed native a11y")
-            .activation_handler
-            .request_initial_tree()
-            .is_none()
-    );
+    let initial = native
+        .state
+        .a11y
+        .borrow_mut()
+        .as_mut()
+        .expect("installed native a11y")
+        .activation_handler
+        .request_initial_tree()
+        .expect("synchronous initial Window snapshot");
+    assert_eq!(initial.nodes.len(), 1);
+    assert_eq!(initial.nodes[0].1.role(), Role::Window);
+    assert_eq!(initial.focus, accesskit::NodeId(0));
     let mut generation = 0;
     let mut snapshot = checkpoint(&mut app, handle, expected, 0, &mut generation);
     passive(&mut app, handle, &snapshot, &renders, &requests);

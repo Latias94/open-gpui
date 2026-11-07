@@ -908,7 +908,7 @@ impl Window {
         &mut self,
         source_id: &SourceId,
     ) -> Result<Ticket, Invalidation> {
-        if self.removed || self.native_closed.get() {
+        if self.removed || self.native_closed.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(Invalidation::WindowClosed);
         }
         let visual = self
@@ -940,7 +940,7 @@ impl Window {
     }
 
     fn replay_retained_visual(&mut self, ticket: &Ticket) -> Result<ReplayReceipt, Invalidation> {
-        if self.removed || self.native_closed.get() {
+        if self.removed || self.native_closed.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(Invalidation::WindowClosed);
         }
         if !self.invalidator.is_paint() {

@@ -795,3 +795,55 @@ These commands are verification instructions, not execution or compilation resul
 Cargo process at a time and reuse `target`. The runtime target qualifies public consumers on
 TestPlatform; native screen-reader behavior, native GPU presentation, rejected candidates,
 atlas refusal, and late geometry invalidation require their owning verification.
+
+## Accessibility property and configuration consumer
+
+The `accessibility_configuration` target consumes the public shortcut, numeric-step and
+author-identifier builders, plus the enabled-versus-active Window queries, against official Zed
+[`635026fabc38440fce5e1767d125026a17b12012`](https://github.com/zed-industries/zed/tree/635026fabc38440fce5e1767d125026a17b12012).
+Its two tests contain deliberately unexecuted `_type_only` closures. They type-check spinbutton
+and menu composition with `aria_keyshortcuts`, `aria_numeric_value_step` and `accessibility_id`,
+including borrowed strings, owned strings and `SharedString`. A composite consumer gates its
+accessibility-only source subscription with `Window::is_a11y_enabled()`, independently of
+`Window::is_a11y_active()`. This fixture adds no dependency, enables no `test-support`, constructs
+no App or Window, and does not publish or inspect a live accessibility tree.
+
+The author identifier is distinct from GPUI's internal element ID. It is visible outside the
+process through supported AccessKit platform adapters; use stable identifiers unique within the
+accessibility tree. Keyboard shortcuts describe existing bindings and do not install a keymap.
+The enabled query describes configuration, including force-disabled windows, while the active
+query describes the current frame's accessibility work. Gate subscriptions by enabled and gate
+render-time semantic computation by active, so attaching assistive technology can request a
+fresh tree without missing earlier source or focus notifications.
+
+The separate framework `crates/gpui/tests/accessibility_configuration.rs` runtime target uses
+public `TestAppContext` and `VisualTestContext` APIs to cover:
+
+- Source-notified spinbutton and menu property replacement and removal, exact complete author
+  identifiers and shortcut strings, numeric steps, stable distinct node/element identities,
+  removed menu children, and agreement between the final platform tree and inspection JSON.
+- Passive enabled/active and inspection queries before attachment, after accepted publication
+  and after deactivation, with unchanged rendering, scheduling, focus and publication history.
+- Real composite focus and source subscriptions registered before attachment, source selection
+  updates while inactive, repeated activation/deactivation and full-refresh requests, and
+  selected-descendant focus with stable item identities.
+- `TestAppContext::disable_accessibility()` affecting subsequently created windows only;
+  earlier windows remain eligible for activation, while disabled menus never register
+  accessibility subscriptions, select, activate or publish, including after root replacement.
+- Root replacement, reconstruction and window removal releasing exact weak view owners and
+  preventing further deliveries from a retained source entity.
+
+Run the independent type checks and framework runtime target separately with the existing
+lockfiles, one Cargo process at a time, reusing `target`:
+
+```text
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --test accessibility_configuration --jobs 1 --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run -p open-gpui --no-default-features --features test-support --test accessibility_configuration --jobs 1 --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run -p open-gpui --release --no-default-features --features test-support --test accessibility_configuration --jobs 1 --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+These commands are verification instructions, not compilation or execution results. The runtime
+target inspects the latest complete accepted tree after the public activation helper drains its
+work; it does not assert the synchronous initial callback's root-only title snapshot or its
+sequenced refresh. Native initial callbacks, actual screen readers, native `Submitted` frames,
+GPU output and platform-specific identifier exposure require their separate owners and gates.

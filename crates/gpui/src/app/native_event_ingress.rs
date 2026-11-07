@@ -40,6 +40,7 @@ pub(super) const MAX_NATIVE_WORK_PER_DRAIN: u8 = 64;
 struct NativeSequenceAuthority {
     next_sequence: u64,
     terminated: bool,
+    shutdown_generation: Option<u64>,
     staged_cross_thread: VecDeque<StagedNativeEnvelope>,
 }
 
@@ -48,6 +49,7 @@ impl NativeSequenceAuthority {
         Self {
             next_sequence: 0,
             terminated: false,
+            shutdown_generation: None,
             staged_cross_thread: VecDeque::new(),
         }
     }
@@ -131,8 +133,8 @@ impl NativeCrossThreadIngress {
         &self,
         window_id: WindowId,
         active_state: &std::sync::atomic::AtomicU64,
-    ) {
-        self.stage_active_state(window_id, active_state, true);
+    ) -> bool {
+        self.stage_active_state(window_id, active_state, true)
     }
 
     #[cfg(not(target_family = "wasm"))]
@@ -150,11 +152,11 @@ impl NativeCrossThreadIngress {
         window_id: WindowId,
         active_state: &std::sync::atomic::AtomicU64,
         active: bool,
-    ) {
+    ) -> bool {
         {
             let mut sequencer = self.sequencer.lock();
-            if sequencer.terminated {
-                return;
+            if sequencer.terminated || (active && sequencer.shutdown_generation.is_some()) {
+                return false;
             }
             let sequence = sequencer.reserve_sequence();
             crate::window::a11y::set_requested_active(active_state, active);
@@ -173,6 +175,7 @@ impl NativeCrossThreadIngress {
                 });
         }
         self.wake_importer();
+        true
     }
 
     #[cfg(not(target_family = "wasm"))]
@@ -349,7 +352,6 @@ pub(super) struct NativeEventIngress {
     unwind_recovery_scheduled: Cell<bool>,
     post_borrow_convergence_scheduled: Cell<bool>,
     terminated: Cell<bool>,
-    shutdown_generation: Cell<Option<u64>>,
     delayed_wake_tasks: RefCell<Vec<NativeOwnedLocalTask>>,
     cross_thread_wake_sender: async_channel::Sender<()>,
     cross_thread_wake_task: RefCell<Option<NativeOwnedLocalTask>>,
@@ -391,7 +393,6 @@ impl NativeEventIngress {
             unwind_recovery_scheduled: Cell::new(false),
             post_borrow_convergence_scheduled: Cell::new(false),
             terminated: Cell::new(false),
-            shutdown_generation: Cell::new(None),
             delayed_wake_tasks: RefCell::new(Vec::new()),
             cross_thread_wake_sender,
             cross_thread_wake_task: RefCell::new(Some(cross_thread_wake_task)),
@@ -646,7 +647,7 @@ impl NativeEventIngress {
             );
             return false;
         }
-        if self.shutdown_generation.get().is_some() && !envelope.is_shutdown_critical() {
+        if self.sequencer.lock().shutdown_generation.is_some() && !envelope.is_shutdown_critical() {
             self.diagnostics.record_terminal(
                 envelope.pending_diagnostic(),
                 NativeBoundaryDisposition::Closed,
@@ -724,15 +725,18 @@ impl NativeEventIngress {
     }
 
     pub(super) fn begin_shutdown(&self, generation: u64) {
-        match self.shutdown_generation.get() {
-            Some(current) => {
-                debug_assert_eq!(
-                    current, generation,
-                    "shutdown generation changed while fenced"
-                );
-                return;
+        {
+            let mut sequencer = self.sequencer.lock();
+            match sequencer.shutdown_generation {
+                Some(current) => {
+                    debug_assert_eq!(
+                        current, generation,
+                        "shutdown generation changed while fenced"
+                    );
+                    return;
+                }
+                None => sequencer.shutdown_generation = Some(generation),
             }
-            None => self.shutdown_generation.set(Some(generation)),
         }
 
         let retired = {
@@ -759,8 +763,16 @@ impl NativeEventIngress {
     }
 
     pub(super) fn end_shutdown(&self, generation: u64) {
-        if self.shutdown_generation.get() == Some(generation) {
-            self.shutdown_generation.set(None);
+        let ended = {
+            let mut sequencer = self.sequencer.lock();
+            if sequencer.shutdown_generation == Some(generation) {
+                sequencer.shutdown_generation = None;
+                true
+            } else {
+                false
+            }
+        };
+        if ended {
             self.schedule_wake_if_needed();
         }
     }
@@ -2588,7 +2600,7 @@ mod tests {
         let worker_ingress = ingress.clone();
         let worker_state = active_state.clone();
         std::thread::spawn(move || {
-            worker_ingress.activated(original_window, &worker_state);
+            assert!(worker_ingress.activated(original_window, &worker_state));
         })
         .join()
         .expect("accessibility callback worker should complete");
@@ -2650,9 +2662,10 @@ mod tests {
         let active_state = AtomicU64::new(0);
         let window_id = WindowId::from(1);
 
-        ingress.activated(window_id, &active_state);
+        assert!(ingress.activated(window_id, &active_state));
         ingress.system_wake();
         sequencer.lock().terminate();
+        assert!(!ingress.activated(window_id, &active_state));
         ingress.deactivated(window_id, &active_state);
         ingress.thermal_state_changed();
 
@@ -2667,5 +2680,27 @@ mod tests {
             (1 << 1) | 1,
             "callbacks after termination must not mutate requested activation state"
         );
+    }
+
+    #[test]
+    fn shutdown_fence_refuses_activation_without_consuming_sequence_or_generation() {
+        let sequencer = Arc::new(Mutex::new(NativeSequenceAuthority::new()));
+        let (wake_sender, _wake_receiver) = async_channel::bounded(1);
+        let ingress = NativeCrossThreadIngress::new(sequencer.clone(), wake_sender);
+        let active_state = AtomicU64::new(0);
+        let window_id = WindowId::from(1);
+        sequencer.lock().shutdown_generation = Some(17);
+        assert!(!ingress.activated(window_id, &active_state));
+        assert_eq!(active_state.load(Ordering::SeqCst), 0);
+        {
+            let mut state = sequencer.lock();
+            assert_eq!(state.next_sequence, 0);
+            assert!(state.staged_cross_thread.is_empty());
+            assert!(!state.terminated);
+            state.shutdown_generation = None;
+        }
+        assert!(ingress.activated(window_id, &active_state));
+        assert_eq!(sequencer.lock().next_sequence, 1);
+        assert_eq!(active_state.load(Ordering::SeqCst), (1 << 1) | 1);
     }
 }

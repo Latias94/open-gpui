@@ -197,6 +197,22 @@ jobs:
         shell: pwsh
         run: cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test profiler --test lifecycle --test foreground_journal --test frame_signals --test frame_scheduling --test refresh_measurements --test power_cadence --test view_components --test rems --test measured_text --test accessibility_tree --test composite_focus --target-dir target -j 1 --test-threads=1 --no-fail-fast --no-tests fail
 
+      - name: Test accessibility configuration and initial activation
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: |
+          cargo nextest run --locked -p open-gpui --all-features --lib --test accessibility_configuration -E 'test(a11y_activation_tests) | test(configuration_tests) | test(shutdown_fence_refuses_activation) | binary(accessibility_configuration)' -j 1 --test-threads=1 --no-fail-fast --no-tests fail
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo nextest run --locked -p open-gpui --no-default-features --features test-support --lib --test accessibility_configuration -E 'test(a11y_activation_tests) | test(configuration_tests) | test(shutdown_fence_refuses_activation) | binary(accessibility_configuration)' -j 1 --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Test independent accessibility configuration
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: |
+          cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --all-features --test accessibility_configuration --target-dir target -j 1 --test-threads=1 --no-fail-fast --no-tests fail
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test accessibility_configuration --target-dir target -j 1 --test-threads=1 --no-fail-fast --no-tests fail
+
       - name: Run native WGPU package tests
         if: matrix.name == 'windows'
         shell: pwsh

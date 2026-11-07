@@ -164,7 +164,7 @@ struct NativeSceneConsumers {
 impl Render for NativeSceneConsumers {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.counters.renders.set(self.counters.renders.get() + 1);
-        if window.is_accessibility_active() || window.is_inspector_picking(cx) {
+        if window.is_a11y_active() || window.is_inspector_picking(cx) {
             self.counters
                 .uncached_renders
                 .set(self.counters.uncached_renders.get() + 1);
@@ -270,7 +270,7 @@ impl Render for NativeSceneColorRoot {
                 canvas(
                     move |_, window, cx| {
                         let cache_allowed =
-                            !window.is_accessibility_active() && !window.is_inspector_picking(cx);
+                            !window.is_a11y_active() && !window.is_inspector_picking(cx);
                         let accepted = counters.clone();
                         let discarded = counters.clone();
                         window.record_prepaint_window_transaction(

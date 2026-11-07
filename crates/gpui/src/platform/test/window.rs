@@ -788,6 +788,22 @@ impl TestWindow {
             .set_active_window(Some(self.clone()));
     }
 
+    #[cfg(test)]
+    pub(crate) fn take_accessibility_activation_for_test(
+        &self,
+    ) -> Box<dyn Fn() -> Option<accesskit::TreeUpdate> + Send + 'static> {
+        let mut state = self.0.lock();
+        let callbacks = Rc::get_mut(
+            state
+                .accessibility
+                .callbacks
+                .as_mut()
+                .expect("installed accessibility callbacks"),
+        )
+        .expect("the activation callback must not be checked out");
+        std::mem::replace(&mut callbacks.activation, Box::new(|| None))
+    }
+
     pub(crate) fn activate_accessibility(&self) -> bool {
         let callbacks = {
             let mut state = self.0.lock();

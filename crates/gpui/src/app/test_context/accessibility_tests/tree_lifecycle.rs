@@ -82,10 +82,13 @@ fn accessibility_harness_observes_final_tree_lifecycle(cx: &mut TestAppContext) 
 
     let activation_update_count = cx.accessibility_tree_update_history(window).len();
     assert!(cx.activate_accessibility(window));
-    assert_eq!(
-        cx.accessibility_tree_update_history(window).len(),
-        activation_update_count + 1
-    );
+    let reactivated = cx.accessibility_tree_update_history(window);
+    assert_eq!(reactivated.len(), activation_update_count + 2);
+    let placeholder = &reactivated[activation_update_count];
+    assert_eq!(placeholder.nodes.len(), 1);
+    assert_eq!(placeholder.nodes[0].1.role(), Role::Window);
+    assert_eq!(placeholder.focus, NodeId(0));
+    assert_eq!(reactivated[activation_update_count + 1], initial);
 
     let (control_id, control) = node_with_role(&initial, Role::SpinButton);
     let (label_id, _) = node_with_role(&initial, Role::Label);
@@ -164,10 +167,11 @@ fn accessibility_harness_observes_final_tree_lifecycle(cx: &mut TestAppContext) 
     let (reactivated_id, reactivated_control) = node_with_role(&reactivated, Role::SpinButton);
     assert_eq!(reactivated_id, control_id);
     assert_eq!(reactivated_control.numeric_value(), Some(2.0));
-    assert_eq!(
-        cx.accessibility_tree_update_history(window).len(),
-        update_count + 1
-    );
+    let resumed = cx.accessibility_tree_update_history(window);
+    assert_eq!(resumed.len(), update_count + 2);
+    assert_eq!(resumed[update_count].nodes.len(), 1);
+    assert_eq!(resumed[update_count].nodes[0].1.role(), Role::Window);
+    assert_eq!(resumed[update_count + 1], reactivated);
 }
 
 #[open_gpui::test]

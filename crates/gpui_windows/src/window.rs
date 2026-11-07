@@ -8798,6 +8798,26 @@ pub(crate) struct A11yActivationHandler {
     interaction_authority: A11yInteractionAuthority,
 }
 
+#[cfg(test)]
+impl A11yActivationHandler {
+    pub(crate) fn request_initial_tree_on_worker_for_test(
+        &mut self,
+    ) -> Option<accesskit::TreeUpdate> {
+        if !self.interaction_authority.accepts_interaction() {
+            return None;
+        }
+        let callback = std::mem::replace(&mut self.callback, Box::new(|| None));
+        let (callback, result) = std::thread::spawn(move || {
+            let result = callback();
+            (callback, result)
+        })
+        .join()
+        .expect("the installed Send activation callback must complete on a worker");
+        self.callback = callback;
+        result
+    }
+}
+
 impl accesskit::ActivationHandler for A11yActivationHandler {
     fn request_initial_tree(&mut self) -> Option<accesskit::TreeUpdate> {
         if !self.interaction_authority.accepts_interaction() {

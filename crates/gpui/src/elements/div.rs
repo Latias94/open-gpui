@@ -1520,6 +1520,18 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self
     }
 
+    /// Set the author-provided identifier exposed to accessibility clients.
+    ///
+    /// Unlike the GPUI element ID, this value is visible outside the process.
+    /// Keep it stable and unique within its accessibility tree.
+    /// AccessKit maps it to platform identifiers where supported, including
+    /// UIA `AutomationId` on Windows, `AXIdentifier` on macOS, and AT-SPI
+    /// `AccessibleId` on Linux stacks whose deployed adapter exposes it.
+    fn accessibility_id(mut self, id: impl Into<SharedString>) -> Self {
+        self.interactivity().accessibility.author_id = Some(id.into());
+        self
+    }
+
     /// Set the accessible label for this element.
     fn aria_label(mut self, label: impl Into<SharedString>) -> Self {
         self.interactivity().accessibility.label = Some(label.into());
@@ -1529,6 +1541,16 @@ pub trait StatefulInteractiveElement: InteractiveElement {
     /// Set the accessible description for this element.
     fn aria_description(mut self, description: impl Into<SharedString>) -> Self {
         self.interactivity().accessibility.description = Some(description.into());
+        self
+    }
+
+    /// Set the keyboard shortcut(s) that activate this element, announced by
+    /// assistive technology (maps to AccessKit's `keyboard_shortcut`).
+    ///
+    /// Note that this does not create a keymap. It simply instructs assistive
+    /// technology what the keymap is.
+    fn aria_keyshortcuts(mut self, keyshortcuts: impl Into<SharedString>) -> Self {
+        self.interactivity().accessibility.keyshortcuts = Some(keyshortcuts.into());
         self
     }
 
@@ -1681,6 +1703,13 @@ pub trait StatefulInteractiveElement: InteractiveElement {
     /// Set the numeric value for this element.
     fn aria_numeric_value(mut self, value: f64) -> Self {
         self.interactivity().accessibility.numeric_value = Some(value);
+        self
+    }
+
+    /// Set the step by which assistive technology should expect the numeric
+    /// value of this element to change (e.g. when incrementing a spin button).
+    fn aria_numeric_value_step(mut self, step: f64) -> Self {
+        self.interactivity().accessibility.numeric_value_step = Some(step);
         self
     }
 
@@ -5483,6 +5512,71 @@ mod tests {
         util::FluentBuilder as _,
     };
     use std::{cell::Cell, rc::Weak};
+
+    #[test]
+    fn test_accessibility_id_builder_writes_author_id() {
+        let mut element = div()
+            .id("buffer-font-size")
+            .accessibility_id("settings.buffer-font-size");
+        let mut node = accesskit::Node::new(accesskit::Role::SpinButton);
+
+        element.interactivity().write_a11y_info(&mut node);
+
+        assert_eq!(node.author_id(), Some("settings.buffer-font-size"));
+        assert_eq!(Element::id(&element), Some("buffer-font-size".into()));
+    }
+
+    #[test]
+    fn test_write_a11y_info_string_and_numeric_properties() {
+        let mut interactivity = Interactivity::default();
+        interactivity.accessibility.author_id = Some("settings.buffer-font-size".into());
+        interactivity.accessibility.label = Some("Buffer Font Size".into());
+        interactivity.accessibility.value = Some("15".into());
+        interactivity.accessibility.placeholder = Some("Search".into());
+        interactivity.accessibility.numeric_value = Some(15.0);
+        interactivity.accessibility.min_numeric_value = Some(6.0);
+        interactivity.accessibility.max_numeric_value = Some(72.0);
+        interactivity.accessibility.numeric_value_step = Some(1.0);
+
+        let mut node = accesskit::Node::new(accesskit::Role::SpinButton);
+        interactivity.write_a11y_info(&mut node);
+
+        assert_eq!(node.author_id(), Some("settings.buffer-font-size"));
+        assert_eq!(node.label(), Some("Buffer Font Size"));
+        assert_eq!(node.value(), Some("15"));
+        assert_eq!(node.placeholder(), Some("Search"));
+        assert_eq!(node.numeric_value(), Some(15.0));
+        assert_eq!(node.min_numeric_value(), Some(6.0));
+        assert_eq!(node.max_numeric_value(), Some(72.0));
+        assert_eq!(node.numeric_value_step(), Some(1.0));
+    }
+
+    #[test]
+    fn test_keyshortcuts_and_numeric_step_builders_preserve_explicit_values() {
+        for step in [
+            0.25,
+            0.0,
+            -0.0,
+            -1.0,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NAN,
+        ] {
+            let mut element = div()
+                .id("numeric-control")
+                .aria_keyshortcuts("Control+Shift+P Alt+P")
+                .aria_numeric_value_step(step);
+            let mut node = accesskit::Node::new(accesskit::Role::SpinButton);
+
+            element.interactivity().write_a11y_info(&mut node);
+
+            assert_eq!(node.keyboard_shortcut(), Some("Control+Shift+P Alt+P"));
+            assert_eq!(
+                node.numeric_value_step().map(f64::to_bits),
+                Some(step.to_bits())
+            );
+        }
+    }
 
     struct RetainedResourceDropProbe(Rc<Cell<usize>>);
 

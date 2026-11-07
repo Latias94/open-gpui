@@ -219,6 +219,16 @@
 //! [`.on_click()`][StatefulInteractiveElement::on_click] adds an
 //! [`AccessibleAction::Click`] handler that calls the click handler.
 //!
+//! ## Configuration and authored properties
+//!
+//! Use [`Window::is_a11y_enabled`] to decide whether to install accessibility-only
+//! subscriptions. [`Window::is_a11y_active`] reports whether a tree is being built
+//! for the current frame. Reading either query does not activate accessibility.
+//! [`StatefulInteractiveElement::accessibility_id`] supplies an author identifier
+//! distinct from the element ID; it is exposed to platform accessibility clients.
+//! Keyboard shortcut and numeric-step builders describe semantics without installing
+//! keybindings or changing the control's value policy.
+//!
 //! ## Composite focus
 //!
 //! Composite widgets can keep keyboard focus on a container and declare the selected

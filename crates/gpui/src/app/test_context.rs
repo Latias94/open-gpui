@@ -720,6 +720,11 @@ impl TestAppContext {
         emitted
     }
 
+    /// Disables accessibility for subsequently created test windows.
+    pub fn disable_accessibility(&mut self) {
+        self.update(|cx| cx.accessibility_force_disabled = true);
+    }
+
     /// Activates accessibility for a test window and drains the resulting frame work.
     ///
     /// Returns `false` when the application was created with accessibility disabled.

@@ -772,14 +772,21 @@ impl AppCell {
         self.close_native_window_activation_target(window_id);
         self.native_events.close_window(window_id);
         self.native_queries.remove_window(window_id);
-        self.window_interaction_authorities
+        let authority = self
+            .window_interaction_authorities
             .borrow_mut()
             .remove(&window_id);
+        if let Some(authority) = authority {
+            authority.revoke_admission();
+        }
     }
 
     pub(super) fn clear_native_windows(&self) {
         self.native_queries.clear();
-        self.window_interaction_authorities.borrow_mut().clear();
+        let authorities = std::mem::take(&mut *self.window_interaction_authorities.borrow_mut());
+        for authority in authorities.into_values() {
+            authority.revoke_admission();
+        }
     }
 
     pub(crate) fn revoke_window_interaction(

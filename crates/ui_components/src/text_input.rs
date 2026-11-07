@@ -1567,7 +1567,7 @@ impl RenderOnce for TextInput {
                 (!placeholder.is_empty()).then_some(placeholder.as_ref()),
             );
         let character_lengths = resolve_text_input_character_lengths_when_active(
-            window.is_accessibility_active(),
+            window.is_a11y_active(),
             semantic_projection.exposes_text_runs(),
             || text_editing::accessible_character_lengths(semantic_projection.value()),
         )

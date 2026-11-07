@@ -109,6 +109,8 @@ use std::{
 
 #[cfg(test)]
 mod composite_focus_tests;
+#[cfg(test)]
+mod configuration_tests;
 pub(crate) mod debug;
 #[cfg(test)]
 mod synthetic_tests;
@@ -553,7 +555,7 @@ impl A11y {
     /// for more commentary.
     pub(crate) fn sync_active_flag(&mut self) {
         let (active, generation) = requested_state(&self.active_state);
-        self.active_this_frame = !self.force_disabled && active;
+        self.active_this_frame = self.is_enabled() && active;
         self.activation_generation_this_frame = generation;
         if !self.active_this_frame
             || self
@@ -563,6 +565,10 @@ impl A11y {
             self.clear_debug_tree();
         }
         self.reconcile_announcement_generation(self.active_this_frame, generation);
+    }
+
+    pub(crate) fn is_enabled(&self) -> bool {
+        !self.force_disabled
     }
 
     pub(crate) fn is_active(&self) -> bool {

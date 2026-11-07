@@ -252,6 +252,9 @@ fn node_to_json(
     }
 
     // String properties.
+    if let Some(v) = node.author_id() {
+        aria.insert("author_id".into(), json!(v));
+    }
     if let Some(v) = node.label() {
         aria.insert("label".into(), json!(v));
     }
@@ -374,6 +377,7 @@ mod tests {
         let value = "  Ordinary value\nwith \"quotes\" and \\slashes  ";
         let title: SharedString = "  Window \"title\"\n日本語  ".into();
         let mut node = Node::new(Role::TextInput);
+        node.set_author_id("settings.editor.text 文本");
         node.set_label(label);
         node.set_description("Complete description");
         node.set_value(value);
@@ -425,6 +429,7 @@ mod tests {
             json!({
                 "role": "TextInput",
                 "on_action": ["Click", "Focus", "SetValue", "ShowContextMenu"],
+                "author_id": "settings.editor.text 文本",
                 "label": label,
                 "description": "Complete description",
                 "value": value,

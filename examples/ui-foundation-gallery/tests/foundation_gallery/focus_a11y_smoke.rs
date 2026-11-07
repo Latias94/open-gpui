@@ -772,7 +772,7 @@ fn focus_a11y_explicit_tree_copy_preserves_clipboard_when_tree_is_unavailable(
         cx.read_from_clipboard().and_then(|item| item.text()),
         Some(CLIPBOARD_SENTINEL.to_owned())
     );
-    assert!(!cx.update(|window, _| window.is_accessibility_active()));
+    assert!(!cx.update(|window, _| window.is_a11y_active()));
     assert!(cx.accessibility_tree_update_history().is_empty());
     assert!(
         cx.update(|window, _| window.debug_a11y_tree_json())
@@ -813,7 +813,7 @@ fn focus_a11y_explicit_tree_copy_preserves_clipboard_when_tree_is_unavailable(
         Some(CLIPBOARD_SENTINEL.to_owned()),
         "a deactivated tree must not overwrite the clipboard with stale or fabricated JSON"
     );
-    assert!(!cx.update(|window, _| window.is_accessibility_active()));
+    assert!(!cx.update(|window, _| window.is_a11y_active()));
     assert!(
         cx.update(|window, _| window.debug_a11y_tree_json())
             .is_none()

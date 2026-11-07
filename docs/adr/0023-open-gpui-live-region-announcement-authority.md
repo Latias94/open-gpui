@@ -2,6 +2,7 @@
 
 **Status**: Accepted
 **Date**: 2026-07-21
+**Amended**: 2026-11-08 (configuration and initial activation response)
 
 ## Context
 
@@ -65,6 +66,33 @@ GPUI does not automatically log, save, transmit or feed this content to DevTools
 typed announcement metadata and automatic diagnostic/export contracts remain unchanged. This
 clarification extends the earlier blanket diagnostic wording rather than substituting a redacted
 tree for the official inspection capability.
+
+### Configuration And Initial Activation Response
+
+The November 8 upstream reconciliation preserves official `is_a11y_enabled` configuration
+separately from frame-local `is_a11y_active`. Configuration queries neither attach assistive
+technology nor request a tree. Force-disabled applications install no accessibility callbacks;
+the test configuration switch affects subsequently created windows.
+
+Activation may synchronously return the official immutable root-only `TreeUpdate`, containing
+the window's creation-time title and root focus. It is a bootstrap response, not an accepted
+component tree, action publication, inspection snapshot, announcement completion or Submitted
+frame. Repeated activation returns the same creation snapshot; subsequent complete trees use
+the current title. Complete content and action authority continue through the existing ordered
+native ingress and accepted candidate publication after App borrows release.
+
+The response reads the same window interaction authority from callback threads. Logical
+close, reservation rollback and registry retirement revoke that authority. A native-close
+notification is read through the existing native-terminal fact without prematurely revoking
+general command admission; queued commands retain their exact WindowClosed settlement. The
+existing native ingress shutdown fence also refuses new activation before termination without reordering quit
+observer or pointer-release cleanup. In-flight calls overlapping revocation retain their actual
+admission point; no global atomic snapshot across native teardown and reply is promised.
+Backend provisional-session and native-generation checks remain additional requirements.
+
+Author identifiers remain separate from framework element IDs. The explicit raw inspection API
+includes a published node's `author_id` beside keyboard shortcuts and numeric-step properties.
+These authored strings do not enter automatic DevTools metadata or diagnostic exports.
 
 ## Consequences
 

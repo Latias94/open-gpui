@@ -1415,6 +1415,27 @@ The following public migrations are part of this contract:
 See [ADR 0023](../adr/0023-open-gpui-live-region-announcement-authority.md) for lifecycle,
 privacy, and final-tree verification details.
 
+## Accessibility Configuration And Initial Trees
+
+Replace `Window::is_accessibility_active()` with the official `Window::is_a11y_active()`.
+Use `Window::is_a11y_enabled()` to install accessibility-only subscriptions before an assistive
+technology attaches; querying configuration does not activate a tree. The two queries have
+different meanings. `TestAppContext::disable_accessibility()` affects subsequently created
+windows and preserves existing windows' configuration.
+
+Use `aria_keyshortcuts`, `aria_numeric_value_step` and `accessibility_id` on stateful elements.
+The author identifier is distinct from the framework element ID, is exposed to platform clients,
+and should remain stable and unique within its tree. Explicit raw inspection includes it.
+An author identifier does not grant action authority; requests still target the current published
+node through the existing window and activation checks. Shortcut metadata does not install a
+keybinding, and numeric-step metadata does not replace the control's value policy.
+
+An activation callback now returns the official root-only creation-title snapshot synchronously,
+then schedules the complete tree. Repeated activation returns the same creation snapshot; full
+accepted trees use the current title. The initial reply is not a published component tree,
+inspection snapshot or Submitted frame. Custom backends retain exact window/provisional lifecycle
+checks and may receive the complete update only after the current App borrow releases.
+
 ## Semantic Activation Authority
 
 Official controls normalize pointer, allowed key-up, AccessKit Click, and programmatic requests

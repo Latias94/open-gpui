@@ -1074,14 +1074,12 @@ impl RenderOnce for Textarea {
             .filter(|placeholder: &SharedString| !placeholder.is_empty())
             .or(self.placeholder.clone())
             .unwrap_or_default();
-        let accessible_text_runs = resolve_textarea_accessible_text_runs_when_active(
-            window.is_accessibility_active(),
-            || {
+        let accessible_text_runs =
+            resolve_textarea_accessible_text_runs_when_active(window.is_a11y_active(), || {
                 runtime.update(cx, |runtime, _| {
                     runtime.resolve_accessible_text_runs(&self.id, semantic_value.clone(), window)
                 })
-            },
-        );
+            });
         let semantic_projection = state
             .semantic_projection_for_value::<open_gpui::accesskit::NodeId>(
                 semantic_value.as_ref(),

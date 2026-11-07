@@ -35,8 +35,10 @@ pub(super) struct InteractivityAccessibility {
     explicit_actions: Option<A11yActionSet>,
     accessibility_focus: Option<FocusHandle>,
     pub(super) override_role: Option<accesskit::Role>,
+    pub(super) author_id: Option<SharedString>,
     pub(super) label: Option<SharedString>,
     pub(super) description: Option<SharedString>,
+    pub(super) keyshortcuts: Option<SharedString>,
     pub(super) placeholder: Option<SharedString>,
     pub(super) character_lengths: Option<Vec<u8>>,
     pub(super) text_selection: Option<accesskit::TextSelection>,
@@ -60,6 +62,7 @@ pub(super) struct InteractivityAccessibility {
     pub(super) numeric_value: Option<f64>,
     pub(super) min_numeric_value: Option<f64>,
     pub(super) max_numeric_value: Option<f64>,
+    pub(super) numeric_value_step: Option<f64>,
     pub(super) orientation: Option<accesskit::Orientation>,
     pub(super) level: Option<usize>,
     pub(super) position_in_set: Option<usize>,
@@ -107,11 +110,17 @@ impl InteractivityAccessibility {
         supports_click: bool,
         supports_focus: bool,
     ) {
+        if let Some(id) = &self.author_id {
+            node.set_author_id(id.to_string());
+        }
         if let Some(label) = &self.label {
             node.set_label(label.to_string());
         }
         if let Some(description) = &self.description {
             node.set_description(description.to_string());
+        }
+        if let Some(keyshortcuts) = &self.keyshortcuts {
+            node.set_keyboard_shortcut(keyshortcuts.to_string());
         }
         if let Some(placeholder) = &self.placeholder {
             node.set_placeholder(placeholder.to_string());
@@ -207,6 +216,9 @@ impl InteractivityAccessibility {
         if let Some(value) = self.max_numeric_value {
             node.set_max_numeric_value(value);
         }
+        if let Some(step) = self.numeric_value_step {
+            node.set_numeric_value_step(step);
+        }
         if let Some(orientation) = self.orientation {
             node.set_orientation(orientation);
         }
@@ -279,6 +291,53 @@ fn action_mutates_value(action: accesskit::Action) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn author_id_keyshortcuts_and_numeric_step_preserve_explicit_and_absent_properties() {
+        let mut accessibility = InteractivityAccessibility {
+            author_id: Some("settings.buffer-font-size".into()),
+            keyshortcuts: Some("Control+Shift+P Alt+P".into()),
+            numeric_value_step: Some(1.0),
+            ..Default::default()
+        };
+        let mut node = accesskit::Node::new(accesskit::Role::SpinButton);
+
+        accessibility.write_node(&mut node, false, false);
+
+        assert_eq!(node.author_id(), Some("settings.buffer-font-size"));
+        assert_eq!(node.keyboard_shortcut(), Some("Control+Shift+P Alt+P"));
+        assert_eq!(node.numeric_value_step(), Some(1.0));
+
+        accessibility.author_id = Some("settings.line-height".into());
+        accessibility.keyshortcuts = Some("Alt+L".into());
+        accessibility.numeric_value_step = Some(0.25);
+        accessibility.write_node(&mut node, false, false);
+
+        assert_eq!(node.author_id(), Some("settings.line-height"));
+        assert_eq!(node.keyboard_shortcut(), Some("Alt+L"));
+        assert_eq!(node.numeric_value_step(), Some(0.25));
+
+        accessibility.author_id = Some("".into());
+        accessibility.keyshortcuts = Some("".into());
+        accessibility.numeric_value_step = Some(0.0);
+        accessibility.write_node(&mut node, false, false);
+
+        assert_eq!(node.author_id(), Some(""));
+        assert_eq!(node.keyboard_shortcut(), Some(""));
+        assert_eq!(node.numeric_value_step(), Some(0.0));
+
+        InteractivityAccessibility::default().write_node(&mut node, false, false);
+
+        assert_eq!(node.author_id(), Some(""));
+        assert_eq!(node.keyboard_shortcut(), Some(""));
+        assert_eq!(node.numeric_value_step(), Some(0.0));
+        let mut rebuilt = accesskit::Node::new(accesskit::Role::SpinButton);
+        InteractivityAccessibility::default().write_node(&mut rebuilt, false, false);
+        assert_eq!(rebuilt.author_id(), None);
+        assert_eq!(rebuilt.keyboard_shortcut(), None);
+        assert_eq!(rebuilt.numeric_value_step(), None);
+        assert_eq!(node.role(), accesskit::Role::SpinButton);
+    }
 
     #[test]
     fn declared_actions_are_written_without_listeners() {

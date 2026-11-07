@@ -77,13 +77,15 @@ use std::{
     rc::{Rc, Weak as RcWeak},
     sync::{
         Arc, Weak,
-        atomic::{AtomicU64, AtomicUsize, Ordering::SeqCst},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering::SeqCst},
     },
     time::Duration,
 };
 use uuid::Uuid;
 
 pub(crate) mod a11y;
+#[cfg(test)]
+mod a11y_activation_tests;
 #[cfg(test)]
 mod accepted_frame_scheduling_tests;
 #[cfg(test)]
@@ -1679,7 +1681,7 @@ pub(crate) struct WindowInteractionAuthority {
 }
 
 struct WindowInteractionAuthorityState {
-    admitted: Cell<bool>,
+    admitted: Arc<AtomicBool>,
     defer_pointer_cleanup_to_native_capture: Cell<bool>,
     platform: RefCell<Option<PlatformWindowInteractionQuiescence>>,
 }
@@ -1688,7 +1690,7 @@ impl WindowInteractionAuthority {
     pub(crate) fn new() -> Self {
         Self {
             state: Rc::new(WindowInteractionAuthorityState {
-                admitted: Cell::new(true),
+                admitted: Arc::new(AtomicBool::new(true)),
                 defer_pointer_cleanup_to_native_capture: Cell::new(false),
                 platform: RefCell::new(None),
             }),
@@ -1711,14 +1713,18 @@ impl WindowInteractionAuthority {
     }
 
     pub(crate) fn is_admitted(&self) -> bool {
-        self.state.admitted.get()
+        self.state.admitted.load(SeqCst)
     }
 
     pub(crate) fn revoke(&self) -> bool {
-        let logical_revoked_now = self.state.admitted.replace(false);
+        let logical_revoked_now = self.revoke_admission();
         let platform = self.state.platform.borrow().clone();
         let platform_revoked_now = platform.is_some_and(|platform| platform.revoke());
         logical_revoked_now || platform_revoked_now
+    }
+
+    pub(crate) fn revoke_admission(&self) -> bool {
+        self.state.admitted.swap(false, SeqCst)
     }
 
     fn has_pending_platform_revocation(&self) -> bool {
@@ -1794,7 +1800,7 @@ pub struct Window {
     pub(crate) handle: AnyWindowHandle,
     pub(crate) invalidator: WindowInvalidator,
     pub(crate) removed: bool,
-    native_closed: Rc<Cell<bool>>,
+    native_closed: Arc<AtomicBool>,
     removal_state: WindowRemovalState,
     should_close_handler: WindowShouldCloseHandlerSlot,
     pub(crate) platform_window: Box<dyn PlatformWindow>,
@@ -2601,9 +2607,20 @@ impl Window {
 
         let accessibility_force_disabled = cx.accessibility_force_disabled;
         let a11y_active_state = Arc::new(AtomicU64::new(0));
+        let native_closed = Arc::new(AtomicBool::new(false));
 
         #[cfg(not(target_family = "wasm"))]
         if !accessibility_force_disabled {
+            let mut root = accesskit::Node::new(accesskit::Role::Window);
+            if let Some(title) = &window_title {
+                root.set_label(title.to_string());
+            }
+            let initial_tree = accesskit::TreeUpdate {
+                nodes: vec![(a11y::ROOT_NODE_ID, root)],
+                tree: Some(accesskit::Tree::new(a11y::ROOT_NODE_ID)),
+                tree_id: accesskit::TreeId::ROOT,
+                focus: a11y::ROOT_NODE_ID,
+            };
             let window_id = handle.window_id();
             let accessibility_ingress = cx
                 .this
@@ -2614,12 +2631,19 @@ impl Window {
                 activation: {
                     let active_state = a11y_active_state.clone();
                     let accessibility_ingress = accessibility_ingress.clone();
+                    let admitted = interaction_authority.state.admitted.clone();
+                    let native_closed = native_closed.clone();
                     Box::new(move || {
-                        accessibility_ingress.activated(window_id, &active_state);
-                        log::info!("Accessibility activated");
-                        // A complete tree cannot be produced synchronously here. The platform
-                        // adapter owns any placeholder until the sequenced refresh is delivered.
-                        None
+                        if !admitted.load(SeqCst) || native_closed.load(SeqCst) {
+                            return None;
+                        }
+                        (accessibility_ingress.activated(window_id, &active_state)
+                            && admitted.load(SeqCst)
+                            && !native_closed.load(SeqCst))
+                        .then(|| {
+                            log::info!("Accessibility activated");
+                            initial_tree.clone()
+                        })
                     })
                 },
                 action: {
@@ -2639,14 +2663,13 @@ impl Window {
             });
         }
 
-        let native_closed = Rc::new(Cell::new(false));
         let should_close_handler = WindowShouldCloseHandlerSlot::default();
         platform_window.on_close(Box::new({
             let window_id = handle.window_id();
             let cx = cx.to_async();
             let native_closed = native_closed.clone();
             move || {
-                native_closed.set(true);
+                native_closed.store(true, SeqCst);
                 cx.enqueue_window_closed(window_id);
             }
         }));
@@ -3031,7 +3054,7 @@ impl Window {
     pub(crate) fn creation_can_commit(&self) -> bool {
         self.interaction_authority.is_admitted()
             && !self.removed
-            && !self.native_closed.get()
+            && !self.native_closed.load(SeqCst)
             && self.removal_state == WindowRemovalState::Open
     }
 
@@ -6514,7 +6537,7 @@ impl Window {
         before_platform_dispatch: impl FnOnce(u64),
         dispatch_platform: impl FnOnce(&mut dyn PlatformWindow, u64) -> PlatformWindowDispatch,
     ) -> WindowMutationDispatch {
-        if self.native_closed.get()
+        if self.native_closed.load(SeqCst)
             || self.removal_state != WindowRemovalState::Open
             || self.removed
         {
@@ -6804,11 +6827,21 @@ impl Window {
         self.active.get()
     }
 
+    /// Returns whether accessibility support is enabled for this window.
+    ///
+    /// This is false when the app was created with [`crate::Application::new_inaccessible`].
+    /// Unlike [`Self::is_a11y_active`], this does not depend on whether assistive
+    /// technology is currently connected, so it can be used to gate subscriptions
+    /// that are only needed for accessibility.
+    pub fn is_a11y_enabled(&self) -> bool {
+        self.a11y.is_enabled()
+    }
+
     /// Returns whether accessibility is effectively active for the current frame.
     ///
     /// This is GPUI's frame-local accessibility state, not whether the operating system considers
     /// the window active. See [`Self::is_window_active`] for the latter.
-    pub fn is_accessibility_active(&self) -> bool {
+    pub fn is_a11y_active(&self) -> bool {
         self.a11y.is_active()
     }
 
@@ -6834,7 +6867,7 @@ impl Window {
         announcement: AccessibilityAnnouncement,
         _cx: &mut App,
     ) -> AccessibilityAnnouncementOutcome {
-        if self.native_closed.get()
+        if self.native_closed.load(SeqCst)
             || self.removal_state != WindowRemovalState::Open
             || self.removed
         {
@@ -13451,7 +13484,7 @@ impl Window {
         let activation_policy = self
             .window_mutations
             .committed_activation_policy(&self.platform_facts);
-        let terminal = if self.removed || self.native_closed.get() {
+        let terminal = if self.removed || self.native_closed.load(SeqCst) {
             Some(crate::WindowActivationTerminal::WindowClosed)
         } else if self.window_capabilities.activation
             != crate::PlatformWindowActivationSupport::Observed

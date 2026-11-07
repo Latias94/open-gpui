@@ -538,9 +538,31 @@ fn published_snapshot(visual: &mut VisualTestContext) -> (TreeUpdate, Value) {
         Some(generation)
     );
     assert!(snapshot["frame"]["activation_generation"].as_u64().unwrap() > 0);
+    let history = visual.accessibility_tree_update_history();
+    let published_updates = history
+        .iter()
+        .filter(|update| {
+            let root = update.tree.as_ref().expect("full platform tree").root;
+            let node = &update
+                .nodes
+                .iter()
+                .find(|(id, _)| *id == root)
+                .expect("platform root")
+                .1;
+            if node.label() == Some(RAW_TITLE) {
+                true
+            } else {
+                assert_eq!(update.nodes.len(), 1);
+                assert_eq!(node.role(), Role::Window);
+                assert!(node.children().is_empty());
+                assert_eq!(update.focus, root);
+                false
+            }
+        })
+        .count();
     assert_eq!(
         snapshot["frame"]["frame_number"].as_u64(),
-        Some(visual.accessibility_tree_update_history().len() as u64)
+        Some(published_updates as u64)
     );
     assert!(
         snapshot["frame"]["rendered_at"]
