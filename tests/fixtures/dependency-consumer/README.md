@@ -671,3 +671,26 @@ tests activate their windows, disable creation-time frame limits, and draw throu
 context without holding a typed root borrow. Their submission facts belong to TestPlatform;
 native compositor delivery, GPU output, foreign-platform execution, hot reload, and measured
 performance require separate qualification.
+
+## Measured text queries and rem units
+
+The ordinary `measured_text` target constructs public StyledText/TextLayout values and checks query
+signatures without enabling test-support. Its `_measured_queries_type_only` closure is deliberately
+unexecuted. The separate WGPU `measured_text` consumer executes measurement before prepaint,
+source-order and UTF-8/newline/wrap queries, then paints the same StyledText using Cosmic and Swash.
+It also exercises notification, remeasurement, source updates, refresh, reconstruction and retained
+layout lifetime. That is software/TestPlatform qualification, not native GPU presentation.
+
+The ordinary `rems` target exercises ZERO, arithmetic and style storage. Its pixel-conversion
+closure is typechecked only. The separate Core public `rems` target executes current Window rem
+size changes, two-window isolation and actual committed layout dimensions. Rems conversion stores
+a value using the current rem size; it does not introduce another reactive scale owner.
+
+```text
+cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --all-features --test measured_text --test rems --jobs 1 --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --locked -p open-gpui --all-features --test rems --test frame_scheduling --jobs 1 --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --locked -p open-gpui-wgpu --all-features --test measured_text --jobs 1 --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+These commands describe the intended gates; actual results and limits are recorded in the
+[query/List qualification](../../../docs/verification.md#measured-text-queries-rem-units-and-list-autoscroll).

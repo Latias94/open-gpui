@@ -11,7 +11,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use smallvec::{SmallVec, smallvec};
 use std::borrow::Cow;
 use std::cell::Cell;
-use std::ops::Range;
+use std::ops::{AddAssign, Range};
 use std::rc::Rc;
 use std::{
     cmp::{self, PartialOrd},
@@ -3241,9 +3241,15 @@ impl MulAssign<f32> for ScaledPixels {
 pub struct Rems(pub f32);
 
 impl Rems {
+    /// A length of zero.
+    pub const ZERO: Self = Self(0.0);
     /// Convert this Rem value to pixels.
     pub fn to_pixels(self, rem_size: Pixels) -> Pixels {
         self * rem_size
+    }
+    /// Convert from pixels to Rem
+    pub fn from_pixels(length: Pixels, window: &crate::Window) -> Self {
+        Self(length / window.rem_size())
     }
 }
 
@@ -3252,6 +3258,12 @@ impl Mul<Pixels> for Rems {
 
     fn mul(self, other: Pixels) -> Pixels {
         Pixels(self.0 * other.0)
+    }
+}
+
+impl AddAssign<Rems> for Rems {
+    fn add_assign(&mut self, rhs: Rems) {
+        self.0 += rhs.0
     }
 }
 

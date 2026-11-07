@@ -15442,6 +15442,129 @@ mod cached_paint_atlas_tests {
     }
 
     #[test]
+    fn list_overshoot_atlas_rejection_preserves_scroll_and_revision_until_retry() {
+        use crate::{ListAlignment, ListOffset, ListState, list};
+
+        struct ListOvershootRoot {
+            state: ListState,
+            enabled: Rc<Cell<bool>>,
+        }
+
+        impl Render for ListOvershootRoot {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let enabled = self.enabled.get();
+                let tile = RejectOnceAtlas::tile(AtlasTextureKind::Monochrome);
+                div().size_full().bg(red()).child(
+                    list(self.state.clone(), move |index, _, _| {
+                        canvas(
+                            move |bounds, window, _| {
+                                if enabled && index == 2 {
+                                    window.request_autoscroll(Bounds::from_corners(
+                                        point(bounds.left(), bounds.top() - px(30.0)),
+                                        point(bounds.right(), bounds.top() + px(5.0)),
+                                    ));
+                                }
+                            },
+                            move |bounds, (), window, _| {
+                                if enabled && index == 2 {
+                                    let bounds = window.device_local_bounds(bounds);
+                                    window.insert_scene_primitive(MonochromeSprite {
+                                        order: 0,
+                                        pad: 0,
+                                        bounds,
+                                        clip: Default::default(),
+                                        color: red(),
+                                        tile,
+                                        transform: PrimitiveTransform::IDENTITY,
+                                    });
+                                }
+                            },
+                        )
+                        .h(px(20.0))
+                        .w_full()
+                        .into_any_element()
+                    })
+                    .w_full()
+                    .h(px(60.0)),
+                )
+            }
+        }
+
+        let mut test_app = TestAppContext::single();
+        let atlas = Arc::new(RejectOnceAtlas::new());
+        let enabled = Rc::new(Cell::new(false));
+        let state = ListState::new(5, ListAlignment::Top, px(0.0));
+        let initial = ListOffset {
+            item_ix: 2,
+            offset_in_item: px(0.0),
+        };
+        state.scroll_to(initial);
+        let initial_revision = state.direct_scroll_revision();
+        let (root, cx) = test_app.add_window_view({
+            let atlas = atlas.clone();
+            let enabled = enabled.clone();
+            let state = state.clone();
+            move |window, _| {
+                window.sprite_atlas = atlas;
+                ListOvershootRoot { state, enabled }
+            }
+        });
+        cx.simulate_resize(size(px(128.0), px(60.0)));
+
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            let committed_generation = window.rendered_frame.generation;
+            let committed_scene_len = window.rendered_frame.scene.len();
+            assert_eq!(state.logical_scroll_top(), initial);
+            assert_eq!(state.direct_scroll_revision(), initial_revision);
+            assert_eq!(atlas.lease_attempts(), 0);
+            assert_eq!(window.last_atlas_frame_rejection, None);
+
+            enabled.set(true);
+            window.mark_view_dirty(root.entity_id());
+            atlas.fail_next_lease();
+            window.draw(cx).clear(cx);
+            let rejection = Some(AtlasFrameRejection {
+                generation: committed_generation + 1,
+                error: AtlasTextureLeaseError::TextureUnavailable {
+                    texture: RejectOnceAtlas::tile(AtlasTextureKind::Monochrome).texture_instance(),
+                    epoch: AtlasTextureLeaseEpoch::INITIAL,
+                },
+            });
+            assert_eq!(atlas.lease_attempts(), 1);
+            assert_eq!(window.rendered_frame.generation, committed_generation);
+            assert_eq!(window.rendered_frame.scene.len(), committed_scene_len);
+            assert_eq!(window.last_atlas_frame_rejection, rejection);
+            assert!(window.refresh_pending_for_test());
+            assert_eq!(state.logical_scroll_top(), initial);
+            assert_eq!(state.direct_scroll_revision(), initial_revision);
+
+            window.draw(cx).clear(cx);
+            let normalized = ListOffset {
+                item_ix: 0,
+                offset_in_item: px(10.0),
+            };
+            let accepted_revision = ScrollDirectMutationRevision {
+                horizontal: initial_revision.horizontal,
+                vertical: initial_revision.vertical + 1,
+            };
+            assert_eq!(atlas.lease_attempts(), 2);
+            assert_eq!(window.rendered_frame.generation, committed_generation + 1);
+            assert_eq!(window.rendered_frame.scene.monochrome_sprites.len(), 1);
+            assert_eq!(window.last_atlas_frame_rejection, rejection);
+            assert_eq!(state.logical_scroll_top(), normalized);
+            assert_eq!(state.direct_scroll_revision(), accepted_revision);
+
+            window.draw(cx).clear(cx);
+            assert_eq!(atlas.lease_attempts(), 3);
+            assert_eq!(window.rendered_frame.generation, committed_generation + 2);
+            assert_eq!(window.last_atlas_frame_rejection, rejection);
+            assert_eq!(state.logical_scroll_top(), normalized);
+            assert_eq!(state.direct_scroll_revision(), accepted_revision);
+        });
+    }
+
+    #[test]
     fn fresh_image_lease_failure_rejects_the_candidate_until_repaint_recovers() {
         let image = Arc::new(RenderImage::new(smallvec::smallvec![Frame::new(
             ImageBuffer::from_pixel(1, 1, Rgba([0, 0, 0, 0xff])),

@@ -1277,9 +1277,30 @@ impl StateInner {
                 {
                     let autoscroll_bounds = intent.bounds();
                     let scroll_top = if autoscroll_bounds.top() < bounds.top() {
+                        let mut item_ix = item.index;
+                        let mut offset_in_item = autoscroll_bounds.top() - item_origin.y;
+                        if offset_in_item < Pixels::ZERO {
+                            let mut cursor = self.items.cursor::<Count>(());
+                            cursor.seek(&Count(item_ix), Bias::Right);
+                            while offset_in_item < Pixels::ZERO {
+                                cursor.prev();
+                                let Some(prev_item) = cursor.item() else {
+                                    offset_in_item = Pixels::ZERO;
+                                    break;
+                                };
+                                let size = prev_item.size().unwrap_or_else(|| {
+                                    let mut element = render_item(cursor.start().0, window, cx);
+                                    let item_available_size =
+                                        size(bounds.size.width.into(), AvailableSpace::MinContent);
+                                    element.layout_as_root(item_available_size, window, cx)
+                                });
+                                item_ix = cursor.start().0;
+                                offset_in_item += size.height;
+                            }
+                        }
                         Some(ListOffset {
-                            item_ix: item.index,
-                            offset_in_item: autoscroll_bounds.top() - item_origin.y,
+                            item_ix,
+                            offset_in_item,
                         })
                     } else if autoscroll_bounds.bottom() > bounds.bottom() {
                         let mut cursor = self.items.cursor::<Count>(());
@@ -1688,6 +1709,10 @@ impl open_gpui_sum_tree::SeekTarget<'_, ListItemSummary, ListItemSummary> for He
 #[cfg(test)]
 #[path = "list/text_measurement_tests.rs"]
 mod text_measurement_tests;
+
+#[cfg(test)]
+#[path = "list/autoscroll_tests.rs"]
+mod autoscroll_tests;
 
 #[cfg(test)]
 mod test {

@@ -101,6 +101,24 @@ The ordinary content cache supplies layout reuse across these source-preserving 
 
 ## Layout Measurement And Root Sizing
 
+After measuring a StyledText element, use `TextLayout::line_layouts()` to retain all logical line
+layouts in source order, or `line_layout_for_index(byte_index)` to select one. Both queries require
+measurement; neither requires prepaint. Each result shares its immutable WrappedLineLayout through
+Arc. Retaining these results does not keep the TextLayout or Window alive, and later remeasurement
+does not replace the retained value. Soft-wrapped rows remain part of their original logical line.
+Positions, bounds and painting still depend on prepainted geometry; the earlier query availability
+does not make those operations valid before prepaint.
+
+`Rems::from_pixels(length, window)` captures a numeric rem value using that Window's current rem
+size. Recompute it when a new pixel-to-rem conversion is required after changing rem size. An
+existing Rems value stays numeric and resolves through the rem size used by layout. `Rems::ZERO`
+and `+=` support ordinary composition without an additional scale or theme owner.
+
+List autoscroll requests extending above their source row now walk preceding rows and clamp at
+the beginning. Keep holding the ListState in its existing view; no new adapter is required. The
+fork still publishes autoscroll only when its source survives candidate acceptance, including
+atlas/resource admission. A rejected candidate cannot advance the direct-scroll revision.
+
 The framework now uses Taffy 0.15. Applications that directly pin Taffy must update their
 dependency choice when they require the same backend version. The framework requirement
 allows compatible 0.15 patches; its qualification lockfile records the fixed version.

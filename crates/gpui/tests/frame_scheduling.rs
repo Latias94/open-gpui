@@ -2,11 +2,11 @@
 
 use open_gpui::{
     AppContext as _, AtlasKey, AtlasTextureId, AtlasTextureInstanceId, AtlasTextureLeaseEpoch,
-    AtlasTextureLeaseError, AtlasTile, Bounds, Context, DevicePixels, IntoElement,
-    ParentElement as _, PlatformAtlas, PlatformWindowPresentOutcome, Render, RenderImage, Size,
-    Styled as _, TestAppContext, TileId, VisualTestContext, Window, WindowBounds, WindowHandle,
-    WindowInitialPresentationStatus, WindowOptions, WindowPresentationFacts, blue, canvas, div,
-    point, px, size,
+    AtlasTextureLeaseError, AtlasTile, Bounds, Context, DevicePixels, InteractiveElement as _,
+    IntoElement, ParentElement as _, PlatformAtlas, PlatformWindowPresentOutcome, Point, Render,
+    RenderImage, Size, Styled as _, TestAppContext, TileId, VisualTestContext, Window,
+    WindowBounds, WindowHandle, WindowInitialPresentationStatus, WindowOptions,
+    WindowPresentationFacts, blue, canvas, div, point, px, size,
 };
 use std::{
     borrow::Cow,
@@ -382,6 +382,180 @@ fn public_refused_candidate_keeps_scheduled_demand_until_a_new_scene_is_submitte
     let submitted = presentation_facts(&mut visual);
     assert_submitted(submitted, baseline.frame_accepted_generation.unwrap() + 1);
     assert_compositor_callback_parks(&mut visual, &observed, submitted);
+}
+
+#[open_gpui::test]
+fn public_list_overshoot_waits_for_admitted_candidate_before_committing_scroll(
+    cx: &mut TestAppContext,
+) {
+    struct AutoscrollView {
+        state: open_gpui::ListState,
+        request: Rc<Cell<bool>>,
+        image: Arc<RenderImage>,
+    }
+
+    impl Render for AutoscrollView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let request = self.request.get();
+            let image = self.image.clone();
+            div().size_full().bg(blue()).child(
+                open_gpui::list(self.state.clone(), move |index, _, _| {
+                    let image = image.clone();
+                    let paint = canvas(
+                        move |bounds, window, _| {
+                            if index == 2 && request {
+                                window.request_autoscroll(Bounds::from_corners(
+                                    point(bounds.left(), bounds.top() - px(30.)),
+                                    point(bounds.right(), bounds.top() + px(5.)),
+                                ));
+                            }
+                        },
+                        move |bounds, (), window, _| {
+                            if index == 2 && request {
+                                window
+                                    .paint_image(
+                                        bounds,
+                                        Default::default(),
+                                        image.clone(),
+                                        0,
+                                        false,
+                                    )
+                                    .unwrap();
+                            }
+                        },
+                    )
+                    .size_full();
+                    div()
+                        .debug_selector(move || format!("autoscroll-row-{index}"))
+                        .h(px(20.))
+                        .w_full()
+                        .child(paint)
+                        .into_any_element()
+                })
+                .w_full()
+                .h(px(60.)),
+            )
+        }
+    }
+
+    let state = open_gpui::ListState::new(5, open_gpui::ListAlignment::Top, px(0.));
+    let initial = open_gpui::ListOffset {
+        item_ix: 2,
+        offset_in_item: px(0.),
+    };
+    state.scroll_to(initial);
+    let request = Rc::new(Cell::new(false));
+    let image = Arc::new(RenderImage::new([image::Frame::new(
+        image::RgbaImage::from_pixel(1, 1, image::Rgba([0, 0, 255, 255])),
+    )]));
+    cx.defer_next_window_frame_requests();
+    let handle = cx.update(|app| {
+        app.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                    Point::default(),
+                    size(px(96.), px(60.)),
+                ))),
+                inactive_frame_interval: None,
+                low_power_frame_interval: None,
+                thermal_frame_interval: None,
+                ..Default::default()
+            },
+            |_, app| {
+                app.new(|_| AutoscrollView {
+                    state: state.clone(),
+                    request: request.clone(),
+                    image,
+                })
+            },
+        )
+        .unwrap()
+    });
+    let mut visual = VisualTestContext::from_window(handle.into(), cx);
+    let _activation = visual.update(|window, _| window.activate_window());
+    visual.run_until_parked();
+    visual.update(|window, app| {
+        assert!(window.is_window_active());
+        window.draw(app).clear(app);
+    });
+    assert!(visual.simulate_scheduled_frame());
+    assert!(visual.simulate_scheduled_frame());
+    let baseline = presentation_facts(&mut visual);
+    let baseline_generation = baseline.frame_accepted_generation.unwrap();
+    assert_submitted(baseline, baseline_generation);
+    assert_eq!(state.logical_scroll_top(), initial);
+    assert_eq!(
+        visual.debug_bounds("autoscroll-row-2").unwrap().origin.y,
+        px(0.)
+    );
+
+    let atlas = Arc::new(RefusingAtlas::default());
+    atlas.refuse.store(true, SeqCst);
+    request.set(true);
+    visual.update(|window, _| window.set_sprite_atlas_for_test(atlas.clone()));
+    handle.update(&mut visual, |_, _, cx| cx.notify()).unwrap();
+    assert!(atlas.lease_attempts.load(SeqCst) > 0);
+    assert_eq!(presentation_facts(&mut visual), baseline);
+    assert_eq!(state.logical_scroll_top(), initial);
+    assert!(visual.simulate_scheduled_frame());
+    assert_eq!(presentation_facts(&mut visual), baseline);
+    assert_eq!(state.logical_scroll_top(), initial);
+
+    atlas.refuse.store(false, SeqCst);
+    assert!(visual.simulate_scheduled_frame());
+    let recovery = presentation_facts(&mut visual);
+    assert_eq!(
+        recovery.frame_accepted_generation,
+        Some(baseline_generation + 2)
+    );
+    assert_eq!(
+        recovery.present_submitted_generation,
+        Some(baseline_generation + 1)
+    );
+    assert_eq!(
+        recovery.non_empty_presented_generation,
+        Some(baseline_generation + 1)
+    );
+    let attempt = recovery.latest_present_attempt.unwrap();
+    assert_eq!(attempt.generation, baseline_generation + 1);
+    assert_eq!(attempt.outcome, PlatformWindowPresentOutcome::Submitted);
+    assert!(attempt.contained_valid_primitives);
+    assert_eq!(
+        state.logical_scroll_top(),
+        open_gpui::ListOffset {
+            item_ix: 0,
+            offset_in_item: px(10.),
+        }
+    );
+    assert_eq!(
+        visual.debug_bounds("autoscroll-row-0").unwrap().origin.y,
+        px(-10.)
+    );
+    assert_eq!(
+        visual.debug_bounds("autoscroll-row-1").unwrap().origin.y,
+        px(10.)
+    );
+    assert_eq!(
+        visual.debug_bounds("autoscroll-row-2").unwrap().origin.y,
+        px(30.)
+    );
+    assert!(visual.simulate_scheduled_frame());
+    assert_submitted(presentation_facts(&mut visual), baseline_generation + 2);
+    let committed_scroll = state.logical_scroll_top();
+    request.set(false);
+    handle
+        .update(&mut visual, |_, window, cx| {
+            window.refresh();
+            cx.notify();
+        })
+        .unwrap();
+    assert_eq!(state.logical_scroll_top(), committed_scroll);
+    assert!(visual.simulate_scheduled_frame());
+    assert_eq!(state.logical_scroll_top(), committed_scroll);
+    assert_submitted(presentation_facts(&mut visual), baseline_generation + 3);
+    handle
+        .update(&mut visual, |_, window, cx| window.remove_window(cx))
+        .unwrap();
 }
 
 #[open_gpui::test]
