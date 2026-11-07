@@ -105,6 +105,10 @@ impl NativeCrossThreadIngress {
         self.stage_app_event(StagedNativeAppEvent::ThermalStateChanged);
     }
 
+    pub(crate) fn power_mode_changed(&self) {
+        self.stage_app_event(StagedNativeAppEvent::PowerModeChanged);
+    }
+
     fn stage_app_event(&self, event: StagedNativeAppEvent) {
         {
             let mut sequencer = self.sequencer.lock();
@@ -225,6 +229,7 @@ enum StagedNativeAppEvent {
     SystemSleep,
     SystemWake,
     ThermalStateChanged,
+    PowerModeChanged,
 }
 
 #[cfg(not(target_family = "wasm"))]
@@ -250,6 +255,9 @@ impl StagedNativeEnvelope {
             }
             StagedNativeEvent::App(StagedNativeAppEvent::ThermalStateChanged) => {
                 NativeEventTarget::App(NativeAppEvent::ThermalStateChanged)
+            }
+            StagedNativeEvent::App(StagedNativeAppEvent::PowerModeChanged) => {
+                NativeEventTarget::App(NativeAppEvent::PowerModeChanged)
             }
             #[cfg(not(target_family = "wasm"))]
             StagedNativeEvent::Accessibility { window_id, event } => {
@@ -287,6 +295,7 @@ impl StagedNativeEnvelope {
                     StagedNativeAppEvent::ThermalStateChanged => {
                         NativeCallbackKind::ThermalStateChanged
                     }
+                    StagedNativeAppEvent::PowerModeChanged => NativeCallbackKind::PowerModeChanged,
                 };
                 NativeBoundaryDiagnostic::pending(
                     self.sequence,
@@ -1923,6 +1932,7 @@ pub(super) enum NativeAppEvent {
     AppMenuAction(Box<dyn Action>),
     KeyboardLayoutChanged,
     ThermalStateChanged,
+    PowerModeChanged,
     DisplaysChanged,
     Quit,
 }
@@ -1976,6 +1986,13 @@ impl NativeAppEvent {
                     .retain(&(), move |callback| (callback)(app));
                 NativeEventDrainControl::Continue
             }
+            Self::PowerModeChanged => {
+                app.power_mode = app.platform.power_mode();
+                app.power_mode_observers
+                    .clone()
+                    .retain(&(), |callback| callback(app));
+                NativeEventDrainControl::Continue
+            }
             Self::DisplaysChanged => {
                 app.displays_changed();
                 NativeEventDrainControl::Continue
@@ -1991,6 +2008,7 @@ impl NativeAppEvent {
         match self {
             Self::KeyboardLayoutChanged => Some(NativeAppEventCoalesceDomain::KeyboardLayout),
             Self::ThermalStateChanged => Some(NativeAppEventCoalesceDomain::ThermalState),
+            Self::PowerModeChanged => Some(NativeAppEventCoalesceDomain::PowerMode),
             Self::DisplaysChanged => Some(NativeAppEventCoalesceDomain::Displays),
             Self::OpenUrls(_)
             | Self::Reopen
@@ -2012,6 +2030,7 @@ impl NativeAppEvent {
             Self::AppMenuAction(_) => NativeCallbackKind::AppMenuAction,
             Self::KeyboardLayoutChanged => NativeCallbackKind::KeyboardLayoutChanged,
             Self::ThermalStateChanged => NativeCallbackKind::ThermalStateChanged,
+            Self::PowerModeChanged => NativeCallbackKind::PowerModeChanged,
             Self::DisplaysChanged => NativeCallbackKind::DisplaysChanged,
             Self::Quit => NativeCallbackKind::Quit,
         }
@@ -2261,6 +2280,7 @@ enum NativeEventCoalesceKey {
 enum NativeAppEventCoalesceDomain {
     KeyboardLayout,
     ThermalState,
+    PowerMode,
     Displays,
 }
 

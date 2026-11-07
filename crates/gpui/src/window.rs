@@ -149,7 +149,7 @@ pub(crate) use self::frame_journal::{
     DeferredDraw, Frame, FrameOutput, PaintIndex, PrepaintCommit, PrepaintCommitCallback,
     PrepaintCommitPhase, PrepaintStateIndex, TooltipRequest, VisualPaintIndex, VisualPrepaintIndex,
 };
-use self::frame_pump::{FrameThrottleFacts, PresentFacts, frame_should_wait};
+use self::frame_pump::{FramePacer, FrameThrottleFacts, PresentFacts};
 pub(crate) use self::invalidator::WindowInvalidator;
 use self::pointer_session::{InputDispatchGuard, MouseEventTargetGuard, PressedMouseButtons};
 pub use self::pointer_session::{
@@ -1895,7 +1895,10 @@ pub struct Window {
     /// Tracks recent input event timestamps to determine if input is arriving at a high rate.
     /// Used to selectively enable VRR optimization only when input rate exceeds 60fps.
     pub(crate) input_rate_tracker: Rc<RefCell<InputRateTracker>>,
-    last_frame_time: Cell<Option<Instant>>,
+    frame_pacer: FramePacer,
+    inactive_frame_interval: Option<Duration>,
+    low_power_frame_interval: Option<Duration>,
+    thermal_frame_interval: Option<Duration>,
     deferred_force_render: bool,
     #[cfg(feature = "profiler")]
     window_profiler: profiler::WindowProfiler,
@@ -2443,6 +2446,9 @@ impl Window {
             transient_for,
             kind,
             is_movable,
+            inactive_frame_interval,
+            low_power_frame_interval,
+            thermal_frame_interval,
             is_resizable,
             is_minimizable,
             accepts_pointer_input,
@@ -2958,7 +2964,10 @@ impl Window {
             hovered,
             needs_present,
             input_rate_tracker,
-            last_frame_time: Cell::new(None),
+            frame_pacer: FramePacer::default(),
+            inactive_frame_interval,
+            low_power_frame_interval,
+            thermal_frame_interval,
             deferred_force_render: false,
             #[cfg(feature = "profiler")]
             window_profiler: profiler::WindowProfiler::new(handle.window_id())?,
@@ -7217,6 +7226,12 @@ impl Window {
         let force_render = fresh_frame_required
             || (requested_force_render && !(initial_presentation_pending && !fresh_frame_required));
         let high_rate_input = self.input_rate_tracker.borrow_mut().is_high_rate();
+        let has_frame_demand = self.invalidator.is_dirty()
+            || force_render
+            || !self.next_frame_callbacks.borrow().is_empty()
+            || request_frame_options.require_presentation
+            || self.needs_present.get()
+            || high_rate_input;
         let min_frame_interval = if initial_presentation_pending
             || renderer_repaint_pending
             || provisional_presentation_pending
@@ -7228,21 +7243,23 @@ impl Window {
             None
         } else {
             FrameThrottleFacts {
-                force_render,
                 require_presentation: request_frame_options.require_presentation,
-                has_next_frame_callbacks: !self.next_frame_callbacks.borrow().is_empty(),
                 active: self.active.get(),
                 high_rate_input,
-                thermal_state: Some(cx.thermal_state()),
+                thermal_state: cx.thermal_state(),
+                power_mode: cx.power_mode(),
+                inactive_frame_interval: self.inactive_frame_interval,
+                low_power_frame_interval: self.low_power_frame_interval,
+                thermal_frame_interval: self.thermal_frame_interval,
             }
             .min_frame_interval()
         };
         let now = Instant::now();
-        if frame_should_wait(
-            now,
-            self.last_frame_time.get(),
-            min_frame_interval.map(|(interval, _)| interval),
-        ) {
+        if has_frame_demand
+            && self
+                .frame_pacer
+                .should_defer(now, min_frame_interval.map(|(interval, _)| interval))
+        {
             self.deferred_force_render |= force_render;
             self.platform_window.schedule_frame();
             self.invalidator.wake_platform();
@@ -7255,6 +7272,9 @@ impl Window {
                         frame_pump::FrameRateLimit::Inactive => {
                             profiler::journal::FrameSkipReason::InactiveFrameRateLimit
                         }
+                        frame_pump::FrameRateLimit::LowPower => {
+                            profiler::journal::FrameSkipReason::LowPowerFrameRateLimit
+                        }
                         frame_pump::FrameRateLimit::Thermal => {
                             profiler::journal::FrameSkipReason::ThermalFrameRateLimit
                         }
@@ -7263,8 +7283,6 @@ impl Window {
             }
             return;
         }
-        self.last_frame_time.set(Some(now));
-
         for callback in self.next_frame_callbacks.take() {
             callback(self, cx);
         }
@@ -7276,7 +7294,6 @@ impl Window {
         let needs_present = PresentFacts {
             require_presentation: request_frame_options.require_presentation,
             needs_present: self.needs_present.get(),
-            active: self.active.get(),
             high_rate_input: self.input_rate_tracker.borrow_mut().is_high_rate(),
         }
         .needs_present();
@@ -15952,7 +15969,7 @@ mod cached_paint_atlas_tests {
             let draw_count_after_invalidation = platform_window.draw_count();
 
             window.active.set(false);
-            window.last_frame_time.set(Some(Instant::now()));
+            window.frame_pacer.last_frame = Some(Instant::now());
             platform_window.set_present_outcome(PlatformWindowPresentOutcome::Deferred);
             window.native_frame_requested(
                 RequestFrameOptions {
@@ -15983,7 +16000,7 @@ mod cached_paint_atlas_tests {
             assert!(!window.renderer_repaint_is_pending());
 
             let draw_count_after_fresh_attempt = platform_window.draw_count();
-            window.last_frame_time.set(None);
+            window.frame_pacer.last_frame = None;
             platform_window.set_present_outcome(PlatformWindowPresentOutcome::Submitted);
             window.native_frame_requested(
                 RequestFrameOptions {

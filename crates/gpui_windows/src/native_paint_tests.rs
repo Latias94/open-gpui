@@ -190,6 +190,9 @@ fn two_hwnd_reentrant_paint_defers_ime_until_native_frame_command() {
                 WindowOptions {
                     window_bounds: Some(WindowBounds::centered(size(px(320.0), px(220.0)), cx)),
                     focus_on_appearing: false,
+                    inactive_frame_interval: None,
+                    low_power_frame_interval: None,
+                    thermal_frame_interval: None,
                     ..WindowOptions::default()
                 },
                 |window, cx| {
@@ -218,6 +221,9 @@ fn two_hwnd_reentrant_paint_defers_ime_until_native_frame_command() {
                 WindowOptions {
                     window_bounds: Some(WindowBounds::centered(size(px(240.0), px(160.0)), cx)),
                     focus_on_appearing: false,
+                    inactive_frame_interval: None,
+                    low_power_frame_interval: None,
+                    thermal_frame_interval: None,
                     ..WindowOptions::default()
                 },
                 |_, cx| {

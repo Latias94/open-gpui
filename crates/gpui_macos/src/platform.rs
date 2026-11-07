@@ -4,6 +4,7 @@ use crate::{
     events::key_to_native,
     ns_string,
     pasteboard::Pasteboard,
+    process_info::{self, ProcessInfoObserver},
     renderer,
     window::{macos_supports_focus_on_appearing, macos_supports_toplevel_creation_state},
 };
@@ -46,9 +47,10 @@ use open_gpui::{
     PlatformDisplaySnapshot, PlatformFocusedWindow, PlatformHoveredWindow, PlatformKeyboardLayout,
     PlatformKeyboardMapper, PlatformTextSystem, PlatformViewportCapabilities, PlatformWindow,
     PlatformWindowActivationSupport, PlatformWindowCapabilities,
-    PlatformWindowCreationCapabilities, PlatformWindowMutationCapabilities, Result, SystemMenuType,
-    Task, ThermalState, WindowAppearance, WindowCoordinateSpace, WindowCreationSupport,
-    WindowInitialPresentationOrder, WindowKind, WindowMutationSupport, WindowParams,
+    PlatformWindowCreationCapabilities, PlatformWindowMutationCapabilities, PowerMode, Result,
+    SystemMenuType, Task, ThermalState, WindowAppearance, WindowCoordinateSpace,
+    WindowCreationSupport, WindowInitialPresentationOrder, WindowKind, WindowMutationSupport,
+    WindowParams,
 };
 use open_gpui_util::{
     ResultExt,
@@ -159,11 +161,6 @@ unsafe fn build_classes() {
             );
 
             decl.add_method(
-                sel!(onThermalStateChange:),
-                on_thermal_state_change as extern "C" fn(&mut Object, Sel, id),
-            );
-
-            decl.add_method(
                 sel!(onSystemSleep:),
                 on_system_sleep as extern "C" fn(&mut Object, Sel, id),
             );
@@ -187,7 +184,6 @@ pub struct MacPlatform(Mutex<MacPlatformState>, MacNativeNotificationCallbacks);
 
 #[derive(Default)]
 struct MacNativeNotificationCallbacks {
-    thermal_state_change: OnceLock<NativeAppNotificationHandler>,
     system_sleep: OnceLock<NativeAppNotificationHandler>,
     system_wake: OnceLock<NativeAppNotificationHandler>,
 }
@@ -206,6 +202,8 @@ pub(crate) struct MacPlatformState {
     on_keyboard_layout_change: Option<Box<dyn FnMut()>>,
     on_displays_changed: Option<Box<dyn FnMut()>>,
     system_power_observers_registered: bool,
+    thermal_observer: Option<ProcessInfoObserver>,
+    power_observer: Option<ProcessInfoObserver>,
     quit: Option<Box<dyn FnMut()>>,
     menu_command: Option<Box<dyn FnMut(&dyn Action)>>,
     validate_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
@@ -260,6 +258,8 @@ impl MacPlatform {
                 on_keyboard_layout_change: None,
                 on_displays_changed: None,
                 system_power_observers_registered: false,
+                thermal_observer: None,
+                power_observer: None,
                 menus: None,
                 keyboard_mapper,
                 cursor_visible: Arc::new(AtomicBool::new(true)),
@@ -1243,24 +1243,23 @@ impl Platform for MacPlatform {
     }
 
     fn on_thermal_state_change(&self, callback: NativeAppNotificationHandler) {
-        assert!(
-            self.1.thermal_state_change.set(callback).is_ok(),
-            "thermal state callback must be installed exactly once"
-        );
+        let observer = ProcessInfoObserver::thermal(callback);
+        let previous = self.0.lock().thermal_observer.replace(observer);
+        drop(previous);
     }
 
     fn thermal_state(&self) -> ThermalState {
-        unsafe {
-            let process_info: id = msg_send![class!(NSProcessInfo), processInfo];
-            let state: NSInteger = msg_send![process_info, thermalState];
-            match state {
-                0 => ThermalState::Nominal,
-                1 => ThermalState::Fair,
-                2 => ThermalState::Serious,
-                3 => ThermalState::Critical,
-                _ => ThermalState::Nominal,
-            }
-        }
+        process_info::thermal_state()
+    }
+
+    fn power_mode(&self) -> PowerMode {
+        process_info::power_mode()
+    }
+
+    fn on_power_mode_change(&self, callback: NativeAppNotificationHandler) {
+        let observer = ProcessInfoObserver::power(callback);
+        let previous = self.0.lock().power_observer.replace(observer);
+        drop(previous);
     }
 
     fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
@@ -1536,14 +1535,6 @@ extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
             object: nil
         ];
 
-        let thermal_name = ns_string("NSProcessInfoThermalStateDidChangeNotification");
-        let process_info: id = msg_send![class!(NSProcessInfo), processInfo];
-        let _: () = msg_send![notification_center, addObserver: this as id
-            selector: sel!(onThermalStateChange:)
-            name: thermal_name
-            object: process_info
-        ];
-
         let screen_parameters_name =
             ns_string("NSApplicationDidChangeScreenParametersNotification");
         let _: () = msg_send![notification_center, addObserver: this as id
@@ -1626,18 +1617,6 @@ extern "C" fn on_keyboard_layout_change(this: &mut Object, _: Sel, _: id) {
             .lock()
             .on_keyboard_layout_change
             .get_or_insert(callback);
-    }
-}
-
-extern "C" fn on_thermal_state_change(this: &mut Object, _: Sel, _: id) {
-    let callback = unsafe {
-        get_mac_notification_callbacks(this)
-            .thermal_state_change
-            .get()
-            .cloned()
-    };
-    if let Some(callback) = callback {
-        callback();
     }
 }
 

@@ -27,7 +27,10 @@ use windows::{
             Gdi::*,
         },
         Security::Credentials::*,
-        System::{Com::*, LibraryLoader::*, Ole::*, Power::*, SystemInformation::*},
+        System::{
+            Com::*, LibraryLoader::*, Ole::*, Power::*, SystemInformation::*,
+            SystemServices::GUID_POWER_SAVING_STATUS,
+        },
         UI::{Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
     core::*,
@@ -215,6 +218,7 @@ impl Eq for RegisteredWindow {}
 static NEXT_NATIVE_WINDOW_GENERATION: AtomicUsize = AtomicUsize::new(1);
 const DISPLAY_TOPOLOGY_RETRY_TIMER_ID: usize = 1;
 const DISPLAY_TOPOLOGY_RETRY_DELAY_MS: u32 = 100;
+static NEXT_NATIVE_RETIREMENT_TIMER_ID: AtomicUsize = AtomicUsize::new(2);
 
 fn next_native_window_generation() -> usize {
     let generation = NEXT_NATIVE_WINDOW_GENERATION.fetch_add(1, Ordering::Relaxed);
@@ -250,7 +254,7 @@ pub struct WindowsPlatform {
     invalidate_devices: Arc<AtomicBool>,
     handle: HWND,
     suspend_resume_notification: RefCell<Option<HPOWERNOTIFY>>,
-    native_finalization_started: Cell<bool>,
+    power_saving_notification: RefCell<Option<HPOWERNOTIFY>>,
     run_exit: WindowsPlatformRunExit,
     disable_direct_composition: bool,
     #[cfg(test)]
@@ -271,6 +275,7 @@ pub(crate) struct WindowsPlatformInner {
     display_topology: RefCell<WindowsDisplayTopologyAuthority>,
     displays_changed_scheduled: Cell<bool>,
     native_retirement: RefCell<WindowsNativeRetirementCoordinator>,
+    native_finalization_started: Cell<bool>,
     #[cfg(test)]
     lifecycle_test_probe: Rc<NativeWindowLifecycleTestProbe>,
 }
@@ -293,9 +298,14 @@ impl Default for WindowsNativeRetirementCoordinator {
 
 #[derive(Default)]
 struct NativeRetirementRetryAuthority {
-    scheduled: bool,
-    generation: u64,
+    wake: Option<NativeRetirementRetryWake>,
     attempt: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeRetirementRetryWake {
+    Timer(usize),
+    MainThreadMessage,
 }
 
 enum PendingNativeWindowIdentity {
@@ -330,6 +340,7 @@ struct DeferredNativeWindowFinalization {
 struct PlatformNativeRetirementResources {
     platform_handle: HWND,
     suspend_resume_notification: Option<HPOWERNOTIFY>,
+    power_saving_notification: Option<HPOWERNOTIFY>,
     ole_initialized: bool,
 }
 
@@ -440,6 +451,7 @@ pub(crate) struct WindowsPlatformState {
     /// Shared with each window so `WM_SETCURSOR` can read it directly.
     pub(crate) cursor_visible: Arc<AtomicBool>,
     directx_devices: RefCell<Option<DirectXDevices>>,
+    power_mode: Cell<PowerMode>,
 }
 
 struct WindowsPlatformConstructionGuard {
@@ -503,6 +515,7 @@ impl Drop for WindowsPlatformConstructionGuard {
                 raw_window_handles,
                 hwnd,
                 None,
+                None,
                 ole_initialized,
             );
             return;
@@ -547,9 +560,14 @@ pub(crate) struct NativeWindowLifecycleTestProbe {
     fail_next_destroy: Cell<usize>,
     fail_next_platform_destroy: Cell<usize>,
     fail_next_suspend_resume_unregister: Cell<usize>,
+    fail_next_power_saving_unregister: Cell<usize>,
     fail_next_initial_presentation: Cell<bool>,
     platform_destroy_attempts: Cell<usize>,
     suspend_resume_unregister_attempts: Cell<usize>,
+    power_saving_unregister_attempts: Cell<usize>,
+    power_saving_notifications: Cell<usize>,
+    fail_next_retirement_timer: Cell<bool>,
+    retirement_timer_attempts: Cell<usize>,
     ole_uninitialize_count: Cell<usize>,
     last_created_hwnd: Cell<Option<HWND>>,
     hidden_before_map: Cell<Option<bool>>,
@@ -647,6 +665,40 @@ impl NativeWindowLifecycleTestProbe {
 
     pub(crate) fn suspend_resume_unregister_attempts(&self) -> usize {
         self.suspend_resume_unregister_attempts.get()
+    }
+
+    pub(crate) fn fail_next_power_saving_unregister(&self) {
+        self.fail_next_power_saving_unregister.set(
+            self.fail_next_power_saving_unregister
+                .get()
+                .saturating_add(1),
+        );
+    }
+
+    fn take_fail_next_power_saving_unregister(&self) -> bool {
+        let attempts = self.fail_next_power_saving_unregister.get();
+        if attempts == 0 {
+            false
+        } else {
+            self.fail_next_power_saving_unregister.set(attempts - 1);
+            true
+        }
+    }
+
+    fn record_power_saving_unregister_attempt(&self) {
+        self.power_saving_unregister_attempts.set(
+            self.power_saving_unregister_attempts
+                .get()
+                .saturating_add(1),
+        );
+    }
+
+    pub(crate) fn power_saving_unregister_attempts(&self) -> usize {
+        self.power_saving_unregister_attempts.get()
+    }
+
+    pub(crate) fn power_saving_notifications(&self) -> usize {
+        self.power_saving_notifications.get()
     }
 
     pub(crate) fn record_ole_uninitialize(&self) {
@@ -756,6 +808,7 @@ struct PlatformCallbacks {
     keyboard_layout_change: Cell<Option<Box<dyn FnMut()>>>,
     system_sleep: Cell<Option<NativeAppNotificationHandler>>,
     system_wake: Cell<Option<NativeAppNotificationHandler>>,
+    power_mode_change: Cell<Option<NativeAppNotificationHandler>>,
     displays_changed: Cell<Option<Box<dyn FnMut()>>>,
 }
 
@@ -768,6 +821,7 @@ impl WindowsPlatformState {
             jump_list: RefCell::new(jump_list),
             cursor_visible: Arc::new(AtomicBool::new(true)),
             directx_devices: RefCell::new(directx_devices),
+            power_mode: Cell::new(PowerMode::Unknown),
             menus: RefCell::new(Vec::new()),
         }
     }
@@ -872,6 +926,18 @@ impl WindowsPlatform {
             .take()
             .context("CreateWindowExW did not run correctly")?;
 
+        match query_system_power_status() {
+            Ok(power_status) => inner
+                .state
+                .power_mode
+                .set(if power_status.SystemStatusFlag == 1 {
+                    PowerMode::LowPower
+                } else {
+                    PowerMode::HighPower
+                }),
+            Err(error) => log::warn!("Failed to query Windows battery saver status: {error}"),
+        }
+
         let disable_direct_composition = std::env::var(DISABLE_DIRECT_COMPOSITION)
             .is_ok_and(|value| value == "true" || value == "1");
         let background_executor = inner.background_executor.clone();
@@ -904,7 +970,7 @@ impl WindowsPlatform {
             text_system,
             direct_write_text_system,
             suspend_resume_notification: RefCell::new(None),
-            native_finalization_started: Cell::new(false),
+            power_saving_notification: RefCell::new(None),
             run_exit,
             disable_direct_composition,
             drop_target_helper,
@@ -917,7 +983,7 @@ impl WindowsPlatform {
     }
 
     fn ensure_suspend_resume_notification(&self) {
-        if self.native_finalization_started.get() {
+        if self.inner.native_finalization_started.get() {
             return;
         }
         let mut notification = self.suspend_resume_notification.borrow_mut();
@@ -932,8 +998,26 @@ impl WindowsPlatform {
         }
     }
 
+    fn ensure_power_saving_notification(&self) {
+        if self.inner.native_finalization_started.get() {
+            return;
+        }
+        let mut notification = self.power_saving_notification.borrow_mut();
+        if notification.is_none() {
+            // SAFETY: self.handle is the live platform HWND receiving WM_POWERBROADCAST.
+            *notification = unsafe {
+                RegisterPowerSettingNotification(
+                    HANDLE(self.handle.0),
+                    &GUID_POWER_SAVING_STATUS,
+                    DEVICE_NOTIFY_WINDOW_HANDLE,
+                )
+                .log_err()
+            };
+        }
+    }
+
     fn begin_native_finalization(&self) {
-        if self.native_finalization_started.replace(true) {
+        if self.inner.native_finalization_started.replace(true) {
             return;
         }
         *self.vsync_owner_live.write() = false;
@@ -941,6 +1025,7 @@ impl WindowsPlatform {
             self.raw_window_handles.clone(),
             self.handle,
             self.suspend_resume_notification.borrow_mut().take(),
+            self.power_saving_notification.borrow_mut().take(),
             true,
         );
     }
@@ -986,7 +1071,7 @@ impl WindowsPlatform {
             "returning Windows test platform could not converge native finalization: pending_windows={}, finalization={}, retry_scheduled={}",
             coordinator.pending_windows.len(),
             coordinator.finalization.is_some(),
-            coordinator.retry.scheduled,
+            coordinator.retry.wake.is_some(),
         );
     }
 
@@ -2570,6 +2655,24 @@ impl Platform for WindowsPlatform {
         self.ensure_suspend_resume_notification();
     }
 
+    /// Reports the Windows battery-saver flag. Windows does not distinguish Balanced from
+    /// HighPower through this notification, so disabled battery saver reports HighPower.
+    fn power_mode(&self) -> PowerMode {
+        self.inner.state.power_mode.get()
+    }
+
+    fn on_power_mode_change(&self, callback: NativeAppNotificationHandler) {
+        if self.inner.native_finalization_started.get() {
+            return;
+        }
+        self.inner
+            .state
+            .callbacks
+            .power_mode_change
+            .set(Some(callback));
+        self.ensure_power_saving_notification();
+    }
+
     fn set_menus(&self, menus: Vec<Menu>, _keymap: &Keymap) {
         *self.inner.state.menus.borrow_mut() = menus.into_iter().map(|menu| menu.owned()).collect();
     }
@@ -2801,6 +2904,7 @@ impl WindowsPlatformInner {
             ),
             displays_changed_scheduled: Cell::new(false),
             native_retirement: RefCell::new(WindowsNativeRetirementCoordinator::default()),
+            native_finalization_started: Cell::new(false),
             #[cfg(test)]
             lifecycle_test_probe: context.lifecycle_test_probe.clone(),
         }))
@@ -2992,7 +3096,7 @@ impl WindowsPlatformInner {
         let coordinator = self.native_retirement.borrow();
         coordinator.pending_windows.is_empty()
             && coordinator.finalization.is_none()
-            && !coordinator.retry.scheduled
+            && coordinator.retry.wake.is_none()
     }
 
     pub(crate) fn enqueue_construction_native_window(
@@ -3028,8 +3132,10 @@ impl WindowsPlatformInner {
         raw_window_handles: Arc<RegisteredWindows>,
         platform_handle: HWND,
         suspend_resume_notification: Option<HPOWERNOTIFY>,
+        power_saving_notification: Option<HPOWERNOTIFY>,
         ole_initialized: bool,
     ) {
+        self.native_finalization_started.set(true);
         let registered_windows = raw_window_handles.read().clone();
         let mut coordinator = self.native_retirement.borrow_mut();
         if coordinator.finalization.is_some() {
@@ -3049,6 +3155,7 @@ impl WindowsPlatformInner {
             resources: PlatformNativeRetirementResources {
                 platform_handle,
                 suspend_resume_notification,
+                power_saving_notification,
                 ole_initialized,
             },
             keepalive: Some(self.clone()),
@@ -3071,51 +3178,99 @@ impl WindowsPlatformInner {
     }
 
     fn schedule_native_retirement_retry(self: &Rc<Self>) {
-        let (delay, generation) = {
+        let (delay, timer_id) = {
             let mut coordinator = self.native_retirement.borrow_mut();
-            if coordinator.retry.scheduled
+            if coordinator.retry.wake.is_some()
                 || (coordinator.pending_windows.is_empty() && coordinator.finalization.is_none())
             {
                 return;
             }
-            coordinator.retry.scheduled = true;
-            coordinator.retry.generation = coordinator.retry.generation.wrapping_add(1);
-            let generation = coordinator.retry.generation;
+            let timer_id = NEXT_NATIVE_RETIREMENT_TIMER_ID
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+                .expect("native retirement timer identity exhausted");
+            coordinator.retry.wake = Some(NativeRetirementRetryWake::Timer(timer_id));
             let delay = native_retirement_retry_delay(coordinator.retry.attempt);
-            (delay, generation)
+            (delay, timer_id)
         };
 
-        let inner = self.clone();
-        let background_executor = self.background_executor.clone();
-        let timer = background_executor.timer(delay);
-        self.foreground_executor
-            .spawn(async move {
-                timer.await;
-                inner.native_retirement_retry_fired(generation);
-            })
-            .detach();
+        #[cfg(test)]
+        self.lifecycle_test_probe
+            .retirement_timer_attempts
+            .set(self.lifecycle_test_probe.retirement_timer_attempts.get() + 1);
+        #[cfg(test)]
+        let fail_timer = self
+            .lifecycle_test_probe
+            .fail_next_retirement_timer
+            .replace(false);
+        #[cfg(not(test))]
+        let fail_timer = false;
+        let timer = if fail_timer {
+            0
+        } else {
+            unsafe {
+                SetTimer(
+                    Some(self.platform_handle.as_raw()),
+                    timer_id,
+                    delay.as_millis() as u32,
+                    None,
+                )
+            }
+        };
+        if timer != 0 {
+            return;
+        }
+        log::error!(
+            "cannot schedule a Windows native-retirement timer: {}",
+            std::io::Error::last_os_error()
+        );
+        let posted = unsafe {
+            PostMessageW(
+                Some(self.platform_handle.as_raw()),
+                WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD,
+                WPARAM(self.validation_number),
+                LPARAM(0),
+            )
+        };
+        self.native_retirement.borrow_mut().retry.wake = match posted {
+            Ok(()) => Some(NativeRetirementRetryWake::MainThreadMessage),
+            Err(error) => {
+                log::error!("cannot post a Windows native-retirement retry: {error}");
+                None
+            }
+        };
     }
 
-    fn native_retirement_retry_fired(self: &Rc<Self>, generation: u64) {
+    fn handle_native_retirement_retry(self: &Rc<Self>, timer_id: usize) -> Option<isize> {
         {
             let mut coordinator = self.native_retirement.borrow_mut();
-            if !coordinator.retry.scheduled || coordinator.retry.generation != generation {
-                return;
+            if coordinator.retry.wake != Some(NativeRetirementRetryWake::Timer(timer_id)) {
+                return None;
             }
-            coordinator.retry.scheduled = false;
+            coordinator.retry.wake = None;
             coordinator.retry.attempt = coordinator.retry.attempt.saturating_add(1);
         }
+        unsafe {
+            let _ = KillTimer(Some(self.platform_handle.as_raw()), timer_id);
+        }
         self.drive_native_retirement();
+        Some(0)
+    }
+
+    fn cancel_native_retirement_retry(&self) {
+        let wake = self.native_retirement.borrow_mut().retry.wake.take();
+        if let Some(NativeRetirementRetryWake::Timer(timer_id)) = wake {
+            unsafe {
+                let _ = KillTimer(Some(self.platform_handle.as_raw()), timer_id);
+            }
+        }
     }
 
     fn drive_native_retirement(self: &Rc<Self>) {
         match self.drain_native_retirement() {
             NativeRetirementDrainResult::Retryable => self.schedule_native_retirement_retry(),
             NativeRetirementDrainResult::Complete | NativeRetirementDrainResult::Blocked => {
-                let mut coordinator = self.native_retirement.borrow_mut();
-                coordinator.retry.scheduled = false;
-                coordinator.retry.generation = coordinator.retry.generation.wrapping_add(1);
-                coordinator.retry.attempt = 0;
+                self.cancel_native_retirement_retry();
+                self.native_retirement.borrow_mut().retry.attempt = 0;
             }
         }
     }
@@ -3309,8 +3464,33 @@ impl WindowsPlatformInner {
             resources.suspend_resume_notification = None;
         }
 
+        if let Some(notification) = resources.power_saving_notification {
+            #[cfg(test)]
+            {
+                self.lifecycle_test_probe
+                    .record_power_saving_unregister_attempt();
+                if self
+                    .lifecycle_test_probe
+                    .take_fail_next_power_saving_unregister()
+                {
+                    log::error!(
+                        "injected power-saving notification unregistration failure; retaining platform retirement authority"
+                    );
+                    return false;
+                }
+            }
+            // SAFETY: notification was returned by RegisterPowerSettingNotification and remains
+            // owned by these retirement resources until unregistration succeeds.
+            if let Err(error) = unsafe { UnregisterPowerSettingNotification(notification) } {
+                log::error!("failed to unregister power-saving notification: {error}");
+                return false;
+            }
+            resources.power_saving_notification = None;
+        }
+
         // Keep the message HWND alive until every fallible platform-resource cleanup has
         // completed. It is the foreground retry transport for returning test applications.
+        self.cancel_native_retirement_retry();
         if unsafe { IsWindow(Some(resources.platform_handle)).as_bool() } {
             #[cfg(test)]
             {
@@ -3365,7 +3545,8 @@ impl WindowsPlatformInner {
             WM_TIMER if wparam.0 == DISPLAY_TOPOLOGY_RETRY_TIMER_ID => {
                 self.handle_display_topology_retry()
             }
-            WM_POWERBROADCAST => self.handle_power_broadcast(wparam),
+            WM_TIMER => self.handle_native_retirement_retry(wparam.0),
+            WM_POWERBROADCAST => self.handle_power_broadcast(wparam, lparam),
             WM_DISPLAYCHANGE => {
                 self.request_display_topology_refresh();
                 Some(0)
@@ -3425,6 +3606,13 @@ impl WindowsPlatformInner {
     fn run_foreground_task(self: &Rc<Self>) -> Option<isize> {
         const MAIN_TASK_TIMEOUT: u128 = 10;
 
+        {
+            let mut coordinator = self.native_retirement.borrow_mut();
+            if coordinator.retry.wake == Some(NativeRetirementRetryWake::MainThreadMessage) {
+                coordinator.retry.wake = None;
+                coordinator.retry.attempt = coordinator.retry.attempt.saturating_add(1);
+            }
+        }
         let start = std::time::Instant::now();
         'tasks: loop {
             'timeout_loop: loop {
@@ -3516,10 +3704,33 @@ impl WindowsPlatformInner {
         Some(0)
     }
 
-    fn handle_power_broadcast(&self, wparam: WPARAM) -> Option<isize> {
+    fn handle_power_broadcast(&self, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
+        if self.native_finalization_started.get() {
+            return Some(1);
+        }
         let callback = match wparam.0 as u32 {
             PBT_APMSUSPEND => &self.state.callbacks.system_sleep,
             PBT_APMRESUMEAUTOMATIC => &self.state.callbacks.system_wake,
+            PBT_POWERSETTINGCHANGE => {
+                // SAFETY: Windows supplies a POWERBROADCAST_SETTING valid for this synchronous
+                // message dispatch; the parser checks the GUID and payload size before reading.
+                let Some(enabled) = (unsafe { power_saving_status(lparam) }) else {
+                    return Some(1);
+                };
+                #[cfg(test)]
+                self.lifecycle_test_probe
+                    .power_saving_notifications
+                    .set(self.lifecycle_test_probe.power_saving_notifications.get() + 1);
+                let power_mode = if enabled {
+                    PowerMode::LowPower
+                } else {
+                    PowerMode::HighPower
+                };
+                if self.state.power_mode.replace(power_mode) == power_mode {
+                    return Some(1);
+                }
+                &self.state.callbacks.power_mode_change
+            }
             _ => return Some(1),
         };
         let _ = with_windows_shared_callback(callback, |callback| callback());
@@ -3532,6 +3743,45 @@ impl WindowsPlatformInner {
         *self.state.directx_devices.borrow_mut() = Some(directx_devices);
 
         Some(0)
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static FAIL_NEXT_INITIAL_POWER_STATUS_QUERY: Cell<bool> = const { Cell::new(false) };
+}
+
+fn query_system_power_status() -> windows::core::Result<SYSTEM_POWER_STATUS> {
+    #[cfg(test)]
+    if FAIL_NEXT_INITIAL_POWER_STATUS_QUERY.with(|fail| fail.replace(false)) {
+        return Err(windows::core::Error::from_hresult(E_FAIL));
+    }
+    let mut status = SYSTEM_POWER_STATUS::default();
+    unsafe { GetSystemPowerStatus(&mut status) }?;
+    Ok(status)
+}
+
+/// Reads the battery-saver payload used by Zed's Windows backend.
+///
+/// # Safety
+/// A nonzero `lparam` must point to a readable `POWERBROADCAST_SETTING` header and, when its
+/// `DataLength` is four, at least four readable payload bytes for the duration of this call.
+unsafe fn power_saving_status(lparam: LPARAM) -> Option<bool> {
+    let setting = unsafe { (lparam.0 as *const POWERBROADCAST_SETTING).as_ref()? };
+    if setting.PowerSetting != GUID_POWER_SAVING_STATUS || setting.DataLength != 4 {
+        return None;
+    }
+    // SAFETY: The caller guarantees four readable payload bytes; the Windows trailing byte array
+    // does not guarantee u32 alignment, so the DWORD is copied with an unaligned read.
+    let data = unsafe {
+        std::ptr::addr_of!(setting.Data)
+            .cast::<u32>()
+            .read_unaligned()
+    };
+    match data {
+        0 => Some(false),
+        1 => Some(true),
+        _ => None,
     }
 }
 

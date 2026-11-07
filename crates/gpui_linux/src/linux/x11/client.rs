@@ -439,10 +439,9 @@ impl X11Client {
                 if let calloop::channel::Event::Msg(event) = event {
                     let callback = client
                         .0
-                        .borrow()
+                        .borrow_mut()
                         .common
-                        .callbacks
-                        .system_power_callback(event);
+                        .handle_system_power_event(event);
                     if let Some(callback) = callback {
                         callback();
                     }

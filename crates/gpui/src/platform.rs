@@ -3710,6 +3710,15 @@ pub trait Platform: 'static {
     fn thermal_state(&self) -> ThermalState;
     fn on_thermal_state_change(&self, callback: NativeAppNotificationHandler);
 
+    /// Returns the operating system's power mode, or [`PowerMode::Unknown`]
+    /// when the platform cannot determine it.
+    fn power_mode(&self) -> PowerMode {
+        PowerMode::Unknown
+    }
+
+    /// Registers a callback invoked when the reported power mode changes.
+    fn on_power_mode_change(&self, _callback: NativeAppNotificationHandler) {}
+
     fn compositor_name(&self) -> &'static str {
         ""
     }
@@ -3882,6 +3891,19 @@ pub trait PlatformDisplay: Debug {
         let origin = point(center.x - offset.width, center.y - offset.height);
         Bounds::new(origin, clipped_window_size)
     }
+}
+
+/// The operating system's preference for energy use versus performance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PowerMode {
+    /// The platform cannot determine the mode or distinguish non-low-power modes.
+    Unknown,
+    /// The system prioritizes reducing energy use.
+    LowPower,
+    /// The system balances energy use and performance.
+    Balanced,
+    /// The system prioritizes performance over energy use.
+    HighPower,
 }
 
 /// Thermal state of the system
@@ -7326,6 +7348,24 @@ pub struct WindowOptions {
     /// Whether the window should be movable by the user
     pub is_movable: bool,
 
+    /// The minimum frame interval while inactive without sustained high-rate input.
+    ///
+    /// Defaults to approximately 30 fps. Set to `None` to disable this limit.
+    /// The longest applicable interval wins; mandatory presentations bypass all limits.
+    pub inactive_frame_interval: Option<Duration>,
+
+    /// The minimum frame interval while the platform reports Low Power Mode.
+    ///
+    /// Defaults to approximately 30 fps. Set to `None` to disable this limit.
+    /// The longest applicable interval wins; mandatory presentations bypass all limits.
+    pub low_power_frame_interval: Option<Duration>,
+
+    /// The minimum frame interval under serious or critical thermal pressure.
+    ///
+    /// Defaults to approximately 60 fps. Set to `None` to disable this limit.
+    /// The longest applicable interval wins; mandatory presentations bypass all limits.
+    pub thermal_frame_interval: Option<Duration>,
+
     /// Whether the window should be resizable by the user
     pub is_resizable: bool,
 
@@ -7475,6 +7515,9 @@ impl Default for WindowOptions {
             transient_for: None,
             kind: WindowKind::Normal,
             is_movable: true,
+            inactive_frame_interval: Some(Duration::from_micros(33_333)),
+            low_power_frame_interval: Some(Duration::from_micros(33_333)),
+            thermal_frame_interval: Some(Duration::from_micros(16_667)),
             is_resizable: true,
             is_minimizable: true,
             accepts_pointer_input: true,

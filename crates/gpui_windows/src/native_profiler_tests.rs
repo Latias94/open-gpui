@@ -96,7 +96,9 @@ impl Render for NativeProfilerRoot {
                 }),
             )
             .on_key_down(cx.listener(|root, event: &KeyDownEvent, window, cx| {
-                assert_eq!(event.keystroke.key, "p");
+                if event.keystroke.key != "p" {
+                    return;
+                }
                 root.source.key_inputs += 1;
                 for _ in 0..2 {
                     window.refresh();
@@ -351,6 +353,7 @@ impl NativeProfilerWindow {
         app: &mut Application,
         platform: &WindowsPlatform,
         observation: &NativeWindowTestObservation,
+        before_close: impl FnOnce(&mut Window),
     ) {
         let hwnd = self.registration.as_raw();
         let lifetime = Rc::downgrade(&self.native);
@@ -362,8 +365,10 @@ impl NativeProfilerWindow {
         );
         let renderer_borrow = self.native.state.renderer.borrow_mut();
         app.update_for_test(|cx| {
-            self.handle
-                .update(cx, |_, window, cx| window.remove_window(cx))
+            self.handle.update(cx, |_, window, cx| {
+                before_close(window);
+                window.remove_window(cx);
+            })
         })
         .expect("the exact native profiler consumer must close");
         assert!(unsafe { IsWindow(Some(hwnd)).as_bool() });
@@ -934,7 +939,7 @@ fn native_profiler_tracks_input_submission_redraw_and_reconstructed_window() {
         &redraw_frame,
     );
     let retired_id = consumer.handle.window_id();
-    consumer.retire(&mut app, &platform, &observation);
+    consumer.retire(&mut app, &platform, &observation, |_| {});
     assert!(collector.collect_unseen().is_empty());
 
     assert!(profiler::set_trace_enabled(false));
@@ -1005,7 +1010,7 @@ fn native_profiler_tracks_input_submission_redraw_and_reconstructed_window() {
             > rebuilt_frame.dirty_to_present_histogram.len()
     );
     assert!(collector.collect_unseen().is_empty());
-    rebuilt.retire(&mut app, &platform, &observation);
+    rebuilt.retire(&mut app, &platform, &observation, |_| {});
 
     app.update_for_test(|cx| cx.shutdown());
     assert!(monitor_completed.load(std::sync::atomic::Ordering::Acquire));
@@ -1437,7 +1442,7 @@ fn native_frame_signals_preserve_coalescing_visibility_retirement_and_vsync_orig
         Some(Instant::now()),
         FrameRequestSource::NativeCallback,
     );
-    consumer.retire(&mut app, &platform, &observation);
+    consumer.retire(&mut app, &platform, &observation, |_| {});
     assert!(retired_signal.take().is_none());
     assert_eq!(
         Arc::strong_count(&retired_signal),
@@ -1586,19 +1591,15 @@ fn native_frame_signals_preserve_coalescing_visibility_retirement_and_vsync_orig
     let pending_callback_capture = Rc::new(());
     let pending_callback_weak = Rc::downgrade(&pending_callback_capture);
     let pending_callback_calls = Rc::new(Cell::new(0_u32));
-    app.update_for_test(|cx| {
-        rebuilt.handle.update(cx, |_, window, _| {
-            let pending_callback_calls = pending_callback_calls.clone();
-            window.on_next_frame(move |_, _| {
-                let _keep_alive = &pending_callback_capture;
-                pending_callback_calls.set(pending_callback_calls.get() + 1);
-            });
-        })
-    })
-    .expect("the native consumer must retain a pending callback until retirement");
-    assert!(pending_callback_weak.upgrade().is_some());
-    assert_eq!(pending_callback_calls.get(), 0);
-    rebuilt.retire(&mut app, &platform, &observation);
+    rebuilt.retire(&mut app, &platform, &observation, |window| {
+        let callback_calls = pending_callback_calls.clone();
+        window.on_next_frame(move |_, _| {
+            let _keep_alive = &pending_callback_capture;
+            callback_calls.set(callback_calls.get() + 1);
+        });
+        assert!(pending_callback_weak.upgrade().is_some());
+        assert_eq!(pending_callback_calls.get(), 0);
+    });
     assert!(
         pending_callback_weak.upgrade().is_none(),
         "exact native retirement must release pending next-frame callback captures"

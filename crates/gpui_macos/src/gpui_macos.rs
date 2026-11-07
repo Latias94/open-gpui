@@ -14,6 +14,7 @@ mod events;
 mod keyboard;
 mod metal_compat;
 mod pasteboard;
+mod process_info;
 
 #[cfg(feature = "screen-capture")]
 mod screen_capture;

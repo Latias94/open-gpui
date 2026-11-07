@@ -44,7 +44,7 @@ impl HeadlessClient {
             .insert_source(power_receiver, |event, _, client: &mut HeadlessClient| {
                 if let calloop::channel::Event::Msg(event) = event {
                     let callback =
-                        client.with_common(|common| common.callbacks.system_power_callback(event));
+                        client.with_common(|common| common.handle_system_power_event(event));
                     if let Some(callback) = callback {
                         callback();
                     }

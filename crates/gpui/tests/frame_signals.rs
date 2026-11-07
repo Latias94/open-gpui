@@ -452,7 +452,10 @@ fn public_inactive_throttling_retains_pending_input_callback_and_force_render(
     for (completed_callbacks, require_presentation) in [true, false].into_iter().enumerate() {
         visual.deactivate_window();
         visual.update(|window, _| assert!(!window.is_window_active()));
-        assert!(visual.simulate_frame(RequestFrameOptions::default()));
+        assert!(visual.simulate_frame(RequestFrameOptions {
+            require_presentation: true,
+            ..Default::default()
+        }));
         let primed = collector.collect_unseen();
         assert_eq!(primed.lost, 0);
         sealer.push_entries(primed.entries);

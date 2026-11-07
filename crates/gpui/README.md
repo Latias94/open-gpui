@@ -271,6 +271,35 @@ In addition to the systems above, Open GPUI provides a range of smaller services
 
 Currently, the best way to learn about these APIs is to read the Open GPUI examples and the framework source. This repository is a fork of Zed GPUI, but it is maintained as an independent Open GPUI workspace.
 
+## Power Modes And Frame Cadence
+
+Read `App::power_mode` and retain an `App::on_power_mode_change` subscription to observe the
+platform's energy preference. `PowerMode::Unknown` means the platform cannot determine or
+distinguish the mode; it is not a guessed performance setting. Power observation does not change
+the host's system settings.
+
+Mappings follow the native API: Windows maps battery saver on/off to LowPower/HighPower, while
+macOS reports LowPower or Unknown. Linux maps recognized power-saver/balanced/performance profiles
+to the corresponding mode. An unsuccessful or unrecognized query retains Unknown. These values
+describe those reports rather than measured performance or energy use.
+
+Set `WindowOptions::inactive_frame_interval`, `low_power_frame_interval` and
+`thermal_frame_interval` independently when opening a window. Defaults are approximately
+30 fps inactive, 30 fps in Low Power Mode and 60 fps under serious/critical thermal pressure.
+`None` disables an individual limit. The longest applicable interval wins; sustained high-rate
+input bypasses the inactive limit while power/thermal limits still apply. Mandatory native
+presentations and existing recovery transitions bypass limits.
+
+Dirty work, a scene awaiting presentation, next-frame callbacks and high-rate-input presentation
+share the same pacing decision. The frame source retries deferred work without consuming its
+force-render hint. Pure idle callbacks neither consume a cadence slot nor wake a parked source.
+Small callback delays retain stable deadlines; a longer stall restarts cadence instead of
+producing a catch-up burst. These rules do not replace accepted-frame or native submission facts.
+
+The [power/cadence qualification](../../docs/verification.md#power-modes-and-stable-frame-cadence)
+records backend sources, executed platform/consumer scope and remaining physical timing/energy
+limits.
+
 ## Frame And Hang Measurement
 
 Enable the `profiler` feature to read `Window::frame_duration_snapshot` and

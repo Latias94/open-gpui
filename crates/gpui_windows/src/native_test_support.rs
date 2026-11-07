@@ -90,11 +90,15 @@ mod native_intrinsic_layout_tests;
 mod native_paint_tests;
 #[path = "native_pending_input_tests.rs"]
 mod native_pending_input_tests;
+#[path = "native_power_mode_tests.rs"]
+mod native_power_mode_tests;
 #[path = "native_power_visibility_tests.rs"]
 mod native_power_visibility_tests;
 #[cfg(feature = "profiler")]
 #[path = "native_profiler_tests.rs"]
 mod native_profiler_tests;
+#[path = "native_retirement_timer_tests.rs"]
+mod native_retirement_timer_tests;
 #[path = "native_scene_color_tests.rs"]
 mod native_scene_color_tests;
 #[path = "native_text_layout_tests.rs"]
@@ -924,11 +928,11 @@ fn owned_nonactivating_first_show_preserves_z_order_and_later_activation() {
         .last()
         .expect("foreground sentinel should register an HWND")
         .as_raw();
-    unsafe {
-        let _ = SetActiveWindow(foreground_hwnd);
-    }
+    crate::native_test_foreground::acquire_foreground_window(foreground_hwnd)
+        .expect("the first-show foreground sentinel must own global foreground authority");
     assert_eq!(unsafe { GetActiveWindow() }, foreground_hwnd);
     let native_foreground_before = unsafe { GetForegroundWindow() };
+    assert_eq!(native_foreground_before, foreground_hwnd);
     let z_order_before = application_window_z_order(&platform);
     assert_eq!(
         z_order_before,

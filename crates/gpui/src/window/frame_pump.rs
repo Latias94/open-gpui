@@ -1,64 +1,114 @@
-use crate::ThermalState;
+use crate::{PowerMode, ThermalState};
 use open_gpui_scheduler::Instant;
 use std::time::Duration;
 
-const INACTIVE_FRAME_INTERVAL: Duration = Duration::from_micros(33333);
-const THERMAL_THROTTLE_FRAME_INTERVAL: Duration = Duration::from_micros(16667);
+const FRAME_INTERVAL_TOLERANCE: Duration = Duration::from_millis(1);
+
+/// Keeps throttled frames on a stable cadence despite callback delivery jitter.
+#[derive(Default)]
+pub(super) struct FramePacer {
+    pub(super) last_frame: Option<Instant>,
+}
+
+impl FramePacer {
+    pub(super) fn should_defer(
+        &mut self,
+        now: Instant,
+        minimum_interval: Option<Duration>,
+    ) -> bool {
+        if let Some(interval) = minimum_interval
+            && let Some(last_frame) = self.last_frame
+        {
+            let Some(deadline) = last_frame.checked_add(interval) else {
+                return true;
+            };
+            if now.saturating_duration_since(last_frame) < interval
+                && deadline.saturating_duration_since(now) > FRAME_INTERVAL_TOLERANCE
+            {
+                return true;
+            }
+            self.last_frame = Some(if now.saturating_duration_since(deadline) <= interval / 4 {
+                deadline
+            } else {
+                now
+            });
+        } else {
+            self.last_frame = Some(now);
+        }
+        false
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum FrameRateLimit {
     Inactive,
+    LowPower,
     Thermal,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct FrameThrottleFacts {
-    pub(crate) force_render: bool,
     pub(crate) require_presentation: bool,
-    pub(crate) has_next_frame_callbacks: bool,
     pub(crate) active: bool,
     pub(crate) high_rate_input: bool,
-    pub(crate) thermal_state: Option<ThermalState>,
+    pub(crate) thermal_state: ThermalState,
+    pub(crate) power_mode: PowerMode,
+    pub(crate) inactive_frame_interval: Option<Duration>,
+    pub(crate) low_power_frame_interval: Option<Duration>,
+    pub(crate) thermal_frame_interval: Option<Duration>,
 }
 
 impl FrameThrottleFacts {
     pub(crate) fn min_frame_interval(self) -> Option<(Duration, FrameRateLimit)> {
-        if self.require_presentation || (!self.force_render && !self.has_next_frame_callbacks) {
-            None
-        } else if !self.active && !self.high_rate_input {
-            Some((INACTIVE_FRAME_INTERVAL, FrameRateLimit::Inactive))
-        } else if let Some(ThermalState::Critical | ThermalState::Serious) = self.thermal_state {
-            Some((THERMAL_THROTTLE_FRAME_INTERVAL, FrameRateLimit::Thermal))
-        } else {
-            None
+        if self.require_presentation {
+            return None;
         }
+        let mut longest = None;
+        for candidate in [
+            self.inactive_frame_interval
+                .filter(|_| !self.active && !self.high_rate_input)
+                .map(|interval| (interval, FrameRateLimit::Inactive)),
+            self.low_power_frame_interval
+                .filter(|_| self.power_mode == PowerMode::LowPower)
+                .map(|interval| (interval, FrameRateLimit::LowPower)),
+            self.thermal_frame_interval
+                .filter(|_| {
+                    matches!(
+                        self.thermal_state,
+                        ThermalState::Critical | ThermalState::Serious
+                    )
+                })
+                .map(|interval| (interval, FrameRateLimit::Thermal)),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if longest.is_none_or(|(interval, _)| candidate.0 > interval) {
+                longest = Some(candidate);
+            }
+        }
+        longest
     }
-}
-
-pub(crate) fn frame_should_wait(
-    now: Instant,
-    last_frame: Option<Instant>,
-    min_frame_interval: Option<Duration>,
-) -> bool {
-    let (Some(last_frame), Some(min_frame_interval)) = (last_frame, min_frame_interval) else {
-        return false;
-    };
-    now.duration_since(last_frame) < min_frame_interval
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct PresentFacts {
     pub(crate) require_presentation: bool,
     pub(crate) needs_present: bool,
-    pub(crate) active: bool,
     pub(crate) high_rate_input: bool,
 }
 
 impl PresentFacts {
     pub(crate) fn needs_present(self) -> bool {
-        self.require_presentation || self.needs_present || (self.active && self.high_rate_input)
+        self.require_presentation || self.needs_present || self.high_rate_input
     }
 }
+
+#[cfg(test)]
+mod cadence_tests;
+
+#[cfg(test)]
+mod high_rate_tests;
 
 #[cfg(test)]
 mod tests {
@@ -101,7 +151,7 @@ mod tests {
             let initial_renders = renders.get();
             assert!(initial_renders > 0);
             window.active.set(false);
-            window.last_frame_time.set(Some(Instant::now()));
+            window.frame_pacer.last_frame = Some(Instant::now());
             window.native_frame_requested(
                 RequestFrameOptions {
                     force_render: true,
@@ -113,7 +163,7 @@ mod tests {
             assert_eq!(renders.get(), initial_renders);
             assert!(window.deferred_force_render);
 
-            window.last_frame_time.set(None);
+            window.frame_pacer.last_frame = None;
             window.native_frame_requested(
                 RequestFrameOptions {
                     force_render: false,
@@ -125,7 +175,7 @@ mod tests {
             assert_eq!(renders.get(), initial_renders + 1);
             assert!(!window.deferred_force_render);
 
-            window.last_frame_time.set(None);
+            window.frame_pacer.last_frame = None;
             window.native_frame_requested(
                 RequestFrameOptions {
                     force_render: false,
@@ -138,35 +188,30 @@ mod tests {
         });
     }
 
-    #[test]
-    fn frame_throttle_is_disabled_without_work() {
-        assert_eq!(
-            FrameThrottleFacts {
-                force_render: false,
-                require_presentation: false,
-                has_next_frame_callbacks: false,
-                active: false,
-                high_rate_input: false,
-                thermal_state: Some(ThermalState::Critical),
-            }
-            .min_frame_interval(),
-            None
-        );
+    fn default_limits() -> FrameThrottleFacts {
+        let options = crate::WindowOptions::default();
+        FrameThrottleFacts {
+            require_presentation: false,
+            active: true,
+            high_rate_input: false,
+            thermal_state: ThermalState::Nominal,
+            power_mode: PowerMode::Unknown,
+            inactive_frame_interval: options.inactive_frame_interval,
+            low_power_frame_interval: options.low_power_frame_interval,
+            thermal_frame_interval: options.thermal_frame_interval,
+        }
     }
 
     #[test]
     fn frame_throttle_prefers_inactive_over_thermal_pressure() {
         assert_eq!(
             FrameThrottleFacts {
-                force_render: true,
-                require_presentation: false,
-                has_next_frame_callbacks: false,
                 active: false,
-                high_rate_input: false,
-                thermal_state: Some(ThermalState::Critical),
+                thermal_state: ThermalState::Critical,
+                ..default_limits()
             }
             .min_frame_interval(),
-            Some((INACTIVE_FRAME_INTERVAL, FrameRateLimit::Inactive))
+            Some((Duration::from_micros(33_333), FrameRateLimit::Inactive))
         );
     }
 
@@ -174,15 +219,11 @@ mod tests {
     fn frame_throttle_limits_active_thermal_pressure() {
         assert_eq!(
             FrameThrottleFacts {
-                force_render: true,
-                require_presentation: false,
-                has_next_frame_callbacks: false,
-                active: true,
-                high_rate_input: false,
-                thermal_state: Some(ThermalState::Serious),
+                thermal_state: ThermalState::Serious,
+                ..default_limits()
             }
             .min_frame_interval(),
-            Some((THERMAL_THROTTLE_FRAME_INTERVAL, FrameRateLimit::Thermal))
+            Some((Duration::from_micros(16_667), FrameRateLimit::Thermal))
         );
     }
 
@@ -191,12 +232,11 @@ mod tests {
         for active in [false, true] {
             assert_eq!(
                 FrameThrottleFacts {
-                    force_render: true,
                     require_presentation: true,
-                    has_next_frame_callbacks: true,
                     active,
-                    high_rate_input: false,
-                    thermal_state: Some(ThermalState::Critical),
+                    thermal_state: ThermalState::Critical,
+                    power_mode: PowerMode::LowPower,
+                    ..default_limits()
                 }
                 .min_frame_interval(),
                 None
@@ -207,20 +247,18 @@ mod tests {
     #[test]
     fn high_rate_input_bypasses_only_the_inactive_limit() {
         for (thermal_state, expected) in [
-            (None, None),
+            (ThermalState::Nominal, None),
             (
-                Some(ThermalState::Serious),
-                Some((THERMAL_THROTTLE_FRAME_INTERVAL, FrameRateLimit::Thermal)),
+                ThermalState::Serious,
+                Some((Duration::from_micros(16_667), FrameRateLimit::Thermal)),
             ),
         ] {
             assert_eq!(
                 FrameThrottleFacts {
-                    force_render: true,
-                    require_presentation: false,
-                    has_next_frame_callbacks: false,
                     active: false,
                     high_rate_input: true,
                     thermal_state,
+                    ..default_limits()
                 }
                 .min_frame_interval(),
                 expected
@@ -231,31 +269,26 @@ mod tests {
     #[test]
     fn frame_wait_requires_previous_frame_and_interval() {
         let now = Instant::now();
-        assert!(!frame_should_wait(now, None, Some(INACTIVE_FRAME_INTERVAL)));
-        assert!(!frame_should_wait(now, Some(now), None));
-        assert!(frame_should_wait(
-            now,
-            Some(now),
-            Some(INACTIVE_FRAME_INTERVAL)
-        ));
+        let mut pacer = FramePacer::default();
+        assert!(!pacer.should_defer(now, Some(Duration::from_millis(30))));
+        assert!(pacer.should_defer(now, Some(Duration::from_millis(30))));
+        assert!(!pacer.should_defer(now, None));
     }
 
     #[test]
-    fn present_decision_uses_active_high_rate_input() {
-        assert!(
-            PresentFacts {
-                require_presentation: false,
-                needs_present: false,
-                active: true,
-                high_rate_input: true,
-            }
-            .needs_present()
-        );
+    fn present_decision_keeps_high_rate_input_demand() {
         assert!(
             !PresentFacts {
                 require_presentation: false,
                 needs_present: false,
-                active: false,
+                high_rate_input: false,
+            }
+            .needs_present()
+        );
+        assert!(
+            PresentFacts {
+                require_presentation: false,
+                needs_present: false,
                 high_rate_input: true,
             }
             .needs_present()

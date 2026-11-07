@@ -6,10 +6,11 @@ use crate::{
     MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, Pixels, Platform,
     PlatformPointerCaptureReleaseOutcome, PlatformWindowCreationCapabilities,
     PlatformWindowDispatch, PlatformWindowHitStack, PlatformWindowMutationCapabilities,
-    PlatformWindowMutationTerminal, PlatformWindowPresentOutcome, Point, Render, Result, Size,
-    Task, TestDispatcher, TestPlatform, TestScreenCaptureSource, TestWindow, TextSystem,
-    VisualContext, Window, WindowBounds, WindowHandle, WindowMutationDomain, WindowOptions,
-    WindowPlatformFacts, app::GpuiMode, platform::RequestFrameOptions, window::ElementArenaScope,
+    PlatformWindowMutationTerminal, PlatformWindowPresentOutcome, Point, PowerMode, Render, Result,
+    Size, Task, TestDispatcher, TestPlatform, TestScreenCaptureSource, TestWindow, TextSystem,
+    ThermalState, VisualContext, Window, WindowBounds, WindowHandle, WindowMutationDomain,
+    WindowOptions, WindowPlatformFacts, app::GpuiMode, platform::RequestFrameOptions,
+    window::ElementArenaScope,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt, channel::oneshot};
@@ -780,6 +781,20 @@ impl TestAppContext {
         let (tx, rx) = futures::channel::oneshot::channel();
         self.test_platform.expect_restart.borrow_mut().replace(tx);
         rx
+    }
+
+    /// Updates the platform power mode and delivers its native notification.
+    ///
+    /// While the App is borrowed, delivery waits for the existing native ingress to drain.
+    pub fn simulate_power_mode(&self, mode: PowerMode) {
+        self.test_platform.simulate_power_mode_change(mode);
+        self.run_until_parked();
+    }
+
+    /// Updates the platform thermal state and delivers its native notification.
+    pub fn simulate_thermal_state_change(&self, state: ThermalState) {
+        self.test_platform.simulate_thermal_state_change(state);
+        self.run_until_parked();
     }
 
     /// Simulates the system waking from sleep.

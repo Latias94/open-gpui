@@ -55,6 +55,9 @@ screen-capture = [
     "scap",
 ]
 
+[dev-dependencies]
+open_gpui.workspace = true
+
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 accesskit.workspace = true

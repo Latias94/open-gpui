@@ -1,9 +1,10 @@
 use crate::{
     BoolExt, DisplayLinkError, MacDisplay, MacDisplayTopologyHandle, MacDisplayTopologySnapshot,
-    MacDisplayTopologySubscription, NSRange, NSStringExt, TISCopyCurrentKeyboardInputSource,
-    TISGetInputSourceProperty, ValidatedMacDisplayTarget, WindowFrameSource,
-    events::platform_input_from_native, kTISPropertyInputSourceIsASCIICapable,
-    kTISPropertyInputSourceType, kTISTypeKeyboardInputMode, ns_string, renderer,
+    MacDisplayTopologySubscription, MetalFrameGeneration, MetalFrameSource, MetalFrames, NSRange,
+    NSStringExt, TISCopyCurrentKeyboardInputSource, TISGetInputSourceProperty,
+    ValidatedMacDisplayTarget, WindowFrameSource, events::platform_input_from_native,
+    kTISPropertyInputSourceIsASCIICapable, kTISPropertyInputSourceType, kTISTypeKeyboardInputMode,
+    ns_string, renderer,
 };
 use anyhow::{Result, anyhow};
 use block2::RcBlock;
@@ -1590,6 +1591,11 @@ impl MacPresentationShutdownAuthority {
     }
 }
 
+enum FrameSource {
+    Metal(Rc<MetalFrames>),
+    DisplayLink(Option<WindowFrameSource>),
+}
+
 struct MacWindowState {
     handle: AnyWindowHandle,
     window_registry: MacWindowRegistry,
@@ -1601,7 +1607,7 @@ struct MacWindowState {
     background_appearance: WindowBackgroundAppearance,
     cursor_style: CursorStyle,
     cursor_visible: Arc<AtomicBool>,
-    frame_source: Option<WindowFrameSource>,
+    frame_source: FrameSource,
     renderer: renderer::Renderer,
     presentation_shutdown_authority: Arc<Mutex<MacPresentationShutdownAuthority>>,
     display_transaction_frame_depth: MacDisplayTransactionFrameDepth,
@@ -1683,7 +1689,9 @@ impl MacWindowState {
         self.closed.store(true, Ordering::Release);
         self.interaction_quiesced.store(true, Ordering::Release);
         self.stop_display_link();
-        self.frame_source = None;
+        if let FrameSource::DisplayLink(source) = &mut self.frame_source {
+            source.take();
+        }
         self.synthetic_drag_counter += 1;
         self.fullscreen_transition = None;
         self.observation_commit.cancel();
@@ -1755,8 +1763,8 @@ impl MacWindowState {
         }
     }
 
-    fn start_display_link(&mut self) {
-        if self.is_closed() {
+    fn start_display_link(&mut self, window_state: &Arc<Mutex<MacWindowState>>) {
+        if self.is_closed() || self.presentation_shutdown_authority.lock().ticket.is_some() {
             self.stop_display_link();
             return;
         }
@@ -1775,6 +1783,22 @@ impl MacWindowState {
         }
 
         self.stop_display_link();
+
+        if let FrameSource::Metal(frames) = &self.frame_source {
+            let Some(layer) = self.renderer.layer() else {
+                return;
+            };
+            let main_thread =
+                objc2::MainThreadMarker::new().expect("macOS windows require the main thread");
+            let window_state = Arc::downgrade(window_state);
+            let attached = frames.start(layer, main_thread, move |generation, update| {
+                if let Some(window_state) = window_state.upgrade() {
+                    metal_frame(&window_state, generation, update);
+                }
+            });
+            self.renderer.set_display_link_attached(attached);
+            return;
+        }
 
         if screen == nil {
             log::debug!(
@@ -1795,10 +1819,17 @@ impl MacWindowState {
             return;
         }
 
-        let native_view = self.native_view.as_ptr() as *mut c_void;
-        let source = self
-            .frame_source
-            .get_or_insert_with(|| WindowFrameSource::new(native_view, step));
+        let FrameSource::DisplayLink(source) = &mut self.frame_source else {
+            return;
+        };
+        let source = source.get_or_insert_with(|| {
+            let window_state = Arc::downgrade(window_state);
+            WindowFrameSource::new(move || {
+                if let Some(window_state) = window_state.upgrade() {
+                    step(&window_state);
+                }
+            })
+        });
         if let Err(error) = source.start(display_id) {
             self.log_display_link_start_failure(display_id, error);
             self.request_layer_display();
@@ -1834,8 +1865,13 @@ impl MacWindowState {
     }
 
     fn stop_display_link(&mut self) {
-        if let Some(source) = self.frame_source.as_mut() {
-            source.stop();
+        match &mut self.frame_source {
+            FrameSource::Metal(frames) => {
+                frames.stop();
+                self.renderer.set_display_link_attached(false);
+            }
+            FrameSource::DisplayLink(Some(source)) => source.stop(),
+            FrameSource::DisplayLink(None) => {}
         }
     }
 
@@ -2091,6 +2127,7 @@ pub(crate) struct MacWindow(
     // Native disposal has either completed synchronously or been queued on the main executor.
     bool,
     Option<MacWindowRegistration>,
+    Option<Rc<MetalFrames>>,
 );
 
 struct MacNativeObjectConstructionGuard {
@@ -2989,6 +3026,7 @@ impl MacWindow {
             let presentation_shutdown_authority = Arc::new(Mutex::new(
                 MacPresentationShutdownAuthority::new(handle.window_id()),
             ));
+            let metal_frames = MetalFrameSource::is_available().then(Rc::<MetalFrames>::default);
             let mut window = Self(
                 Arc::new(Mutex::new(MacWindowState {
                     handle,
@@ -3001,7 +3039,10 @@ impl MacWindow {
                     background_appearance: WindowBackgroundAppearance::Opaque,
                     cursor_style: CursorStyle::Arrow,
                     cursor_visible,
-                    frame_source: None,
+                    frame_source: match &metal_frames {
+                        Some(frames) => FrameSource::Metal(frames.clone()),
+                        None => FrameSource::DisplayLink(None),
+                    },
                     renderer: renderer::new_renderer(
                         renderer_context,
                         native_window as *mut _,
@@ -3075,6 +3116,7 @@ impl MacWindow {
                 presentation_shutdown_authority,
                 false,
                 None,
+                metal_frames,
             );
             let mut construction_guard = MacWindowConstructionGuard::new(&mut window);
             native_window_ownership.disarm();
@@ -3706,7 +3748,7 @@ fn deliver_window_request_frame(
             }
             if completed_outermost_frame {
                 state.renderer.set_presents_with_transaction(false);
-                state.start_display_link();
+                state.start_display_link(window_state);
             }
         });
     }
@@ -4639,6 +4681,17 @@ impl PlatformWindow for MacWindow {
             options.signal_at = PlatformFrameSignal::capture(Instant::now);
             options.signal_source = FrameRequestSource::LocalSchedule;
         }
+        if let Some(frames) = &self.4
+            && frames.is_attached()
+        {
+            frames.request_frame(options);
+            return;
+        }
+        let mode = if self.4.is_some() {
+            MacRequestFrameDeliveryMode::DisplayTransaction
+        } else {
+            MacRequestFrameDeliveryMode::LocalSchedule
+        };
         let window_state = Arc::downgrade(&self.0);
         DispatchQueue::main().exec_async(move || {
             let Some(window_state) = window_state.upgrade() else {
@@ -4646,12 +4699,7 @@ impl PlatformWindow for MacWindow {
             };
             let mut panic_boundary = MacWindowCallbackPanicBoundary::default();
             let delivery = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                deliver_window_request_frame(
-                    &window_state,
-                    MacRequestFrameDeliveryMode::LocalSchedule,
-                    options,
-                    &mut panic_boundary,
-                );
+                deliver_window_request_frame(&window_state, mode, options, &mut panic_boundary);
             }));
             if let Err(panic) = delivery {
                 panic_boundary.retain(panic);
@@ -4841,6 +4889,21 @@ impl PlatformWindow for MacWindow {
         }
         this.attempted_window_draw = true;
         this.renderer.draw(scene)
+    }
+
+    fn schedule_frame(&self) {
+        if let Some(frames) = &self.4 {
+            frames.wake();
+        }
+    }
+
+    fn frame_waker(&self) -> Option<Rc<dyn Fn()>> {
+        let frames = Rc::downgrade(self.4.as_ref()?);
+        Some(Rc::new(move || {
+            if let Some(frames) = frames.upgrade() {
+                frames.wake();
+            }
+        }))
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
@@ -5582,7 +5645,7 @@ extern "C" fn window_did_change_occlusion_state(this: &Object, _: Sel, _: id) {
             .contains(NSWindowOcclusionState::NSWindowOcclusionStateVisible)
         {
             lock.move_traffic_light();
-            lock.start_display_link();
+            lock.start_display_link(&window_state);
         } else {
             lock.stop_display_link();
         }
@@ -5763,7 +5826,7 @@ extern "C" fn window_did_change_screen(this: &Object, _: Sel, _: id) {
     if lock.is_closed() {
         return;
     }
-    lock.start_display_link();
+    lock.start_display_link(&window_state);
     drop(lock);
     update_window_scale_factor(&window_state);
 }
@@ -6043,27 +6106,24 @@ extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
     panic_boundary.isolate_at_native_boundary("a macOS display-layer frame callback");
 }
 
-extern "C" fn step(view: *mut c_void) {
-    let view = view as id;
-    let window_state = unsafe { get_window_state(&*view) };
+fn step(window_state: &Arc<Mutex<MacWindowState>>) {
     let mut panic_boundary = MacWindowCallbackPanicBoundary::default();
     let delivery = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let (signal_at, signal_source) = {
             let state = window_state.lock();
-            let Some(source) = state
-                .frame_source
-                .as_ref()
-                .filter(|source| source.is_running())
-            else {
+            let FrameSource::DisplayLink(Some(source)) = &state.frame_source else {
                 return;
             };
+            if !source.is_running() {
+                return;
+            }
             source.take_signal().map_or(
                 (None, FrameRequestSource::NativeCallback),
                 |(at, source)| (Some(at), source),
             )
         };
         deliver_window_request_frame(
-            &window_state,
+            window_state,
             MacRequestFrameDeliveryMode::DisplayLinkTick,
             RequestFrameOptions {
                 signal_at,
@@ -6077,6 +6137,57 @@ extern "C" fn step(view: *mut c_void) {
         panic_boundary.retain(panic);
     }
     panic_boundary.isolate_at_native_boundary("a macOS display-link frame callback");
+}
+
+fn metal_frame(
+    window_state: &Arc<Mutex<MacWindowState>>,
+    generation: MetalFrameGeneration,
+    update: &objc2_quartz_core::CAMetalDisplayLinkUpdate,
+) {
+    let signal_at = PlatformFrameSignal::capture(Instant::now);
+    let mut panic_boundary = MacWindowCallbackPanicBoundary::default();
+    let delivery = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let (frames, options) = {
+            let mut state = window_state.lock();
+            if state.is_closed() {
+                return;
+            }
+            let FrameSource::Metal(frames) = &state.frame_source else {
+                return;
+            };
+            let frames = frames.clone();
+            let Some(options) = frames.begin_frame(generation, signal_at) else {
+                return;
+            };
+            state.renderer.set_frame_drawable(Some(
+                crate::metal_compat::MetalDrawable::from_display_link(update.drawable()),
+            ));
+            (frames, options)
+        };
+        let frame_delivery = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            deliver_window_request_frame(
+                window_state,
+                MacRequestFrameDeliveryMode::DisplayLinkTick,
+                options,
+                &mut panic_boundary,
+            );
+        }));
+        if let Err(panic) = frame_delivery {
+            panic_boundary.retain(panic);
+        }
+        let used_drawable = {
+            let mut state = window_state.lock();
+            if !frames.is_current(generation) {
+                return;
+            }
+            state.renderer.set_frame_drawable(None).is_none()
+        };
+        frames.end_frame(generation, used_drawable);
+    }));
+    if let Err(panic) = delivery {
+        panic_boundary.retain(panic);
+    }
+    panic_boundary.isolate_at_native_boundary("a macOS Metal display-link frame callback");
 }
 
 extern "C" fn valid_attributes_for_marked_text(_: &Object, _: Sel) -> id {

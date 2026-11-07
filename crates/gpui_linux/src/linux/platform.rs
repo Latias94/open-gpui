@@ -11,7 +11,7 @@ use std::{io::Read as _, os::fd::AsRawFd};
 
 use anyhow::{Context as _, anyhow};
 use calloop::LoopSignal;
-#[cfg(all(target_os = "linux", any(feature = "wayland", feature = "x11")))]
+#[cfg(any(feature = "wayland", feature = "x11"))]
 use calloop::channel::Sender;
 use futures::channel::oneshot;
 use open_gpui_util::ResultExt as _;
@@ -25,7 +25,7 @@ use open_gpui::{
     Keymap, Menu, MenuItem, MouseButton, NativeAppNotificationHandler, OwnedMenu,
     PathPromptOptions, Platform, PlatformDisplay, PlatformFocusedWindow, PlatformHoveredWindow,
     PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PlatformViewportCapabilities, PlatformWindow, PlatformWindowCapabilities, Result,
+    PlatformViewportCapabilities, PlatformWindow, PlatformWindowCapabilities, PowerMode, Result,
     RunnableVariant, Task, ThermalState, WindowAppearance, WindowButtonLayout, WindowKind,
     WindowParams,
 };
@@ -132,6 +132,7 @@ pub(crate) struct PlatformHandlers {
     pub(crate) displays_changed: Option<Box<dyn FnMut()>>,
     pub(crate) system_sleep: Option<NativeAppNotificationHandler>,
     pub(crate) system_wake: Option<NativeAppNotificationHandler>,
+    pub(crate) power_mode_change: Option<NativeAppNotificationHandler>,
 }
 
 impl PlatformHandlers {
@@ -142,11 +143,12 @@ impl PlatformHandlers {
         match event {
             SystemPowerEvent::Sleep => self.system_sleep.clone(),
             SystemPowerEvent::Wake => self.system_wake.clone(),
+            SystemPowerEvent::ModeChanged(_) => self.power_mode_change.clone(),
         }
     }
 }
 
-/// A logind `PrepareForSleep` signal forwarded to the client's event loop.
+/// A system power change forwarded from D-Bus to the client's event loop.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(
     not(all(target_os = "linux", any(feature = "wayland", feature = "x11"))),
@@ -155,6 +157,7 @@ impl PlatformHandlers {
 pub(crate) enum SystemPowerEvent {
     Sleep,
     Wake,
+    ModeChanged(PowerMode),
 }
 
 pub(crate) struct LinuxCommon {
@@ -167,9 +170,14 @@ pub(crate) struct LinuxCommon {
     pub(crate) callbacks: PlatformHandlers,
     pub(crate) signal: LoopSignal,
     pub(crate) menus: Vec<OwnedMenu>,
-    #[cfg(all(target_os = "linux", any(feature = "wayland", feature = "x11")))]
+    #[cfg(any(feature = "wayland", feature = "x11"))]
     power_sender: Sender<SystemPowerEvent>,
-    power_listener_started: bool,
+    #[cfg(all(target_os = "linux", any(feature = "wayland", feature = "x11")))]
+    system_power_listener: Option<Task<()>>,
+    power_mode: PowerMode,
+    #[cfg(any(feature = "wayland", feature = "x11"))]
+    power_mode_listener: Option<Task<()>>,
+    power_observation_stopped: bool,
 }
 
 impl LinuxCommon {
@@ -182,7 +190,7 @@ impl LinuxCommon {
     ) {
         let (main_sender, main_receiver) = PriorityQueueCalloopReceiver::new();
         let (power_sender, power_receiver) = calloop::channel::channel();
-        #[cfg(not(all(target_os = "linux", any(feature = "wayland", feature = "x11"))))]
+        #[cfg(not(any(feature = "wayland", feature = "x11")))]
         let _ = power_sender;
 
         #[cfg(any(feature = "wayland", feature = "x11"))]
@@ -206,31 +214,87 @@ impl LinuxCommon {
             callbacks,
             signal,
             menus: Vec::new(),
-            #[cfg(all(target_os = "linux", any(feature = "wayland", feature = "x11")))]
+            #[cfg(any(feature = "wayland", feature = "x11"))]
             power_sender,
-            power_listener_started: false,
+            #[cfg(all(target_os = "linux", any(feature = "wayland", feature = "x11")))]
+            system_power_listener: None,
+            power_mode: PowerMode::Unknown,
+            #[cfg(any(feature = "wayland", feature = "x11"))]
+            power_mode_listener: None,
+            power_observation_stopped: false,
         };
 
         (common, main_receiver, power_receiver)
     }
 
     pub(crate) fn start_power_listener(&mut self) {
-        if self.power_listener_started {
+        if self.power_observation_stopped {
             return;
         }
 
         #[cfg(all(target_os = "linux", any(feature = "wayland", feature = "x11")))]
-        smol::spawn({
+        if self.system_power_listener.is_none() {
             let power_sender = self.power_sender.clone();
-            async move {
+            self.system_power_listener = Some(self.background_executor.spawn(async move {
                 if let Err(error) = listen_for_system_power_events(power_sender).await {
                     log::debug!("failed to listen for system sleep/wake events: {error:?}");
                 }
-            }
-        })
-        .detach();
+            }));
+        }
+    }
 
-        self.power_listener_started = true;
+    #[cfg(any(feature = "wayland", feature = "x11"))]
+    fn start_power_mode_listener(&mut self) {
+        if self.power_observation_stopped || self.power_mode_listener.is_some() {
+            return;
+        }
+
+        let sender = self.power_sender.clone();
+        self.power_mode_listener = Some(self.background_executor.spawn(async move {
+            let result = async {
+                let connection = ashpd::zbus::Connection::system().await?;
+                crate::linux::power::monitor_power_mode(&connection, |mode| {
+                    sender.send(SystemPowerEvent::ModeChanged(mode))?;
+                    Ok(())
+                })
+                .await
+            }
+            .await;
+            if let Err(error) = result {
+                sender
+                    .send(SystemPowerEvent::ModeChanged(PowerMode::Unknown))
+                    .ok();
+                log::debug!("failed to monitor system power mode: {error:?}");
+            }
+        }));
+    }
+
+    pub(crate) fn handle_system_power_event(
+        &mut self,
+        event: SystemPowerEvent,
+    ) -> Option<NativeAppNotificationHandler> {
+        if self.power_observation_stopped {
+            return None;
+        }
+        if let SystemPowerEvent::ModeChanged(mode) = event {
+            if self.power_mode == mode {
+                return None;
+            }
+            self.power_mode = mode;
+        }
+        self.callbacks.system_power_callback(event)
+    }
+
+    fn stop_power_listeners(&mut self) {
+        self.power_observation_stopped = true;
+        self.power_mode = PowerMode::Unknown;
+        #[cfg(all(target_os = "linux", any(feature = "wayland", feature = "x11")))]
+        self.system_power_listener.take();
+        #[cfg(any(feature = "wayland", feature = "x11"))]
+        self.power_mode_listener.take();
+        self.callbacks.system_sleep.take();
+        self.callbacks.system_wake.take();
+        self.callbacks.power_mode_change.take();
     }
 }
 
@@ -256,7 +320,7 @@ async fn listen_for_system_power_events(
         } else {
             SystemPowerEvent::Wake
         };
-        power_sender.send(event).ok();
+        power_sender.send(event)?;
     }
 
     Ok(())
@@ -300,21 +364,52 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
         ThermalState::Nominal
     }
 
+    fn power_mode(&self) -> PowerMode {
+        #[cfg(any(feature = "wayland", feature = "x11"))]
+        let windowed = self.inner.compositor_name() != "headless";
+        self.inner.with_common(|common| {
+            #[cfg(any(feature = "wayland", feature = "x11"))]
+            if windowed {
+                common.start_power_mode_listener();
+            }
+            common.power_mode
+        })
+    }
+
+    fn on_power_mode_change(&self, callback: NativeAppNotificationHandler) {
+        #[cfg(any(feature = "wayland", feature = "x11"))]
+        let windowed = self.inner.compositor_name() != "headless";
+        self.inner.with_common(|common| {
+            if common.power_observation_stopped {
+                return;
+            }
+            common.callbacks.power_mode_change = Some(callback);
+            #[cfg(any(feature = "wayland", feature = "x11"))]
+            if windowed {
+                common.start_power_mode_listener();
+            }
+        });
+    }
+
     fn run(&self, on_finish_launching: Box<dyn FnOnce()>) {
         on_finish_launching();
 
         LinuxClient::run(&self.inner);
 
-        let quit = self
-            .inner
-            .with_common(|common| common.callbacks.quit.take());
+        let quit = self.inner.with_common(|common| {
+            common.stop_power_listeners();
+            common.callbacks.quit.take()
+        });
         if let Some(mut fun) = quit {
             fun();
         }
     }
 
     fn quit(&self) {
-        self.inner.with_common(|common| common.signal.stop());
+        self.inner.with_common(|common| {
+            common.stop_power_listeners();
+            common.signal.stop();
+        });
     }
 
     fn compositor_name(&self) -> &'static str {
@@ -623,6 +718,9 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
 
     fn on_system_sleep(&self, callback: NativeAppNotificationHandler) {
         self.inner.with_common(|common| {
+            if common.power_observation_stopped {
+                return;
+            }
             common.callbacks.system_sleep = Some(callback);
             common.start_power_listener();
         });
@@ -630,6 +728,9 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
 
     fn on_system_wake(&self, callback: NativeAppNotificationHandler) {
         self.inner.with_common(|common| {
+            if common.power_observation_stopped {
+                return;
+            }
             common.callbacks.system_wake = Some(callback);
             common.start_power_listener();
         });
@@ -1287,6 +1388,96 @@ pub(super) fn compositor_gpu_hint_from_dev_t(
 mod tests {
     use super::*;
     use open_gpui::{Point, px};
+
+    #[test]
+    fn power_mode_reports_update_before_notification_and_without_an_observer() {
+        let event_loop = calloop::EventLoop::<()>::try_new().unwrap();
+        let (common, _, _) = LinuxCommon::new(event_loop.get_signal());
+        let common = std::cell::RefCell::new(common);
+        assert_eq!(common.borrow().power_mode, PowerMode::Unknown);
+        assert!(
+            common
+                .borrow_mut()
+                .handle_system_power_event(SystemPowerEvent::ModeChanged(PowerMode::LowPower))
+                .is_none()
+        );
+        assert_eq!(common.borrow().power_mode, PowerMode::LowPower);
+
+        let (sender, receiver) = std::sync::mpsc::channel();
+        common.borrow_mut().callbacks.power_mode_change = Some(Arc::new(move || {
+            sender.send(()).unwrap();
+        }));
+        for mode in [
+            PowerMode::LowPower,
+            PowerMode::Balanced,
+            PowerMode::Balanced,
+            PowerMode::HighPower,
+            PowerMode::Unknown,
+            PowerMode::Unknown,
+        ] {
+            let callback = common
+                .borrow_mut()
+                .handle_system_power_event(SystemPowerEvent::ModeChanged(mode));
+            assert_eq!(common.borrow().power_mode, mode);
+            if let Some(callback) = callback {
+                callback();
+            }
+        }
+        assert_eq!(receiver.try_iter().count(), 3);
+        common.borrow_mut().stop_power_listeners();
+        assert!(
+            common
+                .borrow_mut()
+                .handle_system_power_event(SystemPowerEvent::ModeChanged(PowerMode::HighPower))
+                .is_none()
+        );
+        assert_eq!(common.borrow().power_mode, PowerMode::Unknown);
+    }
+
+    #[test]
+    fn headless_power_queries_stay_unknown_and_shutdown_releases_and_refuses_callbacks() {
+        let platform = LinuxPlatform {
+            inner: crate::linux::HeadlessClient::new(),
+        };
+        assert_eq!(platform.power_mode(), PowerMode::Unknown);
+        assert_eq!(platform.thermal_state(), ThermalState::Nominal);
+
+        let retained = Arc::new(());
+        let weak = Arc::downgrade(&retained);
+        platform.on_power_mode_change(Arc::new(move || {
+            let _ = &retained;
+        }));
+        assert!(weak.upgrade().is_some());
+        assert_eq!(platform.power_mode(), PowerMode::Unknown);
+        #[cfg(any(feature = "wayland", feature = "x11"))]
+        platform.inner.with_common(|common| {
+            assert!(common.power_mode_listener.is_none());
+        });
+
+        platform.quit();
+        assert!(weak.upgrade().is_none());
+        assert_eq!(platform.power_mode(), PowerMode::Unknown);
+
+        let retained = Arc::new(());
+        let weak = Arc::downgrade(&retained);
+        let callback: NativeAppNotificationHandler = Arc::new(move || {
+            let _ = &retained;
+        });
+        platform.on_power_mode_change(callback.clone());
+        platform.on_system_sleep(callback.clone());
+        platform.on_system_wake(callback);
+        assert!(weak.upgrade().is_none());
+        platform.inner.with_common(|common| {
+            for event in [
+                SystemPowerEvent::Sleep,
+                SystemPowerEvent::Wake,
+                SystemPowerEvent::ModeChanged(PowerMode::LowPower),
+            ] {
+                assert!(common.handle_system_power_event(event).is_none());
+            }
+        });
+        assert_eq!(platform.power_mode(), PowerMode::Unknown);
+    }
 
     #[test]
     fn system_power_callbacks_keep_event_order_and_cross_thread_custody() {

@@ -48,11 +48,11 @@ use crate::{
     OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformDisplaySnapshot,
     PlatformFocusedWindow, PlatformHoveredWindow, PlatformKeyboardLayout, PlatformKeyboardMapper,
     PlatformViewportCapabilities, PlatformWindowCapabilities, PlatformWindowProfile, Point,
-    PointerCaptureHandle, Priority, PromptBuilder, PromptButton, PromptHandle, PromptLevel, Render,
-    RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString,
-    SubscriberSet, Subscription, SvgRenderer, Task, TextRenderingMode, TextSystem, ThermalState,
-    Window, WindowAppearance, WindowButtonLayout, WindowHandle, WindowId, WindowInvalidator,
-    WindowKind, WindowTransientOwner,
+    PointerCaptureHandle, PowerMode, Priority, PromptBuilder, PromptButton, PromptHandle,
+    PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource,
+    SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextRenderingMode, TextSystem,
+    ThermalState, Window, WindowAppearance, WindowButtonLayout, WindowHandle, WindowId,
+    WindowInvalidator, WindowKind, WindowTransientOwner,
     asset_cache::CachedLoad,
     colors::{Colors, GlobalColors},
     hash, init_app_menus,
@@ -79,6 +79,8 @@ mod native_event_ingress;
 mod native_platform_commands;
 mod native_query_snapshot;
 mod native_window_activation;
+#[cfg(test)]
+mod power_mode_tests;
 #[cfg(test)]
 mod power_tests;
 #[cfg(any(test, feature = "test-support"))]
@@ -800,6 +802,7 @@ pub struct App {
     missing_glyph_task: RefCell<Option<Task<()>>>,
     missing_glyph_callback: Rc<missing_glyphs::MissingGlyphCallbackSlot>,
     pub(crate) thermal_state_observers: SubscriberSet<(), Handler>,
+    power_mode_observers: SubscriberSet<(), Handler>,
     pub(crate) system_sleep_observers: SubscriberSet<(), Handler>,
     pub(crate) system_wake_observers: SubscriberSet<(), Handler>,
     display_observers: SubscriberSet<(), displays::DisplayHandler>,
@@ -859,6 +862,7 @@ pub struct App {
     window_update_provenance: WindowUpdateProvenance,
     pub(crate) mode: GpuiMode,
     pub(crate) cursor_hide_mode: CursorHideMode,
+    power_mode: PowerMode,
     /// Whether the app was created by [`Application::new_inaccessible`]. No
     /// accesskit APIs will be called when this flag is set.
     pub(crate) accessibility_force_disabled: bool,
@@ -935,6 +939,7 @@ impl App {
         let entities = EntityMap::new();
         let keyboard_layout = platform.keyboard_layout();
         let keyboard_mapper = platform.keyboard_mapper();
+        let power_mode = platform.power_mode();
 
         #[cfg(any(test, feature = "leak-detection"))]
         let _ref_counts = entities.ref_counts_drop_handle();
@@ -994,6 +999,7 @@ impl App {
                 missing_glyph_task: RefCell::new(None),
                 missing_glyph_callback: Rc::default(),
                 thermal_state_observers: SubscriberSet::new(),
+                power_mode_observers: SubscriberSet::new(),
                 system_sleep_observers: SubscriberSet::new(),
                 system_wake_observers: SubscriberSet::new(),
                 display_observers: SubscriberSet::new(),
@@ -1020,6 +1026,7 @@ impl App {
                 window_open_barrier_depth: 0,
                 window_open_epoch: 0,
                 cursor_hide_mode: CursorHideMode::default(),
+                power_mode,
                 accessibility_force_disabled: false,
 
                 #[cfg(any(test, feature = "test-support", debug_assertions))]
@@ -1087,8 +1094,11 @@ impl App {
             }
         }));
 
-        platform
-            .on_thermal_state_change(Arc::new(move || native_app_ingress.thermal_state_changed()));
+        platform.on_thermal_state_change(Arc::new({
+            let native_app_ingress = native_app_ingress.clone();
+            move || native_app_ingress.thermal_state_changed()
+        }));
+        platform.on_power_mode_change(Arc::new(move || native_app_ingress.power_mode_changed()));
 
         platform.on_quit(Box::new({
             let app = Rc::downgrade(&app);
@@ -1878,6 +1888,31 @@ impl App {
     /// Returns the current thermal state of the system.
     pub fn thermal_state(&self) -> ThermalState {
         self.platform.thermal_state()
+    }
+
+    /// Returns the operating system's power mode, or [`PowerMode::Unknown`]
+    /// when the platform cannot determine it.
+    pub fn power_mode(&self) -> PowerMode {
+        self.power_mode
+    }
+
+    /// Invokes a handler after a native power-mode notification updates [`Self::power_mode`].
+    ///
+    /// Each retained subscription receives notifications independently. Adjacent native
+    /// notifications may be coalesced, and handlers observe the latest platform mode at delivery.
+    pub fn on_power_mode_change<F>(&self, mut callback: F) -> Subscription
+    where
+        F: 'static + FnMut(&mut App),
+    {
+        let (subscription, activate) = self.power_mode_observers.insert(
+            (),
+            Box::new(move |cx| {
+                callback(cx);
+                true
+            }),
+        );
+        activate();
+        subscription
     }
 
     /// Invokes a handler when the thermal state changes

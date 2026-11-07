@@ -7,7 +7,7 @@ use crate::{
     PlatformHoveredWindow, PlatformKeyboardLayout, PlatformKeyboardMapper,
     PlatformNativeDragHysteresis, PlatformTextSystem, PlatformWindowActivationSupport,
     PlatformWindowCapabilities, PlatformWindowCommandOutcome, PlatformWindowCreationCapabilities,
-    PlatformWindowHitStack, PlatformWindowMutationCapabilities, Point, PromptButton,
+    PlatformWindowHitStack, PlatformWindowMutationCapabilities, Point, PowerMode, PromptButton,
     ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, SourceMetadata, Task,
     TestDisplay, TestWindow, ThermalState, WindowAppearance, WindowCoordinateSpace,
     WindowCreationSupport, WindowInitialPresentationOrder, WindowMutationSupport, WindowParams,
@@ -70,6 +70,10 @@ pub(crate) struct TestPlatform {
     reopen_callback: RefCell<Option<Box<dyn FnMut()>>>,
     system_wake_callback: RefCell<Option<NativeAppNotificationHandler>>,
     system_sleep_callback: RefCell<Option<NativeAppNotificationHandler>>,
+    thermal_state: Cell<ThermalState>,
+    thermal_state_callback: RefCell<Option<NativeAppNotificationHandler>>,
+    power_mode: Cell<PowerMode>,
+    power_mode_callback: RefCell<Option<NativeAppNotificationHandler>>,
     defer_next_launch: Cell<bool>,
     will_open_app_menu_callback: RefCell<Option<Box<dyn FnMut()>>>,
     app_menu_action_callback: RefCell<Option<Box<dyn FnMut(&dyn crate::Action)>>>,
@@ -197,6 +201,10 @@ impl TestPlatform {
             reopen_callback: Default::default(),
             system_wake_callback: Default::default(),
             system_sleep_callback: Default::default(),
+            thermal_state: Cell::new(ThermalState::Nominal),
+            thermal_state_callback: Default::default(),
+            power_mode: Cell::new(PowerMode::Unknown),
+            power_mode_callback: Default::default(),
             defer_next_launch: Cell::new(false),
             will_open_app_menu_callback: Default::default(),
             app_menu_action_callback: Default::default(),
@@ -603,6 +611,30 @@ impl TestPlatform {
         }
     }
 
+    pub(crate) fn simulate_power_mode_change(&self, mode: PowerMode) {
+        self.power_mode.set(mode);
+        let callback = self.power_mode_callback.borrow().clone();
+        if let Some(callback) = callback {
+            callback();
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn power_mode_notification_handler_for_test(&self) -> NativeAppNotificationHandler {
+        self.power_mode_callback
+            .borrow()
+            .clone()
+            .expect("power mode callback must be installed during App initialization")
+    }
+
+    pub(crate) fn simulate_thermal_state_change(&self, state: ThermalState) {
+        self.thermal_state.set(state);
+        let callback = self.thermal_state_callback.borrow().clone();
+        if let Some(callback) = callback {
+            callback();
+        }
+    }
+
     pub(crate) fn simulate_system_wake(&self) {
         let callback = self
             .system_wake_callback
@@ -696,7 +728,25 @@ impl Platform for TestPlatform {
 
     fn on_keyboard_layout_change(&self, _: Box<dyn FnMut()>) {}
 
-    fn on_thermal_state_change(&self, _: NativeAppNotificationHandler) {}
+    fn on_thermal_state_change(&self, callback: NativeAppNotificationHandler) {
+        assert!(
+            self.thermal_state_callback
+                .replace(Some(callback))
+                .is_none(),
+            "thermal state callback must be installed exactly once"
+        );
+    }
+
+    fn power_mode(&self) -> PowerMode {
+        self.power_mode.get()
+    }
+
+    fn on_power_mode_change(&self, callback: NativeAppNotificationHandler) {
+        assert!(
+            self.power_mode_callback.replace(Some(callback)).is_none(),
+            "power mode callback must be installed exactly once"
+        );
+    }
 
     fn on_system_wake(&self, callback: NativeAppNotificationHandler) {
         assert!(
@@ -713,7 +763,7 @@ impl Platform for TestPlatform {
     }
 
     fn thermal_state(&self) -> ThermalState {
-        ThermalState::Nominal
+        self.thermal_state.get()
     }
 
     fn run(&self, on_finish_launching: Box<dyn FnOnce()>) {

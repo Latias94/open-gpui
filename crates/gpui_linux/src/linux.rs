@@ -5,6 +5,8 @@ mod interaction_gate;
 mod keyboard;
 mod platform;
 #[cfg(any(feature = "wayland", feature = "x11"))]
+mod power;
+#[cfg(any(feature = "wayland", feature = "x11"))]
 mod text_system;
 #[cfg(feature = "wayland")]
 mod wayland;

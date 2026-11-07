@@ -536,3 +536,75 @@ Scheduled helpers do not capture a timestamp or accept custom signal options; ex
 `simulate_frame(RequestFrameOptions)` delivers captured simulation signals through the same
 public test-platform callback. Busy/reentrant backend delivery and native timing need their
 own owner verification. This fixture does not start an App or monitor thread.
+
+## Power modes and configurable cadence consumers
+
+The `power_cadence` targets consume the complete official power and cadence successor from Zed
+[`fdcb1981103408e63fff5ef47c8ae2f9995262ad`](https://github.com/zed-industries/zed/commit/fdcb1981103408e63fff5ef47c8ae2f9995262ad),
+[`2580a00264a799d76401f12bde3f9ade219212c4`](https://github.com/zed-industries/zed/commit/2580a00264a799d76401f12bde3f9ade219212c4),
+and
+[`7c8dbadcb5c39270eba8d45bc040fd626684a748`](https://github.com/zed-industries/zed/commit/7c8dbadcb5c39270eba8d45bc040fd626684a748),
+as present in the fixed cycle source
+[`635026fabc38440fce5e1767d125026a17b12012`](https://github.com/zed-industries/zed/tree/635026fabc38440fce5e1767d125026a17b12012).
+Inactive windows without sustained high-rate input, Low Power Mode, and serious or critical
+thermal pressure contribute enabled intervals; the longest applicable interval wins. Defaults
+are 33,333, 33,333, and 16,667 microseconds respectively. Each `WindowOptions` field accepts
+`None` to disable its own limit. Required platform presentations bypass the limits. The owner
+module tests cover the pacer's one-millisecond early tolerance, bounded quarter-interval
+deadline correction, restart after stalls, and demand accounting; the public consumers below
+do not make precise frame-time assertions.
+
+This independently locked fixture uses ordinary dependency features and adds no dependency or
+`test-support` requirement. Its `power_cadence` target executes enum and option-value assertions,
+including all four `PowerMode` variants, the exact defaults, custom intervals, and independent
+disabling of each limit. With `profiler`, it also checks the distinct public low-power skip
+reason while preserving the existing skip-reason assertions in `frame_signals`.
+The deliberately unexecuted `_platform_type_only` and `_app_type_only` closures consume the
+actual object-safe Platform query, `Arc<dyn Fn() + Send + Sync>` notification callback, App
+query, and App observer returning `Subscription`. Those closures qualify signatures only;
+they do not deliver notifications, test subscription replacement, or start an App or Window.
+
+```text
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --test power_cadence --jobs 1 --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --features profiler --test power_cadence --jobs 1 --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+The separate `crates/gpui/tests/power_cadence.rs` target exercises real TestPlatform workflows
+through public App, Window, `TestAppContext`, and `VisualTestContext` APIs:
+
+- Mode changes update the query before any observer is registered; retained observers read
+  the committed mode, independent subscriptions survive another subscription's drop, dropped
+  callbacks release their captures, and detached subscriptions remain active.
+- Two actual windows receive different creation options. Under the same inactive, low-power,
+  and critical-thermal conditions, each individual enabled limit defers callback demand while
+  the window with all limits disabled runs immediately. Required presentation releases the
+  capped callback, and the simulated compositor callback parks the source afterward.
+- An active window retains a deferred force-render request in Low Power Mode. Each non-low
+  mode releases it without another force flag or an App observer. A separately accepted scene
+  with only pending-presentation demand is also paced, then submitted by a required frame
+  without drawing again.
+- A next-frame callback dispatches real mouse input through the rendered handler and queues
+  another callback. Throttling preserves their captures and input state. Deferred and rejected
+  renderer attempts preserve the exact accepted scene and previous submitted generations;
+  leaving Low Power Mode submits that same scene, releases captures, and retains the handler
+  for later platform input.
+- Closing a throttled window releases its queued captures and root before a held native
+  terminal callback. The App's power query and observer and the other window continue to work;
+  releasing the late terminal callback cannot revive the closed window.
+- With `profiler`, actual deferred callbacks emit the effective limit's skip reason. Each
+  limit wins when its interval is longest, with the inactive reason winning an equal tie.
+
+```text
+cargo nextest run -p open-gpui --no-default-features --features test-support --test power_cadence --jobs 1 --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run -p open-gpui --no-default-features --features test-support,profiler --test power_cadence --jobs 1 --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+These commands are verification instructions, not an execution or compilation record. The frame
+pump uses scheduler `Instant::now()` (the native monotonic clock); advancing the executor's
+`TestClock` does not advance it. The public tests deliberately use hour-scale intervals and
+immediate callback delivery, with no sleeps or assertions about physical frame timing. Exact
+pacer deadlines and high-rate input thresholds belong to owner-module tests. Presentation
+generations and outcomes are read from real test-platform draws and submissions, never
+constructed as successful receipts. Native power notification sources, physical mode changes,
+native compositor timing, GPU output, energy savings, and performance remain unqualified by
+these consumers.

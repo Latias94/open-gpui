@@ -82,6 +82,7 @@ pub enum NativeCallbackKind {
     SystemWake,
     KeyboardLayoutChanged,
     ThermalStateChanged,
+    PowerModeChanged,
     DisplaysChanged,
     Quit,
     WillOpenAppMenu,

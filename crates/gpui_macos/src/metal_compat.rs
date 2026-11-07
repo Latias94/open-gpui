@@ -228,6 +228,12 @@ pub(crate) struct MetalDrawable(Retained<ProtocolObject<dyn ca::CAMetalDrawable>
 pub(crate) type MetalDrawableRef = MetalDrawable;
 
 impl MetalDrawable {
+    pub(crate) fn from_display_link(
+        drawable: Retained<ProtocolObject<dyn ca::CAMetalDrawable>>,
+    ) -> Self {
+        Self(drawable)
+    }
+
     pub(crate) fn texture(&self) -> Texture {
         Texture(self.0.texture())
     }

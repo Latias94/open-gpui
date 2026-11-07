@@ -103,12 +103,20 @@ impl InstanceBufferPool {
     }
 }
 
+enum DisplayLinkMode {
+    Detached,
+    Attached {
+        drawable: Option<metal::MetalDrawable>,
+    },
+}
+
 pub(crate) struct MetalRenderer {
     device: metal::Device,
     layer: Option<metal::MetalLayer>,
     is_apple_gpu: bool,
     is_unified_memory: bool,
     presents_with_transaction: bool,
+    display_link_mode: DisplayLinkMode,
     /// For headless rendering, tracks whether output should be opaque
     opaque: bool,
     command_queue: CommandQueue,
@@ -329,6 +337,7 @@ impl MetalRenderer {
             device,
             layer,
             presents_with_transaction: false,
+            display_link_mode: DisplayLinkMode::Detached,
             is_apple_gpu,
             is_unified_memory,
             opaque,
@@ -369,6 +378,32 @@ impl MetalRenderer {
         &self.sprite_atlas
     }
 
+    /// Replaces the current link update's drawable, returning any unused drawable.
+    pub(crate) fn set_frame_drawable(
+        &mut self,
+        drawable: Option<metal::MetalDrawable>,
+    ) -> Option<metal::MetalDrawable> {
+        match &mut self.display_link_mode {
+            DisplayLinkMode::Attached { drawable: current } => mem::replace(current, drawable),
+            DisplayLinkMode::Detached => {
+                debug_assert!(
+                    drawable.is_none(),
+                    "received a Metal drawable while detached"
+                );
+                None
+            }
+        }
+    }
+
+    /// Allows nextDrawable only after the window has invalidated its Metal link.
+    pub(crate) fn set_display_link_attached(&mut self, attached: bool) {
+        self.display_link_mode = if attached && self.presentation_shutdown.is_none() {
+            DisplayLinkMode::Attached { drawable: None }
+        } else {
+            DisplayLinkMode::Detached
+        };
+    }
+
     pub fn set_presents_with_transaction(&mut self, presents_with_transaction: bool) {
         if self.presentation_shutdown.is_some() {
             return;
@@ -396,6 +431,17 @@ impl MetalRenderer {
         if size.width.0 <= 0 || size.height.0 <= 0 {
             self.path_intermediate_texture = None;
             self.path_intermediate_msaa_texture = None;
+            return;
+        }
+
+        if self
+            .path_intermediate_texture
+            .as_ref()
+            .is_some_and(|texture| {
+                texture.width() == size.width.0 as NSUInteger
+                    && texture.height() == size.height.0 as NSUInteger
+            })
+        {
             return;
         }
 
@@ -438,6 +484,7 @@ impl MetalRenderer {
     }
 
     fn retire_surface(&mut self) {
+        self.display_link_mode = DisplayLinkMode::Detached;
         if let Some(command_buffer) = self.last_submitted_command_buffer.take() {
             command_buffer.wait_until_completed();
         }
@@ -515,20 +562,31 @@ impl MetalRenderer {
                 return PlatformWindowPresentOutcome::Rejected;
             }
         };
-        let viewport_size = layer.drawable_size();
-        let viewport_size: Size<DevicePixels> = size(
-            (viewport_size.width.ceil() as i32).into(),
-            (viewport_size.height.ceil() as i32).into(),
-        );
-        let drawable = if let Some(drawable) = layer.next_drawable() {
-            drawable
-        } else {
-            log::debug!(
-                "deferred draw because no drawable is available, drawable size: {:?}",
-                viewport_size
-            );
-            return PlatformWindowPresentOutcome::Deferred;
+        let drawable = match &mut self.display_link_mode {
+            DisplayLinkMode::Attached { drawable } => {
+                let Some(drawable) = drawable.take() else {
+                    log::debug!("deferred a draw outside its Metal display-link update");
+                    return PlatformWindowPresentOutcome::Deferred;
+                };
+                drawable
+            }
+            DisplayLinkMode::Detached => {
+                let Some(drawable) = layer.next_drawable() else {
+                    log::debug!(
+                        "deferred draw because no drawable is available, drawable size: {:?}",
+                        layer.drawable_size()
+                    );
+                    return PlatformWindowPresentOutcome::Deferred;
+                };
+                drawable
+            }
         };
+        let texture = drawable.texture();
+        let viewport_size = size(
+            DevicePixels(texture.width() as i32),
+            DevicePixels(texture.height() as i32),
+        );
+        self.update_path_intermediate_textures(viewport_size);
 
         loop {
             let mut instance_buffer = self
@@ -600,86 +658,7 @@ impl MetalRenderer {
             (viewport_size.width.ceil() as i32).into(),
             (viewport_size.height.ceil() as i32).into(),
         );
-        let drawable = layer
-            .next_drawable()
-            .ok_or_else(|| anyhow::anyhow!("Failed to get drawable for render_to_image"))?;
-
-        loop {
-            let mut instance_buffer = self
-                .instance_buffer_pool
-                .lock()
-                .acquire(&self.device, self.is_unified_memory);
-
-            let command_buffer =
-                self.draw_primitives(scene, &mut instance_buffer, &drawable, viewport_size);
-
-            match command_buffer {
-                Ok(command_buffer) => {
-                    let instance_buffer_pool = self.instance_buffer_pool.clone();
-                    let instance_buffer = Cell::new(Some(instance_buffer));
-                    let block: RcBlock<CommandBufferHandler> = RcBlock::new(move |_| {
-                        if let Some(instance_buffer) = instance_buffer.take() {
-                            instance_buffer_pool.lock().release(instance_buffer);
-                        }
-                    });
-                    command_buffer.add_completed_handler(&block);
-
-                    // Commit and wait for completion without presenting
-                    command_buffer.commit();
-                    command_buffer.wait_until_completed();
-
-                    // Read pixels from the texture
-                    let texture = drawable.texture();
-                    let width = texture.width() as u32;
-                    let height = texture.height() as u32;
-                    let bytes_per_row = width as usize * 4;
-                    let buffer_size = height as usize * bytes_per_row;
-
-                    let mut pixels = vec![0u8; buffer_size];
-
-                    let region = metal::MTLRegion {
-                        origin: metal::MTLOrigin { x: 0, y: 0, z: 0 },
-                        size: metal::MTLSize {
-                            width: width as usize,
-                            height: height as usize,
-                            depth: 1,
-                        },
-                    };
-
-                    texture.get_bytes(
-                        pixels.as_mut_ptr() as *mut std::ffi::c_void,
-                        bytes_per_row as u64,
-                        region,
-                        0,
-                    );
-
-                    // Convert BGRA to RGBA (swap B and R channels)
-                    for chunk in pixels.chunks_exact_mut(4) {
-                        chunk.swap(0, 2);
-                    }
-
-                    return RgbaImage::from_raw(width, height, pixels).ok_or_else(|| {
-                        anyhow::anyhow!("Failed to create RgbaImage from pixel data")
-                    });
-                }
-                Err(err) => {
-                    log::error!(
-                        "failed to render: {}. retrying with larger instance buffer size",
-                        err
-                    );
-                    let mut instance_buffer_pool = self.instance_buffer_pool.lock();
-                    let buffer_size = instance_buffer_pool.buffer_size;
-                    if buffer_size >= 256 * 1024 * 1024 {
-                        anyhow::bail!("instance buffer size grew too large: {}", buffer_size);
-                    }
-                    instance_buffer_pool.reset(buffer_size * 2);
-                    log::info!(
-                        "increased instance buffer size to {}",
-                        instance_buffer_pool.buffer_size
-                    );
-                }
-            }
-        }
+        self.render_scene_to_image(scene, viewport_size)
     }
 
     /// Renders a scene to an image without requiring a window or CAMetalLayer.
@@ -692,6 +671,11 @@ impl MetalRenderer {
         scene: &Scene,
         size: Size<DevicePixels>,
     ) -> Result<RgbaImage> {
+        objc2::rc::autoreleasepool(|_| self.render_offscreen(scene, size))
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    fn render_offscreen(&mut self, scene: &Scene, size: Size<DevicePixels>) -> Result<RgbaImage> {
         if size.width.0 <= 0 || size.height.0 <= 0 {
             anyhow::bail!("Invalid size for render_scene_to_image: {:?}", size);
         }
@@ -707,7 +691,12 @@ impl MetalRenderer {
         texture_descriptor.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
         texture_descriptor
             .set_usage(metal::MTLTextureUsage::RenderTarget | metal::MTLTextureUsage::ShaderRead);
-        texture_descriptor.set_storage_mode(metal::MTLStorageMode::Managed);
+        let uses_shared_storage = self.is_apple_gpu;
+        texture_descriptor.set_storage_mode(if uses_shared_storage {
+            metal::MTLStorageMode::Shared
+        } else {
+            metal::MTLStorageMode::Managed
+        });
         let target_texture = self.device.new_texture(&texture_descriptor);
 
         loop {
@@ -734,7 +723,7 @@ impl MetalRenderer {
                     // require an explicit blit synchronize before the CPU can
                     // read back the rendered data. Without this, get_bytes
                     // returns stale zeros.
-                    if !self.is_unified_memory {
+                    if !uses_shared_storage {
                         let blit = command_buffer.new_blit_command_encoder();
                         blit.synchronize_resource(&target_texture);
                         blit.end_encoding();
@@ -1912,6 +1901,89 @@ mod abi_layout_tests {
     use super::*;
     use open_gpui::{Corners, SubpixelSprite};
     use std::mem::{align_of, offset_of, size_of};
+
+    #[test]
+    fn attached_renderer_requires_and_consumes_its_links_drawable() {
+        objc2::rc::autoreleasepool(|_| {
+            let mut renderer = MetalRenderer::new(Default::default(), false);
+            renderer.update_drawable_size(size(DevicePixels(64), DevicePixels(64)));
+            let drawable = renderer.layer().unwrap().next_drawable().unwrap();
+            renderer.set_display_link_attached(true);
+            assert_eq!(
+                renderer.draw(&Scene::default()),
+                PlatformWindowPresentOutcome::Deferred
+            );
+            assert!(renderer.last_submitted_command_buffer.is_none());
+            assert!(
+                renderer
+                    .set_frame_drawable(Some(drawable.clone()))
+                    .is_none()
+            );
+            assert!(renderer.set_frame_drawable(None).is_some());
+            assert!(renderer.set_frame_drawable(Some(drawable)).is_none());
+            assert_eq!(
+                renderer.draw(&Scene::default()),
+                PlatformWindowPresentOutcome::Submitted
+            );
+            assert!(renderer.set_frame_drawable(None).is_none());
+            assert_eq!(
+                renderer.draw(&Scene::default()),
+                PlatformWindowPresentOutcome::Deferred
+            );
+            renderer.destroy();
+        });
+    }
+
+    #[test]
+    fn attached_window_screenshots_use_offscreen_storage() {
+        objc2::rc::autoreleasepool(|_| {
+            let mut renderer = MetalRenderer::new(Default::default(), false);
+            renderer.update_drawable_size(size(DevicePixels(64), DevicePixels(64)));
+            renderer.set_display_link_attached(true);
+            let image = renderer.render_to_image(&Scene::default()).unwrap();
+            assert_eq!(image.dimensions(), (64, 64));
+            assert!(renderer.last_submitted_command_buffer.is_none());
+            assert!(matches!(
+                renderer.display_link_mode,
+                DisplayLinkMode::Attached { drawable: None }
+            ));
+            assert_eq!(
+                renderer.draw(&Scene::default()),
+                PlatformWindowPresentOutcome::Deferred
+            );
+            renderer.destroy();
+        });
+    }
+
+    #[test]
+    fn invalidated_link_allows_synchronous_presentation_again() {
+        use objc2::AnyThread;
+        use objc2_quartz_core::CAMetalDisplayLink;
+
+        if !crate::MetalFrameSource::is_available() {
+            return;
+        }
+        objc2::rc::autoreleasepool(|_| {
+            let mut renderer = MetalRenderer::new(Default::default(), false);
+            renderer.update_drawable_size(size(DevicePixels(64), DevicePixels(64)));
+            let link = CAMetalDisplayLink::initWithMetalLayer(
+                CAMetalDisplayLink::alloc(),
+                renderer.layer().unwrap(),
+            );
+            renderer.set_display_link_attached(true);
+            assert_eq!(
+                renderer.draw(&Scene::default()),
+                PlatformWindowPresentOutcome::Deferred
+            );
+            link.invalidate();
+            renderer.set_display_link_attached(false);
+            assert_eq!(
+                renderer.draw(&Scene::default()),
+                PlatformWindowPresentOutcome::Submitted
+            );
+            renderer.destroy();
+        });
+    }
 
     #[test]
     fn primitive_transform_has_shader_abi_layout() {

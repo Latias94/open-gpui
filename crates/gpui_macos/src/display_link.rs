@@ -1,4 +1,5 @@
-//! CoreVideo frame requests use one immortal display link per display.
+//! Metal frame requests use a per-window link on macOS 14 and later.
+//! CoreVideo fallback frame requests use one immortal link per display.
 //!
 //! `CVDisplayLinkStop` does not wait for its output callback. Callback contexts
 //! therefore contain only integer display ids, and the registry retains every
@@ -6,10 +7,17 @@
 //! registry lock before their dispatch sources can be cancelled or released.
 //! CoreVideo start and stop calls run outside that lock on the main thread.
 
+use block2::RcBlock;
 use core_graphics::display::CGDirectDisplayID;
+
+mod metal;
+mod metal_state;
+
 use dispatch2::{
     _dispatch_source_type_data_add, DispatchObject, DispatchQueue, DispatchRetained, DispatchSource,
 };
+pub(crate) use metal::{MetalFrameSource, MetalFrames};
+pub(crate) use metal_state::MetalFrameGeneration;
 use open_gpui::{FrameRequestSource, PlatformFrameSignal};
 use open_gpui_scheduler::Instant;
 use std::{
@@ -17,7 +25,10 @@ use std::{
     error::Error,
     ffi::c_void,
     fmt,
-    sync::{Arc, Mutex, MutexGuard, PoisonError},
+    sync::{
+        Arc, Mutex, MutexGuard, PoisonError,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 
@@ -47,6 +58,7 @@ struct DisplayLinkSubscriber {
     id: SubscriberId,
     frame_requests: DispatchRetained<DispatchSource>,
     signal: Arc<PlatformFrameSignal>,
+    pending: Arc<AtomicBool>,
 }
 
 // SAFETY: The CoreVideo and GCD handles are thread-safe refcounted objects. The
@@ -104,6 +116,7 @@ unsafe extern "C" fn display_link_output_callback(
                     .signal
                     .record(signal_at, FrameRequestSource::NativeCallback);
             }
+            subscriber.pending.store(true, Ordering::Release);
             subscriber.frame_requests.merge_data(1);
         }
     }
@@ -140,6 +153,7 @@ fn subscribe(
     display_id: CGDirectDisplayID,
     frame_requests: DispatchRetained<DispatchSource>,
     signal: Arc<PlatformFrameSignal>,
+    pending: Arc<AtomicBool>,
 ) -> Result<SubscriberId, DisplayLinkError> {
     debug_assert_main_thread();
 
@@ -178,6 +192,7 @@ fn subscribe(
             id: subscriber_id,
             frame_requests,
             signal,
+            pending,
         });
         let link_to_start = if entry.running {
             None
@@ -307,14 +322,28 @@ impl fmt::Display for DisplayLinkError {
 impl Error for DisplayLinkError {}
 
 /// A per-window dispatch source subscribed to its display's immortal link.
+/// Its handler holds only a weak window lease and is retired after cancellation.
 pub struct WindowFrameSource {
     frame_requests: DispatchRetained<DispatchSource>,
     registration: Option<(CGDirectDisplayID, SubscriberId)>,
     signal: Arc<PlatformFrameSignal>,
+    pending: Arc<AtomicBool>,
 }
 
 impl WindowFrameSource {
-    pub fn new(data: *mut c_void, callback: extern "C" fn(*mut c_void)) -> Self {
+    pub fn new(callback: impl Fn() + Send + Sync + 'static) -> Self {
+        let pending = Arc::new(AtomicBool::new(false));
+        let handler: RcBlock<dyn Fn()> = RcBlock::new({
+            let pending = pending.clone();
+            move || {
+                if pending.swap(false, Ordering::AcqRel) {
+                    callback();
+                }
+            }
+        });
+        // SAFETY: GCD copies the block and invokes it on the main queue. It
+        // owns only a weak window lease and synchronized pending state, so a
+        // queued event cannot dereference a retired native view.
         let frame_requests = unsafe {
             let frame_requests = DispatchSource::new(
                 &raw const _dispatch_source_type_data_add as *mut _,
@@ -322,8 +351,7 @@ impl WindowFrameSource {
                 0,
                 Some(DispatchQueue::main()),
             );
-            frame_requests.set_context(data);
-            frame_requests.set_event_handler_f(callback);
+            frame_requests.set_event_handler_with_block(RcBlock::as_ptr(&handler));
             frame_requests.resume();
             frame_requests
         };
@@ -331,13 +359,18 @@ impl WindowFrameSource {
             frame_requests,
             registration: None,
             signal: Arc::new(PlatformFrameSignal::new()),
+            pending,
         }
     }
 
     pub fn start(&mut self, display_id: CGDirectDisplayID) -> Result<(), DisplayLinkError> {
         self.stop();
-        let subscriber_id =
-            subscribe(display_id, self.frame_requests.clone(), self.signal.clone())?;
+        let subscriber_id = subscribe(
+            display_id,
+            self.frame_requests.clone(),
+            self.signal.clone(),
+            self.pending.clone(),
+        )?;
         self.registration = Some((display_id, subscriber_id));
         Ok(())
     }
@@ -355,6 +388,7 @@ impl WindowFrameSource {
             unsubscribe(display_id, subscriber_id);
         }
         self.signal.take();
+        self.pending.store(false, Ordering::Release);
     }
 }
 

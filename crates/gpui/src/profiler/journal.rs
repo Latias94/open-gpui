@@ -163,6 +163,8 @@ pub enum FrameSkipReason {
     NoRenderNeeded,
     /// An inactive window deferred drawing.
     InactiveFrameRateLimit,
+    /// Low Power Mode deferred drawing.
+    LowPowerFrameRateLimit,
     /// Thermal throttling deferred drawing.
     ThermalFrameRateLimit,
 }
@@ -1901,6 +1903,7 @@ mod tests {
         for reason in [
             FrameSkipReason::NoRenderNeeded,
             FrameSkipReason::InactiveFrameRateLimit,
+            FrameSkipReason::LowPowerFrameRateLimit,
             FrameSkipReason::ThermalFrameRateLimit,
         ] {
             let (mut writer, mut collector) = test_journal(ForegroundRunnableCounter::new());

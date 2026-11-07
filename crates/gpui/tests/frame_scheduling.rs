@@ -1,11 +1,12 @@
 #![cfg(feature = "test-support")]
 
 use open_gpui::{
-    AtlasKey, AtlasTextureId, AtlasTextureInstanceId, AtlasTextureLeaseEpoch,
+    AppContext as _, AtlasKey, AtlasTextureId, AtlasTextureInstanceId, AtlasTextureLeaseEpoch,
     AtlasTextureLeaseError, AtlasTile, Bounds, Context, DevicePixels, IntoElement,
     ParentElement as _, PlatformAtlas, PlatformWindowPresentOutcome, Render, RenderImage, Size,
-    Styled as _, TestAppContext, TileId, VisualTestContext, Window, WindowHandle,
-    WindowInitialPresentationStatus, WindowPresentationFacts, blue, canvas, div, px, size,
+    Styled as _, TestAppContext, TileId, VisualTestContext, Window, WindowBounds, WindowHandle,
+    WindowInitialPresentationStatus, WindowOptions, WindowPresentationFacts, blue, canvas, div,
+    point, px, size,
 };
 use std::{
     borrow::Cow,
@@ -104,9 +105,26 @@ fn open_parked_window(
         image::RgbaImage::from_pixel(1, 1, image::Rgba([0, 0, 255, 255])),
     )]));
     cx.defer_next_window_frame_requests();
-    let handle = cx.open_window(size(px(96.), px(96.)), {
-        let observed = Rc::clone(&observed);
-        move |_, _| SchedulingView { observed, image }
+    let handle = cx.update(|app| {
+        app.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                    point(px(0.), px(0.)),
+                    size(px(96.), px(96.)),
+                ))),
+                inactive_frame_interval: None,
+                low_power_frame_interval: None,
+                thermal_frame_interval: None,
+                ..Default::default()
+            },
+            |_, app| {
+                app.new(|_| SchedulingView {
+                    observed: Rc::clone(&observed),
+                    image,
+                })
+            },
+        )
+        .unwrap()
     });
     let mut visual = VisualTestContext::from_window(handle.into(), cx);
     let _activation = visual.update(|window, _| window.activate_window());
