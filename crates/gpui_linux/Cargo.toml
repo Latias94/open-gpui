@@ -20,6 +20,7 @@ path = "src/gpui_linux.rs"
 [features]
 default = ["wayland", "x11"]
 test-support = ["open_gpui/test-support"]
+bench-support = ["open_gpui/bench-support", "open_gpui_wgpu?/bench-support"]
 wayland = [
     "bitflags",
     "open_gpui_wgpu",

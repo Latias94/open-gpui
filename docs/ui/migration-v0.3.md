@@ -4,6 +4,54 @@ Open GPUI v0.3 is an intentionally breaking, pre-release architecture release. R
 deleted rather than retained as aliases. This guide records each migration in the implementation
 unit that introduces it.
 
+## Benchmark Contexts And Measurements
+
+Enable `bench-support` on both `open-gpui` and `open-gpui-platform`, and depend on Criterion
+0.8.2. Benchmark-only consumers do not need `test-support`. The official `bench` feature remains
+an alias for `bench-support`. Ordinary deterministic tests continue to use `test-support`.
+
+Replace `(bencher, cx)` benchmark functions and the old virtual context constructors with:
+
+```rust,ignore
+#[open_gpui::bench]
+fn update_document(cx: &mut open_gpui::BenchAppContext) {
+    let document = build_document(cx);
+    cx.bench_iter(|cx| update_document_once(&document, cx));
+}
+
+open_gpui::bench_group!(benches, update_document);
+open_gpui::bench_main!(benches);
+```
+
+Use `inputs = [...]` with an input reference before the context, and an optional by-value
+`rand::rngs::StdRng` in any argument position for seeded workloads. `seed`, `seeds`, `iterations`,
+`fps`, `group`, `input_name` and `sample_size` retain the official macro behavior. Tests and
+benchmarks share `SEED` and `ITERATIONS`; each input/seed gets its own report. Manual harnesses
+construct `BenchAppContext::new(platform, name, bencher)` with a `Bencher<BenchMeasurement>`.
+
+The context uses real-time threaded dispatch rather than a virtual test clock. `bench_iter` and
+`bench_task` exclude setup, while frame/settle/session APIs measure actual driven work. Explicit
+teardown drops the App and foreground owners before cancelling and draining timers. It must not
+leave one routine's tasks or windows running during the next routine.
+
+`bench_group!` installs the environment-selected primary measurement and supported secondary
+reports. `bench_main!` wraps the system allocator with `CountingAllocator`; use
+`allocator = Path;` for a custom allocator or `allocator = none;` to omit allocation metrics.
+`BENCH_MEASUREMENT=wall-time` disables secondary counters. Unsupported explicitly requested
+hardware/resource counters fail with an availability error rather than producing zero samples.
+
+Headless renderer factories now return `Result<Option<Box<dyn PlatformHeadlessRenderer>>>`.
+Propagate construction errors; `Ok(None)` means no renderer is available. Implement the required
+`render_scene` method for GPU submission without CPU readback, separately from
+`render_scene_to_image`. The default Windows factory retains the official `Ok(None)` result;
+applications may inject the public WGPU headless renderer. The maintained independent benchmark
+and Canvas consumers demonstrate complete usage.
+
+Canvas exposes separate `test-support` and `bench-support` features. Enable the former for its
+complete window-driven tests and only the latter for its maintained renderer benchmark. Core
+test-support is no longer forced by the Canvas dev-dependency, so benchmark measurements do not
+include entity leak-detection instrumentation.
+
 ## Element Arena Cleanup
 
 Pass the App that produced the frame when consuming its clear token:

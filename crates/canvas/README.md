@@ -579,10 +579,14 @@ relation traversal benchmark measures parent, group, and mixed structural select
 adding any read-side relation index.
 
 ```sh
-cargo nextest run -p open-gpui-canvas gpui::tests::collect_visible_records_keeps_large_canvas_frame_bounded
-cargo bench -p open-gpui-canvas --bench large_canvas
+cargo nextest run -p open-gpui-canvas --features test-support
+cargo bench -p open-gpui-canvas --features bench-support --bench large_canvas
 cargo bench -p open-gpui-canvas --bench relation_traversal -- --sample-size 10
 ```
+
+Use `test-support` for the complete Canvas test cohort, including window-driven input and clip
+generation tests. It is independent of `bench-support`: the maintained renderer benchmark must
+not inherit deterministic test support or entity leak-detection overhead from dev-dependencies.
 
 Use this before and after changing the runtime candidate cache, such as replacing the internal base
 with an R-tree, tile index, packed AABB index, or GPU-assisted culling adapter. The important signal

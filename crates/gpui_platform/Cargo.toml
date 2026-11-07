@@ -25,7 +25,8 @@ test = true
 [features]
 default = []
 font-kit = ["open_gpui_macos/font-kit"]
-test-support = ["open_gpui/test-support", "open_gpui_macos/test-support", "open_gpui_windows/test-support", "open_gpui_linux/test-support"]
+test-support = ["open_gpui/test-support", "open_gpui_macos/test-support", "open_gpui_windows/test-support", "open_gpui_linux/test-support", "dep:open_gpui_wgpu", "open_gpui_wgpu?/test-support"]
+bench-support = ["open_gpui/bench-support", "open_gpui_macos/bench-support", "open_gpui_windows/bench-support", "open_gpui_linux/bench-support", "dep:open_gpui_wgpu", "open_gpui_wgpu?/bench-support"]
 screen-capture = ["open_gpui/screen-capture", "open_gpui_macos/screen-capture", "open_gpui_windows/screen-capture", "open_gpui_linux/screen-capture"]
 runtime_shaders = ["open_gpui_macos/runtime_shaders"]
 wayland = ["open_gpui_linux/wayland"]
@@ -33,6 +34,7 @@ x11 = ["open_gpui_linux/x11"]
 web-multithreaded = ["open_gpui_web/multithreaded"]
 
 [dependencies]
+anyhow.workspace = true
 open_gpui.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -44,6 +46,7 @@ open_gpui = { workspace = true, features = ["windows-manifest"] }
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 open_gpui_linux.workspace = true
+open_gpui_wgpu = { workspace = true, optional = true }
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 open_gpui_web.workspace = true

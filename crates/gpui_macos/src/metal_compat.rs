@@ -7,7 +7,7 @@ use objc2::runtime::ProtocolObject;
 use objc2_core_foundation::{CFRetained, CGSize};
 use objc2_core_video as cv;
 use objc2_foundation::{NSString, NSUInteger};
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
 use objc2_metal::MTLBlitCommandEncoder as _;
 use objc2_metal::{self as mtl, MTLBuffer as _};
 use objc2_metal::{
@@ -64,6 +64,15 @@ impl Device {
         self.0.supportsFamily(family)
     }
 
+    /// Returns the Metal feature-set limit: 32K for Apple10, 16K for other macOS families.
+    pub(crate) fn max_texture_dimension_2d(&self) -> NSUInteger {
+        if self.supports_family(MTLGPUFamily::Apple10) {
+            32_768
+        } else {
+            16_384
+        }
+    }
+
     pub(crate) fn new_command_queue(&self) -> CommandQueue {
         CommandQueue(
             self.0
@@ -97,11 +106,12 @@ impl Device {
     }
 
     pub(crate) fn new_texture(&self, descriptor: &TextureDescriptor) -> Texture {
-        Texture(
-            self.0
-                .newTextureWithDescriptor(&descriptor.0)
-                .expect("Metal device failed to create texture"),
-        )
+        self.try_new_texture(descriptor)
+            .expect("Metal device failed to create texture")
+    }
+
+    pub(crate) fn try_new_texture(&self, descriptor: &TextureDescriptor) -> Option<Texture> {
+        self.0.newTextureWithDescriptor(&descriptor.0).map(Texture)
     }
 
     #[cfg(not(feature = "runtime_shaders"))]
@@ -170,7 +180,7 @@ impl MetalLayer {
         self.0.setMaximumDrawableCount(count);
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
     pub(crate) fn set_framebuffer_only(&self, framebuffer_only: bool) {
         self.0.setFramebufferOnly(framebuffer_only);
     }
@@ -281,7 +291,7 @@ impl CommandBuffer {
         )
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
     pub(crate) fn new_blit_command_encoder(&self) -> BlitCommandEncoder {
         BlitCommandEncoder(
             self.0
@@ -319,11 +329,11 @@ impl Deref for CommandBuffer {
     }
 }
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
 #[derive(Clone)]
 pub(crate) struct BlitCommandEncoder(Retained<ProtocolObject<dyn mtl::MTLBlitCommandEncoder>>);
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
 impl BlitCommandEncoder {
     pub(crate) fn synchronize_resource(&self, texture: &Texture) {
         self.0.synchronizeResource(texture.0.as_ref());
@@ -421,7 +431,7 @@ impl Texture {
         self.0.pixelFormat()
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
     pub(crate) fn get_bytes(
         &self,
         bytes: *mut c_void,

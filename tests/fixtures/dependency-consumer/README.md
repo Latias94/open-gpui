@@ -39,6 +39,10 @@ cargo check --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --lock
 Run the same gate separately on Windows, Linux, and macOS in CI. Record results per host;
 a Windows result does not qualify compilation on macOS, Linux, or FreeBSD.
 
+Set `CARGO_BUILD_JOBS=1` for serial compilation when running the nextest commands below.
+Nextest's `--jobs` and `--test-threads` both control test concurrency; use only
+`--test-threads=1` rather than supplying both options.
+
 This is a source compilation and dependency resolution gate. It requires the normal native build
 prerequisites for the host platform. No application launch or test framework is required. Passing
 the gate does not qualify native window behavior, visual output, GPU execution, or the declared
@@ -182,7 +186,7 @@ therefore does not start an App, construct a Window, or synthesize an applicatio
 identity. Run it separately with the existing lockfile and root build directory:
 
 ```text
-cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --test lifecycle --jobs 1 --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --test lifecycle --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
 ```
 
 Passing this target establishes public API compilation and the five standalone controls only.
@@ -215,8 +219,8 @@ command above so its resolution includes `hdrhistogram`. Run both configurations
 that lockfile, reusing the root build directory:
 
 ```text
-cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --test profiler --jobs 1 --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
-cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --features profiler --test profiler --jobs 1 --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --test profiler --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --features profiler --test profiler --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
 ```
 
 This consumer does not qualify Window invalidation, histogram sampling across draw/present,
@@ -265,7 +269,7 @@ disabled, then run the feature-enabled public consumer separately, serially, fro
 
 ```text
 cargo check --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --all-targets --jobs 1 --target-dir target
-cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --features profiler --test foreground_journal --jobs 1 --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --features profiler --test foreground_journal --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
 ```
 
 The framework's separate crate-external `crates/gpui/tests/foreground_journal.rs` target requires
@@ -279,7 +283,7 @@ collector survival across App release. It uses no fabricated Window ID, timing-b
 or manually recorded submission.
 
 ```text
-cargo nextest run -p open-gpui --features test-support,profiler --test foreground_journal --jobs 1 --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run -p open-gpui --features test-support,profiler --test foreground_journal --test-threads=1 --no-fail-fast --no-tests fail
 ```
 
 Those framework cases use the test platform's presentation callback and outcome. They do not
@@ -324,8 +328,8 @@ Run both fixture configurations separately, preserving its independent lockfile 
 the root build directory. Neither configuration enables `test-support`:
 
 ```text
-cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --test frame_signals --jobs 1 --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
-cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --features profiler --test frame_signals --jobs 1 --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --test frame_signals --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --features profiler --test frame_signals --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
 ```
 
 The separate crate-external `crates/gpui/tests/frame_signals.rs` target requires both
@@ -361,7 +365,7 @@ the official presentation bypass. The callback itself does not request a refresh
 activation/default-request pass checks force-hint retention independently of callback execution.
 
 ```text
-cargo nextest run -p open-gpui --features test-support,profiler --test frame_signals --jobs 1 --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run -p open-gpui --features test-support,profiler --test frame_signals --test-threads=1 --no-fail-fast --no-tests fail
 ```
 
 These are test-platform runtime scenarios and independent public API/value controls, not native
@@ -399,8 +403,8 @@ than a consumer-owned closure that exercises only standard-library reference cou
 signature target in both instrumentation configurations, separately, with the existing lockfile:
 
 ```text
-cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --test frame_scheduling --jobs 1 --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
-cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --features profiler --test frame_scheduling --jobs 1 --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --test frame_scheduling --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --features profiler --test frame_scheduling --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
 ```
 
 The separate crate-external `crates/gpui/tests/frame_scheduling.rs` target requires
@@ -434,8 +438,8 @@ whose delivery must park without another render or presentation. The workflows c
   redraw or restore that window.
 
 ```text
-cargo nextest run -p open-gpui --no-default-features --features test-support --test frame_scheduling --jobs 1 --test-threads=1 --no-fail-fast --no-tests fail
-cargo nextest run -p open-gpui --no-default-features --features test-support,profiler --test frame_scheduling --jobs 1 --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run -p open-gpui --no-default-features --features test-support --test frame_scheduling --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run -p open-gpui --no-default-features --features test-support,profiler --test frame_scheduling --test-threads=1 --no-fail-fast --no-tests fail
 ```
 
 These framework scenarios qualify TestPlatform scheduling and its simulated compositor callback,
@@ -495,8 +499,8 @@ and ordinary trace/aggregate controls.
 Run the independent targets separately in both instrumentation configurations:
 
 ```text
-cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --test refresh_measurements --test profiler --jobs 1 --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
-cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --features profiler --test refresh_measurements --test profiler --test foreground_journal --jobs 1 --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --test refresh_measurements --test profiler --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --features profiler --test refresh_measurements --test profiler --test foreground_journal --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
 ```
 
 The separate crate-external `crates/gpui/tests/refresh_measurements.rs` target uses the existing
@@ -524,7 +528,7 @@ without borrowing the typed root across a draw. It then exercises these actual w
   occurring during active use. Draw contributors carry all three phase durations.
 
 ```text
-cargo nextest run -p open-gpui --no-default-features --features test-support,profiler --test refresh_measurements --jobs 1 --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run -p open-gpui --no-default-features --features test-support,profiler --test refresh_measurements --test-threads=1 --no-fail-fast --no-tests fail
 ```
 
 These commands are verification instructions, not an execution or compilation record. Runtime
@@ -565,8 +569,8 @@ query, and App observer returning `Subscription`. Those closures qualify signatu
 they do not deliver notifications, test subscription replacement, or start an App or Window.
 
 ```text
-cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --test power_cadence --jobs 1 --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
-cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --features profiler --test power_cadence --jobs 1 --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --test power_cadence --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --features profiler --test power_cadence --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
 ```
 
 The separate `crates/gpui/tests/power_cadence.rs` target exercises real TestPlatform workflows
@@ -595,8 +599,8 @@ through public App, Window, `TestAppContext`, and `VisualTestContext` APIs:
   limit wins when its interval is longest, with the inactive reason winning an equal tie.
 
 ```text
-cargo nextest run -p open-gpui --no-default-features --features test-support --test power_cadence --jobs 1 --test-threads=1 --no-fail-fast --no-tests fail
-cargo nextest run -p open-gpui --no-default-features --features test-support,profiler --test power_cadence --jobs 1 --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run -p open-gpui --no-default-features --features test-support --test power_cadence --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run -p open-gpui --no-default-features --features test-support,profiler --test power_cadence --test-threads=1 --no-fail-fast --no-tests fail
 ```
 
 These commands are verification instructions, not an execution or compilation record. The frame
@@ -631,8 +635,8 @@ composition, and the typed root creation signature. Those closures establish com
 contracts only; they do not run an App, render a frame, dispatch input, or prove cache reuse.
 
 ```text
-cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --test view_components --jobs 1 --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
-cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --features profiler --test view_components --jobs 1 --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --test view_components --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --features profiler --test view_components --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
 ```
 
 The separate crate-external `crates/gpui/tests/view_components.rs` target exercises actual
@@ -662,8 +666,8 @@ TestPlatform windows through public `TestAppContext` and `VisualTestContext` API
   release and reconstruction check the new identity, rendered values, and exact release count.
 
 ```text
-cargo nextest run -p open-gpui --no-default-features --features test-support --test view_components --jobs 1 --test-threads=1 --no-fail-fast --no-tests fail
-cargo nextest run -p open-gpui --no-default-features --features test-support,profiler --test view_components --jobs 1 --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run -p open-gpui --no-default-features --features test-support --test view_components --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run -p open-gpui --no-default-features --features test-support,profiler --test view_components --test-threads=1 --no-fail-fast --no-tests fail
 ```
 
 These commands are verification instructions, not an execution or compilation record. Framework
@@ -687,9 +691,9 @@ size changes, two-window isolation and actual committed layout dimensions. Rems 
 a value using the current rem size; it does not introduce another reactive scale owner.
 
 ```text
-cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --all-features --test measured_text --test rems --jobs 1 --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
-cargo nextest run --locked -p open-gpui --all-features --test rems --test frame_scheduling --jobs 1 --test-threads=1 --no-fail-fast --no-tests fail
-cargo nextest run --locked -p open-gpui-wgpu --all-features --test measured_text --jobs 1 --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --all-features --test measured_text --test rems --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --locked -p open-gpui --all-features --test rems --test frame_scheduling --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --locked -p open-gpui-wgpu --all-features --test measured_text --test-threads=1 --no-fail-fast --no-tests fail
 ```
 
 These commands describe the intended gates; actual results and limits are recorded in the
@@ -734,9 +738,9 @@ Run the independent signature target and the framework runtime target separately
 existing lockfiles and root build directory, with one Cargo process at a time:
 
 ```text
-cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --test accessibility_tree --jobs 1 --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
-cargo nextest run -p open-gpui --features test-support --test accessibility_tree --jobs 1 --test-threads=1 --no-fail-fast --no-tests fail
-cargo nextest run -p open-gpui --release --features test-support --test accessibility_tree --jobs 1 --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --test accessibility_tree --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run -p open-gpui --features test-support --test accessibility_tree --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run -p open-gpui --release --features test-support --test accessibility_tree --test-threads=1 --no-fail-fast --no-tests fail
 ```
 
 These commands are verification instructions, not execution results. The framework runtime tests
@@ -786,9 +790,9 @@ windows through public `TestAppContext` and `VisualTestContext` APIs:
   and retained source notifications cannot render the released root.
 
 ```text
-cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --test composite_focus --jobs 1 --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
-cargo nextest run -p open-gpui --no-default-features --features test-support --test composite_focus --jobs 1 --test-threads=1 --no-fail-fast --no-tests fail
-cargo nextest run -p open-gpui --release --no-default-features --features test-support --test composite_focus --jobs 1 --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --test composite_focus --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run -p open-gpui --no-default-features --features test-support --test composite_focus --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run -p open-gpui --release --no-default-features --features test-support --test composite_focus --test-threads=1 --no-fail-fast --no-tests fail
 ```
 
 These commands are verification instructions, not execution or compilation results. Run one
@@ -837,9 +841,9 @@ Run the independent type checks and framework runtime target separately with the
 lockfiles, one Cargo process at a time, reusing `target`:
 
 ```text
-cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --test accessibility_configuration --jobs 1 --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
-cargo nextest run -p open-gpui --no-default-features --features test-support --test accessibility_configuration --jobs 1 --test-threads=1 --no-fail-fast --no-tests fail
-cargo nextest run -p open-gpui --release --no-default-features --features test-support --test accessibility_configuration --jobs 1 --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --test accessibility_configuration --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run -p open-gpui --no-default-features --features test-support --test accessibility_configuration --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run -p open-gpui --release --no-default-features --features test-support --test accessibility_configuration --test-threads=1 --no-fail-fast --no-tests fail
 ```
 
 These commands are verification instructions, not compilation or execution results. The runtime
@@ -847,3 +851,72 @@ target inspects the latest complete accepted tree after the public activation he
 work; it does not assert the synchronous initial callback's root-only title snapshot or its
 sequenced refresh. Native initial callbacks, actual screen readers, native `Submitted` frames,
 GPU output and platform-specific identifier exposure require their separate owners and gates.
+
+## Maintained benchmark harness consumer
+
+The `maintained_harness` benchmark binary uses the public benchmark implementation from the fixed
+Zed source
+[`635026fabc38440fce5e1767d125026a17b12012`](https://github.com/zed-industries/zed/tree/635026fabc38440fce5e1767d125026a17b12012),
+adapted through Open GPUI's platform and presentation owners. Enable this fixture's `bench-support`
+feature to forward Core and facade benchmark support and activate Criterion 0.8.2 and rand 0.9.
+This feature is independent of `test-support`; the consumer does not use `FakeCounter`, test
+contexts, virtual timers or a no-op text system.
+
+The binary executes its workloads through `#[open_gpui::bench]`, a
+`Criterion<BenchMeasurement>` group, and `bench_main!` with the default `CountingAllocator`:
+
+- `simple_native_shaping` calls `bench_text_system()` and measures actual native `layout_line`
+  calls for multilingual text. After execution it checks UTF-8 length, positive native metrics,
+  character-boundary glyph indices and nonempty glyph output.
+- `maintained-renderer/rows/{4,16}` constructs source-observed, labeled views outside timing and
+  measures source updates through `bench_renderer`. Executed render/paint counters and the final
+  painted source value must agree. Accepted frame generations advance, and the final submitted
+  generation and nonempty presentation facts must match the accepted frame. Closing the window
+  and explicitly dropping the window context, view and source releases their weak owners once.
+- `maintained-seeded-tasks/items/{64,256}/seed-{7,23}` puts the by-value `StdRng` between the input
+  and context arguments. Each Criterion routine checks the fresh RNG stream against the selected
+  seeds, clones input in untimed `bench_batched_task` setup, sorts on the background executor, and
+  verifies completed output in its destructor after timing and tracing finish. The next iteration
+  requires the preceding output to have been released.
+- `seeded_task/seed-11` puts `StdRng` first and executes a background-to-foreground `bench_task`
+  workflow with verified completion and released task captures.
+- `module_cases::public_routine` registers a benchmark from a child module through its preserved
+  restricted visibility, proving that reusable benchmark modules can join the public group.
+
+Every executed Criterion routine installs fresh App state. A weak owner and exact release count
+are checked before the next routine and after each generated benchmark returns, including the
+last benchmark. Local handles and context clones are dropped before the macro's teardown. Filters
+and `--list` can skip workloads; listing or compiling the binary is not runtime qualification.
+`SEED` and `ITERATIONS` select reproducible seed cases using the same rules as the benchmark macro.
+
+The Core crate-external `benchmark_harness` target is gated solely on `bench-support`. It executes
+short Criterion measurements through raw public APIs and checks source notifications, resize and
+frame callbacks, root reconstruction, real timer deadlines, an external callback waking a Task,
+untimed batched input/output destruction, metric samples, App/TextSystem lifetime, timer cleanup
+and the next routine's isolation on the shared dispatcher. Finite renderer sessions use fresh
+untimed setup per iteration and require the final source value to be accepted and submitted before
+session destruction. Those Core windows use `NoopTextSystem` without a GPU renderer; native text
+shaping belongs to this independent binary. Candidate refusal and native GPU output retain their
+separate verification owners.
+
+Run the focused public tests, the independently locked binary's execution smoke check, and an
+actual measurement separately, one Cargo process at a time, reusing the existing `target`:
+
+```text
+cargo nextest run --locked -p open-gpui --no-default-features --features bench-support --test benchmark_harness --test-threads=1 --no-fail-fast --no-tests fail
+cargo bench --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features bench-support --bench maintained_harness --jobs 1 --target-dir target -- --test
+cargo bench --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features bench-support --bench maintained_harness --jobs 1 --target-dir target
+cargo bench --locked -p open-gpui-canvas --features bench-support --bench large_canvas --jobs 1 -- paint_frame_render_labels --test
+```
+
+Set `BENCH_MEASUREMENT=wall-time` when the smoke check should omit hardware counters; the default
+measurement reports supported counters and allocator observations. Measurement selection and
+`bench_main!(allocator = none; ...)` are owned by the public harness, rather than a consumer-local
+measurement or allocator shim. The Canvas consumer preserves its 200-by-100 labeled grid,
+viewport and culling options while moving only setup-excluded notification/render measurement to
+the maintained context and native text factory.
+
+These commands are verification instructions, not compilation, execution or performance results.
+The consumer's presentation assertions describe the benchmark platform's accepted/submitted facts.
+GPU rendering, OS-native window delivery, cross-platform qualification and rejected-candidate
+controls require their owning checks and recorded execution evidence.

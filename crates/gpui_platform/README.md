@@ -47,6 +47,17 @@ For a native application entry point, see `examples/smoke-native`. For a common 
 through the selector, see `examples/docking-minimal`. Web backend work should use
 `open-gpui-web`-specific examples and the `xtask web-smoke` gate.
 
+## Benchmark Support
+
+Enable `bench-support` on this crate and `open-gpui` to consume `#[open_gpui::bench]` without
+deterministic test support. `bench_text_system()` shares the native text system per thread;
+`current_headless_renderer()` returns a fallible optional renderer. The default factory supplies
+Metal on macOS and WGPU on Linux, with `Ok(None)` on Windows and other targets. A caller can
+inject the public WGPU headless renderer independently. A benchmark without a renderer measures
+UI work and platform submission bookkeeping, not GPU output. See the
+[migration guide](../../docs/ui/migration-v0.3.md#benchmark-contexts-and-measurements) and the
+[independent consumer](../../tests/fixtures/dependency-consumer/README.md).
+
 ## Verification
 
 For focused platform-selector work, run:

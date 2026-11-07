@@ -187,9 +187,80 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
 }
 
 /// `#[open_gpui::bench]` annotates a Criterion benchmark that runs with GPUI support.
+///
+/// Use `#[open_gpui::bench(inputs = some_iterable())]` on benchmarks that take an
+/// additional input argument; the generated benchmark uses Criterion's
+/// `bench_with_input`. `group`, `input_name`, and `sample_size` can customize
+/// the generated input benchmark group. `fps = N` sets the frame budget used by
+/// the benchmark report. `fps`, `sample_size`, and `iterations` must be positive.
+///
+/// A benchmark takes `cx: &mut BenchAppContext`, preceded by `input: &Input` when
+/// `inputs` is specified. Use the context's measurement methods for the timed work.
+///
+/// A benchmark that takes a `StdRng` parameter (by value, in any position) is run
+/// once per seed, with the RNG seeded from it. Seeds are chosen exactly as for
+/// `#[open_gpui::test]`: `seed = N`, `seeds(...)`, and `iterations = N` take the same
+/// meaning, and the `SEED` and `ITERATIONS` environment variables override them the
+/// same way, so one `SEED` reproduces a test or a benchmark. Each seed is its own
+/// Criterion benchmark, named `<input>/seed-<seed>` (or `<function>/seed-<seed>`
+/// without inputs), and the RNG is rebuilt for every Criterion routine call so all
+/// samples measure the same seed. The generated code seeds it through Open GPUI's
+/// own `rand`, so the crate needs `rand` only to name `StdRng` in the signature.
+///
+/// ```ignore
+/// #[open_gpui::bench(inputs = families(), iterations = 6)]
+/// fn full_refresh(family: &Family, mut rng: StdRng, cx: &mut BenchAppContext) {
+///     let tree = family.sample(&mut rng);
+///     cx.bench_iter(|cx| refresh(&tree, cx));
+/// }
+/// ```
+///
+/// The benchmark crate must add `criterion` and `open_gpui_platform` (with its
+/// `bench-support` feature) to its dev-dependencies and enable Open GPUI's
+/// `bench-support` feature, since the generated code references all three. Use
+/// `open_gpui::bench_group!` and `open_gpui::bench_main!` to configure the shared
+/// measurement and allocation metrics.
+///
+/// Input-only options require `inputs`:
+///
+/// ```compile_fail
+/// # use open_gpui_macros::bench;
+/// #[bench(input_name = "size")]
+/// fn invalid(cx: &mut BenchAppContext) {}
+/// ```
+///
+/// Seed options require a by-value `StdRng` parameter:
+///
+/// ```compile_fail
+/// # use open_gpui_macros::bench;
+/// #[bench(seed = 7)]
+/// fn invalid(cx: &mut BenchAppContext) {}
+/// ```
+///
+/// ```compile_fail
+/// # use open_gpui_macros::bench;
+/// #[bench]
+/// fn invalid(rng: &mut StdRng, cx: &mut BenchAppContext) {}
+/// ```
+///
+/// A benchmark accepts one seed declaration:
+///
+/// ```compile_fail
+/// # use open_gpui_macros::bench;
+/// #[bench(seed = 7, seeds(8))]
+/// fn invalid(rng: StdRng, cx: &mut BenchAppContext) {}
+/// ```
+///
+/// The old separate `Bencher` parameter is unsupported:
+///
+/// ```compile_fail
+/// # use open_gpui_macros::bench;
+/// #[bench]
+/// fn invalid(bencher: &mut criterion::Bencher, cx: &mut BenchAppContext) {}
+/// ```
 #[proc_macro_attribute]
 pub fn bench(args: TokenStream, function: TokenStream) -> TokenStream {
-    bench::bench(args, function)
+    bench::bench(args.into(), function.into()).into()
 }
 
 /// A variant of `#[open_gpui::test]` that supports property-based testing.

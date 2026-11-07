@@ -49,7 +49,7 @@ pub struct HeadlessAppContext {
 impl HeadlessAppContext {
     /// Creates a new headless app context with the given text system.
     pub fn new(platform_text_system: Arc<dyn PlatformTextSystem>) -> Self {
-        Self::with_platform(platform_text_system, Arc::new(()), || None)
+        Self::with_platform(platform_text_system, Arc::new(()), || Ok(None))
     }
 
     /// Creates a new headless app context with a custom text system and asset source.
@@ -57,15 +57,15 @@ impl HeadlessAppContext {
         platform_text_system: Arc<dyn PlatformTextSystem>,
         asset_source: Arc<dyn AssetSource>,
     ) -> Self {
-        Self::with_platform(platform_text_system, asset_source, || None)
+        Self::with_platform(platform_text_system, asset_source, || Ok(None))
     }
 
     /// Creates a new headless app context with the given text system, asset source,
-    /// and an optional renderer factory for screenshot support.
+    /// and a fallible renderer factory for GPU rendering and screenshot support.
     pub fn with_platform(
         platform_text_system: Arc<dyn PlatformTextSystem>,
         asset_source: Arc<dyn AssetSource>,
-        renderer_factory: impl Fn() -> Option<Box<dyn PlatformHeadlessRenderer>> + 'static,
+        renderer_factory: impl Fn() -> Result<Option<Box<dyn PlatformHeadlessRenderer>>> + 'static,
     ) -> Self {
         let seed = std::env::var("SEED")
             .ok()
@@ -77,7 +77,7 @@ impl HeadlessAppContext {
         let background_executor = BackgroundExecutor::new(arc_dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(arc_dispatcher);
 
-        let renderer_factory: Box<dyn Fn() -> Option<Box<dyn PlatformHeadlessRenderer>>> =
+        let renderer_factory: Box<dyn Fn() -> Result<Option<Box<dyn PlatformHeadlessRenderer>>>> =
             Box::new(renderer_factory);
         let platform = TestPlatform::with_platform(
             background_executor.clone(),
@@ -128,6 +128,25 @@ impl HeadlessAppContext {
     /// Runs all pending tasks until parked.
     pub fn run_until_parked(&self) {
         self.dispatcher.run_until_parked();
+    }
+
+    /// Delivers one scheduled frame or compositor callback and drains pending deterministic work.
+    pub fn simulate_window_scheduled_frame(&self, window: AnyWindowHandle) -> Result<bool> {
+        let platform_window = self
+            .app
+            .borrow_mut()
+            .update_window(window, |_, window, _| {
+                window
+                    .platform_window
+                    .as_test()
+                    .map(|window| window.clone())
+            })?
+            .ok_or_else(|| anyhow::anyhow!("headless window is not backed by TestPlatform"))?;
+        let app_borrow = self.app.borrow();
+        let delivered = platform_window.simulate_scheduled_frame();
+        drop(app_borrow);
+        self.run_until_parked();
+        Ok(delivered)
     }
 
     /// Advances the simulated clock.
@@ -286,5 +305,50 @@ impl AppContext for HeadlessAppContext {
     {
         let app = self.app.borrow();
         app.read_global(callback)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Empty, NoopTextSystem, px, size};
+    use std::cell::Cell;
+
+    #[test]
+    fn renderer_factory_failure_precedes_root_creation_and_releases_window_reservation() {
+        let fail = Rc::new(Cell::new(true));
+        let factory_calls = Rc::new(Cell::new(0));
+        let built_root = Rc::new(Cell::new(false));
+        let mut cx = HeadlessAppContext::with_platform(Arc::new(NoopTextSystem), Arc::new(()), {
+            let fail = fail.clone();
+            let factory_calls = factory_calls.clone();
+            move || {
+                factory_calls.set(factory_calls.get() + 1);
+                anyhow::ensure!(!fail.get(), "injected renderer factory failure");
+                Ok(None)
+            }
+        });
+        let result = cx.open_window(size(px(32.0), px(24.0)), {
+            let built_root = built_root.clone();
+            move |_, app| {
+                built_root.set(true);
+                app.new(|_| Empty)
+            }
+        });
+        let error = result.unwrap_err();
+        assert!(format!("{error:#}").contains("injected renderer factory failure"));
+        assert_eq!(factory_calls.get(), 1);
+        assert!(!built_root.get());
+        assert!(cx.update(|app| app.windows().is_empty()));
+
+        fail.set(false);
+        let handle = cx
+            .open_window(size(px(32.0), px(24.0)), |_, app| app.new(|_| Empty))
+            .unwrap();
+        assert_eq!(factory_calls.get(), 2);
+        assert_eq!(cx.update(|app| app.windows()), vec![handle.into()]);
+        cx.update_window(handle.into(), |_, window, app| window.remove_window(app))
+            .unwrap();
+        assert!(cx.update(|app| app.windows().is_empty()));
     }
 }

@@ -60,3 +60,18 @@ contents throughout that closure, so the original monorepo SHA remains unknown. 
 content-verified reconstruction anchor rather than an asserted source-history parent. The
 [current sync queue](zed-gpui-upstream-sync-candidates.md#fixed-revisions-and-provenance) owns the
 complete evidence, later comparison pins and fixed maintenance target.
+
+## November 8 Benchmark Measurement Dependency
+
+The complete benchmark successor additionally imports `crates/bench_metrics` from fixed Zed
+`635026fabc38440fce5e1767d125026a17b12012`, source blob
+`1ec628b0e943e34ca6c0f87e5def8f86a63e967f`. Its manifest explicitly licenses this independent
+Criterion measurement package under Apache-2.0; its license is retained as a regular file rather
+than the monorepo's license symlink. The extracted package is `open-gpui-bench-metrics`, with the
+workspace alias `open_gpui_bench_metrics`. It depends on Criterion, anyhow, Unix libc and Linux
+`perf-event2`, without any GPUI or Zed product dependency.
+
+Core consumes it only through `bench-support`; ordinary test support remains independent. The
+official Criterion 0.8.2 API is retained, including all throughput variants, primary measurement
+selection and secondary reports. This import does not add the retired GPL `perf` tooling crate.
+Executed behavior and platform limits belong to the existing verification record.

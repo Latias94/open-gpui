@@ -335,7 +335,7 @@ impl ThreadedDispatcher {
         ran_any
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
     pub(crate) fn run_until_with_frames<R>(
         &self,
         mut ready: impl FnMut() -> Option<R>,
@@ -386,6 +386,10 @@ impl ThreadedDispatcher {
         canceled
     }
 
+    pub(crate) fn has_pending_timers(&self) -> bool {
+        !self.timers.state.lock().heap.is_empty()
+    }
+
     /// Describes the dispatcher's idle-tracking state, for diagnosing
     /// workloads that fail to reach quiescence.
     pub fn debug_state(&self) -> String {
@@ -401,7 +405,7 @@ impl ThreadedDispatcher {
     /// Whether no main-thread work is queued, no background or timer
     /// runnables are queued or running, and no armed timer is due. Timers
     /// that aren't due yet are ignored, as in [`Self::run_until_idle`].
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
     pub(crate) fn is_idle(&self) -> bool {
         !self.main_queue_has_work() && !self.has_due_timer() && *self.idle.inflight.lock() == 0
     }
@@ -486,7 +490,7 @@ impl PlatformDispatcher for ThreadedDispatcher {
             .expect("failed to spawn threaded dispatcher realtime thread");
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
     fn as_threaded(&self) -> Option<&ThreadedDispatcher> {
         Some(self)
     }

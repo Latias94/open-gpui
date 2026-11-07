@@ -26,6 +26,7 @@ use open_gpui::{
 };
 
 mod feedback;
+#[cfg(feature = "test-support")]
 mod input;
 mod paint_model;
 mod scene;

@@ -4278,6 +4278,14 @@ mod tests {
     }
 
     impl PlatformHeadlessRenderer for AtlasTestRenderer {
+        fn render_scene(
+            &mut self,
+            _scene: &Scene,
+            _size: Size<DevicePixels>,
+        ) -> anyhow::Result<()> {
+            Ok(())
+        }
+
         fn render_scene_to_image(
             &mut self,
             _scene: &Scene,
@@ -5326,9 +5334,9 @@ mod tests {
         let renderer_atlas = atlas.clone();
         let mut cx =
             HeadlessAppContext::with_platform(Arc::new(NoopTextSystem), Arc::new(()), move || {
-                Some(Box::new(AtlasTestRenderer {
+                Ok(Some(Box::new(AtlasTestRenderer {
                     atlas: renderer_atlas.clone(),
-                }))
+                })))
             });
         let rendered_in = Rc::new(RefCell::new(Vec::new()));
         let panel = cx.update({

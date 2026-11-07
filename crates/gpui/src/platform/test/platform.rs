@@ -60,6 +60,7 @@ pub(crate) struct TestPlatform {
     current_primary_item: Mutex<Option<ClipboardItem>>,
     #[cfg(target_os = "macos")]
     current_find_pasteboard_item: Mutex<Option<ClipboardItem>>,
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) prompts: RefCell<TestPrompts>,
     screen_capture_sources: RefCell<Vec<TestScreenCaptureSource>>,
     pub opened_url: RefCell<Option<String>>,
@@ -78,7 +79,8 @@ pub(crate) struct TestPlatform {
     will_open_app_menu_callback: RefCell<Option<Box<dyn FnMut()>>>,
     app_menu_action_callback: RefCell<Option<Box<dyn FnMut(&dyn crate::Action)>>>,
     validate_app_menu_command_callback: RefCell<Option<Box<dyn FnMut(&dyn crate::Action) -> bool>>>,
-    headless_renderer_factory: Option<Box<dyn Fn() -> Option<Box<dyn PlatformHeadlessRenderer>>>>,
+    headless_renderer_factory:
+        Option<Box<dyn Fn() -> Result<Option<Box<dyn PlatformHeadlessRenderer>>>>>,
     weak: Weak<Self>,
 }
 
@@ -118,6 +120,7 @@ impl ScreenCaptureStream for TestScreenCaptureStream {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 struct TestPrompt {
     msg: String,
     detail: Option<String>,
@@ -126,6 +129,7 @@ struct TestPrompt {
 }
 
 #[derive(Default)]
+#[cfg(any(test, feature = "test-support"))]
 pub(crate) struct TestPrompts {
     multiple_choice: VecDeque<TestPrompt>,
     new_path: VecDeque<(PathBuf, oneshot::Sender<Result<Option<PathBuf>>>)>,
@@ -163,12 +167,13 @@ impl TestPlatform {
         foreground_executor: ForegroundExecutor,
         text_system: Arc<dyn PlatformTextSystem>,
         headless_renderer_factory: Option<
-            Box<dyn Fn() -> Option<Box<dyn PlatformHeadlessRenderer>>>,
+            Box<dyn Fn() -> Result<Option<Box<dyn PlatformHeadlessRenderer>>>>,
         >,
     ) -> Rc<Self> {
         Rc::new_cyclic(|weak| TestPlatform {
             background_executor: executor,
             foreground_executor,
+            #[cfg(any(test, feature = "test-support"))]
             prompts: Default::default(),
             screen_capture_sources: Default::default(),
             active_cursor: Default::default(),
@@ -410,6 +415,7 @@ impl TestPlatform {
         self.next_window_defer_frame_requests.replace(true);
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn simulate_new_path_selection(
         &self,
         select_path: impl FnOnce(&std::path::Path) -> Option<std::path::PathBuf>,
@@ -423,6 +429,7 @@ impl TestPlatform {
         tx.send(Ok(select_path(&path))).ok();
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn simulate_path_prompt_response(
         &self,
         select_paths: impl FnOnce(&PathPromptOptions) -> Option<Vec<std::path::PathBuf>>,
@@ -446,11 +453,13 @@ impl TestPlatform {
         tx.send(Ok(selection)).ok();
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn did_prompt_for_paths(&self) -> bool {
         !self.prompts.borrow().paths.is_empty()
     }
 
     #[track_caller]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn simulate_prompt_answer(&self, response: &str) {
         let prompt = self
             .prompts
@@ -467,6 +476,7 @@ impl TestPlatform {
         prompt.tx.send(ix).ok();
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn has_pending_prompt(&self) -> bool {
         !self.prompts.borrow().multiple_choice.is_empty()
     }
@@ -475,6 +485,7 @@ impl TestPlatform {
         *self.quit_requested.borrow()
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn pending_prompt(&self) -> Option<(String, String)> {
         let prompts = self.prompts.borrow();
         let prompt = prompts.multiple_choice.front()?;
@@ -488,6 +499,7 @@ impl TestPlatform {
         *self.screen_capture_sources.borrow_mut() = sources;
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn prompt(
         &self,
         msg: &str,
@@ -506,6 +518,16 @@ impl TestPlatform {
                 tx,
             });
         rx
+    }
+
+    #[cfg(not(any(test, feature = "test-support")))]
+    pub(crate) fn prompt(
+        &self,
+        _msg: &str,
+        _detail: Option<&str>,
+        _answers: &[PromptButton],
+    ) -> oneshot::Receiver<usize> {
+        oneshot::channel().1
     }
 
     pub(crate) fn set_active_window(&self, window: Option<TestWindow>) {
@@ -700,6 +722,7 @@ impl TestPlatform {
         available
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn did_prompt_for_new_path(&self) -> bool {
         !self.prompts.borrow().new_path.is_empty()
     }
@@ -973,7 +996,10 @@ impl Platform for TestPlatform {
         handle: AnyWindowHandle,
         params: WindowParams,
     ) -> anyhow::Result<Box<dyn crate::PlatformWindow>> {
-        let renderer = self.headless_renderer_factory.as_ref().and_then(|f| f());
+        let renderer = match self.headless_renderer_factory.as_ref() {
+            Some(factory) => factory()?,
+            None => None,
+        };
         let display = params
             .display_id
             .and_then(|id| {
@@ -1019,6 +1045,7 @@ impl Platform for TestPlatform {
         );
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     fn prompt_for_paths(
         &self,
         options: crate::PathPromptOptions,
@@ -1028,6 +1055,7 @@ impl Platform for TestPlatform {
         rx
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     fn prompt_for_new_path(
         &self,
         directory: &std::path::Path,
@@ -1039,6 +1067,23 @@ impl Platform for TestPlatform {
             .new_path
             .push_back((directory.to_path_buf(), tx));
         rx
+    }
+
+    #[cfg(not(any(test, feature = "test-support")))]
+    fn prompt_for_paths(
+        &self,
+        _options: PathPromptOptions,
+    ) -> oneshot::Receiver<Result<Option<Vec<PathBuf>>>> {
+        oneshot::channel().1
+    }
+
+    #[cfg(not(any(test, feature = "test-support")))]
+    fn prompt_for_new_path(
+        &self,
+        _directory: &Path,
+        _suggested_name: Option<&str>,
+    ) -> oneshot::Receiver<Result<Option<PathBuf>>> {
+        oneshot::channel().1
     }
 
     fn can_select_mixed_files_and_dirs(&self) -> bool {

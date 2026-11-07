@@ -2075,14 +2075,27 @@ impl PlatformWindow for TestWindow {
 
     fn on_appearance_changed(&self, _callback: Box<dyn Fn()>) {}
 
-    fn draw(&self, _scene: &Scene) -> PlatformWindowPresentOutcome {
+    fn draw(&self, scene: &Scene) -> PlatformWindowPresentOutcome {
         let mut state = self.0.lock();
         state.draw_count += 1;
         if std::mem::take(&mut state.reveal_on_next_present) {
             state.mapped = true;
         }
         let close_on_next_present = std::mem::take(&mut state.close_on_next_present);
-        let outcome = state.present_outcome;
+        let mut outcome = state.present_outcome;
+        if outcome == PlatformWindowPresentOutcome::Submitted {
+            let device_size = state.bounds.size.to_device_pixels(state.scale_factor);
+            if let Some(renderer) = state.renderer.as_mut() {
+                if let Err(error) = renderer.render_scene(scene, device_size) {
+                    log::error!("Headless renderer rejected the frame: {error:#}");
+                    outcome = if error.downcast_ref::<AtlasTextureLeaseError>().is_some() {
+                        PlatformWindowPresentOutcome::RepaintRequired
+                    } else {
+                        PlatformWindowPresentOutcome::Rejected
+                    };
+                }
+            }
+        }
         state.frame_scheduled = true;
         if outcome == PlatformWindowPresentOutcome::Submitted {
             state.frame_callback_pending = true;
@@ -2098,7 +2111,7 @@ impl PlatformWindow for TestWindow {
         self.0.lock().sprite_atlas.clone()
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
     fn render_to_image(&self, scene: &Scene) -> anyhow::Result<RgbaImage> {
         let mut state = self.0.lock();
         let size = state.bounds.size;
@@ -2285,6 +2298,155 @@ fn apply_window_platform_facts(state: &mut TestWindowState, facts: &WindowPlatfo
 fn normalize_accessibility_tree_update(mut update: accesskit::TreeUpdate) -> accesskit::TreeUpdate {
     update.nodes.sort_unstable_by_key(|(id, _)| *id);
     update
+}
+
+#[cfg(test)]
+mod headless_renderer_tests {
+    use super::*;
+    use crate::{AppContext as _, Empty, TestAppContext, px, size};
+
+    struct ControlledRenderer {
+        atlas: Arc<dyn PlatformAtlas>,
+        fail: Rc<Cell<bool>>,
+        draws: Rc<Cell<usize>>,
+        readbacks: Rc<Cell<usize>>,
+        last_size: Rc<Cell<Option<Size<DevicePixels>>>>,
+    }
+
+    impl PlatformHeadlessRenderer for ControlledRenderer {
+        fn render_scene(&mut self, _: &Scene, size: Size<DevicePixels>) -> anyhow::Result<()> {
+            self.draws.set(self.draws.get() + 1);
+            self.last_size.set(Some(size));
+            anyhow::ensure!(!self.fail.get(), "injected headless rendering failure");
+            Ok(())
+        }
+
+        fn render_scene_to_image(
+            &mut self,
+            _: &Scene,
+            _: Size<DevicePixels>,
+        ) -> anyhow::Result<RgbaImage> {
+            self.readbacks.set(self.readbacks.get() + 1);
+            anyhow::bail!("the draw path must not read back an image")
+        }
+
+        fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
+            self.atlas.clone()
+        }
+    }
+
+    #[crate::test]
+    fn headless_draw_preserves_configured_outcomes_and_reports_renderer_failure(
+        cx: &mut TestAppContext,
+    ) {
+        let handle = cx
+            .open_window(size(px(32.0), px(24.0)), |_, _| Empty)
+            .into();
+        let window = cx.test_window(handle);
+        let fail = Rc::new(Cell::new(true));
+        let draws = Rc::new(Cell::new(0));
+        let readbacks = Rc::new(Cell::new(0));
+        let last_size = Rc::new(Cell::new(None));
+        let atlas = window.sprite_atlas();
+        window.0.lock().renderer = Some(Box::new(ControlledRenderer {
+            atlas,
+            fail: fail.clone(),
+            draws: draws.clone(),
+            readbacks: readbacks.clone(),
+            last_size: last_size.clone(),
+        }));
+        let initial_draws = window.draw_count();
+        for outcome in [
+            PlatformWindowPresentOutcome::Rejected,
+            PlatformWindowPresentOutcome::Deferred,
+            PlatformWindowPresentOutcome::RepaintRequired,
+        ] {
+            window.set_present_outcome(outcome);
+            assert_eq!(window.draw(&Scene::default()), outcome);
+        }
+        assert_eq!(window.draw_count(), initial_draws + 3);
+        assert_eq!(draws.get(), 0);
+        window.set_present_outcome(PlatformWindowPresentOutcome::Submitted);
+        window.0.lock().frame_callback_pending = false;
+        assert_eq!(
+            window.draw(&Scene::default()),
+            PlatformWindowPresentOutcome::Rejected
+        );
+        assert_eq!(draws.get(), 1);
+        assert!(!window.0.lock().frame_callback_pending);
+        assert_eq!(
+            last_size.get(),
+            Some(size(DevicePixels(64), DevicePixels(48)))
+        );
+        fail.set(false);
+        assert_eq!(
+            window.draw(&Scene::default()),
+            PlatformWindowPresentOutcome::Submitted
+        );
+        assert_eq!(window.draw_count(), initial_draws + 5);
+        assert_eq!(draws.get(), 2);
+        assert_eq!(readbacks.get(), 0);
+        assert!(window.0.lock().frame_callback_pending);
+    }
+
+    #[crate::test]
+    fn renderer_failure_keeps_accepted_and_submitted_generations_distinct(cx: &mut TestAppContext) {
+        let handle: AnyWindowHandle = cx
+            .open_window(size(px(32.0), px(24.0)), |_, _| Empty)
+            .into();
+        let platform_window = cx.test_window(handle);
+        let fail = Rc::new(Cell::new(true));
+        let atlas = platform_window.sprite_atlas();
+        platform_window.0.lock().renderer = Some(Box::new(ControlledRenderer {
+            atlas,
+            fail: fail.clone(),
+            draws: Rc::new(Cell::new(0)),
+            readbacks: Rc::new(Cell::new(0)),
+            last_size: Rc::new(Cell::new(None)),
+        }));
+        let previous = cx
+            .update_window(handle, |_, window, _| window.presentation_facts())
+            .unwrap();
+        let rejected = cx
+            .update_window(handle, |_, window, app| {
+                window.refresh();
+                window.draw(app).clear(app);
+                window.present(app);
+                window.presentation_facts()
+            })
+            .unwrap();
+        assert!(rejected.frame_accepted_generation > previous.frame_accepted_generation);
+        assert_eq!(
+            rejected.present_submitted_generation,
+            previous.present_submitted_generation
+        );
+        assert_eq!(
+            rejected.latest_present_attempt.unwrap().outcome,
+            PlatformWindowPresentOutcome::Rejected
+        );
+        assert_ne!(
+            rejected.frame_accepted_generation,
+            rejected.present_submitted_generation
+        );
+
+        fail.set(false);
+        let submitted = cx
+            .update_window(handle, |_, window, app| {
+                window.refresh();
+                window.draw(app).clear(app);
+                window.present(app);
+                window.presentation_facts()
+            })
+            .unwrap();
+        assert_eq!(
+            submitted.frame_accepted_generation,
+            submitted.present_submitted_generation
+        );
+        assert_eq!(
+            submitted.latest_present_attempt.unwrap().outcome,
+            PlatformWindowPresentOutcome::Submitted
+        );
+    }
 }
 
 #[cfg(test)]

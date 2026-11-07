@@ -1,0 +1,32 @@
+[package]
+name = "open-gpui-bench-metrics"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+readme = "README.md"
+description = "Criterion measurements and secondary metric reports for Open GPUI benchmarks."
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/bench_metrics.rs"
+doctest = false
+
+[features]
+test-support = []
+
+[dependencies]
+anyhow.workspace = true
+criterion.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+perf-event.workspace = true

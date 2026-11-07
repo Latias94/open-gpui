@@ -870,14 +870,20 @@ pub fn set_trace_enabled(enabled: bool) -> bool {
 }
 
 /// Keeps trace collection enabled until this guard is dropped.
-#[cfg(all(feature = "profiler", any(test, feature = "test-support")))]
+#[cfg(all(
+    feature = "profiler",
+    any(test, feature = "test-support", feature = "bench-support")
+))]
 #[must_use]
 pub(crate) struct TraceGuard {
     _private: (),
 }
 
 /// Starts a reference-counted trace scope, independent of the manual setting.
-#[cfg(all(feature = "profiler", any(test, feature = "test-support")))]
+#[cfg(all(
+    feature = "profiler",
+    any(test, feature = "test-support", feature = "bench-support")
+))]
 pub(crate) fn trace_scope() -> TraceGuard {
     let _lifecycle = TRACE_LIFECYCLE_LOCK.lock();
     let incremented = TRACE_STATE.fetch_update(Ordering::AcqRel, Ordering::Acquire, |state| {
@@ -887,7 +893,10 @@ pub(crate) fn trace_scope() -> TraceGuard {
     TraceGuard { _private: () }
 }
 
-#[cfg(all(feature = "profiler", any(test, feature = "test-support")))]
+#[cfg(all(
+    feature = "profiler",
+    any(test, feature = "test-support", feature = "bench-support")
+))]
 impl Drop for TraceGuard {
     fn drop(&mut self) {
         let _lifecycle = TRACE_LIFECYCLE_LOCK.lock();

@@ -447,6 +447,7 @@ enum TerminalPlatformQuit {
     #[default]
     NotRequested,
     Requested,
+    Dispatched,
 }
 
 struct NativeBoundaryTerminalGuard<'a> {
@@ -1706,8 +1707,28 @@ impl AppCell {
     }
 
     pub(super) fn request_terminal_platform_quit(&self) {
+        if self.terminal_platform_quit.get() == TerminalPlatformQuit::NotRequested {
+            self.terminal_platform_quit
+                .set(TerminalPlatformQuit::Requested);
+            if self.native_events.is_terminated() {
+                self.native_events.schedule_post_borrow_convergence();
+            }
+        }
+    }
+
+    fn take_terminal_platform_quit(&self) -> bool {
+        if self.terminal_platform_quit.get() != TerminalPlatformQuit::Requested {
+            return false;
+        }
         self.terminal_platform_quit
-            .set(TerminalPlatformQuit::Requested);
+            .set(TerminalPlatformQuit::Dispatched);
+        true
+    }
+
+    fn finish_late_terminal_platform_quit(&self) {
+        if self.native_events.is_terminated() && self.take_terminal_platform_quit() {
+            self.platform.quit_after_terminal_shutdown();
+        }
     }
 
     fn park_shutdown_fence(&self, mut fence: NativeShutdownFence) {
@@ -2064,10 +2085,7 @@ impl AppCell {
 
         NativeShutdownCompletionAction::Complete {
             terminate_ingress: fence.terminate_ingress,
-            quit_platform: self
-                .terminal_platform_quit
-                .replace(TerminalPlatformQuit::NotRequested)
-                == TerminalPlatformQuit::Requested,
+            quit_platform: self.take_terminal_platform_quit(),
             panic: fence.first_panic.take(),
         }
     }
@@ -3711,6 +3729,9 @@ impl AppCell {
                 self.drain_native_work_pass_with_budget(None, Some(&native_work_budget));
             },
         );
+        self.run_post_borrow_convergence_stage("terminal platform quit", &mut first_panic, || {
+            self.finish_late_terminal_platform_quit()
+        });
         self.run_post_borrow_convergence_stage("App borrow waiters", &mut first_panic, || {
             self.wake_app_borrow_waiters()
         });

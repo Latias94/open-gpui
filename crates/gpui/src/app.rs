@@ -19,8 +19,11 @@ use parking_lot::RwLock;
 use slotmap::SlotMap;
 
 pub use async_context::*;
-#[cfg(any(test, feature = "test-support"))]
-pub use bench_context::{BenchAppContext, BenchWindowContext};
+#[cfg(feature = "bench-support")]
+pub use bench_context::{
+    BenchAppContext, BenchMeasurement, BenchReport, BenchWindowContext, CountingAllocator,
+    MetricReport, bench_platform,
+};
 pub use context::*;
 pub use entity_map::*;
 #[cfg(any(test, feature = "test-support"))]
@@ -60,7 +63,7 @@ use crate::{
 
 mod action_dispatch;
 mod async_context;
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(feature = "bench-support")]
 mod bench_context;
 mod cell;
 mod context;
@@ -1194,10 +1197,16 @@ impl App {
             return;
         };
         app_cell.request_terminal_platform_quit();
+        if self.quitting {
+            return;
+        }
         self.begin_shutdown_with_window_open_barrier(true);
     }
 
     fn begin_shutdown_with_window_open_barrier(&mut self, terminate_ingress: bool) {
+        if self.quitting {
+            return;
+        }
         let Some(app_cell) = self.this.upgrade() else {
             return;
         };

@@ -20,6 +20,7 @@ path = "src/gpui_windows.rs"
 [features]
 default = ["open_gpui/default"]
 test-support = ["open_gpui/test-support"]
+bench-support = ["open_gpui/bench-support"]
 profiler = ["open_gpui/profiler"]
 screen-capture = ["open_gpui/screen-capture", "scap"]
 

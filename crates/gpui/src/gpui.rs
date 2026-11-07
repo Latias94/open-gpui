@@ -10,6 +10,12 @@ pub static GPUI_MANIFEST_DIR: &'static str = env!("CARGO_MANIFEST_DIR");
 #[macro_use]
 mod action;
 mod app;
+#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+mod bench;
+#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+mod seeds;
+#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+pub use seeds::calculate_seeds;
 
 mod arena;
 mod asset_cache;
@@ -40,7 +46,8 @@ pub mod profiler;
     target_os = "linux",
     target_family = "wasm",
     test,
-    feature = "test-support"
+    feature = "test-support",
+    feature = "bench-support"
 ))]
 #[expect(missing_docs)]
 pub mod queue;
@@ -77,6 +84,7 @@ pub mod _ownership_and_data_flow;
 pub mod private {
     pub use anyhow;
     pub use inventory;
+    pub use rand;
     pub use schemars;
     pub use serde;
     pub use serde_json;
@@ -108,29 +116,6 @@ pub use open_gpui_macros::{
     AppContext, IntoElement, Render, VisualContext, bench, property_test, register_action, test,
 };
 
-/// Defines a Criterion benchmark group for benchmarks annotated with [`open_gpui::bench`].
-///
-/// This mirrors `criterion::criterion_group!` so GPUI benchmark files can keep the
-/// same shape as ordinary Criterion benchmarks.
-///
-/// [`open_gpui::bench`]: crate::bench
-#[macro_export]
-macro_rules! bench_group {
-    ($($tokens:tt)*) => {
-        criterion::criterion_group!($($tokens)*);
-    };
-}
-
-/// Defines the entry point for GPUI Criterion benchmark groups.
-///
-/// This mirrors `criterion::criterion_main!` so GPUI benchmark files can keep the
-/// same shape as ordinary Criterion benchmarks.
-#[macro_export]
-macro_rules! bench_main {
-    ($($tokens:tt)*) => {
-        criterion::criterion_main!($($tokens)*);
-    };
-}
 pub use input::*;
 pub use inspector::*;
 pub use interactive::*;
@@ -148,7 +133,8 @@ pub use profiler::*;
     target_os = "linux",
     target_family = "wasm",
     test,
-    feature = "test-support"
+    feature = "test-support",
+    feature = "bench-support"
 ))]
 pub use queue::{PriorityQueueReceiver, PriorityQueueSender};
 pub use scene::*;

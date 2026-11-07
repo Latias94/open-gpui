@@ -11,6 +11,7 @@ publish = false
 [features]
 profiler = ["open_gpui/profiler"]
 wgpu-renderer = ["dep:open_gpui_wgpu"]
+bench-support = ["open_gpui/bench-support", "open_gpui_platform/bench-support", "dep:criterion", "dep:rand"]
 
 [dependencies]
 open_gpui = { package = "open-gpui", path = "../../../crates/gpui", default-features = false }
@@ -18,6 +19,8 @@ open_gpui_platform = { package = "open-gpui-platform", path = "../../../crates/g
 open_gpui_ui_components = { package = "open-gpui-ui-components", path = "../../../crates/ui_components" }
 open_gpui_docking = { package = "open-gpui-docking", path = "../../../crates/gpui_docking" }
 open_gpui_wgpu = { package = "open-gpui-wgpu", path = "../../../crates/gpui_wgpu", default-features = false, optional = true }
+criterion = { version = "0.8.2", optional = true }
+rand = { version = "0.9", optional = true }
 
 # Application-owned pins exercise compatible patch choices outside the library lockfile.
 taffy = "=0.15.0"
@@ -29,3 +32,8 @@ open_gpui_platform = { package = "open-gpui-platform", path = "../../../crates/g
 [target.'cfg(target_os = "macos")'.dependencies]
 open_gpui_platform = { package = "open-gpui-platform", path = "../../../crates/gpui_platform", default-features = false, features = ["font-kit"] }
 core-foundation = "=0.10.1"
+
+[[bench]]
+name = "maintained_harness"
+harness = false
+required-features = ["bench-support"]

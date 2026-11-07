@@ -16,6 +16,8 @@ categories = ["gui", "data-structures"]
 [features]
 default = []
 profiler = ["open_gpui/profiler"]
+bench-support = ["open_gpui/bench-support", "open_gpui_platform/bench-support"]
+test-support = ["open_gpui/test-support"]
 redb-store = []
 loro-crdt = []
 rkyv-snapshot = []
@@ -30,12 +32,14 @@ thiserror.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true
-open_gpui = { workspace = true, features = ["test-support"] }
+open_gpui.workspace = true
+open_gpui_platform.workspace = true
 rstar = "0.13.0"
 
 [[bench]]
 name = "large_canvas"
 harness = false
+required-features = ["bench-support"]
 
 [[bench]]
 name = "spatial_index_strategies"

@@ -2,14 +2,14 @@ mod app_menu;
 mod keyboard;
 mod keystroke;
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
 mod threaded_dispatcher;
 
 #[cfg(all(target_os = "linux", feature = "wayland"))]
 #[expect(missing_docs)]
 pub mod layer_shell;
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
 mod test;
 
 #[cfg(any(test, feature = "test-support"))]
@@ -50,7 +50,7 @@ use anyhow::bail;
 use anyhow::{Context as _, Result};
 use async_task::Runnable;
 use futures::channel::oneshot;
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
 use image::RgbaImage;
 use image::codecs::{gif::GifDecoder, webp::WebPDecoder};
 use image::{DynamicImage, Frame, Rgba};
@@ -104,13 +104,13 @@ impl WindowVisibility {
     }
 }
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
 pub(crate) use test::*;
 
 #[cfg(any(test, feature = "test-support"))]
 pub use test::{TestDispatcher, TestScreenCaptureSource, TestScreenCaptureStream};
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
 pub use threaded_dispatcher::ThreadedDispatcher;
 
 #[cfg(any(test, feature = "test-support"))]
@@ -5732,7 +5732,7 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     /// Inform the adapter of updated window bounds.
     fn a11y_update_window_bounds(&self) {}
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
     fn as_test(&mut self) -> Option<&mut TestWindow> {
         None
     }
@@ -5740,7 +5740,7 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     /// Renders the given scene to a texture and returns the pixel data as an RGBA image.
     /// This does not present the frame to screen - useful for visual testing where we want
     /// to capture what would be rendered without displaying it or requiring the window to be visible.
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
     fn render_to_image(&self, _scene: &Scene) -> Result<RgbaImage> {
         anyhow::bail!("render_to_image not implemented for this platform")
     }
@@ -5763,8 +5763,11 @@ pub enum PlatformWindowPresentOutcome {
 }
 
 /// A renderer for headless windows that can produce real rendered output.
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
 pub trait PlatformHeadlessRenderer {
+    /// Render a scene without copying its pixels back to the CPU.
+    fn render_scene(&mut self, scene: &Scene, size: Size<DevicePixels>) -> Result<()>;
+
     /// Render a scene and return the result as an RGBA image.
     fn render_scene_to_image(
         &mut self,
@@ -5837,7 +5840,7 @@ pub trait PlatformDispatcher: Send + Sync {
         None
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
     fn as_threaded(&self) -> Option<&ThreadedDispatcher> {
         None
     }

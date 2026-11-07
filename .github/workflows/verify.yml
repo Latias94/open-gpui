@@ -17,6 +17,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_BUILD_JOBS: 1
 
 jobs:
   msrv-windows:
@@ -37,7 +38,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Check framework on minimum Rust
-        run: cargo +1.92.0 check --locked -p open-gpui -p open-gpui-wgpu -p open-gpui-windows -p open-gpui-canvas --all-features --all-targets -j 1
+        run: cargo +1.92.0 check --locked -p open-gpui -p open-gpui-wgpu -p open-gpui-windows -p open-gpui-canvas -p open-gpui-platform -p open-gpui-bench-metrics -p open-gpui-macros --all-features --all-targets -j 1
 
       - name: Check independent consumer on minimum Rust
         run: cargo +1.92.0 check --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --all-targets --all-features --target-dir target -j 1
@@ -175,53 +176,68 @@ jobs:
       - name: Test profiler-enabled core contracts
         if: matrix.name == 'windows'
         shell: pwsh
-        run: cargo nextest run --locked -p open-gpui --all-features --lib -E 'test(profiler) | test(draw_unwind) | test(frame_scheduling) | test(frame_pump) | test(power_mode) | test(view::) | test(cache_dependency_tests) | test(elements::list::) | test(list_overshoot) | test(measured_layout_tests) | test(window::a11y::) | test(cached_paint_atlas_tests::) | test(focus_generation_tests) | test(keyboard_activation)' -j 1 --test-threads=1 --no-fail-fast --no-tests fail
+        run: cargo nextest run --locked -p open-gpui --all-features --lib -E 'test(profiler) | test(draw_unwind) | test(frame_scheduling) | test(frame_pump) | test(power_mode) | test(view::) | test(cache_dependency_tests) | test(elements::list::) | test(list_overshoot) | test(measured_layout_tests) | test(window::a11y::) | test(cached_paint_atlas_tests::) | test(focus_generation_tests) | test(keyboard_activation)' --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Test instrumentation-disabled core contracts
         if: matrix.name == 'windows'
         shell: pwsh
-        run: cargo nextest run --locked -p open-gpui --no-default-features --features test-support --lib --test frame_scheduling --test power_cadence --test view_components --test rems --test accessibility_tree --test composite_focus -E 'test(profiler) | test(draw_unwind) | test(frame_scheduling) | test(frame_pump) | test(power_mode) | test(view::) | test(cache_dependency_tests) | test(elements::list::) | test(list_overshoot) | test(measured_layout_tests) | test(window::a11y::) | test(cached_paint_atlas_tests::) | test(focus_generation_tests) | test(keyboard_activation) | binary(frame_scheduling) | binary(power_cadence) | binary(view_components) | binary(rems) | binary(accessibility_tree) | binary(composite_focus)' -j 1 --test-threads=1 --no-fail-fast --no-tests fail
+        run: cargo nextest run --locked -p open-gpui --no-default-features --features test-support --lib --test frame_scheduling --test power_cadence --test view_components --test rems --test accessibility_tree --test composite_focus -E 'test(profiler) | test(draw_unwind) | test(frame_scheduling) | test(frame_pump) | test(power_mode) | test(view::) | test(cache_dependency_tests) | test(elements::list::) | test(list_overshoot) | test(measured_layout_tests) | test(window::a11y::) | test(cached_paint_atlas_tests::) | test(focus_generation_tests) | test(keyboard_activation) | binary(frame_scheduling) | binary(power_cadence) | binary(view_components) | binary(rems) | binary(accessibility_tree) | binary(composite_focus)' --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Test lifecycle, journal and view public surfaces
         if: matrix.name == 'windows'
         shell: pwsh
-        run: cargo nextest run --locked -p open-gpui --all-features --test lifecycle --test foreground_journal --test frame_signals --test frame_scheduling --test refresh_measurements --test power_cadence --test view_components --test rems --test accessibility_tree --test composite_focus -j 1 --test-threads=1 --no-fail-fast --no-tests fail
+        run: cargo nextest run --locked -p open-gpui --all-features --test lifecycle --test foreground_journal --test frame_signals --test frame_scheduling --test refresh_measurements --test power_cadence --test view_components --test rems --test accessibility_tree --test composite_focus --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Test profiler-enabled independent consumer
         if: matrix.name == 'windows'
         shell: pwsh
-        run: cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --all-features --test profiler --test lifecycle --test foreground_journal --test frame_signals --test frame_scheduling --test refresh_measurements --test power_cadence --test view_components --test rems --test measured_text --test accessibility_tree --test composite_focus --target-dir target -j 1 --test-threads=1 --no-fail-fast --no-tests fail
+        run: cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --all-features --test profiler --test lifecycle --test foreground_journal --test frame_signals --test frame_scheduling --test refresh_measurements --test power_cadence --test view_components --test rems --test measured_text --test accessibility_tree --test composite_focus --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Test instrumentation-disabled independent consumer
         if: matrix.name == 'windows'
         shell: pwsh
-        run: cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test profiler --test lifecycle --test foreground_journal --test frame_signals --test frame_scheduling --test refresh_measurements --test power_cadence --test view_components --test rems --test measured_text --test accessibility_tree --test composite_focus --target-dir target -j 1 --test-threads=1 --no-fail-fast --no-tests fail
+        run: cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test profiler --test lifecycle --test foreground_journal --test frame_signals --test frame_scheduling --test refresh_measurements --test power_cadence --test view_components --test rems --test measured_text --test accessibility_tree --test composite_focus --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Test accessibility configuration and initial activation
         if: matrix.name == 'windows'
         shell: pwsh
         run: |
-          cargo nextest run --locked -p open-gpui --all-features --lib --test accessibility_configuration -E 'test(a11y_activation_tests) | test(configuration_tests) | test(shutdown_fence_refuses_activation) | binary(accessibility_configuration)' -j 1 --test-threads=1 --no-fail-fast --no-tests fail
+          cargo nextest run --locked -p open-gpui --all-features --lib --test accessibility_configuration -E 'test(a11y_activation_tests) | test(configuration_tests) | test(shutdown_fence_refuses_activation) | binary(accessibility_configuration)' --test-threads=1 --no-fail-fast --no-tests fail
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cargo nextest run --locked -p open-gpui --no-default-features --features test-support --lib --test accessibility_configuration -E 'test(a11y_activation_tests) | test(configuration_tests) | test(shutdown_fence_refuses_activation) | binary(accessibility_configuration)' -j 1 --test-threads=1 --no-fail-fast --no-tests fail
+          cargo nextest run --locked -p open-gpui --no-default-features --features test-support --lib --test accessibility_configuration -E 'test(a11y_activation_tests) | test(configuration_tests) | test(shutdown_fence_refuses_activation) | binary(accessibility_configuration)' --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Test independent accessibility configuration
         if: matrix.name == 'windows'
         shell: pwsh
         run: |
-          cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --all-features --test accessibility_configuration --target-dir target -j 1 --test-threads=1 --no-fail-fast --no-tests fail
+          cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --all-features --test accessibility_configuration --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test accessibility_configuration --target-dir target -j 1 --test-threads=1 --no-fail-fast --no-tests fail
+          cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test accessibility_configuration --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Run native WGPU package tests
         if: matrix.name == 'windows'
         shell: pwsh
-        run: cargo nextest run -p open-gpui-wgpu --features font-kit --locked --no-fail-fast
+        run: cargo nextest run -p open-gpui-wgpu --features font-kit,test-support --locked --test-threads=1 --no-fail-fast
 
       - name: Test threaded execution and queue closure
         if: matrix.name == 'windows'
         shell: pwsh
         run: |
-          cargo nextest run --locked -p open-gpui --all-features --lib --test threaded_dispatcher -E 'test(queue::) | test(platform::threaded_dispatcher::) | test(platform_scheduler::) | binary(threaded_dispatcher)' -j 1 --test-threads=1 --no-fail-fast --no-tests fail
+          cargo nextest run --locked -p open-gpui --all-features --lib --test threaded_dispatcher -E 'test(queue::) | test(platform::threaded_dispatcher::) | test(platform_scheduler::) | binary(threaded_dispatcher)' --test-threads=1 --no-fail-fast --no-tests fail
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cargo nextest run --locked -p open-gpui --no-default-features --features test-support --lib --test threaded_dispatcher -E 'test(queue::) | test(platform::threaded_dispatcher::) | test(platform_scheduler::) | binary(threaded_dispatcher)' -j 1 --test-threads=1 --no-fail-fast --no-tests fail
+          cargo nextest run --locked -p open-gpui --no-default-features --features test-support --lib --test threaded_dispatcher -E 'test(queue::) | test(platform::threaded_dispatcher::) | test(platform_scheduler::) | binary(threaded_dispatcher)' --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Test complete benchmark context and measurements
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: |
+          cargo nextest run --locked -p open-gpui-bench-metrics -p open-gpui-macros --all-features --lib --tests --test-threads=1 --no-fail-fast --no-tests fail
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo nextest run --locked -p open-gpui --all-features --lib --test benchmark_harness -E 'test(app::bench_context::) | test(seeds::) | binary(benchmark_harness)' --test-threads=1 --no-fail-fast --no-tests fail
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo nextest run --locked -p open-gpui-canvas --features test-support --lib --tests --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Run independent benchmark without test support
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: cargo bench --locked --profile dev --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --features bench-support --bench maintained_harness --target-dir target -- --noplot

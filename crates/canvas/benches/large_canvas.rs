@@ -1,7 +1,7 @@
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion};
 use open_gpui::{
-    BenchAppContext, Bounds, Context, IntoElement, Render, Styled, VisualContext, Window, point,
-    px, size,
+    BenchAppContext, BenchMeasurement, BenchReport, Bounds, Context, IntoElement, Render, Styled,
+    VisualContext, Window, bench_platform, point, px, size,
 };
 use open_gpui_canvas::adapter::{
     CanvasPaintModel, CanvasPaintOptions, CanvasPaintTheme, canvas_view, collect_visible_records,
@@ -12,6 +12,7 @@ use open_gpui_canvas::{
     CanvasNode, CanvasNodeKind, CanvasNodeRenderPolicy, CanvasTransaction, CanvasViewport,
     DocumentCommand,
 };
+use std::hint::black_box;
 
 const LABELED_NODE_KIND: &str = "benchmark-labeled-node";
 const GRID_COLUMNS: usize = 200;
@@ -35,7 +36,7 @@ impl Render for LabeledCanvasBenchmarkView {
     }
 }
 
-fn large_canvas_benches(c: &mut Criterion) {
+fn large_canvas_benches(c: &mut Criterion<BenchMeasurement>) {
     let document = build_grid_document(GRID_COLUMNS, GRID_ROWS);
     let index = SpatialIndex::rebuild(&document);
     let node_count = document.node_count();
@@ -79,6 +80,7 @@ fn large_canvas_benches(c: &mut Criterion) {
         b.iter(|| black_box(CanvasPaintModel::from(black_box(&editor))));
     });
 
+    let report = BenchReport::default();
     c.bench_function("paint_frame_render_labels", |b| {
         let model = CanvasPaintModel::new_with_kind_registry(
             labeled_grid_document(&document),
@@ -91,7 +93,15 @@ fn large_canvas_benches(c: &mut Criterion) {
             ..CanvasPaintOptions::default()
         };
         let theme = CanvasPaintTheme::default();
-        let mut app = BenchAppContext::new(Some("paint_frame_render_labels"));
+        let mut app = BenchAppContext::new_with_platform_and_report(
+            bench_platform(
+                Some(Box::new(open_gpui_platform::current_headless_renderer)),
+                open_gpui_platform::bench_text_system(),
+            ),
+            Some("paint_frame_render_labels"),
+            b,
+            report.clone(),
+        );
         let mut window = app.add_empty_window();
         let view = window
             .replace_root_view(move |_, _| LabeledCanvasBenchmarkView {
@@ -101,28 +111,13 @@ fn large_canvas_benches(c: &mut Criterion) {
             })
             .expect("benchmark root view should remain live");
 
-        let measure = |_: &mut BenchAppContext| {
-            b.iter(|| {
-                window
-                    .update_window_entity(&view, |_, _, cx| cx.notify())
-                    .expect("benchmark root view should remain live");
-                let revision = window.update(|window, cx| {
-                    window.draw(cx).clear(cx);
-                    window.rendered_frame_revision()
-                });
-                black_box(revision);
-            });
-        };
-        #[cfg(feature = "profiler")]
-        black_box(app.profile(measure));
-        #[cfg(not(feature = "profiler"))]
-        {
-            let mut measure = measure;
-            measure(&mut app);
-        }
-
+        app.settle();
+        app.bench_renderer(view.clone(), |_, _, cx| cx.notify());
+        black_box(window.update(|window, _| window.rendered_frame_revision()));
+        drop((window, view));
         app.teardown();
     });
+    report.print("paint_frame_render_labels");
 }
 
 struct BenchmarkLabelNodeKind;
@@ -206,5 +201,5 @@ fn edge_id(
     format!("edge-{source_row}-{source_column}-{target_row}-{target_column}")
 }
 
-criterion_group!(benches, large_canvas_benches);
-criterion_main!(benches);
+open_gpui::bench_group!(benches, large_canvas_benches);
+open_gpui::bench_main!(benches);

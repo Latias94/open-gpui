@@ -1,0 +1,11 @@
+Open GPUI Bench Metrics
+
+Portions derived from the Apache-2.0 bench_metrics package in the Zed repository:
+  Copyright Zed Industries, Inc.
+  Licensed under the Apache License, Version 2.0.
+
+Open GPUI modifications:
+  Copyright 2026 Mingzhen Zhuang and Open GPUI contributors.
+  Licensed under the Apache License, Version 2.0.
+
+Third-party dependencies retain their own copyright notices and license terms.
