@@ -419,17 +419,18 @@ dispositions. None of these findings adds runtime qualification or changes the f
 | `10628c3d2c` | Complete upward List normalization implemented; the old negative-offset branch is removed. | Existing PendingAutoscroll/admitted commit retains source and atlas rejection. Original/variable/zero-height/start-clamp controls and exact public recovery qualify the adaptation. |
 | `362035d52a` | Official parenthesized-position regression imported; runtime parsing already present. | Existing `/root/Test (3)` path/row behavior is preserved. Product file-existence fallback stays outside util. |
 | `c7ad65e468` | Complete source-order shared line queries and measurement-only indexed lookup implemented. | Owner, actual software paint and independent signature consumers preserve existing text/candidate lifetime and clipping. |
-| `1722fe63bc` | Parameterized benchmark macros, real text-system injection and threaded dispatcher/timer teardown are absent. | Extend the existing benchmark/report successor, not another harness. Reconcile phase 2 `297c4a4d78`, ThreadedDispatcher `8886dcb0d4`, existing `1f7eae7fb7` support and `3135cdf8dc` platform text-system caching against final target. |
+| `1722fe63bc` | Parameterized benchmark macros, real text-system injection and benchmark-context timer teardown remain absent. The concrete dispatcher prerequisite is implemented below. | Extend the existing benchmark/report successor, not another harness. Reconcile phase 2 `297c4a4d78`, existing `1f7eae7fb7` support and `3135cdf8dc` platform text-system caching against final target; reuse the complete dispatcher. |
 
 The benchmark owner includes inputs/input_name/group/sample_size validation and Criterion
 bench_with_input, thread-local dispatcher reuse with per-context platform creation, timer release
 outside its lock followed by waking/draining, bounded cancel/drain after App/foreground release,
 and bounds evaluation before mutable App access. Macro parameters alone do not close that owner.
 
-The November 8 read-only follow-up maps the final target beyond those introductions. Existing
-`BenchAppContext` and virtual `TestDispatcher` do not supply the missing official concrete
-`ThreadedDispatcher`, native text-system injection/cache, scheduled-frame driving or isolated
-per-routine platforms. `1f7eae7fb7`'s blocked HTTP/trace foundations are present, but the independent
+The November 8 follow-up maps the final target beyond those introductions. The concrete official
+`ThreadedDispatcher` is now implemented by the prerequisite below. Existing `BenchAppContext`
+still uses the virtual `TestDispatcher`; native text-system injection/cache, scheduled-frame
+driving and isolated per-routine platforms remain missing. `1f7eae7fb7`'s blocked HTTP/trace
+foundations are present, but the independent
 `bench-support` feature and benchmark-only prompt cancellation remain missing. `2440236055` adds
 seeded benchmark macros and shared seed calculation; the current private test helper is not
 equivalent when `SEED` is combined with multiple iterations. The final macro also depends on
@@ -437,13 +438,29 @@ equivalent when `SEED` is combined with multiple iterations. The final macro als
 
 `3135cdf8dc` also owns queue/dispatcher teardown fixes: final-sender drop must wake every waiting
 receiver, receivers must recheck closure after waking, and the Linux timer loop must exit on a
-closed channel. The current `queue.rs` and `gpui_linux/src/linux/dispatcher.rs` do not yet implement
-that complete behavior. Existing text and glyph caches do not replace these lifecycle fixes.
+closed channel. The prerequisite below now implements these fixes in the existing queue and
+Linux dispatcher. Its qualification keeps Linux active execution separate from source review.
 Headless benchmark rendering also needs the official no-readback render operation and fallible
 optional renderer factory; TestWindow draw counts and simulated outcomes are not actual GPU
-submission. These findings join the existing complete benchmark/report owner and have source
-evidence only. Full report/allocator semantics, real headless GPU execution and downstream device
-reuse/loss policy retain their own implementation and qualification requirements.
+submission. The remaining harness/render findings join the existing complete benchmark/report
+owner and have source evidence only. Full report/allocator semantics, real headless GPU execution
+and downstream device reuse/loss policy retain their own implementation and qualification requirements.
+
+The [threaded-dispatcher prerequisite](../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#threaded-dispatcher-and-queue-closure-prerequisite)
+starts from `1670c373e34751ac520237b7d04a480b06ab7b4a` and implements the complete
+concrete dispatcher and final-target readiness/cancellation hooks alongside queue/Linux closure,
+with public executor execution and existing admission/profiler contracts. Independent benchmark
+features, context replacement, real font/GPU injection and complete measurement/report consumers
+remain queued; the current test-support exposure does not close them.
+
+Local implementation `018fbdc5f708d91f0ae16a7fb43ac04280ebb680` and its
+[qualification](../verification.md#threaded-dispatcher-and-queue-closure) record complete
+Core/public/WGPU/Windows 1,810, components/docking/Canvas 2,966, disabled affected 35 and
+independent enabled/disabled 62/47 passing. Four original interactive skips remain. Locked
+checks, actual Windows Rust 1.92, correctness Clippy, stable/nightly production wasm,
+formatting and static gates pass. The Linux fix/test is source-reviewed without active Linux
+compilation or execution. Ordinary dependencies retain their prior feature graph and lockfile;
+the old virtual benchmark context still requires its complete replacement.
 
 The source-only audit retains the explicit `2882636c06`/`b5c2d8a13f` revert pair's rejected
 disposition. It is a bounded correction, not a claim that all target-to-fork omissions are exhausted.

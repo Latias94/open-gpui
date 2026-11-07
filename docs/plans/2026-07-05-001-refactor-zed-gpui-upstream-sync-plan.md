@@ -1391,7 +1391,55 @@ until its supported mechanisms and real consumers pass. Report aggregation, fore
 consumption, allocation metrics and debug overlay keep explicit acceptance; macro expansion or
 dispatcher compilation alone does not establish their behavior, numerical budgets or full refresh.
 
+#### Threaded Dispatcher And Queue Closure Prerequisite
+
+Start at `1670c373e34751ac520237b7d04a480b06ab7b4a` against the unchanged fixed target.
+Import the complete concrete dispatcher from `8886dcb0d4` and its final-target follow-ups,
+including `1722fe63bc` timer cancellation, `38df25d54c` readiness checks between polls,
+`82878540b5` count-bounded ready turns and `1a89a92e7e` frame-service hooks. Preserve all
+official worker/main, timer, cancellation, external-wake and requeued-work regressions.
+The queue and Linux timer-loop closure correction from `3135cdf8dc` is a dependency of this
+owner rather than an optional benchmark optimization. Reproduce the original blocked-receiver
+failure before fixing the existing queue; queued values must remain consumable after closure.
+
+Use the existing `PlatformDispatcher` boundary and executors, retaining the fork's admission
+result and scoped task timing. Background/timer polls must not consume another foreground
+task's queue count. Preserve official worker sizing, priority and process-lifetime timer-thread
+semantics rather than introducing a new scheduler or teardown policy. Expose the concrete
+dispatcher through the current test-support gate; the independent benchmark-feature split
+and replacement of the old virtual benchmark context remain subsequent work in the complete
+owner above. Ensure queue compilation and reexports follow that support gate on every supported
+platform, including the fork's existing scheduler tests on macOS.
+
+Add an actual crate-external executor consumer covering handoff, thread-affine state release,
+real timers and cancellation. Test enabled and disabled instrumentation, relevant queue/executor/
+journal owners and the original complete consumers. Native backend scheduling is unchanged;
+Linux active-source compilation/execution requires its own platform evidence. Ordinary independent
+dependencies must retain their existing feature graphs and lockfiles. No real benchmark context,
+font injection, renderer submission, report aggregation, numerical budget or full-refresh claim
+follows from this prerequisite.
+
+Implemented locally at `018fbdc5f708d91f0ae16a7fb43ac04280ebb680`. The
+[qualification](../verification.md#threaded-dispatcher-and-queue-closure) retains the original
+blocked-receiver failure, test-channel correction and reviewed cancellation-fixture race before
+their fixes. Focused 182, complete Core/public/WGPU/Windows 1,810, components/docking/Canvas
+2,966, disabled affected 35 and independent enabled/disabled 62/47 pass. Four preexisting
+interactive Windows cases remain skipped. Actual public handoff, timer, cancellation and Rc/
+Task release controls execute through existing executors. Locked checks, affected correctness
+Clippy, actual Windows Rust 1.92, stable and existing nightly production wasm, formatting and
+static gates pass. Five threads close. Linux source is reviewed without active Linux execution;
+benchmark feature/context/report and the remaining owners above retain their complete acceptance.
+
 ## Maintained Baseline Before Engine Adaptation
+
+The [threaded/queue prerequisite](../verification.md#threaded-dispatcher-and-queue-closure)
+records local implementation `018fbdc5f708d91f0ae16a7fb43ac04280ebb680`, finishing on
+November 8. Complete official concrete dispatch, ready turns and timer/queue closure reuse
+existing platform/executor/profiler owners. Its complete scoped consumers and compiler gates
+pass; Linux active execution and other foreign-platform gates remain separate. Continue
+benchmark-feature separation and the complete context/real-text/render/measurement/report owner,
+then conditional hot reload. Full refresh, numerical budgets, canonical docking and Nara GPU/View
+adoption remain open; no engine UI default follows.
 
 The [property/configuration/initial-tree qualification](../verification.md#accessibility-properties-configuration-and-initial-trees)
 records local implementation `d9608b1a3174f17df270d6b92894539ec32654a8`, finishing on

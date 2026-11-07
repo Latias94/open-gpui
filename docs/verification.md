@@ -4023,6 +4023,103 @@ This unit does not qualify real AT/UIA consumption, OS-generated input, foreign 
 execution or compositor scanout. Earlier failures and the undiagnosed extra mouse transition
 remain recorded alongside the final passing results.
 
+## Threaded Dispatcher And Queue Closure
+
+The November 8 benchmark prerequisite starts at
+`1670c373e34751ac520237b7d04a480b06ab7b4a`, against unchanged fixed Zed
+`635026fabc38440fce5e1767d125026a17b12012`. Official `3135cdf8dc` supplies priority-queue
+and Linux timer-loop closure; the concrete dispatcher follows `8886dcb0d4` and the fixed
+target's cancellation/readiness/frame-service follow-ups. Existing PlatformDispatcher,
+executors, priority queue and scoped profiler remain the owners. No benchmark context, font
+injection, renderer submission or complete report behavior is qualified by this prerequisite.
+Local implementation is `018fbdc5f708d91f0ae16a7fb43ac04280ebb680`.
+
+The original blocked-receiver regression fails on the old implementation: 0/1
+(`782e539e-c2b2-4df1-b947-36025a4061e4`). After the final sender is dropped, two waiting
+receivers do not complete within the original five-second timeout. The official fix synchronizes
+with the queue lock before waking all receivers and rechecks sender closure after every wake;
+it preserves already queued values and existing priority. The corrected test and complete
+dispatcher/public/runtime qualification follow separately.
+
+The all-feature production Core check passes. The first affected test build stops at an
+untyped disconnected-observer channel in the new panic test (`E0282`); annotating its unit
+message type corrects the fixture without changing production code. The corrected focused
+cohort follows. Existing import-boundary/public-API scans, document links and changed-workflow
+YAML parsing pass at this checkpoint. Linux source and new test are independently reviewed,
+without claiming active Linux compilation or execution.
+
+Independent review identifies a new cancellation-test race before execution: a timer thread can
+legitimately acquire the lock before a destructor's one-shot `try_lock`, whose assertion can
+then abort through async-task's destructor handling. The owned build is stopped before execution.
+The corrected fixture uses bounded lock acquisition and reports its result from the test body,
+preserving rearm and the original 1/1/0 cancellation counts. Panic coverage now proves an actual
+poll, and nested unwind retains an independently queued sentinel to detect premature Idle.
+Production dispatcher code is unchanged by these corrections.
+
+The corrected all-feature queue/dispatcher/executor/scheduler/profiler and public-runtime cohort
+passes 182/182 (`10acfe9c-8ebd-4f9e-9876-29199e7205cb`), filtering 1,239 unrelated cases.
+The original blocked-receiver regression and
+all eight upstream dispatcher scenarios pass alongside two real crate-external execution
+trajectories. Subsequent source review aligns queue reexports with the same support gate as
+its module, including existing fork scheduler tests on macOS. Windows behavior is unchanged;
+complete final-source and disabled/compiler qualification follow separately.
+
+Bounded independent re-review closes the cancellation-fixture race and confirms the strengthened
+panic/queued-sentinel controls. Queue/Linux source and core support gates have a separate
+correctness review. All three implementation and two review threads are closed. Reviews remain
+source evidence alongside the separately executed focused suite and later complete gates.
+
+The complete final-source all-feature Core/public/WGPU/Windows cohort passes 1,810/1,810
+(`ef3c4394-51a1-47c5-8ffe-f5edaaec5c25`), with four preexisting interactive skips. The
+new threaded/public controls execute alongside original native submitted-frame, queued command,
+input, cache, text, power and exact-retirement trajectories. This final-source cohort passes
+without an isolated runtime retry. Component, disabled and ordinary-consumer gates follow.
+After this result, the remaining serial sequence is adjusted at its stage boundary: the
+independent fixture is a bin package and must select `--tests` without `--lib`. No fixture
+command using the incorrect library selection is executed; no product source changes follow.
+
+The complete all-feature UI core/components/docking/Canvas library and integration cohort
+passes 2,966/2,966 (`228767d8-9fde-4bd3-973a-d8924f8129e5`), with no skips. Existing
+component semantics, virtualized controls, final-tree publication, floating/cross-window
+docking and Canvas workflows execute against the final shared Core source.
+
+The profiler-disabled affected queue/dispatcher/executor/scheduler and public lifecycle cohort
+passes 35/35 (`c3608cfb-ae75-4e1d-b9f7-0d87f68ad55c`), filtering 1,210 unrelated cases.
+Both public execution trajectories pass without instrumentation. The disabled poll control
+also verifies that main, worker and timer threads register no timing records and the scoped
+guard remains zero-sized. This is the affected disabled selection, not an entire disabled
+native or benchmark/report qualification.
+
+The independently locked ordinary dependency tests pass 62/62 with all features
+(`250f2812-5ac0-4ab9-b568-e0d7bec51e05`) and 47/47 without default features
+(`26ef07ca-5692-4569-af92-ed666e4c3ff6`), with no skips. This unchanged fixture uses no
+test-support or engine-private dependency. It includes executed value/layout controls and
+explicitly type-only interfaces; those cases are not promoted to native, input or AT evidence.
+The separate new test-support integration target supplies actual threaded handoff, timer,
+cancellation, Task/Rc release and thread-affinity execution.
+
+Locked workspace all-target and independently locked consumer all-target/all-feature checks
+pass on Rust 1.95.0. Affected Core/Windows correctness Clippy passes. Actual Windows Rust
+1.92.0 Core/Windows and independent consumer all-target/all-feature checks pass. Stable
+production wasm Core/WGPU/Web checks pass with instrumentation off and on. The existing
+nightly shared-memory configuration also passes using Rust 1.98.0-nightly
+(`57d06900f`, May 27), build-std, atomics and the existing imported-memory flags; no
+`RUSTC_BOOTSTRAP` workaround is used. These are production compilation results, not browser
+or multithreaded runtime execution.
+
+Root/independent formatting, import-boundary, public-API-tier, document-link and release-document
+scans pass. The changed workflow parses as YAML and retains both feature modes; remote CI is
+not executed. No dependency, lockfile or compiler-floor change follows. All five implementation/
+review threads are closed, no owned Cargo remains active and no remote publication occurs.
+
+The scoped prerequisite retains official process-lifetime timer reuse and existing admission/
+backlog limits. Linux source and lifecycle test remain unqualified by active Linux compilation
+or execution; macOS native and browser/test-support execution also retain their own gates.
+Benchmark-feature separation, the old virtual context's replacement, real font/render injection,
+per-routine platform isolation, measurement/report/allocator consumers and numerical costs remain
+in the complete benchmark owner. Full refresh, hot reload, canonical docking U4-U9 and Nara
+renderer/View adoption remain open. This unit changes no engine UI default or R11/R12 status.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:

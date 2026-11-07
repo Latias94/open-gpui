@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-08T04:32:45+08:00
+timestamp: 2026-11-08T05:54:54+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -516,6 +516,24 @@ verified_by:
   refresh, hot reload, numerical budgets, canonical docking U4-U9 and Nara adoption remain open.
   No owned Cargo remains active and no remote publication occurs.
 
+- The complete benchmark owner's threaded-dispatcher/queue-closure prerequisite is implemented
+  locally at `018fbdc5f708d91f0ae16a7fb43ac04280ebb680`, after
+  `1670c373e34751ac520237b7d04a480b06ab7b4a`. The complete official
+  concrete dispatcher uses existing platform/executor/queue/profiler owners; fork changes retain
+  admission results, scoped timing and thread-affine refusal. The original blocked-receiver test
+  fails before the official closure fix. Corrected queue/dispatcher/executor/profiler and actual
+  public consumers pass 182/182 after an untyped-channel correction and reviewed fixture-race
+  fixes. Complete Core/public/WGPU/Windows 1,810, components/docking/Canvas 2,966, disabled
+  affected 35 and independent enabled/disabled 62/47 pass; four original interactive skips remain.
+  Locked checks, affected correctness Clippy, actual Windows Rust 1.92, stable production wasm
+  in both instrumentation modes and existing nightly shared-memory compilation pass. Root/
+  independent formatting, existing static scans and workflow YAML parsing pass. All five
+  implementation/review threads are closed. Linux source is reviewed but active Linux
+  compilation/runtime remains unqualified. Current exposure uses test-support;
+  benchmark-feature separation, context replacement, real text/render injection, report and
+  numerical budgets remain in the complete successor. No owned Cargo remains active and no
+  remote publication occurs. Full refresh, hot reload, docking and Nara adoption remain open.
+
 # Historical Main Integration
 
 The previous snapshot recorded `df6ae2f` on July 9. The following integration summary retains that
@@ -543,8 +561,8 @@ historical scope and is not current branch or CI qualification.
 
 - Continue the
   [complete benchmark harness and report owner](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#complete-benchmark-harness-and-report-successor).
-  Its November 8 source audit queues independent benchmark features, queue/timer closure,
-  ThreadedDispatcher, real text-system injection/cache, isolated platforms, context teardown,
+  Reuse the qualified concrete dispatcher and queue-closure prerequisite. Continue independent
+  benchmark features, real text-system injection/cache, isolated platforms, context teardown,
   scheduled frames, measurement interfaces, parameterized/seeded macros and actual consumers.
   Existing virtual contexts and Noop text do not establish equivalent benchmark execution.
 - Apply the maintenance skill's official-baseline rule through existing owners. Preserve
