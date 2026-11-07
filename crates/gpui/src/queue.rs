@@ -80,12 +80,10 @@ impl<T> PriorityQueueState<T> {
     fn recv<'a>(&'a self) -> Result<parking_lot::MutexGuard<'a, PriorityQueues<T>>, RecvError> {
         let mut queues = self.queues.lock();
 
-        let sender_count = self.sender_count.load(std::sync::atomic::Ordering::Relaxed);
-        if queues.is_empty() && sender_count == 0 {
-            return Err(crate::queue::RecvError);
-        }
-
         while queues.is_empty() {
+            if self.sender_count.load(std::sync::atomic::Ordering::Acquire) == 0 {
+                return Err(crate::queue::RecvError);
+            }
             self.condvar.wait(&mut queues);
         }
 
@@ -155,9 +153,14 @@ impl<T> PriorityQueueSender<T> {
 
 impl<T> Drop for PriorityQueueSender<T> {
     fn drop(&mut self) {
-        self.state
+        let previous = self
+            .state
             .sender_count
             .fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+        if previous == 1 {
+            drop(self.state.queues.lock());
+            self.state.condvar.notify_all();
+        }
     }
 }
 
@@ -218,6 +221,17 @@ impl<T> PriorityQueueReceiver<T> {
         };
 
         (sender, receiver)
+    }
+
+    /// Returns whether the queue currently contains no elements.
+    pub fn is_empty(&self) -> bool {
+        self.state.queues.lock().is_empty()
+    }
+
+    /// Returns the number of queued elements across all priorities.
+    pub(crate) fn len(&self) -> usize {
+        let queues = self.state.queues.lock();
+        queues.high_priority.len() + queues.medium_priority.len() + queues.low_priority.len()
     }
 
     /// Tries to pop one element from the priority queue without blocking.
@@ -391,6 +405,73 @@ mod tests {
     use open_gpui_collections::HashSet;
 
     use super::*;
+
+    #[test]
+    fn blocked_receivers_end_when_the_sender_drops() {
+        let (sender, receiver) = PriorityQueueReceiver::<u32>::new();
+        let (done_sender, done_receiver) = std::sync::mpsc::channel();
+        let workers = (0..2)
+            .map(|_| {
+                let receiver = receiver.clone();
+                let done_sender = done_sender.clone();
+                std::thread::spawn(move || {
+                    let received: Vec<u32> = receiver.iter().collect();
+                    done_sender.send(received).ok();
+                })
+            })
+            .collect::<Vec<_>>();
+        drop(receiver);
+
+        sender.send(Priority::Medium, 7).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        assert!(
+            done_receiver.try_recv().is_err(),
+            "receivers keep waiting while the sender is alive"
+        );
+
+        drop(sender);
+        let mut received = Vec::new();
+        for _ in 0..2 {
+            received.extend(
+                done_receiver
+                    .recv_timeout(std::time::Duration::from_secs(5))
+                    .expect("a waiting receiver should end once the sender is dropped"),
+            );
+        }
+        assert_eq!(received, [7]);
+        for worker in workers {
+            worker.join().expect("worker should exit cleanly");
+        }
+    }
+
+    #[test]
+    fn closure_preserves_queued_values_and_reports_empty_after_draining() {
+        let (sender, mut receiver) = PriorityQueueReceiver::new();
+        assert!(receiver.is_empty());
+        assert_eq!(receiver.len(), 0);
+        for (priority, value) in [
+            (Priority::High, 3),
+            (Priority::Medium, 2),
+            (Priority::Low, 1),
+        ] {
+            sender.send(priority, value).unwrap();
+        }
+        drop(sender);
+
+        assert!(!receiver.is_empty());
+        assert_eq!(receiver.len(), 3);
+        let mut values = Vec::new();
+        while let Some(value) = receiver.try_pop().unwrap_or(None) {
+            values.push(value);
+            assert_eq!(receiver.len(), 3 - values.len());
+        }
+        values.sort_unstable();
+        assert_eq!(values, [1, 2, 3]);
+        assert!(receiver.is_empty());
+        assert!(receiver.pop().is_err());
+        assert!(receiver.try_pop().is_err());
+        assert!(receiver.spin_try_pop().is_err());
+    }
 
     #[test]
     fn all_tasks_get_yielded() {

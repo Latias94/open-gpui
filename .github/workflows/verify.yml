@@ -217,3 +217,11 @@ jobs:
         if: matrix.name == 'windows'
         shell: pwsh
         run: cargo nextest run -p open-gpui-wgpu --features font-kit --locked --no-fail-fast
+
+      - name: Test threaded execution and queue closure
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: |
+          cargo nextest run --locked -p open-gpui --all-features --lib --test threaded_dispatcher -E 'test(queue::) | test(platform::threaded_dispatcher::) | test(platform_scheduler::) | binary(threaded_dispatcher)' -j 1 --test-threads=1 --no-fail-fast --no-tests fail
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo nextest run --locked -p open-gpui --no-default-features --features test-support --lib --test threaded_dispatcher -E 'test(queue::) | test(platform::threaded_dispatcher::) | test(platform_scheduler::) | binary(threaded_dispatcher)' -j 1 --test-threads=1 --no-fail-fast --no-tests fail

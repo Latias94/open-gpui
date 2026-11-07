@@ -74,6 +74,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Changed
 
+- The priority queue wakes every blocked receiver when its final sender is released, while preserving queued values. Test-support consumers can use the upstream `ThreadedDispatcher` for real worker concurrency, real-time timers and explicit main-thread pumping.
 - Accessibility exposes shortcut/numeric-step/author-ID builders and a synchronous creation-title root on activation before the complete sequenced tree. `TestAppContext::disable_accessibility` configures subsequent windows. Explicit raw inspection includes published author IDs.
 - Composite controls can report descendant accessibility focus with `aria_active_descendant` while retaining real keyboard focus on their container. Final semantic ancestry and source validity govern admission. Keyboard clicks require an uninterrupted Enter/Space press and release without focus movement; repeated same-focus claims remain valid. Tab-group containers enter their own group, and missing focus-node diagnostics are deduplicated at accepted publication.
 - Custom elements and stateful divs can append synthetic accessibility children and update parent semantics after prepaint. `Window::debug_a11y_tree_json` exposes the complete last accepted published tree for explicit developer inspection, including raw text and window titles; debug builds add element/view/source provenance. Activation replacement and window shutdown clear the snapshot. Automatic diagnostic exports remain redacted.

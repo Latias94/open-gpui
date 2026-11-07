@@ -59,8 +59,14 @@ impl LinuxDispatcher {
 
                 let handle = event_loop.handle();
                 let timer_handle = event_loop.handle();
+                let signal = event_loop.get_signal();
                 handle
                     .insert_source(timer_channel, move |e, _, _| {
+                        // The dispatcher owning the sender is gone; timers already
+                        // scheduled would run tasks nothing can observe.
+                        if let channel::Event::Closed = e {
+                            signal.stop();
+                        }
                         if let channel::Event::Msg(timer) = e {
                             let mut runnable = Some(timer.runnable);
                             timer_handle
@@ -359,5 +365,95 @@ mod tests {
 
         assert!(data.got_msg);
         assert!(data.got_closed);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn dispatcher_shutdown_stops_threads_and_drops_pending_timers() {
+        use std::sync::{Arc, mpsc};
+
+        struct CaptureDispatcher(mpsc::Sender<RunnableVariant>);
+
+        impl PlatformDispatcher for CaptureDispatcher {
+            fn is_main_thread(&self) -> bool {
+                false
+            }
+
+            fn dispatch(&self, runnable: RunnableVariant, _priority: Priority) {
+                self.0.send(runnable).unwrap();
+            }
+
+            fn dispatch_on_main_thread(
+                &self,
+                _runnable: RunnableVariant,
+                _priority: Priority,
+            ) -> bool {
+                unreachable!()
+            }
+
+            fn dispatch_after(&self, _duration: Duration, _runnable: RunnableVariant) {
+                unreachable!()
+            }
+
+            fn spawn_realtime(&self, _f: Box<dyn FnOnce() + Send>) {
+                unreachable!()
+            }
+        }
+
+        let timeout = Duration::from_secs(5);
+        let (main_sender, _main_receiver) = PriorityQueueCalloopReceiver::new();
+        let mut dispatcher = LinuxDispatcher::new(main_sender);
+        let (runnable_sender, runnable_receiver) = mpsc::channel();
+        let executor =
+            open_gpui::BackgroundExecutor::new(Arc::new(CaptureDispatcher(runnable_sender)));
+
+        let (pending_sender, pending_receiver) = mpsc::channel();
+        executor
+            .spawn(async move {
+                pending_sender.send(()).ok();
+            })
+            .detach();
+        dispatcher.dispatch_after(
+            Duration::from_secs(3600),
+            runnable_receiver.recv_timeout(timeout).unwrap(),
+        );
+
+        let (ready_sender, ready_receiver) = mpsc::channel();
+        executor
+            .spawn(async move {
+                ready_sender.send(()).ok();
+            })
+            .detach();
+        dispatcher.dispatch_after(
+            Duration::ZERO,
+            runnable_receiver.recv_timeout(timeout).unwrap(),
+        );
+        ready_receiver
+            .recv_timeout(timeout)
+            .expect("the timer thread should process queued timers");
+        assert_eq!(pending_receiver.try_recv(), Err(mpsc::TryRecvError::Empty));
+
+        let threads = std::mem::take(&mut dispatcher._background_threads);
+        drop(dispatcher);
+
+        assert_eq!(
+            pending_receiver.recv_timeout(timeout),
+            Err(mpsc::RecvTimeoutError::Disconnected),
+            "shutdown should drop the pending timer's capture without running it"
+        );
+
+        let deadline = std::time::Instant::now() + timeout;
+        while threads.iter().any(|thread| !thread.is_finished()) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "dispatcher threads should exit after their senders are dropped"
+            );
+            thread::sleep(Duration::from_millis(1));
+        }
+        for thread in threads {
+            thread
+                .join()
+                .expect("dispatcher thread should exit cleanly");
+        }
     }
 }

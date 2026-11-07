@@ -1436,6 +1436,23 @@ accepted trees use the current title. The initial reply is not a published compo
 inspection snapshot or Submitted frame. Custom backends retain exact window/provisional lifecycle
 checks and may receive the complete update only after the current App borrow releases.
 
+## Threaded Execution For Integration Tests
+
+Enable `test-support` to use `ThreadedDispatcher` with `BackgroundExecutor` and
+`ForegroundExecutor`. Create it on the thread that will pump main-thread work.
+`run_until_idle` services queued work and due timers; it does not wait for future timer
+deadlines. `run_ready_main_tasks` services at most the queue length observed at the start
+of the call, so work that requeues itself cannot extend that turn indefinitely. Priority
+still determines which tasks run within that count.
+
+`cancel_pending_timers` drops timer runnables after releasing the timer lock. Their original
+waiters are awakened by cancellation; drain the resulting work before reusing the dispatcher.
+Cancellation can itself cause additional timers to be scheduled. The dispatcher retains the
+official process-lifetime timer-thread contract and is intended to be reused rather than
+created per iteration. It is an integration-test execution tool, without a native event loop.
+Benchmark-feature separation, real font/render injection, context teardown and report APIs
+remain in the complete upstream benchmark migration.
+
 ## Semantic Activation Authority
 
 Official controls normalize pointer, allowed key-up, AccessKit Click, and programmatic requests

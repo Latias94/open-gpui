@@ -35,7 +35,13 @@ mod platform;
 pub mod prelude;
 /// Profiling utilities for task timing and thread performance tracking.
 pub mod profiler;
-#[cfg(any(target_os = "windows", target_os = "linux", target_family = "wasm"))]
+#[cfg(any(
+    target_os = "windows",
+    target_os = "linux",
+    target_family = "wasm",
+    test,
+    feature = "test-support"
+))]
 #[expect(missing_docs)]
 pub mod queue;
 mod scene;
@@ -137,7 +143,13 @@ pub use open_gpui_shared_string::*;
 pub use path_builder::*;
 pub use platform::*;
 pub use profiler::*;
-#[cfg(any(target_os = "windows", target_os = "linux", target_family = "wasm"))]
+#[cfg(any(
+    target_os = "windows",
+    target_os = "linux",
+    target_family = "wasm",
+    test,
+    feature = "test-support"
+))]
 pub use queue::{PriorityQueueReceiver, PriorityQueueSender};
 pub use scene::*;
 pub use shared_uri::*;
