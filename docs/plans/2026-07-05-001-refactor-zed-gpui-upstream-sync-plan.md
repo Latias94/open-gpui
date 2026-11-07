@@ -1120,6 +1120,71 @@ its transport owner; native callbacks and exact weak release remain required. Pr
 View/ViewElement as the next complete interface reconciliation, alongside explicit report/hot-reload
 and engine-adapter work; no focused result closes those owners.
 
+### Generic View And Component Interface Successor
+
+Execution starts at `a89a7200c80fc40eb073dbad37789f17153ec7b8`. Reconcile official
+`74b5207744ef95505fd75c56bf2c9d4736e931ee` and its final-target changes through
+`635026fabc38440fce5e1767d125026a17b12012`. Render and RenderOnce remain public; generic
+View/ViewElement supplies their common embedding mechanism. Remove the old Component owner and
+direct AnyView Element implementation instead of retaining parallel compatibility paths.
+
+Preserve the complete typed/erased/weak conversion and render-type attribution path, entity-backed
+caching and stateless type-scoped layout/prepaint/paint. Parent-supplied props can compose with an
+existing entity identity through an ordinary manual View implementation. The same entity cannot
+back two siblings at the same element-tree position; retain the official identity contract rather
+than inventing another allocator. Only Entity/AnyView expose caching. Stateless components need
+no cache-invalidation authority and must not acquire a public frozen-cache shortcut.
+
+Keep the fork's exact clip/transform/presentation/resource admission, candidate rollback,
+accessed-entity subscriptions, opacity, accessibility/inspector bypass, reveal/portal aliases and
+scoped profiler unwind through their existing owners. Generic code should use the official shared
+phase helpers rather than duplicate the cache machinery per component type. Every rendering path
+uses one private render_view boundary; conditional Subsecond/build/runtime selection remains its
+separate complete successor, not an implied capability of this API migration.
+
+An independently reproduced final-review correction propagates debug caller metadata through
+explicit Entity/AnyView conversion and erased cached embedding. Record this as a fork diagnostic
+adaptation to the target's internal-location behavior. Both macro conversion entry points execute
+through actual public workflows; file/line assertions cover typed/erased/cached/upgraded-weak
+conversion without changing render or cache ownership.
+
+Implement the core owner locally while disjoint lanes migrate the derive macro/public and
+independently locked consumers and a complete native typed/erased/props/stateless composition.
+Preserve original cache, source, reentrant/unwind, notify and exact Submitted/retirement assertions.
+Qualify actual props changes, identity-local state, pointer/keyboard callbacks, notify/rebuild,
+cache reuse/invalidation, weak release and reconstruction; typed unexecuted closures establish
+only signatures. Cargo remains serial. Current-host, foreign native, browser and measured-cost
+scope stays explicit. Preserve the preceding power unit's Windows failures alongside later
+complete passing observations rather than treating focused checks as their resolution.
+
+Implemented locally at `652122a4e118ff2d213ae0d9392c71f49c44553b`; the
+[View qualification](../verification.md#generic-views-and-reusable-component-interfaces) records
+complete framework/public/Gallery/native 1,856, components/docking/Canvas 2,966, disabled Core/public
+1,167 and independent enabled/disabled 53/38 passing within their exact scope. Five existing skips
+remain in the framework cohort. All 222 current Windows cases pass without an isolated retry;
+earlier failures remain recorded rather than attributed or erased. The final source-location and
+macro-entry correction has separate public enabled/disabled 5/5, native 1/1 and affected compiler/
+Clippy/fmt results. Locked workspace/consumer checks, actual Rust 1.92, production wasm and existing
+static scans pass. Seven threads close. No dependency/default, numeric-cost, hot-reload or complete
+fixed-target-refresh claim follows.
+
+The following accessibility successor is a complete owner rather than a View field patch.
+Official `2268045a11` supplies capture/provenance/JSON and product consumers; the GPUI portion of
+`83d4847462` supplies synthetic-child callbacks/builders and Div forwarding despite that commit's
+Settings product scope. The [candidate mapping](../imports/zed-gpui-upstream-sync-candidates.md#accessibility-publication-diagnostics-and-synthetic-children)
+records its accepted-publication/rollback dependency and ADR 0023 diagnostic-redaction contract.
+Preserve official framework mechanisms while explicitly reconciling those fork contracts through
+the existing A11y owner and an actual public reader/example consumer. No runtime qualification or
+complete accessibility/debug parity follows from this source-only mapping.
+
+A bounded follow-up to the same disposition audit also identifies framework slices in seven
+product-labeled commits. The [source mapping](../imports/zed-gpui-upstream-sync-candidates.md#framework-slices-in-product-labeled-commits)
+queues List autoscroll normalization, measured TextLayout queries, Rems helpers, os-release parsing
+and existing shell/path/key regressions. Parameterized benchmark/context/dispatcher changes join
+the existing complete benchmark/report successor. Product consumers remain outside the closure.
+These source findings change the remaining queue rather than the current View unit's acceptance;
+their implementations and independent consumers still require separate verification.
+
 ## Maintained Baseline Before Engine Adaptation
 
 The [unified-profiler qualification](../verification.md#unified-profiler-foundation) now records

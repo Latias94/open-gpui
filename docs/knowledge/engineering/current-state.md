@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-07T18:27:00+08:00
+timestamp: 2026-11-07T20:30:00+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -391,8 +391,8 @@ verified_by:
   release scans pass. All eight implementation/review threads close. The verification guide
   preserves earlier failures and scopes. No dependency or engine-default
   changes follow. Publisher-tail/backlog retirement, numeric costs and native foreign-platform/
-  browser execution remain separate. The official generic View/ViewElement API is an explicitly
-  queued inherited interface gap, not rejected in favor of the current entity-only path.
+  browser execution remain separate. The then-queued official generic View/ViewElement API has
+  its implemented successor and scoped qualification below.
 
 - The power/cadence successor is implemented locally at
   `2ceb09aa4590388b8e2d73ac1406caddc5b6c470`, adopting official `fdcb198110`, `2580a00264`,
@@ -422,6 +422,26 @@ verified_by:
   guide retains earlier failures and corrections. macOS Metal/CV/process-info and Linux D-Bus
   remain native source-only, distinct from portable tests; physical timing/energy costs remain
   unmeasured. No engine default or complete fixed-target-refresh claim follows.
+
+- The generic View/component successor is implemented locally at
+  `652122a4e118ff2d213ae0d9392c71f49c44553b`, starting at
+  `a89a7200c80fc40eb073dbad37789f17153ec7b8` against the unchanged fixed Zed target.
+  Official View/ViewElement replaces Component and direct AnyView Element embedding; Render
+  and RenderOnce remain public. Shared phase helpers preserve existing cache/candidate/resource
+  admission, subscriptions and scoped profiler unwind. Focused owners pass 117/117, new public
+  consumers 5/5 and native composition/cache/profiler/signal trajectories 4/4. The complete
+  framework/public/Gallery/native cohort passes 1,856/1,856 with five existing skips; affected
+  components/docking/Canvas passes 2,966/2,966; profiler-disabled Core/public passes 1,167/1,167;
+  independently locked consumers pass 53/53 and 38/38. Whole-workspace all-target compilation,
+  correctness Clippy, formatting, static scans, affected Rust 1.92 and stable/nightly production
+  wasm checks pass. Final review reproduces and corrects explicit conversion source locations;
+  public workflows pass 5/5 in each profiler configuration and the native composition passes 1/1
+  after this metadata/test correction, followed by affected Rust 1.92, Clippy and formatting.
+  Earlier complete cohorts retain their pre-correction scope. All seven threads close.
+  The complete accessibility synthetic-child/diagnostic successor
+  is source-mapped to official `83d4847462` and `2268045a11`, with accepted-publication and ADR
+  0023 redaction reconciliation still queued. Conditional hot reload and complete fixed-target
+  refresh remain separate.
 
 # Historical Main Integration
 
@@ -460,9 +480,11 @@ historical scope and is not current branch or CI qualification.
   scope, together with the complete foreground journal/detector/monitor checkpoint and the
   complete demand-driven platform-loop prerequisite and refresh-aware measurement-v3 qualification.
   Power/cadence and MetalFrameSource implementation and scoped checks are recorded above; keep
-  complete Windows/native-foreign qualification open. Continue at the complete generic
-  View/ViewElement, macro and component-interface reconciliation, then report/hot-reload owners
-  in the candidate queue's prerequisite order. Display getters and the foundation profiler do
+  foreign native qualification open and retain the earlier Windows failure evidence alongside the
+  later complete passing View cohort. Continue with the surviving List/TextLayout/utility slices,
+  the published accessibility diagnostics/synthetic-child owner and the
+  complete benchmark/report/hot-reload owners in the candidate queue's prerequisite order. Display
+  getters and the foundation profiler do
   not qualify complete frame pacing. Apply the maintenance skill's official-baseline rule while
   reconciling remaining image-feature/API/platform/hot-reload differences. Qualify the
   prepared CoreText selection/cascade work on macOS when that platform is available. The

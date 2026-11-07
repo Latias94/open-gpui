@@ -62,15 +62,15 @@ official mechanism remains queued until it receives an explicit disposition.
 |---|---|---|
 | `2882636c06` | Rejected | The hanging-updates change was reverted upstream by `b5c2d8a13f`; do not port a reverted behavior. |
 | `b5c2d8a13f` | Rejected | Revert commit confirms `2882636c06` should not enter the candidate queue. |
-| `a923597341` | Rejected | Agent terminal sandbox behavior is Zed product/app scope, not Open GPUI framework scope. |
-| `479bce0995` | Rejected | Remote-server telemetry is outside the GPUI framework import boundary. |
-| `ccf4058b7a` | Rejected | Picker preview and resizing are Zed UI/product behavior, not framework closure sync. |
-| `10628c3d2c` | Rejected | Agent UI in-thread search is outside Open GPUI's imported framework closure. |
+| `a923597341` | Split | Terminal product behavior stays outside the closure. Its shell-builder regression is queued below; the fork already has the tested runtime behavior. |
+| `479bce0995` | Split | Remote telemetry stays outside the closure. Public util::parse_os_release and its tests remain a framework utility omission, queued below. |
+| `ccf4058b7a` | Split | Picker product changes stay outside the closure. Public Rems helpers and key-dispatch regression tests remain queued below. |
+| `10628c3d2c` | Split | Agent search stays outside the closure. The List upward-autoscroll normalization and regression remain a framework correctness omission, queued below. |
 | `6076ce2738` | Deferred | Markdown benchmark work may be useful later but is not a correctness fix in this plan. |
-| `362035d52a` | Rejected | Folder-opening suffix behavior is editor/workspace product scope. |
-| `83d4847462` | Rejected | Settings UI accessibility is product UI scope. |
-| `c7ad65e468` | Rejected | Editor highlight optimization is outside the GPUI framework closure. |
-| `1722fe63bc` | Rejected | Editor multi-cursor optimization is outside the framework closure. |
+| `362035d52a` | Split | File-existence fallback stays in product path derivation. The util parser already supports parenthesized positions; its added behavioral regression remains queued below. |
+| `83d4847462` | Split | Settings product migration stays outside the framework closure. Its GPUI synthetic-child callback/builder/Div mechanism is a queued framework prerequisite for the accessibility publication/diagnostic successor below; the product disposition does not reject that framework slice. |
+| `c7ad65e468` | Split | Editor highlight consumers stay outside the closure. TextLayout::line_layouts and measurement-only line lookup remain framework API/lifecycle omissions, queued below. |
+| `1722fe63bc` | Split | Editor multi-cursor consumers stay outside the closure. Parameterized benchmark, real text-system and dispatcher/teardown mechanisms join the existing benchmark/report successor below. |
 | `138139f830` | Deferred | macOS traffic-light hitbox behavior appears mostly absorbed locally; revisit only if a focused diff proves a remaining framework regression. |
 | `60ed56b372` | Deferred | Miscellaneous macOS process spawning fixes need a separate utility audit after U7. |
 | `e1bfcf85db` | Deferred | macOS process file-descriptor leak fix needs a separate utility audit after U7. |
@@ -201,7 +201,7 @@ disposition of the 364 commits.
 | Conditional GPUI hot reload | `670a779a5ed9e7161c97aa4f998d395c207d5631` initializes Subsecond hot reload under `cfg(gpui_hot_reload)` during both launch callbacks; the fork has no matching owner or dependency. | Compare compiler/build/runtime prerequisites and real stateful custom-panel replacement/recovery before selecting the target's mechanism. External-loop ownership is not hot reload, and source adoption alone does not qualify edit-to-result latency. |
 | Atlas and renderer lifetime | Target `platform.rs` adds shared `AtlasBackend`/`AtlasState`; `96e95edac45` skips released-texture sprites, and WGPU adds texture generations and bind-group caching. The fork instead has per-instance lease generations and candidate-frame refusal. | Compare the lifetime behavior in the existing owner, including stale resource and rejected-frame controls. Preserve admitted candidate and lease semantics while evaluating deeper shared atlas code; copying upstream's skip policy would change the product contract. |
 | Platform closure | Target macOS shares `gpui_apple` and uses `objc2`; Linux gains switchable headless/windowed modes and rendering; Web adds backend/focus/input changes. The native-font successor now corrects already-matched Windows selections and private fallback, including gaps retained by the fixed target. CoreText source adaptation has separate unexecuted-platform scope. | Map trait and manifest changes across the actual supported backend closure. The [native-font record](../verification.md#native-font-reselection-and-retained-faces) distinguishes actual simulation/face retention, submitted Windows frames and prepared Mac source. Treat iOS as a separate platform decision and retain unexecuted native-platform limits. Existing Windows-only evidence cannot qualify the other backends. |
-| Public API evolution | The target changes event, headless-renderer, font/text and benchmark APIs. Its generic `View`/`ViewElement` path from `74b5207744ef95505fd75c56bf2c9d4736e931ee` coexists with `Render`/`RenderOnce`; AnyView embeds through ViewElement. The fork's direct AnyView Element path remains an inherited omission. | The complete interface, macro, cached-view and reusable-component consumer migration remains queued under the View reconciliation below. Compare final target blobs and follow-up history, preserve ordinary public consumption, and keep the independently locked consumer in verification. Both Render traits remaining in the target does not establish View parity. |
+| Public API evolution | The target changes event, headless-renderer, font/text and benchmark APIs. Its generic `View`/`ViewElement` path from `74b5207744ef95505fd75c56bf2c9d4736e931ee` coexists with `Render`/`RenderOnce`; AnyView embeds through ViewElement. The complete View interface, macro and cached-view migration is implemented and scoped qualification is recorded below. | Preserve ordinary public consumption and the independently locked consumer. The target's debug accessibility view-type map/dump pipeline and conditional hot reload retain separate owners; the interface migration alone does not qualify those mechanisms or complete API parity. |
 
 A subsequent coherent text refresh should assess resolved-font fallback caches together with
 font-generation and layout invalidation, UAX #14 line breaking, and text synchronization/API
@@ -327,17 +327,78 @@ adding an API name or retaining an earlier fixed-budget counter does not close i
 ### View And Component Interface Reconciliation
 
 Official `74b5207744ef95505fd75c56bf2c9d4736e931ee` unifies Render and RenderOnce through
-generic View/ViewElement. The current fork still lets AnyView implement Element directly,
-inherited from its initial import; that API has not been synchronized. Measurement v3 maps type
-attribution and all three entity-view phases to the fork's actual Entity/AnyView/PresentedAnyView
-path. This is current-consumer coverage, not an equivalence claim for the generic/stateless API.
+generic View/ViewElement. The successor implemented at `652122a4e118ff2d213ae0d9392c71f49c44553b`,
+starting at `a89a7200c80fc40eb073dbad37789f17153ec7b8`,
+replaces the inherited direct AnyView Element and Component owners with the official shared
+embedding mechanism. Typed/erased/weak handles, stateless scopes, parent props with entity identity,
+the derive macro and both entity-backed cache routes move together. Shared phase helpers retain
+the fork's exact candidate/resource/geometry admission, subscriptions and scoped profiler unwind.
+Explicit conversion caller tracking is a reproduced fork diagnostic adaptation to the target's
+internal source locations. It leaves render/cache ownership intact and has direct public controls.
 
-Queue the complete interface owner and final-target follow-ups before conditional hot reload and
-full framework-refresh closure. Preserve current candidate/cached-subscription/geometry and
-independent-consumer contracts while adjusting the fork to the official baseline. Reconcile
-typed/erased/weak conversion, stateless composition, derive/macro consumers and reusable component
-ergonomics together; do not retain the older entity-only abstraction merely because current
-tests use it. Its source disposition is separate from measured timing or engine-default selection.
+The [View qualification](../verification.md#generic-views-and-reusable-component-interfaces)
+records actual owner/public/native and independently locked consumer evidence: complete framework
+1,856, components/docking/Canvas 2,966, disabled Core/public 1,167 and independent enabled/disabled
+53/38 pass within their recorded scope. The bounded final metadata/test correction has separate
+public enabled/disabled/native and compiler checks. Conditional Subsecond/build/runtime selection
+and the target's absent debug accessibility
+view-type map/dump pipeline remain separate complete successors. Do not claim their parity from
+this API migration or introduce an unused substitute map. Source disposition remains separate
+from measured timing, complete framework refresh and engine-default selection.
+
+### Accessibility Publication Diagnostics And Synthetic Children
+
+Source inspection at the fixed target identifies complete official mechanism
+`2268045a119030735f762e5afaf59da0bda869f4`: view-name/node provenance, last-tree capture,
+Window JSON access and Zed dump/copy consumers. Its synthetic-child provenance depends on the
+framework slice of `83d4847462e57a6f72dc314abea05d57d3bdcfb6`: Element callback,
+A11ySubtreeBuilder and Div/stateful forwarding. Settings product dependencies are unnecessary.
+Queue this complete owner separately from the generic View API; an unused view-name map is not
+an implementation. Synthetic children affect runtime accessibility. Only provenance is debug-only;
+the target retains tree capture and JSON access in release builds too.
+
+Use the fork's final accepted accessibility publication, existing focus/activation authority and
+prepaint rollback. Candidate geometry/modal/hidden filtering must also filter provenance; refused
+or superseded candidates cannot replace the last published snapshot. The target captures before
+its send decision, and its capture counter is not a native Submitted generation. Its view-name
+registration is limited to AnyView; broader typed/manual attribution would be a documented fork
+adaptation, not source parity.
+
+[ADR 0023](../adr/0023-open-gpui-live-region-announcement-authority.md) and current DevTools
+consumers prohibit retaining ordinary announcement text in diagnostic artifacts. Reconcile that
+contract in the A11y owner before introducing capture: a redacted final-tree snapshot preserves
+the existing contract but differs from the target's raw label/value/title export. Do not silently
+claim equivalence or copy raw TreeUpdate into diagnostics. Keep the public Window reader and an
+actual example/Gallery dump/copy consumer independent of Zed editor and Nara types. Acceptance
+must cover synthetic parentage, debug/release output, exact published-tree correspondence,
+rollback/rejection/filtering, activation changes and canary exclusion before the queued unit closes.
+Map frame/title/focus metadata and valid tab-stop counting to the existing owners. Official action
+enumeration uses AccessKit's enumn feature, absent from the fork's current dependency selection;
+qualify that dependency choice rather than assuming the target helper already compiles here.
+This is source-only planning, not runtime or native accessibility qualification.
+
+### Framework Slices In Product-Labeled Commits
+
+A bounded fixed-target source audit corrects seven further product-wide rejections. Product
+consumers stay outside the imported closure; their surviving framework slices have independent
+dispositions. None of these findings adds runtime qualification or changes the fixed target.
+
+| Source | Remaining framework work | Complete owner/acceptance |
+| --- | --- | --- |
+| `a923597341` | The shell-builder non-interactive regression is absent; the fork already omits the interactive flag. | Preserve the existing runtime and import the source regression without terminal-product dependencies. |
+| `479bce0995` | Public util::parse_os_release and tests are absent. | Preserve ID/optional VERSION_ID and quote/missing-ID behavior through an ordinary public utility consumer. No telemetry dependency is needed. |
+| `ccf4058b7a` | Rems::ZERO, from_pixels and AddAssign are absent. The key-dispatch slice adds same-depth load-order tests for behavior already present in the fork. | Migrate geometry API with public consumers and keep key-dispatch regressions through the existing resolver; no picker or product overlay is needed. |
+| `10628c3d2c` | Upward List autoscroll still permits a negative item-local offset instead of measuring/walking preceding rows and clamping at the start. | Adapt official normalization and original regression through existing PendingAutoscroll/admitted commit. Verify varying row heights and refused candidates without importing agent search. |
+| `362035d52a` | The parenthesized-position parser regression is absent; runtime parsing is present. | Record the existing `/root/Test (3)` path/row behavior. Keep product file-existence fallback outside util. |
+| `c7ad65e468` | TextLayout::line_layouts is absent and line_layout_for_index still requires prepaint bounds. | Return measured layouts in source order and support measurement-only lookup through public consumers, preserving existing text/candidate lifetime and clipping. |
+| `1722fe63bc` | Parameterized benchmark macros, real text-system injection and threaded dispatcher/timer teardown are absent. | Extend the existing benchmark/report successor, not another harness. Reconcile phase 2 `297c4a4d78`, ThreadedDispatcher `8886dcb0d4`, existing `1f7eae7fb7` support and `3135cdf8dc` platform text-system caching against final target. |
+
+The benchmark owner includes inputs/input_name/group/sample_size validation and Criterion
+bench_with_input, thread-local dispatcher reuse with per-context platform creation, timer release
+outside its lock followed by waking/draining, bounded cancel/drain after App/foreground release,
+and bounds evaluation before mutable App access. Macro parameters alone do not close that owner.
+The source-only audit retains the explicit `2882636c06`/`b5c2d8a13f` revert pair's rejected
+disposition. It is a bounded correction, not a claim that all target-to-fork omissions are exhausted.
 
 ### Text And Layout Reconciliation Units
 

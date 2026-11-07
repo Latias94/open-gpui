@@ -3334,6 +3334,128 @@ and accepted-backlog retirement, full report/debug-overlay comparison, hot reloa
 docking U4-U9 and Nara GPU/View adoption remain open. No Editor/game-runtime default or complete
 fixed-target refresh is selected by this implementation.
 
+## Generic Views And Reusable Component Interfaces
+
+This unit starts at `a89a7200c80fc40eb073dbad37789f17153ec7b8`, against fixed Zed
+`635026fabc38440fce5e1767d125026a17b12012`, and is implemented locally at
+`652122a4e118ff2d213ae0d9392c71f49c44553b`. Official `74b5207744ef95505fd75c56bf2c9d4736e931ee`
+and final-target follow-ups supply View/ViewElement, typed/erased entity conversion, stateless
+type-name scopes and the derive macro. Render and RenderOnce remain supported public traits.
+The inherited Component and direct AnyView Element paths are removed without compatibility aliases.
+One private phase implementation retains existing clip/transform/presentation/resource admission,
+cached dependencies, opacity, reveal/portal aliases and scoped profiler unwind.
+
+Initial production compilation exposes a missing Element trait import after moving phase code
+into its private module. The corrected all-feature library check passes. The first disabled check
+exposes a paint closure's mutable-call requirement; explicit one-shot closures preserve the same
+phase execution through both configurations. The corrected profiler-disabled library check passes.
+An independent source review identifies three conditional-cache fixtures and one profiler route
+whose old AnyView return-type assumptions prevent test compilation. Their branches now finish
+with into_any_element while all cache/opacity/subscription/type/unwind assertions remain. The
+existing paint-only subscription trajectory also executes typed Entity::cached and erased cached
+routes through the same complete assertions.
+
+The first focused owner run passes 117/117
+(`7d661b4b-143e-4bb1-ae06-42ef2c309be2`), filtering 1,207 unrelated cases. It preserves cache
+and deferred dependency/opacity behavior, nested candidate rejection and unwind, exact atlas
+admission and scene retries, view-presentation receipts, reveal/portal constraints and all selected
+view profiler recovery/type-attribution cases. The paint-only subscription test executes both new
+typed and existing erased cached routes. All-feature and profiler-disabled production-library
+checks pass; actual new public/native consumers remain separately unexecuted at this checkpoint.
+
+The new public TestPlatform consumer passes 5/5 without skips
+(`d7ab944d-b04a-46f0-a6af-11692a32fd44`). It executes generic stateless pointer/keyboard/canvas
+composition and type-local state, manual props with a non-Render backing entity across reorder,
+removal and reconstruction, typed/erased/weak child and root conversion, and independent typed/
+erased cached reuse, notification and exact release. At this initial checkpoint ordinary child
+composition executes the macro's into_element override; the native trajectory below directly
+executes its into_any_element override.
+Independent consumer/derive/native-source review reports no confirmed P1/P2; native and ordinary
+dependency execution still need their own results. Existing API-tier and document-link scans pass.
+
+The first native build fails in the new fixture: terminal diagnostics contain
+NativeInputDeliveryResult rather than DispatchEventResult. The corrected comparison copies both
+propagate and default_prevented into the actual diagnostic value; input delivery and its terminal
+assertion remain exact. An unused intermediate paint assignment is removed without skipping its
+submitted-frame wait. The bounded core rereview closes the earlier fixture compilation findings
+and confirms the typed/erased subscription trajectory retains all original assertions.
+
+The corrected Windows native selection passes 4/4
+(`b3629460-d6a6-4da4-ac03-81d302bbef3e`), filtering 1,546 unrelated cases. The new composition
+executes props replacement, both entity cache routes, custom canvas, pointer/key callbacks outside
+App borrows, exact newer nonempty Submitted generations, notification and refresh, retirement and
+reconstruction. Backing, local-state, callback, root, global-theme and platform weak owners release;
+stale native callbacks cannot enter the replacement window. Existing cached-dependency and both
+profiler/signal native trajectories pass in the same selection. Inputs use production callbacks,
+not OS injection; this establishes neither compositor scanout nor physical focus/timing costs.
+
+The locked whole-workspace all-target check passes, including existing component/docking/Canvas
+and example consumers. The independently locked ordinary dependency fixture passes 53/53 with
+all features (`4bef5853-46d7-435a-b4fc-10f641a205ea`) and 38/38 without default features
+(`c2ca7752-76ef-4a92-bc68-66702b1fcd66`), without skips. Its two new View tests construct the
+generic/manual element and verify source callers; deliberately unexecuted composition/root
+closures establish signatures only. Actual render/input/cache/lifetime behavior belongs to the
+separate public and native trajectories above. No dependency or lockfile change is required.
+
+The complete all-feature framework/library/public/Gallery/native cohort passes 1,856/1,856
+(`2b8b0afc-5275-493e-b5fc-3e83ce40b23b`), with five existing skipped cases. It includes
+Core 1,324, Windows 222, all five new public View workflows and the new native composition.
+The current complete Windows selection passes without an isolated retry. This is a later complete
+passing observation; it does not erase the preceding power unit's capture/activation and
+foreground-preparation failures or establish their cause. Linux/macOS portable state tests on
+Windows do not qualify foreign native backends, and Web host tests do not qualify a browser.
+
+The complete affected UI core/components/docking/Canvas cohort passes 2,966/2,966 without skips
+(`d347962d-bf7e-4de7-b289-d913bba188a3`). It preserves the existing component, overlay,
+semantic, host recovery, viewport/payload and headless dependency-boundary assertions. No docking
+production graph is replaced by this interface unit; canonical docking U4-U9 remains separate.
+
+Profiler-disabled Core and the selected lifecycle/frame-scheduling/power/View public consumers
+pass 1,167/1,167 without skips (`e6ed6761-bc35-4c0b-aea9-d1e21a06c9ca`). All five new public
+View workflows execute again in this configuration, alongside the original cache, candidate,
+subscription and lifecycle suite. Instrumentation is not required for their runtime behavior.
+
+Locked whole-workspace and independent-consumer all-target checks, affected all-feature correctness
+Clippy, root/independent formatting and actual Windows Rust 1.92.0 framework/Canvas/consumer
+all-target/all-feature checks pass. Existing import-boundary, public-API, document-link and release
+document scans pass. The local Verify workflow includes the new View consumer in public and both
+independent configurations; its YAML parses. No remote workflow execution is claimed.
+
+Stable production wasm checks pass with profiling disabled and enabled; the existing nightly
+shared-memory/build-std configuration also compiles. These are production-library compilation
+checks, not browser/test-support execution or foreign native-platform qualification.
+
+Final independent review finds two P3 issues: entity conversion records a framework-internal
+debug source location, and the initial public-test record overstates direct macro conversion
+coverage. A source-location red control fails as expected (`91c687c3-c059-46b9-8410-b0a8af347def`).
+Explicit Entity/AnyView conversions and erased cached embedding now propagate the caller through
+the existing ViewElement constructor. This diagnostic-only fork adaptation extends the target's
+internal-location behavior; render/cache ownership remains official. The original public props
+trajectory directly exercises the derive's into_any_element override, while generic child
+composition exercises into_element. Typed/erased/cached/upgraded-weak file/line checks accompany
+the unchanged render/input/cache/release assertions. The earlier complete cohorts precede this
+bounded metadata/test correction; its final affected checks are recorded separately below.
+
+The corrected public workflows pass 5/5 with profiling
+(`04070d1d-64e7-47dd-b350-726cb7ee7735`) and 5/5 without it
+(`fd580e3b-e991-4cad-9644-e2e8e005a160`), without skips. The exact native composition passes
+1/1 (`5b9c7daa-57d8-47bd-bfb6-1289786a7e0b`), filtering 225 unrelated cases. Source-location
+checks retain their full render/input/cache/release trajectory. No complete-cohort rerun is
+inferred from these affected checks, and no speed or allocation improvement is claimed.
+Actual Rust 1.92.0 affected-framework/Canvas all-target/all-feature compilation, Core correctness
+Clippy and root/independent formatting pass again after this correction. All seven implementation,
+source-audit and review agents close; no Cargo process owned by this unit remains running.
+
+The generic View owner/public/native execution is complete for the scoped current-host matrix. The
+complete [accessibility diagnostic/synthetic-child successor](imports/zed-gpui-upstream-sync-candidates.md#accessibility-publication-diagnostics-and-synthetic-children)
+is source-mapped separately to official `2268045a11` and the framework slice of `83d4847462`.
+Node provenance is debug-only; tree capture and JSON access also exist in the target's release
+builds. The fork's accepted publication/rollback and diagnostic-redaction contracts need their own
+reconciliation and actual consumers. No unused substitute map is introduced. Conditional hot
+reload retains its separate build/runtime owner. Native foreign-platform/browser execution and
+measured-cost limits remain open. Earlier complete Windows failures retain their original scope
+despite this later complete passing observation.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:
