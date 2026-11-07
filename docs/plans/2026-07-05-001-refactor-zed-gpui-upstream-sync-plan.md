@@ -1058,7 +1058,44 @@ profiling-disabled behavior. Separate numeric overhead/latency measurements from
 correctness controls and source-only foreign backends. Existing benchmark/report/debug-overlay
 comparison remains an explicit consumer audit. Later power/cadence and MetalFrameSource keep
 their own successor; none is implicitly complete because measurement version 3 is implemented.
-This successor is queued implementation and changes no engine default.
+Execution starts at `9901ed0bcc6272a647bccfb73016f3f22206a013`. The profiler, journal/detector,
+Window/view integration, public consumers and native trajectory have disjoint implementation
+lanes, with main-owned serial verification. Preserve the existing fork checkpoint, pending-input,
+refusal and presentation tests while adopting the official API and regression scenarios. Frame
+signals are scoped to callback delivery and cannot overwrite a pending accepted scene's timing
+or leak from a skipped callback into a later direct draw. View phase scopes unwind through their
+existing Window owner; rejected work remains actual work without a presentation completion.
+Executed red controls also require correcting inherited sealer completion-order clipping and
+active-use history/pruning/interpolation defects. The existing input lifecycle supplies raw
+activity controls for exact chronological accounting, including nested dispatch and unwind;
+the guard closes before its foreground turn. They do not represent work or seal an interval.
+Preserve per-input completed events and accepted input/frame authority. Qualify the 61-second
+disjoint-window union, cap/repeated consumption, suspend/loss and lifecycle properties rather
+than impose an undocumented short-poll requirement. Publisher-tail/backlog drain remains a
+separate explicit lifetime qualification; this extension does not silently close it.
+The [qualification record](../verification.md#refresh-aware-frame-and-hang-measurement-v3)
+separates implementation, executed results and remaining platform/cost scope. This unit changes
+no engine default. Its qualified local implementation is
+`411895475e9e51a9f06954d5d676333d597b991f`; power/cadence remains the following successor.
+
+### Power And Cadence Successor
+
+After measurement-v3 qualification, reconcile complete official `fdcb198110`, `2580a00264` and
+`7c8dbadcb5` through the existing Platform/App lifecycle, Window frame-pump and backend owners.
+Public PowerMode observations and configurable inactive/low-power/thermal intervals must agree
+with actual platform state. Unknown state remains unknown. Preserve stable pacing and callback
+signal custody, queued demand, mandatory presentation/recovery bypass and exact native retirement.
+Use the final target's complete limit composition and late-callback scheduling, rather than
+adding a low-power flag to the fork's earlier fixed thermal throttle.
+
+macOS MetalFrameSource `0373366f43` and its backend/dependency prerequisites need a complete
+source owner before their behavior is claimed. Adopt the official source without introducing
+another scheduler/render owner or letting a source-only migration count as macOS execution.
+Retain Windows and portable production consumers separately from physical power transitions,
+native foreign-platform execution and numerical energy/frame-pacing evidence. Keep measurement
+and journal skip reasons consistent with actual applied limits, without treating a skip as
+successful presentation. This successor remains queued; no implementation or engine default
+is selected by the plan alone.
 
 ## Maintained Baseline Before Engine Adaptation
 
@@ -1133,9 +1170,26 @@ unchanged image-animation timeout passing its unchanged isolated rerun; the caus
 Five preexisting skips remain explicit. Components/docking/Canvas 2,966, disabled Core/public
 1,134 and independent enabled/disabled 40/31 pass without skips. Locked checks, correctness
 Clippy, formatting, actual Windows Rust 1.92.0 and stable/nightly production wasm compilation
-pass. Native foreign-platform/browser execution and numeric costs remain unqualified. Continue
-at the complete refresh-aware v3 successor above, then later power/cadence and MetalFrameSource.
+pass. Native foreign-platform/browser execution and numeric costs remain unqualified. The
+following complete refresh-aware v3 unit now has its scoped qualification; power/cadence and
+MetalFrameSource remain next.
 This unit changes no engine default or full-refresh completion state.
+
+The [refresh-aware measurement-v3 qualification](../verification.md#refresh-aware-frame-and-hang-measurement-v3)
+records local implementation `411895475e9e51a9f06954d5d676333d597b991f`, adopting official
+`4f6d97b9de` and relevant final cleanup through existing owners. Signal/dirty-to-submission work,
+per-refresh reports, nested view self-time and all three hang rules retain complete mechanism
+scope. Fork accepted-frame/input custody and four reproduced inherited sealer/active-use fixes
+have public, property and native consumers. Corrected focused Core/public 208 and expanded
+native two pass; complete runtime/public/Gallery/state/native 1,809 passes with five preexisting
+skips. Components/docking/Canvas 2,966, disabled Core/public 1,134 and independent enabled/
+disabled 46/32 pass without skips. Locked checks, correctness Clippy, formatting, actual Windows
+Rust 1.92.0 and stable/nightly production wasm compilation pass. The record preserves initial
+test migrations, executed red cases, corrected native fixture and interrupted first broad build.
+No dependency or engine-default changes follow. Continue with complete power/cadence, later
+MetalFrameSource and the queued generic View/interface/report/hot-reload differences; publisher-
+tail/backlog retirement, numerical costs, foreign native/browser execution, canonical docking
+and engine GPU/View adoption remain open. This unit does not complete the fixed-target refresh.
 
 Finish a bounded framework refresh against the recorded November 5 Zed revision before expanding
 Nara-specific UI implementation. The five correctness units are the first dependency-ordered

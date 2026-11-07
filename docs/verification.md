@@ -2949,6 +2949,158 @@ conditional hot reload, canonical docking U4-U9, numeric costs and engine GPU/Vi
 remain open. This scoped prerequisite does not complete the fixed-target refresh or select an
 Editor/game-runtime default.
 
+## Refresh-Aware Frame And Hang Measurement V3
+
+This successor starts at `9901ed0bcc6272a647bccfb73016f3f22206a013`, after the complete
+demand-driven platform-loop prerequisite. Its qualified local implementation is
+`411895475e9e51a9f06954d5d676333d597b991f`, without publication. The fixed cycle target remains
+`635026fabc38440fce5e1767d125026a17b12012`. The complete official measurement-v3 mechanism
+comes from `4f6d97b9de7d9f167da8b7832eeecea22c5a9efa`, with the final profiler/journal cleanup
+`dde76a1dca`. Later power/cadence and MetalFrameSource remain separate owners. Application-only
+telemetry/UI consumers are comparison inputs, not framework dependencies.
+
+Existing profiler, Window, view, journal, detector and monitor owners retain the mechanism.
+Frame work starts at the later of signal arrival and invalidation and ends at platform-submission
+start. Refresh grouping, real-interval missed refreshes, the official lateness floor/fallback and
+input-response groups retain public report semantics. View type identity follows erased/weak
+handles and each phase records self-time excluding nested views. Callback signal scope and
+unwinding view scopes must not contaminate later measurements; accepted pending scenes retain
+their original timing through failed submissions. Only actual Submitted completes the covered
+frame/input measurement. Rejected attempts remain recorded work without fabricated completion.
+
+The following record retains the implementation and public/native regression sequence, including
+failed controls and their owner corrections. Existing synthetic ownership controls, TestPlatform
+workflows, actual Windows message-pump/Submitted evidence and production compilation retain
+distinct scope. Native foreign-platform/browser execution, physical refresh/power behavior,
+numeric overhead and engine integration remain separate qualification.
+
+The all-feature current-host Core/Windows production-library check passes on Rust 1.95.0.
+The first focused Core/public cohort passes 184 of 187
+(`e02f011b-2c24-40dc-b0bd-c6b2c9fa22d0`). Two failures are test migrations: the prior public
+consumer still expects measurement version 2, and the new no-render control incorrectly expects
+an empty idle callback to seal an interval. It now requires the exact raw signal and no boundary,
+preserving the established completed-skip contract and the later direct draw's unmeasured state.
+The third failure exposes a real inherited sealer defect: a nested view completed first fixes
+the interval start too late, clipping an enclosing ten-millisecond draw to eight milliseconds.
+The expected ten milliseconds is retained, with an explicit original-start assertion.
+
+Independent journal/hang review also identifies two inherited official active-use defects:
+poll-only consumers accumulate per-input history indefinitely, while fixed-time history pruning
+can erase evidence needed by a still-open long interval. The owner red selection runs four tests:
+one batched-boundary control passes and the two active-use plus nested-sealer regressions fail
+(`d2b1406e-537d-4404-8a4e-737f228afe9c`). These are executed failures, separate from the earlier
+source review. The correction keeps only the latest deliberate input, observes/seals entries in
+recording order and leaves time consumption independent of attribution. The sealer retains its
+previous-boundary floor and chooses the earliest retained work when sealing, so completion order
+does not erase enclosing work. Its independent integer reference model follows the same timeline
+contract; no original cap, discontinuity, demand or interval assertions are removed.
+
+The actual Window/view controls now exercise RequestLayout, Prepaint and Paint nested self-time,
+each phase's unwind and subsequent recovery, and erased/weak/failed-downcast attribution.
+Independent source reviews leave no confirmed profiler or Window/view P1/P2. One additional
+deterministic control combines a failed 60-Hz frame, another input and a replacing 240-Hz frame;
+only the submitted replacement can classify work and complete both pending inputs. Corrected
+focused and native/complete qualification follow before a final implementation claim.
+
+The corrected focused Core/public cohort passes 191/191
+(`60da1bfb-4c7a-421c-8f2b-65dae363bb0e`), filtering 1,117 unrelated cases. It includes all
+three executed owner regressions, the sealer's completion-order/reference/occupancy properties,
+the 60-to-240-Hz replacement control and all six public measurement workflows. The two migrated
+fixture assertions retain their exact version/raw-signal and no-empty-boundary meaning.
+
+The first native profiler/signal selection passes one of two
+(`eb5d2ac1-6c88-467b-b8e7-b924014762ec`). Actual refresh-aware timing, raw callback association
+and public report assertions execute, but the new one-shot render-delay marker is consumed by
+an intermediate input render before the exact target scene. The corrected fixture binds that
+control to the complete target input source until its exact Submitted frame is observed, then
+releases it. It preserves original generations, receipts, dual collectors, reconstruction,
+monitor/callback and retirement assertions. Corrected native execution passes 2/2
+(`95fb8f79-a310-4d30-b3c7-e90fc65f7577`), filtering 216 unrelated cases. The observed native
+sample is correctness evidence, not a numeric overhead or frame-budget qualification.
+
+Further bounded review confirms a separate inherited duration defect: two deliberate inputs at
+seconds 1 and 200, consumed at second 201, are interpolated as 200 active seconds instead of the
+61-second union of their active windows. The explicit red regression reproduces 200 versus 61
+(`88f4fc5f-aab0-495f-abda-cd2e390831dc`). A periodic short monitor cadence can hide this case;
+the public API does not impose that cadence. Merely moving a cursor through completed input
+events cannot preserve an enclosing input whose start precedes already completed nested events.
+
+The complete runtime build is deliberately interrupted before nextest execution while this owner
+correction is made; it supplies no broad test result. The existing input lifecycle now supplies
+chronological begin/end activity diagnostics through the same journal, including nested and
+unwinding input. Active time is settled from those state changes with bounded state, while
+completed input events retain incident attribution and their original work/latency authority.
+These raw controls are neither work nor interval completion. The following final-source
+qualification supersedes the earlier 191 focused and two native passes for this correction.
+
+The lifecycle correction's all-feature current-host production-library check passes. Final
+focused Core/public execution passes 208/208
+(`2fc7a635-8054-446f-a5f1-944941cd88b7`), filtering 1,117 unrelated cases. It retains the
+61-second red expectation and covers one/multiple drains, overlapping windows, repeated/capped
+consumption, synchronous nested input, guard unwind/retirement, suspend/loss and the independent
+interval-union model. Actual profiler integration also requires outer input to remain active
+after child completion and activity to close before profiler retirement or draw rollback.
+Expanded native profiler/signal trajectories pass 2/2 against this source
+(`a12e0e8a-3bf5-486f-ade7-b1aa808fa95d`), filtering 216 unrelated cases.
+
+Final independent rereview closes all four confirmed defects and finds no remaining P1/P2 in
+the bounded profiler/Window/view/journal/hang/input-lifecycle scope. Exact-journal weak guard
+custody, raw-marker semantics, loss/suspend behavior and retained property operation spaces
+remain explicit. All eight implementation/review subthreads are closed. Existing import-boundary,
+public-API, document-link and release-document scans pass; workflow YAML loads and its three
+public/independent measurement gates retain serial test execution. The corrected complete
+framework/component/independent/disabled sequence is running; final build/compiler-floor and
+portable checks follow. Pending publisher tails/backlog retirement, foreign native/browser
+execution and numeric costs remain separate from this scoped qualification.
+
+The corrected complete framework/public/gallery/production-state/native cohort passes
+1,809/1,809 across 26 binaries (`869fc559-c396-42cd-b18c-c8fb108aebca`). Its five preexisting
+skips remain four interactive Windows cases and the Gallery fixture-regeneration command.
+The complete Windows image-animation trajectory passes in this run, as do both expanded
+profiler/signal trajectories, native reconstruction/retirement, public measurement consumers
+and actual production-state modules. No unchanged retry is needed for this cohort. Profiling-
+enabled UI core/components/docking/Canvas passes 2,966/2,966 across 25 binaries without skips
+(`cd6f2be8-2e61-4b4d-9298-d242ddd62462`). Independently locked feature configurations and
+disabled Core/public qualification follow in the same serial sequence.
+
+The independently locked all-feature consumer passes 46/46 without skips
+(`9a9d4b0b-9c82-413d-8889-076b39890493`). Its six new enabled controls qualify ordinary
+public frame arithmetic, histogram buckets, per-refresh accepted-draw snapshots, v3 view
+conversion and raw input-marker non-work semantics. Typed unexecuted closures remain signature
+evidence, separate from the executed public TestPlatform and native workflows above.
+
+The independently locked no-default-feature consumer passes 32/32 without skips
+(`8caf2adc-08b2-4b30-811a-4350171c6f48`), including the new disabled timing-scope/collector
+control and existing zero-capture frame-signal behavior. Disabled Core/public qualification
+continues separately.
+
+The complete no-default-feature Core library plus lifecycle/scheduling public cohort passes
+1,134/1,134 without skips (`201adfba-7258-4eb1-8f3b-cc65c363eb0f`). Feature-gated measurement
+tests supply no disabled execution claim; the actual ordinary scheduling, input, presentation,
+visibility and task-guard controls execute in this configuration. All runtime/consumer gates
+now pass against the frozen lifecycle correction.
+
+Locked workspace all-target and independently locked consumer all-target/all-feature checks pass
+on Rust 1.95.0. Correctness Clippy passes for Core, WGPU, Windows, Canvas, Web and Linux package
+targets on the current host. Both root and independent formatting checks pass. Actual Windows
+Rust 1.92.0 all-target/all-feature checks pass for Core/WGPU/Windows/Canvas and the independently
+locked consumer. Neither manifest nor lockfile changes are required by this unit.
+
+Stable Rust 1.95.0 production wasm32 Core/WGPU/Web checks pass with profiling disabled and
+enabled. The installed nightly with the existing hello_web shared-memory/build-std configuration
+also compiles the multithreaded production branch. These are compilation results, not browser
+callback/pixel/timing execution or cfg-excluded native Linux/macOS qualification. Existing import,
+public-API, document-link and release-document scans, focused YAML/serial-command checks and Git
+whitespace validation pass. All eight implementation/review subthreads close; no remote CI job,
+push or publication is performed.
+
+Continue at the complete official power/cadence successor and MetalFrameSource, then remaining
+framework/interface/report differences, including generic View/ViewElement and conditional hot
+reload. Complete benchmark/report/debug-overlay comparison, pending publisher-tail/backlog
+retirement, canonical docking U4-U9, numeric costs and Nara GPU/View adoption remain open.
+Measurement qualification changes no Editor/game-runtime default and does not complete the
+fixed-target refresh or Nara R11/R12.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:

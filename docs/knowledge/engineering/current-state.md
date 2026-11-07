@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-07T11:43:00+08:00
+timestamp: 2026-11-07T13:44:00+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -373,6 +373,27 @@ verified_by:
   The verification guide preserves initial fixture failures, interrupted compilation, independent
   reviews and source limits. No engine default or full-refresh completion changes.
 
+- Refresh-aware measurement v3 is qualified locally at
+  `411895475e9e51a9f06954d5d676333d597b991f`, after `9901ed0bcc6272a647bccfb73016f3f22206a013`.
+  Official `4f6d97b9de` and relevant cleanup
+  supply signal/dirty-to-submission timing, refresh groups, view self-time and the three hang
+  rules. Exact candidate/Submitted authority remains intact. Executed red controls expose four
+  inherited sealer/active-use defects; bounded attribution, deferred sealer start and existing
+  input-lifecycle controls correct completion order, long-open attribution and inactive gaps.
+  The final lifecycle-focused Core/public cohort passes 208/208 and both expanded native
+  profiler/signal trajectories pass 2/2. A former full build is stopped before test execution
+  after the last defect is confirmed. The corrected complete framework/public/Gallery/state/
+  native cohort passes 1,809/1,809 with five preexisting skips, including the native image-animation
+  trajectory without an isolated retry. Components/docking/Canvas passes 2,966/2,966, independent
+  enabled/disabled consumers pass 46/46 and 32/32, and disabled Core/public passes 1,134/1,134,
+  without skips. Locked workspace/consumer checks, correctness Clippy, formatting, actual Windows
+  Rust 1.92.0 and stable/nightly production wasm configurations pass. Existing import/API/document/
+  release scans pass. All eight implementation/review threads close. The verification guide
+  preserves earlier failures and scopes. No dependency or engine-default
+  changes follow. Publisher-tail/backlog retirement, numeric costs and native foreign-platform/
+  browser execution remain separate. The official generic View/ViewElement API is an explicitly
+  queued inherited interface gap, not rejected in favor of the current entity-only path.
+
 # Historical Main Integration
 
 The previous snapshot recorded `df6ae2f` on July 9. The following integration summary retains that
@@ -408,8 +429,8 @@ historical scope and is not current branch or CI qualification.
   their recorded scope. The unified-profiler foundation is qualified within its recorded scope.
   Official multi-subscriber wake and sleep/window visibility are qualified within their recorded
   scope, together with the complete foreground journal/detector/monitor checkpoint and the
-  complete demand-driven platform-loop prerequisite. Continue at the planned complete
-  refresh-aware v3 and power/cadence owners
+  complete demand-driven platform-loop prerequisite and refresh-aware measurement-v3 qualification.
+  Continue at the complete power/cadence and MetalFrameSource owners
   in the candidate queue's prerequisite order. Display getters and the foundation profiler do
   not qualify complete frame pacing. Apply the maintenance skill's official-baseline rule while
   reconciling remaining image-feature/API/platform/hot-reload differences. Qualify the

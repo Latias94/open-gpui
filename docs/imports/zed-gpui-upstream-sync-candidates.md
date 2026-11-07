@@ -197,7 +197,7 @@ disposition of the 364 commits.
 | Implemented: owning asset loads | Official `5896274168e06663568f42b5bae142162936e0a6` and fixed-target cleanup now flow through the owning CachedLoad, Option-returning App fetch, Window subscriptions and opaque ImageCacheItem. Shared task handles and per-use completion tasks are removed from App, Window, retain-all and the actual gallery LRU. | The [asset-load qualification](../verification.md#owning-asset-loads-and-view-completion) records the reproduced fork App-borrow failure and wait-before-publication adaptation. Focused owner/image/candidate/LRU/native cases pass 22/22. Each interested view receives one notification, passive reads do not redraw, eviction cancels old entries and accepted frame leases survive key removal. The dormant gallery now has an explicit platform example target and actual cache tests. Browser contention, numeric costs and complete framework/engine acceptance remain distinct unqualified scope. |
 | Implemented: externally driven App ownership | Official `74798c68d5c` now supplies `Application::run_embedded` and the strong ApplicationHandle; launch reuses the existing run_platform owner. Handle update deliberately uses the fork's complete update transaction rather than official direct callback invocation. | The [application qualification](../verification.md#externally-driven-application-lifetime) records defer/batching red results, 10 owner cases and actual Windows visual-host Submitted/readback/retirement. Complete affected runtime/public, component and independent suites pass 1,339/1,339, 2,964/2,964 and 14/14; four existing interactive Windows cases remain skipped. Locked checks, correctness Clippy and actual Windows Rust 1.92.0 affected-framework/consumer checks pass. Stock Windows still owns a blocking process loop; native production external-loop support, shared GPU and separate display/hot-reload/asset owners are not implied. |
 | Implemented: display and launch lifecycle | `f495dd0f77b69e287ed72c1168dc02965f08be7d` now supplies App-owned display observation, per-window association and cached refresh intervals, initialized from both launch callbacks. The fixed target retains that mechanism. | The [qualification](../verification.md#connected-displays-and-window-association) records the fork's ordered native ingress/immutable topology adaptation, official reciprocal-overflow correction, deferred-close reentry fix and ordinary required bitflags dependency. Corrected runtime/public/gallery, component and independent consumers pass 1,388/1,388, 2,964/2,964 and 18/18; four existing interactive Windows cases remain skipped. Source migration, actual Submitted frames and synthetic WM ingress retain distinct scope from physical hotplug/refresh-mode and non-Windows native qualification. |
-| Implemented profiler foundation; queued refresh-aware telemetry | `4f6d97b9de7d9f167da8b7832eeecea22c5a9efa` measures frame work against the window's refresh interval and evolves profiler/reporting consumers. The common task/frame owner is now qualified; journal and platform-state prerequisites remain. | The [unified profiler successor](../verification.md#unified-profiler-foundation) adopts `48511e0b9c`, `c16d19c94d` and `a21007b7a9`, preserving actual Submitted/candidate consumers. Complete refresh-aware telemetry remains queued until its journal, lifecycle and signal owners are reconciled. |
+| Implemented: refresh-aware measurement v3 | `4f6d97b9de7d9f167da8b7832eeecea22c5a9efa` and final cleanup now measure signal/dirty-to-submission work against each window's refresh interval, including view self-time and the complete v3 detector/monitor mechanism. Local implementation is `411895475e9e51a9f06954d5d676333d597b991f`. | The [qualification](../verification.md#refresh-aware-frame-and-hang-measurement-v3) retains official provenance, exact accepted/Submitted adaptations and four reproduced inherited sealer/active-use corrections. Complete framework/public/Gallery/state/native 1,809, components/docking/Canvas 2,966, disabled Core/public 1,134 and independent enabled/disabled 46/32 pass. Actual Windows Rust 1.92.0, stable/nightly production wasm and static checks pass. Numeric overhead, foreign native/browser execution and complete benchmark/report/debug-overlay parity remain separate. |
 | Conditional GPUI hot reload | `670a779a5ed9e7161c97aa4f998d395c207d5631` initializes Subsecond hot reload under `cfg(gpui_hot_reload)` during both launch callbacks; the fork has no matching owner or dependency. | Compare compiler/build/runtime prerequisites and real stateful custom-panel replacement/recovery before selecting the target's mechanism. External-loop ownership is not hot reload, and source adoption alone does not qualify edit-to-result latency. |
 | Atlas and renderer lifetime | Target `platform.rs` adds shared `AtlasBackend`/`AtlasState`; `96e95edac45` skips released-texture sprites, and WGPU adds texture generations and bind-group caching. The fork instead has per-instance lease generations and candidate-frame refusal. | Compare the lifetime behavior in the existing owner, including stale resource and rejected-frame controls. Preserve admitted candidate and lease semantics while evaluating deeper shared atlas code; copying upstream's skip policy would change the product contract. |
 | Platform closure | Target macOS shares `gpui_apple` and uses `objc2`; Linux gains switchable headless/windowed modes and rendering; Web adds backend/focus/input changes. The native-font successor now corrects already-matched Windows selections and private fallback, including gaps retained by the fixed target. CoreText source adaptation has separate unexecuted-platform scope. | Map trait and manifest changes across the actual supported backend closure. The [native-font record](../verification.md#native-font-reselection-and-retained-faces) distinguishes actual simulation/face retention, submitted Windows frames and prepared Mac source. Treat iOS as a separate platform decision and retain unexecuted native-platform limits. Existing Windows-only evidence cannot qualify the other backends. |
@@ -297,13 +297,37 @@ framework consumer and needs its own disposition rather than implicit exclusion.
    measurement-version-3 trigger/active-use rules. The
    [complete successor](../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#refresh-aware-measurement-v3-successor)
    owns framework/report consumers, exact Submitted integration and enabled/disabled qualification.
+   Implementation preserves the official mechanism while correcting reproduced inherited sealer
+   and active-use defects. Fork raw input-activity controls follow existing dispatch lifecycle so
+   nested/unwinding work and inactive gaps have bounded, chronological time accounting; they
+   add no work or completion boundary. This explicit extension is not present in the fixed target.
+   Local implementation `411895475e9e51a9f06954d5d676333d597b991f` has complete scoped
+   qualification: framework/public/Gallery/state/native 1,809, components/docking/Canvas 2,966,
+   disabled Core/public 1,134 and independent enabled/disabled 46/32 pass. The record preserves
+   all red baselines, actual native submission and distinct compilation/cost limits.
    Do not infer timing fidelity or overhead from functional tests.
 7. Fixed-target power/cadence follow-ups `fdcb198110`, `2580a00264`, `7c8dbadcb5`, plus
    macOS MetalFrameSource `0373366f43`. Public power modes, configurable frame limits, stable
-   pacing, mandatory presentation bypass and actual platform frame sources need complete owners.
+   pacing, mandatory presentation bypass and actual platform frame sources have a
+   [complete queued owner](../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#power-and-cadence-successor).
 
 Use the final target's files and follow-ups for each unit, mapping relocated ownership. Merely
 adding an API name or retaining an earlier fixed-budget counter does not close its mechanism.
+
+### View And Component Interface Reconciliation
+
+Official `74b5207744ef95505fd75c56bf2c9d4736e931ee` unifies Render and RenderOnce through
+generic View/ViewElement. The current fork still lets AnyView implement Element directly,
+inherited from its initial import; that API has not been synchronized. Measurement v3 maps type
+attribution and all three entity-view phases to the fork's actual Entity/AnyView/PresentedAnyView
+path. This is current-consumer coverage, not an equivalence claim for the generic/stateless API.
+
+Queue the complete interface owner and final-target follow-ups before conditional hot reload and
+full framework-refresh closure. Preserve current candidate/cached-subscription/geometry and
+independent-consumer contracts while adjusting the fork to the official baseline. Reconcile
+typed/erased/weak conversion, stateless composition, derive/macro consumers and reusable component
+ergonomics together; do not retain the older entity-only abstraction merely because current
+tests use it. Its source disposition is separate from measured timing or engine-default selection.
 
 ### Text And Layout Reconciliation Units
 
