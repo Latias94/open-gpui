@@ -17,11 +17,14 @@ The owner has resumed maintenance in `F:/SourceCodes/Rust/open-gpui`, whose insp
 that branch's unfinished canonical-docking work. The July units below retain their historical
 requirements; they are not proof of parity with current Zed.
 
-The November 6 owner clarification selects the
+The November 6-7 owner clarification selects the
 [sync skill's official-baseline rule](../../.agents/skills/open-gpui-upstream-sync/SKILL.md#integrate-through-existing-owners):
 retain official framework behavior by default, refactor fork-owned adaptations around that base,
 and build reusable additions through ordinary public modules. The candidate queue records the
 reason and verification for each retained difference; unfinished official mechanisms stay visible.
+Module boundaries must keep the framework usable independently of Nara. A fork extension cannot
+justify replacing an official subsystem with a reduced local mechanism; reconcile its concrete
+consumer against the full baseline and refactor the extension first.
 
 The [candidate queue](../imports/zed-gpui-upstream-sync-candidates.md#november-5-maintained-framework-successor)
 now records upstream `635026fabc38440fce5e1767d125026a17b12012` and five complete
@@ -1094,8 +1097,28 @@ another scheduler/render owner or letting a source-only migration count as macOS
 Retain Windows and portable production consumers separately from physical power transitions,
 native foreign-platform execution and numerical energy/frame-pacing evidence. Keep measurement
 and journal skip reasons consistent with actual applied limits, without treating a skip as
-successful presentation. This successor remains queued; no implementation or engine default
-is selected by the plan alone.
+successful presentation. Execution starts at `110f9c88084227eb526515167c204af3555f22a8`, after
+measurement-v3 qualification. Platform/App observation, Windows power notifications, Linux
+providers, macOS process/frame sources and public consumers have disjoint implementation lanes;
+the main lane owns options, frame-pump integration and serial verification. Preserve all official
+pacer/limit scenarios and the fork's recovery/Submitted/retirement consumers. A source-only
+foreign backend remains distinct from native execution. The
+[qualification record](../verification.md#power-modes-and-stable-frame-cadence) owns actual
+results and limits. No engine default is selected by the plan alone.
+
+Local implementation is `2ceb09aa4590388b8e2d73ac1406caddc5b6c470`. Focused Core/public,
+portable production-state and native power/signal/retirement consumers pass. The qualification
+record retains the complete framework result and subsequent Windows fixture/activation failures,
+with exact unchanged focused rechecks. Components/docking/Canvas 2,966, independent enabled/
+disabled 51/36 and disabled Core/public 1,162 pass. Locked checks, correctness Clippy, formatting,
+actual Windows Rust 1.92.0 and stable/nightly production wasm pass. Diagnostics are committed at
+`1a6d90bdaac5256c36064be9824459de74ea91bf`; final Windows selection passes 220/221 and its
+bounded image/activation recheck passes 3/3. The complete Windows gate and foreign native
+qualification remain open; successful rechecks do not resolve earlier capture/activation failures.
+The inherited fork detached-retirement-task defect is corrected at
+its transport owner; native callbacks and exact weak release remain required. Preserve official
+View/ViewElement as the next complete interface reconciliation, alongside explicit report/hot-reload
+and engine-adapter work; no focused result closes those owners.
 
 ## Maintained Baseline Before Engine Adaptation
 

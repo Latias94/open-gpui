@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-07T13:44:00+08:00
+timestamp: 2026-11-07T18:27:00+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -394,6 +394,35 @@ verified_by:
   browser execution remain separate. The official generic View/ViewElement API is an explicitly
   queued inherited interface gap, not rejected in favor of the current entity-only path.
 
+- The power/cadence successor is implemented locally at
+  `2ceb09aa4590388b8e2d73ac1406caddc5b6c470`, adopting official `fdcb198110`, `2580a00264`,
+  `7c8dbadcb5` and macOS `0373366f43` through existing Platform/App, Window and backend owners.
+  Longest enabled limits cover dirty, pending-presentation, callback and high-rate-input demand;
+  idle callbacks consume no cadence slot. Exact mandatory recovery and deferred force survive.
+  Corrected focused Core/public passes 76/76; actual production Linux profile/Metal state passes
+  3/3 on the host. The final focused Windows selection passes 11/11, including public power
+  observations, LowPower-to-Submitted recovery, signal custody and exact native retirement.
+  Native execution exposes and independently diagnoses an inherited fork detached-retry Rc leak;
+  HWND-bound retries replace that transport within the existing coordinator. Its ordinary-
+  maintenance, admission-fallback and stale-token controls pass with exact weak-owner release.
+  All fourteen implementation/review threads close. Complete framework qualification executes
+  1,850 cases: 1,849 pass and a reentrant IME fixture fails; explicit unlimited window options
+  correct its timing premise. Windows reruns each pass 220/221, exposing first an uncontrolled
+  foreground setup, then an unchanged activation-terminal timeout. The corrected first-show
+  setup and all 14 focused power/retirement/IME/activation cases pass. The activation timeout's
+  cause remains unproven; no production source change follows. Image/activation failure diagnostics
+  are committed at `1a6d90bdaac5256c36064be9824459de74ea91bf`. The final Windows selection
+  passes 220/221, with a different foreground-preparation failure; all new power/retirement and
+  both diagnostic consumers pass. Its final bounded image/activation recheck passes 3/3. The
+  complete Windows gate remains open, including the earlier capture timeout and activation
+  failures. Components/docking/Canvas 2,966, independent enabled/disabled 51/36 and disabled
+  Core/public 1,162 pass without skips. Locked workspace/consumer checks, correctness Clippy,
+  root/independent formatting, actual Windows Rust 1.92.0 and stable/nightly production wasm
+  checks pass. No clean complete Windows run is inferred from the focused rechecks. The verification
+  guide retains earlier failures and corrections. macOS Metal/CV/process-info and Linux D-Bus
+  remain native source-only, distinct from portable tests; physical timing/energy costs remain
+  unmeasured. No engine default or complete fixed-target-refresh claim follows.
+
 # Historical Main Integration
 
 The previous snapshot recorded `df6ae2f` on July 9. The following integration summary retains that
@@ -430,7 +459,9 @@ historical scope and is not current branch or CI qualification.
   Official multi-subscriber wake and sleep/window visibility are qualified within their recorded
   scope, together with the complete foreground journal/detector/monitor checkpoint and the
   complete demand-driven platform-loop prerequisite and refresh-aware measurement-v3 qualification.
-  Continue at the complete power/cadence and MetalFrameSource owners
+  Power/cadence and MetalFrameSource implementation and scoped checks are recorded above; keep
+  complete Windows/native-foreign qualification open. Continue at the complete generic
+  View/ViewElement, macro and component-interface reconciliation, then report/hot-reload owners
   in the candidate queue's prerequisite order. Display getters and the foundation profiler do
   not qualify complete frame pacing. Apply the maintenance skill's official-baseline rule while
   reconciling remaining image-feature/API/platform/hot-reload differences. Qualify the

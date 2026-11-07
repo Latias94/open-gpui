@@ -3101,6 +3101,239 @@ retirement, canonical docking U4-U9, numeric costs and Nara GPU/View adoption re
 Measurement qualification changes no Editor/game-runtime default and does not complete the
 fixed-target refresh or Nara R11/R12.
 
+## Power Modes And Stable Frame Cadence
+
+This successor starts at `110f9c88084227eb526515167c204af3555f22a8`, after complete
+measurement-v3 qualification. The implementation is committed locally as
+`2ceb09aa4590388b8e2d73ac1406caddc5b6c470`, with failure diagnostics at
+`1a6d90bdaac5256c36064be9824459de74ea91bf`. The final results and native limits are below.
+The fixed cycle target remains
+`635026fabc38440fce5e1767d125026a17b12012`. Complete official power observation `fdcb198110`,
+stable pacing `2580a00264`, configurable frame limits `7c8dbadcb5` and macOS MetalFrameSource
+`0373366f43` map to the existing Platform/App, Window, process-info and backend frame owners.
+
+Public power modes preserve unknown state, native callback ordering and observer lifetime.
+Inactive, low-power and thermal intervals compose by the longest applicable value; mandatory
+presentation and existing recovery authority bypass limits. Ordinary dirty work, pending scenes,
+next-frame callbacks and high-rate-input presentation all constitute demand. Pure idle callbacks
+must not consume cadence or wake a parked source. The official one-millisecond tolerance and
+bounded quarter-interval correction preserve stable deadlines without a catch-up burst after a
+long stall. Source/clock pairing, exact candidate/Submitted authority, deferred force and native
+retirement remain intact. The local pacer handles unrepresentable public intervals without
+overflow, retaining mandatory bypass.
+
+Official provenance and extraction-specific decisions remain distinct:
+
+- Official: PowerMode queries/observations and Linux modern/legacy providers; longest-limit
+  composition, configurable intervals, stable cadence and all demand classes; macOS process-info,
+  MetalFrameSource/CV fallback and offscreen screenshot behavior.
+- Fork integration: the existing ordered cross-thread App ingress, shared notification-handler
+  shape, immutable reader snapshots, exact candidate/Submitted and weak native-generation
+  retirement. Apple's responsibilities map to the existing macOS package, without a second
+  renderer or scheduler owner. Ordinary public consumers remain independent of Nara types.
+- Owning corrections: unavailable Windows power queries remain Unknown; unrepresentable public
+  intervals defer without overflow; native retirement retries no longer retain a detached task
+  after their HWND transport is destroyed. The latter defect belongs to the fork, not Zed.
+
+Implementation and owner/public/native qualification are in progress. No result, numeric power
+saving or complete platform-execution claim follows from the prepared source. Windows synthetic
+power messages must not change the host's physical settings. Actual host tests, native Windows
+submission and cfg-excluded foreign source/production compilation retain distinct scopes.
+
+The first focused owner/public run `aaf053b7-43e1-472b-a49c-acdab010905f` executes 73 tests:
+69 pass and four fail. The foreign-thread App fixture wakes the deterministic scheduler from an
+unregistered OS thread. Its correction queues the importer on the owning thread before the real
+foreign callbacks, preserving their sequence and coalescing assertions; this does not qualify an
+otherwise sleeping test scheduler's cross-thread wake. The scheduling fixture now explicitly
+disables limits so its two-window immediate-submission promises remain about demand/wake rather
+than inactive throttling. The signal fixture primes a real mandatory submission rather than an
+idle callback, because idle callbacks no longer consume cadence. The new skip-reason fixture
+dispatches real input before expecting a retained-work boundary; raw idle skips must not produce
+empty intervals. Exact accepted/Submitted generations, pending input and deferred callbacks remain
+asserted. Added controls cover high-rate-only presentation and expiry, mandatory cadence reset,
+LowPower signal custody and power-mode changes without sleep/wake measurement interruption.
+Two subsequent build-only attempts expose a missing public AppContext trait import in the migrated
+scheduling fixture and an overlapping TestAppContext borrow in the new private signal test. Both
+are corrected without production changes. The corrected focused run passes 76/76
+(`38d81424-4371-452a-a975-380a0172de26`), filtering 1,273 unrelated cases. It includes all four
+previously failing controls and the added cadence, input, signal and measurement regressions.
+
+Initial independent Core, App/Linux, Windows and macOS reviews report no confirmed P1/P2 in their
+bounded source scopes. Later native execution exposes the retirement defect below. Portable tests
+include the actual production Linux profile parser and Metal frame
+state, not native D-Bus or CAMetalDisplayLink execution. Linux service owner loss/reacquisition is
+supported; complete system-bus disconnection currently ends observation with Unknown, matching the
+fixed official implementation, and automatic bus reconnection is not claimed. macOS process-info,
+Metal/CV window/renderer integration and the later offscreen screenshot correction `f816e1f926`
+are adopted as source. Native macOS compilation, nonempty Apple/Intel screenshot pixels, display
+migration and old-system CV fallback still need a macOS host.
+
+The host-portable selection passes 3/3 (`f254585d-0eb6-426e-b3cd-4df4da2a1f25`), filtering
+1,334 unrelated cases. It compiles the actual production Linux profile parser and Metal frame
+state module through their package tests. This supersedes the earlier direct-rustc two-test
+Metal state check, without adding native platform-execution claims.
+
+The first native selection passes 4/8 (`7c8a5d75-566c-41e2-a64b-6c35536125c7`). The corrected
+second selection passes 5/8 (`e82cde78-9ec0-46e5-ba51-97b7ba663052`). Registration sends an
+asynchronous native power-status value; the fixture must observe that actual initial payload
+before injecting synthetic preferences. Otherwise a late initial HighPower value can overwrite
+the intended LowPower scenario. A test-only native probe now waits for the real payload. Pending
+callback setup and closure share one App borrow so a legitimate successor callback cannot consume
+the test capture before the requested retirement. These corrections retain exact source, native
+submission and callback-lifetime assertions.
+
+Additional retirement diagnostics reproduce an inherited fork P2: native HWND/OLE finalization is
+complete, but a detached delayed retry still owns the platform Rc and its callbacks. A concurrent
+foreground maintenance drain can complete finalization and destroy the retry's only HWND transport
+before that delayed task resumes. Diagnostics show HWND absent, OLE released once, unregister and
+destroy each attempted twice, no pending/finalization state, and one actual retained platform owner.
+Independent diagnosis predicts the same values before reading them. The correction removes the
+detached strong-Rc task from the existing retirement coordinator. HWND-bound timers use distinct
+tokens, reject stale/previous-owner delivery and cancel before final HWND destruction; failed timer
+admission falls back to the existing validated main-thread message. Finalization retains the
+platform during retirement without a delayed-task owner. If both native transports refuse admission,
+pending resources remain owned and
+later maintenance can retry; successful progress under simultaneous transport failure is not
+claimed. Win32's minimum timer period applies to shutdown retry backoff, not frame cadence.
+
+The first post-refactor native run passes 8/11 (`e667243d-a833-4f6b-9456-bfc47234a9d8`). The
+previously failing exact retirement now releases both weak owners, and all three new timer
+controls pass: fallback admission, ordinary foreground maintenance completing before the valid
+timer, and cancelled/previous-platform tokens. A build-only attempt first exposes two missing
+test imports; explicit imports correct it. Independent rereview closes the retained-Rc defect at
+the owning transport, retaining the simultaneous-admission-failure limit above.
+
+Remaining native fixture corrections preserve their original contract: after both windows initialize,
+read the latest actual source-0 Submitted generation rather than an earlier valid initialization
+frame; inspect three staged power notifications while App is borrowed, then require the exact two
+Coalesced links and final Delivered result after native import. Coalescing does not precede that
+import. The power consumer dispatches actual native input before its frame callback so skip reasons
+seal retained work rather than expect an empty interval. The profiler fixture responds only to its
+`p` binding; unrelated desktop keystrokes do not panic the consumer, while the driver still requires
+the injected `p` to update the source exactly once. Native input/frame/retirement assertions remain.
+
+The next native run passes 10/11 (`534412f4-c575-4b2c-b1d3-336dd0e34413`). The remaining
+power fixture attempted synchronous native input while holding App, correctly triggering the
+existing busy-input boundary. It now dispatches outside the App borrow, through a rendered
+mouse handler that invalidates the real view, before staging the native frame. Final focused
+native execution passes 11/11 (`10cf828a-4e70-4535-abfb-3cd0a91e147c`), filtering 214 unrelated
+cases. It retains actual hidden HWND notification registration, staged/coalesced delivery,
+independent observers and App reconstruction, unavailable initial query recovery, exact failure/
+retry retirement, two independently configured windows, deferred force/callback custody,
+LowPower skip provenance, mandatory submission and mode-change recovery. Both preceding profiler/
+signal and sleep/visibility trajectories execute unchanged guarantees. No physical power setting
+or native receipt is synthesized as successful.
+
+Existing import-boundary, public-API, document-link and release-document scans pass. The workflow
+YAML loads with its existing two jobs and the five public/independent/disabled gates include the
+new consumer. No remote workflow execution is claimed.
+
+The complete framework/public/Gallery/production-state/native run executes 1,850 cases across
+29 binaries (`7baff7f7-040b-42c6-909c-eda57f67f7d2`): 1,849 pass and one fails. Five
+preexisting skips remain the four interactive Windows cases and the Gallery fixture-regeneration
+command. All 1,629 non-Windows-package cases pass; the Windows package passes 220 of 221 executed
+cases. Its sole failure is the two-HWND reentrant IME fixture, whose tight immediate message pump
+does not wait for newly paced inactive dirty work. Its source/target windows now explicitly disable
+all three frame limits so the test continues to isolate reentrant paint, exact coalesced callback,
+post-borrow CompleteNativeFrame and restored text admission. All original assertions remain; the
+dedicated public/native cadence workflows retain the actual limiting controls. No production
+source changes follow this fixture correction. Complete Windows rerun and component/independent/
+disabled qualification follow; the original broad failure is not reported as a clean full run.
+
+The first complete Windows rerun executes 221 cases (`33fe8e01-b278-4cf1-9a32-29e2613860ef`):
+220 pass, including the corrected two-HWND IME and complete power/signal/retirement trajectories.
+Four preexisting interactive cases remain skipped. The nonactivating-first-show fixture fails its
+global foreground equality, although its setup established only thread-local ActiveWindow. It
+now acquires the existing foreground sentinel with the repository's native test helper and asserts
+that actual global precondition before recording the baseline. Global foreground preservation,
+application Z-order, native owner, click activation and programmatic activation assertions remain.
+No activation policy or runtime source is changed. Complete Windows qualification follows against
+this explicit native setup; external desktop focus is not inferred from thread-local activation.
+
+The next complete Windows selection passes 220/221
+(`6622f815-c33b-4ddf-a9c9-8cd92f93b78e`), retaining four interactive skips. Both corrected
+fixtures and all new power/retirement workflows pass. The unchanged exact activation-terminal
+case times out in its later success phase; it passed in both preceding broad selections. The
+unchanged focused recheck passes all 14 affected/native/activation cases
+(`0d58b084-cc5a-4c94-96b8-365f26c95aa4`), including that case.
+
+An independent bounded activation review finds no confirmed production defect or dependency on
+new frame pacing. The OS may reject foreground admission, and a successful ticket can also
+coexist with later focus loss; the original timeout lacks facts to distinguish these from pending
+readback. No cause is claimed from the successful rerun. The test retains all success and
+first-terminal assertions; failure-only diagnostics now capture the exact ticket/generation,
+pending/terminal boundary records and actual foreground/active/focus HWNDs. That diagnostic
+successor still needs compilation/execution. A clean complete Windows run is not inferred from
+the focused pass. All twelve implementation/review threads are closed.
+
+Profiling-enabled UI core/components/docking/Canvas passes 2,966/2,966 across 25 binaries with
+no skips (`c9b3b1f9-fa88-4133-802a-ae4e964b0b1e`). This includes actual Host interaction,
+multiview scenarios, component composition and the existing virtualizer/cache controls. The
+independently locked enabled/disabled consumers and disabled Core/public follow serially.
+
+The independently locked all-feature consumer passes 51/51 without skips
+(`6d220f39-2d6a-432b-8682-cbea92155a54`). Its five new power controls execute enum/default/
+configuration and low-power reason assertions, while the explicitly unexecuted callback/App
+closures remain signature-only evidence. Actual notification and window workflows retain the
+separate public TestPlatform and native results above.
+
+The independently locked no-default-feature consumer passes 36/36 without skips
+(`6597c427-7844-4ac8-b3d9-9b02e40c5fa3`), including its four ordinary public power controls
+and the existing zero-capture/empty-profiler accessors. Disabled Core/public qualification follows.
+
+The complete no-default-feature Core library and public lifecycle/scheduling/power cohort passes
+1,162/1,162 without skips (`1581e59e-6a63-446c-89d8-3657af1aea97`). Ordinary power/cadence
+workflows execute without instrumentation, alongside existing input, rollback, visibility and
+native-ingress controls. Profiling-only cases contribute no disabled execution claim. Component
+and both independent gates now pass. Final Windows diagnostic execution and compiler/static
+qualification remain separate from the completed host-portable gates.
+
+The failure-diagnostic successor compiles and the complete Windows selection executes 221 cases
+(`fd75df4d-26fe-474e-9fe2-fab5bf2db6ed`): 219 pass, two fail, and the same four interactive
+cases remain skipped. All power/signal/retirement/IME/first-show controls pass. The activation case
+fails earlier than the diagnostic wait: its target has no recorded activation/focus events, while
+the foreground HWND changes to a third window rather than that target. This records loss of the
+test's global foreground precondition, without proving the previous timeout's cause. The image
+animation capture times out despite passing in the original broad and both preceding Windows
+selections; bounded source diagnosis follows. No complete Windows pass is claimed and neither
+oracle is weakened. Final build/static/compiler qualification proceeds separately.
+
+Bounded image-source review finds no confirmed runtime defect or cadence starvation path. The
+fixture follows each loader's own 0/1/0 cycle and captures the same exact submitted scene; its old
+timeout does not identify the rejected prerequisite. The diagnostic successor at
+`1a6d90bdaac5256c36064be9824459de74ea91bf` retains all nineteen acceptance conditions and
+pixel oracles, records the calling phase and last unmet condition, and rethrows the original
+failure. Independent review finds no P1/P2 in that or the activation diagnostic. All fourteen
+implementation/review threads are closed.
+
+The final complete Windows selection executes 221 cases
+(`8700e766-e69f-4057-a23c-5afc1efc5b8e`): 220 pass, one fails, four interactive cases remain
+skipped. Both diagnostic consumers, all power/signal/retirement/IME controls and corrected
+first-show setup pass. The remaining failure is a different unchanged activation-restore fixture,
+at its foreground-preparation wait. Its cause is not established by this result. One final bounded
+recheck executes image capture, exact activation terminal and that activation-restore case:
+3/3 pass (`6a4c2fd7-f7e8-4d31-a50b-edc683a5e0db`), filtering 1,852 cases. The historical
+capture timeout and activation failures remain unresolved qualification limits; no clean complete
+Windows gate is inferred from separate successful runs or weakened assertions.
+
+Locked workspace all-target and independently locked all-target/all-feature checks pass on Rust
+1.95.0. Final correctness Clippy passes for Core/WGPU/Windows/Canvas/Web/Linux/macOS package
+targets on the current host after both diagnostic changes. Root and independent formatting checks
+pass. Actual Windows Rust 1.92.0 all-target/all-feature checks pass for Core/WGPU/Windows/Canvas
+and the independent consumer. Stable production wasm32 Core/WGPU/Web checks pass with profiling
+off and on; the installed nightly and existing shared-memory/build-std configuration also pass.
+These checks require no lockfile or package-version changes. Linux adds only a test dependency
+edge to its existing Core dependency. Native foreign-platform and browser execution remain
+unqualified by current-host cfg-excluded compilation.
+
+This completes the implemented power/cadence unit's recorded owner, public, component, independent,
+disabled and compiler checks, with the complete native-Windows gate explicitly still open. Preserve
+that native qualification work while proceeding to the complete generic View/ViewElement, macro
+and component-interface reconciliation. Physical power/frame-pacing costs, journal publisher-tail
+and accepted-backlog retirement, full report/debug-overlay comparison, hot reload, canonical
+docking U4-U9 and Nara GPU/View adoption remain open. No Editor/game-runtime default or complete
+fixed-target refresh is selected by this implementation.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:

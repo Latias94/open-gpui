@@ -201,7 +201,7 @@ disposition of the 364 commits.
 | Conditional GPUI hot reload | `670a779a5ed9e7161c97aa4f998d395c207d5631` initializes Subsecond hot reload under `cfg(gpui_hot_reload)` during both launch callbacks; the fork has no matching owner or dependency. | Compare compiler/build/runtime prerequisites and real stateful custom-panel replacement/recovery before selecting the target's mechanism. External-loop ownership is not hot reload, and source adoption alone does not qualify edit-to-result latency. |
 | Atlas and renderer lifetime | Target `platform.rs` adds shared `AtlasBackend`/`AtlasState`; `96e95edac45` skips released-texture sprites, and WGPU adds texture generations and bind-group caching. The fork instead has per-instance lease generations and candidate-frame refusal. | Compare the lifetime behavior in the existing owner, including stale resource and rejected-frame controls. Preserve admitted candidate and lease semantics while evaluating deeper shared atlas code; copying upstream's skip policy would change the product contract. |
 | Platform closure | Target macOS shares `gpui_apple` and uses `objc2`; Linux gains switchable headless/windowed modes and rendering; Web adds backend/focus/input changes. The native-font successor now corrects already-matched Windows selections and private fallback, including gaps retained by the fixed target. CoreText source adaptation has separate unexecuted-platform scope. | Map trait and manifest changes across the actual supported backend closure. The [native-font record](../verification.md#native-font-reselection-and-retained-faces) distinguishes actual simulation/face retention, submitted Windows frames and prepared Mac source. Treat iOS as a separate platform decision and retain unexecuted native-platform limits. Existing Windows-only evidence cannot qualify the other backends. |
-| Public API evolution | The target changes event, headless-renderer, font/text and benchmark APIs. A historical commit temporarily unified `Render`/`RenderOnce`, but the fixed target still defines both traits. | Compare final target blobs and follow-up/revert history before migrating consumers. A commit title alone is insufficient evidence for an API change. Keep the independently locked consumer in the verification path. |
+| Public API evolution | The target changes event, headless-renderer, font/text and benchmark APIs. Its generic `View`/`ViewElement` path from `74b5207744ef95505fd75c56bf2c9d4736e931ee` coexists with `Render`/`RenderOnce`; AnyView embeds through ViewElement. The fork's direct AnyView Element path remains an inherited omission. | The complete interface, macro, cached-view and reusable-component consumer migration remains queued under the View reconciliation below. Compare final target blobs and follow-up history, preserve ordinary public consumption, and keep the independently locked consumer in verification. Both Render traits remaining in the target does not establish View parity. |
 
 A subsequent coherent text refresh should assess resolved-font fallback caches together with
 font-generation and layout invalidation, UAX #14 line breaking, and text synchronization/API
@@ -309,7 +309,17 @@ framework consumer and needs its own disposition rather than implicit exclusion.
 7. Fixed-target power/cadence follow-ups `fdcb198110`, `2580a00264`, `7c8dbadcb5`, plus
    macOS MetalFrameSource `0373366f43`. Public power modes, configurable frame limits, stable
    pacing, mandatory presentation bypass and actual platform frame sources have a
-   [complete queued owner](../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#power-and-cadence-successor).
+   [implemented owner](../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#power-and-cadence-successor).
+   Local implementation `2ceb09aa4590388b8e2d73ac1406caddc5b6c470` starts at
+   `110f9c88084227eb526515167c204af3555f22a8`. The official mechanisms
+   replace the fork's earlier force/callback-only throttle; platform state, observer lifetime,
+   longest-limit composition, stable pacing and Metal/CV source integration share existing owners.
+   The [qualification](../verification.md#power-modes-and-stable-frame-cadence) distinguishes
+   executed Windows/portable consumers from foreign native compilation and physical power costs.
+   Components 2,966, independent enabled/disabled 51/36, disabled Core/public 1,162 and final
+   compiler/static checks pass. The final complete Windows run remains 220/221, followed by a
+   passing three-case image/activation recheck. Earlier capture/activation failures remain
+   unresolved qualification limits; no complete clean native gate or fixed-target parity is claimed.
 
 Use the final target's files and follow-ups for each unit, mapping relocated ownership. Merely
 adding an API name or retaining an earlier fixed-budget counter does not close its mechanism.
