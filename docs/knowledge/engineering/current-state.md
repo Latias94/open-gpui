@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-07T10:04:00+08:00
+timestamp: 2026-11-07T11:43:00+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -355,6 +355,24 @@ verified_by:
   platforms, browser execution, numerical costs and complete fixed-target refresh remain open;
   no engine default changes.
 
+- The demand-driven platform-loop successor is qualified locally at
+  `b6506b48efca022c13256ef17d5ecfa26787b2ae`, after `c7fb5ccd8a8`.
+  Official `417d03305a` weak wakeups/Web RAF parking, `eb354c8d50` Wayland scheduling and X11
+  Expose/recovery now use existing owners. The completion-driven hook is removed; Wayland uses
+  the existing native completion command after App borrow release. A source-confirmed accepted-
+  publication unwind gap has an owning retry/completion correction and real scheduled-callback
+  regressions. Corrected focused Core/public passes 62/62, actual Web/Wayland/pointer state
+  modules pass 27/27 on the host and the affected native selection passes 5/5. Complete runtime/
+  public/gallery/state/native runs 1,749 cases, with 1,748 passing and one native image-animation
+  timeout; its unchanged isolated rerun passes 1/1, with the cause undiagnosed. Five preexisting
+  skips remain explicit. Components/docking/Canvas pass 2,966/2,966, independently locked enabled/
+  disabled consumers pass 40/40 and 31/31, and disabled Core/public passes 1,134/1,134, without
+  skips. Locked workspace/consumer checks, correctness Clippy, formatting, actual Windows Rust
+  1.92.0 and stable/nightly production wasm compilation pass. Linux/browser state tests do not
+  qualify native execution or numerical costs. All nine implementation/review subthreads close.
+  The verification guide preserves initial fixture failures, interrupted compilation, independent
+  reviews and source limits. No engine default or full-refresh completion changes.
+
 # Historical Main Integration
 
 The previous snapshot recorded `df6ae2f` on July 9. The following integration summary retains that
@@ -389,9 +407,9 @@ historical scope and is not current branch or CI qualification.
   The externally driven App, owning asset-load and display-observation units are qualified within
   their recorded scope. The unified-profiler foundation is qualified within its recorded scope.
   Official multi-subscriber wake and sleep/window visibility are qualified within their recorded
-  scope, together with the complete foreground journal/detector/monitor checkpoint. Continue with
-  the official demand-driven platform-loop prerequisite after the qualified frame-signal/
-  completed-skip unit, then refresh-aware v3 and power/cadence
+  scope, together with the complete foreground journal/detector/monitor checkpoint and the
+  complete demand-driven platform-loop prerequisite. Continue at the planned complete
+  refresh-aware v3 and power/cadence owners
   in the candidate queue's prerequisite order. Display getters and the foundation profiler do
   not qualify complete frame pacing. Apply the maintenance skill's official-baseline rule while
   reconciling remaining image-feature/API/platform/hot-reload differences. Qualify the

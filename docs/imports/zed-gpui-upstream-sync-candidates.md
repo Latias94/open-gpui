@@ -281,10 +281,23 @@ framework consumer and needs its own disposition rather than implicit exclusion.
    alone does not establish native Expose provenance.
    The [platform-loop prerequisite](../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#demand-driven-platform-loop-prerequisite)
    owns the complete source/candidate/retirement reconciliation and removal of superseded hooks.
+   Local implementation `b6506b48efca022c13256ef17d5ecfa26787b2ae` includes official Web/
+   invalidator weak wakeups `417d03305a`, complete Wayland scheduling and X11 direct Expose/
+   recovery through existing owners. Its [qualification](../verification.md#demand-driven-platform-frame-loops)
+   records 62 focused Core/public, 27 actual production-state and five affected native passes.
+   The complete runtime cohort passes 1,748 of 1,749, with one image-animation timeout passing
+   an unchanged isolated rerun; its cause is undiagnosed. Five preexisting skips remain explicit.
+   Components/docking/Canvas 2,966, disabled Core/public 1,134 and independent enabled/disabled
+   40/31 pass without skips. Locked checks, correctness Clippy, formatting, actual Windows Rust
+   1.92.0 and stable/nightly production wasm configurations pass. Existing completion commands
+   carry Wayland post-borrow work; host state tests do not establish native Linux/browser execution
+   or numeric cost qualification. Initial fixture failures and interrupted compilation remain recorded.
 6. Refresh-aware frame/view/hang measurement `4f6d97b9de`: real signal/dirty work start,
    submission-start cutoff, per-refresh histograms, missed refreshes, view self-time and
-   measurement-version-3 trigger/active-use rules. Do not infer timing fidelity or overhead from
-   functional tests.
+   measurement-version-3 trigger/active-use rules. The
+   [complete successor](../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#refresh-aware-measurement-v3-successor)
+   owns framework/report consumers, exact Submitted integration and enabled/disabled qualification.
+   Do not infer timing fidelity or overhead from functional tests.
 7. Fixed-target power/cadence follow-ups `fdcb198110`, `2580a00264`, `7c8dbadcb5`, plus
    macOS MetalFrameSource `0373366f43`. Public power modes, configurable frame limits, stable
    pacing, mandatory presentation bypass and actual platform frame sources need complete owners.

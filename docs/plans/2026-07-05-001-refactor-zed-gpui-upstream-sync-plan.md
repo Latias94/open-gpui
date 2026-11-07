@@ -1008,8 +1008,57 @@ Retain the original official public TestWindow parked-loop regressions and async
 Add fork refusal/reentry/retirement controls through the existing test platform, then independent
 public consumers without Nara types. Run affected enabled/disabled Core, component and native
 Windows workflows, portable production and compiler-floor checks. Source-only Linux/macOS and
-unexecuted browser scope remain explicit until native evidence is available. This prerequisite
-is queued implementation, not a qualified platform-loop replacement or a numeric power result.
+unexecuted browser scope remain explicit until native evidence is available. The complete
+implementation now follows below; its qualification does not establish a numeric power result.
+
+The execution starts at `c7fb5ccd8a81ee8221fb90711b02649516b4c4fa`. Source comparison also
+finds the missing official `PlatformWindow::frame_waker`/WindowInvalidator wake path. Include its
+complete `417d03305a` weak wakeup mechanism, dirty-transition delivery outside the invalidator borrow and
+next-frame demand, using the fixed target's actual backend implementations. Ordinary schedule
+hooks and weak wakeups share the existing platform owner; neither may borrow App or draw
+synchronously from a wakeup, or retain App/Window through a callback cycle. Keep the
+Windows post-borrow maintenance command separate from the removed completion-driven hook.
+TestPlatform callbacks model a scheduled request, actual Submitted scene and outstanding
+compositor callback before parking; Deferred/Rejected attempts retain demand. Public consumers
+must demonstrate the complete behavior, including async refresh after parking and held-terminal
+retirement. Existing native Windows VSync stays continuous; its execution does not qualify
+Wayland or browser parking. Later power/cadence remains outside this prerequisite. The qualified
+local implementation is `b6506b48efca022c13256ef17d5ecfa26787b2ae`; the
+[verification record](../verification.md#demand-driven-platform-frame-loops) owns its results,
+review corrections and explicit native/portable limits.
+
+### Refresh-Aware Measurement V3 Successor
+
+After the complete platform-loop prerequisite, adopt official
+`4f6d97b9de7d9f167da8b7832eeecea22c5a9efa` and relevant fixed-target follow-ups through the
+existing profiler, journal, hang detector, Window and view owners. Preserve the official
+framework mechanism and regression scenarios. Zed's application telemetry/report consumers
+are comparison sources; ordinary Open-GPUI consumers must remain usable without Zed or Nara
+product dependencies. Retain generic report semantics through public consumer coverage rather
+than importing an application owner or adding a second timing authority.
+
+Frame work starts at the later of the actual frame signal and first invalidation, and ends when
+platform submission begins. Keep unavailable timing explicitly unmeasured. The late-frame budget
+uses the window refresh interval with the official 120-Hz lower bound and unknown-refresh
+fallback; missed refreshes still use the actual interval. Preserve per-window/refresh grouping,
+input-response distinction, work/draw distributions and the supported CPU/GPU observations.
+View request-layout, prepaint and paint contributors measure their own work excluding nested
+views, retaining actual view type attribution through erased and weak handles. Nested work,
+unwind and cache reuse must not corrupt the existing scope or candidate authority.
+
+Retain measurement-version-3 threshold, late-frame and blocking-work trigger rules, overlapping
+contributors, active-use windows and accumulated totals. Preserve suspend, visibility, power
+epochs, discontinuities, raw signal versus completed-skip semantics and bounded monitor shutdown.
+Only the exact successful Submitted frame can complete its covered frame/input measurement;
+rejected candidates, failed submissions and old-scene retries retain their explicit fork contracts.
+
+Qualify official module scenarios and public report consumers, deterministic known/unknown and
+changed-refresh controls, actual callback-to-Submitted native execution, refusal/unwind/retry and
+profiling-disabled behavior. Separate numeric overhead/latency measurements from synthetic
+correctness controls and source-only foreign backends. Existing benchmark/report/debug-overlay
+comparison remains an explicit consumer audit. Later power/cadence and MetalFrameSource keep
+their own successor; none is implicitly complete because measurement version 3 is implemented.
+This successor is queued implementation and changes no engine default.
 
 ## Maintained Baseline Before Engine Adaptation
 
@@ -1066,11 +1115,27 @@ pass, interrupted final run and later complete Windows success. Components/docki
 Locked checks, correctness Clippy, formatting, actual Windows Rust 1.92.0 and stable wasm on/off
 plus the existing nightly shared-memory production configuration pass. Source-only foreign clocks
 do not qualify native Linux/macOS or browser execution; numerical costs remain unmeasured.
-Continue with the complete official demand-driven platform-loop prerequisite and X11 Expose/
-recovery, then refresh-aware v3, power/cadence and later MetalFrameSource. Publisher-tail and
-accepted-backlog lifetime gaps, benchmark/report/debug-overlay evolution, hot reload, canonical
+The complete official demand-driven platform-loop prerequisite and X11 Expose/recovery now have
+their scoped qualification below. Continue with refresh-aware v3, power/cadence and later
+MetalFrameSource. Publisher-tail and accepted-backlog lifetime gaps, benchmark/report/debug-overlay
+evolution, hot reload, canonical
 docking and engine GPU/View adoption remain open. This unit changes no engine default or full
 refresh completion state.
+
+The [demand-driven platform-loop qualification](../verification.md#demand-driven-platform-frame-loops)
+records local implementation `b6506b48efca022c13256ef17d5ecfa26787b2ae`. Official weak
+wakeups, Core scheduling, Wayland FrameLoop/ping/retry, Web RAF parking and X11 Expose/recovery
+use existing owners; the old completion-driven hook is removed. Fork post-borrow native
+maintenance, exact candidate/Submitted authority and accepted-publication unwind recovery retain
+real consumer coverage. Focused Core/public 62, actual production-state 27 and affected native
+five pass. The full runtime/public/gallery/state/native run passes 1,748 of 1,749, with one
+unchanged image-animation timeout passing its unchanged isolated rerun; the cause is undiagnosed.
+Five preexisting skips remain explicit. Components/docking/Canvas 2,966, disabled Core/public
+1,134 and independent enabled/disabled 40/31 pass without skips. Locked checks, correctness
+Clippy, formatting, actual Windows Rust 1.92.0 and stable/nightly production wasm compilation
+pass. Native foreign-platform/browser execution and numeric costs remain unqualified. Continue
+at the complete refresh-aware v3 successor above, then later power/cadence and MetalFrameSource.
+This unit changes no engine default or full-refresh completion state.
 
 Finish a bounded framework refresh against the recorded November 5 Zed revision before expanding
 Nara-specific UI implementation. The five correctness units are the first dependency-ordered

@@ -2797,6 +2797,158 @@ backlog retirement, benchmark/report/debug-overlay evolution, hot reload, canoni
 and Nara GPU/View adoption remain separate open scope. This unit does not complete fixed-target
 parity or Nara R11/R12.
 
+## Demand-Driven Platform Frame Loops
+
+This successor starts at `c7fb5ccd8a81ee8221fb90711b02649516b4c4fa`; its qualified local
+implementation is `b6506b48efca022c13256ef17d5ecfa26787b2ae`, without publication. It retains
+fixed target `635026fabc38440fce5e1767d125026a17b12012`. Official Web wake/park and weak invalidator wakeups
+come from `417d03305ac194470f5d85a4b584c34dcec8cf57`; Wayland's complete FrameLoop/ping/retry
+mechanism and Core scheduling/async refresh come from `eb354c8d50`, with `cd4fc8de4c` signal
+custody. X11 direct Expose and recovery reconstruction follow `ae99a867d7` and `f25434f3c5`.
+Later refresh-aware measurement v3 and power/cadence retain their own owners.
+
+Core uses the official `PlatformWindow::schedule_frame` and weak `frame_waker` through existing
+WindowInvalidator and App effect-flush owners. Dirty state, accepted scenes needing presentation
+and next-frame callbacks retain separate demand. The old completion-driven scheduling hook is
+removed; Windows post-borrow native maintenance keeps its existing command path. Callback/frame
+demand survives throttle, refusal and unsuccessful presentation. Wakeups execute outside the
+invalidator borrow and cannot retain App/Window through a callback cycle. AsyncApp refresh now
+uses the ordinary update/flush transaction, so a queued refresh effect reaches a parked source.
+
+The first Core frame/signal/journal selection runs 20 tests, with 17 passing and three new
+fixture failures (`ed54399f-f23d-4674-9904-4aa106a3eed4`). The fork's initial presentation can
+consume startup callbacks before the source-only official fixture's assumed ticks; the corrected
+fixture explicitly defers those initial requests. A callback asserting another Submitted scene
+now creates actual refresh demand. The retained-waker test checks unchanged strong ownership,
+closed-source refusal and final backend release after complete App teardown rather than assuming
+that logical close instantly drops every test-context reference. Original parking, wake and
+pending-presentation assertions remain in the following reruns.
+
+Platform native, source-state, public/independent consumers and final enabled/disabled qualification
+follow after production-stable worker checkpoints. Isolated source-extraction tests from a worker
+are not package or browser execution; the Web and Wayland private production state modules are
+made host-testable without copying their state machines. Windows continuous VSync is native
+execution evidence, not proof of Wayland/browser parking. Native Linux/macOS/browser execution
+and numerical cost qualification remain separate from portable compilation and state tests.
+
+The second Core selection passes 27/29 (`aef20fb9-c096-4b61-b02e-dd511b94c74c`), with only
+the two initial-compositor assumptions still failing. The fork's `add_window` alone does not
+establish the fixture's accepted nonempty scene before those ticks. The corrected private fixture
+now activates the test window and prepares that initial scene explicitly, matching the public
+consumer's setup; presentation and parking still run through actual scheduled callbacks. The
+retained-waker owner-release control passes after complete App teardown. Existing visibility,
+signal, frame-demand and failed-retry controls pass unchanged.
+
+Independent Core review identifies a real accepted-publication unwind gap: a candidate can become
+accepted and clean with `needs_present` still true, then unwind before ordinary demand rescheduling.
+The callback owner now catches that unwind, rearms remaining demand, restores rejected dirty/force
+work where applicable, completes existing post-borrow native maintenance and resumes the original
+panic. Recovery scheduling failure cannot replace the original panic or skip the separate native
+completion attempt. New actual scheduled-callback controls require the same accepted generation
+to submit without another draw, and a rejected render to preserve the old scene until a scheduled
+retry succeeds. Neither recovery uses a manual `present` call. Their executed results appear
+below; the review finding is source-confirmed, without a claimed executed red baseline for it.
+
+The current-host all-feature Core/Windows/Web/Linux production-library check passes on Rust
+1.95.0. Linux's cfg-excluded backend is not thereby typechecked for its native target. Wayland uses
+the existing `CompleteNativeFrame` command after Core delivery/borrow release; its cfg/diagnostic
+and test matches extend to Linux/FreeBSD, with an X11 no-op. `Stopped`, stale-deadline fencing,
+explicit Submitted/error outcomes and post-borrow completion are fork adaptations to the official
+loop. Source review finds no confirmed open P1/P2 in the frozen Wayland scope. X11/Web review
+also finds no new P1/P2, and identifies the inherited official ResizeObserver forced-frame request
+omission. That request is now restored after resize through the existing callback slot and Core
+ingress, using mandatory presentation/force and unavailable native timestamp exactly as the fixed
+target. No browser-before-paint execution claim follows from that source correction.
+
+The corrected Core/public signal/scheduling/visibility/unwind selection passes 62/62 across five
+binaries (`acf9a28d-1e6d-4b34-825b-d3860a6263ce`), with 1,203 unrelated cases filtered out.
+Both accepted-publication and render-unwind controls execute through actual scheduled callbacks
+and retain their original panic, scene/generation and parking assertions. The five public
+scheduling workflows pass: notify/refresh of parked windows, callbacks queued mid-frame,
+Deferred/Rejected old-scene retry, controlled atlas candidate refusal and held-native-terminal
+close. Existing signal, journal and visibility controls remain green. A source sweep additionally
+supplies the Linux headless no-op for the extended completion command; native Linux compilation
+remains separate. Platform state/native and full affected qualification continue serially.
+
+The host-testable actual Web/Wayland/pointer state selection passes 27/27 across two package
+binaries (`2bdfe395-e53b-4851-b652-e07985ffcae6`), without skips, on Rust 1.95.0. It executes
+the same private production state modules rather than an extracted copy. The worker's earlier
+isolated Rust 1.99.1 Web source-extraction result is not part of this package qualification.
+Ten Wayland and eight Web frame-state scenarios cover request coalescing, unconfigured/parked/
+stopped behavior, retry after failure, outstanding callbacks, stale deadlines and independent
+window demand; the remaining cases are the existing Web pointer controls. X11's six actual
+callback-dispatch regressions remain source-only on this Windows host.
+
+The affected native paint/power/visibility/profiler selection passes 5/5
+(`293b470e-d7c1-452c-87b3-41afddaca029`), filtering 213 unrelated cases. It retains the original
+actual Submitted/monitor/reconstruction assertions and extends the existing VSync trajectory:
+public AsyncApp refresh and callbacks queued mid-frame reach newer exact nonempty Submitted
+generations through the real message pump, each callback runs once, and pending callback captures
+release during retirement. No private request hook, manual draw or fabricated receipt replaces
+that added production path. The two-HWND reentrant paint control also retains native-command
+ordering for IME maintenance. Windows VSync remains continuous and supplies no parking claim.
+
+Final independent reliability review of the unwind correction leaves no confirmed open P1/P2;
+the earlier Core finding is resolved within the callback owner and its executed regressions.
+Web ResizeObserver source reconciliation is also independently rechecked without a new finding.
+All nine implementation/review subthreads are closed. Complete runtime/public/gallery/state,
+profiler-enabled component/docking/Canvas, independent configurations and disabled Core/public
+qualification now run serially against the frozen source; final static/compiler checks follow.
+
+The complete framework/public/gallery/state/native cohort runs 1,749 cases: 1,748 pass and the
+unchanged native image decode/animation trajectory times out waiting for its nonempty Submitted
+frame plus RGBA capture (`c89a3989-c0a0-49aa-b731-c3fc6c4fd3b3`). Its five preexisting skips
+remain four interactive Windows cases and the gallery fixture-regeneration command. All Core,
+public scheduling, state, gallery and other executed native cases pass. An unchanged isolated
+rerun with the same package/feature union passes 1/1
+(`1640f12f-3987-406d-8e08-04b351a1231d`), filtering 1,753 unrelated cases. The timeout did not
+reproduce in that rerun; its cause is not established. Preserve both results rather than report
+a clean single-run 1,749/1,749 result or widen the test's bounded wait.
+
+The first component command uses the renamed package spelling for a dependency feature and
+stops before compilation/tests. Its corrected `open_gpui/profiler` dependency-key spelling
+preserves the intended profiling-enabled component cohort. This command correction changes no
+manifest, dependency resolution or source. Component, independent and disabled gates continue.
+
+The corrected component sequence is interrupted during compilation, before a nextest run ID or
+test results. On continuation its owned session is unavailable, no Cargo/rustc process remains
+and the log last changed at 11:06 local. The later independent/disabled steps have no logs and
+did not run. A resumed serial sequence reuses the existing build products; the interrupted
+compilation establishes no component result and is kept separate from the command spelling
+correction and runtime failures above. The resumed profiling-enabled UI core/components/
+docking/Canvas cohort passes 2,966/2,966 with no skips
+(`a36aa07b-fd4d-42b6-a0e6-28a2fe12004f`). Independently locked consumers pass 40/40
+with all features (`4ea21cb9-812c-4f0d-92d3-2088d2cbd8e7`) and 31/31 without default
+features (`44adc352-858e-478b-9627-d7753b588cdb`), with no skips. Their two new scheduling
+tests execute typed but uncalled closure construction and remain signature evidence; the five
+crate-external TestPlatform workflows above supply actual scheduling behavior. The complete
+instrumentation-disabled Core library plus lifecycle/scheduling public cohort passes
+1,134/1,134 without skips (`f9e6607b-1115-46ac-9a6b-bdc6233dee08`). The two scheduled
+unwind regressions and all five public scheduling workflows execute in this configuration too.
+
+Locked workspace all-target and independently locked consumer all-target/all-feature checks
+pass on Rust 1.95.0. Correctness Clippy passes for Core, WGPU, Windows, Canvas, Web and Linux
+package targets on this host, and both root/independent formatting checks pass after the frozen
+source is formatted. Host checking does not typecheck cfg-excluded native foreign backends.
+No manifest or lockfile changes are required by this unit.
+
+Actual Windows Rust 1.92.0 all-target/all-feature checks pass for Core, WGPU, Windows and
+Canvas and for the independently locked consumer. Stable Rust 1.95.0 production wasm32
+Core/WGPU/Web checks pass with profiling disabled and enabled. The installed nightly with the
+existing hello_web shared-memory/build-std configuration also compiles the multithreaded
+production branch. These are compilation results, not browser callback, pixel or timing
+execution. Native Linux/macOS, browser/test-support and physical refresh/power qualification
+retain their separate unexecuted scope.
+
+The existing import-boundary, public-API, document-link and release-document scans pass, as do
+YAML loading, the focused serial CI command check and Git whitespace validation. CI changes
+are local configuration; no remote job, push or publication is performed. Continue with the
+planned complete refresh-aware measurement-v3 owner, then power/cadence and MetalFrameSource.
+Complete benchmark/report/debug-overlay comparison, publisher-tail/backlog retirement,
+conditional hot reload, canonical docking U4-U9, numeric costs and engine GPU/View adoption
+remain open. This scoped prerequisite does not complete the fixed-target refresh or select an
+Editor/game-runtime default.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:
