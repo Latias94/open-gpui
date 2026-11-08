@@ -98,7 +98,12 @@ pub struct ClipEnvelope {
     pub clip_count: u32,
 }
 
-#[derive(Default)]
+/// Owned drawing data, including the frame-local clip arena and paint journal.
+///
+/// Cloning preserves this data without acquiring atlas texture leases or transferring
+/// accepted-frame, renderer-submission or native-window authority.
+/// Geometry-validity associations remain tied to their original scope.
+#[derive(Clone, Default)]
 #[expect(missing_docs)]
 pub struct Scene {
     pub(crate) paint_operations: Vec<PaintOperation>,
@@ -595,11 +600,13 @@ pub(crate) enum PrimitiveKind {
     Surface,
 }
 
+#[derive(Clone)]
 pub(crate) struct PaintOperation {
     kind: PaintOperationKind,
     validity: Option<SubtreeGeometryValidity>,
 }
 
+#[derive(Clone)]
 pub(crate) enum PaintOperationKind {
     Primitive(Primitive),
     StartLayer(Bounds<ScaledPixels>),
@@ -1774,6 +1781,66 @@ mod tests {
     }
 
     #[test]
+    fn scene_clone_owns_complete_clip_and_journal_data_after_source_clear() {
+        let viewport = logical_bounds(0.0, 0.0, 200.0, 200.0);
+        let clip = rounded_stack(viewport, logical_bounds(20.0, 20.0, 80.0, 80.0));
+        let layer = scaled_bounds(0.0, 0.0, 200.0, 200.0);
+        let mut source = Scene::default();
+        source.push_layer(layer);
+        source
+            .insert_primitive_scoped(
+                Quad {
+                    bounds: scaled_bounds(30.0, 30.0, 20.0, 20.0),
+                    ..Default::default()
+                },
+                &clip,
+                1.0,
+                None,
+            )
+            .unwrap();
+        source.pop_layer();
+        source.finish();
+        let expected_clip = source.clip_shapes().to_vec();
+        let original_order = source.quads[0].order;
+        let envelope = source.quads[0].clip;
+        let mut copied = source.clone();
+        assert_ne!(copied.clip_shapes().as_ptr(), source.clip_shapes().as_ptr());
+        source.clear();
+        assert_eq!(copied.clip_shapes(), expected_clip);
+        assert_eq!(copied.quads[0].clip, envelope);
+        assert_eq!(copied.journal_len(), 3);
+        assert_eq!(copied.len(), 3);
+        assert_eq!(copied.batches().count(), 1);
+
+        let mut replayed = Scene::default();
+        replayed
+            .replay(0..copied.journal_len(), &copied, None)
+            .unwrap();
+        replayed.finish();
+        assert_eq!(replayed.clip_shapes(), copied.clip_shapes());
+        assert_eq!(replayed.quads[0].clip, envelope);
+        assert_eq!(replayed.quads[0].order, original_order);
+
+        copied.push_layer(layer);
+        copied
+            .insert_primitive_scoped(
+                Quad {
+                    bounds: scaled_bounds(40.0, 40.0, 20.0, 20.0),
+                    ..Default::default()
+                },
+                &clip,
+                1.0,
+                None,
+            )
+            .unwrap();
+        copied.pop_layer();
+        copied.finish();
+        assert_eq!(copied.quads.len(), 2);
+        assert!(copied.quads[1].order > original_order);
+        assert_eq!(copied.journal_len(), 6);
+    }
+
+    #[test]
     fn scene_replay_rolls_back_every_channel_after_a_late_error() {
         let viewport = logical_bounds(0.0, 0.0, 200.0, 200.0);
         let clip = rounded_stack(viewport, logical_bounds(20.0, 20.0, 80.0, 80.0));
@@ -1861,15 +1928,22 @@ mod tests {
         let journal_len = scene.journal_len();
         let clip_shapes = scene.clip_shapes().to_vec();
         let valid_envelope = scene.quads[1].clip;
+        let mut copied = scene.clone();
 
         invalidity.invalidate(SubtreeClipError::UnrepresentableResult);
         scene.finish();
+        copied.finish();
 
         assert_eq!(scene.quads.len(), 1);
         assert_eq!(scene.quads[0].bounds, scaled_bounds(90.0, 90.0, 20.0, 20.0));
         assert_eq!(scene.quads[0].clip, valid_envelope);
         assert_eq!(scene.journal_len(), journal_len);
         assert_eq!(scene.clip_shapes(), clip_shapes);
+        assert_eq!(copied.quads.len(), 1);
+        assert_eq!(copied.quads[0].bounds, scene.quads[0].bounds);
+        assert_eq!(copied.quads[0].clip, scene.quads[0].clip);
+        assert_eq!(copied.journal_len(), journal_len);
+        assert_eq!(copied.clip_shapes(), clip_shapes);
 
         let mut replayed = Scene::default();
         replayed.replay(1..2, &scene, None).unwrap();

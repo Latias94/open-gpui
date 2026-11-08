@@ -34,6 +34,21 @@ where
     search_stack: Vec<NonNull<Node<U>>>,
 }
 
+impl<Units> Clone for BoundsTree<Units>
+where
+    Units: Clone + Debug + Default + PartialEq,
+{
+    fn clone(&self) -> Self {
+        Self {
+            nodes: self.nodes.clone(),
+            root: self.root,
+            max_leaf: self.max_leaf,
+            insert_path: Vec::new(),
+            search_stack: Vec::new(),
+        }
+    }
+}
+
 /// A node in the bounds tree.
 #[derive(Debug, Clone)]
 struct Node<U>
@@ -376,6 +391,35 @@ mod tests {
     use super::*;
     use crate::{Bounds, Point, Size};
     use rand::{Rng, SeedableRng};
+
+    #[test]
+    fn cloned_nodes_keep_ordering_without_borrowing_the_original_search_scratch() {
+        let bounds = Bounds {
+            origin: Point { x: 0.0, y: 0.0 },
+            size: Size {
+                width: 10.0,
+                height: 10.0,
+            },
+        };
+        let distant = Bounds {
+            origin: Point { x: 100.0, y: 100.0 },
+            size: bounds.size,
+        };
+        let mut original = BoundsTree::<f32>::default();
+        assert_eq!(original.insert(bounds), 1);
+        original
+            .search_stack
+            .push(NonNull::from(&original.nodes[0]));
+        let mut copied = original.clone();
+        assert!(copied.search_stack.is_empty());
+        assert!(copied.insert_path.is_empty());
+        assert_ne!(copied.nodes.as_ptr(), original.nodes.as_ptr());
+        assert_eq!(copied.insert(bounds), 2);
+        assert_eq!(original.insert(distant), 1);
+        drop(original);
+        assert_eq!(copied.insert(distant), 1);
+        assert_eq!(copied.insert(bounds), 3);
+    }
 
     #[test]
     fn test_insert() {
