@@ -14,6 +14,9 @@ use std::{future::Future, rc::Weak};
 
 use super::{Context, WeakEntity};
 
+#[cfg(all(test, not(target_family = "wasm")))]
+mod runtime_detection_tests;
+
 /// An async-friendly version of [App] with a static lifetime so it can be held across `await` points in async code.
 /// You're provided with an instance when calling [App::spawn], and you can also create one with [App::to_async].
 ///
@@ -427,6 +430,12 @@ impl AsyncApp {
     /// Get an executor which can be used to spawn futures in the background.
     pub fn background_executor(&self) -> &BackgroundExecutor {
         &self.background_executor
+    }
+
+    /// Whether this app runs on the deterministic test scheduler. See
+    /// [`BackgroundExecutor::is_test`].
+    pub fn is_test(&self) -> bool {
+        self.background_executor.is_test()
     }
 
     /// Get an executor which can be used to spawn futures in the foreground.

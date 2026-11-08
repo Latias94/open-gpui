@@ -22,7 +22,6 @@ workspace = true
 default = ["font-kit", "wayland", "x11", "windows-manifest"]
 test-support = [
     "open_gpui_bench_metrics?/test-support",
-    "leak-detection",
     "open_gpui_collections/test-support",
     "open_gpui_http_client/test-support",
     "wayland",
@@ -32,7 +31,7 @@ test-support = [
 bench-support = ["profiler", "dep:criterion", "dep:open_gpui_bench_metrics"]
 bench = ["bench-support"]
 inspector = ["open_gpui_macros/inspector"]
-leak-detection = ["backtrace"]
+leak-detection = []
 wayland = []
 x11 = [
     "scap?/x11",
@@ -52,7 +51,7 @@ doctest = false
 accesskit.workspace = true
 anyhow.workspace = true
 async-task = "4.7"
-backtrace = { workspace = true, optional = true }
+backtrace.workspace = true
 bitflags.workspace = true
 criterion = { workspace = true, optional = true }
 open_gpui_bench_metrics = { workspace = true, optional = true }

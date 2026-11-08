@@ -3704,6 +3704,7 @@ dependencies = [
  "anyhow",
  "async-channel",
  "async-task",
+ "backtrace",
  "bindgen 0.72.1",
  "bitflags 2.13.2",
  "cbindgen",

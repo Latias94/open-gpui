@@ -19,10 +19,13 @@ use crate::rel_path::RelPath;
 use crate::rel_path::RelPathBuf;
 
 /// Returns the path to the user's home directory.
+///
+/// Only this crate's own tests use a fixed fake directory. Enabling `test-support`
+/// in a consumer preserves the real home directory.
 pub fn home_dir() -> &'static PathBuf {
     static HOME_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
     HOME_DIR.get_or_init(|| {
-        if cfg!(any(test, feature = "test-support")) {
+        if cfg!(test) {
             if cfg!(target_os = "macos") {
                 PathBuf::from("/Users/open-gpui")
             } else if cfg!(target_os = "windows") {
@@ -1663,6 +1666,18 @@ mod tests {
 
     use super::*;
     use open_gpui_util_macros::perf;
+
+    #[test]
+    fn own_tests_keep_the_fixed_home_directory() {
+        let expected = if cfg!(target_os = "macos") {
+            Path::new("/Users/open-gpui")
+        } else if cfg!(target_os = "windows") {
+            Path::new("C:\\Users\\open-gpui")
+        } else {
+            Path::new("/home/open-gpui")
+        };
+        assert_eq!(home_dir(), expected);
+    }
 
     #[test]
     fn test_parse_str_treats_paren_suffix_as_position() {

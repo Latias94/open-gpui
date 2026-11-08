@@ -4,6 +4,35 @@ Open GPUI v0.3 is an intentionally breaking, pre-release architecture release. R
 deleted rather than retained as aliases. This guide records each migration in the implementation
 unit that introduces it.
 
+## Additive Test Support And Explicit Leak Tracking
+
+`test-support` exposes deterministic test facilities without enabling entity-handle tracking.
+Enable `leak-detection` explicitly, or build with a nonempty `GPUI_LEAK_DETECTION`, for tests
+that require leak snapshots and per-handle diagnostics. This is a build-time setting; changing
+it only after compilation does not enable tracking. The value `0` is nonempty and enables it.
+Core's own unit tests retain tracking through `cfg(test)`.
+
+The `backtrace` dependency is unconditional, as in the official environment-selected mechanism;
+its former implicit Cargo feature is removed. Use `leak-detection` to select tracking and
+`LEAK_BACKTRACE` to request allocation backtraces when tracking is compiled in.
+
+`LeakDetectorSnapshot::default`, `App::leak_detector_snapshot` and
+`App::assert_no_new_leaks` remain available with test support. Without tracking they record and
+check nothing. `WeakEntity::assert_released` still refuses live strong ownership and resources
+awaiting effect cleanup in either mode. Release assertions do not consume tracking evidence.
+
+Use `App::is_test`, `AsyncApp::is_test`, GPUI `BackgroundExecutor::is_test`, or scheduler
+local/background executor queries when behavior depends on deterministic execution. They describe
+the actual executor even if test support is compiled into a normal application. The separate
+`test_scheduler_created` process hint stays true after any test scheduler has existed; it does
+not identify a particular App or executor. Utilities use the real home directory in downstream
+programs, including those enabling test support. Only util's own tests use its fixed fake path.
+
+The [independent test-support consumer](../../tests/fixtures/test-support-consumer/README.md)
+shows feature-only, explicit-tracking and real-time benchmark usage. The existing ordinary
+dependency consumer retains its separate feature graph without test support. This interface
+migration does not establish measured build-time savings or native execution on every platform.
+
 ## Benchmark Contexts And Measurements
 
 Enable `bench-support` on both `open-gpui` and `open-gpui-platform`, and depend on Criterion

@@ -10,6 +10,9 @@ pub use open_gpui_scheduler::{
     FallibleTask, LocalExecutor as SchedulerLocalExecutor, Priority, Task,
 };
 
+#[cfg(all(test, not(target_family = "wasm")))]
+mod runtime_detection_tests;
+
 /// A pointer to the executor that is currently running,
 /// for spawning background tasks.
 #[derive(Clone)]
@@ -262,6 +265,15 @@ impl BackgroundExecutor {
     /// Whether we're on the main thread.
     pub fn is_main_thread(&self) -> bool {
         self.dispatcher.is_main_thread()
+    }
+
+    /// Whether this executor runs on the deterministic test scheduler.
+    ///
+    /// Available in every build. Use it, rather than `cfg(feature =
+    /// "test-support")`, for behavior that must differ under tests, so that
+    /// compiling `test-support` into an application doesn't change it.
+    pub fn is_test(&self) -> bool {
+        self.inner.is_test()
     }
 
     #[doc(hidden)]

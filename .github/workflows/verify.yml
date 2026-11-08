@@ -43,6 +43,9 @@ jobs:
       - name: Check independent consumer on minimum Rust
         run: cargo +1.92.0 check --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --all-targets --all-features --target-dir target -j 1
 
+      - name: Check independent test-support consumer on minimum Rust
+        run: cargo +1.92.0 check --locked --manifest-path tests/fixtures/test-support-consumer/Cargo.toml --all-targets --all-features --target-dir target -j 1
+
   verify:
     name: verify (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
@@ -120,6 +123,9 @@ jobs:
       - name: Run verification gate
         if: matrix.name == 'windows'
         shell: pwsh
+        env:
+          GPUI_LEAK_DETECTION: '1'
+          GPUI_TEST_EXPECT_LEAK_DETECTION: 'on'
         run: cargo run -p xtask -- verify
 
       - name: Run GPUI presentation public-surface contract
@@ -134,11 +140,15 @@ jobs:
       - name: Run native docking rendered tests
         if: matrix.name == 'windows'
         shell: pwsh
+        env:
+          GPUI_LEAK_DETECTION: '1'
         run: cargo nextest run -p open-gpui-docking-native --no-fail-fast
 
       - name: Run docking authority tests
         if: matrix.name == 'windows'
         shell: pwsh
+        env:
+          GPUI_LEAK_DETECTION: '1'
         run: cargo nextest run -p open-gpui-docking --locked --no-fail-fast
 
       - name: Check Linux platform surface
@@ -165,6 +175,8 @@ jobs:
       - name: Test Windows platform surface
         if: matrix.name == 'windows'
         shell: pwsh
+        env:
+          GPUI_LEAK_DETECTION: '1'
         run: cargo nextest run -p open-gpui-windows --all-features --locked --no-fail-fast
 
       - name: Check native WGPU font-kit path
@@ -172,6 +184,9 @@ jobs:
 
       - name: Check independent dependency consumer
         run: cargo check --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --all-targets --all-features --target-dir target -j 1
+
+      - name: Check independent test-support consumer
+        run: cargo check --locked --manifest-path tests/fixtures/test-support-consumer/Cargo.toml --all-targets --all-features --target-dir target -j 1
 
       - name: Test profiler-enabled core contracts
         if: matrix.name == 'windows'
@@ -230,6 +245,8 @@ jobs:
       - name: Test complete benchmark context and measurements
         if: matrix.name == 'windows'
         shell: pwsh
+        env:
+          GPUI_LEAK_DETECTION: '1'
         run: |
           cargo nextest run --locked -p open-gpui-bench-metrics -p open-gpui-macros --all-features --lib --tests --test-threads=1 --no-fail-fast --no-tests fail
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -240,4 +257,46 @@ jobs:
       - name: Run independent benchmark without test support
         if: matrix.name == 'windows'
         shell: pwsh
+        env:
+          GPUI_LEAK_DETECTION: ''
         run: cargo bench --locked --profile dev --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --features bench-support --bench maintained_harness --target-dir target -- --noplot
+
+      - name: Test additive support without handle tracking
+        if: matrix.name == 'windows'
+        shell: pwsh
+        env:
+          GPUI_LEAK_DETECTION: ''
+          GPUI_TEST_EXPECT_LEAK_DETECTION: 'off'
+        run: |
+          cargo nextest run --locked -p open-gpui --no-default-features --features test-support --lib --test test_support -E 'test(runtime_detection_tests) | binary(test_support)' --test-threads=1 --no-fail-fast --no-tests fail
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo nextest run --locked --manifest-path tests/fixtures/test-support-consumer/Cargo.toml --features bench-support --test public_api --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo nextest run --locked -p open-gpui-windows --lib -E 'test(native_generic_views_compose_rebuild_cache_notify_and_release_exact_owners)' --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Test explicit handle tracking and native release
+        if: matrix.name == 'windows'
+        shell: pwsh
+        env:
+          GPUI_LEAK_DETECTION: '1'
+          GPUI_TEST_EXPECT_LEAK_DETECTION: 'on'
+        run: |
+          cargo nextest run --locked -p open-gpui --all-features --lib --test test_support -E 'test(leak_tests::) | test(runtime_detection_tests) | binary(test_support)' --test-threads=1 --no-fail-fast --no-tests fail
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo nextest run --locked --manifest-path tests/fixtures/test-support-consumer/Cargo.toml --no-default-features --features test-support --test public_api --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo nextest run --locked -p open-gpui-windows --features test-support,profiler --lib -E 'test(native_generic_views_compose_rebuild_cache_notify_and_release_exact_owners)' --test-threads=1 --no-fail-fast --no-tests fail
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:GPUI_LEAK_DETECTION = ''
+          cargo nextest run --locked --manifest-path tests/fixtures/test-support-consumer/Cargo.toml --features leak-detection --test public_api --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Test nonempty zero tracking selection
+        if: matrix.name == 'windows'
+        shell: pwsh
+        env:
+          GPUI_LEAK_DETECTION: '0'
+          GPUI_TEST_EXPECT_LEAK_DETECTION: 'on'
+        run: |
+          cargo nextest run --locked -p open-gpui --no-default-features --features test-support --test test_support -E 'test(snapshots_track_new_entities_only_when_explicitly_enabled)' --test-threads=1 --no-fail-fast --no-tests fail
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo nextest run --locked --manifest-path tests/fixtures/test-support-consumer/Cargo.toml --no-default-features --features test-support --test public_api --target-dir target --test-threads=1 --no-fail-fast --no-tests fail

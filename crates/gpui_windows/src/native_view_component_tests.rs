@@ -1,5 +1,8 @@
 //! Generic views composed through an actual Windows Application, native input and submissions.
 //!
+//! A deterministic test context coexists with the native owner without changing its runtime mode.
+//! Exact-generation DX11 readback and entity release assertions also run without handle tracking.
+//!
 //! Synthetic pointer/key values enter the production native input callback outside App borrows.
 //! Paint receipts identify the source accepted by the renderer; this does not qualify OS input
 //! injection, physical foreground focus, compositor scanout or the complete Windows gate.
@@ -16,13 +19,14 @@ use crate::{
 use open_gpui::{
     AnyElement, AnyView, AnyWeakView, App, AppContext as _, Application, Bounds, Context,
     DispatchEventResult, Entity, EntityId, FocusHandle, Global, InteractiveElement as _,
-    IntoElement, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, MouseUpEvent,
-    NativeBoundaryDiagnosticCursor, NativeBoundaryDisposition, NativeBoundaryKind,
+    IntoElement, KeyDownEvent, Keystroke, LeakDetectorSnapshot, MouseButton, MouseDownEvent,
+    MouseUpEvent, NativeBoundaryDiagnosticCursor, NativeBoundaryDisposition, NativeBoundaryKind,
     NativeBoundaryTarget, NativeCallbackKind, NativeInputDeliveryResult, ParentElement, Pixels,
     PlatformInput, PlatformWindowPresentOutcome, QuitMode, Render, RenderOnce, StyleRefinement,
-    Styled, View, ViewElement, WeakEntity, Window, WindowBounds, WindowHandle, WindowId,
-    WindowInitialPresentationStatus, WindowOptions, canvas, div, fill, px, rgb, size,
+    Styled, TestAppContext, View, ViewElement, WeakEntity, Window, WindowBounds, WindowHandle,
+    WindowId, WindowInitialPresentationStatus, WindowOptions, canvas, div, fill, px, rgb, size,
 };
+use open_gpui_scheduler::test_scheduler_created;
 use std::{
     cell::{Cell, RefCell},
     rc::{Rc, Weak},
@@ -81,6 +85,7 @@ struct NativeViewProbe {
     paint: RefCell<Option<NativeViewPaint>>,
     local: RefCell<Option<WeakEntity<NativeViewLocal>>>,
     callbacks: RefCell<Vec<Weak<()>>>,
+    readback: Cell<Option<(u32, [u8; 4])>>,
 }
 
 impl NativeViewProbe {
@@ -92,6 +97,7 @@ impl NativeViewProbe {
             paint: RefCell::new(None),
             local: RefCell::new(None),
             callbacks: RefCell::new(Vec::new()),
+            readback: Cell::new(None),
         }
     }
 
@@ -340,6 +346,7 @@ struct NativeViewWindow {
     probes: [Rc<NativeViewProbe>; 3],
     column_paint: Rc<RefCell<Option<NativeViewColumnPaint>>>,
     root_renders: Rc<Cell<usize>>,
+    leak_snapshot: LeakDetectorSnapshot,
 }
 
 impl NativeViewWindow {
@@ -352,6 +359,10 @@ impl NativeViewWindow {
         .map(|selector| Rc::new(NativeViewProbe::new(selector)));
         let column_paint = Rc::new(RefCell::new(None));
         let root_renders = Rc::new(Cell::new(0));
+        let leak_snapshot = app.update_for_test(|cx| {
+            assert_native_view_runtime(cx, "before opening a native view window");
+            cx.leak_detector_snapshot()
+        });
         let (handle, root, owners, erased_lifetime) = app.update_for_test(|cx| {
             let [typed, erased, props_owner] = probes.each_ref().map(|probe| {
                 cx.new(|cx| NativeViewState {
@@ -431,6 +442,7 @@ impl NativeViewWindow {
             probes,
             column_paint,
             root_renders,
+            leak_snapshot,
         }
     }
 
@@ -448,7 +460,7 @@ impl NativeViewWindow {
         pump_messages_until_with_delay(&description, Duration::from_millis(5), || {
             submitted = app
                 .update_for_test(|cx| {
-                    self.handle.update(cx, |_, window, _| {
+                    self.handle.update(cx, |_, window, cx| {
                         let facts = window.presentation_facts();
                         let attempt = facts.latest_present_attempt?;
                         let column = (*self.column_paint.borrow())?;
@@ -479,7 +491,7 @@ impl NativeViewWindow {
                                         && *bounds == paint.bounds
                                 })
                         });
-                        (exact_source
+                        if !(exact_source
                             && column.window_id == self.handle.window_id()
                             && column.source == composition
                             && column.previous_revision.checked_add(1) == Some(attempt.generation)
@@ -494,7 +506,86 @@ impl NativeViewWindow {
                             && facts.non_empty_presented_generation == Some(attempt.generation)
                             && window.rendered_frame_revision() == attempt.generation
                             && diagnostics.generation() == attempt.generation)
-                            .then_some((attempt.generation, paints))
+                        {
+                            return None;
+                        }
+                        assert!(test_scheduler_created());
+                        assert_native_view_runtime(cx, "accepted native view submission");
+                        let capture = window.capture_frame();
+                        assert_eq!(capture.metadata.window_id, self.handle.window_id());
+                        assert_eq!(
+                            capture.metadata.framework_frame_generation,
+                            attempt.generation
+                        );
+                        assert_eq!(capture.metadata.scale_factor, window.scale_factor());
+                        assert!(capture.metadata.scale_factor.is_finite());
+                        assert!(capture.metadata.scale_factor > 0.);
+                        assert_eq!(
+                            capture.metadata.logical_viewport_size,
+                            window.viewport_size()
+                        );
+                        assert_eq!(
+                            capture.metadata.physical_viewport_size,
+                            window
+                                .viewport_size()
+                                .to_device_pixels(window.scale_factor())
+                        );
+                        assert!(capture.unsupported_reason.is_none(), "{capture:?}");
+                        let image = capture.image.as_ref().expect(
+                            "the native generic views must support real DX11 RGBA readback",
+                        );
+                        assert_eq!(
+                            image.dimensions(),
+                            (
+                                capture.metadata.physical_viewport_size.width.0 as u32,
+                                capture.metadata.physical_viewport_size.height.0 as u32,
+                            )
+                        );
+                        let rgba = paints.each_ref().map(|paint| {
+                            let position = paint.bounds.center();
+                            let x = (position.x.as_f32() * capture.metadata.scale_factor).floor()
+                                as u32;
+                            let y = (position.y.as_f32() * capture.metadata.scale_factor).floor()
+                                as u32;
+                            assert!(x < image.width() && y < image.height());
+                            image.get_pixel(x, y).0
+                        });
+                        for index in 0..3 {
+                            let source = sources[index];
+                            let color = cx.global::<NativeViewTheme>().color
+                                + source.props * 0x100
+                                + source.pointer_inputs * 0x10000
+                                + source.key_inputs * 0x1000
+                                + source.updates;
+                            let expected =
+                                [(color >> 16) as u8, (color >> 8) as u8, color as u8, 255];
+                            let actual = rgba[index];
+                            assert!(
+                                actual.iter().zip(expected).all(|(a, b)| a.abs_diff(b) <= 1),
+                                "native view {} generation {} RGBA: {actual:?} != {expected:?}",
+                                self.probes[index].selector,
+                                attempt.generation
+                            );
+                            if let Some((previous_color, previous_rgba)) =
+                                self.probes[index].readback.replace(Some((color, actual)))
+                            {
+                                if color == previous_color {
+                                    assert_eq!(actual, previous_rgba);
+                                } else {
+                                    assert_ne!(
+                                        actual, previous_rgba,
+                                        "a changed view source must produce new Submitted pixels"
+                                    );
+                                }
+                            }
+                        }
+                        eprintln!(
+                            "native generic-view Submitted/readback: window={:?}, generation={}, \
+                             composition={composition:?}, sources={sources:?}, rgba={rgba:?}",
+                            self.handle.window_id(),
+                            attempt.generation
+                        );
+                        Some((attempt.generation, paints))
                     })
                 })
                 .expect("the composition must remain live through native submission");
@@ -600,7 +691,21 @@ impl NativeViewWindow {
             },
         );
         assert_eq!(pending_calls.get(), 0);
+        self.root.assert_released();
+        for owner in &self.owners {
+            owner.assert_released();
+        }
+        for probe in &self.probes {
+            probe
+                .local
+                .borrow()
+                .as_ref()
+                .expect("every submitted native view must have owned local state")
+                .assert_released();
+        }
         assert!(app.update_for_test(|cx| {
+            assert_native_view_runtime(cx, "after native view entity release");
+            cx.assert_no_new_leaks(&self.leak_snapshot);
             assert!(self.handle.update(cx, |_, _, _| ()).is_err());
             cx.windows().is_empty()
         }));
@@ -640,8 +745,37 @@ impl NativeViewWindow {
         assert_eq!(pending_calls.get(), 0);
         drop(self);
         assert!(native_lifetime.upgrade().is_none());
+        eprintln!(
+            "native generic-view release: entities, locals, callbacks, pending work and HWND owner \
+             released; snapshot assertion completed with optional handle tracking"
+        );
         stale_callback
     }
+}
+
+fn assert_native_view_runtime(cx: &App, phase: &str) {
+    let async_cx = cx.to_async();
+    let modes = [
+        ("App", cx.is_test()),
+        ("AsyncApp", async_cx.is_test()),
+        ("BackgroundExecutor", cx.background_executor().is_test()),
+        (
+            "AsyncApp BackgroundExecutor",
+            async_cx.background_executor().is_test(),
+        ),
+        (
+            "scheduler BackgroundExecutor",
+            cx.background_executor().scheduler_executor().is_test(),
+        ),
+    ];
+    assert!(
+        modes.iter().all(|(_, is_test)| !is_test),
+        "the actual native runtime must remain in production mode at {phase}: {modes:?}"
+    );
+    eprintln!(
+        "native generic-view {phase}: test_scheduler_created={}, modes={modes:?}",
+        test_scheduler_created()
+    );
 }
 
 fn assert_closed_view_callback(app: &mut Application, window_id: WindowId, callback: &dyn Fn()) {
@@ -687,6 +821,27 @@ fn native_generic_views_compose_rebuild_cache_notify_and_release_exact_owners() 
     let platform_lifetime = Rc::downgrade(&platform);
     let lifecycle = platform.lifecycle_test_probe.clone();
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
+    app.update_for_test(|cx| {
+        assert_native_view_runtime(cx, "before creating a deterministic test context")
+    });
+    let test_cx = TestAppContext::single();
+    assert!(test_scheduler_created());
+    test_cx.update(|cx| {
+        assert!(cx.is_test());
+        let async_cx = cx.to_async();
+        assert!(async_cx.is_test());
+        assert!(cx.background_executor().is_test());
+        assert!(async_cx.background_executor().is_test());
+        assert!(cx.background_executor().scheduler_executor().is_test());
+    });
+    assert!(test_cx.dispatcher.scheduler().foreground().is_test());
+    eprintln!(
+        "native generic-view deterministic context: App, AsyncApp, both BackgroundExecutors and \
+         scheduler LocalExecutor report test mode; test_scheduler_created=true"
+    );
+    app.update_for_test(|cx| {
+        assert_native_view_runtime(cx, "while the deterministic test context is alive")
+    });
     let global = Rc::new(());
     let global_lifetime = Rc::downgrade(&global);
     app.update_for_test(|cx| {
@@ -972,6 +1127,12 @@ fn native_generic_views_compose_rebuild_cache_notify_and_release_exact_owners() 
     drop(rebuilt.retire(&mut app, &platform, &observation));
     drop(stale_callback);
 
+    test_cx.quit();
+    drop(test_cx);
+    assert!(test_scheduler_created());
+    app.update_for_test(|cx| {
+        assert_native_view_runtime(cx, "after dropping the deterministic test context")
+    });
     app.update_for_test(|cx| cx.shutdown());
     drop(app);
     drop(platform);

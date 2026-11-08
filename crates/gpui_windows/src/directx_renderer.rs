@@ -7,7 +7,7 @@ use std::{
 
 use ::open_gpui_util::ResultExt;
 use anyhow::{Context, Result, bail};
-#[cfg(feature = "test-support")]
+#[cfg(any(test, feature = "test-support"))]
 use image::RgbaImage;
 use windows::{
     Win32::{
@@ -389,7 +389,7 @@ impl DirectXRenderer {
         Ok(())
     }
 
-    #[cfg(feature = "test-support")]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn render_to_image(
         &mut self,
         scene: &Scene,
@@ -403,7 +403,7 @@ impl DirectXRenderer {
         self.read_render_target_to_image()
     }
 
-    #[cfg(feature = "test-support")]
+    #[cfg(any(test, feature = "test-support"))]
     fn read_render_target_to_image(&self) -> Result<RgbaImage> {
         let devices = self.devices.as_ref().context("devices missing")?;
         let resources = self.resources.as_ref().context("resources missing")?;
