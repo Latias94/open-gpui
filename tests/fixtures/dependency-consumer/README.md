@@ -963,3 +963,48 @@ off/on fixture commands exercise the ordinary consumer's existing feature graph 
 upload no GPU pixels, and establish neither native presentation, scanout, renderer submission nor
 performance. The separately ported official owner regressions and real renderer/resource tests
 retain their own verification scope.
+
+## Application-owned AVIF encoding opt-in
+
+The consumer's optional `image` dependency requests version `0.25.4` with
+`default-features = false` and only `features = ["avif"]`. Its `avif-encoding` feature enables
+that dependency through `dep:image`; no GPUI feature or wrapper is involved. Other image
+formats remain governed by the workspace dependency policy. This follows the encoding opt-in
+boundary from official Zed `8e06c323ae063f3d245ea5c283d4bf373ad51db2`, retained in the fixed
+source `635026fabc38440fce5e1767d125026a17b12012`.
+
+With `avif-encoding` enabled, the ordinary `images` test
+`downstream_opts_into_avif_encoding_alongside_gpui_decoding` executes public
+`Image::from_bytes` and `Image::to_image_data` to decode the existing animated WebP fixture.
+It converts the first one-pixel frame from BGRA to RGBA and actually encodes it with the public
+`image::codecs::avif::AvifEncoder`. It uses speed 10 and `with_num_threads(Some(1))`, checks
+that output is nonempty, and requires `image::guess_format` to identify the bytes as AVIF.
+The existing JPEG, animated WebP and malformed/truncated-image tests remain enabled in both
+feature configurations; only the additional encoder test is gated by `avif-encoding`.
+
+Run these commands from the repository root with `CARGO_BUILD_JOBS=1` and one Cargo process at a time.
+The first command runs the image tests with the encoding opt-in off; the second enables it.
+Both reuse the repository's `target` directory:
+
+```text
+cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test images --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features avif-encoding --test images --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+Inspect the corresponding image feature requests separately:
+
+```text
+cargo tree --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --edges features --invert image
+cargo tree --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features avif-encoding --edges features --invert image
+```
+
+With the workspace's default-minus-AVIF image configuration, the off graph must omit the
+`image` crate's `avif` feature, and the on graph must show that feature requested by the
+consumer. The fixture's `--all-features` gate also includes this opt-in.
+
+The [qualification](../../../docs/verification.md#image-dependency-feature-policy) records
+executed tests and compiler scope separately from these reusable commands. This consumer
+enables no `test-support` or `avif-native` feature and uses no engine-private API.
+Encoding and format detection do not establish AVIF decoding or a decoded AVIF round trip.
+The test constructs no App or Window and does not qualify native image loading, rendering,
+GPU presentation, cross-platform runtime behavior or performance.

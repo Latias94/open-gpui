@@ -1682,12 +1682,26 @@ optional codec packages can remain locked without being built. Review all affect
 locks without unrelated upgrades. Record actual compiler, feature and execution scope; this
 dependency unit does not qualify AVIF native decoding, foreign runtime execution or a speedup.
 
+Local implementation is `b4355a36824f0709f1b73f7480ec88a884a489bc` on November 9.
+The [qualification](../verification.md#image-dependency-feature-policy) records exact
+three-platform before/after graphs, complete retained formats, actual resource controls and
+ordinary application-owned encoding. Final Core/public/native image consumers pass 25/25;
+independent encoding off/on passes 3/3 and 4/4. Locked workspace/consumer compilation,
+affected correctness Clippy, actual Windows Rust 1.92 framework/ordinary-consumer checks and
+stable production wasm pass. The separately refreshed smoke lock at
+`015863c085dbcd845658cfb97c289c3ac4433aad` reconciles inherited stale dependencies and passes
+its own locked production wasm check without unrelated compatible upgrades. Independent
+source review closes without P1/P2 findings. Remaining renderer/API/platform closure,
+native foreground restoration, foreign execution, numerical costs, canonical docking and
+Nara GPU/View adoption retain separate scope.
+
 ## Maintained Baseline Before Engine Adaptation
 
 The [conditional hot-reload qualification](../verification.md#conditional-native-hot-reload)
 records the actual native compiler/patch/pixel/state consumer and rejection controls above.
-One existing native foreground-restoration gate remains unqualified. Continue atlas/renderer
-lifetime and remaining API/image-feature/platform reconciliation. Final hot-reload-disabled
+One existing native foreground-restoration gate remains unqualified. The atlas/renderer and
+image-feature successors above have scoped qualification; continue remaining API/platform
+reconciliation. Final hot-reload-disabled
 owners/public 68, ordinary independently locked enabled/disabled 62/47, locked workspace
 all-target compilation, correctness Clippy and actual Windows Rust 1.92 affected-framework/native
 consumer checks pass. Feature-selected non-debug Core excludes the reload cfg, and stable

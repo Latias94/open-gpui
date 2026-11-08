@@ -4793,6 +4793,104 @@ the existing foreground-restoration failure, replacement-Device/fractional-DPI/s
 execution and numeric costs retain their stated limits. Full fixed-target refresh,
 canonical docking and Nara GPU/View adoption remain open.
 
+## Image Dependency Feature Policy
+
+On November 9, the successor starts from Open-GPUI
+`c3d31566ffd6cc55c6f2b98e5e33810812e27262` against the unchanged fixed Zed target
+`635026fabc38440fce5e1767d125026a17b12012`. Official
+`8e06c323ae063f3d245ea5c283d4bf373ad51db2` removes the unused default AVIF encoder
+without changing the remaining image feature policy. The fork retains its qualified 0.25.4
+API minimum and resolved image 0.25.10. No decoder, resource loader, extension inventory,
+rendering owner or public GPUI format enum changes.
+Local implementation is `b4355a36824f0709f1b73f7480ec88a884a489bc`; the independently
+locked smoke consumer refresh is separately committed at
+`015863c085dbcd845658cfb97c289c3ac4433aad`.
+
+The root manifest disables defaults and explicitly enables bmp, dds, exr, ff, gif, hdr,
+ico, jpeg, png, pnm, qoi, rayon, tga, tiff and webp. AVIF encoding uses `avif` and
+ravif/rav1e; AVIF decoding separately needs `avif-native` and dav1d. Neither the previous
+default graph nor this policy provides that decoder. The inherited `"avif"` extension
+label remains an inventory entry, and TGA still lacks resource format guessing.
+
+Actual before/after Core feature graphs are captured for Windows x64, Linux x64 and
+macOS arm64. The after graphs include the entire workspace with all features.
+Each removes exactly `avif`, `default` and `default-formats`, adding no other image feature.
+Normal/build package graphs exclude ravif, rav1e and dav1d on all three targets.
+These are resolved dependency graphs on Windows, not foreign compilation or runtime tests.
+Optional packages can remain in Cargo.lock; their presence does not establish active builds.
+
+The ordinary independently locked consumer owns optional
+`image = { version = "0.25.4", default-features = false, features = ["avif"] }`,
+selected by its own `avif-encoding = ["dep:image"]`. Actual feature/package graphs on the
+same three targets exclude the encoder in default mode and include it under both explicit
+`avif-encoding` and all-feature modes. No mode enables image defaults or the native decoder.
+This adds no GPUI codec-selection API or feature. Initial offline foreign-graph inspection
+encounters uncached ashpd 0.13.13; the targeted online retry uses the existing proxy and
+preserves locked versions.
+
+New Core resource controls await the actual ImageAssetLoader HTTP-resource path for DDS,
+OpenEXR, Farbfeld, HDR and QOI, comparing all BGRA pixels against a deterministic red/blue
+image. DDS uses a locally constructed DXT1 header/block rather than an external binary asset.
+A separately named header-only AVIF control checks a recognized format reaching the shared
+decoder and returning its exact Unsupported format error; it establishes neither valid AVIF
+content nor decoding. The ordinary encoder control decodes public GPUI WebP pixels, converts
+BGRA to RGBA and actually encodes one AVIF pixel with one thread. Format detection establishes
+encoded output, not an AVIF round trip.
+
+Root, ordinary-consumer, test-support-consumer and hot-reload-consumer lockfiles retain every
+package version. The root/test-support/hot-reload image nodes only drop the direct `rgb` edge;
+the ordinary fixture adds its application-owned image edge and retains encoding when selected.
+Inspection also exposes a preexisting stale smoke_web lock: it still contains Taffy 0.10,
+spin 0.10 and the retired stacksafe owner, and lacks current segmentation and accessibility
+dependencies. Its separate refresh follows the existing manifests, including Taffy 0.15.1,
+spin 0.12.3, ICU 2.4 and the required zero-copy closure. Unrelated compatible crossbeam-deque,
+ctor, link-section and linktime-proc-macro selections are explicitly preserved. No manifest
+version requirements are raised by that fixture maintenance.
+
+Bounded independent source review confirms the exact official feature set, deterministic DDS
+contents, actual awaited resource path, decoder error branch and ordinary encoder API use,
+with no P1/P2 finding. Both implementation workers and the reviewer are closed. The existing
+workflow gains the focused Core/public/independent image gates; remote CI is not executed.
+
+The initial focused Core image run passes 20/20 without skips in its selected set
+(`3e7a73fe-58cf-4009-b467-aba10db320ac`). After a test-variable naming cleanup, the final
+Core/WGPU-public/Windows-native selection passes 25/25
+(`6d6306ba-2a78-44d9-8976-3e007616d9db`): twenty Core cases, four public headless resource/
+animation/loading consumers and the complete native encoded/embedded image trajectory.
+The native consumer retains actual nonempty Submitted frames, decoded BGRA and framework
+pixel readback, animation/replacement/reconstruction, atlas reuse and exact owner retirement.
+It does not establish OS compositor presentation. The overlapping 20 and 25 selections are
+not forty-five distinct regressions; 1,818 unrelated tests are filtered from the final run.
+
+The ordinary independently locked image target passes 3/3 with encoding disabled
+(`35b8cace-6222-49a0-82ca-75c9c36e27d2`) and 4/4 with only the application-owned
+`avif-encoding` opt-in (`8f5452cf-51dc-4364-bf91-dda2c33e26c2`), without skips.
+The enabled test writes nonempty AVIF bytes through the public encoder while existing GPUI
+JPEG/WebP/error consumers keep passing. The normal dependency graph acquires no GPUI
+test-support feature.
+
+Final Windows Rust 1.95 locked workspace all-target and independently locked ordinary-consumer
+all-target/all-feature checks pass. Affected Core/WGPU/Windows all-target/all-feature Clippy
+passes with `-D clippy::correctness`. Actual Rust 1.92.0 checks pass for those three packages
+and the ordinary independent consumer, both all-target/all-feature. These checks include the
+application-owned encoder without raising the declared framework compiler floor.
+
+Stable Rust 1.95 production Core/WGPU/Web compiles for wasm32-unknown-unknown with default
+features disabled. Profiling and optional shared-memory variants retain their separately
+recorded earlier qualification; they are not rerun for this dependency-only policy.
+Import-boundary and public-API scans pass through the existing built xtask executable.
+The refreshed independently locked smoke_web consumer also passes its stable Rust 1.95
+production wasm32-unknown-unknown check. This is compilation rather than browser execution
+or a Rust 1.92 qualification for that fixture.
+
+Root and ordinary-consumer formatting checks, workflow YAML parsing, whitespace checks and
+the existing document-link/release-doc scans pass. The earlier complete suites
+are not repeated for this dependency policy; the affected image consumers above supply its
+runtime evidence. Existing native foreground restoration, foreign execution, AVIF native
+decoding, numeric cost distributions, complete fixed-target refresh, canonical docking and
+Nara GPU/View adoption remain open. No build-time or memory speedup is claimed from the
+upstream measurements.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:
@@ -5052,12 +5150,15 @@ still pin `quick-xml = "0.39"`, and both reach this workspace through proc-macro
 paths rather than runtime XML parsing. Remove those ignores once upstream releases accept
 `quick-xml >= 0.41`.
 
-The remaining warning-class advisories are not denied by the local audit gate: `paste 1.0.15` comes
-from `image`'s default AVIF encoding chain, and `ttf-parser 0.25.1` comes through the font/SVG stack.
+At that dependency audit, warning-class advisories are not denied by the local gate:
+`paste 1.0.15` comes from `image`'s then-default AVIF encoding chain, and
+`ttf-parser 0.25.1` comes through the font/SVG stack.
 The AVIF encoder feature does not provide decoding; decoding needs the separately selected
 `avif-native` feature, absent from this qualified graph. Official `8e06c323ae` removes the unused
-default encoding chain while retaining the other default format features; that dependency-policy
-reconciliation is a separate successor. Replacing the second requires a renderer/font-stack
+default encoding chain while retaining the other default format features; the later
+[dependency-policy qualification](#image-dependency-feature-policy) records that adoption.
+Optional encoder packages can remain locked, so active-feature removal is not an advisory
+resolution claim. Replacing the second requires a renderer/font-stack
 migration. The updated SVG stack crates reviewed in this slice (`resvg 0.46.0`, `usvg 0.46.0`,
 `imagesize 0.14.0`, `kurbo 0.13.1`, `polycool 0.4.0`, `roxmltree 0.21.1`, `svgtypes 0.16.1`) are
 crates.io packages with MIT and/or Apache-2.0 licenses.
