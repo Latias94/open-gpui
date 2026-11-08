@@ -4120,6 +4120,154 @@ per-routine platform isolation, measurement/report/allocator consumers and numer
 in the complete benchmark owner. Full refresh, hot reload, canonical docking U4-U9 and Nara
 renderer/View adoption remain open. This unit changes no engine UI default or R11/R12 status.
 
+## Complete Benchmark Context And Measurements
+
+The November 8 successor continues from `916c7cb2d2fffcaa95199598655b5cef97fb9bda`
+against fixed Zed `635026fabc38440fce5e1767d125026a17b12012`. It imports the complete
+independent Apache-2.0 measurement owner, benchmark-only feature, threaded context/report,
+parameterized macros, shared seeds and optional fallible renderer path. Official behavior is the
+baseline; fork adaptation preserves accepted candidate and exact submission/resource authority.
+
+The initial metrics/macro selection passes **27/27** without skips
+(`6f7d00f6-7ea4-4f0b-b765-2037420139b5`). It includes all official measurement tests applicable
+to this host, explicit Windows counter unavailability, allocator failure/reallocation accounting,
+secondary normalization, macro validation and separate input/seed report expansion. A first command
+was refused because `-j 1` and `--test-threads=1` both set nextest's test concurrency; the executed
+command uses `CARGO_BUILD_JOBS=1` and only the latter nextest option.
+
+Independent source review finds two inherited official defects. The new wrapper-visibility
+regression fails against the imported macro (`84c6cf8c-6101-44d0-b0bd-8c70cc2898fc`); preserving
+the original visibility corrects cross-module registration. A standalone Rust 1.95 test of the
+actual shared seed source reproduces maximum-seed addition overflow. Count-based generation
+allows a valid final `u64::MAX` and rejects an overflowing sequence before iteration. Both boundary
+controls pass after correction. The complete metrics/macro selection then passes **28/28**
+without skips (`07928f24-6f35-4588-990c-6d1e0749b2d7`); integrated Core seed controls and a
+real module-qualified independent benchmark remain part of the full qualification below.
+
+Actual Windows Rust 1.92.0 all-target/all-feature compilation passes for the new measurement
+package and macros. This early prerequisite check does not replace full context/renderer/consumer
+compiler-floor qualification.
+
+The first integrated context/public selection compiles after correcting test-only return-type and
+empty-array inference errors, then runs **40 tests: 36 pass and 4 fail**
+(`58b67107-e12a-4bb8-9361-ca115d5d3592`). Public notification/resize/reconstruction, task/timer,
+external callback and successive-routine consumers pass. New refusal and per-session close
+scenarios expose remaining integration problems; their original assertions are retained.
+
+Three additional independent-review findings reproduce in an isolated red selection
+(`849ffe4e-ee5b-4fc6-9276-3099fd24983b`): App-destructor tasks are left queued when no timer
+has yet been armed, a successful 100th cancellation still reports failure, and batched panic drops
+input before closing its trace scope. The correction drains destructor work unconditionally,
+checks remaining timers without cancelling a 101st round, and places the trace field before input.
+The same selection retains the existing refresh-only renderer failure for diagnosis. These are
+inherited official context edges, separately from the fork's terminal-generation integration.
+
+Canvas now opts into deterministic window tests through an explicit `test-support` feature;
+its dev-dependency no longer forces Core test support and leak detection into benchmarks. The
+complete Canvas cohort and benchmark-only feature graph must both be checked. CI uses one global
+build job and removes the invalid duplicate nextest concurrency options; no remote CI run is
+implied by these local workflow edits.
+
+The refresh-only renderer failure is a fork integration defect: the official helper assumes a
+synchronous frame callback, while the fork enqueues it in ordered native ingress. Actual draw
+previously occurred on a later App borrow release, outside measurement. A scoped App borrow
+around each simulated callback now finishes that existing convergence path before returning.
+The new regression reads the native submission count immediately inside measured work, before
+any later App read, and compares complete draw samples. It does not bypass native ingress or
+directly draw. Benchmark Apps use explicit quit mode across per-iteration window closes. The
+existing terminal quit authority now preserves a dispatched state, accepts a late platform quit
+after native terminal shutdown through post-borrow convergence, and avoids opening another fence.
+
+Renderer source review also identifies the fork's infallible Metal intermediate-allocation helper.
+It now adopts official fallible paired allocation and caller propagation, validates the owning
+device's dimension limit, and rejects an invalid native resize until valid geometry recovers.
+Metal regressions are source-only on this Windows host; no macOS execution or allocation-pressure
+qualification is implied.
+
+The initial injected-renderer selection runs **8 tests: 6 pass and 2 fail**
+(`98cba361-074b-4016-8b85-625f480c5cb8`). Actual WGPU submission, padded-row readback, target
+reuse, invalid-size recovery and atlas release pass. The public fixture needs explicit paintable
+child bounds and an active, actually submitted startup baseline; its original pixel and exact
+generation assertions remain intact. The combined successor runs **59 tests: 57 pass and 2 fail**
+(`3f16050b-50c1-427e-b96a-02842714a3af`). Executed context/frame/unwind/timer corrections pass;
+the remaining public fixtures require the startup frame delivery and a poll that explicitly exceeds
+the public journal floor before asserting retained foreground work. Short-poll timing noise is not
+a reliable positive-work oracle. These functional Criterion runs do not constitute matched
+performance comparisons, regardless of incidental saved-baseline output.
+
+The next 60-test run passes 59 and exposes the fixture's remaining BGRA input mismatch
+(`a15e4dba-22e1-449c-b37b-efa1fb5475a8`). `RenderImage` explicitly stores BGRA bytes; the
+fixture had passed RGBA red. Correcting the fixture's source bytes, while retaining the original
+red screenshot assertion and the official renderer conversion, closes that failure. Final focused
+context/public/renderer execution passes **60/60** without selected skips
+(`1d8e78bc-94ce-4e92-8a8a-d2784b2b5c21`). This includes the late-terminal-quit unwind wake,
+100/101 cancellation boundaries, refused-candidate recovery, actual WGPU pixels and exact
+renderer/atlas release across reconstruction. Both selected benchmark feature graphs exclude Core
+`test-support` and `leak-detection`; executable consumers and broad qualification follow.
+
+The independently locked `maintained_harness` executable completes **9 benchmark cases** with
+`--profile dev --features bench-support -- --noplot`. It executes native text shaping, two
+parameterized renderer inputs, four input/seed task combinations, a single seeded task and the
+module-qualified registration. Default counting-allocator reports contain actual allocation and
+byte observations; no FakeCounter or test-support dependency is involved. The feature-graph check
+also excludes Core leak detection. This is executed functional qualification in an unoptimized
+profile; its incidental timings are not a release performance result. Windows retains the official
+default unavailable renderer factory, so this binary's platform Submitted facts do not establish
+GPU output; the separate injected WGPU consumer above supplies that evidence.
+
+The maintained Canvas `large_canvas` executable passes all **5 smoke cases** under
+`--profile dev --features bench-support -- --test`: index rebuild, visible query, paint-frame
+culling, editor-model snapshot and label rendering. The 200-by-100 node grid, 39,900 indexed
+records, labels, viewport and culling options remain intact. The label case emits actual
+allocation, dirty-to-draw, draw and foreground-work reports, with unavailable Windows hardware/
+resource counters reported explicitly. This one-iteration smoke is not a numeric budget or an
+optimized renderer comparison. Complete component acceptance enables Canvas `test-support`
+explicitly to retain its two window-driven input/clip regressions.
+
+Complete all-feature Core/public/WGPU/Windows/platform/Gallery and metrics/macros execution passes
+**2,040/2,040** (`ba398eb1-2d7d-4aab-b320-7c8b9943b9ea`). Five tests are skipped: four
+pre-existing interactive Windows cases and the Gallery's fixture-regeneration maintenance case.
+The full native trajectory needs no isolated runtime retry. UI core/components/docking/Canvas
+passes **2,964/2,964** without skips (`b0be986b-39a7-43e1-bbd8-7cad3053c52f`), explicitly
+enabling Canvas test support and retaining both window-driven input/clip cases. Comparing the
+complete prior test-name set identifies two additional Docking tests gated on its own
+`test-support` feature. Both pass in the supplemental run
+(`a0e72175-78bc-45b7-afc8-1e0240959a0d`), with 1,473 unrelated Docking cases filtered out.
+The union preserves the previous 2,966-test cohort without repeating already qualified cases.
+Future complete cohort commands enable both `open-gpui-canvas/test-support` and
+`open-gpui-docking/test-support` together; Core test support alone does not enable a consumer's
+own feature-gated tests.
+
+The instrumentation-disabled affected Core/public selection passes **112/112**
+(`f4007354-2541-4c7b-a357-9133394aaf64`), with 1,155 unrelated cases filtered out. It retains
+App/native-ingress/renderer lifecycle, seeded tests, foreground instrumentation, scheduled frames,
+real threaded handoff/timers and public release controls. The independently locked consumer passes
+**62/62** with all features (`2498f4cd-2564-44cc-b565-efa208c56337`) and **47/47** with
+defaults disabled (`886f57b4-65db-402e-9b75-50cd59c1a6d4`), both without skips. These ordinary-dependency
+value/layout and explicitly type-only controls remain separate from the executed benchmark
+and injected-renderer consumers above; they do not claim to launch an independent native App.
+Locked workspace all-target and independent all-target/all-feature checks pass on Rust 1.95.0.
+Affected Core/WGPU/Windows/platform/Canvas/metrics/macros all-target/all-feature Clippy passes
+with `-D clippy::correctness`. Actual Windows Rust 1.92.0 all-target/all-feature checks pass for
+Core/WGPU/Windows/platform/Canvas/metrics/macros and the independently locked consumer. No compiler
+floor increase is needed. Stable production wasm compilation passes with instrumentation off/on.
+The existing optional shared-memory configuration passes on Rust 1.98.0-nightly (`57d06900f`,
+May 27), using build-std and the checked-in atomics/imported-memory flags without
+`RUSTC_BOOTSTRAP`. Root and independent formatting checks pass. These are production compilation
+gates, not browser/test-support or foreign-native execution.
+
+All ten implementation/test/review threads are closed. The final benchmark/context/renderer and Metal
+source reviews report no unresolved P1/P2 findings in their reviewed scope. Existing import/API/
+document/release scans, changed-workflow YAML/manifests and Git whitespace checks pass. Local CI
+configuration changes do not imply remote CI execution or publication.
+
+These functional gates do not establish numerical performance budgets. Linux/macOS hardware
+counters and renderer execution require their owning platform evidence; Windows keeps the official
+default unavailable renderer result and independently exercises an injected WGPU renderer. Official
+`95cd535a5fad96d649513f96c5784ceefd379e47`'s additive test-support/leak-selection mechanism
+remains a separate source-grounded successor. This unit excludes those features from benchmark
+consumers without claiming that broader mechanism synchronized.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:
@@ -4410,7 +4558,7 @@ cargo nextest run -p open-gpui-canvas document tool gpui public_surface_tests --
 The canvas crate also has a large-canvas Criterion baseline:
 
 ```sh
-cargo bench -p open-gpui-canvas --bench large_canvas
+cargo bench -p open-gpui-canvas --features bench-support --bench large_canvas
 ```
 
 Use the benchmark to compare spatial-index, visible-query, and paint-frame culling changes. It is

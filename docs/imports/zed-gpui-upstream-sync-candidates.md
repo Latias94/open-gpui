@@ -198,7 +198,8 @@ disposition of the 364 commits.
 | Implemented: externally driven App ownership | Official `74798c68d5c` now supplies `Application::run_embedded` and the strong ApplicationHandle; launch reuses the existing run_platform owner. Handle update deliberately uses the fork's complete update transaction rather than official direct callback invocation. | The [application qualification](../verification.md#externally-driven-application-lifetime) records defer/batching red results, 10 owner cases and actual Windows visual-host Submitted/readback/retirement. Complete affected runtime/public, component and independent suites pass 1,339/1,339, 2,964/2,964 and 14/14; four existing interactive Windows cases remain skipped. Locked checks, correctness Clippy and actual Windows Rust 1.92.0 affected-framework/consumer checks pass. Stock Windows still owns a blocking process loop; native production external-loop support, shared GPU and separate display/hot-reload/asset owners are not implied. |
 | Implemented: display and launch lifecycle | `f495dd0f77b69e287ed72c1168dc02965f08be7d` now supplies App-owned display observation, per-window association and cached refresh intervals, initialized from both launch callbacks. The fixed target retains that mechanism. | The [qualification](../verification.md#connected-displays-and-window-association) records the fork's ordered native ingress/immutable topology adaptation, official reciprocal-overflow correction, deferred-close reentry fix and ordinary required bitflags dependency. Corrected runtime/public/gallery, component and independent consumers pass 1,388/1,388, 2,964/2,964 and 18/18; four existing interactive Windows cases remain skipped. Source migration, actual Submitted frames and synthetic WM ingress retain distinct scope from physical hotplug/refresh-mode and non-Windows native qualification. |
 | Implemented: refresh-aware measurement v3 | `4f6d97b9de7d9f167da8b7832eeecea22c5a9efa` and final cleanup now measure signal/dirty-to-submission work against each window's refresh interval, including view self-time and the complete v3 detector/monitor mechanism. Local implementation is `411895475e9e51a9f06954d5d676333d597b991f`. | The [qualification](../verification.md#refresh-aware-frame-and-hang-measurement-v3) retains official provenance, exact accepted/Submitted adaptations and four reproduced inherited sealer/active-use corrections. Complete framework/public/Gallery/state/native 1,809, components/docking/Canvas 2,966, disabled Core/public 1,134 and independent enabled/disabled 46/32 pass. Actual Windows Rust 1.92.0, stable/nightly production wasm and static checks pass. Numeric overhead, foreign native/browser execution and complete benchmark/report/debug-overlay parity remain separate. |
-| Conditional GPUI hot reload | `670a779a5ed9e7161c97aa4f998d395c207d5631` initializes Subsecond hot reload under `cfg(gpui_hot_reload)` during both launch callbacks; the fork has no matching owner or dependency. | Compare compiler/build/runtime prerequisites and real stateful custom-panel replacement/recovery before selecting the target's mechanism. External-loop ownership is not hot reload, and source adoption alone does not qualify edit-to-result latency. |
+| Additive test support | Official `95cd535a5fad96d649513f96c5784ceefd379e47` separates leak tracking from test support, adds build-time instrumentation selection and identifies deterministic execution through runtime queries. The fork still couples the two features. | The [complete successor](../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#additive-test-support-and-leak-detection-successor) maps framework/scheduler/util/native behavior and explicit leak-enabled acceptance. Benchmark graph isolation alone does not qualify this mechanism. |
+| Conditional GPUI hot reload | `670a779a5ed9e7161c97aa4f998d395c207d5631` and the final target supply debug-native launch initialization, matched patch transport, foreground application and View/AnyView HotFn boundaries; the fork has no matching implementation or dependency. | The [source-grounded successor](../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#conditional-hot-reload-successor) maps the complete mechanism, pinned prerequisites and an actual edit/build/apply custom-panel consumer. Existing websocket/refresh regressions are not executable patch or edit-to-result qualification. |
 | Atlas and renderer lifetime | Target `platform.rs` adds shared `AtlasBackend`/`AtlasState`; `96e95edac45` skips released-texture sprites, and WGPU adds texture generations and bind-group caching. The fork instead has per-instance lease generations and candidate-frame refusal. | Compare the lifetime behavior in the existing owner, including stale resource and rejected-frame controls. Preserve admitted candidate and lease semantics while evaluating deeper shared atlas code; copying upstream's skip policy would change the product contract. |
 | Platform closure | Target macOS shares `gpui_apple` and uses `objc2`; Linux gains switchable headless/windowed modes and rendering; Web adds backend/focus/input changes. The native-font successor now corrects already-matched Windows selections and private fallback, including gaps retained by the fixed target. CoreText source adaptation has separate unexecuted-platform scope. | Map trait and manifest changes across the actual supported backend closure. The [native-font record](../verification.md#native-font-reselection-and-retained-faces) distinguishes actual simulation/face retention, submitted Windows frames and prepared Mac source. Treat iOS as a separate platform decision and retain unexecuted native-platform limits. Existing Windows-only evidence cannot qualify the other backends. |
 | Public API evolution | The target changes event, headless-renderer, font/text and benchmark APIs. Its generic `View`/`ViewElement` path from `74b5207744ef95505fd75c56bf2c9d4736e931ee` coexists with `Render`/`RenderOnce`; AnyView embeds through ViewElement. The complete View interface, macro and cached-view migration is implemented and scoped qualification is recorded below. | Preserve ordinary public consumption and the independently locked consumer. The target's debug accessibility view-type map/dump pipeline and conditional hot reload retain separate owners; the interface migration alone does not qualify those mechanisms or complete API parity. |
@@ -419,39 +420,39 @@ dispositions. None of these findings adds runtime qualification or changes the f
 | `10628c3d2c` | Complete upward List normalization implemented; the old negative-offset branch is removed. | Existing PendingAutoscroll/admitted commit retains source and atlas rejection. Original/variable/zero-height/start-clamp controls and exact public recovery qualify the adaptation. |
 | `362035d52a` | Official parenthesized-position regression imported; runtime parsing already present. | Existing `/root/Test (3)` path/row behavior is preserved. Product file-existence fallback stays outside util. |
 | `c7ad65e468` | Complete source-order shared line queries and measurement-only indexed lookup implemented. | Owner, actual software paint and independent signature consumers preserve existing text/candidate lifetime and clipping. |
-| `1722fe63bc` | Parameterized benchmark macros, real text-system injection and benchmark-context timer teardown remain absent. The concrete dispatcher prerequisite is implemented below. | Extend the existing benchmark/report successor, not another harness. Reconcile phase 2 `297c4a4d78`, existing `1f7eae7fb7` support and `3135cdf8dc` platform text-system caching against final target; reuse the complete dispatcher. |
+| `1722fe63bc` | Complete context, measurement, parameterized macro, real text-system and renderer successor is implemented at `5f3a99fad9284c17a8eaac508ab8b4f47018be44` after the qualified threaded-dispatcher prerequisite. | Phase 2 `297c4a4d78`, existing `1f7eae7fb7`, shared seeds `2440236055` and `3135cdf8dc` are reconciled against the fixed final target. The [qualification](../verification.md#complete-benchmark-context-and-measurements) records complete scoped runtime, benchmark-only/injected GPU, independent-consumer and compiler gates, with explicit platform/performance limits. |
 
 The benchmark owner includes inputs/input_name/group/sample_size validation and Criterion
 bench_with_input, thread-local dispatcher reuse with per-context platform creation, timer release
 outside its lock followed by waking/draining, bounded cancel/drain after App/foreground release,
 and bounds evaluation before mutable App access. Macro parameters alone do not close that owner.
 
-The November 8 follow-up maps the final target beyond those introductions. The concrete official
-`ThreadedDispatcher` is now implemented by the prerequisite below. Existing `BenchAppContext`
-still uses the virtual `TestDispatcher`; native text-system injection/cache, scheduled-frame
-driving and isolated per-routine platforms remain missing. `1f7eae7fb7`'s blocked HTTP/trace
-foundations are present, but the independent
-`bench-support` feature and benchmark-only prompt cancellation remain missing. `2440236055` adds
-seeded benchmark macros and shared seed calculation; the current private test helper is not
-equivalent when `SEED` is combined with multiple iterations. The final macro also depends on
-`Criterion<BenchMeasurement>` rather than the fork's plain Criterion forwarders.
+The November 8 pre-implementation audit maps the final target beyond those introductions. The
+concrete official `ThreadedDispatcher` is implemented by the prerequisite below. At that audit,
+`BenchAppContext` still used the virtual `TestDispatcher`; native text-system injection/cache,
+scheduled-frame driving and isolated per-routine platforms were missing. `1f7eae7fb7`'s blocked
+HTTP/trace foundations were present, but independent `bench-support` and benchmark-only prompt
+cancellation were missing. `2440236055` adds seeded benchmark macros and shared seed calculation;
+the former private test helper was not equivalent when `SEED` was combined with multiple
+iterations. The final macro also depends on `Criterion<BenchMeasurement>` rather than the fork's
+former plain Criterion forwarders.
 
 `3135cdf8dc` also owns queue/dispatcher teardown fixes: final-sender drop must wake every waiting
 receiver, receivers must recheck closure after waking, and the Linux timer loop must exit on a
 closed channel. The prerequisite below now implements these fixes in the existing queue and
 Linux dispatcher. Its qualification keeps Linux active execution separate from source review.
-Headless benchmark rendering also needs the official no-readback render operation and fallible
-optional renderer factory; TestWindow draw counts and simulated outcomes are not actual GPU
-submission. The remaining harness/render findings join the existing complete benchmark/report
-owner and have source evidence only. Full report/allocator semantics, real headless GPU execution
-and downstream device reuse/loss policy retain their own implementation and qualification requirements.
+The audit also requires the official no-readback render operation and fallible optional renderer
+factory; TestWindow draw counts and simulated outcomes are not actual GPU submission. The complete
+benchmark/report successor below owns these harness/render findings, full report/allocator
+semantics and actual injected headless GPU consumers. Real device-loss and platform execution
+retain their separate evidence requirements.
 
 The [threaded-dispatcher prerequisite](../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#threaded-dispatcher-and-queue-closure-prerequisite)
 starts from `1670c373e34751ac520237b7d04a480b06ab7b4a` and implements the complete
 concrete dispatcher and final-target readiness/cancellation hooks alongside queue/Linux closure,
-with public executor execution and existing admission/profiler contracts. Independent benchmark
-features, context replacement, real font/GPU injection and complete measurement/report consumers
-remain queued; the current test-support exposure does not close them.
+with public executor execution and existing admission/profiler contracts. Its test-support exposure
+does not itself close the successor's independent benchmark features, context replacement, real
+font/GPU injection or complete measurement/report consumers.
 
 Local implementation `018fbdc5f708d91f0ae16a7fb43ac04280ebb680` and its
 [qualification](../verification.md#threaded-dispatcher-and-queue-closure) record complete
@@ -459,8 +460,22 @@ Core/public/WGPU/Windows 1,810, components/docking/Canvas 2,966, disabled affect
 independent enabled/disabled 62/47 passing. Four original interactive skips remain. Locked
 checks, actual Windows Rust 1.92, correctness Clippy, stable/nightly production wasm,
 formatting and static gates pass. The Linux fix/test is source-reviewed without active Linux
-compilation or execution. Ordinary dependencies retain their prior feature graph and lockfile;
-the old virtual benchmark context still requires its complete replacement.
+compilation or execution. That prerequisite retains ordinary dependencies' prior feature graph
+and lockfile; complete context/dependency replacement belongs to the benchmark successor.
+
+The complete benchmark successor is implemented at
+`5f3a99fad9284c17a8eaac508ab8b4f47018be44`. It replaces the virtual context and forwarding
+macros, adds the independent Apache-2.0 measurement package, isolates native text/platform state,
+and separates optional no-readback rendering from screenshots. Independent review reproduces and
+corrects inherited seed, wrapper-visibility and teardown/unwind edges separately from fork
+ingress/candidate/terminal-quit adaptations. Focused actual consumers pass 60/60, the independent
+benchmark executes nine cases, Canvas passes five smoke cases, and complete runtime/public/
+Gallery/native passes 2,040/2,040 with five documented skips. Components pass 2,964 plus two
+separately gated Docking controls, preserving the previous 2,966-test set. Disabled affected
+Core/public 112 and independent enabled/disabled 62/47 pass. Locked checks, correctness Clippy,
+actual Windows Rust 1.92, stable/nightly production wasm, formatting and existing static gates
+are recorded in the owning qualification. Numerical costs, foreign-platform execution, additive
+test support, conditional hot reload and engine adoption remain separate.
 
 The source-only audit retains the explicit `2882636c06`/`b5c2d8a13f` revert pair's rejected
 disposition. It is a bounded correction, not a claim that all target-to-fork omissions are exhausted.

@@ -1430,16 +1430,128 @@ Clippy, actual Windows Rust 1.92, stable and existing nightly production wasm, f
 static gates pass. Five threads close. Linux source is reviewed without active Linux execution;
 benchmark feature/context/report and the remaining owners above retain their complete acceptance.
 
+#### Complete Benchmark Context, Measurements And Consumers
+
+Continue from `916c7cb2d2fffcaa95199598655b5cef97fb9bda` against the unchanged fixed
+target. Complete the existing owner above through the official independent `bench-support`
+feature, threaded per-routine platforms, real text-system reuse, frame-driven context, teardown,
+measurements/reporting and parameterized/seeded macro APIs. Replace the old virtual context
+and Criterion-forwarding macros; retain their setup-exclusion, nested tracing and unwind
+regressions through the complete successor. Do not add a compatibility context or reduce the
+official report to plain Criterion wall-time forwarding.
+
+Import the Apache-2.0 `bench_metrics` closure as an independent Open-GPUI package. Criterion
+0.8.2 and `perf-event2` 0.7.4 are the fixed target's direct prerequisites; resolve only their
+necessary closure and qualify the declared compiler floor rather than copying the upstream
+toolchain. Preserve platform-specific counter availability instead of reporting unsupported
+counters as zero. Hardware/allocator metrics, frame events and foreground journal work retain
+their distinct scopes and setup exclusion.
+
+Keep accepted scene publication and actual submission separate while adding the official
+fallible optional headless renderer and no-readback render seam. Extend existing renderer/
+context owners and preserve lease/refusal/device-loss behavior. The default Windows factory
+retains the official unavailable result; a supplied real renderer must have an actual public
+submission consumer. Linux/macOS active execution and hardware measurements require their
+own evidence. Complete independent benchmark-only consumption without test-support, real
+font shaping, exact state release and successive-routine isolation before claiming the owner
+qualified. Canonical docking, hot reload and Nara GPU/View adoption remain separate.
+
+Independent source review identifies two inherited official edge defects, reproduced before the
+corrections: the attribute macro drops wrapper visibility, blocking cross-module registration;
+the shared seed range overflows when a valid final seed is `u64::MAX`. Preserve the original
+visibility on the registered wrapper, and validate the final seed before generating a sequence
+by count. Keep complete official mechanisms and tests. Add an actual module-qualified independent
+benchmark, maximum-seed controls and an explicit pre-iteration overflow error. Record these as
+official inherited corrections, separately from fork renderer/candidate adaptations.
+
+Integrated review adds three reproduced official context edge corrections: drain tasks queued
+by App destruction before deciding timer cancellation is complete; accept convergence on the
+100th permitted cancellation without an extra cancellation; and end the trace scope before input
+destruction during unwind. Keep explicit benchmark App lifetime across per-iteration window closes
+and completed terminal shutdown idempotent through the existing App owner. Canvas deterministic
+test support is explicit so normal benchmark measurements exclude entity leak-detection overhead.
+Retain refused-candidate, rejected-present, final-submission and original teardown regressions.
+
+Local implementation is `5f3a99fad9284c17a8eaac508ab8b4f47018be44`. The
+[qualification record](../verification.md#complete-benchmark-context-and-measurements) owns actual
+focused context/renderer execution, independently locked benchmark and maintained Canvas smoke
+cases, full runtime/native results, compiler gates and their limits. The complete scoped unit
+does not establish numeric budgets or close the following official mechanisms.
+
+### Additive Test Support And Leak-Detection Successor
+
+The final target also contains official `95cd535a5fad96d649513f96c5784ceefd379e47`:
+test support no longer implies entity-handle leak tracking, build-time `GPUI_LEAK_DETECTION`
+and the explicit feature select that instrumentation, and runtime `is_test` queries identify the
+deterministic executor rather than the compiled feature. The current fork still couples test
+support to leak detection. Excluding both from the benchmark graph qualifies benchmark isolation;
+it does not implement this broader official mechanism.
+
+Reconcile the complete framework, extracted scheduler/util and native renderer closure through
+their existing owners before the hot-reload build-script change. Preserve real native behavior
+when test support is compiled in, explicit leak-enabled acceptance, live weak-handle release
+assertions and the fork's native ingress/candidate contracts. Keep no-op snapshot behavior
+explicit when tracking is absent. Verify ordinary native execution, deterministic contexts,
+benchmark-only isolation, feature/environment selection, enabled and disabled leak controls,
+independent consumption and actual compiler-floor builds. Product-only agent skill changes stay
+outside the framework closure. This is source-grounded queued work, not an executed feature or
+a measured build-time improvement.
+
+Keep per-executor runtime detection distinct from the official process-level
+`test_scheduler_created` hint. A process may host both a deterministic test context and a
+real-time benchmark or native context; constructing the former must not change the latter's
+`is_test` result. Source inspection maps both to the existing extracted scheduler and GPUI
+executor wrappers. Native Metal screenshot access must retain the target's debug-only gate;
+compiling test support into an optimized application must not silently change presentation policy.
+
+### Conditional Hot Reload Successor
+
+After complete benchmark qualification and additive test-support reconciliation, reconcile official
+`670a779a5ed9e7161c97aa4f998d395c207d5631` against the same fixed target. The inspected
+target includes more than launch initialization: optional native transport, a per-App owned task,
+build/process-matched jump tables, foreground update application, window refresh, `HotFn`
+redirection for stored AnyView render pointers, and the common View/RenderOnce render boundary.
+Preserve the complete mechanism and official regressions through the existing App/View owners;
+do not add an engine reload manager or a second render scheduler.
+
+The target pins `dioxus-cli-config`, `dioxus-devtools-types` and `subsecond` to 0.7.10, with
+async-tungstenite 0.33 and smol transport. Its build script enables `gpui_hot_reload` only for
+feature-enabled debug builds on the enumerated native targets. Reconcile dependencies, license
+closure, compiler/build-driver requirements and actual supported backends explicitly; ordinary
+and release consumers retain their exclusion. Do not infer an executable patch from a successful
+feature build or silently raise the framework's compiler floor to the monorepo toolchain.
+
+The official websocket test proves build/process filtering and the cached-view test proves
+refresh without recreating model state. Neither loads a newly compiled patch. Add a complete
+independent stateful custom-panel edit/build/apply trajectory, including stored/erased render
+pointers, retained state, exact accepted/submitted replacement, invalid or mismatched patch,
+required full restart, disconnect and retirement. Preserve fork callback/candidate/lease authority
+at the patch boundary. Measure edit-to-visible latency only after that real compiler/runtime
+consumer passes; body patching does not establish arbitrary state-layout migration or a complete
+engine Editor reload workflow. This subsection is source-grounded execution planning, not hot
+reload implementation or qualification.
+
 ## Maintained Baseline Before Engine Adaptation
+
+The [complete benchmark qualification](../verification.md#complete-benchmark-context-and-measurements)
+records local implementation `5f3a99fad9284c17a8eaac508ab8b4f47018be44` on November 8.
+It replaces the old virtual context and parameter forwarders through complete official owners,
+with independent measurements and actual benchmark-only/font/GPU consumers. Complete runtime/
+native 2,040, the previous 2,966-case component union, disabled affected 112 and independent
+enabled/disabled 62/47 pass. Locked checks, correctness Clippy, actual Windows Rust 1.92,
+stable/nightly production wasm, formatting and existing static gates pass. Continue additive
+test support and conditional hot reload. Numerical budgets, foreign native execution, full
+refresh, canonical docking and Nara GPU/View adoption remain open.
 
 The [threaded/queue prerequisite](../verification.md#threaded-dispatcher-and-queue-closure)
 records local implementation `018fbdc5f708d91f0ae16a7fb43ac04280ebb680`, finishing on
 November 8. Complete official concrete dispatch, ready turns and timer/queue closure reuse
 existing platform/executor/profiler owners. Its complete scoped consumers and compiler gates
-pass; Linux active execution and other foreign-platform gates remain separate. Continue
-benchmark-feature separation and the complete context/real-text/render/measurement/report owner,
-then conditional hot reload. Full refresh, numerical budgets, canonical docking and Nara GPU/View
-adoption remain open; no engine UI default follows.
+pass; Linux active execution and other foreign-platform gates remain separate. The complete
+benchmark/context/real-text/render/measurement/report successor is implemented above. Continue
+additive test support and conditional hot reload after its scoped qualification. Full refresh,
+numerical budgets, canonical docking and Nara GPU/View adoption remain open; no engine UI default
+follows.
 
 The [property/configuration/initial-tree qualification](../verification.md#accessibility-properties-configuration-and-initial-trees)
 records local implementation `d9608b1a3174f17df270d6b92894539ec32654a8`, finishing on

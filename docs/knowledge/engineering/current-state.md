@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-08T05:54:54+08:00
+timestamp: 2026-11-08T08:39:09+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -18,6 +18,22 @@ verified_by:
 
 # Current State
 
+- The complete benchmark context/measurement successor is implemented at
+  `5f3a99fad9284c17a8eaac508ab8b4f47018be44`, after
+  `916c7cb2d2fffcaa95199598655b5cef97fb9bda`. It retains the official independent measurement
+  package, parameterized macros, real-time threaded contexts and fallible optional headless
+  renderers. Corrected metrics/macros pass 28/28; focused context/public/actual WGPU execution
+  passes 60/60. The independently locked benchmark executes all nine cases, and the maintained
+  Canvas benchmark passes five smoke cases. Both benchmark feature graphs exclude Core test support
+  and leak detection. Complete runtime/public/Gallery/native/metrics/macros passes 2,040/2,040
+  with five documented skips; components/docking/Canvas passes 2,964/2,964 plus both separately
+  feature-gated Docking controls, preserving the prior 2,966-test set. Disabled affected Core/public
+  passes 112/112; independent enabled/disabled passes 62/47. Locked checks, correctness Clippy,
+  actual Windows Rust 1.92, stable/nightly production wasm and both formatting checks pass. Existing owning records
+  distinguish reproduced inherited corrections from fork candidate/submission and terminal-quit
+  adaptations. This does not complete the fixed-target refresh or select an engine UI default.
+  Official additive test support/leak selection is an explicit complete successor before
+  conditional hot reload; excluding test instrumentation from benchmarks does not implement it.
 - Authoritative development workspace: `F:/SourceCodes/Rust/open-gpui`, on
   `optimize/docking-graph-transaction`. The inspected starting revision was
   `89cb76ba1d59904d5c670f770aa8e30fe0346178`, with a clean initial worktree.
@@ -559,12 +575,13 @@ historical scope and is not current branch or CI qualification.
 
 # Next Action
 
-- Continue the
-  [complete benchmark harness and report owner](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#complete-benchmark-harness-and-report-successor).
-  Reuse the qualified concrete dispatcher and queue-closure prerequisite. Continue independent
-  benchmark features, real text-system injection/cache, isolated platforms, context teardown,
-  scheduled frames, measurement interfaces, parameterized/seeded macros and actual consumers.
-  Existing virtual contexts and Noop text do not establish equivalent benchmark execution.
+- Continue the official
+  [additive test-support and leak-detection successor](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#additive-test-support-and-leak-detection-successor),
+  then [conditional hot reload](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#conditional-hot-reload-successor).
+  Reuse the qualified threaded benchmark/measurement owners. Keep per-executor runtime detection
+  distinct from a process-level test hint, explicitly enable leak tracking for its acceptance,
+  and preserve ordinary native behavior. Hot reload needs a real stateful edit/build/apply/output
+  consumer, beyond feature compilation or websocket filtering.
 - Apply the maintenance skill's official-baseline rule through existing owners. Preserve
   qualified fork admission, completed-action observation, source/geometry validity, exact native
   leases, accepted cache publication and App/post-borrow command authority while reconciling
