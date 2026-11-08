@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Added
+
+- Optional native debug hot reload follows the official GPUI/Subsecond 0.7.10 mechanism: build/process-matched patches, foreground application, window refresh, and typed, stateless and stored erased View render boundaries. Run with `dx serve --hot-patch`; compatible render-body edits preserve existing model state. Release/WebAssembly transport exclusion, failed loads, required restarts and disconnects remain explicit. The independently locked native consumer provides an actual edit/build/apply and Submitted-scene pixel acceptance procedure, including the required upstream dx x64 jump-stub backport for the qualified Windows tool.
+
 ### Breaking Changes and Migration Notes
 
 - `test-support` no longer enables entity-handle leak tracking. Select `leak-detection` or set a nonempty `GPUI_LEAK_DETECTION` when building tests that require tracked snapshots; `0` is nonempty too. Without tracking, snapshots are no-ops while weak release assertions still check live handles and pending cleanup. Use `App::is_test`, `AsyncApp::is_test` and executor queries to identify deterministic execution; compiling test support preserves normal home-directory and native runtime behavior.

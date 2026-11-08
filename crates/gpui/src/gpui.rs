@@ -5,6 +5,17 @@
 #![allow(unused_mut)] // False positives in platform specific code
 
 extern crate self as open_gpui;
+/// Subsecond entry points for hot-patching callbacks outside GPUI's render boundaries.
+#[cfg(all(
+    feature = "hot-reload",
+    any(
+        target_os = "macos",
+        target_os = "linux",
+        target_os = "windows",
+        target_os = "ios"
+    )
+))]
+pub extern crate subsecond;
 #[doc(hidden)]
 pub static GPUI_MANIFEST_DIR: &'static str = env!("CARGO_MANIFEST_DIR");
 #[macro_use]
@@ -31,6 +42,8 @@ mod platform_scheduler;
 pub(crate) use platform_scheduler::PlatformScheduler;
 mod geometry;
 mod global;
+#[cfg(gpui_hot_reload)]
+mod hot_reload;
 mod input;
 mod inspector;
 mod interactive;

@@ -1,0 +1,26 @@
+[workspace]
+resolver = "2"
+members = ["panel"]
+
+[workspace.dependencies]
+open_gpui = { package = "open-gpui", path = "../../../crates/gpui", default-features = false }
+
+[package]
+name = "open-gpui-hot-reload-consumer"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.92"
+publish = false
+
+[features]
+default = ["hot-reload"]
+hot-reload = ["open_gpui/hot-reload"]
+
+[dependencies]
+open_gpui = { workspace = true, features = ["test-support", "windows-manifest"] }
+hot_reload_panel = { path = "panel" }
+serde_json = "1.0"
+env_logger = "0.11"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+open_gpui_windows = { package = "open-gpui-windows", path = "../../../crates/gpui_windows", default-features = false, features = ["test-support"] }

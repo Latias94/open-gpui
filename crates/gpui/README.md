@@ -44,8 +44,28 @@ alongside the existing geometry, inherited style and resource checks. Manual and
 have no public cache shortcut. When branches have different element types, finish each branch
 with `into_any_element()`; the underlying entity identity and concrete profiling name survive.
 
-This shared render boundary does not enable hot reload by itself. The conditional reload build,
-runtime replacement and recovery workflow remains a separately selected capability.
+## Conditional Native Hot Reload
+
+Enable `open-gpui`'s optional `hot-reload` feature and launch a native debug application through
+`dx serve --hot-patch` using Dioxus CLI 0.7.10. GPUI initializes the connection during application
+launch, accepts only patches for the current build and process, and applies executable code in
+a foreground App update before refreshing windows. A native callback that temporarily holds the
+App borrow delays application through the existing update owner. A quitting App refuses patch
+application, and releasing the App-owned reload state cancels both tasks. Release builds and
+WebAssembly do not enable this transport.
+
+`View`/`RenderOnce` and stored `AnyView` render functions pass through the official Subsecond
+boundaries. Existing model state and cached views can survive compatible render-body edits;
+arbitrary type-layout migration and custom Element phase replacement need a restart or separate
+integration. Callbacks outside these boundaries can opt into the reexported `subsecond` API.
+Only load patches produced by the developer's trusted local build server.
+
+A full-reload command reports that an application restart is required. Disconnects and failed
+loads are reported; restart `dx serve` to reconnect. See the independently locked
+[native consumer](../../tests/fixtures/hot-reload-consumer/README.md) for the real compiler,
+state, exact Submitted-frame and pixel acceptance procedure and its platform limits. Windows x64
+qualification uses the documented upstream dx jump-stub backport; the published 0.7.10 executable
+has a reproduced stack-probe code-generation defect.
 
 ## Application Lifetime Under An External Loop
 

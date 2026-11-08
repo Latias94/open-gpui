@@ -1,0 +1,9 @@
+[package]
+name = "hot_reload_panel"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.92"
+publish = false
+
+[dependencies]
+open_gpui.workspace = true

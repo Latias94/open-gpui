@@ -42,6 +42,13 @@ screen-capture = [
 windows-manifest = ["dep:embed-resource"]
 profiler = ["dep:hdrhistogram"]
 stacker = ["dep:stacksafe"]
+hot-reload = [
+    "dep:async-tungstenite",
+    "dep:dioxus-cli-config",
+    "dep:dioxus-devtools-types",
+    "dep:smol",
+    "dep:subsecond",
+]
 
 [lib]
 path = "src/gpui.rs"
@@ -124,6 +131,13 @@ uuid.workspace = true
 web-time.workspace = true
 heapless.workspace = true
 unicode-segmentation.workspace = true
+
+[target.'cfg(any(target_os = "macos", target_os = "linux", target_os = "windows", target_os = "ios"))'.dependencies]
+async-tungstenite = { version = "0.33", optional = true }
+dioxus-cli-config = { version = "=0.7.10", optional = true }
+dioxus-devtools-types = { version = "=0.7.10", optional = true }
+smol = { workspace = true, optional = true }
+subsecond = { version = "=0.7.10", optional = true }
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 getrandom = { version = "0.4.3", features = ["wasm_js"] }

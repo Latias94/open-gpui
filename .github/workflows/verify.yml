@@ -46,6 +46,9 @@ jobs:
       - name: Check independent test-support consumer on minimum Rust
         run: cargo +1.92.0 check --locked --manifest-path tests/fixtures/test-support-consumer/Cargo.toml --all-targets --all-features --target-dir target -j 1
 
+      - name: Check hot-reload consumer on minimum Rust
+        run: cargo +1.92.0 check --locked --manifest-path tests/fixtures/hot-reload-consumer/Cargo.toml --all-targets --target-dir target -j 1
+
   verify:
     name: verify (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
@@ -127,6 +130,9 @@ jobs:
           GPUI_LEAK_DETECTION: '1'
           GPUI_TEST_EXPECT_LEAK_DETECTION: 'on'
         run: cargo run -p xtask -- verify
+
+      - name: Run conditional hot-reload transport and render regressions
+        run: cargo nextest run --locked -p open-gpui --no-default-features --features test-support,hot-reload --lib -E 'test(hot_reload::)' --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Run GPUI presentation public-surface contract
         if: matrix.name != 'windows'

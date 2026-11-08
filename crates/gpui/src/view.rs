@@ -111,8 +111,16 @@ impl View for AnyView {
         Some(AnyView::entity_id(self))
     }
 
+    #[cfg(not(gpui_hot_reload))]
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         (self.render)(&self, window, cx)
+    }
+
+    // The stored function pointer was captured from the original binary, so it must be looked up
+    // in the jump table to reach the patched render.
+    #[cfg(gpui_hot_reload)]
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        subsecond::HotFn::current(self.render).call((&self, window, cx))
     }
 }
 

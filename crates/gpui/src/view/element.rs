@@ -56,9 +56,22 @@ impl<V: View> IntoElement for ViewElement<V> {
     }
 }
 
+#[cfg(not(gpui_hot_reload))]
 #[inline]
 fn render_view<V: View>(view: V, window: &mut Window, cx: &mut App) -> AnyElement {
     View::render(view, window, cx).into_any_element()
+}
+
+/// Every view and component render passes through this hot-patchable boundary, so the
+/// patched code for that render and everything it calls runs on the next frame.
+#[cfg(gpui_hot_reload)]
+fn render_view<V: View>(view: V, window: &mut Window, cx: &mut App) -> AnyElement {
+    #[inline(never)]
+    fn render_view_impl<V: View>(view: V, window: &mut Window, cx: &mut App) -> AnyElement {
+        View::render(view, window, cx).into_any_element()
+    }
+
+    subsecond::HotFn::current(render_view_impl::<V>).call((view, window, cx))
 }
 
 impl<V: View> Element for ViewElement<V> {

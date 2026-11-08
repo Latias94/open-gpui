@@ -362,6 +362,8 @@ impl Application {
         platform.run(Box::new(move || {
             let cx = &mut *this.borrow_mut();
             cx.displays_changed();
+            #[cfg(gpui_hot_reload)]
+            crate::hot_reload::init(cx);
             on_finish_launching(cx);
         }));
     }
