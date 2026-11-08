@@ -4608,6 +4608,191 @@ framework crates outside that workspace. Compatible render-body replacement does
 arbitrary struct-layout migration, custom Element phase replacement, browser transport, foreign
 native execution, OS scanout, numerical latency budgets or a complete Nara Editor reload workflow.
 
+## Shared Atlas Ownership And Retained Renderer Bindings
+
+The November 8 successor starts from `480430f02aecc3bdcf78bed8126ef6b871974770` against
+the unchanged fixed Zed target. Local implementation is committed at
+`67e1360709ca48be74bf986f116b9c004ff5bd59`, with final scoped qualification on November 9.
+Official `0ef92145ff87aab5f19f6b44c9c55a486f4f064f`
+supplies owned insertion, Entry-based successful-only publication, shared AtlasState/AtlasBackend
+and one HeadlessAtlas for TestWindow/Linux. The renderer prerequisite chain includes
+`be8c6f9fb356dcd40a7ff06149568753e64ee171`,
+`a434bb7ee275cefa348a2bfaf27dc30280bf38f7`,
+`96e95edac45b0e0696179b8139aa521cf48db392` and
+`e91b82c106817f2419207ebf81f1da766698ac95`. The
+[successor plan](plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#shared-atlas-ownership-and-renderer-lifetime-successor)
+owns complete backend/headless integration, frozen resource receipts and actual binding-cache
+qualification. The execution history below distinguishes intermediate failures from final
+affected-backend qualification and the remaining platform/native gates.
+
+The shared owner retains the fork's concrete diagnostics and exact texture-instance leases.
+Successful insertion consumes the caller's key without cloning it into another backend map.
+Builder/backend failures leave the key unpublished. Builders now run under the same atlas lock
+in every implementation and must not re-enter that atlas. Published region retention, atomic
+set acquisition, old-epoch release refusal and checked monotonic identities remain backend
+responsibilities. Test-only acquisition/release counters are absent from normal runtime builds.
+The two official key-cache regressions and the original four TestAtlas lease scenarios move
+to their shared owner without dropping their original assertions.
+
+An initial Core library check passes, then the disabled focused owner/public cohort passes
+55/55 (`7938f992-19b0-4e3a-8c3b-77287cb5a1c0`). That run precedes a diagnostic-source
+correction: inserted diagnostics retain the builder's requested dimensions, while a cache hit
+reports the existing tile dimensions. A backend-adjusted-size regression distinguishes those
+facts. A separate actual lease/unwind regression catches a raster-builder panic, releases an
+outer retained lease after lock unwind, refuses the retired instance and successfully retries
+the unpublished key. It does not promise same-atlas reentry from a builder or its destructors.
+
+The corrected all-feature focused owner/public selection passes 58/58
+(`023cc0c4-a50e-433e-acdd-ee1d0ce007fe`). Complete Core library plus the public atlas,
+frame-scheduling, View/component and lifecycle targets then pass 1,516/1,516 without skips
+(`36a3f34d-1b2e-45ba-a181-deffee715398`). The ordinary public CPU-backend target also
+passes 1/1 without optional features (`4a51802f-03bf-4f95-9fe4-99a22b0b255d`).
+Actual Windows Rust 1.92.0 Core all-target/all-feature compilation passes. These results
+qualify the stated Core/CPU paths, not GPU submission, native pixels, backend migration,
+foreign execution, a cache speedup or complete fixed-target refresh.
+
+The complete-Scene recording prerequisite is committed separately at
+`186deca5a46f9e5ed48614b3e631a051b305e96a`. Its BoundsTree copy owns the nodes and starts
+with empty pointer scratch; Scene copies preserve clip arenas, journals and original
+geometry-validity associations without acquiring resource leases or presentation authority.
+Fourteen BoundsTree/Scene tests pass
+(`fbbb2933-219b-4faf-8da1-ce95a9e03a75`), followed by actual Windows Rust 1.92.0 Core
+all-target/all-feature compilation. The bounded final review closes without P1/P2.
+The WGPU fixture uses the actual Window scale factor two; fractional/dynamic DPI and DX
+journal replay after fixture sprite replacement remain outside those backend controls.
+
+The first WGPU all-target/all-feature check stops while writing its incremental dependency
+graph with Windows disk-space error 112. The verified shared target contains approximately
+219 GiB of compiler incremental cache. Automatic policy rejects the attempted cache-only
+cleanup; no deletion occurs. Subsequent commands retain one build job and the same target,
+with `CARGO_INCREMENTAL=0`. Existing dependencies, executables, driver and qualification
+artifacts remain in place. This is a build-environment correction, not a source/compiler
+failure or a changed runtime performance qualification.
+
+The retried WGPU all-target/all-feature check passes. The first actual GPU selection
+`66f175c0-d527-4897-b821-e3557c6c0826` runs 17 cases: eleven pass and all six new
+cache/lifetime/growth cases fail their expected-color assertions with the cleared black pixel.
+Independent source review identifies the shared fixture's missing clip arena and zero-count
+default envelope; the production shader correctly rejects that envelope. Quad/path growth
+fixtures have the same issue. These failures do not qualify later cache-count assertions.
+The correction must use complete Window-generated clipping and retain all original pixel,
+submission, creation/hit, generation and lifetime controls; shader rejection remains strict.
+
+The same review identifies an inherited WGPU upload-admission gap: allocation and publication
+can precede validation of a short source buffer, with failure deferred to queue upload. Both
+the content import anchor and fixed official target retain that missing validation. The owning
+backend must refuse malformed dimensions/bytes before allocation, queueing and key publication,
+with retry and trailing-byte controls. This is a source-confirmed inherited correction rather
+than a newly introduced fork regression.
+
+The corrected WGPU selection `052e0606-dffb-4085-b7fa-8d9f8962b61f` runs 21 cases:
+sixteen pass, including the new malformed-source, dimension/row-pitch, same-key retry and
+resident-region/pending-upload controls, mixed stale-generation refusal and both existing
+headless submission trajectories. Five cache/reset/growth pixel cases still fail. Their
+Window fixture uses scale factor two, while the affected radius and pixel probes assume one;
+the one-texel color fixture also samples atlas filtering boundaries. The next fixture revision
+captures the public Window scale with the complete Scene, converts targets and probes to
+device coordinates and uses uniform multi-texel colors. Expected colors, actual submission,
+binding creation/hit and generation/lifetime assertions remain strict. A source correction
+alone does not close those five execution failures.
+
+The scale-corrected selection `6bfc3b98-afcd-4fd5-8cbf-0e74b96716cf` then passes
+21/21 across the library and existing headless renderer integration target, with 78 tests
+outside the selected scope. Actual submitted/readback controls now reach all cache-hit,
+resize, eviction, mixed stale-instance refusal, leased-region retention, frozen receipt
+and same-device reconstruction assertions. The mixed primitive path executes real Window
+clips, nonidentity transforms, glyph/shadow/underline pixels and instance-buffer growth.
+Same-device reset is not a replacement-Device qualification, and the monochrome glyph
+fixture does not execute subpixel dual-source blending. No numeric speedup follows from
+the observed creation/hit counters.
+
+The independently locked ordinary consumer passes 48/48 with optional features disabled
+(`b2e19246-24bb-4420-bd2a-7dd8f94a9523`), including its public headless lease scenario.
+DirectX upload/admission passes 14/14
+(`8147a03c-4b18-486b-9553-157bd33caa2b`). Its first complete-Scene renderer fixtures retain
+one-texel filtering failures; replacing those uniform source images without changing the
+pixel oracle yields 4/4 (`d46d371a-c537-4247-b202-3c1aac74ab5f`): the existing two-window
+native asset consumer and three WARP controls. They exercise complete mixed-resource refusal
+before target clearing, frozen original-region/SRV retention, renderer recovery and fresh
+paint. These are executed Windows checkpoint results, not final workspace/component or
+foreign-platform qualification.
+
+Independent Core/shared-headless review closes without P1/P2 after the size/unwind correction.
+The separate Metal atlas/render source review finds no confirmed P1/P2 in its bounded scope,
+but its thirteen new tests have not run on macOS. The atlas-test helper now returns an explicit
+missing-device error rather than reporting empty success. Native draw/capture, valid clip arenas,
+CoreVideo and actual GPU-completion lifetime still require owning-platform execution; the
+Windows Core pass count does not supply that evidence.
+
+The first final all-feature framework/public/Gallery build stops before test execution
+while linking the paragraph-text target: MSVC reports PDB `LNK1318 LIMIT (12)`, with only
+97,546,240 bytes remaining on F:. The user frees space before the resumed serial build,
+which keeps the same target and disables incremental compilation. The failed build is
+not a test failure or a completed regression run.
+
+After the user's cleanup, the resumed all-feature Core/WGPU/Windows/platform/public/Gallery
+selection runs 1,935 cases: 1,934 pass, one fails and four original interactive cases remain
+skipped (`a2eea953-d2dc-43e8-8e04-f1944c5dfbc1`). The only failure is the previously recorded
+`rejected_activation_restores_a_non_click_activating_gpui_foreground_window`: foreground
+restoration does not converge within 512 delayed pump attempts. This run supplies neither
+an explanation of its current desktop cause nor a complete all-green native qualification.
+The cold public negative-compilation check passes after its recorded slow build.
+This selection precedes the additional prepared-receipt region-lifetime regression and any
+subsequent WGPU correction; those require their own execution evidence.
+
+That regression reproduces a real integration defect. Official region deallocation combined
+with the fork's view-only prepared receipt permits removal/reinsertion to overwrite an old
+resident region between preparation and submission. Actual readback is blue instead of the
+prepared red (`2458e3f6-b0bc-4e82-b503-77d8d4eb1520`, one failing case). The owning
+correction makes the private receipt retain the existing complete-set texture lease as well
+as frozen views. It adds no second resource identity or owner. Error unwinding releases the
+inner atlas lock before dropping the lease; old-epoch release cannot affect new residents.
+The same-device frozen-view/reset behavior remains intact.
+
+The corrected focused Atlas/renderer selection passes 20/20
+(`ef58f584-f26c-40e8-a424-52580513e56a`), and all WGPU library/public integrations pass
+110/110 without skips. Independent review closes the receipt correction without P1/P2.
+The subsequent test revision moves receipt drop, region reuse and upload before first
+readback to exercise same-Queue ordering after submission. It also adds atomic/deduplicated
+acquisition and unsubmitted-receipt Drop controls; their results are recorded separately below.
+
+The final Windows CI command passes 21/21 with 78 cases outside its focused selection
+(`1ad1a803-9f52-4048-bf03-ef13083641d1`). The strengthened GPU control drops the receipt
+immediately after actual submission, reuses/uploads the old region before first readback,
+and still observes the submitted red target. The backend control proves no partial lease
+on mixed valid/stale acquisition, one count for duplicate instances, and exact region
+reclamation after an unsubmitted receipt drops. Bounded independent review closes both
+test additions without P1/P2. Complete components/docking/Canvas passes 2,966/2,966 with
+no skips (`86fe99ea-6441-4898-bf26-1577e2c3b0c4`). No production changes follow these
+qualifications; independently locked consumers and final compiler/configuration gates follow.
+
+The independently locked ordinary consumer then passes 63/63 with all features
+(`4f4ebfbf-71a4-4d47-b76f-eaa3304a5f4a`) and 48/48 without optional features
+(`49b05559-79db-43fb-9f7b-7ddd0b7d8870`), without skips. Both execute the public shared
+headless lease consumer. These mode results use the fixture's own compatible dependency
+choices and do not add test support to its normal graph.
+
+Final November 9 Windows Rust 1.95 checks pass: locked workspace all-target compilation,
+ordinary and test-support independent all-target/all-feature compilation, and affected
+Core/WGPU/Windows all-target/all-feature Clippy with `-D clippy::correctness`. Actual
+Rust 1.92.0 affected-framework and ordinary independently locked consumer all-target/
+all-feature checks also pass. Stable production Core/WGPU/Web compiles for
+wasm32-unknown-unknown with profiling disabled and enabled. These are compiler gates;
+they establish neither browser execution nor a cross-platform native runtime result.
+
+The existing optional shared-memory/multithreaded production wasm configuration also compiles
+under the installed nightly, using its maintained hello-web configuration and profiler/
+multithreaded features. It does not use stable feature bypasses or qualify browser execution.
+
+All four formatting checks pass after three formatting-only wraps in the new ordinary
+consumer test. Rebuilt existing import-boundary, public-API, document-link and release-doc
+scans pass, as do workflow YAML and whitespace checks. The public/independent atlas and
+focused Windows WGPU gates are added to the existing workflow without running remote CI.
+No runtime code changes follow the recorded owner/consumer acceptance. Metal native tests,
+the existing foreground-restoration failure, replacement-Device/fractional-DPI/subpixel
+execution and numeric costs retain their stated limits. Full fixed-target refresh,
+canonical docking and Nara GPU/View adoption remain open.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:
@@ -4868,8 +5053,11 @@ paths rather than runtime XML parsing. Remove those ignores once upstream releas
 `quick-xml >= 0.41`.
 
 The remaining warning-class advisories are not denied by the local audit gate: `paste 1.0.15` comes
-from `image`'s AVIF codec chain, and `ttf-parser 0.25.1` comes through the font/SVG stack. Removing
-the first would drop AVIF image support; replacing the second requires a renderer/font-stack
+from `image`'s default AVIF encoding chain, and `ttf-parser 0.25.1` comes through the font/SVG stack.
+The AVIF encoder feature does not provide decoding; decoding needs the separately selected
+`avif-native` feature, absent from this qualified graph. Official `8e06c323ae` removes the unused
+default encoding chain while retaining the other default format features; that dependency-policy
+reconciliation is a separate successor. Replacing the second requires a renderer/font-stack
 migration. The updated SVG stack crates reviewed in this slice (`resvg 0.46.0`, `usvg 0.46.0`,
 `imagesize 0.14.0`, `kurbo 0.13.1`, `polycool 0.4.0`, `roxmltree 0.21.1`, `svgtypes 0.16.1`) are
 crates.io packages with MIT and/or Apache-2.0 licenses.

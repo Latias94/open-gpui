@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-08T16:30:00+08:00
+timestamp: 2026-11-09T01:17:00+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -18,6 +18,33 @@ verified_by:
 
 # Current State
 
+- Shared atlas/renderer integration is implemented at
+  `67e1360709ca48be74bf986f116b9c004ff5bd59`, from
+  `480430f02aecc3bdcf78bed8126ef6b871974770` against the unchanged fixed Zed target.
+  Official owned insertion, shared AtlasState/AtlasBackend and shared HeadlessAtlas replace
+  duplicate key ownership; WGPU adopts instance preupload and separate cached texture
+  bindings. Exact instance leases and complete-frame refusal remain explicit fork contracts.
+  Core/public checkpoints pass 1,516/1,516 and the ordinary independently locked disabled
+  consumer passes 48/48. DirectX upload/admission passes 14/14; the corrected existing
+  two-window native asset trajectory and three WARP renderer controls pass 4/4. WGPU's
+  scale-corrected GPU/headless selection passes 21/21 after the recorded 16/21 failure.
+  Real pixels, binding reuse and exact resource/refusal assertions remain intact.
+  The complete resumed framework/public/Gallery selection passes 1,934/1,935, preserving
+  four interactive skips; the previously recorded foreground-restoration gate still fails.
+  A red GPU regression exposes the local view-only receipt/region-recycling integration
+  defect; the existing complete-set lease now protects the prepared regions. Complete WGPU
+  library/public passes 110/110, the strengthened CI owner/renderer selection passes 21/21,
+  components/docking/Canvas passes 2,966/2,966, and independent enabled/disabled modes pass
+  63/63 and 48/48. Locked workspace/both-consumer compilation, correctness Clippy, actual
+  Windows Rust 1.92 framework/consumer checks, stable production wasm profiling off/on,
+  existing nightly shared-memory wasm, four formatting and existing static gates pass.
+  Complete Scene recording is independently committed at `186deca5a46`, with fourteen
+  owning regressions and bounded source review.
+  Metal has bounded source review, with thirteen native tests
+  still unexecuted on macOS. Remaining native foreground, foreign execution, replacement-Device/
+  fractional-DPI/subpixel scope, full refresh, measured costs and engine adoption stay open. The
+  [qualification](../../verification.md#shared-atlas-ownership-and-retained-renderer-bindings)
+  preserves failures and exact scopes.
 - Official conditional native hot reload is implemented at
   `ad70ac9230892ca4e4d47840b93215596b8c60e0` through existing App/View owners.
   The independently locked real compiler/patch consumer changes typed cached, startup-stored
@@ -611,9 +638,11 @@ historical scope and is not current branch or CI qualification.
 
 # Next Action
 
-- Continue atlas/renderer lifetime and remaining API/image-feature/platform reconciliation
-  through existing owners after the
-  [conditional hot-reload successor](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#conditional-hot-reload-successor).
+- Implement the complete official
+  [image feature-policy successor](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#image-dependency-feature-policy-successor)
+  after the scoped atlas/renderer qualification. Preserve ordinary downstream AVIF encoder
+  opt-in, retained default formats, the declared compiler floor and independent lockfiles.
+  Then continue remaining API/platform reconciliation through existing owners.
   Keep the remaining native foreground-restoration failure visible; its real stateful
   edit/build/apply/output consumer has passed. Preserve ordinary/release feature exclusion,
   the declared compiler floor and the distinct GPUI/fork/external-driver source provenance.

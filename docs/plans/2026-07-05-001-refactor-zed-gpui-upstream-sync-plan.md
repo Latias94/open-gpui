@@ -1593,6 +1593,95 @@ accommodate it, and leave this native qualification gate open. The successful pa
 does not establish arbitrary state-layout migration, foreign native/browser execution, numerical
 budgets or a complete Nara Editor reload workflow.
 
+### Shared Atlas Ownership And Renderer Lifetime Successor
+
+Continue from `480430f02aecc3bdcf78bed8126ef6b871974770` against the unchanged fixed
+target. Official `0ef92145ff87aab5f19f6b44c9c55a486f4f064f` changes insertion to an
+owned AtlasKey and moves key lookup/publication into shared AtlasState/AtlasBackend. Preserve
+its Entry-based successful-insert-only publication, builder/backend error recovery, clear/reset
+ordering and original regression scenarios. Replace the fork's duplicated key maps through the
+complete DirectX, WGPU, Metal, TestWindow and Linux headless closure. The official shared
+HeadlessAtlas replaces both old headless implementations, with existing exact texture-instance
+leases, diagnostics and epoch refusal adapted through the same concrete owner.
+
+Reconcile official `96e95edac45` and the fixed-target WGPU generation/bind-group cache in the
+existing renderers. Inspect introduction/follow-ups rather than treating similar identifiers as
+equivalent. Resource access must not panic after release. Preserve the fork's complete-candidate
+and exact accepted/Submitted contracts: an unavailable texture cannot become a successful partial
+frame. Adapt fork preflight/receipt ownership where necessary while retaining actual GPU objects
+until their admitted use completes. Avoid a second atlas, resource registry or render scheduler.
+
+The WGPU prerequisite chain includes instance preupload and separated texture bindings
+`be8c6f9fb356dcd40a7ff06149568753e64ee171`, the cache
+`a434bb7ee275cefa348a2bfaf27dc30280bf38f7`, and shared window/headless renderer ownership
+`e91b82c106817f2419207ebf81f1da766698ac95`. Reconcile that complete chain rather than adding a
+map around the fork's old combined instance/texture bindings. Cache identity comes from the
+existing exact AtlasTextureInstanceId, with frozen presentation views and device-owned cache
+reset; no independent generation clock is needed. Preserve current clip/transform/generation
+shader ABI while updating actual storage/WebGL binding paths. Later sprite packing/sort changes
+remain an explicit closure-audit item rather than an implicit rejection or part of this unit's
+qualification.
+
+Two actual backend consumers expose an owned-data seam: capturing one sprite from a Window
+scene loses its frame-local clip arena. Provide ordinary complete Scene value cloning for
+backend recording, including its paint journal and owned spatial data. Spatial-tree cloning
+must clear reusable pointer scratch rather than copying NonNull addresses into the original
+allocation. This fork addition carries no atlas lease, geometry-scope replacement, accepted
+frame or submission authority. Verify source-clear/independent-mutation and complete real
+Window-generated clipping through the backend consumers; do not introduce a clip-arena
+mutator or weaken shader rejection for test fixtures.
+
+Qualify success, unavailable/error/retry, removal while leased, slot reuse, epoch reset and
+clear/reconstruction through actual owners. Preserve malformed-upload refusal and unpublished
+allocation cleanup. Public and independently locked consumers must exercise the owned API and
+shared headless/backend extension without engine-private dependencies. Real WGPU/DX resource and
+render tests must distinguish unchanged binding reuse from generation/device replacement, and
+retain actual submitted/readback and teardown controls. A cache lookup test alone establishes
+neither GPU execution nor numerical performance. Metal/Linux source review, compiler checks and
+foreign native execution retain distinct scopes. Record breaking API migration, actual failures
+and final gates before claiming this successor qualified; full fixed-target refresh, canonical
+docking, measured budgets and Nara adoption remain open.
+
+Implementation is committed locally at `67e1360709ca48be74bf986f116b9c004ff5bd59`, with
+the independent Scene prerequisite `186deca5a46f9e5ed48614b3e631a051b305e96a`. The
+[qualification](../verification.md#shared-atlas-ownership-and-retained-renderer-bindings)
+records the official mechanism chain, concrete fork contracts, inherited source-admission
+correction and actual red/green local prepared-region regression. Complete WGPU/public
+110, final owner/renderer 21, components/docking/Canvas 2,966 and independent enabled/disabled
+63/48 pass. Locked checks, correctness Clippy, actual Windows Rust 1.92, stable/nightly
+production wasm, four formatting and existing static gates pass on November 9.
+The earlier complete framework/public/Gallery 1,934/1,935 retains the previously recorded
+foreground failure and four interactive skips; it precedes the receipt correction, whose
+affected WGPU suite follows. Metal's thirteen tests remain unexecuted on macOS. Foreign
+native/browser execution, actual WGPU replacement-Device/fractional-DPI/subpixel coverage,
+numerical costs, complete refresh and engine adoption retain separate scope.
+
+### Image Dependency Feature Policy Successor
+
+After the atlas/renderer unit, adopt complete official
+`8e06c323ae063f3d245ea5c283d4bf373ad51db2` and the unchanged fixed-target policy through
+the root image dependency. Disable image defaults and explicitly retain bmp, dds, exr, ff,
+gif, hdr, ico, jpeg, png, pnm, qoi, rayon, tga, tiff and webp. Preserve the qualified 0.25.4
+API minimum and compatible resolved versions. Do not narrow the official format set, restore
+`default-formats`, duplicate the list in platform manifests or add a GPUI codec-selection owner.
+WGPU's optional dependency policy is a separate closure difference.
+
+Distinguish AVIF encoding from decoding. The removed default `avif` feature supplies an
+encoder and its ravif/rav1e chain; it does not supply the separate avif-native decoder.
+Retain the official extension inventory, whose AVIF entry predates this policy, without
+advertising a default decoder. Correct the earlier verification explanation that conflates
+those capabilities. Existing TGA resource guessing also has an independent limitation;
+a dependency feature or extension label alone is not executed format support.
+
+Verify shared image decoding, actual WGPU resource/encoded-image consumers and independently
+locked ordinary consumption. Add narrow missing-decoder and retained-format controls where
+the changed capability needs evidence. Demonstrate that an ordinary downstream image dependency
+can explicitly restore AVIF encoding through Cargo feature unification without a GPUI wrapper
+or feature. Inspect the resolved default/test/platform/downstream graphs, not just lockfile text:
+optional codec packages can remain locked without being built. Review all affected fixture
+locks without unrelated upgrades. Record actual compiler, feature and execution scope; this
+dependency unit does not qualify AVIF native decoding, foreign runtime execution or a speedup.
+
 ## Maintained Baseline Before Engine Adaptation
 
 The [conditional hot-reload qualification](../verification.md#conditional-native-hot-reload)
