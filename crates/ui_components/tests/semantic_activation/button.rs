@@ -49,7 +49,7 @@ impl RejectNextActivationAtlas {
 impl PlatformAtlas for RejectNextActivationAtlas {
     fn get_or_insert_with<'a>(
         &self,
-        key: &AtlasKey,
+        key: AtlasKey,
         _build: &mut dyn FnMut() -> open_gpui::Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
     ) -> open_gpui::Result<Option<AtlasTile>> {
         let mut next_texture_index = self
@@ -57,7 +57,7 @@ impl PlatformAtlas for RejectNextActivationAtlas {
             .lock()
             .expect("activation test atlas index lock should remain available");
         *next_texture_index += 1;
-        Ok(Some(Self::tile(key, *next_texture_index)))
+        Ok(Some(Self::tile(&key, *next_texture_index)))
     }
 
     fn remove(&self, _key: &AtlasKey) {}

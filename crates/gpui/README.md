@@ -44,6 +44,27 @@ alongside the existing geometry, inherited style and resource checks. Manual and
 have no public cache shortcut. When branches have different element types, finish each branch
 with `into_any_element()`; the underlying entity identity and concrete profiling name survive.
 
+## Atlas Ownership
+
+`PlatformAtlas` insertion consumes an `AtlasKey`. Retain a caller-owned key with an explicit
+clone when it is also needed for later removal. Builders run under the atlas lock and must not
+re-enter that same atlas. Backend authors can use the shared `AtlasState`/`AtlasBackend` to
+publish only successful inserts and keep lookup, removal and reset ordering in one owner.
+Diagnostic insertion uses that same key publication path.
+
+`HeadlessAtlas` supplies the shared CPU implementation for Test and Linux headless windows.
+It allocates unique tile identities without uploading pixels. Removing a key and releasing its
+last admitted texture lease are separate events: retained scenes keep their exact texture
+instances, while a renderer reset invalidates old epochs. These lifetime controls do not
+establish GPU submission, scanout or a numerical cache-performance result.
+
+`Scene::clone()` records complete drawing data, including the frame-local clip arena and
+paint journal. It does not acquire texture leases or transfer accepted-frame or submission
+authority. A backend that retains drawing data must also retain its required resources.
+Renderers validate the complete texture set and draw from frozen resource handles; a missing
+instance requires refusal or fresh paint rather than a successful partial frame. WGPU's
+window and headless paths share the same rendering core and exact-instance binding cache.
+
 ## Conditional Native Hot Reload
 
 Enable `open-gpui`'s optional `hot-reload` feature and launch a native debug application through

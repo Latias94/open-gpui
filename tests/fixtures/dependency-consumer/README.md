@@ -920,3 +920,46 @@ These commands are verification instructions, not compilation, execution or perf
 The consumer's presentation assertions describe the benchmark platform's accepted/submitted facts.
 GPU rendering, OS-native window delivery, cross-platform qualification and rejected-candidate
 controls require their owning checks and recorded execution evidence.
+
+## Shared atlas ownership runtime consumers
+
+The `atlas` targets consume the owned-key insertion API and shared atlas owners introduced by
+official Zed `0ef92145ff87aab5f19f6b44c9c55a486f4f064f`, as present in the fixed source
+`635026fabc38440fce5e1767d125026a17b12012`. Insertions transfer an `AtlasKey`; tests clone a key
+only when retaining it for a later lookup or removal. Existing exact texture-instance leases,
+generation fields and shader padding remain part of the fork's contract.
+
+The crate-external `crates/gpui/tests/atlas.rs` consumer implements `AtlasBackend` with a concrete
+CPU texture owner and consumes `AtlasState` through public exports. It executes unavailable and
+decoder-error paths, rejects a short pixel buffer in the actual custom backend, retries the same
+unpublished key, and verifies independently owned image bytes after the caller changes its buffer.
+Cache hits skip decoding and upload. Monochrome and polychrome allocations share the typed backend.
+Removing the image releases exactly its allocation while preserving the live icon; the default
+backend removal diagnostics report the removed texture. A typed reset callback releases the icon,
+and a reconstructed allocation is released when the state drops.
+
+This independently locked fixture's `tests/atlas.rs` executes `HeadlessAtlas::default()` through
+both the concrete owner and `Arc<dyn PlatformAtlas>`. Removing a key while leased retains its exact
+instance for further acquisition. Reinserting the same key creates a distinct instance. Dropping
+one lease preserves the other holders; after the final actual old lease drops, acquisition of the
+old instance fails with `TextureUnavailable`, while the replacement remains cached and retainable.
+Removing the replacement after its lease drops frees that replacement's texture.
+
+Both targets use ordinary `#[test]` functions and public APIs. The fixture enables no
+`test-support`, adds no dependencies, and uses inferred API results with `expect` rather than
+requiring a direct `anyhow` dependency. Run the focused targets from the repository root, with
+`CARGO_BUILD_JOBS=1`, one Cargo process at a time, reusing `target` and the existing lockfiles:
+
+```text
+cargo nextest run --locked -p open-gpui --no-default-features --test atlas --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --locked -p open-gpui --all-features --test atlas --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test atlas --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --all-features --test atlas --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+These commands are verification instructions, not compilation or execution results. The feature
+off/on fixture commands exercise the ordinary consumer's existing feature graph without adding
+`test-support`. These are CPU backend and headless lifetime checks; they construct no App or Window,
+upload no GPU pixels, and establish neither native presentation, scanout, renderer submission nor
+performance. The separately ported official owner regressions and real renderer/resource tests
+retain their own verification scope.

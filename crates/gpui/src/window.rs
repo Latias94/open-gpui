@@ -11513,7 +11513,7 @@ impl Window {
         if !raster_bounds.is_zero() {
             let tile = self
                 .sprite_atlas
-                .get_or_insert_with(&params.clone().into(), &mut || {
+                .get_or_insert_with(params.clone().into(), &mut || {
                     let (size, bytes) = self.text_system().rasterize_glyph(&params)?;
                     Ok(Some((size, Cow::Owned(bytes))))
                 })?
@@ -11611,7 +11611,7 @@ impl Window {
         if !raster_bounds.is_zero() {
             let tile = self
                 .sprite_atlas
-                .get_or_insert_with(&params.clone().into(), &mut || {
+                .get_or_insert_with(params.clone().into(), &mut || {
                     let (size, bytes) = self.text_system().rasterize_glyph(&params)?;
                     Ok(Some((size, Cow::Owned(bytes))))
                 })?
@@ -11673,7 +11673,7 @@ impl Window {
 
         let Some(tile) =
             self.sprite_atlas
-                .get_or_insert_with(&params.clone().into(), &mut || {
+                .get_or_insert_with(params.clone().into(), &mut || {
                     let Some((size, bytes)) = cx.svg_renderer.render_alpha_mask(&params, data)?
                     else {
                         return Ok(None);
@@ -11747,7 +11747,7 @@ impl Window {
 
         let atlas_access =
             self.sprite_atlas
-                .get_or_insert_with_diagnostics(&params.into(), &mut || {
+                .get_or_insert_with_diagnostics(params.into(), &mut || {
                     Ok(Some((
                         data.size(frame_index),
                         Cow::Borrowed(
@@ -14770,7 +14770,7 @@ mod cached_paint_atlas_tests {
     impl PlatformAtlas for EpochAtlas {
         fn get_or_insert_with<'a>(
             &self,
-            _key: &AtlasKey,
+            _key: AtlasKey,
             _build: &mut dyn FnMut() -> Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
         ) -> Result<Option<crate::AtlasTile>> {
             Ok(None)
@@ -15132,7 +15132,7 @@ mod cached_paint_atlas_tests {
     impl PlatformAtlas for RejectOnceAtlas {
         fn get_or_insert_with<'a>(
             &self,
-            key: &AtlasKey,
+            key: AtlasKey,
             _build: &mut dyn FnMut() -> Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
         ) -> Result<Option<AtlasTile>> {
             Ok(Some(Self::tile(key.texture_kind())))
@@ -15189,7 +15189,7 @@ mod cached_paint_atlas_tests {
     impl PlatformAtlas for AlwaysRejectAtlas {
         fn get_or_insert_with<'a>(
             &self,
-            key: &AtlasKey,
+            key: AtlasKey,
             _build: &mut dyn FnMut() -> Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
         ) -> Result<Option<AtlasTile>> {
             Ok(Some(RejectOnceAtlas::tile(key.texture_kind())))

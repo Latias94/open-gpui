@@ -303,7 +303,7 @@ struct RefusingAtlas {
 impl PlatformAtlas for RefusingAtlas {
     fn get_or_insert_with<'a>(
         &self,
-        key: &AtlasKey,
+        key: AtlasKey,
         build: &mut dyn FnMut() -> open_gpui::Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
     ) -> open_gpui::Result<Option<AtlasTile>> {
         Ok(build()?.map(|(size, _)| AtlasTile {

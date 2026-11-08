@@ -134,6 +134,24 @@ jobs:
       - name: Run conditional hot-reload transport and render regressions
         run: cargo nextest run --locked -p open-gpui --no-default-features --features test-support,hot-reload --lib -E 'test(hot_reload::)' --test-threads=1 --no-fail-fast --no-tests fail
 
+      - name: Test public shared atlas without optional features
+        run: cargo nextest run --locked -p open-gpui --no-default-features --test atlas --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Test public shared atlas with all features
+        run: cargo nextest run --locked -p open-gpui --all-features --test atlas --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Test WGPU atlas resources and prepared-frame lifetime
+        if: matrix.name == 'windows'
+        run: cargo nextest run --locked -p open-gpui-wgpu --all-features --lib -E 'test(wgpu_atlas::tests::) | test(wgpu_renderer::atlas_tests::)' --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Test independent shared atlas without optional features
+        if: matrix.name == 'windows'
+        run: cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test atlas --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Test independent shared atlas with all features
+        if: matrix.name == 'windows'
+        run: cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --all-features --test atlas --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+
       - name: Run GPUI presentation public-surface contract
         if: matrix.name != 'windows'
         run: cargo nextest run -p open-gpui --all-features --test presentation_surface --locked --no-fail-fast

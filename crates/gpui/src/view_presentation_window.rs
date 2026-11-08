@@ -4235,7 +4235,7 @@ mod tests {
     impl PlatformAtlas for RejectOnceAtlas {
         fn get_or_insert_with<'a>(
             &self,
-            key: &AtlasKey,
+            key: AtlasKey,
             _build: &mut dyn FnMut() -> anyhow::Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
         ) -> anyhow::Result<Option<AtlasTile>> {
             Ok(Some(Self::tile(key.texture_kind())))

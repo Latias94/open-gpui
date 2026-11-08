@@ -33,6 +33,10 @@ const RENDER_TARGET_FORMAT: DXGI_FORMAT = DXGI_FORMAT_B8G8R8A8_UNORM;
 const PATH_MULTISAMPLE_COUNT: u32 = 4;
 const CLIP_SHAPES_SHADER_RESOURCE_SLOT: u32 = 2;
 
+#[cfg(all(test, feature = "test-support"))]
+#[path = "directx_atlas/render_tests.rs"]
+pub(crate) mod atlas_render_tests;
+
 pub(crate) struct FontInfo {
     pub gamma_ratios: [f32; 4],
     pub grayscale_enhanced_contrast: f32,
@@ -332,7 +336,24 @@ impl DirectXRenderer {
         if std::mem::take(&mut self.repaint_required_after_recovery) {
             return Ok(PlatformWindowPresentOutcome::RepaintRequired);
         }
-        self.draw_scene_to_target(scene, background_appearance)?;
+        let preflight = match self.atlas.preflight(scene) {
+            Ok(preflight) => preflight,
+            Err(error) => {
+                log::error!("refusing a DirectX frame with unavailable atlas resources: {error:#}");
+                return Ok(PlatformWindowPresentOutcome::RepaintRequired);
+            }
+        };
+        if let Err(error) = self.draw_scene_to_target(scene, background_appearance, &preflight) {
+            if let Err(invalidation) = preflight.validate() {
+                log::error!("DirectX atlas resources changed during rendering: {invalidation:#}");
+                return Ok(PlatformWindowPresentOutcome::RepaintRequired);
+            }
+            return Err(error);
+        }
+        if let Err(error) = preflight.validate() {
+            log::error!("DirectX atlas resources changed before presentation: {error:#}");
+            return Ok(PlatformWindowPresentOutcome::RepaintRequired);
+        }
         self.present()?;
         Ok(PlatformWindowPresentOutcome::Submitted)
     }
@@ -341,7 +362,9 @@ impl DirectXRenderer {
         &mut self,
         scene: &Scene,
         background_appearance: WindowBackgroundAppearance,
+        preflight: &DirectXAtlasPreflight,
     ) -> Result<()> {
+        preflight.validate()?;
         self.pre_draw(
             &match background_appearance {
                 WindowBackgroundAppearance::Opaque => [1.0f32; 4],
@@ -363,13 +386,31 @@ impl DirectXRenderer {
                 }
                 PrimitiveBatch::Underlines(range) => self.draw_underlines(range.start, range.len()),
                 PrimitiveBatch::MonochromeSprites { texture, range } => {
-                    self.draw_monochrome_sprites(texture, range.start, range.len())
+                    self.draw_monochrome_sprites(
+                        preflight
+                            .texture_view(texture)
+                            .context("monochrome texture is absent from the DirectX preflight")?,
+                        range.start,
+                        range.len(),
+                    )
                 }
                 PrimitiveBatch::SubpixelSprites { texture, range } => {
-                    self.draw_subpixel_sprites(texture, range.start, range.len())
+                    self.draw_subpixel_sprites(
+                        preflight
+                            .texture_view(texture)
+                            .context("subpixel texture is absent from the DirectX preflight")?,
+                        range.start,
+                        range.len(),
+                    )
                 }
                 PrimitiveBatch::PolychromeSprites { texture, range } => {
-                    self.draw_polychrome_sprites(texture, range.start, range.len())
+                    self.draw_polychrome_sprites(
+                        preflight
+                            .texture_view(texture)
+                            .context("polychrome texture is absent from the DirectX preflight")?,
+                        range.start,
+                        range.len(),
+                    )
                 }
                 PrimitiveBatch::Surfaces(range) => self.draw_surfaces(&scene.surfaces[range]),
             }
@@ -399,7 +440,13 @@ impl DirectXRenderer {
             !self.repaint_required_after_recovery,
             "cannot capture a scene whose DirectX atlas resources were invalidated by device recovery"
         );
-        self.draw_scene_to_target(scene, background_appearance)?;
+        anyhow::ensure!(
+            self.surface_quiesced_for.is_none(),
+            "cannot capture a quiesced DirectX surface"
+        );
+        let preflight = self.atlas.preflight(scene)?;
+        self.draw_scene_to_target(scene, background_appearance, &preflight)?;
+        preflight.validate()?;
         self.read_render_target_to_image()
     }
 
@@ -769,7 +816,7 @@ impl DirectXRenderer {
 
     fn draw_monochrome_sprites(
         &mut self,
-        texture: AtlasTextureInstanceId,
+        texture_view: &[Option<ID3D11ShaderResourceView>; 1],
         start: usize,
         len: usize,
     ) -> Result<()> {
@@ -778,11 +825,10 @@ impl DirectXRenderer {
         }
         let devices = self.devices.as_ref().context("devices missing")?;
         let resources = self.resources.as_ref().context("resources missing")?;
-        let texture_view = self.atlas.get_texture_view(texture);
         self.pipelines.mono_sprites.draw_range_with_texture(
             &devices.device,
             &devices.device_context,
-            &texture_view,
+            texture_view,
             slice::from_ref(&resources.viewport),
             slice::from_ref(&self.globals.global_params_buffer),
             slice::from_ref(&self.globals.clip_shapes_view),
@@ -794,7 +840,7 @@ impl DirectXRenderer {
 
     fn draw_subpixel_sprites(
         &mut self,
-        texture: AtlasTextureInstanceId,
+        texture_view: &[Option<ID3D11ShaderResourceView>; 1],
         start: usize,
         len: usize,
     ) -> Result<()> {
@@ -803,11 +849,10 @@ impl DirectXRenderer {
         }
         let devices = self.devices.as_ref().context("devices missing")?;
         let resources = self.resources.as_ref().context("resources missing")?;
-        let texture_view = self.atlas.get_texture_view(texture);
         self.pipelines.subpixel_sprites.draw_range_with_texture(
             &devices.device,
             &devices.device_context,
-            &texture_view,
+            texture_view,
             slice::from_ref(&resources.viewport),
             slice::from_ref(&self.globals.global_params_buffer),
             slice::from_ref(&self.globals.clip_shapes_view),
@@ -819,7 +864,7 @@ impl DirectXRenderer {
 
     fn draw_polychrome_sprites(
         &mut self,
-        texture: AtlasTextureInstanceId,
+        texture_view: &[Option<ID3D11ShaderResourceView>; 1],
         start: usize,
         len: usize,
     ) -> Result<()> {
@@ -828,11 +873,10 @@ impl DirectXRenderer {
         }
         let devices = self.devices.as_ref().context("devices missing")?;
         let resources = self.resources.as_ref().context("resources missing")?;
-        let texture_view = self.atlas.get_texture_view(texture);
         self.pipelines.poly_sprites.draw_range_with_texture(
             &devices.device,
             &devices.device_context,
-            &texture_view,
+            texture_view,
             slice::from_ref(&resources.viewport),
             slice::from_ref(&self.globals.global_params_buffer),
             slice::from_ref(&self.globals.clip_shapes_view),

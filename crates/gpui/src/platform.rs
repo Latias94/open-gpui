@@ -1,4 +1,5 @@
 mod app_menu;
+mod atlas;
 mod keyboard;
 mod keystroke;
 
@@ -79,6 +80,7 @@ use strum::EnumIter;
 use uuid::Uuid;
 
 pub use app_menu::*;
+pub use atlas::*;
 pub use keyboard::*;
 pub use keystroke::*;
 
@@ -6059,13 +6061,6 @@ pub enum AtlasKey {
 }
 
 impl AtlasKey {
-    #[cfg_attr(
-        all(
-            any(target_os = "linux", target_os = "freebsd"),
-            not(any(feature = "x11", feature = "wayland"))
-        ),
-        allow(dead_code)
-    )]
     /// Returns the texture kind for this atlas key.
     pub fn texture_kind(&self) -> AtlasTextureKind {
         match self {
@@ -6338,17 +6333,19 @@ impl Drop for AtlasTextureLease {
 
 #[expect(missing_docs)]
 pub trait PlatformAtlas {
+    /// The builder runs with the atlas locked and must not re-enter the same atlas.
     fn get_or_insert_with<'a>(
         &self,
-        key: &AtlasKey,
+        key: AtlasKey,
         build: &mut dyn FnMut() -> Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
     ) -> Result<Option<AtlasTile>>;
 
     fn get_or_insert_with_diagnostics<'a>(
         &self,
-        key: &AtlasKey,
+        key: AtlasKey,
         build: &mut dyn FnMut() -> Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
     ) -> Result<AtlasAccess> {
+        let image = key.image_params();
         let tile = self.get_or_insert_with(key, build)?;
         let outcome = if tile.is_some() {
             AtlasAccessOutcome::Unknown
@@ -6357,16 +6354,23 @@ pub trait PlatformAtlas {
         };
         Ok(AtlasAccess {
             tile,
-            diagnostic: AtlasAccessDiagnostic::new(
-                key,
+            diagnostic: AtlasAccessDiagnostic {
+                image,
                 outcome,
                 tile,
-                tile.map(|tile| tile.bounds.size),
-            ),
+                texture_id: tile.map(|tile| tile.texture_id),
+                tile_id: tile.map(|tile| tile.tile_id),
+                size: tile.map(|tile| tile.bounds.size),
+            },
         })
     }
 
     fn remove(&self, key: &AtlasKey);
+
+    #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+    fn contains(&self, _key: &AtlasKey) -> bool {
+        false
+    }
 
     fn remove_with_diagnostics(&self, key: &AtlasKey) -> AtlasRemoveDiagnostic {
         self.remove(key);

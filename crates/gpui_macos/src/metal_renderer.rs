@@ -11,7 +11,7 @@ use objc2_foundation::NSUInteger;
 #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
 use objc2_metal::{MTLCommandBuffer as _, MTLCommandBufferStatus};
 use open_gpui::{
-    AtlasTextureInstanceId, Background, Bounds, ClipEnvelope, DevicePixels, GpuClipShape,
+    AtlasTextureLease, Background, Bounds, ClipEnvelope, DevicePixels, GpuClipShape,
     MonochromeSprite, PaintSurface, Path, PlatformWindowPresentOutcome, Point, PolychromeSprite,
     PrimitiveBatch, PrimitiveTransform, Quad, ScaledPixels, Scene, Shadow, Size, Underline,
     WindowPresentationShutdownTicket, point, size,
@@ -24,7 +24,7 @@ use objc2_core_video::{
 use open_gpui_media::core_video::kCVPixelFormatType_420YpCbCr8BiPlanarFullRange;
 use parking_lot::Mutex;
 
-use std::{cell::Cell, ffi::c_void, mem, ptr, sync::Arc};
+use std::{cell::Cell, ffi::c_void, mem, ops::Range, ptr, sync::Arc};
 
 // Exported to metal
 pub(crate) type PointF = open_gpui::Point<f32>;
@@ -143,6 +143,37 @@ pub(crate) struct MetalRenderer {
     #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
     headless_render_target: Option<metal::Texture>,
     presentation_shutdown: Option<WindowPresentationShutdownTicket>,
+}
+
+struct PreparedMetalScene<'a> {
+    scene: &'a Scene,
+    batches: Vec<PreparedMetalBatch>,
+    atlas_lease: AtlasTextureLease,
+}
+
+enum PreparedMetalBatch {
+    Shadows(Range<usize>),
+    Quads(Range<usize>),
+    Paths(Range<usize>),
+    Underlines(Range<usize>),
+    MonochromeSprites {
+        texture: metal::Texture,
+        range: Range<usize>,
+    },
+    PolychromeSprites {
+        texture: metal::Texture,
+        range: Range<usize>,
+    },
+    Surfaces(Vec<PreparedMetalSurface>),
+}
+
+struct PreparedMetalSurface {
+    bounds: SurfaceBounds,
+    texture_size: Size<DevicePixels>,
+    y_texture: metal::Texture,
+    cb_cr_texture: metal::Texture,
+    _y_cv_texture: metal::CoreVideoTexture,
+    _cb_cr_cv_texture: metal::CoreVideoTexture,
 }
 
 #[repr(C)]
@@ -595,6 +626,116 @@ impl MetalRenderer {
         self.retire_surface();
     }
 
+    fn prepare_scene<'a>(&self, scene: &'a Scene) -> Result<PreparedMetalScene<'a>> {
+        let batches = scene.batches().collect::<Vec<_>>();
+        let instances = batches
+            .iter()
+            .filter_map(|batch| match batch {
+                PrimitiveBatch::MonochromeSprites { texture, .. }
+                | PrimitiveBatch::PolychromeSprites { texture, .. }
+                | PrimitiveBatch::SubpixelSprites { texture, .. } => Some(*texture),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let (atlas_lease, textures) = self.sprite_atlas.retain_metal_textures(&instances)?;
+        let batches = batches
+            .into_iter()
+            .map(|batch| {
+                Ok(match batch {
+                    PrimitiveBatch::Shadows(range) => PreparedMetalBatch::Shadows(range),
+                    PrimitiveBatch::Quads(range) => PreparedMetalBatch::Quads(range),
+                    PrimitiveBatch::Paths(range) => {
+                        anyhow::ensure!(
+                            scene.paths[range.clone()]
+                                .iter()
+                                .all(|path| path_visual_bounds(path).is_some()),
+                            "Metal scene has invalid path geometry"
+                        );
+                        PreparedMetalBatch::Paths(range)
+                    }
+                    PrimitiveBatch::Underlines(range) => PreparedMetalBatch::Underlines(range),
+                    PrimitiveBatch::MonochromeSprites { texture, range } => {
+                        PreparedMetalBatch::MonochromeSprites {
+                            texture: textures
+                                .get(&texture)
+                                .context("missing preflight monochrome texture")?
+                                .clone(),
+                            range,
+                        }
+                    }
+                    PrimitiveBatch::PolychromeSprites { texture, range } => {
+                        PreparedMetalBatch::PolychromeSprites {
+                            texture: textures
+                                .get(&texture)
+                                .context("missing preflight polychrome texture")?
+                                .clone(),
+                            range,
+                        }
+                    }
+                    PrimitiveBatch::Surfaces(range) => PreparedMetalBatch::Surfaces(
+                        scene.surfaces[range]
+                            .iter()
+                            .map(|surface| self.prepare_surface(surface))
+                            .collect::<Result<Vec<_>>>()?,
+                    ),
+                    PrimitiveBatch::SubpixelSprites { .. } => {
+                        anyhow::bail!("Metal does not support subpixel sprite batches")
+                    }
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(PreparedMetalScene {
+            scene,
+            batches,
+            atlas_lease,
+        })
+    }
+
+    fn prepare_surface(&self, surface: &PaintSurface) -> Result<PreparedMetalSurface> {
+        let image_buffer = &surface.image_buffer;
+        anyhow::ensure!(
+            CVPixelBufferGetPixelFormatType(image_buffer)
+                == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+            "unsupported Metal surface pixel format"
+        );
+        let texture_size = size(
+            DevicePixels(i32::try_from(CVPixelBufferGetWidth(image_buffer))?),
+            DevicePixels(i32::try_from(CVPixelBufferGetHeight(image_buffer))?),
+        );
+        let y_cv_texture = self.core_video_texture_cache.create_texture_from_image(
+            image_buffer,
+            MTLPixelFormat::R8Unorm,
+            CVPixelBufferGetWidthOfPlane(image_buffer, 0),
+            CVPixelBufferGetHeightOfPlane(image_buffer, 0),
+            0,
+        )?;
+        let cb_cr_cv_texture = self.core_video_texture_cache.create_texture_from_image(
+            image_buffer,
+            MTLPixelFormat::RG8Unorm,
+            CVPixelBufferGetWidthOfPlane(image_buffer, 1),
+            CVPixelBufferGetHeightOfPlane(image_buffer, 1),
+            1,
+        )?;
+        let y_texture = y_cv_texture
+            .texture()
+            .context("missing Metal surface luma texture")?;
+        let cb_cr_texture = cb_cr_cv_texture
+            .texture()
+            .context("missing Metal surface chroma texture")?;
+        Ok(PreparedMetalSurface {
+            bounds: SurfaceBounds {
+                bounds: surface.bounds,
+                clip: surface.clip,
+                transform: surface.renderer_transform(),
+            },
+            texture_size,
+            y_texture,
+            cb_cr_texture,
+            _y_cv_texture: y_cv_texture,
+            _cb_cr_cv_texture: cb_cr_cv_texture,
+        })
+    }
+
     pub fn draw(&mut self, scene: &Scene) -> PlatformWindowPresentOutcome {
         if self.presentation_shutdown.is_some() {
             return PlatformWindowPresentOutcome::Deferred;
@@ -613,6 +754,13 @@ impl MetalRenderer {
                     "draw() called on headless renderer - use render_scene_to_image() instead"
                 );
                 return PlatformWindowPresentOutcome::Rejected;
+            }
+        };
+        let prepared = match self.prepare_scene(scene) {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                log::debug!("Metal scene requires repaint before presentation: {error:#}");
+                return PlatformWindowPresentOutcome::RepaintRequired;
             }
         };
         let drawable = match &mut self.display_link_mode {
@@ -651,16 +799,18 @@ impl MetalRenderer {
                 .acquire(&self.device, self.is_unified_memory);
 
             let command_buffer =
-                self.draw_primitives(scene, &mut instance_buffer, &drawable, viewport_size);
+                self.draw_primitives(&prepared, &mut instance_buffer, &drawable, viewport_size);
 
             match command_buffer {
                 Ok(command_buffer) => {
                     let instance_buffer_pool = self.instance_buffer_pool.clone();
                     let instance_buffer = Cell::new(Some(instance_buffer));
+                    let resources = Cell::new(Some((prepared.batches, prepared.atlas_lease)));
                     let block: RcBlock<CommandBufferHandler> = RcBlock::new(move |_| {
                         if let Some(instance_buffer) = instance_buffer.take() {
                             instance_buffer_pool.lock().release(instance_buffer);
                         }
+                        drop(resources.take());
                     });
                     command_buffer.add_completed_handler(&block);
 
@@ -738,6 +888,7 @@ impl MetalRenderer {
     fn render_offscreen(&mut self, scene: &Scene, size: Size<DevicePixels>) -> Result<RgbaImage> {
         self.validate_render_target_size(size)?;
         validate_scene_clip_envelopes(scene)?;
+        let prepared = self.prepare_scene(scene)?;
 
         // Update path intermediate textures for this size
         self.update_path_intermediate_textures(size)?;
@@ -760,7 +911,7 @@ impl MetalRenderer {
             .try_new_texture(&texture_descriptor)
             .context("allocating offscreen render target")?;
 
-        let command_buffer = self.render_frame(scene, &target_texture, size)?;
+        let command_buffer = self.render_frame(prepared, &target_texture, size)?;
 
         // On discrete GPUs (non-unified memory), Managed textures
         // require an explicit blit synchronize before the CPU can
@@ -839,6 +990,7 @@ impl MetalRenderer {
                 command_buffer.error()
             );
         }
+        let prepared = self.prepare_scene(scene)?;
 
         objc2::rc::autoreleasepool(|_| {
             self.update_path_intermediate_textures(size)?;
@@ -865,7 +1017,7 @@ impl MetalRenderer {
                 .headless_render_target
                 .clone()
                 .context("retrieving headless render target")?;
-            let command_buffer = self.render_frame(scene, &target_texture, size)?;
+            let command_buffer = self.render_frame(prepared, &target_texture, size)?;
 
             // Commit without waiting, mirroring presentation to a real window where
             // the CPU doesn't block on the GPU.
@@ -878,7 +1030,7 @@ impl MetalRenderer {
     #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
     fn render_frame(
         &mut self,
-        scene: &Scene,
+        prepared: PreparedMetalScene<'_>,
         target_texture: &metal::TextureRef,
         size: Size<DevicePixels>,
     ) -> Result<metal::CommandBuffer> {
@@ -888,17 +1040,23 @@ impl MetalRenderer {
                 .lock()
                 .acquire(&self.device, self.is_unified_memory);
 
-            let command_buffer =
-                self.draw_primitives_to_texture(scene, &mut instance_buffer, target_texture, size);
+            let command_buffer = self.draw_primitives_to_texture(
+                &prepared,
+                &mut instance_buffer,
+                target_texture,
+                size,
+            );
 
             match command_buffer {
                 Ok(command_buffer) => {
                     let instance_buffer_pool = self.instance_buffer_pool.clone();
                     let instance_buffer = Cell::new(Some(instance_buffer));
+                    let resources = Cell::new(Some((prepared.batches, prepared.atlas_lease)));
                     let block: RcBlock<CommandBufferHandler> = RcBlock::new(move |_| {
                         if let Some(instance_buffer) = instance_buffer.take() {
                             instance_buffer_pool.lock().release(instance_buffer);
                         }
+                        drop(resources.take());
                     });
                     command_buffer.add_completed_handler(&block);
 
@@ -926,22 +1084,23 @@ impl MetalRenderer {
 
     fn draw_primitives(
         &mut self,
-        scene: &Scene,
+        prepared: &PreparedMetalScene<'_>,
         instance_buffer: &mut InstanceBuffer,
         drawable: &metal::MetalDrawableRef,
         viewport_size: Size<DevicePixels>,
     ) -> Result<metal::CommandBuffer> {
         let texture = drawable.texture();
-        self.draw_primitives_to_texture(scene, instance_buffer, &texture, viewport_size)
+        self.draw_primitives_to_texture(prepared, instance_buffer, &texture, viewport_size)
     }
 
     fn draw_primitives_to_texture(
         &mut self,
-        scene: &Scene,
+        prepared: &PreparedMetalScene<'_>,
         instance_buffer: &mut InstanceBuffer,
         texture: &metal::TextureRef,
         viewport_size: Size<DevicePixels>,
     ) -> Result<metal::CommandBuffer> {
+        let scene = prepared.scene;
         let command_queue = self.command_queue.clone();
         let command_buffer = command_queue.new_command_buffer();
         let alpha = if self.opaque { 1. } else { 0. };
@@ -967,24 +1126,24 @@ impl MetalRenderer {
             },
         );
 
-        for batch in scene.batches() {
+        for batch in &prepared.batches {
             let ok = match batch {
-                PrimitiveBatch::Shadows(range) => self.draw_shadows(
-                    &scene.shadows[range],
+                PreparedMetalBatch::Shadows(range) => self.draw_shadows(
+                    &scene.shadows[range.clone()],
                     instance_buffer,
                     &mut instance_offset,
                     viewport_size,
                     &command_encoder,
                 ),
-                PrimitiveBatch::Quads(range) => self.draw_quads(
-                    &scene.quads[range],
+                PreparedMetalBatch::Quads(range) => self.draw_quads(
+                    &scene.quads[range.clone()],
                     instance_buffer,
                     &mut instance_offset,
                     viewport_size,
                     &command_encoder,
                 ),
-                PrimitiveBatch::Paths(range) => {
-                    let paths = &scene.paths[range];
+                PreparedMetalBatch::Paths(range) => {
+                    let paths = &scene.paths[range.clone()];
                     command_encoder.end_encoding();
 
                     let did_draw = self.draw_paths_to_intermediate(
@@ -1019,40 +1178,37 @@ impl MetalRenderer {
                         false
                     }
                 }
-                PrimitiveBatch::Underlines(range) => self.draw_underlines(
-                    &scene.underlines[range],
+                PreparedMetalBatch::Underlines(range) => self.draw_underlines(
+                    &scene.underlines[range.clone()],
                     instance_buffer,
                     &mut instance_offset,
                     viewport_size,
                     &command_encoder,
                 ),
-                PrimitiveBatch::MonochromeSprites { texture, range } => self
+                PreparedMetalBatch::MonochromeSprites { texture, range } => self
                     .draw_monochrome_sprites(
                         texture,
-                        &scene.monochrome_sprites[range],
+                        &scene.monochrome_sprites[range.clone()],
                         instance_buffer,
                         &mut instance_offset,
                         viewport_size,
                         &command_encoder,
                     ),
-                PrimitiveBatch::PolychromeSprites { texture, range } => self
+                PreparedMetalBatch::PolychromeSprites { texture, range } => self
                     .draw_polychrome_sprites(
                         texture,
-                        &scene.polychrome_sprites[range],
+                        &scene.polychrome_sprites[range.clone()],
                         instance_buffer,
                         &mut instance_offset,
                         viewport_size,
                         &command_encoder,
                     ),
-                PrimitiveBatch::Surfaces(range) => self.draw_surfaces(
-                    &scene.surfaces[range],
+                PreparedMetalBatch::Surfaces(surfaces) => self.draw_surfaces(
+                    surfaces,
                     instance_buffer,
                     &mut instance_offset,
                     viewport_size,
                     &command_encoder,
-                ),
-                PrimitiveBatch::SubpixelSprites { .. } => unreachable!(
-                    "macOS reports subpixel rendering as unsupported, so glyphs use monochrome sprites"
                 ),
             };
             if !ok {
@@ -1464,7 +1620,7 @@ impl MetalRenderer {
 
     fn draw_monochrome_sprites(
         &self,
-        texture: AtlasTextureInstanceId,
+        texture: &metal::TextureRef,
         sprites: &[MonochromeSprite],
         instance_buffer: &mut InstanceBuffer,
         instance_offset: &mut usize,
@@ -1485,7 +1641,6 @@ impl MetalRenderer {
             return false;
         }
 
-        let texture = self.sprite_atlas.metal_texture(texture);
         let texture_size = size(
             DevicePixels(texture.width() as i32),
             DevicePixels(texture.height() as i32),
@@ -1516,7 +1671,7 @@ impl MetalRenderer {
             Some(&instance_buffer.metal_buffer),
             *instance_offset as u64,
         );
-        command_encoder.set_fragment_texture(SpriteInputIndex::AtlasTexture as u64, Some(&texture));
+        command_encoder.set_fragment_texture(SpriteInputIndex::AtlasTexture as u64, Some(texture));
 
         unsafe {
             ptr::copy_nonoverlapping(
@@ -1538,7 +1693,7 @@ impl MetalRenderer {
 
     fn draw_polychrome_sprites(
         &self,
-        texture: AtlasTextureInstanceId,
+        texture: &metal::TextureRef,
         sprites: &[PolychromeSprite],
         instance_buffer: &mut InstanceBuffer,
         instance_offset: &mut usize,
@@ -1550,7 +1705,6 @@ impl MetalRenderer {
         }
         align_offset(instance_offset);
 
-        let texture = self.sprite_atlas.metal_texture(texture);
         let texture_size = size(
             DevicePixels(texture.width() as i32),
             DevicePixels(texture.height() as i32),
@@ -1581,7 +1735,7 @@ impl MetalRenderer {
             Some(&instance_buffer.metal_buffer),
             *instance_offset as u64,
         );
-        command_encoder.set_fragment_texture(SpriteInputIndex::AtlasTexture as u64, Some(&texture));
+        command_encoder.set_fragment_texture(SpriteInputIndex::AtlasTexture as u64, Some(texture));
 
         let sprite_bytes_len = mem::size_of_val(sprites);
         let buffer_contents =
@@ -1612,7 +1766,7 @@ impl MetalRenderer {
 
     fn draw_surfaces(
         &mut self,
-        surfaces: &[PaintSurface],
+        surfaces: &[PreparedMetalSurface],
         instance_buffer: &mut InstanceBuffer,
         instance_offset: &mut usize,
         viewport_size: Size<DevicePixels>,
@@ -1631,43 +1785,6 @@ impl MetalRenderer {
         );
 
         for surface in surfaces {
-            let texture_size = size(
-                DevicePixels::from(CVPixelBufferGetWidth(&surface.image_buffer) as i32),
-                DevicePixels::from(CVPixelBufferGetHeight(&surface.image_buffer) as i32),
-            );
-
-            assert_eq!(
-                CVPixelBufferGetPixelFormatType(&surface.image_buffer),
-                kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
-            );
-
-            let y_cv_texture = self
-                .core_video_texture_cache
-                .create_texture_from_image(
-                    &surface.image_buffer,
-                    MTLPixelFormat::R8Unorm,
-                    CVPixelBufferGetWidthOfPlane(&surface.image_buffer, 0),
-                    CVPixelBufferGetHeightOfPlane(&surface.image_buffer, 0),
-                    0,
-                )
-                .unwrap();
-            let cb_cr_cv_texture = self
-                .core_video_texture_cache
-                .create_texture_from_image(
-                    &surface.image_buffer,
-                    MTLPixelFormat::RG8Unorm,
-                    CVPixelBufferGetWidthOfPlane(&surface.image_buffer, 1),
-                    CVPixelBufferGetHeightOfPlane(&surface.image_buffer, 1),
-                    1,
-                )
-                .unwrap();
-            let Some(y_texture) = y_cv_texture.texture() else {
-                return false;
-            };
-            let Some(cb_cr_texture) = cb_cr_cv_texture.texture() else {
-                return false;
-            };
-
             align_offset(instance_offset);
             let next_offset = *instance_offset + mem::size_of::<SurfaceBounds>();
             if next_offset > instance_buffer.size {
@@ -1686,26 +1803,21 @@ impl MetalRenderer {
             );
             command_encoder.set_vertex_bytes(
                 SurfaceInputIndex::TextureSize as u64,
-                mem::size_of_val(&texture_size) as u64,
-                &texture_size as *const Size<DevicePixels> as *const _,
+                mem::size_of_val(&surface.texture_size) as u64,
+                &surface.texture_size as *const Size<DevicePixels> as *const _,
             );
             command_encoder
-                .set_fragment_texture(SurfaceInputIndex::YTexture as u64, Some(&y_texture));
-            command_encoder
-                .set_fragment_texture(SurfaceInputIndex::CbCrTexture as u64, Some(&cb_cr_texture));
+                .set_fragment_texture(SurfaceInputIndex::YTexture as u64, Some(&surface.y_texture));
+            command_encoder.set_fragment_texture(
+                SurfaceInputIndex::CbCrTexture as u64,
+                Some(&surface.cb_cr_texture),
+            );
 
             unsafe {
                 let buffer_contents = (instance_buffer.metal_buffer.contents() as *mut u8)
                     .add(*instance_offset)
                     as *mut SurfaceBounds;
-                ptr::write(
-                    buffer_contents,
-                    SurfaceBounds {
-                        bounds: surface.bounds,
-                        clip: surface.clip,
-                        transform: surface.renderer_transform(),
-                    },
-                );
+                ptr::write(buffer_contents, surface.bounds.clone());
             }
 
             command_encoder.draw_primitives(metal::MTLPrimitiveType::Triangle, 0, 6);
@@ -1714,6 +1826,10 @@ impl MetalRenderer {
         true
     }
 }
+
+#[cfg(test)]
+#[path = "metal_renderer/tests.rs"]
+mod atlas_preflight_tests;
 
 fn new_command_encoder_for_texture(
     command_buffer: &metal::CommandBufferRef,

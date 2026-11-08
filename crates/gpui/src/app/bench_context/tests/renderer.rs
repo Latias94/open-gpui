@@ -13,7 +13,7 @@ struct RejectingAtlas {
 impl PlatformAtlas for RejectingAtlas {
     fn get_or_insert_with<'a>(
         &self,
-        key: &AtlasKey,
+        key: AtlasKey,
         _: &mut dyn FnMut() -> Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
     ) -> Result<Option<AtlasTile>> {
         Ok(Some(AtlasTile {

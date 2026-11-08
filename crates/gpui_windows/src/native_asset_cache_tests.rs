@@ -1,14 +1,16 @@
 #![cfg(feature = "test-support")]
 
 use super::*;
+use crate::directx_renderer::atlas_render_tests;
 use crate::native_test_observation::NativeWindowTestMessageDisposition;
 use futures::channel::oneshot;
 use open_gpui::{
-    App, ApplicationHandle, Asset, AtlasAccessOutcome, AtlasRemoveOutcome, ImageId,
+    App, ApplicationHandle, Asset, AtlasAccessOutcome, AtlasKey, AtlasRemoveOutcome, ImageId,
     ImagePaintDiagnostic, InteractiveElement, RenderImage, VisualTestPlatform, WindowFrameCapture,
     WindowHandle, WindowInitialPresentationStatus, img, rgb,
 };
 use std::{
+    borrow::Cow,
     collections::VecDeque,
     future::Future,
     hash::{Hash, Hasher},
@@ -83,6 +85,30 @@ fn native_asset_image(rgba: [u8; 4]) -> Arc<RenderImage> {
     Arc::new(RenderImage::new(vec![image::Frame::new(
         image::RgbaImage::from_pixel(1, 1, image::Rgba([rgba[2], rgba[1], rgba[0], rgba[3]])),
     )]))
+}
+
+#[test]
+fn warp_raw_scene_receipt_retains_original_regions_and_views() {
+    atlas_render_tests::with_warp_scene_template(
+        atlas_render_tests::warp_raw_scene_receipt_retains_original_regions_and_views,
+    )
+    .expect("real WARP rendering must consume the pinned original image region and SRV");
+}
+
+#[test]
+fn warp_mixed_valid_and_stale_resources_refuse_before_target_clear() {
+    atlas_render_tests::with_warp_scene_template(
+        atlas_render_tests::warp_mixed_valid_and_stale_resources_refuse_before_target_clear,
+    )
+    .expect("mixed valid and stale WARP scenes must refuse before touching the target");
+}
+
+#[test]
+fn warp_renderer_recovery_invalidates_receipts_and_requires_fresh_paint() {
+    atlas_render_tests::with_warp_scene_template(
+        atlas_render_tests::warp_renderer_recovery_invalidates_receipts_and_requires_fresh_paint,
+    )
+    .expect("actual WARP renderer reconstruction must reject old receipts and permit fresh paint");
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -650,6 +676,75 @@ fn native_owning_asset_consumers_share_notify_submit_evict_and_retire() {
                             > before_eviction.metadata.capture_generation
                     );
                     assert_eq!(retained.image, before_eviction.image);
+                    let atlas = native_windows[index].state.renderer.borrow().sprite_atlas();
+                    let key = AtlasKey::Image(paint.image);
+                    assert!(!atlas.contains(&key));
+                    let replacement_bytes = [255, 0, 255, 255];
+                    let replacement = atlas
+                        .get_or_insert_with_diagnostics(key.clone(), &mut || {
+                            Ok(Some((
+                                size(1.into(), 1.into()),
+                                Cow::Borrowed(&replacement_bytes),
+                            )))
+                        })
+                        .expect("the removed native image key must allow reconstruction");
+                    assert_eq!(replacement.diagnostic.outcome, AtlasAccessOutcome::Inserted);
+                    let replacement_tile = replacement.tile.expect("the rebuilt native image tile");
+                    assert_eq!(
+                        replacement_tile.texture_instance(),
+                        paint.tile.texture_instance()
+                    );
+                    assert!(!replacement_tile.bounds.intersects(&paint.tile.bounds));
+                    assert!(atlas.contains(&key));
+                    let after_reinsertion = window.capture_frame();
+                    assert!(
+                        after_reinsertion.unsupported_reason.is_none(),
+                        "{after_reinsertion:?}"
+                    );
+                    assert_eq!(
+                        after_reinsertion.metadata.framework_frame_generation,
+                        attempt.generation
+                    );
+                    assert_eq!(after_reinsertion.image, before_eviction.image);
+                    let submitted_after_reinsertion = window
+                        .submitted_frame_diagnostics_for_test()
+                        .expect("reconstruction must preserve the exact submitted diagnostics");
+                    assert_eq!(submitted_after_reinsertion.generation(), attempt.generation);
+                    assert_eq!(
+                        submitted_after_reinsertion.image_paint_diagnostics(),
+                        &[paint]
+                    );
+                    window
+                        .drop_image(image.clone())
+                        .expect("the reconstructed native key must retire independently");
+                    assert!(!atlas.contains(&key));
+                    assert_eq!(
+                        window
+                            .atlas_remove_diagnostics()
+                            .last()
+                            .expect("the reconstructed key must record its exact removal")
+                            .outcome,
+                        AtlasRemoveOutcome::TextureRetained
+                    );
+                    let after_second_eviction = window.capture_frame();
+                    assert!(
+                        after_second_eviction.unsupported_reason.is_none(),
+                        "{after_second_eviction:?}"
+                    );
+                    assert_eq!(after_second_eviction.image, before_eviction.image);
+                    let facts_after_reinsertion = window.presentation_facts();
+                    assert_eq!(
+                        facts_after_reinsertion.frame_accepted_generation,
+                        facts.frame_accepted_generation
+                    );
+                    assert_eq!(
+                        facts_after_reinsertion.present_submitted_generation,
+                        facts.present_submitted_generation
+                    );
+                    assert_eq!(
+                        facts_after_reinsertion.non_empty_presented_generation,
+                        facts.non_empty_presented_generation
+                    );
                 })
                 .expect("accepted native frame leases must survive asset and atlas key eviction");
         }
