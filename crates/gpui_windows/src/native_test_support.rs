@@ -5171,7 +5171,7 @@ fn native_mouse_leave_dispatches_exact_input_before_hover_fact() {
         "a consumed MouseExited input must return the consumed Win32 disposition"
     );
     assert_eq!(exit_count.get(), 2);
-    pump_messages_until_idle("consumed mouse-leave follow-up");
+    app.update_for_test(|_| ());
 
     let diagnostic_delta =
         app.update_for_test(|cx| cx.native_boundary_diagnostics(diagnostic_cursor));
@@ -5210,6 +5210,23 @@ fn native_mouse_leave_dispatches_exact_input_before_hover_fact() {
         [false, false],
         "mouse leave must remain hover-only and expose no captured routing frame"
     );
+    let follow_up = pump_messages_until_idle("consumed mouse-leave follow-up");
+    eprintln!(
+        "mouse-leave exact synchronous transitions passed; subsequent queued messages={:x?}",
+        follow_up.message_ids()
+    );
+    assert!(app.update_for_test(|cx| {
+        cx.native_boundary_diagnostics(diagnostic_delta.cursor)
+            .terminal
+            .iter()
+            .all(|diagnostic| {
+                diagnostic.target != open_gpui::NativeBoundaryTarget::Window(window.window_id())
+                    || !matches!(
+                        diagnostic.disposition,
+                        NativeBoundaryDisposition::InvariantFailure(_)
+                    )
+            })
+    }));
 
     app.update_for_test(|cx| window.update(cx, |_, window, cx| window.remove_window(cx)))
         .expect("native test window should close");
