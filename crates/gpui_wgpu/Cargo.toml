@@ -20,8 +20,8 @@ path = "src/gpui_wgpu.rs"
 [features]
 default = []
 font-kit = ["dep:font-kit"]
-bench-support = ["open_gpui/bench-support"]
-test-support = ["open_gpui/test-support"]
+bench-support = ["open_gpui/bench-support", "dep:image"]
+test-support = ["open_gpui/test-support", "dep:image"]
 
 [dependencies]
 open_gpui.workspace = true
@@ -31,7 +31,7 @@ open_gpui_collections.workspace = true
 cosmic-text = "0.19.0"
 etagere = "0.3"
 itertools.workspace = true
-image.workspace = true
+image = { workspace = true, optional = true }
 log.workspace = true
 parking_lot.workspace = true
 profiling.workspace = true
@@ -41,15 +41,21 @@ swash = "0.2.6"
 unicode-bidi.workspace = true
 unicode-segmentation.workspace = true
 open_gpui_core_util.workspace = true
-wgpu.workspace = true
 
 # Optional: only needed on platforms with multiple font sources (e.g. Linux)
 font-kit = { package = "open-gpui-font-kit", version = "0.14.3", optional = true }
+
+[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
+wgpu = { workspace = true, features = ["std", "metal", "gles", "vulkan", "wgsl", "webgpu"] }
+
+[target.'cfg(not(any(target_os = "linux", target_os = "freebsd")))'.dependencies]
+wgpu = { workspace = true, default-features = true }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 pollster.workspace = true
 
 [target.'cfg(target_family = "wasm")'.dependencies]
+wgpu = { workspace = true, features = ["webgl"] }
 wasm-bindgen.workspace = true
 wasm-bindgen-futures = "0.4.76"
 web-sys = { version = "0.3.103", features = ["HtmlCanvasElement"] }
@@ -58,6 +64,8 @@ js-sys = "0.3.103"
 [dev-dependencies]
 criterion.workspace = true
 open_gpui = { workspace = true, features = ["test-support"] }
+image.workspace = true
+naga = { git = "https://github.com/gfx-rs/wgpu", rev = "cddb2f5d80dc0009b2ef6767635140cacf90a007", features = ["wgsl-in"] }
 
 [[bench]]
 name = "layout_line"

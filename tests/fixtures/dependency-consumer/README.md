@@ -4,16 +4,18 @@ This application is its own Cargo workspace. It consumes Open GPUI through path 
 without inheriting the repository workspace's dependency resolution or lockfile. Its own
 `Cargo.lock` records the consumer resolution.
 
-The application pins Taffy 0.15.0, WGPU 30.0.1, and, on macOS, Core Foundation 0.10.1 to exercise
-application-owned dependency choices independently of the library workspace. Keep these exact pins in
-the application fixture; library dependencies should allow compatible patch releases. The direct
-WGPU dependency requests only its `std` feature for API types.
+The application pins Taffy 0.15.0 and, on macOS, Core Foundation 0.10.1 to exercise
+application-owned compatible dependency choices independently of the library workspace.
+Its direct WGPU dependency selects upstream gfx-rs revision
+`cddb2f5d80dc0009b2ef6767635140cacf90a007`, matching the renderer source, and normally requests
+only `std` for the preview's API types. The pinned correction declares Rust 1.93.
 
 The optional `wgpu-renderer` feature also includes `open-gpui-wgpu` in the consumer graph, so the
-all-features gate compiles the actual renderer against the application's pinned WGPU 30.0.1.
+all-features gate compiles the actual renderer against the application's pinned WGPU source.
 Cargo unifies the renderer's WGPU feature requests with the direct dependency's features. This
-compile check does not select WGPU as the Windows platform backend or establish GPU resource
-sharing.
+compile check does not select WGPU as the Windows platform backend. Passing public WGPU types
+between application and backend requires the same source identity; a registry version with
+the same package version is a distinct Rust type.
 
 The source composes a GPUI `Render` view, a semantic button activation handler, custom canvas
 painting, and a `DockSurface` panel factory. Taffy's size type supplies the preview dimensions;
@@ -1008,3 +1010,41 @@ enables no `test-support` or `avif-native` feature and uses no engine-private AP
 Encoding and format detection do not establish AVIF decoding or a decoded AVIF round trip.
 The test constructs no App or Window and does not qualify native image loading, rendering,
 GPU presentation, cross-platform runtime behavior or performance.
+
+## Application-owned GPU and native Vulkan controls
+
+The `wgpu_atlas` target runs with `wgpu-renderer` and no GPUI test support. It creates a real
+application-owned adapter, device and queue through the direct WGPU dependency, then passes
+those public types to `WgpuAtlas::new`. It exercises malformed-source refusal, a complete
+same-key retry, actual upload and bounded queue completion, public texture leasing and final
+backend-owner release. This proves the device/atlas boundary rather than full Nara renderer
+or native Window integration.
+
+The application-owned `vulkan-surface` feature enables `wgpu/vulkan` and `wgpu/wgsl`.
+Its Windows `vulkan_surface` tests create and retire an actual HWND and Vulkan surface while
+an acquired texture remains alive, with and without submitted clear work. They are ignored
+in generic runs because they require a real presenting Vulkan adapter and desktop. Missing
+support fails explicit execution; it is not silently treated as success. Validation scopes
+and uncaptured errors remain checked. The tests do not assume a minimum GPU execution time
+or simulate physical device loss.
+
+Combining `vulkan-surface,wgpu-renderer` adds an ordinary public `WgpuRenderer` trajectory.
+It creates the first real HWND surface/context with a zero requested drawable size, resumes
+to a nonempty submitted Scene,
+shares the same device/queue with a second real surface, suspends/resumes that surface and
+quiesces both exact shutdown tickets before destroying either HWND. It uses borrowed handle
+values without an unsafe Send/Sync implementation. This qualifies initialization, sharing and
+native retirement on the executed adapter, not the number of configuration calls, hybrid-GPU
+selection, compositor pixels or physical device loss.
+
+Run each command serially from the repository root:
+
+```text
+cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features wgpu-renderer --test wgpu_atlas --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features vulkan-surface --test vulkan_surface --run-ignored only --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features vulkan-surface,wgpu-renderer --test vulkan_surface --run-ignored only --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+The [WGPU qualification](../../../docs/verification.md#wgpu-dependency-shaders-and-webgl)
+records executed results, including the registry 30.0.1 failure control and restored fixed
+source. Reusable commands are not an execution claim for another host or backend.

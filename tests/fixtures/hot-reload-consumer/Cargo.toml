@@ -9,7 +9,7 @@ open_gpui = { package = "open-gpui", path = "../../../crates/gpui", default-feat
 name = "open-gpui-hot-reload-consumer"
 version = "0.0.0"
 edition = "2024"
-rust-version = "1.92"
+rust-version = "1.93"
 publish = false
 
 [features]

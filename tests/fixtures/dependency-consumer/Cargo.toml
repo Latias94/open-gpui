@@ -5,12 +5,13 @@ resolver = "2"
 name = "open-gpui-dependency-consumer"
 version = "0.0.0"
 edition = "2024"
-rust-version = "1.92"
+rust-version = "1.93"
 publish = false
 
 [features]
 avif-encoding = ["dep:image"]
 profiler = ["open_gpui/profiler"]
+vulkan-surface = ["wgpu/vulkan", "wgpu/wgsl"]
 wgpu-renderer = ["dep:open_gpui_wgpu"]
 bench-support = ["open_gpui/bench-support", "open_gpui_platform/bench-support", "dep:criterion", "dep:rand"]
 
@@ -24,9 +25,9 @@ open_gpui_wgpu = { package = "open-gpui-wgpu", path = "../../../crates/gpui_wgpu
 criterion = { version = "0.8.2", optional = true }
 rand = { version = "0.9", optional = true }
 
-# Application-owned pins exercise compatible patch choices outside the library lockfile.
+# Application-owned layout pin and renderer source exercise standalone dependency resolution.
 taffy = "=0.15.0"
-wgpu = { version = "=30.0.1", default-features = false, features = ["std"] }
+wgpu = { git = "https://github.com/gfx-rs/wgpu", rev = "cddb2f5d80dc0009b2ef6767635140cacf90a007", default-features = false, features = ["std"] }
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 open_gpui_platform = { package = "open-gpui-platform", path = "../../../crates/gpui_platform", default-features = false, features = ["x11", "wayland"] }
@@ -34,6 +35,15 @@ open_gpui_platform = { package = "open-gpui-platform", path = "../../../crates/g
 [target.'cfg(target_os = "macos")'.dependencies]
 open_gpui_platform = { package = "open-gpui-platform", path = "../../../crates/gpui_platform", default-features = false, features = ["font-kit"] }
 core-foundation = "=0.10.1"
+
+[target.'cfg(target_os = "windows")'.dev-dependencies]
+raw-window-handle = "0.6"
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_WindowsAndMessaging",
+] }
 
 [[bench]]
 name = "maintained_harness"

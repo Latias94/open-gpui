@@ -92,6 +92,7 @@ pub(crate) struct WebWindowInner {
 
 pub struct WebWindow {
     inner: Rc<WebWindowInner>,
+    lifecycle: Rc<Cell<crate::platform::WebWindowLifecycle>>,
     display: Rc<dyn PlatformDisplay>,
     #[allow(dead_code)]
     handle: AnyWindowHandle,
@@ -102,10 +103,40 @@ pub struct WebWindow {
 }
 
 impl WebWindow {
-    pub fn new(
+    pub(crate) fn prepare_canvas(
+        browser_window: &web_sys::Window,
+    ) -> anyhow::Result<web_sys::HtmlCanvasElement> {
+        let document = browser_window
+            .document()
+            .ok_or_else(|| anyhow::anyhow!("No document found on window"))?;
+        let canvas: web_sys::HtmlCanvasElement = document
+            .create_element("canvas")
+            .map_err(|error| anyhow::anyhow!("Failed to create canvas: {error:?}"))?
+            .dyn_into()
+            .map_err(|error| anyhow::anyhow!("Created element is not a canvas: {error:?}"))?;
+        canvas.set_tab_index(-1);
+        for (property, value) in [
+            ("width", "100%"),
+            ("height", "100%"),
+            ("display", "block"),
+            ("outline", "none"),
+            ("touch-action", "none"),
+        ] {
+            canvas
+                .style()
+                .set_property(property, value)
+                .map_err(|error| anyhow::anyhow!("Failed to set canvas {property}: {error:?}"))?;
+        }
+        Ok(canvas)
+    }
+
+    pub(crate) fn new(
         handle: AnyWindowHandle,
         params: WindowParams,
         context: &WgpuContext,
+        canvas: web_sys::HtmlCanvasElement,
+        surface: open_gpui_wgpu::wgpu::Surface<'static>,
+        lifecycle: Rc<Cell<crate::platform::WebWindowLifecycle>>,
         browser_window: web_sys::Window,
         cursor_visible: Rc<Cell<bool>>,
         last_cursor_css: Rc<Cell<&'static str>>,
@@ -136,34 +167,9 @@ impl WebWindow {
                 .map_err(|e| anyhow::anyhow!("Failed to disable root pointer input: {e:?}"))?;
         }
 
-        let canvas: web_sys::HtmlCanvasElement = document
-            .create_element("canvas")
-            .map_err(|e| anyhow::anyhow!("Failed to create canvas element: {e:?}"))?
-            .dyn_into()
-            .map_err(|e| anyhow::anyhow!("Created element is not a canvas: {e:?}"))?;
-
         let dpr = browser_window.device_pixel_ratio() as f32;
         let max_texture_dimension = context.device.limits().max_texture_dimension_2d;
         let has_device_pixel_support = check_device_pixel_support();
-
-        canvas.set_tab_index(-1);
-
-        let style = canvas.style();
-        style
-            .set_property("width", "100%")
-            .map_err(|e| anyhow::anyhow!("Failed to set canvas width style: {e:?}"))?;
-        style
-            .set_property("height", "100%")
-            .map_err(|e| anyhow::anyhow!("Failed to set canvas height style: {e:?}"))?;
-        style
-            .set_property("display", "block")
-            .map_err(|e| anyhow::anyhow!("Failed to set canvas display style: {e:?}"))?;
-        style
-            .set_property("outline", "none")
-            .map_err(|e| anyhow::anyhow!("Failed to set canvas outline style: {e:?}"))?;
-        style
-            .set_property("touch-action", "none")
-            .map_err(|e| anyhow::anyhow!("Failed to set touch-action style: {e:?}"))?;
 
         root_element
             .append_child(&canvas)
@@ -197,7 +203,7 @@ impl WebWindow {
             preferred_present_mode: None,
         };
 
-        let renderer = WgpuRenderer::new_from_canvas(context, &canvas, renderer_config)?;
+        let renderer = WgpuRenderer::new_from_surface(context, &canvas, surface, renderer_config)?;
 
         let display: Rc<dyn PlatformDisplay> = Rc::new(WebDisplay::new(browser_window.clone()));
 
@@ -269,6 +275,7 @@ impl WebWindow {
 
         Ok(Self {
             inner,
+            lifecycle,
             display,
             handle,
             _raf_closure: raf_closure,
@@ -811,6 +818,8 @@ fn cursor_style_to_css(style: CursorStyle) -> &'static str {
 
 impl Drop for WebWindow {
     fn drop(&mut self) {
+        self.lifecycle
+            .set(crate::platform::WebWindowLifecycle::Closed);
         self.inner.interaction_gate.quiesce();
         self.inner.callbacks.borrow_mut().visibility_change = None;
         self.event_listeners.take();

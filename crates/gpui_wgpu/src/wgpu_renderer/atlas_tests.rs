@@ -292,7 +292,7 @@ fn assert_color(
 
 fn shrink_instance_buffer(renderer: &mut WgpuHeadlessRenderer) {
     renderer.core.instance_buffer_capacity = 64;
-    renderer.core.resources.instance_buffer =
+    renderer.core.resources.instance_buffer = GpuData::Storage(
         renderer
             .context
             .device
@@ -301,7 +301,392 @@ fn shrink_instance_buffer(renderer: &mut WgpuHeadlessRenderer) {
                 size: 64,
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
-            });
+            }),
+    );
+}
+
+fn narrow_packed_texture(
+    device: &wgpu::Device,
+    label: &str,
+    width: u32,
+    height: u32,
+) -> (GpuData, u64) {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(label),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba32Uint,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    let capacity = u64::from(width) * u64::from(height) * INSTANCE_TEXTURE_TEXEL_SIZE;
+    (
+        GpuData::Texture {
+            view: texture.create_view(&wgpu::TextureViewDescriptor::default()),
+            texture,
+            width,
+            height,
+        },
+        capacity,
+    )
+}
+
+#[test]
+fn packed_shader_reads_odd_quads_and_exact_clips_across_texture_rows() -> anyhow::Result<()> {
+    let mut renderer = WgpuHeadlessRenderer::new()?;
+    with_unleased_window_scene(
+        &mut renderer,
+        WindowFixture::mixed()?,
+        |scene, scale_factor, renderer| {
+            assert_eq!(scene.quads.len(), 2);
+            assert_window_clip(scene, scene.quads[1].clip, scale_factor);
+            let target_size = render_size(scale_factor, 112.0, 80.0);
+            let expected = renderer.render_scene_to_image(scene, target_size)?;
+            assert_eq!(
+                pixel_at(&expected, scale_factor, 12.0, 12.0),
+                [255, 0, 0, 255]
+            );
+            assert_eq!(
+                pixel_at(&expected, scale_factor, 28.0, 28.0),
+                [0, 0, 255, 255]
+            );
+            assert_eq!(pixel_at(&expected, scale_factor, 4.0, 4.0), [0, 0, 0, 255]);
+            renderer.core = WgpuRendererCore::new_with_transport(
+                &renderer.context,
+                renderer.core.atlas.clone(),
+                renderer.core.target_format,
+                wgpu::CompositeAlphaMode::Opaque,
+                true,
+            )?;
+
+            let instance_width = 5;
+            let quad_stride = std::mem::size_of::<open_gpui::Quad>() as u64;
+            assert_eq!(quad_stride, 184);
+            assert_eq!(quad_stride % INSTANCE_TEXTURE_TEXEL_SIZE, 8);
+            let odd_first_texel = quad_stride / INSTANCE_TEXTURE_TEXEL_SIZE;
+            let odd_last_texel = (2 * quad_stride - 1) / INSTANCE_TEXTURE_TEXEL_SIZE;
+            assert!(
+                odd_first_texel / u64::from(instance_width)
+                    < odd_last_texel / u64::from(instance_width)
+            );
+            let (instances, instance_capacity) = narrow_packed_texture(
+                &renderer.context.device,
+                "cross_row_packed_instances",
+                instance_width,
+                256,
+            );
+
+            let clip_width = 2;
+            let clip_stride = std::mem::size_of::<GpuClipShape>() as u64;
+            let clip_texels = clip_stride / INSTANCE_TEXTURE_TEXEL_SIZE;
+            assert_eq!(clip_texels, 3);
+            let clip = scene.quads[1].clip;
+            for clip_index in clip.first_clip..clip.first_clip + clip.clip_count {
+                let first_texel = u64::from(clip_index) * clip_texels;
+                assert!(
+                    first_texel / u64::from(clip_width)
+                        < (first_texel + clip_texels - 1) / u64::from(clip_width)
+                );
+            }
+            let clip_height = u32::try_from(
+                (scene.clip_shapes().len() as u64 * clip_texels).div_ceil(u64::from(clip_width)),
+            )?;
+            let (clips, clip_capacity) = narrow_packed_texture(
+                &renderer.context.device,
+                "cross_row_packed_clips",
+                clip_width,
+                clip_height,
+            );
+            let core = &mut renderer.core;
+            core.resources.instance_buffer = instances;
+            core.instance_buffer_capacity = instance_capacity;
+            core.resources.clip_buffer = clips;
+            core.clip_buffer_capacity = clip_capacity;
+            core.resources.globals_bind_group = WgpuRendererCore::create_globals_bind_group(
+                &core.resources.device,
+                &core.resources.bind_group_layouts.globals,
+                &core.resources.globals_buffer,
+                &core.resources.clip_buffer,
+                0,
+                core.gamma_offset,
+                clip_capacity,
+                "cross_row_globals",
+            );
+            core.resources.path_globals_bind_group = WgpuRendererCore::create_globals_bind_group(
+                &core.resources.device,
+                &core.resources.bind_group_layouts.globals,
+                &core.resources.globals_buffer,
+                &core.resources.clip_buffer,
+                core.path_globals_offset,
+                core.gamma_offset,
+                clip_capacity,
+                "cross_row_path_globals",
+            );
+
+            let actual = renderer.render_scene_to_image(scene, target_size)?;
+            assert_eq!(actual, expected);
+            assert_eq!(renderer.core.instance_buffer_capacity, instance_capacity);
+            assert_eq!(renderer.core.clip_buffer_capacity, clip_capacity);
+            assert_eq!(renderer.core.resources.submitted_scene_count, 1);
+            renderer.check_gpu_errors()
+        },
+    )
+}
+
+#[test]
+fn late_path_allocation_refusal_preserves_pixels_and_draw_receipt_until_retry() -> anyhow::Result<()>
+{
+    let mut renderer = WgpuHeadlessRenderer::new()?;
+    with_unleased_window_scene(
+        &mut renderer,
+        WindowFixture::primitives(),
+        |scene, scale_factor, renderer| {
+            assert_eq!(scene.quads.len(), 2);
+            assert_eq!(scene.paths.len(), 1);
+            assert!(projected_path_visible_bounds(&scene.paths[0]).is_some());
+            assert!(!scene.paths[0].vertices.is_empty());
+            let mut batches = scene.batches();
+            assert!(
+                matches!(batches.next(), Some(PrimitiveBatch::Quads(range)) if range == (0..2))
+            );
+            assert!(
+                matches!(batches.next(), Some(PrimitiveBatch::Paths(range)) if range == (0..1))
+            );
+            assert!(batches.next().is_none());
+            let mut previous_scene = scene.clone();
+            let first_background = previous_scene.quads[0].background;
+            previous_scene.quads[0].background = previous_scene.quads[1].background;
+            previous_scene.quads[1].background = first_background;
+            let target_size = render_size(scale_factor, 48.0, 48.0);
+
+            for texture_transport in [false, true] {
+                renderer.core = WgpuRendererCore::new_with_transport(
+                    &renderer.context,
+                    renderer.core.atlas.clone(),
+                    renderer.core.target_format,
+                    wgpu::CompositeAlphaMode::Opaque,
+                    texture_transport,
+                )?;
+                let expected = renderer.render_scene_to_image(scene, target_size)?;
+                let previous = renderer.render_scene_to_image(&previous_scene, target_size)?;
+                assert_ne!(previous, expected);
+                assert_eq!(
+                    pixel_at(&expected, scale_factor, 12.0, 12.0),
+                    [255, 0, 0, 255]
+                );
+                assert_eq!(
+                    pixel_at(&previous, scale_factor, 12.0, 12.0),
+                    [0, 0, 255, 255]
+                );
+
+                let mut prelude_offset = 0;
+                drop(renderer.core.write_instances(scene, &mut prelude_offset)?);
+                let path_size = std::mem::size_of::<PathRasterizationVertex>() as u64
+                    * scene.paths[0].vertices.len() as u64;
+                let (instances, capacity) = GpuData::create(
+                    &renderer.context.device,
+                    "late_path_refusal_instances",
+                    prelude_offset.max(path_size),
+                    texture_transport,
+                )?;
+                let (path_offset, allocation, _) = instance_allocation(
+                    prelude_offset,
+                    path_size,
+                    std::mem::size_of::<PathRasterizationVertex>() as u64,
+                    renderer.core.storage_buffer_alignment,
+                    texture_transport,
+                )?;
+                assert!(path_offset + allocation > capacity);
+                assert!(allocation <= capacity);
+                let maximum = renderer.core.max_buffer_size;
+                renderer.core.resources.instance_buffer = instances;
+                renderer.core.instance_buffer_capacity = capacity;
+                renderer.core.max_buffer_size = capacity;
+                let accepted_draws = renderer.core.resources.submitted_scene_count;
+                assert_eq!(accepted_draws, 2);
+                assert!(renderer.last_submission.take().is_some());
+
+                let error = renderer.render_scene(scene, target_size).unwrap_err();
+                assert_eq!(
+                    error.to_string(),
+                    format!("instance buffer cannot grow beyond {capacity} bytes"),
+                );
+                assert_eq!(
+                    renderer.core.resources.submitted_scene_count,
+                    accepted_draws
+                );
+                assert!(renderer.last_submission.is_none());
+                assert_eq!(renderer.read_image()?, previous);
+                assert_eq!(
+                    renderer.core.resources.submitted_scene_count,
+                    accepted_draws
+                );
+                renderer.check_gpu_errors()?;
+
+                renderer.core.max_buffer_size = maximum;
+                assert!(renderer.last_submission.take().is_some());
+                renderer.render_scene(scene, target_size)?;
+                assert!(renderer.last_submission.is_some());
+                assert_eq!(
+                    renderer.core.resources.submitted_scene_count,
+                    accepted_draws + 1
+                );
+                assert!(renderer.core.instance_buffer_capacity > capacity);
+                assert_eq!(renderer.read_image()?, expected);
+                renderer.check_gpu_errors()?;
+            }
+            Ok(())
+        },
+    )
+}
+
+#[test]
+fn packed_texture_transport_matches_native_storage_for_complete_mixed_scene() -> anyhow::Result<()>
+{
+    let mut renderer = WgpuHeadlessRenderer::new()?;
+    with_unleased_window_scene(
+        &mut renderer,
+        WindowFixture::mixed()?,
+        |scene, scale_factor, renderer| {
+            let target_size = render_size(scale_factor, 112.0, 80.0);
+            let expected = renderer.render_scene_to_image(scene, target_size)?;
+            renderer.core = WgpuRendererCore::new_with_transport(
+                &renderer.context,
+                renderer.core.atlas.clone(),
+                renderer.core.target_format,
+                wgpu::CompositeAlphaMode::Opaque,
+                true,
+            )?;
+            let (data, capacity) = GpuData::create(
+                &renderer.context.device,
+                "small_packed_instance_texture",
+                64,
+                true,
+            )?;
+            renderer.core.resources.instance_buffer = data;
+            renderer.core.instance_buffer_capacity = capacity;
+            renderer.core.clip_buffer_capacity = 0;
+            let actual = renderer.render_scene_to_image(scene, target_size)?;
+            assert_eq!(actual, expected);
+            assert!(renderer.core.instance_buffer_capacity > 64);
+            assert!(renderer.core.clip_buffer_capacity > 0);
+            assert_eq!(renderer.core.resources.submitted_scene_count, 1);
+            assert_eq!(renderer.atlas_bind_group_cache_counts(), (2, 0));
+            assert!(renderer.core.resources.pipelines.subpixel_sprites.is_none());
+            let submissions = renderer.core.resources.submitted_scene_count;
+            let maximum = renderer.core.max_clip_buffer_size;
+            renderer.core.max_clip_buffer_size = 0;
+            assert!(renderer.render_scene(scene, target_size).is_err());
+            assert_eq!(renderer.core.resources.submitted_scene_count, submissions);
+            assert_eq!(renderer.read_image()?, expected);
+            renderer.core.max_clip_buffer_size = maximum;
+            assert_eq!(
+                renderer.render_scene_to_image(scene, target_size)?,
+                expected
+            );
+            Ok(())
+        },
+    )
+}
+
+#[test]
+fn packed_gpu_data_writes_cross_rows_and_rejects_overflow_before_mutation() -> anyhow::Result<()> {
+    let mut renderer = WgpuHeadlessRenderer::new()?;
+    let texture = renderer
+        .context
+        .device
+        .create_texture(&wgpu::TextureDescriptor {
+            label: Some("narrow_packed_data"),
+            size: wgpu::Extent3d {
+                width: 2,
+                height: 3,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba32Uint,
+            usage: wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::COPY_DST
+                | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+    let data = GpuData::Texture {
+        view: texture.create_view(&wgpu::TextureViewDescriptor::default()),
+        texture,
+        width: 2,
+        height: 3,
+    };
+    let bytes = (1..=37).collect::<Vec<u8>>();
+    data.write(&renderer.context.queue, 16, &bytes)?;
+    assert!(data.write(&renderer.context.queue, 1, &bytes).is_err());
+    assert!(data.write(&renderer.context.queue, 80, &bytes).is_err());
+    let readback = renderer
+        .context
+        .device
+        .create_buffer(&wgpu::BufferDescriptor {
+            label: Some("packed_data_readback"),
+            size: 3 * 256,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+    let GpuData::Texture { texture, .. } = &data else {
+        unreachable!()
+    };
+    let mut encoder = renderer
+        .context
+        .device
+        .create_command_encoder(&Default::default());
+    encoder.copy_texture_to_buffer(
+        wgpu::TexelCopyTextureInfo {
+            texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::TexelCopyBufferInfo {
+            buffer: &readback,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(256),
+                rows_per_image: Some(3),
+            },
+        },
+        wgpu::Extent3d {
+            width: 2,
+            height: 3,
+            depth_or_array_layers: 1,
+        },
+    );
+    let submission = renderer.context.queue.submit([encoder.finish()]);
+    let (sender, receiver) = std::sync::mpsc::channel();
+    readback
+        .slice(..)
+        .map_async(wgpu::MapMode::Read, move |result| {
+            let _ = sender.send(result);
+        });
+    renderer.context.device.poll(wgpu::PollType::Wait {
+        submission_index: Some(submission),
+        timeout: Some(Duration::from_secs(30)),
+    })?;
+    receiver.recv_timeout(Duration::from_secs(30))??;
+    let mapped = readback.slice(..).get_mapped_range()?;
+    let actual = mapped
+        .chunks_exact(256)
+        .flat_map(|row| row[..32].iter().copied())
+        .collect::<Vec<_>>();
+    assert_eq!(&actual[16..53], bytes.as_slice());
+    assert_eq!(&actual[53..64], &[0; 11]);
+    drop(mapped);
+    readback.unmap();
+    renderer.check_gpu_errors()?;
+    Ok(())
 }
 
 #[test]

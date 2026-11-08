@@ -6,6 +6,76 @@
         <title>Open GPUI Web Smoke</title>
         <script>
             (() => {
+                const records = [];
+                const byCanvas = new WeakMap();
+                const seenInDom = new WeakSet();
+                const state = { canvases: records, uniqueAppDomCanvases: 0 };
+                const record = canvas => {
+                    let entry = byCanvas.get(canvas);
+                    if (!entry) {
+                        entry = {
+                            id: records.length + 1,
+                            contexts: [],
+                            removeCalls: 0,
+                            connected: canvas.isConnected,
+                            wasInDom: false,
+                        };
+                        records.push(entry);
+                        byCanvas.set(canvas, entry);
+                        canvas.setAttribute("data-smoke-canvas-id", String(entry.id));
+                    }
+                    return entry;
+                };
+                globalThis.__OPEN_GPUI_WEB_SMOKE_CANVASES__ = state;
+                const getContext = HTMLCanvasElement.prototype.getContext;
+                HTMLCanvasElement.prototype.getContext = function (...args) {
+                    if (!["webgpu", "webgl2", "webgl"].includes(args[0])) {
+                        return Reflect.apply(getContext, this, args);
+                    }
+                    const entry = record(this);
+                    const attempt = { kind: String(args[0]), returnedContext: false };
+                    entry.contexts.push(attempt);
+                    try {
+                        const context = Reflect.apply(getContext, this, args);
+                        attempt.returnedContext = context !== null;
+                        return context;
+                    } catch (error) {
+                        attempt.error = String(error);
+                        throw error;
+                    }
+                };
+                const remove = Element.prototype.remove;
+                Element.prototype.remove = function (...args) {
+                    if (this instanceof HTMLCanvasElement) record(this).removeCalls++;
+                    return Reflect.apply(remove, this, args);
+                };
+                const updateConnection = (node, added) => {
+                    const update = canvas => {
+                        const entry = record(canvas);
+                        entry.connected = canvas.isConnected;
+                        if (added) {
+                            entry.wasInDom = true;
+                            if (!seenInDom.has(canvas)) {
+                                seenInDom.add(canvas);
+                                state.uniqueAppDomCanvases++;
+                            }
+                        }
+                    };
+                    if (node instanceof HTMLCanvasElement) update(node);
+                    if (node instanceof Element) {
+                        for (const canvas of node.querySelectorAll("canvas")) update(canvas);
+                    }
+                };
+                new MutationObserver(mutations => {
+                    for (const mutation of mutations) {
+                        for (const node of mutation.addedNodes) updateConnection(node, true);
+                        for (const node of mutation.removedNodes) updateConnection(node, false);
+                    }
+                }).observe(document.documentElement, { childList: true, subtree: true });
+            })();
+        </script>
+        <script>
+            (() => {
                 const entries = [];
                 const limit = 40;
                 const stringify = value => {

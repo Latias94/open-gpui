@@ -49,7 +49,7 @@ exclude = [
 [workspace.package]
 version = "0.2.0"
 edition = "2024"
-rust-version = "1.92"
+rust-version = "1.93"
 authors = ["Mingzhen Zhuang <superfrankie621@gmail.com>"]
 license = "Apache-2.0"
 repository = "https://github.com/Latias94/open-gpui"
@@ -208,7 +208,7 @@ uuid = { version = "1.1.2", features = ["v4", "v5", "v7", "serde"] }
 walkdir = "2.5"
 wasm-bindgen = "0.2.126"
 web-time = "1.1.0"
-wgpu = "30.0.0"
+wgpu = { git = "https://github.com/gfx-rs/wgpu", rev = "cddb2f5d80dc0009b2ef6767635140cacf90a007", default-features = false }
 which = "6.0.0"
 windows-core = "0.62"
 

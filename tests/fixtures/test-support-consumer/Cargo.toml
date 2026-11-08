@@ -5,7 +5,7 @@ resolver = "2"
 name = "open-gpui-test-support-consumer"
 version = "0.0.0"
 edition = "2024"
-rust-version = "1.92"
+rust-version = "1.93"
 publish = false
 
 [features]

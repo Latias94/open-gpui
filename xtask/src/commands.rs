@@ -59,7 +59,7 @@ struct ForwardArgs {
 
 #[derive(Args, Debug)]
 struct WebSmokeArgs {
-    /// Allow a local diagnostic run to skip when WebGPU is unavailable.
+    /// Allow a local diagnostic run to skip when WebGPU and WebGL2 are unavailable.
     #[arg(long)]
     allow_unavailable: bool,
 }

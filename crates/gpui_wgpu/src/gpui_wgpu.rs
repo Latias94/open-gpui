@@ -9,7 +9,9 @@ pub use cosmic_text_system::*;
 pub use surface_lifecycle::WgpuSurfaceShutdownProgress;
 pub use wgpu;
 pub use wgpu_atlas::*;
-pub use wgpu_context::*;
+pub use wgpu_context::{CompositorGpuHint, DeviceErrorState, WgpuBackend, WgpuContext};
+#[cfg(target_family = "wasm")]
+pub use wgpu_context::{PreparedWebGraphics, WebBackendPreference, WebGpuContextOptions};
 #[cfg(all(
     not(target_family = "wasm"),
     any(test, feature = "bench-support", feature = "test-support")

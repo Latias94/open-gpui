@@ -15,8 +15,8 @@ use std::{
 
 const EXAMPLE_DIR: &str = "crates/gpui_web/examples/smoke_web";
 const DIST_DIR: &str = "target/open-gpui-web-smoke/smoke_web";
-const WEBGPU_PREFLIGHT_PATH: &str = "/__open-gpui-web-smoke-preflight";
-const WEBGPU_PREFLIGHT_HTML: &[u8] = br#"<!doctype html>
+const WEB_PREFLIGHT_PATH: &str = "/__open-gpui-web-smoke-preflight";
+const WEB_PREFLIGHT_HTML: &[u8] = br#"<!doctype html>
 <html>
 <head><meta charset="utf-8"><title>open-gpui web smoke preflight</title></head>
 <body>open-gpui web smoke preflight</body>
@@ -27,8 +27,33 @@ const BROWSER_TIMEOUT: Duration = Duration::from_secs(30);
 const BROWSER_LOG_TAIL_BYTES: usize = 16 * 1024;
 const CDP_TIMEOUT: Duration = Duration::from_secs(15);
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
+const PIXEL_RGB_TOLERANCE: u8 = 3;
+const RENDERER_SAMPLES: [(&str, [u32; 2], [u8; 4]); 22] = [
+    ("grid-first", [17, 17], [230, 57, 70, 255]),
+    ("grid-next", [19, 17], [46, 196, 182, 255]),
+    ("grid-row", [17, 19], [46, 196, 182, 255]),
+    ("grid-middle", [145, 145], [230, 57, 70, 255]),
+    ("grid-last", [271, 271], [230, 57, 70, 255]),
+    ("outer-rounded-cut", [306, 18], [16, 19, 24, 255]),
+    ("outer-only", [310, 80], [38, 53, 74, 255]),
+    ("inner-fill", [340, 70], [244, 185, 66, 255]),
+    ("inner-rounded-cut", [440, 28], [38, 53, 74, 255]),
+    ("transform-outside", [310, 180], [16, 19, 24, 255]),
+    ("transform-background", [320, 180], [143, 91, 215, 255]),
+    ("transform-child", [350, 176], [74, 222, 128, 255]),
+    ("alpha-over", [512, 40], [128, 0, 127, 255]),
+    ("image-red", [496, 104], [255, 0, 0, 255]),
+    ("image-green", [528, 104], [0, 255, 0, 255]),
+    ("image-blue", [496, 136], [0, 0, 255, 255]),
+    ("image-white", [528, 136], [255, 255, 255, 255]),
+    ("path-fill", [512, 200], [244, 114, 182, 255]),
+    ("path-outside", [482, 228], [16, 19, 24, 255]),
+    ("white-marker", [300, 284], [255, 255, 255, 255]),
+    ("green-marker", [332, 284], [74, 222, 128, 255]),
+    ("pink-marker", [364, 284], [244, 114, 182, 255]),
+];
 
-const WEBGPU_PREFLIGHT_EXPRESSION: &str = r#"
+const WEB_PREFLIGHT_EXPRESSION: &str = r#"
 (async () => {
     const expectedPath = "/__open-gpui-web-smoke-preflight";
     const path = globalThis.location?.pathname ?? null;
@@ -41,50 +66,43 @@ const WEBGPU_PREFLIGHT_EXPRESSION: &str = r#"
         };
     }
 
-    if (!globalThis.isSecureContext) {
-        return {
-            status: "unavailable",
-            reason: "WebGPU preflight page is not a secure context",
-            path,
-            readyState,
-        };
-    }
-
-    const gpu = navigator.gpu ?? null;
-    if (!gpu) {
-        return {
-            status: "unavailable",
-            reason: "navigator.gpu is unavailable",
-            path,
-            readyState,
-        };
-    }
-
+    let webgl;
+    const canvas = document.createElement("canvas");
     try {
-        const adapter = await gpu.requestAdapter({ forceFallbackAdapter: true });
-        if (!adapter) {
-            return {
+        const context = canvas.getContext("webgl2", { antialias: false });
+        webgl = context
+            ? { status: "available" }
+            : { status: "unavailable", reason: "WebGL2 context creation returned null" };
+        context?.getExtension("WEBGL_lose_context")?.loseContext();
+    } catch (error) {
+        webgl = { status: "unavailable", reason: String(error) };
+    } finally {
+        canvas.remove();
+    }
+
+    let webgpu;
+    const gpu = navigator.gpu ?? null;
+    if (!globalThis.isSecureContext || !gpu) {
+        webgpu = {
+            status: "unavailable",
+            reason: !globalThis.isSecureContext
+                ? "WebGPU preflight page is not a secure context"
+                : "navigator.gpu is unavailable",
+        };
+    } else {
+        try {
+            const adapter = await gpu.requestAdapter({ forceFallbackAdapter: true });
+            webgpu = adapter
+                ? { status: "available", featureCount: Array.from(adapter.features).length }
+                : { status: "unavailable", reason: "fallback WebGPU adapter is unavailable" };
+        } catch (error) {
+            webgpu = {
                 status: "unavailable",
-                reason: "fallback WebGPU adapter is unavailable",
-                path,
-                readyState,
+                reason: String(error && (error.stack || error.message || error)),
             };
         }
-
-        return {
-            status: "available",
-            featureCount: adapter.features ? Array.from(adapter.features).length : null,
-            path,
-            readyState,
-        };
-    } catch (error) {
-        return {
-            status: "unavailable",
-            reason: String(error && (error.stack || error.message || error)),
-            path,
-            readyState,
-        };
     }
+    return { status: "complete", webgpu, webgl, path, readyState };
 })()
 "#;
 
@@ -97,9 +115,22 @@ const SMOKE_STATE_EXPRESSION: &str = r#"
     const diagnostics = globalThis.__OPEN_GPUI_WEB_SMOKE_DIAGNOSTICS__ ?? null;
     return {
         readyState: document.readyState,
+        url: location.href,
         bodyReady: document.body?.dataset?.openGpuiWebSmokeReady === "true",
+        viewport: {
+            width: innerWidth,
+            height: innerHeight,
+            devicePixelRatio,
+            scale: visualViewport?.scale ?? 1,
+            scrollX,
+            scrollY,
+        },
+        webgpuUnavailableControl:
+            globalThis.__OPEN_GPUI_WEBGPU_UNAVAILABLE_CONTROL__ === true,
+        navigatorGpuAvailable: navigator.gpu !== undefined,
         canvas: canvas ? {
             count: document.querySelectorAll("canvas").length,
+            id: canvas.getAttribute("data-smoke-canvas-id"),
             width: canvas.width,
             height: canvas.height,
             rect: rect ? {
@@ -115,6 +146,7 @@ const SMOKE_STATE_EXPRESSION: &str = r#"
             focused: document.activeElement === input,
         } : null,
         probe,
+        canvases: globalThis.__OPEN_GPUI_WEB_SMOKE_CANVASES__ ?? null,
         diagnostics,
     };
 })()
@@ -148,7 +180,7 @@ pub(crate) fn web_smoke(root: &Path, allow_unavailable: bool) -> Result<(), ()> 
         eprintln!("failed to start web smoke static server: {error}");
     })?;
     let url = format!("http://{}/?smoke=1", server.addr());
-    let preflight_url = format!("http://{}{}", server.addr(), WEBGPU_PREFLIGHT_PATH);
+    let preflight_url = format!("http://{}{}", server.addr(), WEB_PREFLIGHT_PATH);
 
     let mut browser = BrowserProcess::launch(&preflight_url).map_err(|error| {
         eprintln!("{error}");
@@ -162,83 +194,178 @@ pub(crate) fn web_smoke(root: &Path, allow_unavailable: bool) -> Result<(), ()> 
         eprintln!("{error}");
     })?;
 
-    enable_browser_domains(&mut cdp).map_err(|error| {
-        eprintln!("{error}");
-    })?;
+    if let Err(error) = qualify_browser(&mut cdp, &url, allow_unavailable) {
+        eprintln!("{error}\n{}", browser.output_summary());
+        return Err(());
+    }
+    Ok(())
+}
 
-    let preflight = wait_for_webgpu_preflight(&mut cdp).map_err(|error| {
-        eprintln!("{error}");
-    })?;
-    match decide_webgpu_preflight(preflight, allow_unavailable) {
-        Ok(WebGpuPreflightDecision::Run) => {}
-        Ok(WebGpuPreflightDecision::SkipAllowed(reason)) => {
-            println!("web smoke explicitly allowed WebGPU-unavailable skip: {reason}");
+fn qualify_browser(cdp: &mut CdpClient, url: &str, allow_unavailable: bool) -> Result<(), String> {
+    enable_browser_domains(cdp)?;
+    set_viewport(cdp, 800, 600)?;
+    let preflight = wait_for_web_preflight(cdp)?;
+    println!("web smoke backend preflight: {preflight:?}");
+    let (webgpu, webgl) = match decide_web_preflight(preflight, allow_unavailable)? {
+        WebPreflightDecision::Run { webgpu, webgl } => (webgpu, webgl),
+        WebPreflightDecision::SkipAllowed(reason) => {
+            println!("web smoke explicitly allowed no-supported-backend skip: {reason}");
             return Ok(());
         }
-        Err(error) => {
-            eprintln!("{error}");
-            return Err(());
-        }
+    };
+    let mut cases = Vec::new();
+    if webgl {
+        cases.push(("webgl", "Gl"));
     }
-
-    cdp.call("Page.navigate", json!({ "url": url }))
-        .map_err(|error| {
-            eprintln!("{error}");
-        })?;
-
-    run_browser_smoke(&mut cdp).map_err(|error| {
-        eprintln!("{error}");
-    })?;
-
-    for (mode, accepts_activation, focus_on_click) in [
-        ("programmatic-only", true, false),
-        ("click-only", false, true),
-    ] {
-        let policy_url = format!("{url}&activation={mode}");
-        cdp.call("Page.navigate", json!({ "url": policy_url }))
-            .map_err(|error| {
-                eprintln!("{error}");
-            })?;
-        run_activation_policy_smoke(&mut cdp, mode, accepts_activation, focus_on_click).map_err(
-            |error| {
-                eprintln!("{error}");
-            },
+    cases.push(("auto", if webgpu { "WebGPU" } else { "Gl" }));
+    if webgpu {
+        cases.push(("webgpu", "WebGPU"));
+    }
+    for (requested, actual) in cases {
+        set_viewport(cdp, 800, 600)?;
+        let software = actual != "Gl";
+        let case_url = format!("{url}&backend={requested}&software={software}");
+        navigate_case(cdp, &case_url)?;
+        run_browser_smoke(cdp)?;
+        check_backend_state(
+            &cdp.evaluate(SMOKE_STATE_EXPRESSION)?,
+            requested,
+            actual,
+            false,
         )?;
+        for (mode, accepts_activation, focus_on_click) in [
+            ("programmatic-only", true, false),
+            ("click-only", false, true),
+        ] {
+            navigate_case(cdp, &format!("{case_url}&activation={mode}"))?;
+            run_activation_policy_smoke(cdp, mode, accepts_activation, focus_on_click)?;
+            check_backend_state(
+                &cdp.evaluate(SMOKE_STATE_EXPRESSION)?,
+                requested,
+                actual,
+                false,
+            )?;
+        }
+        navigate_case(cdp, &format!("{case_url}&renderer=1"))?;
+        run_renderer_smoke(cdp, requested, actual, false)?;
+        println!(
+            "web smoke backend={requested} actual={actual}: complete input/capture/docking/activation and renderer/resize passed"
+        );
     }
-
+    if webgl {
+        expect_graphics_refusal(
+            cdp,
+            &format!("{url}&backend=webgl&software=true"),
+            "webgl",
+            "Only WebGl was tried",
+            true,
+            false,
+        )?;
+        println!(
+            "web smoke preserved explicit WebGL software-adapter refusal; GL success cases request software=false"
+        );
+        let registration = cdp.call(
+            "Page.addScriptToEvaluateOnNewDocument",
+            json!({ "source": r#"
+                Object.defineProperty(navigator, "gpu", {
+                    configurable: true,
+                    get: () => undefined,
+                });
+                globalThis.__OPEN_GPUI_WEBGPU_UNAVAILABLE_CONTROL__ = true;
+            "# }),
+        )?;
+        let identifier = registration
+            .get("identifier")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                format!(
+                    "WebGPU unavailability control returned no script identifier: {registration}"
+                )
+            })?;
+        let result = (|| {
+            set_viewport(cdp, 800, 600)?;
+            expect_graphics_refusal(
+                cdp,
+                &format!("{url}&backend=webgpu&software=false&case=webgpu-unavailable-control"),
+                "webgpu",
+                "Only WebGpu was tried",
+                false,
+                true,
+            )?;
+            navigate_case(
+                cdp,
+                &format!(
+                    "{url}&backend=auto&software=false&renderer=1&case=webgpu-unavailable-control"
+                ),
+            )?;
+            run_browser_smoke(cdp)?;
+            run_renderer_smoke(cdp, "auto", "Gl", true)
+        })();
+        let removal = cdp.call(
+            "Page.removeScriptToEvaluateOnNewDocument",
+            json!({ "identifier": identifier }),
+        );
+        if let Err(error) = result {
+            return Err(format!(
+                "WebGPU-unavailable test control failed: {error}; init-script removal: {removal:?}"
+            ));
+        }
+        removal?;
+        println!(
+            "web smoke Auto fallback passed with navigator.gpu unavailable by explicit test control; this is not a hardware/device-failure qualification"
+        );
+    }
     println!(
-        "web smoke passed: default input and activation flow, independent programmatic-only and click-only activation policies, platform viewport capability gate, and DockSurface unsupported path"
+        "web smoke passed: available browser backends, ordinary public consumers, actual PNG pixels and resize at DPR 1; application counters are not submission receipts"
     );
-
     Ok(())
 }
 
 #[derive(Debug, PartialEq, Eq)]
-enum WebGpuPreflight {
-    Pending,
+enum BackendPreflight {
     Available,
     Unavailable(String),
 }
 
 #[derive(Debug, PartialEq, Eq)]
-enum WebGpuPreflightDecision {
-    Run,
+enum WebPreflight {
+    Pending,
+    Complete {
+        webgpu: BackendPreflight,
+        webgl: BackendPreflight,
+    },
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum WebPreflightDecision {
+    Run { webgpu: bool, webgl: bool },
     SkipAllowed(String),
 }
 
-fn decide_webgpu_preflight(
-    preflight: WebGpuPreflight,
+fn decide_web_preflight(
+    preflight: WebPreflight,
     allow_unavailable: bool,
-) -> Result<WebGpuPreflightDecision, String> {
+) -> Result<WebPreflightDecision, String> {
     match preflight {
-        WebGpuPreflight::Available => Ok(WebGpuPreflightDecision::Run),
-        WebGpuPreflight::Unavailable(reason) if allow_unavailable => {
-            Ok(WebGpuPreflightDecision::SkipAllowed(reason))
+        WebPreflight::Complete { webgpu, webgl } => {
+            if webgpu == BackendPreflight::Available || webgl == BackendPreflight::Available {
+                return Ok(WebPreflightDecision::Run {
+                    webgpu: webgpu == BackendPreflight::Available,
+                    webgl: webgl == BackendPreflight::Available,
+                });
+            }
+            let reason = format!("WebGPU: {webgpu:?}; WebGL2: {webgl:?}");
+            if allow_unavailable {
+                Ok(WebPreflightDecision::SkipAllowed(reason))
+            } else {
+                Err(format!(
+                    "No supported browser graphics backend is available: {reason}. Pass `--allow-unavailable` only for an explicit local diagnostic skip."
+                ))
+            }
         }
-        WebGpuPreflight::Unavailable(reason) => Err(format!(
-            "WebGPU is unavailable, so the browser behavior gate cannot run: {reason}. Pass `--allow-unavailable` only for an explicit local diagnostic skip."
-        )),
-        WebGpuPreflight::Pending => Err("WebGPU preflight remained pending after wait".to_string()),
+        WebPreflight::Pending => {
+            Err("browser graphics preflight remained pending after wait".to_string())
+        }
     }
 }
 
@@ -248,13 +375,13 @@ fn enable_browser_domains(cdp: &mut CdpClient) -> Result<(), String> {
     Ok(())
 }
 
-fn wait_for_webgpu_preflight(cdp: &mut CdpClient) -> Result<WebGpuPreflight, String> {
+fn wait_for_web_preflight(cdp: &mut CdpClient) -> Result<WebPreflight, String> {
     let started = Instant::now();
     let mut last_state = Value::Null;
     while started.elapsed() < BROWSER_TIMEOUT {
-        match cdp.evaluate(WEBGPU_PREFLIGHT_EXPRESSION) {
-            Ok(state) => match webgpu_preflight_result(&state)? {
-                WebGpuPreflight::Pending => {
+        match cdp.evaluate(WEB_PREFLIGHT_EXPRESSION) {
+            Ok(state) => match web_preflight_result(&state)? {
+                WebPreflight::Pending => {
                     last_state = state;
                 }
                 result => return Ok(result),
@@ -267,26 +394,552 @@ fn wait_for_webgpu_preflight(cdp: &mut CdpClient) -> Result<WebGpuPreflight, Str
     }
 
     Err(format!(
-        "timed out waiting for WebGPU preflight page; last state: {last_state}"
+        "timed out waiting for browser graphics preflight page; last state: {last_state}"
     ))
 }
 
-fn webgpu_preflight_result(state: &Value) -> Result<WebGpuPreflight, String> {
+fn web_preflight_result(state: &Value) -> Result<WebPreflight, String> {
     match state.pointer("/status").and_then(Value::as_str) {
-        Some("pending") => Ok(WebGpuPreflight::Pending),
-        Some("available") => Ok(WebGpuPreflight::Available),
-        Some("unavailable") => {
-            let reason = state
-                .pointer("/reason")
-                .and_then(Value::as_str)
-                .unwrap_or("browser WebGPU fallback adapter is unavailable")
-                .to_string();
-            Ok(WebGpuPreflight::Unavailable(reason))
+        Some("pending") => Ok(WebPreflight::Pending),
+        Some("complete") => {
+            let backend = |name: &str| -> Result<BackendPreflight, String> {
+                let value = &state[name];
+                match value["status"].as_str() {
+                    Some("available") => Ok(BackendPreflight::Available),
+                    Some("unavailable") => value["reason"]
+                        .as_str()
+                        .filter(|reason| !reason.is_empty())
+                        .map(|reason| BackendPreflight::Unavailable(reason.to_owned()))
+                        .ok_or_else(|| {
+                            format!(
+                                "browser {name} preflight omitted its unavailable reason: {state}"
+                            )
+                        }),
+                    _ => Err(format!(
+                        "browser {name} preflight returned malformed state: {state}"
+                    )),
+                }
+            };
+            Ok(WebPreflight::Complete {
+                webgpu: backend("webgpu")?,
+                webgl: backend("webgl")?,
+            })
         }
         _ => Err(format!(
-            "WebGPU preflight returned malformed state: {state}"
+            "browser graphics preflight returned malformed state: {state}"
         )),
     }
+}
+
+fn set_viewport(cdp: &mut CdpClient, width: u32, height: u32) -> Result<(), String> {
+    cdp.call(
+        "Emulation.setDeviceMetricsOverride",
+        json!({
+            "width": width,
+            "height": height,
+            "deviceScaleFactor": 1,
+            "mobile": false,
+            "screenWidth": width,
+            "screenHeight": height,
+        }),
+    )?;
+    Ok(())
+}
+
+fn navigate_case(cdp: &mut CdpClient, url: &str) -> Result<(), String> {
+    let navigation = cdp.call("Page.navigate", json!({ "url": url }))?;
+    if let Some(error) = navigation.get("errorText").and_then(Value::as_str) {
+        return Err(format!("web smoke navigation to {url} failed: {error}"));
+    }
+    wait_for_state(cdp, &format!("fresh fixture at {url}"), |state| {
+        state.get("url").and_then(Value::as_str) == Some(url)
+            && canvas_ready(state)
+            && state.pointer("/probe/ready").and_then(Value::as_bool) == Some(true)
+    })?;
+    Ok(())
+}
+
+fn expect_graphics_refusal(
+    cdp: &mut CdpClient,
+    url: &str,
+    requested: &str,
+    reason: &str,
+    force_fallback_adapter: bool,
+    unavailable_control: bool,
+) -> Result<(), String> {
+    let navigation = cdp.call("Page.navigate", json!({ "url": url }))?;
+    if let Some(error) = navigation.get("errorText").and_then(Value::as_str) {
+        return Err(format!(
+            "graphics refusal navigation to {url} failed: {error}"
+        ));
+    }
+    let state = wait_for_state(cdp, "explicit backend initialization refusal", |state| {
+        state.get("url").and_then(Value::as_str) == Some(url)
+            && state
+                .get("diagnostics")
+                .and_then(Value::as_array)
+                .is_some_and(|entries| {
+                    entries.iter().any(|entry| {
+                        entry
+                            .get("message")
+                            .and_then(Value::as_str)
+                            .is_some_and(|message| {
+                                message.contains("Failed to initialize browser graphics")
+                                    && message.contains(reason)
+                            })
+                    })
+                })
+    })?;
+    let candidates = state
+        .pointer("/canvases/canvases")
+        .and_then(Value::as_array);
+    if state
+        .pointer("/probe/requestedBackend")
+        .and_then(Value::as_str)
+        != Some(requested)
+        || state.pointer("/probe/ready").and_then(Value::as_bool) != Some(false)
+        || state.pointer("/probe/stage").and_then(Value::as_str) != Some("graphics-initializing")
+        || state
+            .pointer("/probe/forceFallbackAdapter")
+            .and_then(Value::as_bool)
+            != Some(force_fallback_adapter)
+        || state
+            .get("webgpuUnavailableControl")
+            .and_then(Value::as_bool)
+            != Some(unavailable_control)
+        || (unavailable_control
+            && state.get("navigatorGpuAvailable").and_then(Value::as_bool) != Some(false))
+        || !state
+            .pointer("/probe/graphicsBackend")
+            .is_some_and(Value::is_null)
+        || !state.get("canvas").is_some_and(Value::is_null)
+        || !state.get("input").is_some_and(Value::is_null)
+        || state
+            .pointer("/canvases/uniqueAppDomCanvases")
+            .and_then(Value::as_u64)
+            != Some(0)
+        || !candidates.is_some_and(|entries| {
+            entries.len() == 1
+                && entries.iter().all(|entry| {
+                    entry.get("connected").and_then(Value::as_bool) == Some(false)
+                        && entry.get("wasInDom").and_then(Value::as_bool) == Some(false)
+                        && entry
+                            .get("removeCalls")
+                            .and_then(Value::as_u64)
+                            .is_some_and(|calls| calls > 0)
+                        && entry
+                            .get("contexts")
+                            .and_then(Value::as_array)
+                            .is_some_and(|attempts| {
+                                attempts.iter().all(|attempt| {
+                                    matches!(
+                                        (requested, attempt.get("kind").and_then(Value::as_str)),
+                                        ("webgpu", Some("webgpu"))
+                                            | ("webgl", Some("webgl" | "webgl2"))
+                                    )
+                                })
+                            })
+                })
+        })
+    {
+        return Err(format!(
+            "forced {requested} refusal launched an app or retained its canvas candidate: {state}"
+        ));
+    }
+    Ok(())
+}
+
+fn check_backend_state(
+    state: &Value,
+    requested: &str,
+    actual: &str,
+    unavailable_control: bool,
+) -> Result<(), String> {
+    if state
+        .pointer("/probe/requestedBackend")
+        .and_then(Value::as_str)
+        != Some(requested)
+        || state
+            .pointer("/probe/graphicsBackend")
+            .and_then(Value::as_str)
+            != Some(actual)
+        || state
+            .pointer("/probe/forceFallbackAdapter")
+            .and_then(Value::as_bool)
+            != Some(actual != "Gl")
+        || state
+            .pointer("/probe/appWindowCount")
+            .and_then(Value::as_u64)
+            != Some(1)
+        || state
+            .pointer("/probe/dockingSessionPhase")
+            .and_then(Value::as_str)
+            != Some("Active")
+        || !state
+            .pointer("/probe/dockingSessionGeneration")
+            .and_then(Value::as_u64)
+            .is_some_and(|generation| generation > 0)
+        || !canvas_ready(state)
+    {
+        return Err(format!(
+            "web smoke expected requested={requested}, actual={actual}, one active Dock primary and one canvas: {state}"
+        ));
+    }
+    if state
+        .get("webgpuUnavailableControl")
+        .and_then(Value::as_bool)
+        != Some(unavailable_control)
+        || (unavailable_control
+            && state.get("navigatorGpuAvailable").and_then(Value::as_bool) != Some(false))
+    {
+        return Err(format!(
+            "web smoke WebGPU unavailability control did not match its case: {state}"
+        ));
+    }
+    let instrumentation = state
+        .get("canvases")
+        .ok_or("web smoke canvas instrumentation is missing")?;
+    let entries = instrumentation
+        .get("canvases")
+        .and_then(Value::as_array)
+        .ok_or("web smoke canvas identity records are missing")?;
+    let connected: Vec<_> = entries
+        .iter()
+        .filter(|entry| entry.get("connected").and_then(Value::as_bool) == Some(true))
+        .collect();
+    let current_id = state
+        .pointer("/canvas/id")
+        .and_then(Value::as_str)
+        .and_then(|value| value.parse::<u64>().ok())
+        .ok_or("web smoke DOM canvas has no instrumentation identity")?;
+    if instrumentation
+        .get("uniqueAppDomCanvases")
+        .and_then(Value::as_u64)
+        != Some(1)
+        || connected.len() != 1
+        || connected[0].get("id").and_then(Value::as_u64) != Some(current_id)
+        || connected[0].get("wasInDom").and_then(Value::as_bool) != Some(true)
+    {
+        return Err(format!(
+            "web smoke expected one unique connected app DOM canvas, including across DOM moves: {state}"
+        ));
+    }
+    let context_kind = if actual == "WebGPU" {
+        "webgpu"
+    } else {
+        "webgl2"
+    };
+    if !connected[0]
+        .get("contexts")
+        .and_then(Value::as_array)
+        .is_some_and(|attempts| {
+            attempts.iter().any(|attempt| {
+                attempt.get("kind").and_then(Value::as_str) == Some(context_kind)
+                    && attempt.get("returnedContext").and_then(Value::as_bool) == Some(true)
+            })
+        })
+    {
+        return Err(format!(
+            "web smoke selected {actual} without a matching successful {context_kind} context on its connected canvas: {state}"
+        ));
+    }
+    if requested == "auto"
+        && actual == "Gl"
+        && !entries.iter().any(|entry| {
+            entry
+                .get("id")
+                .and_then(Value::as_u64)
+                .is_some_and(|identity| identity < current_id)
+                && entry
+                    .get("removeCalls")
+                    .and_then(Value::as_u64)
+                    .is_some_and(|calls| calls > 0)
+                && entry.get("connected").and_then(Value::as_bool) == Some(false)
+                && entry.get("wasInDom").and_then(Value::as_bool) == Some(false)
+        })
+    {
+        return Err(format!(
+            "Auto fallback did not record removal of its detached earlier canvas candidate: {state}"
+        ));
+    }
+    Ok(())
+}
+
+fn run_renderer_smoke(
+    cdp: &mut CdpClient,
+    requested: &str,
+    actual: &str,
+    unavailable_control: bool,
+) -> Result<(), String> {
+    for (width, height) in [(800, 600), (960, 720)] {
+        set_viewport(cdp, width, height)?;
+        let state = wait_for_state(
+            cdp,
+            "renderer fixture and resized canvas geometry",
+            |state| {
+                canvas_ready(state)
+                    && state
+                        .pointer("/probe/rendererMode")
+                        .and_then(Value::as_bool)
+                        == Some(true)
+                    && state
+                        .pointer("/probe/paintCalls")
+                        .and_then(Value::as_u64)
+                        .is_some_and(|calls| calls > 0)
+                    && state
+                        .pointer("/probe/denseQuadRequests")
+                        .and_then(Value::as_u64)
+                        .is_some_and(|calls| calls >= 16384)
+                    && state.pointer("/viewport/width").and_then(Value::as_u64)
+                        == Some(u64::from(width))
+                    && state.pointer("/viewport/height").and_then(Value::as_u64)
+                        == Some(u64::from(height))
+                    && state
+                        .pointer("/probe/viewport/width")
+                        .and_then(Value::as_f64)
+                        == Some(f64::from(width))
+                    && state
+                        .pointer("/probe/viewport/height")
+                        .and_then(Value::as_f64)
+                        == Some(f64::from(height))
+                    && state.pointer("/canvas/width").and_then(Value::as_u64)
+                        == Some(u64::from(width))
+                    && state.pointer("/canvas/height").and_then(Value::as_u64)
+                        == Some(u64::from(height))
+            },
+        )?;
+        check_backend_state(&state, requested, actual, unavailable_control)?;
+        let pixels = wait_for_renderer_pixels(cdp, requested, actual, unavailable_control)?;
+        println!(
+            "web smoke PNG backend={actual} viewport={width}x{height} DPR=1: 22/22 fixed samples including high-index quad, text={}; RGB tolerance={PIXEL_RGB_TOLERANCE}/255 for HSL and 8-bit compositor rounding, exact alpha; app frameRevision={} paintCalls={} denseQuadRequests={}",
+            pixels["text"],
+            state["probe"]["frameRevision"],
+            state["probe"]["paintCalls"],
+            state["probe"]["denseQuadRequests"],
+        );
+    }
+    Ok(())
+}
+
+fn wait_for_renderer_pixels(
+    cdp: &mut CdpClient,
+    requested: &str,
+    actual: &str,
+    unavailable_control: bool,
+) -> Result<Value, String> {
+    let started = Instant::now();
+    let mut last_error = String::new();
+    while started.elapsed() < BROWSER_TIMEOUT {
+        let state = cdp.evaluate(SMOKE_STATE_EXPRESSION)?;
+        check_backend_state(&state, requested, actual, unavailable_control)?;
+        match capture_renderer_pixels(cdp, &state).and_then(|pixels| {
+            check_renderer_pixels(&pixels)
+                .map_err(|error| format!("{error}; samples: {pixels}"))?;
+            Ok(pixels)
+        }) {
+            Ok(pixels) => return Ok(pixels),
+            Err(error) => {
+                last_error = format!(
+                    "{error}; probe: {}; diagnostics: {}",
+                    state["probe"], state["diagnostics"],
+                );
+            }
+        }
+        thread::sleep(POLL_INTERVAL);
+    }
+    Err(format!(
+        "timed out waiting for actual renderer PNG pixels: {last_error}"
+    ))
+}
+
+fn renderer_css_point(state: &Value, local: [f64; 2]) -> Result<[f64; 2], String> {
+    let canvas = &state["canvas"]["rect"];
+    let viewport = &state["probe"]["viewport"];
+    let panel = &viewport["paintBounds"];
+    let logical_width = number_field(viewport, "width")?;
+    let logical_height = number_field(viewport, "height")?;
+    if logical_width <= 0.0 || logical_height <= 0.0 {
+        return Err("renderer logical viewport must have positive dimensions".to_string());
+    }
+    Ok([
+        number_field(canvas, "left")?
+            + (number_field(panel, "left")? + local[0]) * number_field(canvas, "width")?
+                / logical_width,
+        number_field(canvas, "top")?
+            + (number_field(panel, "top")? + local[1]) * number_field(canvas, "height")?
+                / logical_height,
+    ])
+}
+
+fn capture_renderer_pixels(cdp: &mut CdpClient, state: &Value) -> Result<Value, String> {
+    if state
+        .pointer("/viewport/devicePixelRatio")
+        .and_then(Value::as_f64)
+        != Some(1.0)
+        || state.pointer("/viewport/scale").and_then(Value::as_f64) != Some(1.0)
+        || state.pointer("/viewport/scrollX").and_then(Value::as_f64) != Some(0.0)
+        || state.pointer("/viewport/scrollY").and_then(Value::as_f64) != Some(0.0)
+        || state
+            .pointer("/probe/viewport/scaleFactor")
+            .and_then(Value::as_f64)
+            != Some(1.0)
+    {
+        return Err(format!(
+            "renderer PNG qualification requires its declared DPR 1, unzoomed, unscrolled scope: {state}"
+        ));
+    }
+    let mut samples = Vec::with_capacity(RENDERER_SAMPLES.len());
+    for (name, at, _) in RENDERER_SAMPLES {
+        samples.push(json!({
+            "name": name,
+            "css": renderer_css_point(state, [f64::from(at[0]), f64::from(at[1])])?,
+        }));
+    }
+    let text_start = renderer_css_point(state, [304.0, 240.0])?;
+    let text_end = renderer_css_point(state, [560.0, 268.0])?;
+    cdp.evaluate(
+        r#"(async () => {
+            await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+            return true;
+        })()"#,
+    )?;
+    let screenshot = cdp.call(
+        "Page.captureScreenshot",
+        json!({
+            "format": "png",
+            "fromSurface": true,
+            "captureBeyondViewport": false,
+        }),
+    )?;
+    let png = screenshot
+        .get("data")
+        .and_then(Value::as_str)
+        .filter(|data| !data.is_empty())
+        .ok_or("Page.captureScreenshot returned no PNG data")?;
+    let input = json!({
+        "png": png,
+        "url": state["url"],
+        "width": state["viewport"]["width"],
+        "height": state["viewport"]["height"],
+        "samples": samples,
+        "textStart": text_start,
+        "textEnd": text_end,
+    });
+    cdp.evaluate(&format!(
+        r#"(async () => {{
+            const input = {input};
+            if (location.href !== input.url || innerWidth !== input.width || innerHeight !== input.height) {{
+                throw new Error("fixture navigated or resized while its screenshot was captured");
+            }}
+            const response = await fetch("data:image/png;base64," + input.png);
+            const bitmap = await createImageBitmap(await response.blob());
+            try {{
+                if (bitmap.width !== input.width || bitmap.height !== input.height) {{
+                    throw new Error("captured PNG dimensions differ from the declared DPR 1 viewport");
+                }}
+                const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+                const context = canvas.getContext("2d", {{ willReadFrequently: true }});
+                if (!context) throw new Error("screenshot decoding needs OffscreenCanvas2D");
+                context.drawImage(bitmap, 0, 0);
+                const pixels = context.getImageData(0, 0, bitmap.width, bitmap.height).data;
+                const toPixel = css => {{
+                    const point = [
+                        Math.floor(css[0] * bitmap.width / input.width),
+                        Math.floor(css[1] * bitmap.height / input.height),
+                    ];
+                    if (point[0] < 0 || point[1] < 0 || point[0] >= bitmap.width || point[1] >= bitmap.height) {{
+                        throw new Error("source sample is outside screenshot: " + JSON.stringify({{ css, point }}));
+                    }}
+                    return point;
+                }};
+                const samples = input.samples.map(sample => {{
+                    const point = toPixel(sample.css);
+                    const offset = (point[1] * bitmap.width + point[0]) * 4;
+                    return {{ name: sample.name, point, rgba: Array.from(pixels.slice(offset, offset + 4)) }};
+                }});
+                const textStart = toPixel(input.textStart);
+                const textEnd = toPixel(input.textEnd);
+                let brightPixels = 0;
+                let minimumColumn = textEnd[0], maximumColumn = textStart[0] - 1;
+                let minimumRow = textEnd[1], maximumRow = textStart[1] - 1;
+                for (let row = textStart[1]; row < textEnd[1]; row++) {{
+                    for (let column = textStart[0]; column < textEnd[0]; column++) {{
+                        const offset = (row * bitmap.width + column) * 4;
+                        if (pixels[offset] >= 200 && pixels[offset + 1] >= 200
+                            && pixels[offset + 2] >= 200 && pixels[offset + 3] === 255) {{
+                            brightPixels++;
+                            minimumColumn = Math.min(minimumColumn, column);
+                            maximumColumn = Math.max(maximumColumn, column);
+                            minimumRow = Math.min(minimumRow, row);
+                            maximumRow = Math.max(maximumRow, row);
+                        }}
+                    }}
+                }}
+                return {{
+                    width: bitmap.width,
+                    height: bitmap.height,
+                    samples,
+                    text: {{
+                        brightPixels,
+                        regionPixels: (textEnd[0] - textStart[0]) * (textEnd[1] - textStart[1]),
+                        inkWidth: Math.max(0, maximumColumn - minimumColumn + 1),
+                        inkHeight: Math.max(0, maximumRow - minimumRow + 1),
+                    }},
+                }};
+            }} finally {{
+                bitmap.close();
+            }}
+        }})()"#
+    ))
+}
+
+fn pixel_matches(actual: [u8; 4], expected: [u8; 4]) -> bool {
+    actual[3] == expected[3]
+        && actual[..3]
+            .iter()
+            .zip(&expected[..3])
+            .all(|(actual, expected)| actual.abs_diff(*expected) <= PIXEL_RGB_TOLERANCE)
+}
+
+fn check_renderer_pixels(pixels: &Value) -> Result<(), String> {
+    let samples = pixels
+        .get("samples")
+        .and_then(Value::as_array)
+        .filter(|samples| samples.len() == RENDERER_SAMPLES.len())
+        .ok_or_else(|| {
+            format!("screenshot did not return all 22 fixed reference samples: {pixels}")
+        })?;
+    for (sample, (name, _, expected)) in samples.iter().zip(RENDERER_SAMPLES) {
+        if sample.get("name").and_then(Value::as_str) != Some(name) {
+            return Err(format!("screenshot sample order/name changed: {sample}"));
+        }
+        let mut actual = [0_u8; 4];
+        for (channel, value) in actual.iter_mut().enumerate() {
+            *value = sample["rgba"][channel]
+                .as_u64()
+                .and_then(|value| u8::try_from(value).ok())
+                .ok_or_else(|| format!("screenshot sample has invalid RGBA bytes: {sample}"))?;
+        }
+        if !pixel_matches(actual, expected) {
+            return Err(format!(
+                "screenshot `{name}` at {} is {actual:?}, expected {expected:?} (RGB tolerance {PIXEL_RGB_TOLERANCE}, exact alpha)",
+                sample["point"]
+            ));
+        }
+    }
+    let text = &pixels["text"];
+    let bright = text["brightPixels"].as_u64().unwrap_or(0);
+    let area = text["regionPixels"].as_u64().unwrap_or(0);
+    if bright < 64
+        || bright.saturating_mul(2) >= area
+        || text["inkWidth"].as_u64().unwrap_or(0) < 80
+        || text["inkHeight"].as_u64().unwrap_or(0) < 9
+    {
+        return Err(format!(
+            "screenshot lacks visible multi-glyph text coverage in its fixed source region: {text}"
+        ));
+    }
+    Ok(())
 }
 
 fn run_browser_smoke(cdp: &mut CdpClient) -> Result<(), String> {
@@ -1005,12 +1658,12 @@ fn serve_static_request(mut stream: TcpStream, root: &Path) -> std::io::Result<(
     if parts.len() < 2 || parts[0] != "GET" {
         return write_response(&mut stream, 405, "text/plain", b"method not allowed");
     }
-    if is_webgpu_preflight_request(parts[1]) {
+    if is_web_preflight_request(parts[1]) {
         return write_response(
             &mut stream,
             200,
             "text/html; charset=utf-8",
-            WEBGPU_PREFLIGHT_HTML,
+            WEB_PREFLIGHT_HTML,
         );
     }
 
@@ -1025,8 +1678,8 @@ fn serve_static_request(mut stream: TcpStream, root: &Path) -> std::io::Result<(
     write_response(&mut stream, 200, content_type(&relative_path), &bytes)
 }
 
-fn is_webgpu_preflight_request(path: &str) -> bool {
-    path.split_once('?').map_or(path, |(path, _)| path) == WEBGPU_PREFLIGHT_PATH
+fn is_web_preflight_request(path: &str) -> bool {
+    path.split_once('?').map_or(path, |(path, _)| path) == WEB_PREFLIGHT_PATH
 }
 
 fn request_path_to_file(path: &str) -> Option<PathBuf> {
@@ -1120,6 +1773,7 @@ impl BrowserProcess {
             "--no-first-run".to_string(),
             "--no-sandbox".to_string(),
             "--enable-unsafe-webgpu".to_string(),
+            "--force-color-profile=srgb".to_string(),
             "--remote-allow-origins=*".to_string(),
             "--remote-debugging-address=127.0.0.1".to_string(),
             format!("--remote-debugging-port={remote_port}"),
@@ -1670,11 +2324,11 @@ mod tests {
 
     #[test]
     fn preflight_path_is_not_static_file_mapped() {
-        assert!(is_webgpu_preflight_request(WEBGPU_PREFLIGHT_PATH));
-        assert!(is_webgpu_preflight_request(&format!(
-            "{WEBGPU_PREFLIGHT_PATH}?cache-bust=1"
+        assert!(is_web_preflight_request(WEB_PREFLIGHT_PATH));
+        assert!(is_web_preflight_request(&format!(
+            "{WEB_PREFLIGHT_PATH}?cache-bust=1"
         )));
-        assert!(!is_webgpu_preflight_request("/"));
+        assert!(!is_web_preflight_request("/"));
     }
 
     #[test]
@@ -1690,77 +2344,164 @@ mod tests {
     }
 
     #[test]
-    fn webgpu_preflight_result_accepts_available_adapter() {
+    fn web_preflight_result_accepts_both_available_backends() {
         assert_eq!(
-            webgpu_preflight_result(&json!({ "status": "available", "featureCount": 0 })).unwrap(),
-            WebGpuPreflight::Available
-        );
-    }
-
-    #[test]
-    fn webgpu_preflight_result_reports_unavailable_reason() {
-        assert_eq!(
-            webgpu_preflight_result(&json!({
-                "status": "unavailable",
-                "reason": "fallback WebGPU adapter is unavailable"
+            web_preflight_result(&json!({
+                "status": "complete",
+                "webgpu": { "status": "available", "featureCount": 0 },
+                "webgl": { "status": "available" },
             }))
             .unwrap(),
-            WebGpuPreflight::Unavailable("fallback WebGPU adapter is unavailable".to_string())
+            WebPreflight::Complete {
+                webgpu: BackendPreflight::Available,
+                webgl: BackendPreflight::Available,
+            }
         );
     }
 
     #[test]
-    fn webgpu_preflight_result_keeps_loading_state_pending() {
+    fn web_preflight_result_preserves_unavailable_reason_and_working_webgl() {
         assert_eq!(
-            webgpu_preflight_result(&json!({
+            web_preflight_result(&json!({
+                "status": "complete",
+                "webgpu": {
+                    "status": "unavailable",
+                    "reason": "fallback WebGPU adapter is unavailable"
+                },
+                "webgl": { "status": "available" },
+            }))
+            .unwrap(),
+            WebPreflight::Complete {
+                webgpu: BackendPreflight::Unavailable(
+                    "fallback WebGPU adapter is unavailable".to_string()
+                ),
+                webgl: BackendPreflight::Available,
+            }
+        );
+    }
+
+    #[test]
+    fn web_preflight_result_keeps_loading_state_pending() {
+        assert_eq!(
+            web_preflight_result(&json!({
                 "status": "pending",
-                "path": WEBGPU_PREFLIGHT_PATH,
+                "path": WEB_PREFLIGHT_PATH,
                 "readyState": "loading"
             }))
             .unwrap(),
-            WebGpuPreflight::Pending
+            WebPreflight::Pending
         );
     }
 
     #[test]
-    fn webgpu_preflight_result_rejects_malformed_state() {
-        assert!(webgpu_preflight_result(&json!({ "available": false })).is_err());
+    fn web_preflight_result_rejects_malformed_or_incomplete_state() {
+        for state in [
+            json!({ "available": false }),
+            json!({ "status": "complete", "webgpu": { "status": "available" } }),
+            json!({
+                "status": "complete",
+                "webgpu": { "status": "unavailable" },
+                "webgl": { "status": "available" },
+            }),
+            json!({
+                "status": "complete",
+                "webgpu": { "status": "available" },
+                "webgl": { "status": "unavailable", "reason": "" },
+            }),
+        ] {
+            assert!(web_preflight_result(&state).is_err(), "{state}");
+        }
     }
 
     #[test]
-    fn webgpu_preflight_policy_runs_when_available() {
-        assert_eq!(
-            decide_webgpu_preflight(WebGpuPreflight::Available, false),
-            Ok(WebGpuPreflightDecision::Run)
-        );
+    fn web_preflight_policy_runs_for_either_or_both_backends_even_when_skips_are_allowed() {
+        for (webgpu, webgl) in [(true, true), (true, false), (false, true)] {
+            for allow_unavailable in [false, true] {
+                let availability = |available| {
+                    if available {
+                        BackendPreflight::Available
+                    } else {
+                        BackendPreflight::Unavailable("backend missing".to_string())
+                    }
+                };
+                assert_eq!(
+                    decide_web_preflight(
+                        WebPreflight::Complete {
+                            webgpu: availability(webgpu),
+                            webgl: availability(webgl),
+                        },
+                        allow_unavailable
+                    ),
+                    Ok(WebPreflightDecision::Run { webgpu, webgl })
+                );
+            }
+        }
     }
 
     #[test]
-    fn webgpu_preflight_policy_fails_closed_when_unavailable() {
-        let error = decide_webgpu_preflight(
-            WebGpuPreflight::Unavailable("adapter missing".to_string()),
+    fn web_preflight_policy_fails_closed_when_both_backends_are_unavailable() {
+        let error = decide_web_preflight(
+            WebPreflight::Complete {
+                webgpu: BackendPreflight::Unavailable("adapter missing".to_string()),
+                webgl: BackendPreflight::Unavailable("context missing".to_string()),
+            },
             false,
         )
         .unwrap_err();
         assert!(error.contains("adapter missing"));
+        assert!(error.contains("context missing"));
         assert!(error.contains("--allow-unavailable"));
     }
 
     #[test]
-    fn webgpu_preflight_policy_requires_an_explicit_local_skip() {
-        assert_eq!(
-            decide_webgpu_preflight(
-                WebGpuPreflight::Unavailable("adapter missing".to_string()),
-                true,
-            ),
-            Ok(WebGpuPreflightDecision::SkipAllowed(
-                "adapter missing".to_string()
-            ))
-        );
+    fn web_preflight_policy_requires_an_explicit_local_skip_for_both_missing_backends() {
+        let decision = decide_web_preflight(
+            WebPreflight::Complete {
+                webgpu: BackendPreflight::Unavailable("adapter missing".to_string()),
+                webgl: BackendPreflight::Unavailable("context missing".to_string()),
+            },
+            true,
+        )
+        .unwrap();
+        let WebPreflightDecision::SkipAllowed(reason) = decision else {
+            panic!("both missing backends must use the explicit skip outcome");
+        };
+        assert!(reason.contains("adapter missing"));
+        assert!(reason.contains("context missing"));
     }
 
     #[test]
-    fn webgpu_preflight_policy_rejects_pending_state() {
-        assert!(decide_webgpu_preflight(WebGpuPreflight::Pending, true).is_err());
+    fn web_preflight_policy_rejects_pending_state_even_when_skips_are_allowed() {
+        for allow_unavailable in [false, true] {
+            assert!(decide_web_preflight(WebPreflight::Pending, allow_unavailable).is_err());
+        }
+    }
+
+    #[test]
+    fn renderer_sample_coordinates_apply_panel_offset_and_css_scale_once() {
+        let state = json!({
+            "canvas": { "rect": { "left": 10, "top": 20, "width": 800, "height": 600 } },
+            "probe": { "viewport": {
+                "width": 400,
+                "height": 300,
+                "paintBounds": { "left": 4, "top": 12 },
+            } },
+        });
+        assert_eq!(
+            renderer_css_point(&state, [17.0, 19.0]).unwrap(),
+            [52.0, 82.0]
+        );
+        let mut invalid = state;
+        invalid["probe"]["viewport"]["width"] = json!(0);
+        assert!(renderer_css_point(&invalid, [17.0, 19.0]).is_err());
+    }
+
+    #[test]
+    fn screenshot_color_tolerance_preserves_exact_alpha_and_rejects_channel_errors() {
+        let expected = [230, 57, 70, 255];
+        assert!(pixel_matches([233, 54, 72, 255], expected));
+        assert!(!pixel_matches([234, 57, 70, 255], expected));
+        assert!(!pixel_matches([230, 57, 70, 254], expected));
+        assert!(!pixel_matches([70, 57, 230, 255], expected));
     }
 }

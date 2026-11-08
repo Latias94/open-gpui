@@ -123,7 +123,6 @@ struct GpuClipShape {
     radii_y: Corners,
 }
 
-@group(0) @binding(2) var<storage, read> b_clip_shapes: array<GpuClipShape>;
 
 struct Edges {
     top: f32,
@@ -288,7 +287,7 @@ fn clip_envelope_contains(position: vec2<f32>, clip: ClipEnvelope) -> bool {
         return false;
     }
 
-    let arena_length = arrayLength(&b_clip_shapes);
+    let arena_length = clip_arena_length();
     if (globals.clip_shape_count > arena_length ||
         clip.first_clip >= globals.clip_shape_count) {
         return false;
@@ -305,7 +304,7 @@ fn clip_envelope_contains(position: vec2<f32>, clip: ClipEnvelope) -> bool {
         if (index >= end) {
             break;
         }
-        if (!clip_shape_contains(position, b_clip_shapes[index])) {
+        if (!clip_shape_contains(position, load_clip_shape(index))) {
             return false;
         }
         index += 1u;
@@ -634,7 +633,6 @@ struct Quad {
     border_widths: Edges,
     transform: PrimitiveTransform,
 }
-@group(1) @binding(0) var<storage, read> b_quads: array<Quad>;
 
 struct QuadVarying {
     @builtin(position) position: vec4<f32>,
@@ -650,7 +648,7 @@ struct QuadVarying {
 @vertex
 fn vs_quad(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> QuadVarying {
     let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
-    let quad = b_quads[instance_id];
+    let quad = load_quad(instance_id);
     let local_position = unit_vertex * quad.bounds.size + quad.bounds.origin;
     let window_position = apply_primitive_transform(local_position, quad.transform);
 
@@ -675,7 +673,7 @@ fn vs_quad(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) insta
 
 @fragment
 fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
-    let quad = b_quads[input.quad_id];
+    let quad = load_quad(input.quad_id);
     if (!clip_envelope_contains(input.window_position, quad.clip)) {
         return vec4<f32>(0.0);
     }
@@ -1074,7 +1072,6 @@ struct Shadow {
     pad: u32, // align to 8 bytes
     transform: PrimitiveTransform,
 }
-@group(1) @binding(0) var<storage, read> b_shadows: array<Shadow>;
 
 struct ShadowVarying {
     @builtin(position) position: vec4<f32>,
@@ -1087,7 +1084,7 @@ struct ShadowVarying {
 @vertex
 fn vs_shadow(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> ShadowVarying {
     let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
-    var shadow = b_shadows[instance_id];
+    var shadow = load_shadow(instance_id);
 
     var geometry: Bounds;
     if (shadow.inset != 0u) {
@@ -1113,7 +1110,7 @@ fn vs_shadow(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) ins
 
 @fragment
 fn fs_shadow(input: ShadowVarying) -> @location(0) vec4<f32> {
-    let shadow = b_shadows[input.shadow_id];
+    let shadow = load_shadow(input.shadow_id);
     if (!clip_envelope_contains(input.window_position, shadow.clip)) {
         return vec4<f32>(0.0);
     }
@@ -1170,7 +1167,6 @@ struct PathRasterizationVertex {
     transform: PrimitiveTransform,
 }
 
-@group(1) @binding(0) var<storage, read> b_path_vertices: array<PathRasterizationVertex>;
 
 struct PathRasterizationVarying {
     @builtin(position) position: vec4<f32>,
@@ -1182,7 +1178,7 @@ struct PathRasterizationVarying {
 
 @vertex
 fn vs_path_rasterization(@builtin(vertex_index) vertex_id: u32) -> PathRasterizationVarying {
-    let v = b_path_vertices[vertex_id];
+    let v = load_path_vertex(vertex_id);
     let window_position = apply_primitive_transform(v.xy_position, v.transform);
 
     var out = PathRasterizationVarying();
@@ -1198,7 +1194,7 @@ fn vs_path_rasterization(@builtin(vertex_index) vertex_id: u32) -> PathRasteriza
 fn fs_path_rasterization(input: PathRasterizationVarying) -> @location(0) vec4<f32> {
     let dx = dpdx(input.st_position);
     let dy = dpdy(input.st_position);
-    let v = b_path_vertices[input.vertex_id];
+    let v = load_path_vertex(input.vertex_id);
     if (!clip_envelope_contains(input.window_position, v.clip)) {
         return vec4<f32>(0.0);
     }
@@ -1232,7 +1228,6 @@ fn fs_path_rasterization(input: PathRasterizationVarying) -> @location(0) vec4<f
 struct PathSprite {
     bounds: Bounds,
 }
-@group(1) @binding(0) var<storage, read> b_path_sprites: array<PathSprite>;
 
 struct PathVarying {
     @builtin(position) position: vec4<f32>,
@@ -1242,7 +1237,7 @@ struct PathVarying {
 @vertex
 fn vs_path(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> PathVarying {
     let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
-    let sprite = b_path_sprites[instance_id];
+    let sprite = load_path_sprite(instance_id);
     // Transform and the exact clip stack were already applied while rasterizing the path.
     let device_position = to_device_position(unit_vertex, sprite.bounds);
     // For screen-space intermediate texture, convert screen position to texture coordinates
@@ -1274,7 +1269,6 @@ struct Underline {
     wavy: u32,
     transform: PrimitiveTransform,
 }
-@group(1) @binding(0) var<storage, read> b_underlines: array<Underline>;
 
 struct UnderlineVarying {
     @builtin(position) position: vec4<f32>,
@@ -1287,7 +1281,7 @@ struct UnderlineVarying {
 @vertex
 fn vs_underline(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> UnderlineVarying {
     let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
-    let underline = b_underlines[instance_id];
+    let underline = load_underline(instance_id);
     let local_position = unit_vertex * underline.bounds.size + underline.bounds.origin;
     let window_position = apply_primitive_transform(local_position, underline.transform);
 
@@ -1305,7 +1299,7 @@ fn fs_underline(input: UnderlineVarying) -> @location(0) vec4<f32> {
     const WAVE_FREQUENCY: f32 = 2.0;
     const WAVE_HEIGHT_RATIO: f32 = 0.8;
 
-    let underline = b_underlines[input.underline_id];
+    let underline = load_underline(input.underline_id);
     if (!clip_envelope_contains(input.window_position, underline.clip)) {
         return vec4<f32>(0.0);
     }
@@ -1342,7 +1336,6 @@ struct MonochromeSprite {
     tile: AtlasTile,
     transform: PrimitiveTransform,
 }
-@group(1) @binding(0) var<storage, read> b_mono_sprites: array<MonochromeSprite>;
 
 struct MonoSpriteVarying {
     @builtin(position) position: vec4<f32>,
@@ -1355,7 +1348,7 @@ struct MonoSpriteVarying {
 @vertex
 fn vs_mono_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> MonoSpriteVarying {
     let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
-    let sprite = b_mono_sprites[instance_id];
+    let sprite = load_mono_sprite(instance_id);
     let local_position = unit_vertex * sprite.bounds.size + sprite.bounds.origin;
     let window_position = apply_primitive_transform(local_position, sprite.transform);
 
@@ -1374,7 +1367,7 @@ fn fs_mono_sprite(input: MonoSpriteVarying) -> @location(0) vec4<f32> {
     let sample = textureSample(t_sprite, s_sprite, input.tile_position).r;
     let alpha_corrected = apply_contrast_and_gamma_correction(sample, input.color.rgb, gamma_params.grayscale_enhanced_contrast, gamma_params.gamma_ratios);
 
-    let sprite = b_mono_sprites[input.sprite_id];
+    let sprite = load_mono_sprite(input.sprite_id);
     if (!clip_envelope_contains(input.window_position, sprite.clip)) {
         return vec4<f32>(0.0);
     }
@@ -1395,7 +1388,6 @@ struct PolychromeSprite {
     tile: AtlasTile,
     transform: PrimitiveTransform,
 }
-@group(1) @binding(0) var<storage, read> b_poly_sprites: array<PolychromeSprite>;
 
 struct PolySpriteVarying {
     @builtin(position) position: vec4<f32>,
@@ -1408,7 +1400,7 @@ struct PolySpriteVarying {
 @vertex
 fn vs_poly_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> PolySpriteVarying {
     let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
-    let sprite = b_poly_sprites[instance_id];
+    let sprite = load_poly_sprite(instance_id);
     let local_position = unit_vertex * sprite.bounds.size + sprite.bounds.origin;
     let window_position = apply_primitive_transform(local_position, sprite.transform);
 
@@ -1424,7 +1416,7 @@ fn vs_poly_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index
 @fragment
 fn fs_poly_sprite(input: PolySpriteVarying) -> @location(0) vec4<f32> {
     let sample = textureSample(t_sprite, s_sprite, input.tile_position);
-    let sprite = b_poly_sprites[input.sprite_id];
+    let sprite = load_poly_sprite(input.sprite_id);
     if (!clip_envelope_contains(input.window_position, sprite.clip)) {
         return vec4<f32>(0.0);
     }
@@ -1443,7 +1435,7 @@ fn fs_poly_sprite(input: PolySpriteVarying) -> @location(0) vec4<f32> {
 
 struct SurfaceParams {
     bounds: Bounds,
-    clip: ClipEnvelope,
+    @size(32) clip: ClipEnvelope,
 }
 
 @group(1) @binding(0) var<uniform> surface_locals: SurfaceParams;
