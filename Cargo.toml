@@ -127,7 +127,23 @@ heck = "0.5"
 hdrhistogram = "7"
 http = "1.1"
 http-body = "1.0"
-image = "0.25.4"
+image = { version = "0.25.4", default-features = false, features = [
+    "bmp",
+    "dds",
+    "exr",
+    "ff",
+    "gif",
+    "hdr",
+    "ico",
+    "jpeg",
+    "png",
+    "pnm",
+    "qoi",
+    "rayon",
+    "tga",
+    "tiff",
+    "webp",
+] }
 indexmap = { version = "2.7.0", features = ["serde"] }
 inventory = "0.3.19"
 itertools = "0.14.0"

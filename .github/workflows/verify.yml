@@ -134,6 +134,19 @@ jobs:
       - name: Run conditional hot-reload transport and render regressions
         run: cargo nextest run --locked -p open-gpui --no-default-features --features test-support,hot-reload --lib -E 'test(hot_reload::)' --test-threads=1 --no-fail-fast --no-tests fail
 
+      - name: Test retained image formats and decoder boundary
+        run: cargo nextest run --locked -p open-gpui --all-features --lib -E 'test(platform::image_tests::) | test(elements::img::tests::)' --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Test public headless image resource consumers
+        if: matrix.name == 'windows'
+        run: cargo nextest run --locked -p open-gpui-wgpu --all-features --test images --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Test independent images with application-owned encoder off and on
+        if: matrix.name == 'windows'
+        run: |
+          cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test images --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+          cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features avif-encoding --test images --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+
       - name: Test public shared atlas without optional features
         run: cargo nextest run --locked -p open-gpui --no-default-features --test atlas --test-threads=1 --no-fail-fast --no-tests fail
 

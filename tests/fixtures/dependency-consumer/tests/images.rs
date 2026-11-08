@@ -76,3 +76,34 @@ fn downstream_reports_malformed_and_truncated_images_as_errors() {
         );
     }
 }
+
+#[cfg(feature = "avif-encoding")]
+#[test]
+fn downstream_opts_into_avif_encoding_alongside_gpui_decoding() {
+    use image::{ExtendedColorType, ImageEncoder, codecs::avif::AvifEncoder};
+
+    let image = Image::from_bytes(ImageFormat::Webp, ANIMATED_WEBP.to_vec());
+    let decoded = image
+        .to_image_data(SvgRenderer::new(Arc::new(())))
+        .expect("GPUI WebP decoding must coexist with application-owned AVIF encoding");
+
+    assert_eq!(decoded.frame_count(), 2);
+    assert_eq!(decoded.size(0), size(1.into(), 1.into()));
+    let bgra = decoded
+        .as_bytes(0)
+        .expect("the WebP frame must have pixels");
+    assert_eq!(bgra.len(), 4);
+    let rgba = [bgra[2], bgra[1], bgra[0], bgra[3]];
+
+    let mut encoded = Vec::new();
+    AvifEncoder::new_with_speed_quality(&mut encoded, 10, 80)
+        .with_num_threads(Some(1))
+        .write_image(&rgba, 1, 1, ExtendedColorType::Rgba8)
+        .expect("the application-owned AVIF encoder must encode actual pixels");
+
+    assert!(!encoded.is_empty(), "the AVIF encoder must write bytes");
+    assert_eq!(
+        image::guess_format(&encoded).expect("encoded bytes must have a recognized image format"),
+        image::ImageFormat::Avif,
+    );
+}

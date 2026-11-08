@@ -976,6 +976,131 @@ mod tests {
     }
 
     #[open_gpui::test]
+    async fn retained_resource_formats_decode_with_default_minus_avif_policy(
+        cx: &mut TestAppContext,
+    ) {
+        use image::{DynamicImage, Rgb};
+        use open_gpui_http_client::{FakeHttpClient, Response};
+
+        let source = DynamicImage::ImageRgb8(ImageBuffer::from_fn(4, 4, |column, row| {
+            if (column + row) % 2 == 0 {
+                Rgb([255, 0, 0])
+            } else {
+                Rgb([0, 0, 255])
+            }
+        }));
+        let expected = source.to_rgba8();
+        let mut dds = vec![0; 136];
+        dds[..4].copy_from_slice(b"DDS ");
+        for (offset, value) in [
+            (4, 124_u32),
+            (8, 0x0008_1007),
+            (12, 4),
+            (16, 4),
+            (20, 8),
+            (76, 32),
+            (80, 4),
+            (108, 0x1000),
+        ] {
+            dds[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        dds[84..88].copy_from_slice(b"DXT1");
+        dds[128..].copy_from_slice(&[0x00, 0xf8, 0x1f, 0x00, 0x44, 0x11, 0x44, 0x11]);
+
+        for format in [
+            ImageFormat::Dds,
+            ImageFormat::OpenExr,
+            ImageFormat::Farbfeld,
+            ImageFormat::Hdr,
+            ImageFormat::Qoi,
+        ] {
+            let bytes = if format == ImageFormat::Dds {
+                dds.clone()
+            } else {
+                let source = match format {
+                    ImageFormat::OpenExr | ImageFormat::Hdr => {
+                        DynamicImage::ImageRgb32F(source.to_rgb32f())
+                    }
+                    ImageFormat::Farbfeld => DynamicImage::ImageRgba16(source.to_rgba16()),
+                    _ => source.clone(),
+                };
+                let mut encoded = io::Cursor::new(Vec::new());
+                source.write_to(&mut encoded, format).unwrap();
+                encoded.into_inner()
+            };
+            assert_eq!(image::guess_format(&bytes).unwrap(), format);
+            cx.update(|cx| {
+                cx.set_http_client(FakeHttpClient::create(move |_| {
+                    let bytes = bytes.clone();
+                    async move { Ok(Response::builder().status(200).body(bytes.into()).unwrap()) }
+                }));
+            });
+            let resource = Resource::Uri(format!("https://test.example/{format:?}").into());
+            let image = cx
+                .update(|cx| {
+                    let load: futures::future::BoxFuture<'static, _> =
+                        Box::pin(ImageAssetLoader::load(resource, cx));
+                    load
+                })
+                .await
+                .unwrap();
+
+            assert_eq!(image.frame_count(), 1, "{format:?}");
+            assert_eq!(image.size(0), size(4.into(), 4.into()), "{format:?}");
+            let actual = image.as_bytes(0).unwrap();
+            assert_eq!(actual.len(), 4 * 4 * 4, "{format:?}");
+            for (pixel, source) in actual.chunks_exact(4).zip(expected.pixels()) {
+                assert_eq!(
+                    pixel,
+                    &[source[2], source[1], source[0], source[3]],
+                    "{format:?}"
+                );
+            }
+        }
+    }
+
+    #[open_gpui::test]
+    async fn header_only_avif_resource_returns_unsupported(cx: &mut TestAppContext) {
+        use image::error::{ImageFormatHint, UnsupportedErrorKind};
+        use open_gpui_http_client::{FakeHttpClient, Response};
+
+        let header_only_avif: &[u8] = b"\0\0\0\x18ftypavif\0\0\0\0avifmif1";
+        assert_eq!(
+            image::guess_format(header_only_avif).unwrap(),
+            ImageFormat::Avif
+        );
+        cx.update(|cx| {
+            cx.set_http_client(FakeHttpClient::create(move |_| async move {
+                Ok(Response::builder()
+                    .status(200)
+                    .body(header_only_avif.into())
+                    .unwrap())
+            }));
+        });
+        let resource = Resource::Uri("https://test.example/header-only.avif".into());
+        let error = cx
+            .update(|cx| {
+                let load: futures::future::BoxFuture<'static, _> =
+                    Box::pin(ImageAssetLoader::load(resource, cx));
+                load
+            })
+            .await
+            .err()
+            .expect("AVIF decoding must remain unsupported without avif-native");
+        let ImageCacheError::Other(error) = error else {
+            panic!("recognized AVIF must fail in the shared decoder: {error}");
+        };
+        assert_eq!(error.to_string(), "creating image decoder");
+        let Some(ImageError::Unsupported(unsupported)) = error.downcast_ref::<ImageError>() else {
+            panic!("expected an unsupported AVIF decoder: {error:#}");
+        };
+        assert!(matches!(
+            unsupported.kind(),
+            UnsupportedErrorKind::Format(ImageFormatHint::Exact(ImageFormat::Avif))
+        ));
+    }
+
+    #[open_gpui::test]
     async fn shared_decoder_errors_keep_context_and_http_status_is_separate(
         cx: &mut TestAppContext,
     ) {

@@ -3814,6 +3814,7 @@ version = "0.0.0"
 dependencies = [
  "core-foundation 0.10.1",
  "criterion",
+ "image",
  "open-gpui",
  "open-gpui-docking",
  "open-gpui-platform",
