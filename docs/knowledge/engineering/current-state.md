@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-09T01:17:00+08:00
+timestamp: 2026-11-09T02:37:25+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -18,6 +18,20 @@ verified_by:
 
 # Current State
 
+- The official image dependency policy is implemented at
+  `b4355a36824f0709f1b73f7480ec88a884a489bc`. Fourteen formats and Rayon remain enabled;
+  the default AVIF encoder is excluded, and ordinary applications can restore it through
+  their own image dependency. Three-platform before/after and downstream graphs confirm
+  the exact active feature boundary. Final Core/public/native image consumers pass 25/25,
+  and independent encoding off/on passes 3/3 and 4/4. Locked workspace/consumer compilation,
+  correctness Clippy, actual Windows Rust 1.92 framework/consumer checks and production wasm
+  pass. The inherited stale smoke lock is separately refreshed at
+  `015863c085dbcd845658cfb97c289c3ac4433aad` and passes its own locked wasm check.
+  Root/ordinary formatting and source review pass; all three threads close.
+  The [qualification](../../verification.md#image-dependency-feature-policy) retains
+  source provenance, decoder/guessing limitations and actual execution scope. Full refresh,
+  native foreground restoration, foreign execution, numerical costs and engine adoption
+  remain open.
 - Shared atlas/renderer integration is implemented at
   `67e1360709ca48be74bf986f116b9c004ff5bd59`, from
   `480430f02aecc3bdcf78bed8126ef6b871974770` against the unchanged fixed Zed target.
@@ -638,11 +652,10 @@ historical scope and is not current branch or CI qualification.
 
 # Next Action
 
-- Implement the complete official
-  [image feature-policy successor](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#image-dependency-feature-policy-successor)
-  after the scoped atlas/renderer qualification. Preserve ordinary downstream AVIF encoder
-  opt-in, retained default formats, the declared compiler floor and independent lockfiles.
-  Then continue remaining API/platform reconciliation through existing owners.
+- Continue remaining renderer feature-policy, API and platform reconciliation after the
+  [image feature-policy qualification](../../verification.md#image-dependency-feature-policy).
+  Preserve ordinary downstream extension, retained formats, the declared compiler floor
+  and independently locked consumers through existing owners.
   Keep the remaining native foreground-restoration failure visible; its real stateful
   edit/build/apply/output consumer has passed. Preserve ordinary/release feature exclusion,
   the declared compiler floor and the distinct GPUI/fork/external-driver source provenance.
@@ -653,7 +666,7 @@ historical scope and is not current branch or CI qualification.
   the remaining mechanisms. Keep the recorded notification and publisher/backlog limits visible;
   avoid replacing the fork or reapplying completed units.
 - Full fixed-target refresh, the remaining native focus gate, numerical budgets and remaining
-  image-feature/API/platform differences stay open. Qualify prepared CoreText selection/cascade
+  renderer/API/platform differences stay open. Qualify prepared CoreText selection/cascade
   on macOS, foreign native/browser execution and touchpad scroll/inertia/pinch/response timing
   on their actual platforms. Existing getters, HWND/IME regressions and source inspection do not
   supply that execution or performance evidence. DirectWrite existing-family and installed-
