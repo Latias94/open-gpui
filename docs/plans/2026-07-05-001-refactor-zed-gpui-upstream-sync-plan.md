@@ -1483,8 +1483,9 @@ does not establish numeric budgets or close the following official mechanisms.
 The final target also contains official `95cd535a5fad96d649513f96c5784ceefd379e47`:
 test support no longer implies entity-handle leak tracking, build-time `GPUI_LEAK_DETECTION`
 and the explicit feature select that instrumentation, and runtime `is_test` queries identify the
-deterministic executor rather than the compiled feature. The current fork still couples test
-support to leak detection. Excluding both from the benchmark graph qualifies benchmark isolation;
+deterministic executor rather than the compiled feature. The starting fork at
+`7c7a1411009a07afbcbd70340256adf55161491b` still couples test support to leak detection.
+Excluding both from the benchmark graph qualifies benchmark isolation;
 it does not implement this broader official mechanism.
 
 Reconcile the complete framework, extracted scheduler/util and native renderer closure through
@@ -1494,8 +1495,22 @@ assertions and the fork's native ingress/candidate contracts. Keep no-op snapsho
 explicit when tracking is absent. Verify ordinary native execution, deterministic contexts,
 benchmark-only isolation, feature/environment selection, enabled and disabled leak controls,
 independent consumption and actual compiler-floor builds. Product-only agent skill changes stay
-outside the framework closure. This is source-grounded queued work, not an executed feature or
-a measured build-time improvement.
+outside the framework closure. These requirements define the complete mechanism; passing their
+functional gates does not establish a measured build-time improvement.
+
+The complete November 8 implementation follows that source through the existing App/entity-map,
+scheduler/executor, util and Metal owners. `backtrace` is available for environment-selected
+instrumentation; the feature graph alone cannot prove tracking is disabled. Preserve own-crate
+test instrumentation, explicit feature and nonempty-environment selection, including the official
+nonempty `0` behavior. Snapshot no-op behavior never replaces live weak-handle liveness checks.
+
+Keep the existing independently locked ordinary consumer free of test-support. A separate minimal
+test-support consumer owns actual feature-only and explicitly tracked public workflows, without
+adding engine types or a second test framework. The native View trajectory must retain notified
+new Submitted output and exact teardown while proving real App/AsyncApp/executors stay native
+after a deterministic scheduler has existed in the same process. Run both tracked and untracked
+variants, preserve explicit leak-enabled component/native acceptance, and keep benchmark-only
+graphs plus build-time tracking disabled for their normal execution.
 
 Keep per-executor runtime detection distinct from the official process-level
 `test_scheduler_created` hint. A process may host both a deterministic test context and a
@@ -1503,6 +1518,17 @@ real-time benchmark or native context; constructing the former must not change t
 `is_test` result. Source inspection maps both to the existing extracted scheduler and GPUI
 executor wrappers. Native Metal screenshot access must retain the target's debug-only gate;
 compiling test support into an optimized application must not silently change presentation policy.
+
+Local implementation is `c6ffb32bd1499c9e8fb46783a3d1a4de626707a0`; the separate
+mouse-leave fixture correction is `2daf8412170540f7e2e586687bc25d5eadf4f2fa`. The
+[qualification](../verification.md#additive-test-support-and-explicit-leak-tracking) retains
+actual inherited release/home-directory failures and their corrections, reviewed native
+observation correction and the complete feature/environment/public matrix. Focused owners 130,
+util 116, the selected framework 1,918-case union, complete Windows 224 and components 2,966 pass
+within their documented scopes. Ordinary enabled/disabled 62/47, actual Windows Rust 1.92,
+locked checks, correctness Clippy, production wasm, formatting and existing static gates pass.
+The original native extra-pair source stays unproven; foreign native/browser execution and
+numeric costs remain open. Continue conditional hot reload without claiming full refresh.
 
 ### Conditional Hot Reload Successor
 
@@ -1533,6 +1559,15 @@ reload implementation or qualification.
 
 ## Maintained Baseline Before Engine Adaptation
 
+The [additive test-support qualification](../verification.md#additive-test-support-and-explicit-leak-tracking)
+records local implementation `c6ffb32bd1499c9e8fb46783a3d1a4de626707a0` on November 8.
+Complete official runtime queries, explicit handle instrumentation, real downstream utilities
+and native debug capture policy reuse existing owners. Reproduced inherited corrections and
+the separately committed native fixture correction retain their source and executed evidence.
+The complete public/independent mode matrix and scoped runtime/native/component/compiler gates
+pass. Conditional hot reload is next; full refresh, measured costs, canonical docking and
+Nara GPU/View adoption remain open.
+
 The [complete benchmark qualification](../verification.md#complete-benchmark-context-and-measurements)
 records local implementation `5f3a99fad9284c17a8eaac508ab8b4f47018be44` on November 8.
 It replaces the old virtual context and parameter forwarders through complete official owners,
@@ -1549,7 +1584,7 @@ November 8. Complete official concrete dispatch, ready turns and timer/queue clo
 existing platform/executor/profiler owners. Its complete scoped consumers and compiler gates
 pass; Linux active execution and other foreign-platform gates remain separate. The complete
 benchmark/context/real-text/render/measurement/report successor is implemented above. Continue
-additive test support and conditional hot reload after its scoped qualification. Full refresh,
+conditional hot reload after the additive test-support qualification above. Full refresh,
 numerical budgets, canonical docking and Nara GPU/View adoption remain open; no engine UI default
 follows.
 

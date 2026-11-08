@@ -4268,6 +4268,165 @@ default unavailable renderer result and independently exercises an injected WGPU
 remains a separate source-grounded successor. This unit excludes those features from benchmark
 consumers without claiming that broader mechanism synchronized.
 
+## Additive Test Support And Explicit Leak Tracking
+
+The November 8 successor starts at `7c7a1411009a07afbcbd70340256adf55161491b` against
+fixed Zed `635026fabc38440fce5e1767d125026a17b12012`. Official
+`95cd535a5fad96d649513f96c5784ceefd379e47` separates test-support compilation from
+entity-handle tracking and deterministic execution. The implementation follows existing
+App/entity-map, scheduler/executor, util and Metal owners. The process-level test hint remains
+distinct from each executor's identity; no new scheduler or lifetime owner is introduced.
+
+An actual downstream util regression fails against the old implementation
+(`ee1ab1af-5aa9-4bd4-8e67-a8cd77bba695`): enabling test support changes its home directory
+to the fake own-test path. The official `cfg(test)` boundary corrects that behavior. Complete util
+unit and external-consumer execution then passes **116/116** without skips
+(`92487fa0-b33b-4504-b50c-e03ba8485a06`), including a separate own-test fixed-directory control.
+
+Source review identifies an inherited tracked-mode release inconsistency. After complete entity
+cleanup and destruction of the final refcount owner, an otherwise released typed/erased weak
+handle still unwraps the missing owner. The actual regression fails with that unwrap
+(`4fb17e78-f5fa-4886-ad71-fd1a3e1844c2`). The owning correction treats an absent owner as
+released while retaining live strong and pending-cleanup refusal. Independent review also finds
+the inherited consuming release diagnostic can hide still-live handles after a caught assertion.
+The next focused run passes the owner-gone, AsyncApp and mixed-executor controls, but fails that
+new preservation assertion: **3 pass, 1 fail** (`37972762-ceac-41b8-8b28-1beba84ee57b`).
+The diagnostic now borrows its existing metadata and clones a backtrace only when resolving it;
+the existing panic-safe destructor remains separate. These reproduced inherited findings are
+separate from the official feature/runtime split.
+
+The new `test-support-consumer` is independently locked and preserves actual public Test,
+returning Application and real-time Bench workflows. The existing ordinary `dependency-consumer`
+remains free of test support. Tracking selection uses a nonempty build-time
+`GPUI_LEAK_DETECTION` or the explicit feature; nonempty `0` enables it too. Runtime
+`GPUI_TEST_EXPECT_LEAK_DETECTION` is a test-only expectation, not a production switch or a cfg
+inferred from a dependency. Feature-only snapshots are no-ops while weak release checks still
+check actual ownership. Native View source preserves the complete input/notification/cache/
+reconstruction/retirement trajectory and adds exact-generation DX11 pixels and mixed-context
+identity controls. Its first build exposes two test-only private `Pixels` field accesses,
+corrected to the public conversion. Actual default Windows execution then fails because the
+backend's existing readback implementation is absent without its own test-support feature
+(`feeeade4-c5ee-4d80-9312-1c760d48b6e2`). The native App already remains production-mode
+after TestApp creation, and exact Submitted state precedes that failure. Enabling the existing
+readback implementation/helpers for backend `cfg(test)` retains the complete pixel oracle and
+passes the full original trajectory (`4001681e-82df-43ef-9ce2-94a149ec7d11`). It does not
+enable readback for ordinary production builds.
+
+Corrected focused Core/scheduler/public execution passes **130/130**
+(`6fed4498-2fdc-4e65-833d-53c7706b52c6`), with 1,381 unrelated cases filtered out. It
+includes original entity tests, all eleven new release controls, scheduler owners, mixed-executor
+and AsyncApp identity, complete benchmark teardown and six actual public workflows. The same six
+public workflows pass with test support and benchmark support compiled in while tracking is off.
+Both independent source reviewers close their findings without remaining P1/P2 in scope; all
+six implementation/review threads are closed. Independent-consumer matrix, tracked native
+execution and compiler gates continue below.
+
+The public/independent matrix passes with the following build-time settings. Every standalone
+fixture case executes its ordinary binary; its Test and real App/Bench cases are selected by
+their own features. No cfg from the dependency is presumed to propagate into the consumer.
+
+| Build selection | Public result | Independently locked result |
+| --- | --- | --- |
+| Test + Bench, empty environment, tracking off | 6/6 (`affae813-95e6-4e31-9b64-72ad41fc8a4d`) | 4/4 (`e3896bac-165e-447d-8f4f-459d3063db77`) |
+| No test or benchmark facilities | Ordinary signature control covered by both mode runs | 2/2 (`80e83309-e62f-4d3a-ba79-30f702013c91`) |
+| Bench only, empty environment | Previous complete benchmark consumers retain separate scope | 3/3 (`cf88fe78-f807-40a9-a3b9-b6ce0915ccff`) |
+| Test, `GPUI_LEAK_DETECTION=1`, no leak feature | 5/5 (`e5edab75-689f-464d-8398-cfa242319cc1`) | 3/3 (`ced0daff-9f76-48b4-8b00-b7565759f263`) |
+| Test, nonempty `GPUI_LEAK_DETECTION=0` | Snapshot control 1/1 (`9e1c70e4-2b02-425c-9842-4bfe58007b73`), four unrelated cases filtered | 3/3 (`ad46f6b3-8de4-4c9f-9688-e19e1d8b5acf`) |
+| Test + explicit leak feature, empty environment | 5/5 (`f09024ab-c3b6-496a-9e01-2b0117c43991`) | 3/3 (`155a6845-cc85-4671-aa55-1842649ebabe`) |
+| All features, empty environment | Included in focused 130/130 above | 4/4 (`1f5445c3-7a9b-4199-85fa-bc3866b61674`) |
+
+All selected matrix cases pass without skips except the explicitly filtered zero-value public
+selection. The real-time cases execute worker-thread identity, actual timers and foreground entity
+updates after deterministic context creation; they do not qualify native rendering or numeric
+performance. Tracking-on/off both preserve live strong/weak and effect-cleanup release assertions.
+
+The complete native View trajectory also passes with Windows test support/profiling enabled and
+environment-selected handle tracking (`66614bd4-f94e-4f17-a07e-f59b59a0f070`). It retains
+the same source-driven notified input/output, actual nonempty Submitted generation, DX11 scene
+readback, cache/reconstruction and exact entity/HWND/platform/OLE retirement checks as the
+untracked default run. Readback redraws the same captured framework scene; it is not proof of
+OS input injection or compositor scanout. Foreign native execution remains unqualified.
+
+The first complete Core/public/WGPU/Windows/platform/scheduler run executes **1,918 tests:
+1,917 pass and 1 fails**, with four original interactive Windows cases skipped
+(`2cf7a61f-642f-4dab-a26f-1e75aff238e1`). Its sole failure is the existing mouse-leave
+fixture: four input/hover pairs appear where it expects three, matching an earlier recorded
+symptom. All new mechanisms and the complete native View trajectory pass. This run does not
+establish a clean complete native gate.
+
+The fixture originally pumps arbitrary OS messages between the three deliberately sent pointer
+transitions and the exact diagnostic snapshot. Moving that pump after the exact assertions
+first reproduces the other boundary: the last queued hover has not yet reached Core delivery,
+so the selected run passes View but fails mouse-leave with five events rather than six
+(`05090d97-0630-4237-bd73-13eb96009915`). One existing App update/release now converges that
+Core ingress before reading the original cursor. The six-event order, two exit counts/positions,
+no captured physical frame and exact HWND teardown are unchanged. Later OS messages are pumped
+separately with their own no-invariant-failure check. The correction changes only the fixture.
+
+Both selected scenarios then pass (`e71e0cee-58a3-46b0-81f8-3ecac3740dd4`); its later OS
+queue contains message IDs `[2a3, 403, 403, 2a3]`. That trace does not retrospectively identify
+the initial extra pair's source. OS queue contamination remains a supported possible explanation,
+not an established root cause. Independent fixture review closes the missing-convergence finding
+with no remaining P1/P2; all seven implementation/review threads are closed. Complete Windows
+and component qualification continue without weakening the exact oracle or suppressing input.
+
+The subsequent complete Windows cohort passes **224/224**, with the same four interactive
+skips (`b4329c4a-bf0a-4e4b-bff0-0e158094aaad`). Together with the unchanged 1,694 passing
+non-Windows cases from the initial run, this qualifies the selected 1,918-case union after the
+fixture correction; it is not reported as a single all-green 1,918-test run. Component and
+ordinary-consumer qualification continue below.
+
+The complete UI core/components/docking/Canvas cohort passes **2,966/2,966** without skips
+(`c7b6da40-88d5-4d33-8c3b-774cbef2f0ce`), explicitly enabling both consumer test-support
+features and environment-selected leak tracking. The ordinary independent consumer initially
+refuses `--locked` after the official unconditional backtrace change. Offline resolution adds
+only the required `backtrace` dependency edge to its existing Core package entry, without package
+version changes. Its locked enabled/disabled runs continue against that reviewed one-line update.
+
+Those ordinary independent runs pass **62/62** with all features
+(`46816bf5-e157-41ac-aec2-989c8e6b20e3`) and **47/47** with defaults disabled
+(`f90feed2-8aa1-42b6-8d80-70ecbc59959b`), both without skips. Their original value/layout
+and explicitly type-only scope is unchanged; actual Test/native/Bench consumers remain separate.
+The test-only tracking expectation now defaults to the forwarded feature and compile-time
+environment when omitted, so ordinary test commands require no extra runtime variable. Its
+default-use controls pass public **6/6** (`fbf2c751-0289-46aa-9302-98eaf3e9bac4`), independent
+untracked **4/4** (`b2e13abb-5bcd-46a3-a73d-c266195ff72b`) and independent environment-tracked
+**3/3** (`1702249a-d4f7-4337-b7f1-2ceb9284848c`). These controls still verify actual dependency
+behavior rather than treating local cfg or expected mode as evidence of tracking.
+
+Locked Rust 1.95 workspace and both independently locked consumer all-target/all-feature
+compilation pass. Affected Core/WGPU/Windows/platform/scheduler/util correctness Clippy passes.
+Actual Windows Rust 1.92 all-target/all-feature compilation passes for the affected framework and
+both independent consumers. The environment-only tracking production build also passes with
+no default features or test facilities. No compiler-floor increase is needed.
+
+Stable production wasm passes with profiling off/on. The existing optional shared-memory
+configuration passes on Rust 1.98.0-nightly (`57d06900f`, May 27), using its checked-in
+build-std/atomics/imported-memory settings without `RUSTC_BOOTSTRAP`. These are compilation gates;
+browser/test-support execution and foreign native platforms remain unqualified. Metal's
+debug-only capture policy has source review, without macOS compilation or execution.
+
+Actual feature-tree checks confirm the ordinary consumer's all-feature graph and the new
+benchmark-only graph exclude Core test support and leak detection. Build-time tracking is
+explicitly disabled for those runs; graph exclusion alone cannot prove an environment cfg is off.
+Root, ordinary fixture and test-support fixture formatting checks pass. Existing import/API/
+document/release scans, workflow YAML/manifests and Git whitespace checks pass; local CI edits
+do not imply a remote run.
+
+Implementation is local `c6ffb32bd1499c9e8fb46783a3d1a4de626707a0`, with the independently
+reviewed mouse-leave fixture correction at `2daf8412170540f7e2e586687bc25d5eadf4f2fa`.
+These results qualify the complete selected additive-test-support unit, retaining the original
+failures and explicit scopes above. They do not establish measured build-time savings, per-frame
+overhead, full fixed-target refresh, conditional hot reload, canonical docking or Nara GPU/View
+adoption. No engine UI default follows.
+
+The first fresh offline fixture resolution selected unrelated newer compatible packages.
+Reusing the maintained dependency choices, then letting Cargo prune and independently resolve
+the standalone fixture, retains its own lockfile with no changed shared package versions.
+Unfiltered offline metadata additionally asks for an uncached foreign-platform package and
+fails; locked Windows-filtered metadata passes without network access. This is a dependency
+resolution record, not foreign-target compilation or execution.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:

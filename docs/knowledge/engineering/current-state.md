@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-08T08:39:09+08:00
+timestamp: 2026-11-08T10:54:00+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -18,6 +18,22 @@ verified_by:
 
 # Current State
 
+- The official additive test-support successor is implemented at
+  `c6ffb32bd1499c9e8fb46783a3d1a4de626707a0`, after
+  `7c7a1411009a07afbcbd70340256adf55161491b`. Runtime queries follow each executor, while
+  build-time environment/feature selection independently controls entity-handle tracking.
+  Complete util passes 116/116 after the old downstream home-directory regression fails.
+  Two reproduced inherited release-diagnostic defects have owning corrections; the default
+  and explicitly tracked Windows View trajectories pass actual mixed-context identity, pixels
+  and exact release. Focused Core/scheduler/public 130 and the complete independent mode matrix
+  pass. Complete framework runs 1,917/1,918; the sole existing mouse-leave fixture failure has
+  separately reviewed convergence/observation correction `2daf8412170540f7e2e586687bc25d5eadf4f2fa`.
+  Selected native 2/2 and complete Windows 224/224 then pass, preserving four interactive skips.
+  The initial extra-event source remains unproven. Components/docking/Canvas pass 2,966/2,966
+  with tracking enabled. Ordinary enabled/disabled 62/47, locked framework/both-consumer checks,
+  correctness Clippy, actual Windows Rust 1.92, production native/wasm and all three format
+  checks pass. Existing static gates pass. All seven implementation/review threads are closed.
+  Conditional hot reload, numeric costs, full refresh and engine adoption remain open.
 - The complete benchmark context/measurement successor is implemented at
   `5f3a99fad9284c17a8eaac508ab8b4f47018be44`, after
   `916c7cb2d2fffcaa95199598655b5cef97fb9bda`. It retains the official independent measurement
@@ -32,8 +48,8 @@ verified_by:
   actual Windows Rust 1.92, stable/nightly production wasm and both formatting checks pass. Existing owning records
   distinguish reproduced inherited corrections from fork candidate/submission and terminal-quit
   adaptations. This does not complete the fixed-target refresh or select an engine UI default.
-  Official additive test support/leak selection is an explicit complete successor before
-  conditional hot reload; excluding test instrumentation from benchmarks does not implement it.
+  The additive test-support/leak-selection mechanism is qualified by the separate successor
+  above; excluding test instrumentation from benchmarks alone did not implement it.
 - Authoritative development workspace: `F:/SourceCodes/Rust/open-gpui`, on
   `optimize/docking-graph-transaction`. The inspected starting revision was
   `89cb76ba1d59904d5c670f770aa8e30fe0346178`, with a clean initial worktree.
@@ -575,13 +591,13 @@ historical scope and is not current branch or CI qualification.
 
 # Next Action
 
-- Continue the official
-  [additive test-support and leak-detection successor](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#additive-test-support-and-leak-detection-successor),
-  then [conditional hot reload](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#conditional-hot-reload-successor).
-  Reuse the qualified threaded benchmark/measurement owners. Keep per-executor runtime detection
-  distinct from a process-level test hint, explicitly enable leak tracking for its acceptance,
-  and preserve ordinary native behavior. Hot reload needs a real stateful edit/build/apply/output
-  consumer, beyond feature compilation or websocket filtering.
+- Continue official
+  [conditional hot reload](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#conditional-hot-reload-successor).
+  Reuse the qualified benchmark and additive-test-support owners. Reconcile the complete
+  debug-native transport/App/View boundaries and pinned dependency/build-driver requirements.
+  Acceptance needs a real stateful edit/build/apply/output consumer, beyond feature compilation
+  or websocket filtering. Preserve ordinary/release feature exclusion and the declared compiler
+  floor unless an actual prerequisite requires an explicit change.
 - Apply the maintenance skill's official-baseline rule through existing owners. Preserve
   qualified fork admission, completed-action observation, source/geometry validity, exact native
   leases, accepted cache publication and App/post-borrow command authority while reconciling
