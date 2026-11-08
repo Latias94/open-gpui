@@ -251,6 +251,12 @@ enum NativeWindowRetirementState {
     AwaitingNativeTerminal,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NativeWindowTerminalObservation {
+    Observed,
+    Settled,
+}
+
 struct NativeWindowRetirementBarrier {
     state: NativeWindowRetirementState,
     presentation_shutdown: PreparedPlatformPresentationShutdown,
@@ -614,7 +620,7 @@ pub struct AppCell {
     pointer_capture_release_retries: RefCell<VecDeque<NativePointerCaptureRelease>>,
     native_window_retirements: RefCell<HashMap<WindowId, NativeWindowRetirementBarrier>>,
     native_window_retirement_dependencies: RefCell<HashMap<WindowId, HashSet<WindowId>>>,
-    observed_native_window_terminals: RefCell<HashSet<WindowId>>,
+    observed_native_window_terminals: RefCell<HashMap<WindowId, NativeWindowTerminalObservation>>,
     next_shutdown_generation: Cell<u64>,
     shutdown_fence: RefCell<Option<NativeShutdownFence>>,
     shutdown_critical: RefCell<NativeShutdownCriticalState>,
@@ -653,7 +659,7 @@ impl AppCell {
             pointer_capture_release_retries: RefCell::new(VecDeque::new()),
             native_window_retirements: RefCell::new(HashMap::new()),
             native_window_retirement_dependencies: RefCell::new(HashMap::new()),
-            observed_native_window_terminals: RefCell::new(HashSet::new()),
+            observed_native_window_terminals: RefCell::new(HashMap::new()),
             next_shutdown_generation: Cell::new(0),
             shutdown_fence: RefCell::new(None),
             shutdown_critical: RefCell::new(NativeShutdownCriticalState::default()),
@@ -835,7 +841,7 @@ impl AppCell {
     fn native_window_terminal_was_observed(&self, window_id: WindowId) -> bool {
         self.observed_native_window_terminals
             .borrow()
-            .contains(&window_id)
+            .contains_key(&window_id)
     }
 
     fn enqueue_native_captured_drag_release_completion(
@@ -1244,7 +1250,7 @@ impl AppCell {
         let observed = self.observed_native_window_terminals.borrow();
         let dependencies = dependencies
             .into_iter()
-            .filter(|dependency| !observed.contains(dependency))
+            .filter(|dependency| !observed.contains_key(dependency))
             .collect::<HashSet<_>>();
         drop(observed);
         for dependency in dependencies.iter().copied() {
@@ -1489,7 +1495,8 @@ impl AppCell {
         self.close_native_window_activation_target(window_id);
         self.observed_native_window_terminals
             .borrow_mut()
-            .insert(window_id);
+            .entry(window_id)
+            .or_insert(NativeWindowTerminalObservation::Observed);
         self.complete_native_pointer_capture_releases_for_native_window_terminal(window_id);
         let terminal = self
             .native_window_retirements
@@ -1505,6 +1512,9 @@ impl AppCell {
                 self.native_window_retirements
                     .borrow_mut()
                     .remove(&window_id);
+                self.observed_native_window_terminals
+                    .borrow_mut()
+                    .insert(window_id, NativeWindowTerminalObservation::Settled);
             }
             Some((false, snapshot)) if snapshot.protocol_violation() => {
                 log::error!(
@@ -1523,6 +1533,11 @@ impl AppCell {
                     snapshot.generation(),
                 );
             }
+            None if self
+                .observed_native_window_terminals
+                .borrow()
+                .get(&window_id)
+                == Some(&NativeWindowTerminalObservation::Settled) => {}
             None => {
                 log::error!(
                     "native window terminal was observed without a registered presentation-shutdown authority for window {:?}",
@@ -4021,6 +4036,9 @@ impl Drop for AppRefMut<'_> {
         }
     }
 }
+
+#[cfg(test)]
+mod native_terminal_tests;
 
 #[cfg(test)]
 mod tests {
