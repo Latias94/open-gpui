@@ -4891,6 +4891,182 @@ decoding, numeric cost distributions, complete fixed-target refresh, canonical d
 Nara GPU/View adoption remain open. No build-time or memory speedup is claimed from the
 upstream measurements.
 
+## WGPU Dependency, Shaders And WebGL
+
+The November 9 successor starts from maintained revision
+`eebfbd2241e9da03125cc86353ee67b31de5131d` against the unchanged fixed Zed target.
+Its complete implementation is committed at `38d3041acab90cc01cbc9984a8b738a8b2c3a194`.
+Official WebGL `4601ead416`, feature cleanup `d544470d1d`, WGPU update `402675e805`
+and reconfiguration follow-up `24a2823456` form the coherent renderer unit. The target
+pins upstream gfx-rs WGPU and matching Naga to
+`cddb2f5d80dc0009b2ef6767635140cacf90a007`. It contains Vulkan surface-texture teardown
+`3b3506ea31154edc04de64debda0e780cba2639c` and the wasm wait-timeout correction at that pin.
+Registry WGPU 30.0.0 in the framework and 30.0.1 in the ordinary consumer are distinct
+dependency sources, not proof of those fixes.
+
+The pinned dependency declares Rust 1.93. Current framework/consumer manifests and the
+minimum-compiler CI job explicitly advance to that floor. The official toolchain action's
+`1.93.0` ref is verified read-only at `48b64ba94bc1a6fe819fd9afc0799a7647efdc65`.
+Earlier compiler-floor results retain their original source revisions; the new source still
+requires its own actual compiler qualification. Nara already declares Rust 1.95, but its
+separate registry WGPU 30.0.1 device identity remains an engine-integration gap.
+
+Initial resolution stops at locked cfg_aliases 0.2.1 versus Naga's required 0.2.2, then at
+the pinned dependency's minimum Web binding SDK. Targeted unlocks resolve the required
+WGPU/Naga closure with cfg_aliases 0.2.2, bit-set/bit-vec, glow and the binding family.
+Root/smoke bindings resolve js-sys/web-sys 0.3.107 and wasm-bindgen 0.2.130; the ordinary
+consumer already had that binding family. The unrelated test-support and hot-reload
+lockfiles retain their prior package selections. No general dependency update is used.
+
+The new ordinary `vulkan_surface` target uses application-owned public WGPU types and an
+owning Win32 HWND/class fixture. Both tests require a real Vulkan adapter and are explicitly
+ignored in generic runs. One drops a surface while its acquired texture remains live; the
+other submits a real GPU clear before surface Drop and waits afterward. It does not assume
+a minimum GPU execution time or qualify physical device loss.
+
+With the fixed Git dependency, both pass on Windows, NVIDIA GeForce RTX 4090, driver 621.14
+(`333ecc6f-5354-4d4a-9991-90856154cc69`). Temporarily selecting the earlier application
+registry pin reproduces both failures (`c81a5977-3546-4d7f-a4c3-1eda127817b8`): the first
+panic is the exact `SwapchainAcquireSemaphore` still-in-use assertion in wgpu-hal 30.0.1.
+A subsequent cleanup panic aborts each test process. Windows reports fast-fail code
+0xc0000409; that generic exit description is not evidence of a native buffer overflow.
+The tests do not catch or suppress either panic.
+
+Restoring the declared fixed revision passes both unchanged tests again
+(`fa8e2e62-dbd6-43cf-886f-451ea2d94435`), with actual Vulkan adapter output retained.
+The framework pin stays unchanged throughout the application-source control. These runs
+compile the ordinary native Core/Windows consumer and direct WGPU dependency; they do not
+compile the still-in-progress GPUI WGPU renderer or Web backend and cannot qualify its shaders.
+Validation scopes and uncaptured-error checks remain active; installed native Vulkan
+validation-layer coverage has not been separately established.
+
+The ordinary native Vulkan target then passes actual Rust 1.93.0 locked compilation.
+Native production WGPU/Web libraries pass Rust 1.95 all-feature checking, and stable production
+WGPU/Web/platform libraries pass wasm32-unknown-unknown checking with optional features disabled.
+The complete renderer/runtime/test/browser and compiler-floor matrix still follows; these
+production checks compile neither the new GPU regressions nor the complete browser consumer.
+
+The independently locked ordinary renderer consumer passes its actual application-owned
+device/queue, upload refusal/retry, atlas lease and final wrapper release trajectory
+(`e7485737-1edd-4efe-ad39-e0c8bb230d35`, 1/1). Its initial test compilation used an unavailable
+`InstanceDescriptor::default`; the correction uses the pinned dependency's public
+`new_without_display_handle` constructor without changing the runtime assertions.
+
+Focused matching-Naga and actual headless GPU controls pass 11/11
+(`0578953d-80a0-47ad-9de5-e3f4508186a1`). These include full-image storage/packed equivalence,
+five-texel instance rows with 184-byte Quads, two-texel clip rows with three-texel clip records,
+out-of-bounds refusal before mutation and late path allocation refusal after a visible Quad.
+The latter preserves previous pixels and accepted-draw count, then retries the same Scene
+successfully after capacity restoration for both transports. Empty resource-write flushes and
+readback copies are allowed; the assertions do not confuse those submissions with an accepted
+draw. Running the packed shader on the native backend does not by itself qualify WebGL.
+
+The browser driver's bounded policy/coordinate/PNG-reference tests pass 14/14
+(`4ee24518-841a-4578-bafb-647a97d1fe49`). The expanded ordinary smoke consumer first requires
+only workspace package-edge lock refresh: offline workspace update locks zero new versions.
+Its first compilation then rejects private `Pixels.0` reads; conversion now uses public
+`f32::from`. Actual browser execution and the corrected complete fixture compilation follow.
+
+Trunk builds the complete fixture and installs its matching wasm-bindgen 0.2.130 without
+replacing the global CLI. The first actual Edge run passes Auto/WebGPU input, activation and
+both 800x600 and 960x720 PNG checks, but forced WebGL refuses the unchanged
+`force_fallback_adapter=true` request: the pinned backend reports no GL fallback adapters.
+The driver now makes GL success cases explicitly request `software=false` and separately
+asserts that the original software-only request refuses without launching an App window or
+retaining a DOM canvas. Production continues forwarding the requested adapter policy.
+
+Actual GL then passes the input/capture/docking/activation trajectory but fails the unchanged
+renderer samples and text coverage. Captured diagnostics identify the fork's `SurfaceParams`:
+replacing the official 16-byte content mask with the 24-byte exact clip envelope made its
+uniform size 40 bytes, violating WebGL's complete 16-byte binding requirement. This is a
+fork integration defect, not evidence of a defect in the official 32-byte parameter layout.
+Rust now reserves 48 bytes and WGSL reserves 32 bytes for the nested clip member. An initial
+explicit trailing WGSL field also violates nested-uniform member spacing; matching-Naga
+controls reproduce all three composed-shader failures
+(`621ffedb-cdae-4a9f-83d0-d3eea9e8f22f`) before the member-size correction. The new Naga
+reflection control checks all uniform struct spans and exact Rust/Surface shader size.
+Native and browser qualification is repeated after this correction.
+
+Matching-Naga, packed/native image equivalence, cross-row decoding and late refusal/retry
+then pass 12/12 (`32a6e747-0dc9-4130-b7ae-256fc9e3b521`). The actual browser matrix also passes
+with the corrected uniform: forced GL, Auto WebGPU, forced WebGPU and Auto GL under an explicit
+`navigator.gpu` unavailability control. Each rendering case passes all 22 fixed samples at
+800x600 and 960x720, including the last of 16,384 Quads, nested asymmetric clips, nonuniform
+transforms, alpha layering, image and path. Text coverage measures 357 bright pixels for
+WebGPU and 532 for GL, with the same 169x16 ink bounds; identical antialiasing bytes across
+backends are not required. Input/focus/capture, docking and activation assertions stay intact.
+
+The driver checks one real Dock primary and one unique connected DOM canvas, including removal
+of Auto's failed detached candidate. It also verifies forced WebGPU refusal under that control
+and the software-only GL refusal, rather than accepting another backend. Bounded independent
+review identifies a negative-control gap: final candidate checks must also exclude attempts at
+the other backend and validate the requested policy/control flags. Those checks are added and
+source review closes the finding; the final driver rebuild and browser repeat follow.
+This executes installed Edge 157.0.4341.42 at DPR 1 on Windows. It does not prove browser
+context/device-loss recovery,
+fractional/dynamic DPI, a native visible frame receipt, general GPU selection or performance.
+
+The final complete WGPU library and all public integration binaries pass 123/123
+(`2ad808a7-11d5-4143-812f-20849b48cf05`), including reflected surface member offsets, all shader
+combinations, actual GPU atlas/clips/transforms/path/growth/refusal controls, image loading,
+headless failure admission and text/layout reconstruction. No tests are skipped in that run.
+
+Native configure-once source `e20d19d32f25734616243f15b7bfecefc633b8d7` is adapted through the
+existing surface/context owner. The new independently locked ordinary public renderer
+trajectory starts with a real HWND surface and zero requested drawable size, initializes its
+context through adapter
+configuration, resumes to a nonempty submitted Quad, shares that exact device/queue with a
+second surface and suspends/resumes it. Both exact shutdown tickets quiesce before HWND
+destruction, with error scopes/observers and bounded GPU polls. The HWND retains a nonzero
+client area; the zero-size control targets the renderer request and its deferred state.
+It passes alongside the two
+dependency lifetime controls, 3/3 (`b43fa846-ec2d-43b6-b7cd-d941cdedf3ee`), on the same actual
+RTX 4090/Vulkan adapter. It measures neither configuration-call count nor compositor pixels,
+hybrid-GPU selection or physical device loss. It adds no native window owner to the framework.
+
+The complete UI core/components/docking/Canvas cohort passes 2,966/2,966
+(`9e44c7ee-86e4-491d-a747-da83227ad331`). The ordinary independently locked consumer passes
+65/65 with all features (`57604b4d-852e-48a5-b0e2-e2c9211ed33c`), retaining the three explicitly
+ignored native Vulkan cases executed separately above, and 48/48 with optional features
+disabled (`383b9016-b480-4ced-a2e8-5ecdeac925ef`). Locked Rust 1.95 workspace all-target and
+independent all-target/all-feature checks pass, as does affected Core/WGPU/Windows correctness
+Clippy. Existing warning-level findings are retained.
+
+Actual Rust 1.93.0 locked checks pass for the selected framework/native packages with all
+targets/features, the ordinary consumer with all targets/features, the independently locked
+test-support consumer with all targets/features and the hot-reload consumer with all targets.
+The separate hot-reload panel also compiles. This establishes the declared dependency-driven
+floor on the executed Windows target, rather than substituting a newer compiler or qualifying
+foreign targets. Earlier Rust 1.92 records remain revision-scoped.
+
+The rebuilt final driver passes its 14 policy/coordinate/reference tests
+(`1a7250d5-38fe-483e-ac0c-25e6e632d04a`) and the complete real browser matrix again, including
+the strengthened forced-backend attempt/policy/control checks. All four rendering cases pass
+22/22 samples at both sizes, with text coverage and all original interaction controls.
+The required run uses no `--allow-unavailable` skip. Browser and static-server processes are
+retired by the existing driver.
+
+Stable Rust 1.95 production wasm checks pass with profiling disabled and enabled. The existing
+nightly/build-std shared-memory configuration also compiles the new WGPU/Web path with profiling
+enabled; this is compilation, not a multithreaded browser execution claim. Native and production
+wasm correctness Clippy pass. Root, ordinary-consumer and smoke-consumer formatting checks pass.
+
+Resolved Windows x64, Linux x64, macOS arm64 and wasm graphs use the one exact Git WGPU source.
+Linux/FreeBSD dependency declarations retain the official explicit backend set; other targets
+retain defaults and wasm adds WebGL. These feature graphs do not establish foreign compilation
+or native execution. The WGPU crate has no direct image edge with optional support disabled;
+enabling test support restores that optional edge. Both WGPU and dev Naga resolve the same
+source revision, while unrelated test-support/hot-reload lock selections remain unchanged.
+
+Workflow YAML, whitespace and the existing import-boundary, public-API, document-link and
+release-document gates pass. Bounded independent source review closes the driver finding and
+finds no remaining confirmed P1/P2 in the native configuration/sharing/retirement scope.
+All six implementation/review threads are closed. This completes the scoped renderer unit,
+not the fixed-target refresh. Other native/browser environments, physical device/context loss,
+fractional/dynamic DPI, numeric costs, the existing foreground-restoration gap, canonical
+docking and Nara shared-GPU/View adoption remain open. No engine execution owner or UI default
+is selected by these framework results.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:
@@ -5061,7 +5237,7 @@ Dependency health is enforced through:
 cargo run -p xtask -- dependency-health
 ```
 
-The command checks that every workspace package declares the workspace MSRV, that the declared MSRV is at least the maximum `rust-version` in the resolved dependency graph, that duplicate registry crate versions are explicitly allowlisted, and that `cargo audit --json` reports no unignored vulnerabilities. The current MSRV is Rust 1.92 because the Linux platform dependency chain reaches `oo7 0.6.0`; `wgpu 30`, `naga 30`, `resvg 0.46`, and `usvg 0.46` currently require Rust 1.87. The dependency health workflow runs this command on Linux, and the release workflow requires a successful `dependency-health.yml` run for the release commit before publishing.
+The command checks that every workspace package declares the workspace MSRV, that the declared MSRV is at least the maximum `rust-version` in the resolved dependency graph, that duplicate registry crate versions are explicitly allowlisted, and that `cargo audit --json` reports no unignored vulnerabilities. The current declared MSRV is Rust 1.93 for the pinned upstream WGPU/Naga correction; the prior Linux platform floor was Rust 1.92 through `oo7 0.6.0`. The [WGPU qualification](#wgpu-dependency-shaders-and-webgl) distinguishes completed compiler checks from the ongoing renderer/backend matrix. The dependency health workflow runs this command on Linux, and the release workflow requires a successful `dependency-health.yml` run for the release commit before publishing.
 
 For the 2026-07 runtime UI hardening slice, the Web dispatcher exposes a typed
 `WebDispatcherMode` through `WebDispatcher::mode()` and `WebPlatform::dispatcher_mode()`. Stable

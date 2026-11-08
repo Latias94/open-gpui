@@ -1695,6 +1695,73 @@ source review closes without P1/P2 findings. Remaining renderer/API/platform clo
 native foreground restoration, foreign execution, numerical costs, canonical docking and
 Nara GPU/View adoption retain separate scope.
 
+### WGPU Dependency, Shader And WebGL Successor
+
+After `eebfbd2241e9da03125cc86353ee67b31de5131d`, reconcile the complete official
+WebGL backend `4601ead416`, dependency-feature cleanup `d544470d1d3770f0024651dbf121525564a2657c`,
+WGPU correction `402675e8058b6b21771be2004fff0977e3b0a79e` and WebGL reconfiguration
+follow-up `24a2823456f16e36bf32df510fb5c43fee7a2565`, including native configure-once
+`e20d19d32f25734616243f15b7bfecefc633b8d7`, against the unchanged fixed target.
+The target pins upstream gfx-rs WGPU/Naga to
+`cddb2f5d80dc0009b2ef6767635140cacf90a007`, including Vulkan live-surface-texture teardown
+`3b3506ea31154edc04de64debda0e780cba2639c` and the wasm wait-timeout correction at that pin.
+At initial inspection the framework resolves registry WGPU 30.0.0; the ordinary consumer
+selects 30.0.1.
+Neither registry selection proves those corrections.
+
+Adopt the official pinned upstream dependency as one coherent source, including matching
+shader validation, target backend features and image's optional WGPU edge. Its declared
+minimum compiler is Rust 1.93. Explicitly update the maintained framework floor, current
+consumer declarations, CI and migration guidance, then qualify the actual minimum compiler.
+Earlier Rust 1.92 records retain their original revisions and scope. Do not edit the upstream
+compiler contract or silently substitute a partial patch. Nara already declares Rust 1.95;
+its separate registry WGPU source identity remains an engine-integration decision to qualify
+through the actual shared-GPU consumer rather than an implied compatible device.
+
+Complete the official storage/WebGL shader split and packed-data WebGL rendering path.
+Preserve fork exact clip ancestry, local transforms, primitive ABI, source validity, atlas
+leases and complete-frame admission. Added clip/transform data needs an actual packed
+representation and shader decoding; dropping it to match official record strides is not a
+replacement. Capacity exhaustion refuses the whole frame through the existing owner.
+Native storage rendering, dual-source capability selection, path compositing, texture-binding
+reuse and headless consumers retain complete behavior. Reuse current surface/recovery and
+submission owners; dependency fixes do not replace the fork's exact native lifetime contract.
+
+Verify ordinary default/optional dependency graphs across Windows, Linux, macOS and wasm,
+including native backend selection and real WebGL activation. Port official shader validation
+controls using the renderer's complete composed sources and the matching Naga revision.
+Exercise existing headless/native pixels, atlas lifetime/refusal and surface/recovery controls
+under the pinned dependency. Add an independently locked ordinary renderer consumer that
+actually uses the backend's public types; a direct Cargo version pin alone is not execution.
+Qualify the actual browser WebGL rendering/fallback trajectory where the available browser
+permits it, preserving existing public input/retirement controls. Keep forced backend
+unavailability, software adapters, physical device-loss coverage and foreign-native execution
+explicit. Production wasm compilation cannot substitute for a browser-rendering claim.
+
+Run focused regressions before affected runtime/component consumers, locked checks, correctness
+Clippy, actual Rust 1.93 checks, formatting and existing import/API/document/release gates.
+Record actual dependency provenance, compiler migration, API/source-identity changes, executed
+backend scope and remaining gaps. This complete renderer unit remains open until those
+mechanisms and consumers are qualified; optionalizing one dependency does not close it.
+
+Implemented at `38d3041acab90cc01cbc9984a8b738a8b2c3a194`. The
+[qualification](../verification.md#wgpu-dependency-shaders-and-webgl) records the actual
+registry Vulkan failure/restored-source controls and the fork-only downlevel uniform
+alignment correction. Complete WGPU/public 123, real native Vulkan/renderer 3,
+components/docking/Canvas 2,966 and independent enabled/disabled 65/48 pass. Native context
+initialization, exact sharing and shutdown remain in the existing owners; zero-size evidence
+targets the renderer request rather than a physically zero-size HWND.
+
+Final actual Edge WebGPU/WebGL/Auto-fallback cases pass 22 fixed samples at both sizes,
+text, resize and complete interaction controls. Forced-policy failures remain explicit,
+and independent review closes their negative-control gap. Locked checks, native/wasm
+correctness Clippy, actual Windows Rust 1.93 framework and three independent-consumer checks,
+stable production wasm profiling off/on, existing nightly shared-memory compilation,
+formatting and static gates pass. Four-target graphs preserve official feature policy and
+the optional image edge. Foreign execution, physical loss, DPI, numeric costs, existing
+native foreground restoration, complete refresh, canonical docking and engine adoption
+retain their separate scope. This scoped unit is complete; the parent plan remains active.
+
 ## Maintained Baseline Before Engine Adaptation
 
 The [conditional hot-reload qualification](../verification.md#conditional-native-hot-reload)

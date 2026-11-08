@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-09T02:37:25+08:00
+timestamp: 2026-11-09T07:20:35+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -18,6 +18,22 @@ verified_by:
 
 # Current State
 
+- The complete WGPU dependency/shader/WebGL successor is implemented at
+  `38d3041acab90cc01cbc9984a8b738a8b2c3a194`, using official WGPU/Naga
+  `cddb2f5d80dc0009b2ef6767635140cacf90a007` and an explicitly qualified Windows Rust 1.93
+  floor. Registry Vulkan controls reproduce both semaphore assertion/cleanup aborts; the
+  restored fixed source passes unchanged. The fork's 40-byte exact-clip surface uniform is
+  corrected to 48 bytes without changing the shared 24-byte clip ABI. Complete WGPU/public
+  123, actual native Vulkan/renderer 3, components/docking/Canvas 2,966 and independent
+  enabled/disabled 65/48 pass. Final actual Edge WebGPU/WebGL/Auto fallback pass both PNG
+  sizes, 22 fixed samples each, text, resize and original input/capture/docking/activation.
+  Forced backend and software-policy failures remain explicit. Locked checks, native/wasm
+  correctness Clippy, actual minimum-compiler framework/three-consumer checks, production
+  wasm profiling off/on, existing nightly shared-memory compilation, four-target graphs,
+  formatting and static gates pass. Both bounded reviews close, all six threads close and
+  the [record](../../verification.md#wgpu-dependency-shaders-and-webgl) retains actual runs,
+  corrections and scopes. Foreign execution, physical loss, general DPI, numeric costs,
+  existing native foreground restoration, full refresh and engine adoption remain open.
 - The official image dependency policy is implemented at
   `b4355a36824f0709f1b73f7480ec88a884a489bc`. Fourteen formats and Rayon remain enabled;
   the default AVIF encoder is excluded, and ordinary applications can restore it through
@@ -652,8 +668,9 @@ historical scope and is not current branch or CI qualification.
 
 # Next Action
 
-- Continue remaining renderer feature-policy, API and platform reconciliation after the
-  [image feature-policy qualification](../../verification.md#image-dependency-feature-policy).
+- Continue remaining renderer/API/platform reconciliation after the complete
+  [WGPU dependency/shader/WebGL qualification](../../verification.md#wgpu-dependency-shaders-and-webgl)
+  and [image feature-policy qualification](../../verification.md#image-dependency-feature-policy).
   Preserve ordinary downstream extension, retained formats, the declared compiler floor
   and independently locked consumers through existing owners.
   Keep the remaining native foreground-restoration failure visible; its real stateful
@@ -667,7 +684,7 @@ historical scope and is not current branch or CI qualification.
   avoid replacing the fork or reapplying completed units.
 - Full fixed-target refresh, the remaining native focus gate, numerical budgets and remaining
   renderer/API/platform differences stay open. Qualify prepared CoreText selection/cascade
-  on macOS, foreign native/browser execution and touchpad scroll/inertia/pinch/response timing
+  on macOS, other native/browser environments and touchpad scroll/inertia/pinch/response timing
   on their actual platforms. Existing getters, HWND/IME regressions and source inspection do not
   supply that execution or performance evidence. DirectWrite existing-family and installed-
   fallback results retain their separate recorded scope.
