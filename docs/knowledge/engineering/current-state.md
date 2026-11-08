@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-08T10:54:00+08:00
+timestamp: 2026-11-08T16:30:00+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -18,6 +18,25 @@ verified_by:
 
 # Current State
 
+- Official conditional native hot reload is implemented at
+  `ad70ac9230892ca4e4d47840b93215596b8c60e0` through existing App/View owners.
+  The independently locked real compiler/patch consumer changes typed cached, startup-stored
+  erased and stateful component render bodies while retaining runtime-mutated state, identities
+  and initialization counts. Final DX11 generation 3-to-4 pixels and normal retirement/quit/exit
+  pass, with one 3,419.7 ms observation. All five rejection/disconnect controls pass an unchanged
+  rerun; the preceding unexplained extra-refresh failure remains recorded. Successful execution
+  uses an identified upstream dx x64 code-generation backport, separate from GPUI provenance.
+  A reproduced fork-only duplicate terminal diagnostic has an independently reviewed AppCell
+  correction `28eebf0e8dcd0c8a71f1064bf9f66052b5d3a55c`; three owner tests and ordinary
+  parallel libtest pass. Final affected lifecycle/Windows runs 310/313, then two of the three
+  failures pass unchanged. One foreground-restoration
+  gate still fails with an external game foreground; no final complete all-green native run is
+  claimed. Workspace all-target compilation, affected correctness Clippy, hot-reload-disabled
+  owner/public 68, independent enabled/disabled 62/47 and actual Windows Rust 1.92 checks pass.
+  Feature-selected non-debug Core excludes the hot-reload cfg; stable production wasm compiles
+  with profiling off/on. All four workspace formatting checks and existing import/API/document/
+  release scans pass; all thirteen implementation/review threads are closed. See the
+  [qualification](../../verification.md#conditional-native-hot-reload) for actual scope.
 - The official additive test-support successor is implemented at
   `c6ffb32bd1499c9e8fb46783a3d1a4de626707a0`, after
   `7c7a1411009a07afbcbd70340256adf55161491b`. Runtime queries follow each executor, while
@@ -33,7 +52,8 @@ verified_by:
   with tracking enabled. Ordinary enabled/disabled 62/47, locked framework/both-consumer checks,
   correctness Clippy, actual Windows Rust 1.92, production native/wasm and all three format
   checks pass. Existing static gates pass. All seven implementation/review threads are closed.
-  Conditional hot reload, numeric costs, full refresh and engine adoption remain open.
+  Conditional hot reload follows in the separate successor above. Numeric costs, full refresh
+  and engine adoption remain open.
 - The complete benchmark context/measurement successor is implemented at
   `5f3a99fad9284c17a8eaac508ab8b4f47018be44`, after
   `916c7cb2d2fffcaa95199598655b5cef97fb9bda`. It retains the official independent measurement
@@ -591,19 +611,19 @@ historical scope and is not current branch or CI qualification.
 
 # Next Action
 
-- Continue official
-  [conditional hot reload](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#conditional-hot-reload-successor).
-  Reuse the qualified benchmark and additive-test-support owners. Reconcile the complete
-  debug-native transport/App/View boundaries and pinned dependency/build-driver requirements.
-  Acceptance needs a real stateful edit/build/apply/output consumer, beyond feature compilation
-  or websocket filtering. Preserve ordinary/release feature exclusion and the declared compiler
-  floor unless an actual prerequisite requires an explicit change.
+- Continue atlas/renderer lifetime and remaining API/image-feature/platform reconciliation
+  through existing owners after the
+  [conditional hot-reload successor](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#conditional-hot-reload-successor).
+  Keep the remaining native foreground-restoration failure visible; its real stateful
+  edit/build/apply/output consumer has passed. Preserve ordinary/release feature exclusion,
+  the declared compiler floor and the distinct GPUI/fork/external-driver source provenance.
+  Successful body patching does not qualify engine adoption.
 - Apply the maintenance skill's official-baseline rule through existing owners. Preserve
   qualified fork admission, completed-action observation, source/geometry validity, exact native
   leases, accepted cache publication and App/post-borrow command authority while reconciling
   the remaining mechanisms. Keep the recorded notification and publisher/backlog limits visible;
   avoid replacing the fork or reapplying completed units.
-- Full fixed-target refresh, conditional hot reload, numerical budgets and remaining
+- Full fixed-target refresh, the remaining native focus gate, numerical budgets and remaining
   image-feature/API/platform differences stay open. Qualify prepared CoreText selection/cascade
   on macOS, foreign native/browser execution and touchpad scroll/inertia/pinch/response timing
   on their actual platforms. Existing getters, HWND/IME regressions and source inspection do not

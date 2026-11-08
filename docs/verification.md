@@ -4427,6 +4427,187 @@ Unfiltered offline metadata additionally asks for an uncached foreign-platform p
 fails; locked Windows-filtered metadata passes without network access. This is a dependency
 resolution record, not foreign-target compilation or execution.
 
+## Conditional Native Hot Reload
+
+The November 8 unit starts from `da1b1fdecbd5bb57a17e8898650cf5592958085b`, preserving
+official `670a779a5ed9e7161c97aa4f998d395c207d5631` through the fixed target
+`635026fabc38440fce5e1767d125026a17b12012`. Local feature implementation is
+`ad70ac9230892ca4e4d47840b93215596b8c60e0`; the separate fork terminal correction is
+`28eebf0e8dcd0c8a71f1064bf9f66052b5d3a55c`. Optional native debug build selection, per-App
+task ownership, the bounded sixteen-table transport, build/process filtering, foreground patch
+application, window refresh and both stored AnyView/common View render boundaries follow the
+official mechanism. The fork applies through existing `AsyncApp::update_when_available` so a
+native modal callback cannot replace code while its active App update still owns the borrow.
+No additional reload manager, render loop or engine owner is introduced.
+
+The initial locked enabled Core library check passes. Ten focused transport/owner/render
+regressions pass in `2b82e9ee-6d70-422f-8a4e-c44dfe9b3529`, including the original filtering
+and cached-state regressions, full-restart commands, malformed messages, refused handshakes,
+disconnects, receiver retirement, App borrow waiting, task cancellation and failed native library
+loads preserving state and refresh. These are not executable patch success evidence. Independent
+core review finds no confirmed P1/P2 defect; its live-borrow successful-patch coverage observation
+remains distinct from the actual compiler/runtime consumer.
+
+The independently locked [native consumer](../tests/fixtures/hot-reload-consumer/README.md)
+compiles using public native, rendering and entity APIs. It exercises a typed cached entity, a
+stored erased view, and a component with persistent keyed state in a separate workspace member.
+The isolated official Windows `dx` 0.7.10 executable reports `57d6794`; its published archive
+SHA-256 is `45eb4f87b7f86fdba8508ee7e0ef1f9e13cf8f2ffcc6a2d5858d0e8ea7dd1531`.
+The developer's installed 0.7.9 executable is unchanged. The first offline run fails before build
+because the independent closure lacks a cached package; a locked fetch supplies that closure.
+The next full dx build takes 412.90 seconds, but Windows loading fails with `0xc0000139`
+before the patch connection. Import/debugger inspection identifies `TaskDialogIndirect` with
+Common Controls 5.82: the fixture had disabled defaults without selecting `windows-manifest`.
+The corrected consumer explicitly enables the existing feature. This is a consumer configuration
+correction, not an official/fork hot-reload algorithm change. Actual edit/build/apply qualification
+is still in progress at this checkpoint.
+
+Independent acceptance review finds three P2 gaps in the initial fixture: state stays at its
+constructor values, success precedes actual process exit, and an already-exited dx parent can
+leave descendants alive. Corrections require an observed runtime state mutation before editing,
+same-process nonce/state continuity, observed quit and process exit before success, and scoped
+process custody through final cleanup. These findings do not weaken the original Submitted-frame,
+pixel, entity or release assertions. Final executions and review closure belong below after they
+actually complete.
+
+The enabled Core/WGPU/Windows/gallery libraries and selected public interfaces subsequently
+pass 1,823/1,823 with the four existing interactive skips
+(`f6182b6d-bcaa-48f2-9e52-a63645a44132`). The corrected real dx run starts a visible DX11
+window, observes constructor state at Submitted generation 2, then distinct runtime-mutated
+state at Submitted generation 3 with the same entities and exact row pixels. dx compiles the
+changed panel in 2,035 ms and GPUI reports patch application, but the immediate redraw exits
+with `0xc00000fd` stack overflow. No PATCHED frame is accepted by the driver and no successful
+result artifact is written. At that checkpoint the actual stack/codegen/jump-table cause remained
+under investigation; compile and load success alone do not close the executable patch requirement.
+
+Two debugger reproductions identify an external driver cause, preserving the original failure.
+The symbolized stack reaches the patched root render through the correct stored AnyView/common
+View boundaries and then faults in original `__chkstk`, without a repeated HotFn recursion cycle.
+Disassembly shows the patched render loading the normal frame size `0x3810` into EAX before
+calling dx's undefined-function stub. That stub replaces RAX with the original `__chkstk`
+address and jumps through it, corrupting the stack-probe argument. This matches upstream
+[Dioxus issue 5966](https://github.com/DioxusLabs/dioxus/issues/5966) and
+[fix 5967](https://github.com/DioxusLabs/dioxus/pull/5967), commit
+`14b4b767c8b661dffabe648bd07994e88ef57000`. The committed fixture backport adapts only that
+register-transparent x64 jump to the published CLI 0.7.10 source; no GPUI boundary is removed
+and no larger application stack is selected. A separately built driver and its binary hash
+must identify any subsequent acceptance result. This correction is outside the fixed Zed GPUI
+source comparison and is not represented as an unchanged released dx tool.
+
+The separately built CLI uses unchanged published source except that one backport, with
+`disable-telemetry`, Rust 1.95.0, development dependencies without debug information and
+level-one optimization on the CLI entry crate. The entirely unoptimized entry first exhausts
+its own main stack before launching the consumer; the entry optimization corrects that tool
+configuration without changing the application's profile or stack reserve. The qualified binary
+SHA-256 is `4fcb34ce830ffbb0c79556b846d873448664f260e56d8b01bd553d39172c2ae1`.
+
+Actual edit/build/apply/readback passes with that identified driver. At scale 1.5, native DX11
+observes constructor state, then root 41 and children 43/47/53 at accepted/Submitted generation 3.
+The panel member's compatible render-body edit compiles in 2,252 ms. Generation 4 contains all
+three updated colors/labels/recipe outputs, exact pixel values, the same process-start nonce,
+window and entity identities, and unchanged mutated counters and one initialization each.
+Normal retirement releases all three states once, records the quit callback and exits with code
+zero before the driver reports success. A prior attempt already produces the correct patched
+frame and exit zero but fails the stricter quit-record requirement: the fixture had omitted the
+existing public `App::shutdown` before platform quit. The corrected fixture completes shutdown
+explicitly. Observed edit-to-result is 3,419.234 ms including compilation, transport, redraw and
+100 ms sampling; this single run is not a latency distribution or performance budget.
+
+The same real base executable passes native wrong-build, wrong-PID, invalid-DLL, full-restart
+and graceful-disconnect controls. Its actual handshake identifies the build, process and ASLR
+anchor. All five live checkpoints retain generation 3, original pixels, entities and mutated
+state without observer notification/redraw. The invalid DLL reports one failed load and no
+successful application; the full-reload command reports restart required, and disconnect is
+observed. Normal retirement, shutdown/quit and process exit zero pass. Wrong-target silence has
+a protocol-pong plus 0.5-second settle bound; it is not an arbitrary-delay proof. The controlled
+WebSocket server uses optional test-only `websockets==16.0`, not a new production dependency.
+Those initial runs still emit the inherited native-terminal retirement diagnostic in both patched
+and unpatched paths. The separate fork-owned correction below reproduces and resolves it; those
+earlier runs alone do not qualify complete native custody.
+
+The separate fork-owned lifecycle correction is reproduced by
+`6b52efb8-5362-4385-8bd4-3e766eabc175`: two controls pass and the queued-Closed regression
+fails with the exact missing-authority diagnostic. Windows reports one physical destruction
+through both the retirement command result and the queued Closed event. The first successful
+ticket acknowledgement removes the barrier; the later event previously treated that success
+as a missing authority. Existing AppCell terminal bookkeeping now distinguishes Observed from
+Settled, marking only successful acknowledgements as Settled. Repeated settled reports remain
+idempotent while capture completion, dependency release and shutdown progression retain their
+existing owners. First unknown reports and quiescence violations still diagnose errors.
+All three controls pass in `3f96cf60-d90a-4da1-9583-771a0b1b8c4b`.
+
+Independent lifecycle review finds a P2 in the new test logger: restoring a process-global log
+level per TLS capture can race under ordinary parallel libtest. One-time logger/level selection
+and TLS-only capture cleanup correct it; the separate reviewer closes that finding, and actual
+ordinary `cargo test --test-threads=3` passes all three controls. Runtime review finds no P1/P2
+in its bounded scope.
+
+The real compiler/patch trajectory passes again after the lifecycle correction, now requiring
+the missing-authority diagnostic to be absent. It retains the same generation 3-to-4, mutated
+state, exact pixel, release/quit and exit-zero controls, with a 3,419.7 ms observed duration.
+The subsequent native failure attempt fails its unchanged generation assertion at full restart:
+root renders and accepted generation advance from 3 to 5 while model values and pixels remain
+unchanged. The source of those additional refreshes is unproven. An unchanged rerun using the
+same base executable and strict assertions passes all five failure checkpoints, retirement,
+shutdown/quit and exit zero without the missing-authority diagnostic. Preserve both results;
+the passing rerun does not explain the extra-refresh failure or establish isolation from
+uncontrolled desktop events. Final success artifacts are `target/hot-reload-i_en9jka/result.json`
+and `target/hot-reload-failures-eupmja5k/result.json`; these generated local observations are not
+source-controlled fixtures.
+
+After the terminal/logger correction, the affected lifecycle and complete Windows selection
+`002c688f-6567-41b8-a329-632259fbb56b` runs 313 cases: 310 pass and three fail. Native image
+animation and nonactivating first-show cases fail active/foreground assertions despite retaining
+their other reported controls. An unchanged selected rerun
+`3db9b830-603e-49df-b394-177c8f81fb30` passes both and still fails
+`rejected_activation_restores_a_non_click_activating_gpui_foreground_window`. Read-only desktop
+inspection identifies the external foreground HWND as the user's running Steam game. This
+supports a desktop-state limitation, not a source-correctness proof. The remaining activation
+gate is unqualified; no all-green final complete native run is claimed. The external process
+is left untouched, and no activation assertion or product behavior is weakened.
+
+The newly resolved dependency closure declares MIT, Apache-2.0 or Zlib licensing. Manifest
+compiler-floor declarations alone do not establish the real Rust 1.92 build. Final affected
+Core/WGPU/Windows all-target/all-feature compilation and the independently locked native consumer
+all-target check both pass on actual Windows Rust 1.92.0 after the lifecycle correction. Root
+lockfile comparison retains every existing package version and adds only seventeen packages.
+The native fixture resolves its own compatible choices rather than copying the root lock;
+its qualified temporary copy has the exact maintained fixture lockfile.
+
+Final hot-reload-disabled View/cache/lifecycle controls pass 68/68
+(`309e76d4-b5d0-447c-ad7d-de6f32f6edb5`). The ordinary independently locked consumer passes
+62/62 enabled (`55757ebd-8913-4f83-b7aa-e9968a0c3aff`) and 47/47 disabled
+(`c8d6d2f6-0993-4f83-a394-74b6cb0a2bc3`), preserving its separate value/type-only scopes.
+The root locked workspace all-target check and affected Core/WGPU/Windows all-target/all-feature
+correctness Clippy pass on Rust 1.95.0. Existing ordinary/test-support consumer checks and
+components/docking/Canvas 2,966/2,966 passed before the small terminal correction; affected
+owner, native consumer and compiler checks above cover that later change. Neither the earlier
+1,823-case run nor those earlier component results are presented as one final all-green
+complete acceptance run.
+
+Feature-selected native Core also compiles with package-local development debug assertions
+disabled. Actual compiler-artifact profile data confirms non-debug selection and the executed
+build script omits `gpui_hot_reload`. This qualifies the conditional boundary without claiming
+an optimized complete release application. Stable production Core/WGPU/Web compilation passes
+with `hot-reload` requested and profiling both off and on; native-only transport dependencies
+remain excluded. These are production compiler checks, not browser execution. Optional nightly
+shared-memory compilation is not rerun for this unit.
+
+All four workspace formatting checks pass: root, ordinary independent consumer, test-support
+consumer and the new native consumer. Workflow YAML, both Python driver syntax checks, staged
+whitespace and the existing import/public-API/document/release scans pass. All thirteen
+implementation/review threads are closed; their bounded reviews close the confirmed
+fixture/lifecycle P2 findings.
+Remote CI is not executed. The one remaining native foreground-restoration failure and the
+unexplained earlier extra-refresh observation retain the distinct scopes above.
+
+Source inspection identifies dx 0.7.10 workspace replay limitations for
+dev-dependency cycles, missing captures and foreign path dependencies. The fixture's separate
+panel is a member of its independent workspace; its success does not qualify editing all
+framework crates outside that workspace. Compatible render-body replacement does not provide
+arbitrary struct-layout migration, custom Element phase replacement, browser transport, foreign
+native execution, OS scanout, numerical latency budgets or a complete Nara Editor reload workflow.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:

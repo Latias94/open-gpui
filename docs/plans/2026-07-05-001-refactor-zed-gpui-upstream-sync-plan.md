@@ -1554,10 +1554,56 @@ pointers, retained state, exact accepted/submitted replacement, invalid or misma
 required full restart, disconnect and retirement. Preserve fork callback/candidate/lease authority
 at the patch boundary. Measure edit-to-visible latency only after that real compiler/runtime
 consumer passes; body patching does not establish arbitrary state-layout migration or a complete
-engine Editor reload workflow. This subsection is source-grounded execution planning, not hot
-reload implementation or qualification.
+engine Editor reload workflow. These source-grounded requirements preceded execution; the
+implementation and scoped qualification follow below.
+
+Execution begins from clean framework `da1b1fdecbd5bb57a17e8898650cf5592958085b` and
+Nara `37b3089aae4d6247ad3074f0e46fea3ece436fe9` on November 8. Retain the official mechanism
+as the baseline, placing fork adaptations in the existing App/View owners. The installed
+default `dx` is 0.7.9, so initial attempts use a separately downloaded official 0.7.10 executable
+with its published SHA-256 verified, without replacing the developer's installed tool. Keep
+the actual custom-panel consumer independently locked and run edits in a temporary fixture
+copy. Compile and execute through the real driver before recording successful patching;
+transport tests and refresh-only tests retain their narrower claims.
+
+The official mechanism is implemented at `ad70ac9230892ca4e4d47840b93215596b8c60e0`,
+with ten focused regressions and an independently locked native edit/build/apply consumer.
+Its typed cached Entity, startup-stored AnyView and
+stateful RenderOnce component retain mutated state, identities and initialization counts while
+generation 3 advances to generation 4 with the changed recipe values and actual DX11 pixels.
+The final observed duration is 3,419.7 ms in one run, including compilation and sampling; it is
+not a latency distribution. All five wrong-build/wrong-PID/invalid-DLL/full-restart/disconnect
+controls pass an unchanged rerun with normal retirement, shutdown/quit and process exit zero.
+The [qualification](../verification.md#conditional-native-hot-reload) preserves an earlier
+unexplained extra-refresh failure rather than attributing it to the passing rerun.
+
+The published dx 0.7.10 x64 tool corrupts the RAX stack-probe argument in an unresolved-function
+stub. Actual successful patching uses the narrowly backported upstream Dioxus fix, whose source
+patch and binary hash are recorded separately from GPUI's official implementation. The existing
+fork's duplicate native-terminal diagnostic is reproduced without a patch and corrected through
+AppCell's existing exact retirement authority at `28eebf0e8dcd0c8a71f1064bf9f66052b5d3a55c`.
+It is not an upstream GPUI defect. Three owning regressions and ordinary parallel libtest pass
+after independent review.
+
+The final affected lifecycle/Windows run passes 310 of 313 cases; an unchanged selected rerun
+passes two of the three failures. The remaining foreground-activation restoration case still
+fails while an external Steam game owns the foreground. That desktop observation is not a proof
+that the source has no defect. Preserve the failure, avoid changing activation semantics to
+accommodate it, and leave this native qualification gate open. The successful patch trajectory
+does not establish arbitrary state-layout migration, foreign native/browser execution, numerical
+budgets or a complete Nara Editor reload workflow.
 
 ## Maintained Baseline Before Engine Adaptation
+
+The [conditional hot-reload qualification](../verification.md#conditional-native-hot-reload)
+records the actual native compiler/patch/pixel/state consumer and rejection controls above.
+One existing native foreground-restoration gate remains unqualified. Continue atlas/renderer
+lifetime and remaining API/image-feature/platform reconciliation. Final hot-reload-disabled
+owners/public 68, ordinary independently locked enabled/disabled 62/47, locked workspace
+all-target compilation, correctness Clippy and actual Windows Rust 1.92 affected-framework/native
+consumer checks pass. Feature-selected non-debug Core excludes the reload cfg, and stable
+production wasm compiles with profiling off/on. Full refresh, measured costs, canonical docking
+and Nara GPU/View adoption remain open.
 
 The [additive test-support qualification](../verification.md#additive-test-support-and-explicit-leak-tracking)
 records local implementation `c6ffb32bd1499c9e8fb46783a3d1a4de626707a0` on November 8.
@@ -1565,8 +1611,8 @@ Complete official runtime queries, explicit handle instrumentation, real downstr
 and native debug capture policy reuse existing owners. Reproduced inherited corrections and
 the separately committed native fixture correction retain their source and executed evidence.
 The complete public/independent mode matrix and scoped runtime/native/component/compiler gates
-pass. Conditional hot reload is next; full refresh, measured costs, canonical docking and
-Nara GPU/View adoption remain open.
+pass. The conditional hot-reload successor above follows it; full refresh, measured costs,
+canonical docking and Nara GPU/View adoption remain open.
 
 The [complete benchmark qualification](../verification.md#complete-benchmark-context-and-measurements)
 records local implementation `5f3a99fad9284c17a8eaac508ab8b4f47018be44` on November 8.
