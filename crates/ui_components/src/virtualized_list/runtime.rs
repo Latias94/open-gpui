@@ -964,7 +964,7 @@ impl VirtualizedList {
 
     /// Requests a motion preference for active-descendant chrome.
     ///
-    /// Reduced motion from either this request or the active theme remains authoritative.
+    /// Reduced motion from this request, the active theme, or the App remains authoritative.
     pub fn motion_preference(mut self, motion_preference: MotionPreference) -> Self {
         self.motion_preference = Some(motion_preference);
         self
@@ -1136,8 +1136,11 @@ impl RenderOnce for VirtualizedList {
         let runtime_id = format!("virtualized-list:{}:runtime", self.id);
         let debug_id = self.id.to_string();
         let now = Instant::now();
-        let motion_preference =
-            ThemeResolver::virtualized_list_motion_preference(&theme, self.motion_preference);
+        let motion_preference = if cx.reduce_motion() {
+            MotionPreference::Reduced
+        } else {
+            ThemeResolver::virtualized_list_motion_preference(&theme, self.motion_preference)
+        };
         let active_indicator_model = MotionPreset::affordance(motion_preference).resolve_model();
         let runtime = window.use_keyed_state(runtime_id, cx, |_, cx| VirtualizedListRuntime {
             scroll_surface: ScrollSurfaceRuntime::new(None),
@@ -1811,5 +1814,209 @@ fn resolve_viewport_item_count(row_height: UiPx, viewport_extent: UiPx, fallback
             .max(1.0) as usize
     } else {
         fallback.max(1)
+    }
+}
+
+#[cfg(test)]
+mod app_motion_tests {
+    use super::*;
+    use crate::theme::{
+        ThemeContext, ThemeDefinition, ThemeRegistry, ThemeSnapshot, override_window_theme,
+    };
+    use open_gpui::{Render, TestAppContext, VisualTestContext};
+    use open_gpui_ui_core::{ThemeDesignScales, ui_px};
+    use std::cell::RefCell;
+
+    use super::super::motion::VirtualizedListActiveIndicatorSnapshot;
+
+    struct ListView {
+        row_height: f32,
+        preference: MotionPreference,
+        indicator: Rc<RefCell<Option<VirtualizedListActiveIndicatorSnapshot>>>,
+    }
+
+    impl Render for ListView {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let list = VirtualizedList::new(
+                "app-motion-list",
+                "App motion list",
+                ["alpha", "beta", "gamma", "delta"]
+                    .map(|key| VirtualizedListItemDescriptor::new(key, key)),
+            )
+            .default_active_key("gamma")
+            .row_height(ui_px(self.row_height))
+            .motion_preference(self.preference)
+            .render(window, cx)
+            .into_any_element();
+            let runtime = window.use_keyed_state(
+                "virtualized-list:app-motion-list:runtime",
+                cx,
+                |_, _| -> VirtualizedListRuntime {
+                    panic!("the production RenderOnce adapter must initialize its runtime")
+                },
+            );
+            *self.indicator.borrow_mut() = runtime.read(cx).active_indicator.snapshot();
+            div().w(px(240.0)).h(px(260.0)).child(list)
+        }
+    }
+
+    fn draw(cx: &mut VisualTestContext) {
+        cx.update(|window, cx| {
+            window.refresh();
+            window.draw(cx).clear(cx);
+        });
+    }
+
+    fn assert_final_indicator(
+        cx: &mut VisualTestContext,
+        indicator: &RefCell<Option<VirtualizedListActiveIndicatorSnapshot>>,
+        row_height: f32,
+    ) {
+        let sample = indicator
+            .borrow()
+            .expect("the active row must have an indicator");
+        assert_eq!(sample.top(), ui_px(row_height * 2.0));
+        assert_eq!(sample.height(), ui_px(row_height));
+        assert!(!sample.frame_demand().needs_frame());
+        let body = cx
+            .debug_bounds("virtualized-list:app-motion-list:body")
+            .expect("the production list body should render");
+        let active_row = cx
+            .debug_bounds("virtualized-list:app-motion-list:row:gamma")
+            .expect("the active row should render");
+        assert_eq!(active_row.top() - body.top(), px(row_height * 2.0));
+        assert_eq!(active_row.size.height, px(row_height));
+    }
+
+    fn assert_idle(cx: &mut VisualTestContext) {
+        let queued = cx.update(|window, cx| window.drain_next_frame_callbacks_for_test(cx));
+        assert!(queued <= 1, "only an already queued animation may remain");
+        draw(cx);
+        assert_eq!(
+            cx.update(|window, cx| window.drain_next_frame_callbacks_for_test(cx)),
+            0,
+            "the snapped active indicator must stop requesting frames"
+        );
+    }
+
+    #[open_gpui::test]
+    fn app_reduced_motion_snaps_active_list_geometry_and_restores_only_new_targets(
+        cx: &mut TestAppContext,
+    ) {
+        let indicator = Rc::new(RefCell::new(None));
+        let (view, cx) = cx.add_window_view(|_, _| ListView {
+            row_height: 28.0,
+            preference: MotionPreference::Animated,
+            indicator: indicator.clone(),
+        });
+        draw(cx);
+        assert_final_indicator(cx, &indicator, 28.0);
+        assert_idle(cx);
+
+        let (initial, requested) = cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.row_height = 48.0;
+                cx.notify();
+            });
+            window.draw(cx).clear(cx);
+            let initial = indicator
+                .borrow()
+                .expect("the indicator should stay mounted");
+            let requested = window.drain_next_frame_callbacks_for_test(cx);
+            (initial, requested)
+        });
+        assert_eq!(initial.top(), ui_px(56.0));
+        assert_eq!(initial.height(), ui_px(28.0));
+        assert!(initial.frame_demand().needs_frame());
+        assert_eq!(requested, 1, "the changed row geometry should animate");
+
+        cx.update(|_, cx| cx.set_reduce_motion(true));
+        draw(cx);
+        assert_final_indicator(cx, &indicator, 48.0);
+        assert_idle(cx);
+
+        cx.update(|_, cx| cx.set_reduce_motion(false));
+        draw(cx);
+        assert_final_indicator(cx, &indicator, 48.0);
+        assert_idle(cx);
+
+        let requested = cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.row_height = 36.0;
+                cx.notify();
+            });
+            window.draw(cx).clear(cx);
+            window.drain_next_frame_callbacks_for_test(cx)
+        });
+        assert_eq!(requested, 1, "a later geometry target should animate");
+        cx.update(|_, cx| cx.set_reduce_motion(true));
+        draw(cx);
+        assert_final_indicator(cx, &indicator, 36.0);
+        assert_idle(cx);
+
+        view.update(cx, |view, cx| {
+            view.row_height = 44.0;
+            cx.notify();
+        });
+        draw(cx);
+        assert_final_indicator(cx, &indicator, 44.0);
+        assert_idle(cx);
+
+        view.update(cx, |view, cx| {
+            view.preference = MotionPreference::Reduced;
+            cx.notify();
+        });
+        cx.update(|_, cx| cx.set_reduce_motion(false));
+        view.update(cx, |view, cx| {
+            view.row_height = 40.0;
+            cx.notify();
+        });
+        draw(cx);
+        assert_final_indicator(cx, &indicator, 40.0);
+        assert_idle(cx);
+    }
+
+    #[open_gpui::test]
+    fn list_theme_reduced_floor_survives_animated_request_and_app_restoration(
+        cx: &mut TestAppContext,
+    ) {
+        let indicator = Rc::new(RefCell::new(None));
+        let (view, cx) = cx.add_window_view(|_, _| ListView {
+            row_height: 28.0,
+            preference: MotionPreference::Animated,
+            indicator: indicator.clone(),
+        });
+        let source = ThemeSnapshot::light();
+        let baseline = source.design_scales();
+        let design = ThemeDesignScales::new(
+            baseline.typography(),
+            baseline.spacing(),
+            baseline.radius(),
+            baseline.elevation(),
+            baseline.density(),
+            MotionPreference::Reduced,
+        );
+        let mut registry = ThemeRegistry::new();
+        let snapshot = registry
+            .register(
+                ThemeDefinition::from_snapshot("list-motion-floor", "List motion floor", &source)
+                    .design_scales(design),
+            )
+            .expect("the reduced-motion theme should register")
+            .snapshot()
+            .clone();
+        cx.update(|window, cx| {
+            cx.set_reduce_motion(true);
+            override_window_theme(window, cx, ThemeContext::new(snapshot));
+        });
+        draw(cx);
+        cx.update(|_, cx| cx.set_reduce_motion(false));
+        view.update(cx, |view, cx| {
+            view.row_height = 48.0;
+            cx.notify();
+        });
+        draw(cx);
+        assert_final_indicator(cx, &indicator, 48.0);
+        assert_idle(cx);
     }
 }

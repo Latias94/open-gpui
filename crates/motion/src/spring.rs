@@ -1,15 +1,12 @@
 //! Renderer-neutral spring sampling for layout-like UI motion.
 
-use crate::{MotionPreference, MotionRunState, motion::MotionSpec, runtime::MotionTimeline};
+use crate::{
+    MotionPreference, MotionRunState, SpringConfig, SpringState, motion::MotionSpec,
+    runtime::MotionTimeline,
+};
 use std::time::Duration;
 
-const DEFAULT_MASS: f32 = 1.0;
-const DEFAULT_STIFFNESS: f32 = 260.0;
-const DEFAULT_DAMPING: f32 = 28.0;
-const DEFAULT_REST_DELTA: f32 = 0.001;
-const DEFAULT_REST_SPEED: f32 = 0.01;
-const MIN_POSITIVE: f32 = 0.000_001;
-const MAX_PHYSICS_VALUE: f32 = 1_000_000.0;
+const DEFAULT_SPRING_EPSILON: f32 = 0.001;
 
 /// Reviewable spring presets for layout-like UI motion.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,114 +19,120 @@ pub enum MotionSpringPreset {
     Continuity,
 }
 
-/// Renderer-neutral spring physics parameters.
+/// Review hints used by domain motion policy, separate from spring physics.
+///
+/// Neither hint changes the solver. Reported bounce is not measured overshoot, and the review
+/// duration is not the spring's physical settling time.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct MotionSpringPhysics {
-    mass: f32,
-    stiffness: f32,
-    damping: f32,
-    rest_delta: f32,
-    rest_speed: f32,
-    bounce: f32,
+pub struct MotionSpringPolicyHints {
+    reported_bounce: f32,
     review_duration: Duration,
 }
 
-impl MotionSpringPhysics {
+impl MotionSpringPolicyHints {
     /// Maximum bounce value accepted by professional UI policy.
     pub const MAX_REVIEWABLE_BOUNCE: f32 = 0.35;
 
-    /// Creates sanitized spring physics parameters.
-    pub fn new(mass: f32, stiffness: f32, damping: f32) -> Self {
+    /// Creates review hints, clamping finite reported bounce to the policy range.
+    ///
+    /// Non-finite reported bounce becomes zero. The duration is retained for policy validation;
+    /// an over-budget duration is reported by the validator rather than shortened here.
+    pub fn new(review_duration: Duration, reported_bounce: f32) -> Self {
         Self {
-            mass: sanitize_positive(mass, DEFAULT_MASS),
-            stiffness: sanitize_positive(stiffness, DEFAULT_STIFFNESS),
-            damping: sanitize_non_negative(damping, DEFAULT_DAMPING),
-            rest_delta: DEFAULT_REST_DELTA,
-            rest_speed: DEFAULT_REST_SPEED,
-            bounce: 0.0,
-            review_duration: Duration::from_millis(180),
+            reported_bounce: if reported_bounce.is_finite() {
+                reported_bounce.clamp(0.0, Self::MAX_REVIEWABLE_BOUNCE)
+            } else {
+                0.0
+            },
+            review_duration,
         }
     }
 
-    /// Returns the mass parameter.
-    pub const fn mass(self) -> f32 {
-        self.mass
-    }
-
-    /// Returns the stiffness parameter.
-    pub const fn stiffness(self) -> f32 {
-        self.stiffness
-    }
-
-    /// Returns the damping parameter.
-    pub const fn damping(self) -> f32 {
-        self.damping
-    }
-
-    /// Returns the position rest threshold.
-    pub const fn rest_delta(self) -> f32 {
-        self.rest_delta
-    }
-
-    /// Returns the velocity rest threshold.
-    pub const fn rest_speed(self) -> f32 {
-        self.rest_speed
-    }
-
-    /// Returns the review-facing bounce value.
-    pub const fn bounce(self) -> f32 {
-        self.bounce
+    /// Returns the review-facing bounce hint.
+    pub const fn reported_bounce(self) -> f32 {
+        self.reported_bounce
     }
 
     /// Returns the expected review duration for policy checks.
     pub const fn review_duration(self) -> Duration {
         self.review_duration
     }
+}
 
-    /// Returns a copy with a sanitized position rest threshold.
-    pub fn with_rest_delta(mut self, rest_delta: f32) -> Self {
-        self.rest_delta = sanitize_positive(rest_delta, DEFAULT_REST_DELTA);
-        self
+/// Domain sampling options using the shared upstream spring configuration.
+///
+/// The configuration is retained exactly and must satisfy [`SpringConfig`]'s preconditions.
+/// Settling uses one positional epsilon and the solver's natural-frequency velocity rule.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MotionSpringOptions {
+    config: SpringConfig,
+    epsilon: f32,
+    policy_hints: MotionSpringPolicyHints,
+}
+
+impl MotionSpringOptions {
+    /// Creates domain options without altering the supplied physical configuration.
+    pub const fn new(config: SpringConfig) -> Self {
+        Self {
+            config,
+            epsilon: DEFAULT_SPRING_EPSILON,
+            policy_hints: MotionSpringPolicyHints {
+                reported_bounce: 0.0,
+                review_duration: Duration::from_millis(180),
+            },
+        }
     }
 
-    /// Returns a copy with a sanitized velocity rest threshold.
-    pub fn with_rest_speed(mut self, rest_speed: f32) -> Self {
-        self.rest_speed = sanitize_positive(rest_speed, DEFAULT_REST_SPEED);
-        self
+    /// Returns the exact shared physical configuration.
+    pub const fn config(self) -> SpringConfig {
+        self.config
     }
 
-    /// Returns a copy with a review-facing bounce value clamped to policy range.
-    pub fn with_bounce(mut self, bounce: f32) -> Self {
-        self.bounce = if bounce.is_finite() {
-            bounce.clamp(0.0, Self::MAX_REVIEWABLE_BOUNCE)
+    /// Returns the positional settling tolerance.
+    pub const fn epsilon(self) -> f32 {
+        self.epsilon
+    }
+
+    /// Returns the domain review hints that do not participate in the solver.
+    pub const fn policy_hints(self) -> MotionSpringPolicyHints {
+        self.policy_hints
+    }
+
+    /// Returns a copy with a finite, non-negative positional tolerance.
+    ///
+    /// Negative or non-finite input uses the default tolerance of `0.001`. Zero is accepted,
+    /// following the solver's exact-rest rule.
+    pub fn with_epsilon(mut self, epsilon: f32) -> Self {
+        self.epsilon = if epsilon.is_finite() && epsilon >= 0.0 {
+            epsilon
         } else {
-            0.0
+            DEFAULT_SPRING_EPSILON
         };
         self
     }
 
-    /// Returns a copy with the expected review duration used by policy checks.
-    pub fn with_review_duration(mut self, duration: Duration) -> Self {
-        self.review_duration = duration;
+    /// Returns a copy with domain review hints.
+    pub const fn with_policy_hints(mut self, policy_hints: MotionSpringPolicyHints) -> Self {
+        self.policy_hints = policy_hints;
         self
     }
 }
 
-/// Renderer-neutral spring motion specification.
+/// Domain spring specification with explicit motion preference and review policy.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MotionSpringSpec {
     preference: MotionPreference,
     preset: Option<MotionSpringPreset>,
-    physics: MotionSpringPhysics,
+    options: MotionSpringOptions,
 }
 
 impl MotionSpringSpec {
-    /// Creates a spring spec from preference and explicit physics.
-    pub fn from_physics(preference: MotionPreference, physics: MotionSpringPhysics) -> Self {
+    /// Creates a spring spec from preference and explicit domain options.
+    pub const fn from_options(preference: MotionPreference, options: MotionSpringOptions) -> Self {
         Self {
             preference,
             preset: None,
-            physics,
+            options,
         }
     }
 
@@ -138,9 +141,9 @@ impl MotionSpringSpec {
         Self::from_preset(
             preference,
             MotionSpringPreset::Affordance,
-            MotionSpringPhysics::new(1.0, 320.0, 34.0)
-                .with_bounce(0.08)
-                .with_review_duration(Duration::from_millis(120)),
+            MotionSpringOptions::new(SpringConfig::new(320.0, 34.0, 1.0)).with_policy_hints(
+                MotionSpringPolicyHints::new(Duration::from_millis(120), 0.08),
+            ),
         )
     }
 
@@ -149,9 +152,9 @@ impl MotionSpringSpec {
         Self::from_preset(
             preference,
             MotionSpringPreset::Layout,
-            MotionSpringPhysics::new(1.0, 260.0, 28.0)
-                .with_bounce(0.12)
-                .with_review_duration(Duration::from_millis(180)),
+            MotionSpringOptions::new(SpringConfig::new(260.0, 28.0, 1.0)).with_policy_hints(
+                MotionSpringPolicyHints::new(Duration::from_millis(180), 0.12),
+            ),
         )
     }
 
@@ -160,21 +163,21 @@ impl MotionSpringSpec {
         Self::from_preset(
             preference,
             MotionSpringPreset::Continuity,
-            MotionSpringPhysics::new(1.0, 190.0, 23.0)
-                .with_bounce(0.10)
-                .with_review_duration(Duration::from_millis(260)),
+            MotionSpringOptions::new(SpringConfig::new(190.0, 23.0, 1.0)).with_policy_hints(
+                MotionSpringPolicyHints::new(Duration::from_millis(260), 0.10),
+            ),
         )
     }
 
     fn from_preset(
         preference: MotionPreference,
         preset: MotionSpringPreset,
-        physics: MotionSpringPhysics,
+        options: MotionSpringOptions,
     ) -> Self {
         Self {
             preference,
             preset: Some(preset),
-            physics,
+            options,
         }
     }
 
@@ -188,9 +191,9 @@ impl MotionSpringSpec {
         self.preset
     }
 
-    /// Returns the sanitized physics parameters.
-    pub const fn physics(self) -> MotionSpringPhysics {
-        self.physics
+    /// Returns the shared solver configuration, epsilon and separate domain review hints.
+    pub const fn options(self) -> MotionSpringOptions {
+        self.options
     }
 
     /// Returns whether this spring completes immediately.
@@ -198,9 +201,9 @@ impl MotionSpringSpec {
         self.preference.is_immediate()
     }
 
-    /// Returns a copy with review-facing bounce clamped to policy range.
-    pub fn with_bounce(mut self, bounce: f32) -> Self {
-        self.physics = self.physics.with_bounce(bounce);
+    /// Returns a copy with domain review hints.
+    pub const fn with_policy_hints(mut self, policy_hints: MotionSpringPolicyHints) -> Self {
+        self.options = self.options.with_policy_hints(policy_hints);
         self
     }
 }
@@ -363,32 +366,27 @@ impl MotionSpring {
             );
         }
 
-        let physics = spec.physics();
-        if elapsed.is_zero() {
-            let state = if at_rest(from, target, initial_velocity, physics) {
-                MotionRunState::Completed
-            } else {
-                MotionRunState::Active
-            };
-            let value = if state.reached_final_state() {
-                target
-            } else {
-                from
-            };
-            let velocity = if state.reached_final_state() {
-                0.0
-            } else {
-                initial_velocity
-            };
-            return MotionScalarSample::new(state, elapsed, value, velocity, target);
-        }
-
-        let (value, velocity) =
-            sample_spring_value(physics, from, target, initial_velocity, elapsed);
-        if at_rest(value, target, velocity, physics) {
+        let options = spec.options();
+        let config = options.config();
+        let initial = SpringState {
+            position: from,
+            velocity: initial_velocity,
+        };
+        let sampled = if elapsed.is_zero() {
+            initial
+        } else {
+            config.step(initial, target, elapsed.as_secs_f32())
+        };
+        if config.is_settled(sampled, target, options.epsilon()) {
             MotionScalarSample::new(MotionRunState::Completed, elapsed, target, 0.0, target)
         } else {
-            MotionScalarSample::new(MotionRunState::Active, elapsed, value, velocity, target)
+            MotionScalarSample::new(
+                MotionRunState::Active,
+                elapsed,
+                sampled.position,
+                sampled.velocity,
+                target,
+            )
         }
     }
 }
@@ -436,11 +434,15 @@ impl MotionModel {
     pub const fn sequence_duration_hint(self) -> Duration {
         match self {
             Self::Timeline(spec) => spec.duration().as_duration(),
-            Self::Spring(spec) => spec.physics().review_duration(),
+            Self::Spring(spec) => spec.options().policy_hints().review_duration(),
         }
     }
 
     /// Samples this motion model as a scalar value.
+    ///
+    /// Non-finite source, target and initial velocity use zero, the source and zero respectively.
+    /// Spring configurations must satisfy [`SpringConfig`]'s physical preconditions. Active spring
+    /// samples preserve the shared solver's position and velocity without clamping overshoot.
     pub fn sample_scalar_elapsed(
         self,
         from: f32,
@@ -469,134 +471,8 @@ impl MotionModel {
     }
 }
 
-fn sample_spring_value(
-    physics: MotionSpringPhysics,
-    from: f32,
-    target: f32,
-    initial_velocity: f32,
-    elapsed: Duration,
-) -> (f32, f32) {
-    let t = elapsed.as_secs_f32().max(0.0);
-    let displacement = from - target;
-    let mass = physics.mass();
-    let stiffness = physics.stiffness();
-    let damping = physics.damping();
-    let angular_frequency = (stiffness / mass).sqrt();
-    let critical_damping = 2.0 * (stiffness * mass).sqrt();
-    let damping_ratio = if critical_damping > 0.0 {
-        damping / critical_damping
-    } else {
-        1.0
-    };
-
-    let (displacement, velocity) = if damping_ratio < 1.0 {
-        sample_underdamped(
-            displacement,
-            initial_velocity,
-            angular_frequency,
-            damping_ratio,
-            t,
-        )
-    } else if (damping_ratio - 1.0).abs() <= f32::EPSILON {
-        sample_critically_damped(displacement, initial_velocity, angular_frequency, t)
-    } else {
-        sample_overdamped(
-            displacement,
-            initial_velocity,
-            angular_frequency,
-            damping_ratio,
-            t,
-        )
-    };
-
-    let value = sanitize_number(target + displacement, target);
-    let velocity = sanitize_number(velocity, 0.0);
-    (value, velocity)
-}
-
-fn sample_underdamped(
-    displacement: f32,
-    velocity: f32,
-    angular_frequency: f32,
-    damping_ratio: f32,
-    time: f32,
-) -> (f32, f32) {
-    let damped_frequency = angular_frequency * (1.0 - damping_ratio * damping_ratio).sqrt();
-    if damped_frequency <= MIN_POSITIVE {
-        return sample_critically_damped(displacement, velocity, angular_frequency, time);
-    }
-
-    let decay = (-damping_ratio * angular_frequency * time).exp();
-    let sin = (damped_frequency * time).sin();
-    let cos = (damped_frequency * time).cos();
-    let a = displacement;
-    let b = (velocity + damping_ratio * angular_frequency * displacement) / damped_frequency;
-    let oscillation = a * cos + b * sin;
-    let sampled_displacement = decay * oscillation;
-    let sampled_velocity = decay
-        * ((-a * damped_frequency * sin + b * damped_frequency * cos)
-            - damping_ratio * angular_frequency * oscillation);
-    (sampled_displacement, sampled_velocity)
-}
-
-fn sample_critically_damped(
-    displacement: f32,
-    velocity: f32,
-    angular_frequency: f32,
-    time: f32,
-) -> (f32, f32) {
-    let decay = (-angular_frequency * time).exp();
-    let c = velocity + angular_frequency * displacement;
-    let displacement_term = displacement + c * time;
-    let sampled_displacement = decay * displacement_term;
-    let sampled_velocity = decay * (c - angular_frequency * displacement_term);
-    (sampled_displacement, sampled_velocity)
-}
-
-fn sample_overdamped(
-    displacement: f32,
-    velocity: f32,
-    angular_frequency: f32,
-    damping_ratio: f32,
-    time: f32,
-) -> (f32, f32) {
-    let ratio_delta = (damping_ratio * damping_ratio - 1.0).sqrt();
-    let r1 = -angular_frequency * (damping_ratio - ratio_delta);
-    let r2 = -angular_frequency * (damping_ratio + ratio_delta);
-    if (r1 - r2).abs() <= MIN_POSITIVE {
-        return sample_critically_damped(displacement, velocity, angular_frequency, time);
-    }
-    let c1 = (velocity - r2 * displacement) / (r1 - r2);
-    let c2 = displacement - c1;
-    let e1 = (r1 * time).exp();
-    let e2 = (r2 * time).exp();
-    let sampled_displacement = c1 * e1 + c2 * e2;
-    let sampled_velocity = c1 * r1 * e1 + c2 * r2 * e2;
-    (sampled_displacement, sampled_velocity)
-}
-
-fn at_rest(value: f32, target: f32, velocity: f32, physics: MotionSpringPhysics) -> bool {
-    (value - target).abs() <= physics.rest_delta() && velocity.abs() <= physics.rest_speed()
-}
-
 fn sanitize_number(value: f32, default: f32) -> f32 {
     if value.is_finite() { value } else { default }
-}
-
-fn sanitize_positive(value: f32, default: f32) -> f32 {
-    if value.is_finite() && value > 0.0 {
-        value.clamp(MIN_POSITIVE, MAX_PHYSICS_VALUE)
-    } else {
-        default
-    }
-}
-
-fn sanitize_non_negative(value: f32, default: f32) -> f32 {
-    if value.is_finite() && value >= 0.0 {
-        value.clamp(0.0, MAX_PHYSICS_VALUE)
-    } else {
-        default
-    }
 }
 
 #[cfg(test)]
@@ -663,7 +539,7 @@ mod tests {
     }
 
     #[test]
-    fn tiny_delta_uses_rest_thresholds_without_oscillating_forever() {
+    fn tiny_delta_uses_shared_settling_rule_without_oscillating_forever() {
         let sample = MotionSpring::sample_elapsed(
             MotionSpringSpec::layout(MotionPreference::Animated),
             10.0,
@@ -677,12 +553,18 @@ mod tests {
     }
 
     #[test]
-    fn spring_bounce_defaults_are_subtle_and_clamped() {
+    fn spring_review_bounce_defaults_are_subtle_and_clamped() {
         let layout = MotionSpringSpec::layout(MotionPreference::Animated);
-        assert!(layout.physics().bounce() <= 0.20);
+        assert!(layout.options().policy_hints().reported_bounce() <= 0.20);
 
-        let clamped = layout.with_bounce(2.0);
-        assert!(clamped.physics().bounce() <= MotionSpringPhysics::MAX_REVIEWABLE_BOUNCE);
+        let clamped = layout.with_policy_hints(MotionSpringPolicyHints::new(
+            Duration::from_millis(180),
+            2.0,
+        ));
+        assert!(
+            clamped.options().policy_hints().reported_bounce()
+                <= MotionSpringPolicyHints::MAX_REVIEWABLE_BOUNCE
+        );
     }
 
     #[test]
@@ -702,12 +584,29 @@ mod tests {
     }
 
     #[test]
-    fn invalid_physics_parameters_are_sanitized() {
-        let physics = MotionSpringPhysics::new(f32::NAN, -1.0, f32::INFINITY)
-            .with_rest_delta(f32::NAN)
-            .with_rest_speed(-20.0);
+    fn domain_policy_inputs_are_sanitized_without_changing_physical_configuration() {
+        let config = SpringConfig::new(260.0, 28.0, 1.0);
+        let options = MotionSpringOptions::new(config)
+            .with_epsilon(f32::NAN)
+            .with_policy_hints(MotionSpringPolicyHints::new(
+                Duration::from_secs(2),
+                f32::INFINITY,
+            ));
+        assert_eq!(options.config(), config);
+        assert_eq!(options.epsilon(), DEFAULT_SPRING_EPSILON);
+        assert_eq!(options.policy_hints().reported_bounce(), 0.0);
+        assert_eq!(
+            options.policy_hints().review_duration(),
+            Duration::from_secs(2)
+        );
+        assert_eq!(
+            options.with_epsilon(-20.0).epsilon(),
+            DEFAULT_SPRING_EPSILON
+        );
+        assert_eq!(options.with_epsilon(0.0).epsilon(), 0.0);
+
         let sample = MotionSpring::sample_elapsed(
-            MotionSpringSpec::from_physics(MotionPreference::Animated, physics),
+            MotionSpringSpec::from_options(MotionPreference::Animated, options),
             0.0,
             1.0,
             f32::NAN,
@@ -716,6 +615,85 @@ mod tests {
 
         assert!(sample.value().is_finite());
         assert!(sample.velocity().is_finite());
+    }
+
+    #[test]
+    fn domain_options_preserve_the_upstream_configuration_preconditions() {
+        let config = SpringConfig::new(-1.0, f32::INFINITY, 0.0);
+        let retained = MotionSpringOptions::new(config).config();
+        assert_eq!(retained, config);
+    }
+
+    #[test]
+    fn domain_sampling_preserves_shared_solver_values_in_every_damping_regime() {
+        let initial = SpringState {
+            position: -3.0,
+            velocity: 5.0,
+        };
+        let target = 7.0;
+        for damping in [0.0, 4.0, 20.0, 40.0] {
+            let config = SpringConfig::new(100.0, damping, 1.0);
+            let epsilon = 0.001;
+            let spec = MotionSpringSpec::from_options(
+                MotionPreference::Animated,
+                MotionSpringOptions::new(config).with_epsilon(epsilon),
+            );
+            for elapsed in [Duration::from_millis(34), Duration::from_secs(4)] {
+                let expected = config.step(initial, target, elapsed.as_secs_f32());
+                let sample = MotionSpring::sample_elapsed(
+                    spec,
+                    initial.position,
+                    target,
+                    initial.velocity,
+                    elapsed,
+                );
+                if config.is_settled(expected, target, epsilon) {
+                    assert_eq!(sample.state(), MotionRunState::Completed);
+                    assert_eq!(sample.value(), target);
+                    assert_eq!(sample.velocity(), 0.0);
+                } else {
+                    assert_eq!(sample.state(), MotionRunState::Active);
+                    assert_eq!(sample.value(), expected.position);
+                    assert_eq!(sample.velocity(), expected.velocity);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn domain_settling_uses_the_natural_frequency_velocity_threshold() {
+        for (stiffness, expected_state) in [
+            (25.0, MotionRunState::Active),
+            (100.0, MotionRunState::Completed),
+        ] {
+            let spec = MotionSpringSpec::from_options(
+                MotionPreference::Animated,
+                MotionSpringOptions::new(SpringConfig::new(stiffness, 10.0, 1.0))
+                    .with_epsilon(0.01),
+            );
+            let sample = MotionSpring::sample_elapsed(spec, 1.0, 1.0, 0.075, Duration::ZERO);
+            assert_eq!(sample.state(), expected_state);
+            if sample.is_active() {
+                assert_eq!(sample.velocity(), 0.075);
+            } else {
+                assert_eq!(sample.velocity(), 0.0);
+            }
+        }
+    }
+
+    #[test]
+    fn policy_hints_do_not_change_spring_samples() {
+        let original = MotionSpringSpec::layout(MotionPreference::Animated);
+        let altered = original.with_policy_hints(MotionSpringPolicyHints::new(
+            Duration::from_secs(20),
+            MotionSpringPolicyHints::MAX_REVIEWABLE_BOUNCE,
+        ));
+        for elapsed in [Duration::from_millis(90), Duration::from_secs(2)] {
+            assert_eq!(
+                MotionSpring::sample_elapsed(original, 0.0, 1.0, 0.0, elapsed),
+                MotionSpring::sample_elapsed(altered, 0.0, 1.0, 0.0, elapsed)
+            );
+        }
     }
 
     #[test]

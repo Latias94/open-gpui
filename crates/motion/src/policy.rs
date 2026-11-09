@@ -1,6 +1,6 @@
 //! Renderer-neutral motion policy validation.
 
-use crate::spring::{MotionModel, MotionSpringPhysics};
+use crate::spring::{MotionModel, MotionSpringPolicyHints};
 use std::time::Duration;
 
 /// Maximum routine UI motion duration accepted without a continuity reason.
@@ -190,7 +190,7 @@ pub fn validate_motion_policy(input: MotionPolicyInput) -> MotionPolicyReport {
     if input
         .reported_bounce()
         .unwrap_or_else(|| model_bounce(input.model()))
-        > MotionSpringPhysics::MAX_REVIEWABLE_BOUNCE
+        > MotionSpringPolicyHints::MAX_REVIEWABLE_BOUNCE
     {
         issues.push(MotionPolicyIssue::ExcessiveBounce);
     }
@@ -214,14 +214,14 @@ pub fn validate_motion_policy(input: MotionPolicyInput) -> MotionPolicyReport {
 fn model_review_duration(model: MotionModel) -> Duration {
     match model {
         MotionModel::Timeline(spec) => spec.duration().as_duration(),
-        MotionModel::Spring(spec) => spec.physics().review_duration(),
+        MotionModel::Spring(spec) => spec.options().policy_hints().review_duration(),
     }
 }
 
 fn model_bounce(model: MotionModel) -> f32 {
     match model {
         MotionModel::Timeline(_) => 0.0,
-        MotionModel::Spring(spec) => spec.physics().bounce(),
+        MotionModel::Spring(spec) => spec.options().policy_hints().reported_bounce(),
     }
 }
 

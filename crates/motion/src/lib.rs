@@ -19,6 +19,7 @@ pub mod projection;
 mod runtime;
 mod sequence;
 mod spring;
+mod spring_solver;
 pub mod transition;
 
 pub use controller::{
@@ -46,7 +47,8 @@ pub use sequence::{
     MotionSequenceStepSample as MotionProgressSequenceStepSample,
     MotionSequenceStepState as MotionProgressSequenceStepState,
 };
-pub use spring::{MotionScalarSample, MotionSpringPhysics};
+pub use spring::{MotionScalarSample, MotionSpringOptions, MotionSpringPolicyHints};
+pub use spring_solver::{SpringConfig, SpringState, sampled_easing};
 pub use transition::{
     MotionFrameDriver, MotionFrameDriverSample, MotionFrameDriverUpdate, MotionFrameResetReason,
     MotionIntent, MotionProgressRun, MotionScalarRun, MotionScalarRunSample, MotionTransition,

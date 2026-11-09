@@ -1856,6 +1856,73 @@ fn direct_scroll_cancels_an_in_flight_motion_sample(cx: &mut TestAppContext) {
 }
 
 #[open_gpui::test]
+fn app_reduced_motion_finishes_an_active_reveal_and_overrides_explicit_animation(
+    cx: &mut TestAppContext,
+) {
+    let outcome = Rc::new(RefCell::new(None));
+    let (view, cx) = cx.add_window_view(|window, _| SingleScrollRevealView {
+        target: window.new_reveal_target(),
+        scroll: ScrollHandle::new(),
+        target_presentation: SubtreePresentation::Visible,
+    });
+    cx.update(|window, app| window.draw(app).clear(app));
+    let (target, scroll) =
+        cx.update_window_entity(&view, |view, _, _| (view.target, view.scroll.clone()));
+    let transition = MotionTransition::duration(
+        MotionIntent::Continuity,
+        MotionPreference::Animated,
+        MotionDuration::Custom(Duration::from_millis(100)),
+        MotionEasing::Linear,
+    );
+    let observed = outcome.clone();
+    let _subscription = cx.update(|window, app| {
+        window
+            .bring_into_view_with_completion(
+                &target,
+                BringIntoViewOptions::nearest()
+                    .with_behavior(crate::BringIntoViewBehavior::Animated(transition)),
+                app,
+                move |result, _, _| *observed.borrow_mut() = Some(result),
+            )
+            .unwrap()
+            .1
+    });
+    cx.update(|window, app| window.draw(app).clear(app));
+    cx.background_executor
+        .advance_clock(Duration::from_millis(50));
+    cx.update(|window, app| window.draw(app).clear(app));
+    assert_eq!(scroll.offset(), point(px(-70.0), px(-70.0)));
+    cx.update(|_, app| app.set_reduce_motion(true));
+    cx.update(|window, app| window.draw(app).clear(app));
+    cx.run_until_parked();
+    assert_eq!(scroll.offset(), point(px(-140.0), px(-140.0)));
+    assert_eq!(
+        *outcome.borrow(),
+        Some(BringIntoViewOutcome::Completed(
+            crate::BringIntoViewCompletion::Revealed
+        ))
+    );
+
+    scroll.set_offset(point(px(0.0), px(0.0)));
+    cx.update(|window, app| window.draw(app).clear(app));
+    cx.update(|window, app| {
+        window
+            .bring_into_view(
+                &target,
+                BringIntoViewOptions::nearest()
+                    .with_behavior(crate::BringIntoViewBehavior::Animated(transition)),
+                app,
+            )
+            .unwrap();
+    });
+    assert_eq!(scroll.offset(), point(px(-140.0), px(-140.0)));
+    cx.update(|_, app| app.set_reduce_motion(false));
+    cx.background_executor.advance_clock(Duration::from_secs(1));
+    cx.update(|window, app| window.draw(app).clear(app));
+    assert_eq!(scroll.offset(), point(px(-140.0), px(-140.0)));
+}
+
+#[open_gpui::test]
 fn nearest_reveal_quantizes_fractional_clipping_away_from_zero(cx: &mut TestAppContext) {
     let (view, cx) = cx.add_window_view(|window, _| FractionalNearestRevealView {
         target: window.new_reveal_target(),

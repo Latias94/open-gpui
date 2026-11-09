@@ -38,7 +38,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Check framework on minimum Rust
-        run: cargo +1.93.0 check --locked -p open-gpui -p open-gpui-wgpu -p open-gpui-windows -p open-gpui-canvas -p open-gpui-platform -p open-gpui-bench-metrics -p open-gpui-macros --all-features --all-targets -j 1
+        run: cargo +1.93.0 check --locked -p open-gpui -p open-gpui-wgpu -p open-gpui-windows -p open-gpui-canvas -p open-gpui-platform -p open-gpui-bench-metrics -p open-gpui-macros -p open-gpui-motion -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-docking --all-features --all-targets -j 1
 
       - name: Check independent consumer on minimum Rust
         run: cargo +1.93.0 check --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --all-targets --all-features --target-dir target -j 1
@@ -160,6 +160,20 @@ jobs:
       - name: Test native generic animation pixels and retirement
         if: matrix.name == 'windows'
         run: cargo nextest run --locked -p open-gpui-windows --all-features --lib -E 'test(=platform::native_test_support::native_animation_tests::native_generic_animations_progress_reduce_restore_and_retire_pending_frames)' --run-ignored only --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Test Spring state, shared solver and public composition
+        run: |
+          cargo nextest run --locked -p open-gpui-motion --test-threads=1 --no-fail-fast --no-tests fail
+          cargo nextest run --locked -p open-gpui --all-features --lib --test spring -E 'test(spring::) | test(elements::animation::spring_tests::) | test(window::spring_tests::) | test(app_reduced_motion_finishes_an_active_reveal_) | binary(spring)' --test-threads=1 --no-fail-fast --no-tests fail
+          cargo nextest run --locked -p open-gpui-ui-components -p open-gpui-docking --all-features --lib --test app_motion -E 'test(app_reduced_) | test(app_motion_) | test(list_theme_reduced_) | binary(app_motion)' --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Test independent Spring API without optional features
+        if: matrix.name == 'windows'
+        run: cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test spring --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Test native Spring pixels, playback and retirement
+        if: matrix.name == 'windows'
+        run: cargo nextest run --locked -p open-gpui-windows --all-features --lib -E 'test(=platform::native_test_support::native_spring_tests::native_springs_retarget_playback_reduce_motion_and_retire_active_frames)' --run-ignored only --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Test public headless image resource consumers
         if: matrix.name == 'windows'

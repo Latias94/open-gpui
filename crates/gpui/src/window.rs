@@ -128,6 +128,8 @@ pub mod retained_visual;
 #[cfg(test)]
 mod root_layout_tests;
 #[cfg(test)]
+mod spring_tests;
+#[cfg(test)]
 mod underline_tests;
 mod visibility;
 #[cfg(test)]

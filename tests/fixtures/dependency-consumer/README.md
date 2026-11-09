@@ -1144,3 +1144,64 @@ cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Ca
 These commands define the consumer gates. The
 [qualification record](../../../docs/verification.md#generic-animation-controls-and-clock)
 records executed host/compiler modes, initial harness corrections and native limits.
+
+## Stateful Spring public consumers
+
+The `spring` targets consume the complete official Spring API from fixed Zed source
+`635026fabc38440fce5e1767d125026a17b12012`. GPUI retains typed targets, interpolation,
+builders, playback and element identity. The pure `SpringConfig`, `SpringState` and
+`sampled_easing` implementation belongs to `open-gpui-motion` and is reexported by GPUI.
+These tests introduce no features, dependencies or lockfile changes.
+
+The ordinary independently locked target enables no GPUI test-support. Executed tests consume
+public solver values across damping regimes, explicit elapsed-time advancement and retargeting,
+the propagator, moving-target ramp, velocity-aware settling and undamped nontermination.
+The public easing adapter is evaluated and installed in an ordinary duration-animation builder,
+including overshoot. Typed target and interpolation tests execute scalar, Pixels, Rems, bool,
+AnimationPhase, a consumer-defined target, RGBA interpolation and the shortest HSLA hue path.
+Builder tests actually construct and drop Spring parents with appended children, map the
+underlying element, and consume a move-only animator capture through normal destruction.
+They perform no layout or paint. A separately named signature test contains an explicitly
+unexecuted App/Window closure; that closure establishes only public type compatibility.
+
+The crate-external `crates/gpui/tests/spring.rs` target requires only `test-support`. Its ordinary
+type-identity test assigns the exact same configuration and state values across the existing
+direct motion dependency and GPUI's reexports, compares both easing paths, and feeds that
+configuration into the GPUI builder. The independent fixture has no direct motion dependency
+and does not claim to establish that cross-package type identity itself.
+
+Real public TestApp workflows mount cached entity views, advance the deterministic executor
+clock and deliver scheduled frame callbacks. They check stateful retargeting after elapsed
+time under the old target and configuration, preserved velocity, pause/resume without counting
+paused time, stop with discarded velocity, cancellation to the first initial value, completion
+to the latest target, default mounting at the target and `.from` applying only to new state.
+Changing ancestor identity and unmounting/remounting establish fresh state. A reduced-motion
+workflow checks updates to mounted cached views, static parking, preference idempotence and
+subsequent retargeting from the snapped endpoint. An unchanged sibling must reuse its cache.
+Window options disable unrelated inactive, low-power and thermal limits; close/reopen uses
+explicit App quit ownership.
+An additional real TestApp view runs built-in Pixels and bool targets, preserving overshooting
+AnimationPhase output while explicitly clamping its color projection, then snapping both typed
+values under reduced motion.
+
+A separate HeadlessAppContext workflow supplies NoopTextSystem, public HeadlessAtlas owners and
+a concrete CPU recording renderer. It checks actual typed-target quad widths and interpolated
+colors, the mapped parent height and appended-child quads in complete received Scenes. It
+compares accepted and Submitted generations through public presentation facts, preserves cached
+sibling reuse, reconstructs a window, and checks exact App/view/renderer/atlas release without
+post-close animation resurrection. Configured CPU submission facts do not establish GPU
+execution, native presentation, scanout or performance. Candidate-refusal, unwind and native
+Spring trajectories retain their separate owning tests.
+
+Run the focused targets serially from the repository root with `CARGO_BUILD_JOBS=1`, using the
+existing lockfiles and the caller's shared `CARGO_TARGET_DIR`:
+
+```text
+cargo +1.95.0 nextest run --locked -p open-gpui --no-default-features --features test-support --test spring --test-threads=1 --no-fail-fast --no-tests fail
+cargo +1.95.0 nextest run --locked -p open-gpui --no-default-features --features test-support,profiler --test spring --test-threads=1 --no-fail-fast --no-tests fail
+cargo +1.95.0 nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test spring --test-threads=1 --no-fail-fast --no-tests fail
+cargo +1.95.0 nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features profiler --test spring --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+These commands define verification instructions, not compilation or execution results. The main
+verification owner records actual results and compiler/platform scope separately.

@@ -2,6 +2,7 @@
 
 **Status**: Accepted
 **Date**: 2026-07-04
+**Refined By**: [ADR 0018](0018-open-gpui-motion-crate-boundary.md) (November 9 official Spring solver and UI lifecycle)
 
 ## Context
 
@@ -27,6 +28,12 @@ React hooks, DOM measurement, CSS strings, browser timelines, WAAPI behavior, or
 runtime. The shared primitive for this project remains renderer-neutral layout motion evidence.
 
 ## Decision
+
+ADR 0018's November 9 refinement retains the domain value/projection boundary while replacing
+duplicate spring mathematics with the official solver. Complete official Spring builders and
+playback are supported in GPUI; the blanket deferral below no longer applies to that official
+element lifecycle. Domain sequences and freeze-at-cancel sampling do not gain GPUI identity,
+frame scheduling or another public reactive value graph.
 
 `open_gpui_ui_core` will deepen its motion foundation around explicit models, scalar value state,
 minimal run state, frame-demand reasons, policy gates, and honest projection data.

@@ -1,14 +1,18 @@
 # Open GPUI Motion
 
 `open-gpui-motion` contains renderer-neutral motion primitives for Open GPUI components and domain
-crates. It is a deterministic Rust foundation for layout-like UI motion; it is not a DOM animation
-runtime.
+crates. It samples layout-like UI motion from caller-owned elapsed time. It does not own a UI clock
+or scheduler, and analytical sampling does not guarantee cross-platform bitwise simulation results.
 
 ## What This Crate Owns
 
 - Motion preferences, duration tokens, easing tokens, and immediate reduced-motion semantics.
 - `MotionTransition` as the root facade for duration, spring, immediate, and reduced-motion
   transitions selected by product intent.
+- The upstream pure `SpringConfig`, `SpringState`, and `sampled_easing` solver, shared by domain
+  motion and GPUI's typed Spring API through the same Rust types.
+- `MotionSpringOptions` for a shared configuration, one positional epsilon and separate
+  `MotionSpringPolicyHints`. Domain presets do not define a second physical solver.
 - Timeline and spring scalar sampling from explicit elapsed time, with `Instant` conversion kept in
   adapter code instead of the motion lifecycle.
 - `MotionScalarRun` and `MotionProgressRun` for policy-resolved scalar and normalized 0..1 adapter
@@ -43,10 +47,82 @@ The current first-party proof is intentionally small:
 - Docking consumes neutral motion geometry and projection helpers for presentation and affordance
   evidence.
 
-These consumers prove deterministic clocks, normalized progress runs, retargeting, reduced-motion
-final state, cancellation, terminal pruning, sequence composition, and `MotionFrameDemand`
-aggregation. They do not prove row enter/exit animation, public presence, keyframes,
+These consumers exercise adapter clocks, normalized progress, reduced-motion final state and frame
+demand. Controller retargeting, freeze-at-cancel, terminal pruning and sequence composition also have
+crate-level tests. Existing consumers may replace a run with zero initial velocity; the existence
+of velocity-preserving controller APIs does not prove that every adapter preserves velocity. The
+current proof does not cover row enter/exit animation, public presence, keyframes,
 repeat/reverse/speed controls, full shared-layout orchestration, WAAPI, or a global scheduler.
+
+## Shared Spring Solver And Domain Policy
+
+The pure solver in `src/spring_solver.rs` is imported from Zed
+`635026fabc38440fce5e1767d125026a17b12012`, `crates/gpui/src/spring.rs`. It retains the official
+signatures and numerical mechanism: canonical parameters, the three damping regimes, the exact
+propagator, fixed-target `step`, moving-target `step_ramp`, natural-frequency settling thresholds,
+conservative `settle_time` and duration-based `sampled_easing`. All eight official pure-math
+regression scenarios live in `src/spring_solver/tests.rs`. Typed targets, interpolation, playback
+and Element-ID lifecycle belong to GPUI; they are not duplicated in this renderer-neutral crate.
+
+One reproduced numerical correction differs from the pinned implementation: canonical parameter
+ratios and products use `f64` intermediates so common finite parameter scaling does not underflow
+or overflow the `f32` product. Returned parameters and subsequent solver arithmetic remain `f32`;
+this does not guarantee arbitrary-range finite output or bitwise parity with the prior arithmetic.
+The conservative settling-time envelope also respects representable target±epsilon endpoints;
+rounding an endpoint outside the requested tolerance moves it inward before deriving the
+position threshold. This may wait for a zero envelope when epsilon is below the target's spacing.
+Fixed-target position sampling also accumulates the target and opposing matrix contributions in
+`f64` before conversion, avoiding intermediate target rounding before cancellation. The official
+matrix/decay formulas, velocity and moving-target ramp path remain unchanged. These corrections
+do not establish measured performance or general numerical accuracy outside the tested range.
+
+`SpringConfig::new(stiffness, damping, mass)` follows upstream argument order. Its constructor does
+not sanitize physical inputs: stiffness and mass must be finite and positive, and damping must be
+finite and non-negative. `MotionSpringOptions::new(config)` retains that exact configuration. Its
+positional epsilon defaults to `0.001`; `with_epsilon` accepts finite non-negative values and resets
+negative or non-finite values to the default. Settling compares position with epsilon and velocity
+with `epsilon * natural_frequency`. There is no independently configurable velocity threshold.
+Domain samples retain the existing fallback for non-finite scalar inputs: source becomes zero,
+target becomes the sanitized source, and initial velocity becomes zero. Solver output is retained
+while active; a settled domain sample publishes the exact target with zero velocity.
+
+`MotionSpringPolicyHints` holds review duration and reported bounce. Finite reported bounce is
+clamped to `0..=MAX_REVIEWABLE_BOUNCE`, and non-finite bounce becomes zero. Review duration is retained
+for policy validation and sequence planning. Neither field changes the solver, measures actual
+overshoot, or establishes physical settling time. Domain sampling retains raw solver overshoot;
+only an explicitly normalized progress or geometry projection clamps its own output.
+
+```rust
+use open_gpui_motion::{
+    MotionIntent, MotionPreference, MotionSpringOptions, MotionSpringPolicyHints, MotionTransition,
+    SpringConfig,
+};
+use std::time::Duration;
+
+let options = MotionSpringOptions::new(SpringConfig::new(260.0, 28.0, 1.0))
+    .with_epsilon(0.001)
+    .with_policy_hints(MotionSpringPolicyHints::new(Duration::from_millis(180), 0.12));
+let transition = MotionTransition::spring(
+    MotionIntent::CommittedLayout,
+    MotionPreference::Animated,
+    options,
+);
+let sample = transition.sample_scalar_elapsed(0.0, 1.0, 0.0, Duration::from_millis(90));
+assert!(sample.is_active());
+```
+
+The previous `MotionSpringPhysics` facade and its independent `rest_delta`/`rest_speed` controls are
+removed. Pass `MotionSpringOptions` to `MotionTransition::spring`; advanced consumers use
+`MotionSpringSpec::from_options` and `options()` instead of `from_physics` and `physics()`. Convert
+old physical arguments explicitly from mass/stiffness/damping to the official
+stiffness/damping/mass order. Replace positional rest tolerance with `with_epsilon`, then qualify the
+new completion timing; the previous independent velocity tolerance has no lossless mapping.
+
+Domain controller cancellation continues to freeze its sampled position and velocity at the cancel
+time. It does not adopt GPUI `SpringPlayback::Cancelled`, which restores the element's initial
+coordinate and discards velocity. A property has one state owner: a component's domain run and a
+GPUI element Spring must not both animate the same value. Adapters pass the App reduced-motion
+preference into domain policy and continue routing all frame demand through the existing Window.
 
 ## Where To See It
 

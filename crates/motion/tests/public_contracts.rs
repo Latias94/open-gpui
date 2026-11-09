@@ -2,12 +2,13 @@ use open_gpui_motion::{
     MotionClockSample, MotionDuration, MotionEasing, MotionFrameDemand, MotionFrameDriver,
     MotionFrameReason, MotionFrameResetReason, MotionIntent, MotionPolicyContext, MotionPreference,
     MotionProgressSequence, MotionProgressSequenceStepState, MotionProjection,
-    MotionProjectionClip, MotionProjectionError, MotionRunState, MotionTransition,
+    MotionProjectionClip, MotionProjectionError, MotionRunState, MotionSpringOptions,
+    MotionSpringPolicyHints, MotionTransition, SpringConfig, SpringState,
     advanced::{
         MotionExecutionPlan, MotionModel, MotionPolicyInput, MotionProgressExecution,
-        MotionScalarController, MotionSpec,
+        MotionScalarController, MotionScalarTrack, MotionSpec, MotionSpringSpec,
     },
-    motion_point, motion_px, motion_rect, motion_size,
+    motion_point, motion_px, motion_rect, motion_size, sampled_easing,
 };
 use std::time::Duration;
 
@@ -37,6 +38,101 @@ fn scalar_run_samples_by_explicit_elapsed_controller_time() {
     assert_eq!(complete.value(), 10.0);
     assert!(complete.complete());
     assert!(!complete.frame_demand().needs_frame());
+}
+
+#[test]
+fn spring_options_use_the_public_solver_and_keep_overshoot_outside_domain_progress() {
+    let config = SpringConfig::new(100.0, 6.0, 1.0);
+    let options = MotionSpringOptions::new(config)
+        .with_epsilon(0.001)
+        .with_policy_hints(MotionSpringPolicyHints::new(
+            Duration::from_millis(180),
+            0.1,
+        ));
+    assert_eq!(options.config(), config);
+    assert_eq!(options.epsilon(), 0.001);
+    let transition = MotionTransition::spring(
+        MotionIntent::CommittedLayout,
+        MotionPreference::Animated,
+        options,
+    );
+    assert!(transition.policy_report().is_ok());
+
+    let elapsed = Duration::from_millis(300);
+    let expected = config.step(SpringState::default(), 1.0, elapsed.as_secs_f32());
+    let scalar = transition.sample_scalar_elapsed(0.0, 1.0, 0.0, elapsed);
+    assert_eq!(scalar.value(), expected.position);
+    assert_eq!(scalar.velocity(), expected.velocity);
+    assert!(scalar.value() > 1.0);
+    assert!(scalar.is_active());
+
+    let progress = transition
+        .progress_run(Duration::ZERO)
+        .sample_elapsed(elapsed);
+    assert_eq!(progress.scalar_sample().value(), scalar.value());
+    assert_eq!(progress.progress(), 1.0);
+    assert!(!progress.complete());
+    assert!(progress.frame_demand().needs_frame());
+
+    let (duration, easing) = sampled_easing(config, options.epsilon());
+    assert_ne!(duration, Duration::MAX);
+    assert_eq!(easing(0.0), 0.0);
+    assert_eq!(easing(1.0), 1.0);
+    let after_settling = transition
+        .scalar_run(0.0, 1.0, 0.0, Duration::ZERO)
+        .sample_elapsed(duration + Duration::from_millis(1));
+    assert_eq!(after_settling.value(), 1.0);
+    assert!(after_settling.complete());
+    assert!(!after_settling.frame_demand().needs_frame());
+}
+
+#[test]
+fn domain_spring_cancel_freezes_the_sample_and_retarget_retains_its_velocity() {
+    let original_config = SpringConfig::new(260.0, 28.0, 1.0);
+    let model = MotionModel::spring(MotionSpringSpec::from_options(
+        MotionPreference::Animated,
+        MotionSpringOptions::new(original_config),
+    ));
+    let mut track = MotionScalarTrack::start(model, 0.0, 1.0, 0.0, Duration::ZERO);
+    let interruption = Duration::from_millis(80);
+    let sampled = track.sample_at(interruption);
+    assert!(sampled.value() > 0.0 && sampled.value() < 1.0);
+    assert_ne!(sampled.velocity(), 0.0);
+
+    track.cancel_at(interruption);
+    let frozen = track.sample_at(Duration::from_secs(1));
+    assert_eq!(frozen.state(), MotionRunState::Cancelled);
+    assert_eq!(frozen.value(), sampled.value());
+    assert_eq!(frozen.velocity(), sampled.velocity());
+    assert_eq!(frozen.elapsed(), interruption);
+    assert!(!frozen.reached_final_state());
+    assert!(!track.frame_demand_at(Duration::from_secs(1)).needs_frame());
+
+    let next_config = SpringConfig::new(190.0, 23.0, 1.0);
+    let next_model = MotionModel::spring(MotionSpringSpec::from_options(
+        MotionPreference::Animated,
+        MotionSpringOptions::new(next_config),
+    ));
+    let resumed_at = Duration::from_secs(2);
+    let retargeted = track.retarget(next_model, 2.0, resumed_at);
+    let resumed = retargeted.sample_at(resumed_at);
+    assert_eq!(resumed.value(), frozen.value());
+    assert_eq!(resumed.velocity(), frozen.velocity());
+    assert_eq!(resumed.target(), 2.0);
+    assert_eq!(resumed.state(), MotionRunState::Active);
+
+    let delta = Duration::from_millis(50);
+    let expected = next_config.step(
+        SpringState {
+            position: frozen.value(),
+            velocity: frozen.velocity(),
+        },
+        2.0,
+        delta.as_secs_f32(),
+    );
+    let next = retargeted.sample_at(resumed_at + delta);
+    assert_eq!(next.value(), expected.position);
+    assert_eq!(next.velocity(), expected.velocity);
 }
 
 #[test]

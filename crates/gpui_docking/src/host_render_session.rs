@@ -3,8 +3,8 @@ use crate::{
     DockVisualStyle, DockWorkspace, geometry::DockDropGuideMetrics, host::DockHostOptions,
     panel_registry::DockPanelRenderRegistration,
 };
-use open_gpui::{AnyView, Context, EntityId, Pixels};
-use open_gpui_motion::MotionPreference;
+use open_gpui::{AnyView, App, Context, EntityId, Pixels};
+use open_gpui_motion::{MotionPreference, MotionTransition};
 use std::{collections::HashMap, ops::Deref, rc::Rc};
 
 pub(crate) enum DockHostPanelRenderResolution {
@@ -331,6 +331,13 @@ impl DockHostPresentationSession {
         self.motion_preference
     }
 
+    fn with_app_motion_preference(mut self, cx: &App) -> Self {
+        if cx.reduce_motion() {
+            self.motion_preference = MotionPreference::Reduced;
+        }
+        self
+    }
+
     pub(crate) fn is_central_tabs(&self, node_id: DockNodeId) -> bool {
         self.central_node
             .is_some_and(|central| self.subtree_contains(central, node_id))
@@ -448,24 +455,37 @@ impl Deref for DockHostRenderSession {
 
 impl DockHost {
     pub(crate) fn presentation_session(&self, cx: &Context<Self>) -> DockHostPresentationSession {
-        if let Some(presentation) = self.live_presentation_session() {
-            return presentation.clone();
-        }
-        let space = self.space().clone();
-        if self.is_provisional_viewport() {
-            return DockHostPresentationSession::provisional_shell(space);
-        }
-        self.with_workspace(cx, |workspace| {
-            DockHostPresentationSession::new(space, workspace)
-        })
+        let presentation = if let Some(presentation) = self.live_presentation_session() {
+            presentation.clone()
+        } else if self.is_provisional_viewport() {
+            DockHostPresentationSession::provisional_shell(self.space().clone())
+        } else {
+            self.with_workspace(cx, |workspace| {
+                DockHostPresentationSession::new(self.space().clone(), workspace)
+            })
+        };
+        presentation.with_app_motion_preference(cx)
     }
 
     pub(crate) fn render_session_with_visual_style(
-        &self,
+        &mut self,
         visual_style: Rc<DockVisualStyle>,
         cx: &Context<Self>,
     ) -> DockHostRenderSession {
-        DockHostRenderSession::new(self.presentation_session(cx), visual_style)
+        let presentation = self.presentation_session(cx);
+        if presentation.motion_preference().is_immediate() {
+            finish_reduced_motion_transition(self.transition_executor_mut());
+            finish_reduced_motion_transition(self.visual_affordance_transition_executor_mut());
+        }
+        DockHostRenderSession::new(presentation, visual_style)
+    }
+}
+
+fn finish_reduced_motion_transition(
+    executor: &mut crate::transition_executor::DockTransitionExecutor,
+) {
+    if let Some(execution) = executor.clear() {
+        executor.execute(execution.plan, MotionTransition::immediate());
     }
 }
 
@@ -493,6 +513,67 @@ mod tests {
         DockCentralRegion, DockGraph,
         host_test_support::{floating_overlay_graph, item, space, tabs_graph},
     };
+
+    #[open_gpui::test]
+    fn app_motion_floor_applies_to_every_presentation_without_rewriting_source_snapshots(
+        cx: &mut open_gpui::TestAppContext,
+    ) {
+        let (graph, root) = tabs_graph(&["a"]);
+        let workspace = DockWorkspace::new(space(), graph);
+        let captured = [
+            DockHostPresentationSession::new(space(), &workspace),
+            DockHostPresentationSession::live_payload_projection(
+                space(),
+                workspace.graph(),
+                &workspace,
+            ),
+            DockHostPresentationSession::payload_recovery_projection(
+                space(),
+                workspace.graph(),
+                &workspace,
+            ),
+            DockHostPresentationSession::provisional_shell(space()),
+        ];
+        cx.update(|cx| {
+            cx.set_reduce_motion(true);
+            for source in &captured {
+                let effective = source.clone().with_app_motion_preference(cx);
+                assert_eq!(effective.kind(), source.kind());
+                assert_eq!(effective.root(), source.root());
+                assert_eq!(effective.motion_preference(), MotionPreference::Reduced);
+                assert_eq!(source.motion_preference(), MotionPreference::Animated);
+            }
+            cx.set_reduce_motion(false);
+            for source in &captured {
+                assert_eq!(
+                    source
+                        .clone()
+                        .with_app_motion_preference(cx)
+                        .motion_preference(),
+                    MotionPreference::Animated,
+                );
+            }
+        });
+        assert_eq!(workspace.graph().root(&space()), Some(root));
+        assert_eq!(
+            workspace.options().motion_preference,
+            MotionPreference::Animated
+        );
+
+        let mut workspace = workspace;
+        workspace.options_mut().motion_preference = MotionPreference::Reduced;
+        let captured = DockHostPresentationSession::new(space(), &workspace);
+        cx.update(|cx| {
+            assert!(!cx.reduce_motion());
+            assert_eq!(
+                captured
+                    .clone()
+                    .with_app_motion_preference(cx)
+                    .motion_preference(),
+                MotionPreference::Reduced,
+            );
+        });
+    }
 
     #[test]
     fn render_session_keeps_inactive_panel_views_out_of_snapshot() {

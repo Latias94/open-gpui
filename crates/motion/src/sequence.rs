@@ -451,11 +451,11 @@ mod tests {
 
         assert_eq!(
             sequence.steps()[0].duration_hint(),
-            spring.physics().review_duration()
+            spring.options().policy_hints().review_duration()
         );
         assert_eq!(
             sequence.steps()[1].start_at(),
-            spring.physics().review_duration()
+            spring.options().policy_hints().review_duration()
         );
         assert_eq!(spring.preset(), Some(MotionSpringPreset::Layout));
     }

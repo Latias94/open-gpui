@@ -20,7 +20,10 @@ use crate::{
         DockVisualAffordanceState, DockVisualLayerScope,
     },
 };
-use open_gpui::{Bounds, TestAppContext, point, px, size};
+use open_gpui::{
+    Bounds, Context, Entity, IntoElement, Render, Styled, TestAppContext, VisualTestContext,
+    Window, canvas, point, px, size,
+};
 use open_gpui_motion::{
     MotionDuration, MotionEasing, MotionFrameDemand, MotionFrameReason, MotionIntent,
     MotionPreference, MotionTransition,
@@ -895,4 +898,236 @@ fn transition_plan_from_rejected_affordance_is_rejected_noop() {
         DockVisualAffordanceTransitionKind::RejectedNoop
     );
     assert!(plan.is_immediate());
+}
+
+fn draw_host_frame(visual: &mut VisualTestContext) {
+    visual.update(|window, cx| {
+        window.refresh();
+        window.draw(cx).clear(cx);
+    });
+}
+
+fn assert_host_motion_idle(visual: &mut VisualTestContext) {
+    let queued = visual.update(|window, cx| window.drain_next_frame_callbacks_for_test(cx));
+    assert!(
+        queued <= 1,
+        "only an already queued animation callback may remain"
+    );
+    draw_host_frame(visual);
+    assert_eq!(
+        visual.update(|window, cx| window.drain_next_frame_callbacks_for_test(cx)),
+        0,
+        "the completed docking presentation must stop renewing frame demand"
+    );
+}
+
+fn assert_panel_width(visual: &mut VisualTestContext, expected: f32) {
+    let bounds = visual
+        .debug_bounds("test-panel:B")
+        .expect("the selected panel must render in its final scene");
+    assert!(
+        (bounds.size.width.as_f32() - expected).abs() < 0.05,
+        "expected panel width {expected}, got {bounds:?}"
+    );
+}
+
+#[open_gpui::test]
+fn app_reduced_motion_finishes_mounted_dock_zoom_and_restores_only_new_targets(
+    cx: &mut TestAppContext,
+) {
+    let (graph, root, left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
+    let (_window, host, mut visual) = open_host(
+        cx,
+        graph,
+        &[("a", "Panel A", "A"), ("b", "Panel B", "B")],
+        size(px(400.0), px(240.0)),
+    );
+    draw_host_frame(&mut visual);
+    assert_panel_width(&mut visual, 198.0);
+    assert_host_motion_idle(&mut visual);
+
+    let requested = visual.update(|window, cx| {
+        host.update(cx, |host, cx| assert!(host.zoom_pane(right_tabs, cx)));
+        window.draw(cx).clear(cx);
+        window.drain_next_frame_callbacks_for_test(cx)
+    });
+    assert_eq!(requested, 1, "the public zoom command should animate");
+
+    visual.update(|_, cx| cx.set_reduce_motion(true));
+    draw_host_frame(&mut visual);
+    assert_panel_width(&mut visual, 398.0);
+    assert_host_motion_idle(&mut visual);
+    assert!(host.update(&mut visual, |host, _| {
+        host.sample_transition_for_test(Duration::ZERO).is_none()
+    }));
+    host.update(&mut visual, |host, cx| {
+        assert_eq!(host.motion_preference(cx), MotionPreference::Reduced);
+        host.with_workspace(cx, |workspace| {
+            assert_eq!(
+                workspace.options().motion_preference,
+                MotionPreference::Animated
+            );
+            assert_eq!(workspace.graph().root(&space()), Some(root));
+            let crate::DockNode::Split {
+                children,
+                fractions,
+                ..
+            } = workspace
+                .graph()
+                .node(root)
+                .expect("the split graph must remain intact")
+            else {
+                panic!("presentation zoom must preserve the split graph");
+            };
+            assert_eq!(children.as_slice(), &[left_tabs, right_tabs]);
+            assert_eq!(fractions.as_slice(), &[0.5, 0.5]);
+        });
+    });
+
+    visual.update(|_, cx| cx.set_reduce_motion(false));
+    draw_host_frame(&mut visual);
+    assert_panel_width(&mut visual, 398.0);
+    assert_host_motion_idle(&mut visual);
+    let requested = visual.update(|window, cx| {
+        host.update(cx, |host, cx| assert!(host.unzoom(cx)));
+        window.draw(cx).clear(cx);
+        window.drain_next_frame_callbacks_for_test(cx)
+    });
+    assert_eq!(requested, 1, "a later public unzoom command should animate");
+
+    visual.update(|_, cx| cx.set_reduce_motion(true));
+    draw_host_frame(&mut visual);
+    assert_panel_width(&mut visual, 198.0);
+    assert_host_motion_idle(&mut visual);
+
+    let requested = visual.update(|window, cx| {
+        host.update(cx, |host, cx| {
+            let previous = host
+                .last_presentation_scene()
+                .expect("the mounted host should retain its final scene")
+                .clone();
+            assert!(host.zoom_pane_with_scene(
+                right_tabs,
+                previous,
+                MotionTransition::continuity(MotionPreference::Animated),
+                Some(window),
+                cx,
+            ));
+        });
+        window.draw(cx).clear(cx);
+        window.drain_next_frame_callbacks_for_test(cx)
+    });
+    assert_eq!(
+        requested, 0,
+        "an explicit Animated transition cannot weaken the App floor"
+    );
+    assert_panel_width(&mut visual, 398.0);
+    assert_host_motion_idle(&mut visual);
+    host.update(&mut visual, |host, cx| assert!(host.unzoom(cx)));
+    draw_host_frame(&mut visual);
+    assert_panel_width(&mut visual, 198.0);
+    assert_host_motion_idle(&mut visual);
+
+    let controller = host.update(&mut visual, |host, _| host.controller().clone());
+    controller.update(&mut visual, |controller, cx| {
+        controller.workspace_mut().options_mut().motion_preference = MotionPreference::Reduced;
+        cx.notify();
+    });
+    visual.update(|_, cx| cx.set_reduce_motion(false));
+    host.update(&mut visual, |host, cx| {
+        assert!(host.zoom_pane(right_tabs, cx))
+    });
+    draw_host_frame(&mut visual);
+    assert_panel_width(&mut visual, 398.0);
+    assert_eq!(
+        visual.update(|window, cx| window.drain_next_frame_callbacks_for_test(cx)),
+        0,
+        "the workspace Reduced preference survives App restoration"
+    );
+}
+
+#[open_gpui::test]
+fn app_reduced_render_finishes_an_unchanged_visual_affordance_target(cx: &mut TestAppContext) {
+    struct AffordanceProbe {
+        host: Entity<crate::DockHost>,
+        scene: DockVisualAffordanceScene,
+        samples:
+            std::rc::Rc<std::cell::RefCell<Vec<crate::transition_executor::DockTransitionSample>>>,
+    }
+
+    impl Render for AffordanceProbe {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let host = self.host.clone();
+            let scene = self.scene.clone();
+            let samples = self.samples.clone();
+            canvas(
+                move |bounds, window, cx| {
+                    host.update(cx, |host, cx| {
+                        let style = std::rc::Rc::new(crate::DockVisualStyle::built_in());
+                        let session = host.render_session_with_visual_style(style, cx);
+                        let presentation = host.presentation_scene_for_test(bounds, cx);
+                        host.set_last_presentation_scene(presentation);
+                        if let Some(sample) = host.sync_visual_affordance_transition_for_test(
+                            &session, &scene, bounds, window,
+                        ) {
+                            samples.borrow_mut().push(sample);
+                        }
+                    });
+                },
+                |_, (), _, _| {},
+            )
+            .size_full()
+        }
+    }
+
+    let (graph, root) = crate::host_test_support::tabs_graph_with_selected(&["a"], "a");
+    let (_window, host, mut visual) = open_host(
+        cx,
+        graph,
+        &[("a", "Panel A", "A")],
+        size(px(400.0), px(240.0)),
+    );
+    draw_host_frame(&mut visual);
+    assert_host_motion_idle(&mut visual);
+    let target = floating_bounds(40.0, 20.0, 90.0, 48.0);
+    let affordance_scene =
+        DockVisualAffordanceScene::from_test_layers(vec![test_affordance_layer(
+            root,
+            DockVisualAffordanceKind::GuideBox,
+            target,
+            Some(DropZone::Left),
+            None,
+        )]);
+    let samples = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    visual.update(|window, cx| {
+        window.replace_root(cx, |_, _| AffordanceProbe {
+            host: host.clone(),
+            scene: affordance_scene,
+            samples: samples.clone(),
+        });
+    });
+    draw_host_frame(&mut visual);
+    assert!(samples.borrow().last().unwrap().frame_demand.needs_frame());
+    assert_eq!(
+        visual.update(|window, cx| window.drain_next_frame_callbacks_for_test(cx)),
+        1
+    );
+    samples.borrow_mut().clear();
+    visual.update(|_, cx| cx.set_reduce_motion(true));
+    draw_host_frame(&mut visual);
+    let sample = samples
+        .borrow()
+        .last()
+        .expect("reducing motion should expose the unchanged target's final sample")
+        .clone();
+    assert_eq!(sample.progress, 1.0);
+    assert!(sample.complete);
+    assert_eq!(sample.frame_demand, MotionFrameDemand::Idle);
+    assert_eq!(sample.visual_affordances.len(), 1);
+    assert_eq!(sample.visual_affordances[0].bounds, target);
+    assert!(host.update(cx, |host, _| {
+        host.sample_visual_affordance_transition_for_test(Duration::ZERO)
+            .is_none()
+    }));
+    assert_host_motion_idle(&mut visual);
 }

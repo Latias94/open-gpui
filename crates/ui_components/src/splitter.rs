@@ -618,7 +618,7 @@ impl Splitter {
 
     /// Requests a motion preference for programmatic layout changes.
     ///
-    /// Reduced motion from either this request or the active theme remains authoritative.
+    /// Reduced motion from this request, the active theme, or the App remains authoritative.
     pub fn motion_preference(mut self, motion_preference: MotionPreference) -> Self {
         self.motion_preference = Some(motion_preference);
         self
@@ -653,8 +653,11 @@ impl RenderOnce for Splitter {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let base_state = self.state();
         let theme = ThemeResolver::current(window, cx);
-        let motion_preference =
-            ThemeResolver::splitter_motion_preference(&theme, self.motion_preference);
+        let motion_preference = if cx.reduce_motion() {
+            MotionPreference::Reduced
+        } else {
+            ThemeResolver::splitter_motion_preference(&theme, self.motion_preference)
+        };
         let motion_model = MotionPreset::committed_layout(motion_preference).resolve_model();
         let now = Instant::now();
         let panel_views = self

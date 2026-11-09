@@ -573,7 +573,10 @@ mod tests {
     fn utf16_range_conversion_normalizes_reversed_ranges() {
         let text = "a🙂中";
 
-        assert_eq!(range_from_utf16(text, &(4..1)), 1..text.len());
+        assert_eq!(
+            range_from_utf16(text, &Range { start: 4, end: 1 }),
+            1..text.len()
+        );
         assert_eq!(range_to_utf16(text, &(2..text.len())), 1..4);
     }
 

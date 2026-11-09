@@ -2,6 +2,7 @@
 
 **Status**: Accepted
 **Date**: 2026-07-03
+**Refined By**: [ADR 0018](0018-open-gpui-motion-crate-boundary.md) (November 9 official Spring solver and UI lifecycle)
 
 ## Context
 
@@ -27,6 +28,11 @@ geometry math. Runtime measurement, window frame requests, accessibility announc
 release authority, and platform compositor execution remain adapter or product responsibilities.
 
 ## Decision
+
+The November 9 refinement in ADR 0018 replaces this decision's fork-specific damping solver
+with the complete official pure solver and places the complete official element Spring API in
+GPUI. Domain policy, geometry, explicit elapsed sampling and adapter-owned scheduling remain
+current. The original `ui_core` location below is historical and was moved by ADR 0018.
 
 `open_gpui_ui_core` now owns the next renderer-neutral motion foundation:
 

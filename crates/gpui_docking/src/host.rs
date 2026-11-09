@@ -728,6 +728,7 @@ pub struct DockHostOptions {
     /// Structural metrics used to size and hit-test dock drop guides.
     pub drop_guide_metrics: DockDropGuideMetrics,
     /// Host-owned motion preference applied before constructing docking transition specs.
+    /// The App's reduced-motion preference remains authoritative for presentation.
     pub motion_preference: MotionPreference,
 }
 
@@ -3428,7 +3429,11 @@ impl DockHost {
     }
 
     pub(crate) fn motion_preference(&self, cx: &Context<Self>) -> MotionPreference {
-        self.with_workspace(cx, |workspace| workspace.options().motion_preference)
+        if cx.reduce_motion() {
+            MotionPreference::Reduced
+        } else {
+            self.with_workspace(cx, |workspace| workspace.options().motion_preference)
+        }
     }
 
     pub(crate) fn current_window_binding(&self) -> Option<DockHostWindowBinding> {

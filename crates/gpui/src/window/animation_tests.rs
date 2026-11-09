@@ -64,10 +64,10 @@ impl Render for AnimationProbe {
     }
 }
 
-struct AnimationFrameBatch(Rc<AppCell>);
+pub(super) struct AnimationFrameBatch(Rc<AppCell>);
 
 impl AnimationFrameBatch {
-    fn new(cx: &TestAppContext) -> Self {
+    pub(super) fn new(cx: &TestAppContext) -> Self {
         cx.update(|app| app.start_update());
         Self(cx.app.clone())
     }

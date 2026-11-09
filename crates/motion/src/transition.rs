@@ -2,7 +2,7 @@
 
 use crate::{
     MotionClockSample, MotionDuration, MotionEasing, MotionFrameDemand, MotionPreference,
-    MotionProgressSample, MotionScalarSample, MotionSpringPhysics,
+    MotionProgressSample, MotionScalarSample, MotionSpringOptions,
     controller::{MotionExecutionPlan, MotionScalarExecution, MotionScalarExecutionSample},
     frame_host::{
         MotionFrameHost, MotionFrameHostResetReason, MotionFrameHostSample, MotionFrameHostUpdate,
@@ -87,14 +87,17 @@ impl MotionTransition {
     }
 
     /// Creates a spring transition for an intent.
+    ///
+    /// The configuration carried by `options` retains [`crate::SpringConfig`]'s preconditions.
+    /// Its epsilon controls settling; its review hints participate only in domain policy.
     pub fn spring(
         intent: MotionIntent,
         preference: MotionPreference,
-        physics: MotionSpringPhysics,
+        options: MotionSpringOptions,
     ) -> Self {
         Self::from_model(
             intent,
-            MotionModel::spring(MotionSpringSpec::from_physics(preference, physics)),
+            MotionModel::spring(MotionSpringSpec::from_options(preference, options)),
         )
     }
 

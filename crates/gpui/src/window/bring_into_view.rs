@@ -1315,14 +1315,18 @@ impl Window {
                 .now()
                 .saturating_duration_since(motion.started_at);
             let sample = motion.progress.sample_elapsed(elapsed);
-            let progress = sample.progress();
+            let progress = if cx.reduce_motion() {
+                1.0
+            } else {
+                sample.progress()
+            };
             let offset = point(
                 motion.from.x + (motion.target.x - motion.from.x) * progress,
                 motion.from.y + (motion.target.y - motion.from.y) * progress,
             );
             let changed = container.driver.apply_authority_offset(offset, motion.axes);
             request.moved |= changed;
-            if sample.complete() {
+            if cx.reduce_motion() || sample.complete() {
                 container
                     .driver
                     .apply_authority_offset(motion.target, motion.axes);
@@ -1421,7 +1425,9 @@ impl Window {
                     request.moved = true;
                 }
                 BringIntoViewBehavior::Animated(transition)
-                    if !transition.is_immediate() && !transition.preference().is_immediate() =>
+                    if !cx.reduce_motion()
+                        && !transition.is_immediate()
+                        && !transition.preference().is_immediate() =>
                 {
                     request.motion = Some(ActiveRevealMotion {
                         container_id: container.id,
