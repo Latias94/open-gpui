@@ -65,6 +65,47 @@ Reproduce each remaining defect, integrate the owning fix, preserve fork contrac
 and affected regression cohorts serially, and record actual results. Source review and dependency-
 consumer checks alone do not qualify a complete framework refresh.
 
+### Maintenance Handoff And Engine Feedback
+
+The November 9 owner clarification keeps this continuation responsible for the fixed-target
+refresh and the modular engine-integration assessment before a separate Codex session takes over
+ongoing Open-GPUI maintenance. That later session consumes concrete feedback from Nara; it is not
+a prerequisite for completing the current work.
+
+After the fixed refresh and first qualified engine-seam consumer, ongoing framework maintenance
+moves to that session while Nara continues complete Editor migration and game-runtime acceptance
+under its own plan.
+
+Keep upstream provenance, fork adaptations, reproducible ordinary-consumer gates and unresolved
+platform limits in this repository's existing candidate queue, plan and verification record.
+The handoff must identify the actual qualified framework revision and fixed upstream target,
+remaining differences and their dispositions, compiler/dependency requirements and the commands
+that a maintenance session can rerun. Do not treat a bounded residual source pass as an exhaustive
+closure audit.
+
+Each engine integration checkpoint records an immutable consumed framework revision and its
+resolved dependency graph. Later maintenance can advance independently; adopting it in Nara
+requires the affected engine consumer's qualification rather than treating either moving
+worktree as the other repository's tested dependency.
+
+Nara owns its engine adapter and complete Editor/game-runtime choice. Open-GPUI owns reusable UI
+execution, platform/render extension seams and its components; no Nara document, ECS, history or
+GPU owner enters the framework. Assess those seams with an ordinary standalone consumer and a
+real engine View, preserving exact input/presentation and resource retirement. Engine-specific
+composition stays in Nara; a framework correction motivated by that consumer needs a focused
+Open-GPUI regression. The existing source-consumption and renderer tests do not yet qualify that
+engine boundary or complete the handoff.
+
+The November 9 bounded source check identifies concrete adapter work: WgpuContext's private
+construction installs device-wide callbacks, WgpuRenderer's private record operation submits
+its own encoder, and WindowsWindowInner constructs a concrete DirectXRenderer. Public Arc
+Device/Queue fields and selecting the WGPU package do not provide captured-device construction,
+Host-owned submission or a replacement Windows renderer. Assess reusable recording/native
+attachment seams through the engine consumer, preserving ordinary standalone drawing and the
+existing loss, atlas, receipt and shutdown contracts. Retained GPU-image sampling also needs
+an actual clipped engine View; the current WGPU Surface branch is not that implementation.
+These source facts add no public API or executed engine qualification.
+
 ### Cached-Dependency Adaptation Requirements
 
 Port `decd2399b1` and `8fa085e397` through existing EntityMap, AnyView and deferred frame journals.
@@ -1814,7 +1855,7 @@ Official `d06ebb7c033365a427b5cc8a3e2a2651bcb0c267`,
 `4ed3738c4068495e12d4d78044b005e5ed9d3b8c`,
 `dd04a229dd22700ff43815b8514453e197c333b7` and
 `99e70ee4a02d8dcf1b72f487f81aaf0d3be74f76` supply reduced motion, synchronized repeats,
-per-animation FPS limits and executor time. The fork still has only duration/oneshot/easing,
+per-animation FPS limits and executor time. At this unit's entry the fork had only duration/oneshot/easing,
 wall-clock progression and unconditional next-frame requests. Its qualified global power/cadence
 and separate motion policy do not implement these public animation controls.
 
@@ -1823,8 +1864,20 @@ App reduced-motion behavior, including image animation. Use existing executor, W
 candidate/state owners. Preserve official synchronized-phase, limited-rate timer and static
 single-frame regression scenarios, plus ordinary public composition. Qualify window release,
 refused-candidate retry and interaction with existing global cadence without adding a scheduler
-or independent animation authority. This is queued source evidence, not executed behavior or
-an engine animation-policy decision.
+or independent animation authority.
+
+Local implementation `4ed461f2b591d6e44d84abc742094740fbd607af` and its
+[qualification](../verification.md#generic-animation-controls-and-clock) preserve all five
+official non-Spring regressions. A reproduced rejected-first-mount timer uses a weak exact-state
+reference; App-borrow notification and invalid FPS intervals adapt through existing owners.
+Focused 26, final strengthened image 3, actual Windows Submitted/pixels/retirement 1, complete
+framework/public/Gallery 2,138, components/docking/Canvas 2,966, profiling-disabled Core/public
+animation 1,310 and independent enabled/disabled 68/52 pass. Seven aggregate skips retain their
+separate scope. Locked checks, correctness Clippy, actual Windows Rust 1.93, stable production
+wasm profiling off/on, existing nightly shared-memory compilation, formatting and static gates
+pass. Both bounded reviews close without remaining P1/P2; all six implementation/review/analysis
+threads close. This completes the non-Spring scheduling unit without an engine animation-policy
+decision, a numerical performance result or foreign-platform runtime qualification.
 
 ### Stateful Spring And Element Successor
 
@@ -1843,6 +1896,39 @@ reduced-motion scenarios. Qualify retained Element state and candidate refusal t
 owners. No public compatibility layer or second animation owner follows merely from keeping
 both old implementations. Implementation and execution remain open.
 
+The November 9 bounded successor analysis selects the following implementation direction.
+Reconcile [ADR 0018](../adr/0018-open-gpui-motion-crate-boundary.md), including the applicable
+ADR 0016/0017 decisions, before changing that contract; this analysis does not implement Spring:
+
+- Keep the complete official `SpringAnimation`, typed `SpringTarget`/interpolation, playback
+  and `with_spring` Element-ID state in GPUI. First mount defaults to the target unless `from`
+  specifies an initial value. Advance existing state under its old target/configuration before
+  applying a new one. Ordinary public consumers retain the official interface.
+- Place the official pure `SpringConfig`/`SpringState` solver in a narrow module of the existing
+  renderer-neutral motion crate and expose those same types through GPUI. GPUI already depends
+  on motion for bring-into-view. No reverse dependency or new package is justified by the current
+  consumer set. Replace the fork's duplicate damping formulas with that solver.
+- Preserve actual domain owners: Splitter fractions/content retention, keyed list-indicator
+  geometry, docking final-layout/reveal projection and Window bring-into-view interruption.
+  These consumers may sample the shared solver from explicit elapsed time; one property must
+  not be driven simultaneously by a domain run and an element Spring. Frame demand remains
+  data aggregated into the existing Window, without a second timer or scheduler.
+  GPUI adapters pass the App reduced-motion preference into domain policy as a floor; the
+  neutral sampler does not query an App or introduce another preference singleton.
+- Migrate semantic differences explicitly. Fork constructor order is mass/stiffness/damping;
+  official order is stiffness/damping/mass. Official settling derives its velocity threshold
+  from epsilon and natural frequency, while the fork has independent rest thresholds. Official
+  cancellation restores the initial value, unlike the fork's freeze-at-cancel operation.
+  Preserve raw official overshoot and leave any reveal/progress clamp with its domain owner.
+  Fork bounce/review-duration metadata is not measured bounce or settling time.
+- Require complete official math/playback/element regressions, ordinary custom typed targets,
+  identity/configuration changes, candidate rejection/unwind and all four domain workflows.
+  Existing Splitter/list paths often recreate controllers with zero initial velocity; do not
+  describe their current behavior as universally velocity-continuous. General run/sequence APIs
+  with only self-tests do not justify retaining a duplicate implementation or public alias.
+  A game simulation retains its own clock, state and pause authority; sharing pure mathematics
+  establishes neither UI lifecycle reuse nor cross-platform bitwise deterministic simulation.
+
 ### System Notification Successor
 
 Official `de827bce2ff1cbb40040bea0ef57c8ac56afd726` supplies the fixed-target Core notification
@@ -1856,6 +1942,15 @@ backend separately and retain explicit unavailable behavior. This independent qu
 not require or create a product notification service.
 
 ## Maintained Baseline Before Engine Adaptation
+
+The [generic-animation qualification](../verification.md#generic-animation-controls-and-clock)
+records implementation `4ed461f2b591d6e44d84abc742094740fbd607af` after the overlay baseline.
+Complete official scheduling and image policy preserve existing candidate, cached-view, App and
+Window owners; independent reviews and the affected runtime/native/component/public/compiler
+matrix above pass. The plan also records the owner's subsequent separate maintenance session,
+immutable consumed revision and actual engine-feedback boundary. Continue stateful Spring/motion
+reconciliation, system notifications and the remaining fixed-target closure before qualifying
+the concrete engine seam. No complete-refresh, engine-default or performance-budget claim follows.
 
 The [frame-time overlay qualification](../verification.md#frame-time-debug-overlay) records
 implementation `73472ca230bac117f8cb417d0cd6b0c1364c980e` on November 9, with the separate fork

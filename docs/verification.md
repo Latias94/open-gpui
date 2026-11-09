@@ -5203,6 +5203,122 @@ does not exhaust the fixed-target delta. Remaining animation/spring/notification
 historical foreground-test variability, canonical docking, full refresh and Nara GPU/View and
 Editor/game-runtime adoption remain open; the parent goal stays active.
 
+## Generic Animation Controls And Clock
+
+The November 9 successor starts at `968f836f48a097ef49e692c62f5d1734c657bb75` against fixed
+Zed `635026fabc38440fce5e1767d125026a17b12012`. Its local implementation is
+`4ed461f2b591d6e44d84abc742094740fbd607af`. Official
+`d06ebb7c033365a427b5cc8a3e2a2651bcb0c267`,
+`4ed3738c4068495e12d4d78044b005e5ed9d3b8c`,
+`dd04a229dd22700ff43815b8514453e197c333b7` and
+`99e70ee4a02d8dcf1b72f487f81aaf0d3be74f76` supply App reduced motion, synchronized repeats,
+per-animation frame limits and executor time. The complete non-Spring mechanism includes
+ordinary builders, ParentElement composition, the shared App epoch and modulo before f32
+conversion, chained static endpoints and image reduced-motion behavior. Stateful Spring and
+the fork motion crate remain the separately planned successor. The App preference is explicitly
+application-controlled here; automatic OS preference propagation and component motion-policy
+reconciliation are not established by the generic element and image controls.
+
+Retained fork adaptations use existing owners. A delayed animation notification waits through
+App borrows and clears its pending flag inside the admitted closure before notifying, allowing
+synchronous redraw to renew its next timer. FPS values whose reciprocal cannot form a finite,
+nonzero, representable timer and deadline use ordinary frame scheduling; this adds no arbitrary
+FPS ceiling. A weak reference to the exact AnimationState flag prevents a timer from keeping a
+rejected first-mount state alive or notifying an accepted replacement view.
+
+The source-only review finding for that last adaptation is reproduced before correction.
+An accepted static view first mounts a 10 FPS animation in a candidate refused by an actual atlas
+lease. A successful retry 50 ms later creates its own timer. At 101 ms the rejected candidate's
+detached timer incorrectly renders the accepted view: four renders instead of three. Nextest
+`5980708f-54ae-4885-ab27-7809bd91e1b5` fails that assertion. The correction retains existing
+accepted-state timers while refusing notification after the rejected state's release, including
+a static accepted retry. This is a fork candidate-transaction adaptation of the official detached
+timer, not a change to the official shared clock or a second scheduling authority.
+
+The first test build fails on a fixture treating the private bool-returning primitive insertion
+as Result. The subsequent run `8fc9a3c6-7e29-41ef-bafc-bfedaa5d206b` passes 20/24: two fixtures
+close the final window and inadvertently trigger default App shutdown before reopening; another
+loads a view-subscribed image outside a rendered phase; the refusal fixture incorrectly asserts
+that its deliberately rejected primitive is admitted. Explicit fixture quit policy, observation
+inside the rendered view and the existing refusal outcome correct those fixtures without
+weakening scene, cache, clock or lifetime assertions.
+
+The corrected focused Core/public run `cfa2d915-df34-4688-901e-1dfd70b871a2` passes 26/26.
+It includes all five official non-Spring tests, twelve further animation regressions, three image
+policy/cache/loading cases, three actual candidate-refusal cases and three crate-external
+workflows. The public CPU Scene renderer proves accepted/submitted generations, ordinary child
+composition, two-window shared phase, cached views, reconstruction and exact renderer/atlas/App
+release; it does not execute a GPU. The ordinary independently locked consumer distinguishes
+executed builder/value/easing checks from explicitly unexecuted App/Window signature closures.
+
+Run the focused owners, public consumer and actual Windows consumer serially:
+
+```sh
+cargo nextest run --locked -p open-gpui --all-features --lib --test animation -E 'test(elements::animation::) | test(elements::img::tests::reduced_motion::) | test(window::animation_tests::) | binary(animation)' --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test animation --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --locked -p open-gpui-windows --all-features --lib -E 'test(=platform::native_test_support::native_animation_tests::native_generic_animations_progress_reduce_restore_and_retire_pending_frames)' --run-ignored only --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+The actual Windows trajectory passes 1/1 at
+`6c0250b7-3a8e-43a0-951c-7cc7c3df0261`, after correcting fixture-only access to Pixels' private
+tuple field to use its public conversion. It observes real nonempty Submitted generations and
+matching GPU pixels, input/focus, static reduced-motion endpoints and restoration. Its pending-close wait uses a FIFO
+foreground barrier after animation tasks have registered their timers, so the deadline upper
+bound cannot predate actual timer registration. Deterministic Core tests own exact deadline and
+expired-notification assertions; native deadline observation supplies no hard OS callback-latency
+or frame-rate budget.
+
+The production-stable complete Core/WGPU/Windows/Gallery library/public cohort passes 2,138/2,138,
+with seven declared skips (`97b52caf-890a-4c9b-88b6-5e44c617b040`). The new ignored native
+animation trajectory is executed separately above. Historical foreground restoration passes
+unchanged in this cohort; this does not resolve its recorded variability.
+
+Independent rereview identifies a second fixture-only image observation issue: calling cache
+load while still pending could subscribe on behalf of the tested Img and mask its missing
+completion notification. The corrected observer first reads the current ImgState, calls load
+only after loading has ended and then enters the cache's already-Loaded branch. Before reading
+the observed Arc, the workflow requires an actual render increase, cleared loading state and one
+image paint after HTTP completion. No production image code changes. The aggregate above uses
+the earlier fixture; final focused execution of all three strengthened image cases passes 3/3
+at `1f455552-d565-4309-b8ed-1698f86974e1` after formatting.
+Both bounded independent reviews close without remaining P1/P2; the third source-analysis lane
+records the Spring successor's explicit ownership and migration semantics in the plan. All six
+implementation/review/analysis threads are closed.
+
+The complete UI core/components/docking/Canvas cohort passes 2,966/2,966 without skips
+(`77129fd1-8424-4d82-b734-394cb2ccc106`). The first independently locked build finds a fixture
+annotation mismatch: adding `id` creates `Stateful<Div>`, not Div. Its explicit
+`AnimationElement<Stateful<Div>>` annotation now matches the public type without weakening the
+executed parent/child composition. No production interface changes for that correction.
+
+Final independently locked consumers pass 68/68 with `profiler` selected
+(`15f9725d-819b-4889-8fe2-75be7d87a5ff`) and 52/52 without optional features
+(`33da70d7-295b-4ea8-a2f4-3b8aca289eb1`), without skips. The four new ordinary animation cases
+execute builder/value/easing and parent construction while retaining explicitly unexecuted
+App/Window signature probes. These selections do not enable the fixture's optional WGPU
+renderer or Vulkan runtime controls; their earlier renderer qualification keeps its own scope.
+The complete profiling-disabled Core library plus public animation target passes 1,310/1,310
+without skips (`8a18e862-04a3-46c2-b76d-02f6a3697e50`). This includes the strengthened image
+fixture and all generic animation owners without the profiler feature. Locked Rust 1.95 workspace
+all-target and independently locked all-target/all-feature checks pass. Core/WGPU/Windows
+all-target/all-feature correctness Clippy passes with existing warnings retained. Actual Windows
+Rust 1.93 framework and independently locked consumer all-target/all-feature checks pass; no
+compiler-floor or dependency change is introduced by this unit.
+
+Stable production wasm Core/WGPU/Web checks pass with profiler disabled and enabled. The existing
+nightly/build-std/shared-memory production configuration passes with profiler and multithreading.
+These are compilation gates, not animation runtime/pixel execution in a browser or another OS.
+Root and ordinary-consumer cargo fmt checks pass without unrelated source changes. Existing
+import-boundary, public API, release-document and document-link scans and workflow YAML parsing
+pass. Local CI commands are recorded; no remote CI execution or publication is performed.
+
+This completes the scoped generic-animation implementation and qualification. Complete stateful
+Spring/motion reconciliation and notifications remain queued, with source-backed ownership and
+semantic migration in the plan. Foreign execution, numerical costs, full fixed-target refresh,
+canonical docking and the real Nara GPU/View/Editor/game-runtime boundary remain open. The owner
+clarification requires a qualified fixed baseline and modular engine seam before the later
+separate framework-maintenance session; this unit does not claim that handoff complete.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:

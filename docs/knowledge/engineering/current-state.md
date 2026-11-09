@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-09T10:20:00+08:00
+timestamp: 2026-11-09T13:00:00+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -18,6 +18,27 @@ verified_by:
 
 # Current State
 
+- The official non-Spring animation successor is implemented at
+  `4ed461f2b591d6e44d84abc742094740fbd607af`, after
+  `968f836f48a097ef49e692c62f5d1734c657bb75`. Generic controls,
+  executor/shared-phase clocks, animated parent composition and image reduced motion preserve
+  the fixed target's complete mechanism. A reproduced first-mount candidate refusal requires
+  a weak exact-state timer; App-borrow admission and invalid FPS intervals use existing owners.
+  Focused 26, actual native Submitted/pixels/retirement 1, complete framework/public/Gallery
+  2,138 with seven declared skips and components/docking/Canvas 2,966 pass. Final strengthened
+  image cases pass 3, independent enabled/disabled consumers pass 68/52 and profiling-disabled
+  Core/public animation passes 1,310. Locked checks, correctness Clippy, actual Windows Rust 1.93
+  framework/independent checks, stable production wasm profiling off/on, existing nightly
+  shared-memory compilation, formatting and static gates pass. The
+  [record](../../verification.md#generic-animation-controls-and-clock) preserves initial failures,
+  source provenance and the exact qualification scope.
+  All six implementation/review/analysis lanes close without remaining P1/P2. The Spring
+  successor's plan retains complete official UI state/playback and one shared pure solver,
+  with explicit fork policy/geometry migration rather than duplicate physics. The owner's
+  later separate maintenance session follows the fixed-target refresh and real modular
+  engine-integration assessment; immutable consumed revisions and consumer evidence connect
+  the two repositories. Full refresh, native timing/foreign execution, measured costs,
+  canonical docking and Nara adoption remain open.
 - The complete official frame-time debug overlay is implemented at
   `73472ca230bac117f8cb417d0cd6b0c1364c980e`, after
   `7cd732eda7f8c5c80e0d08b737504f720f6fa6f5`. Complete mode/history/bitmap recipes and all six
@@ -688,12 +709,14 @@ historical scope and is not current branch or CI qualification.
 
 # Next Action
 
-- Continue the official
-  [animation-control/clock successor](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#animation-control-and-clock-successor),
-  then reconcile the complete
+- Reconcile the complete
   [stateful spring integration](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#stateful-spring-and-element-successor)
-  with fork motion owners. Preserve ordinary builders, reduced motion, synchronized repeats,
-  limited-rate scheduling and complete state/playback consumers through existing owners.
+  with fork motion owners, following the qualified
+  [animation-control/clock successor](../../verification.md#generic-animation-controls-and-clock).
+  Amend the owning ADRs, preserve official typed target/playback/element semantics and replace
+  duplicate scalar physics through one shared solver with explicit domain policy/projection.
+  Preserve ordinary builders, reduced motion, synchronized repeats, limited-rate scheduling
+  and complete state/playback consumers through existing owners.
   [System notifications](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#system-notification-successor)
   have a separate queued complete contract and backend qualification.
 - Continue remaining renderer/API/platform reconciliation after the complete
