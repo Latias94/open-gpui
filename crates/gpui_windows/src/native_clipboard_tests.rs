@@ -12,6 +12,7 @@
 //! clipboard updates prevent restoration; sequence checks are best effort across native calls.
 
 use super::*;
+use crate::clipboard::test_support::retry_clipboard_open;
 use crate::native_test_observation::NativeWindowTestMessageDisposition;
 use futures::FutureExt;
 use open_gpui::{
@@ -41,7 +42,7 @@ impl NativeClipboardRestore {
             CloseClipboard().expect("the native clipboard capture must release its lock");
             (sequence, formats)
         };
-        let original = cx.read_from_clipboard();
+        let original = retry_clipboard_open(|| cx.read_from_clipboard());
         assert_eq!(
             unsafe { GetClipboardSequenceNumber() },
             sequence,
@@ -76,16 +77,18 @@ impl NativeClipboardRestore {
     }
 
     fn write_expected(&mut self, cx: &App, input: ClipboardItem, expected: ClipboardItem) {
-        assert_eq!(
-            unsafe { GetClipboardSequenceNumber() },
-            self.sequence,
-            "an external clipboard update must not be overwritten by the test",
-        );
-        cx.write_to_clipboard(input);
+        retry_clipboard_open(|| {
+            assert_eq!(
+                unsafe { GetClipboardSequenceNumber() },
+                self.sequence,
+                "an external clipboard update must not be overwritten by the test",
+            );
+            cx.write_to_clipboard(input.clone());
+        });
         self.sequence = unsafe { GetClipboardSequenceNumber() };
         self.modified = true;
         assert!(
-            cx.read_from_clipboard().as_ref() == Some(&expected),
+            retry_clipboard_open(|| cx.read_from_clipboard()).as_ref() == Some(&expected),
             "the real Windows clipboard must contain the exact test item",
         );
     }
@@ -440,7 +443,7 @@ fn native_async_clipboard_snapshot_pastes_into_submitted_text_and_reconstructs_c
                         ClipboardItem::new_string_with_metadata(INPUT_TEXT.into(), METADATA.into()),
                         expected.clone(),
                     );
-                    let task = cx.read_from_clipboard_async();
+                    let task = retry_clipboard_open(|| cx.read_from_clipboard_async());
                     clipboard.write(
                         cx,
                         ClipboardItem::new_string("later clipboard value".into()),

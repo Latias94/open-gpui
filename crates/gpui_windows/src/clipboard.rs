@@ -363,7 +363,10 @@ struct ClipboardGuard;
 
 impl ClipboardGuard {
     fn open() -> Option<Self> {
-        match unsafe { OpenClipboard(None) } {
+        let result = unsafe { OpenClipboard(None) };
+        #[cfg(test)]
+        test_support::record_open(result.is_ok());
+        match result {
             Ok(()) => Some(Self),
             Err(e) => {
                 log::error!("Failed to open clipboard: {e}");
@@ -413,8 +416,146 @@ impl Drop for LockedGlobal {
 }
 
 #[cfg(test)]
+pub(crate) mod test_support {
+    use std::{
+        cell::Cell,
+        time::{Duration, Instant},
+    };
+
+    thread_local! {
+        static OPENED: Cell<Option<bool>> = const { Cell::new(None) };
+    }
+
+    pub(super) fn record_open(opened: bool) {
+        OPENED.set(Some(opened));
+    }
+
+    pub(crate) fn retry_clipboard_open<T>(mut operation: impl FnMut() -> T) -> T {
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let mut refused = 0;
+        loop {
+            OPENED.set(None);
+            let result = operation();
+            match OPENED
+                .get()
+                .expect("the fixture must attempt native clipboard acquisition")
+            {
+                true => {
+                    if refused > 0 {
+                        eprintln!(
+                            "native clipboard acquisition refused {refused} attempts before admission"
+                        );
+                    }
+                    return result;
+                }
+                false => {
+                    refused += 1;
+                    assert!(
+                        Instant::now() < deadline,
+                        "native clipboard acquisition remained unavailable for one second"
+                    );
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn normalization_matrix_preserves_text_and_metadata_under_one_native_lock() {
+        let _clipboard = ClipboardGuard::open().expect("the clipboard must be available");
+        for (text, expected) in [
+            ("", ""),
+            ("\0", " "),
+            ("\0\0before\0after\0", "  before after "),
+            ("héllo\0世界🦀", "héllo 世界🦀"),
+            ("unchanged 世界🦀", "unchanged 世界🦀"),
+        ] {
+            // SAFETY: The current thread retains the clipboard lock throughout the matrix.
+            unsafe { EmptyClipboard() }.expect("the owned clipboard must clear");
+            let item = ClipboardString {
+                text: text.into(),
+                metadata: Some("[12]".into()),
+            };
+            write_string(&item).expect("the normalized text and metadata must write");
+            let actual = read_string().map(|entry| ClipboardItem {
+                entries: vec![entry],
+            });
+            assert_eq!(
+                actual,
+                Some(ClipboardItem::new_string_with_json_metadata(
+                    expected.to_string(),
+                    vec![12],
+                )),
+                "Windows must hash and encode the same normalized text",
+            );
+        }
+    }
+
+    #[test]
+    fn contended_native_window_lock_refuses_public_read_and_recovers_after_release() {
+        use windows::Win32::UI::WindowsAndMessaging::{
+            CreateWindowExW, DestroyWindow, WINDOW_EX_STYLE, WS_POPUP,
+        };
+
+        let (opened, did_open) = std::sync::mpsc::sync_channel(1);
+        let (release, released) = std::sync::mpsc::sync_channel::<()>(1);
+        let holder = std::thread::spawn(move || {
+            // SAFETY: STATIC is a system class; this hidden test window has no borrowed creation data.
+            let window = unsafe {
+                CreateWindowExW(
+                    WINDOW_EX_STYLE::default(),
+                    windows::core::w!("STATIC"),
+                    windows::core::w!("OpenGPUI Clipboard Lock Test"),
+                    WS_POPUP,
+                    0,
+                    0,
+                    0,
+                    0,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+            }
+            .expect("the controlled clipboard window must initialize");
+            // SAFETY: The current thread owns this live hidden window.
+            let acquired = unsafe { OpenClipboard(Some(window)) }.is_ok();
+            let _ = opened.send(acquired);
+            let _ = released.recv();
+            // SAFETY: The window and clipboard are released on their acquiring thread.
+            let closed = !acquired || unsafe { CloseClipboard() }.is_ok();
+            // SAFETY: Only this thread owns and destroys the dedicated hidden test window.
+            let destroyed = unsafe { DestroyWindow(window) }.is_ok();
+            (closed, destroyed)
+        });
+        let acquired = did_open.recv().unwrap();
+        let blocked_read = acquired.then(read_from_clipboard);
+        drop(release);
+        let (closed, destroyed) = holder
+            .join()
+            .expect("the native clipboard holder must exit");
+        assert!(
+            closed && destroyed,
+            "the clipboard holder must release its lock and window"
+        );
+        assert!(
+            acquired,
+            "the controlled native clipboard holder must acquire its lock"
+        );
+        assert!(
+            matches!(blocked_read, Some(None)),
+            "a different window's native lock must refuse the public read",
+        );
+        assert!(
+            ClipboardGuard::open().is_some(),
+            "the native clipboard lock must become available after release",
+        );
+    }
 
     #[test]
     fn external_text_replacement_refuses_stale_metadata_without_dropping_private_formats() {
