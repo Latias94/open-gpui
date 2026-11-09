@@ -1929,10 +1929,40 @@ ADR 0016/0017 decisions, before changing that contract; this analysis does not i
   A game simulation retains its own clock, state and pause authority; sharing pure mathematics
   establishes neither UI lifecycle reuse nor cross-platform bitwise deterministic simulation.
 
+Implementation begins from local `af682e37f36f8fc5de575ef485c1d247509a9d22`. The owning
+ADR 0018 refinement, with ADR 0016/0017 references, replaces the duplicate solver and overbroad
+public ownership. `MotionSpringOptions` uses the official configuration and one epsilon;
+policy hints remain separate. Import all eight official math tests and all six official Spring
+element tests, plus ordinary typed target/interpolation and real public/native consumers.
+Use actual atlas refusal, paint unwind, changed target/config/playback and first-mount retry
+to qualify the fork's existing candidate transaction. An unaccepted frame cannot commit a new
+Spring input; the accepted retry accounts for elapsed time under the prior accepted state.
+Keep any required staging local to the Spring element and existing accepted-frame publication
+owner rather than adding a generic cloned-state or animation transaction framework.
+App reduced motion must finish active domain transitions and override explicit Animated policy
+in Splitter/list/docking/bring-into-view, without mutating domain layout, selection or preferences.
+The neutral solver remains App-free.
+
+The scoped unit is implemented at `ecbbfa361ae4489b2de4121c5f0ca8b2a1d7aebb`; the
+[qualification](../verification.md#official-spring-and-shared-domain-sampling) preserves all
+official cases, the reproduced numeric/candidate defects and the corrected fixtures. Complete
+framework/public/Gallery 2,171 and components/docking/Canvas 2,974 pass before the final
+numeric refinements. Final motion 94, affected public/domain paths 43, actual native Spring 1,
+disabled Core/public 1,340 and independent Spring 6/6 in both profiler selections pass after
+those corrections; the broader ordinary consumers pass 74/58 at their recorded prior checkpoint.
+Locked workspace/independent checks, expanded correctness Clippy, actual Windows Rust 1.93
+all-target/all-feature checks, production wasm profiling off/on, existing nightly shared-memory
+compilation, doctests, formatting and static/YAML gates pass. Thirteen implementation/review/
+inventory threads close. Canonical f64 intermediates, representable settling endpoints and final
+position accumulation have separate executed regressions; the official decay, velocity and
+ramp paths retain their scope. No arbitrary-range, bitwise-parity or measured cost claim follows.
+Continue notifications and the bounded residual inventory below; engine integration, full
+refresh, canonical docking and the parent foundation goal remain open.
+
 ### System Notification Successor
 
 Official `de827bce2ff1cbb40040bea0ef57c8ac56afd726` supplies the fixed-target Core notification
-types, Platform/App identity, show/withdraw/response methods and TestPlatform observation and
+types, Platform/App identity, show/dismiss/response methods and TestPlatform observation and
 simulation. The fork has no equivalent public chain; existing macOS system-event observation
 does not implement user notifications. Import the complete framework contract and map its
 supported backend closure, with ordinary public consumers and existing App ingress for callbacks.
@@ -1940,6 +1970,45 @@ Preserve identity prerequisites, same-tag replacement, body/action responses, ca
 and reentry. Deterministic Core controls do not prove actual OS delivery; qualify each supported
 backend separately and retain explicit unavailable behavior. This independent queued unit does
 not require or create a product notification service.
+
+The November 9 bounded source pass confirms that the three native notification modules are
+unchanged between the introduction and fixed target. Use final-target wiring and feature
+conditions, including test-support gating and example font initialization. Preserve the
+official best-effort `()` APIs and platform-specific identity prerequisites: explicit test
+identity, Windows package identity or AUMID, a real macOS bundle, and optional Linux app name.
+The target Linux implementation neither replaces matching tags nor implements dismiss; do
+not claim a cross-platform guarantee stronger than its supported mechanism.
+
+Core response delivery must use the fork's existing ordered native-App ingress and callback
+checkout/replacement owner, with a full App update transaction. A response queued during an
+active borrow must run exactly once in order; reentrant dismiss, entity notification and
+handler replacement must survive without restoring an obsolete callback. Preserve all four
+official TestApp notification regressions and Linux transport/caller action-ID separation.
+The ordinary example and independent consumer must exercise identity, show, replacement,
+response and dismiss with the relevant platform limits visible. Windows XML/response/tag
+controls are separate from actual OS delivery. Add only required Windows API features,
+`notify-rust` and objc2 UserNotifications dependencies, checking the existing lock/compiler
+closure before changing dependency versions. No second App callback or notification service
+owner is required.
+
+### Bounded Core Residual Inventory
+
+The November 9 public-module/export pass compares local `af682e37f36` plus the Spring worktree
+with fixed target `635026fabc38440fce5e1767d125026a17b12012`. It identifies these additional
+concrete successors; this is source evidence, not implementation, complete API equivalence or
+platform qualification. They refine the candidate queue's existing API/platform closure.
+
+| Successor | Fixed-target source and required complete scope |
+| --- | --- |
+| Gesture recognition and scroll-axis locking | `crates/gpui/src/gestures.rs`, `interactive.rs` and Window routing add raw touch, long press, touch drag and locking. Preserve official locking/cancel/momentum controls and ordinary interaction consumers; an iOS backend remains a separate decision. |
+| Randomized element-tree workloads | `crates/gpui/src/randomized_element_tree.rs` supplies seeded topology, mutation, entity-local notifications/work counters and `randomized_element_tree_matches_full_render`. Reuse the qualified benchmark owners rather than reopening the harness. |
+| Sendable foreground submission | `crates/gpui/src/executor.rs` and `crates/scheduler/src/executor.rs` add `SendForegroundExecutor` / `SendLocalExecutor`. Preserve worker submission, wake and scheduler-lifetime regressions through the existing admission/retirement owners. This is not a prerequisite for system notifications. |
+| Async clipboard and error classification | Core App/Platform and `crates/gpui_web/src/platform.rs` add `ClipboardReadError`, a default ready task and actual browser permission/content handling. Complete public and input consumers; compilation alone does not qualify browser clipboard behavior. |
+| Atomic credential insertion and Apple errors | Core App/Platform and `crates/gpui_apple/src/keychain.rs` add `write_credentials_if_not_exists` and distinguish user cancellation from absence. Preserve official status controls and qualify atomicity/cancellation on the actual platform. |
+
+Finish notifications before selecting the next dependency-ordered residual unit. Each successor
+must retain official behavior, adapt proven fork ownership and record independent/public plus
+affected platform evidence. A root export comparison is not a full semantic or dependency audit.
 
 ## Maintained Baseline Before Engine Adaptation
 

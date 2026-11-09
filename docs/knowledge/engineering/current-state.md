@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-09T13:00:00+08:00
+timestamp: 2026-11-09T15:39:30+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -18,6 +18,28 @@ verified_by:
 
 # Current State
 
+- The official stateful Spring successor is implemented at
+  `ecbbfa361ae4489b2de4121c5f0ca8b2a1d7aebb`, after `af682e37f36`. The existing motion
+  crate owns one pure official solver;
+  GPUI reexports its exact types and owns typed targets/playback/Element-ID lifecycle. Duplicate
+  domain physics is removed with explicit options, epsilon and separate policy hints. Numeric
+  common-scaling regressions justify canonical f64 intermediates; refused-candidate trajectories
+  justify Spring-local publication through the existing accepted-frame owner. Translated
+  settling/cancellation failures justify representable endpoints and final position accumulation.
+  Complete framework/components 2,171/2,974 pass at their recorded checkpoint; final motion 94,
+  affected public/domain 43, actual Windows Submitted/pixels/input/retirement 1, disabled
+  Core/public 1,340 and independent Spring 6/6 in both profiler selections pass. Earlier broader
+  ordinary consumers pass 74/58. App reduced motion finishes active domain transitions without
+  rewriting preferences.
+  The [record](../../verification.md#official-spring-and-shared-domain-sampling) preserves actual
+  red runs, source checkpoints and fixture corrections. Locked checks, expanded correctness
+  Clippy, actual Windows Rust 1.93 framework/consumer checks, production wasm profiler off/on,
+  existing nightly shared-memory compilation, doctests, formatting and static gates pass.
+  All thirteen current lanes close without remaining scoped P1/P2; no complete refresh,
+  numeric cost or engine adoption follows.
+  A separate bounded source pass records five further Core mechanisms after notifications:
+  gesture/axis locking, randomized element trees, sendable foreground submission, async clipboard
+  and atomic credential insertion/Apple errors. These are queued source evidence, not parity.
 - The official non-Spring animation successor is implemented at
   `4ed461f2b591d6e44d84abc742094740fbd607af`, after
   `968f836f48a097ef49e692c62f5d1734c657bb75`. Generic controls,
@@ -709,16 +731,14 @@ historical scope and is not current branch or CI qualification.
 
 # Next Action
 
-- Reconcile the complete
-  [stateful spring integration](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#stateful-spring-and-element-successor)
-  with fork motion owners, following the qualified
-  [animation-control/clock successor](../../verification.md#generic-animation-controls-and-clock).
-  Amend the owning ADRs, preserve official typed target/playback/element semantics and replace
-  duplicate scalar physics through one shared solver with explicit domain policy/projection.
-  Preserve ordinary builders, reduced motion, synchronized repeats, limited-rate scheduling
-  and complete state/playback consumers through existing owners.
-  [System notifications](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#system-notification-successor)
-  have a separate queued complete contract and backend qualification.
+- Implement complete official
+  [system notifications](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#system-notification-successor)
+  through the existing ordered App ingress and callback owner, after qualified
+  [Spring/motion reconciliation](../../verification.md#official-spring-and-shared-domain-sampling).
+  Preserve all official regressions, identity/platform limits and ordinary independent
+  consumption; actual OS delivery remains separately qualified. Continue the
+  [bounded residual inventory](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#bounded-core-residual-inventory)
+  through complete official mechanisms; it is not an exhaustive semantic audit.
 - Continue remaining renderer/API/platform reconciliation after the complete
   [WGPU dependency/shader/WebGL qualification](../../verification.md#wgpu-dependency-shaders-and-webgl)
   and [image feature-policy qualification](../../verification.md#image-dependency-feature-policy).

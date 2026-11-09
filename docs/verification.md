@@ -5319,6 +5319,204 @@ canonical docking and the real Nara GPU/View/Editor/game-runtime boundary remain
 clarification requires a qualified fixed baseline and modular engine seam before the later
 separate framework-maintenance session; this unit does not claim that handoff complete.
 
+## Official Spring And Shared Domain Sampling
+
+The November 9 successor starts from `af682e37f36f8fc5de575ef485c1d247509a9d22` against
+fixed Zed `635026fabc38440fce5e1767d125026a17b12012`. Local implementation is
+`ecbbfa361ae4489b2de4121c5f0ca8b2a1d7aebb`. Official
+`8b1497dbd22fb06f5838a7c0b84a1e54fafa71bc` and the final executor-clock correction
+`99e70ee4a02d8dcf1b72f487f81aaf0d3be74f76` supply the full mathematical, typed-target,
+playback and Element-ID Spring mechanism. ADR 0018 refines ADR 0016/0017 before implementation:
+one pure solver lives in the existing motion crate, and GPUI exposes the same solver types while
+owning official targets/interpolation, builders and element lifecycle. Domain sampling and policy
+remain renderer-neutral, with no scheduler or engine-private dependency.
+
+The initial import preserves the official solver and private helper bodies exactly, along with
+all eight math tests and six Spring element tests. Fork domain options replace duplicate damping
+formulas and the independent rest-speed threshold with the shared step and natural-frequency
+settling rule. Physical configuration and review metadata are separate. Domain freeze-at-cancel
+remains distinct from official Cancelled restoring the initial value; normalized domain progress
+clamping is distinct from raw Spring overshoot. Initial motion qualification passes 89/89
+(`ddbb2009-d8cf-4be4-b728-7b7d5650040a`) and three doctests.
+
+Independent review exposes an inherited numeric defect in the official canonical conversion.
+Common scaling of valid finite stiffness, damping and mass by `1e-30` or `1e30` underflows or
+overflows their f32 product, corrupting the damping ratio. The original body fails three actual
+scaled-configuration regressions (`b6bea980-1211-4665-9b57-996c4bdd277e`): infinity, an infinite
+settling duration and NaN even in the zero-time propagator. Computing only the canonical ratios
+and products with f64 intermediates corrects this reproduced scale failure. The public values
+and subsequent solver remain f32, with no parameter clamp or universal numeric-range guarantee.
+The complete corrected motion cohort passes 92/92
+(`578cf645-2021-498c-8ded-6b4aa430edb3`). Canonical f64 intermediates may change final-bit rounding;
+no bitwise parity with the previous arithmetic or cross-platform simulation guarantee follows.
+
+The fork's candidate rejection also needs a concrete adaptation. The direct official mutable
+element state advances to a target or playback requested by a candidate even when a later atlas
+lease rejects that frame. Retrying with the original target then follows the rejected trajectory.
+Actual owner tests `bd243d95-8ec3-49d3-bc99-edc8264e1df2` fail four of five cases: retarget,
+Completed, Cancelled and paint unwind; fresh first-mount rejection already restarts correctly.
+Two earlier fixture builds require explicit TestAppContext and AtlasTextureKind imports.
+
+Spring now computes a candidate-local sample from its last accepted state and records publication
+through the existing prepaint frame transaction. Acceptance commits the exact sample and its
+view's next-frame demand; a refused or unwinding candidate commits neither. Returning the stable
+state owner to the element map before invoking user animation/layout also preserves it through
+callback unwind. Cached replay uses the same publication identity. This is a Spring-local
+adaptation of the existing acceptance owner, not a generic cloned-state transaction mechanism.
+
+Independent review also catches an unconditional current-view lookup in this adaptation that
+would panic when directly drawing a settled Spring outside a rendered view. Only an active
+sample now captures its view. A real VisualTestContext::draw regression covers that static path.
+The first focused/public run passes 47/49 (`b349eb73-7a48-4197-a4e9-b440f596bd72`), including
+all official and candidate controls. Two new public fixture assertions confuse exact color
+interpolation with f32 arithmetic and unrounded authored width with Taffy's rounded paint width.
+Channel-tolerance comparison and the actual rounded-width oracle correct those fixtures without
+changing production interpolation, geometry or refusal behavior.
+
+The corrected focused/public cohort passes 50/50
+(`e72e9630-fc34-4369-9d42-a79292a1558e`), including the static draw regression, all official
+Spring controls, five candidate cases, public typed/cache/playback/reconstruction and the
+App-floor reveal workflow. Real CPU Scenes retain accepted/submitted generation and exact
+view/renderer/atlas/TextSystem/App release assertions; they are not GPU execution evidence.
+
+The initial domain-focused cohort passes 28/31
+(`22d283ee-5257-4c96-aedc-2d0b4778adff`). Three new fixture failures do not justify changing
+production geometry or weakening animation admission. Dock panel content excludes the existing
+one-pixel border on each side, giving 198/398 pixels for half/full panes. Inserting a third
+Splitter panel preserves its minimum-fraction constraints rather than dividing the authored
+fractions by their sum: the left width is 63 pixels, and the extra panel uses its constrained
+8/17 fraction of the 388-pixel panel extent, with both edges rounded at the actual device
+scale. The active visual-affordance probe must run in a real rendered canvas prepaint;
+calling it from an ordinary Window update has no current view for frame scheduling. The
+corrected probes retain final geometry, unchanged-target completion, Idle frame demand,
+unchanged source preferences and restoration assertions.
+The first corrected run passes 30/31 (`2b037e20-96b5-4945-90be-16ece9526ef2`); its remaining
+extra-panel assertion incorrectly rounds to whole logical pixels, while the test window's
+scale permits half-pixel logical edges. The final oracle rounds each edge at the actual scale,
+preserving the exact fraction and finite layout extent rather than broadening its tolerance.
+The final domain-focused cohort passes 31/31
+(`45aa36eb-f958-4a9c-96a2-b0cb5e220179`). A bounded independent rereview finds no remaining
+P1/P2 in the adapter behavior, final geometry or real prepaint probes; it is source review,
+separate from these executed controls.
+
+The actual Windows trajectory passes 1/1
+(`d8eefc2c-24b6-4b16-abaf-85cce3f124c2`). It uses the production Application/executor,
+native HWND registration, input callbacks and DirectX renderer. Every observed control must
+reach a newer nonempty Submitted generation, with matching paint source/revision, diagnostics
+and GPU readback pixels. The trajectory retains outward velocity through retarget and pause,
+observes reversal, and distinguishes a zero-velocity stop by resuming at the held position
+through a real executor barrier. It checks Completed/Cancelled endpoints, active and new-target
+reduced-motion behavior, restoration, logical focus and pointer/key input. Closing from actual
+pending frame demand requires exact quiesce/destroy/terminal tickets, registration removal,
+no further frame callbacks and view/native/renderer/App/platform release.
+
+Native transient trajectories permit at most three fresh element epochs to observe their
+intermediate phases, each with a captured static initial frame. Missed phases do not count
+as success; source, generation, pixel or lifecycle assertion failures are not retried. The
+executed test passes in 16.791 seconds. This does not establish a numeric frame-time budget,
+physical foreground input, compositor scanout or display latency.
+
+The complete Core/WGPU/Windows/Gallery library and public integration cohort passes
+2,171/2,171 (`a5142c08-8fdd-48cc-8a5f-25a2c82e2645`) with eight declared skips. These retain
+the previous seven skips plus the newly added, separately executed native Spring case. The
+existing foreground-activation regression passes unchanged in this run; its historical
+variability remains recorded rather than being considered repaired by the Spring unit.
+The complete UI core/components/docking/Canvas library and public integration cohort passes
+2,974/2,974 without skips (`c3357409-fa3e-45a7-8f1c-de2d6af51653`), retaining existing
+layout, drag, selection, focus, virtualizer, overlay, source and retirement assertions.
+
+The first independently locked enabled run passes 72/74
+(`a1c1465c-ffe3-47b4-9bde-704e7a2f9ee3`). A new color endpoint assertion repeats the exact
+f32 comparison mistake and now compares individual channels with its existing tolerance.
+The other failure is a real inherited solver boundary: damping 40, target -4 and epsilon
+0.001 produce a nominal conservative duration of 3.008299828 seconds, but the sampled
+position is -3.9989998, just outside tolerance after f32 target translation. A focused
+five-of-six diagnostic rerun (`a9fd0bf5-a97b-42e6-9d31-ce3f1429c9bd`) records those exact
+values. An owning regression independently reproduces it before the fix
+(`4e603177-3e57-42dc-848c-d37ebd3f45de`).
+
+`settle_time` now moves rounded target-plus/minus-epsilon endpoints inward when their actual
+distance exceeds epsilon, then uses the smaller representable distance for its existing
+position envelope. Step, propagator, velocity threshold and all three decay formulas remain
+unchanged. If epsilon is smaller than the target's representable spacing, a zero position
+envelope is conservative and may take longer. This corrects the observed duration contract
+without relaxing `is_settled`, padding test time or claiming arbitrary-range accuracy.
+The full updated motion cohort passes 93/93
+(`19b469c1-8b17-4154-8492-1649d8e5d401`) and three doctests. Its regression checks positive,
+negative and large translations and multiple samples at/after the returned duration.
+The complete framework/component cohorts above precede this final duration-only correction;
+only pure duration/easing consumers use it, while active domain and element stepping use the
+unchanged step/is_settled path. Final affected public/independent qualification follows below.
+
+The corrected independently locked consumers pass 74/74 with profiling
+(`450deb00-39b7-4e2e-9515-682a1ac40530`) and 58/58 without it
+(`c8fd9768-6b2a-4879-99c3-ec24035555f2`). A subsequent independent numeric review finds a
+second boundary missed by the first fix: with configuration (100,40,1), initial (5,-40) and
+target 4, the opposing position contributions are about 0.0139272 and -0.0149271. The original
+`(target + x) + y` rounds before cancellation, producing 3.9989998 at the returned duration.
+The mirrored owning regression fails before correction
+(`b194e2d1-bab0-4063-ba9e-7cda4b30fa52`).
+
+Only fixed-target position accumulation now evaluates the target and both matrix contributions
+in f64 before converting the final value to f32. The official matrix/decay formulas, velocity,
+ramp path and public types remain unchanged. Together with the representable endpoint threshold,
+this corrects the reproduced cancellation without loosening tolerances. The complete motion
+cohort passes 94/94 (`220184cd-3dfb-4dc8-bee9-33c98e607053`); the final affected
+public/domain/native paths and both feature selections
+are rerun below. Earlier complete cohorts and the 74/58 consumer results precede this final
+position-accumulation correction. The in-progress disabled Core build is deliberately interrupted
+before execution to avoid qualifying the superseded arithmetic; no unrelated process is stopped.
+No arbitrary-range, bitwise-parity or measured performance guarantee follows from these fixes.
+
+The final affected Core/public Spring, candidate/refusal, domain and reduced-motion paths pass
+43/43 (`6816c51f-9684-4d93-87f7-edebee2dcb0d`). The complete actual native Spring trajectory
+passes again, 1/1 (`759b4b18-46fe-4210-aa4f-52bc272d81f0`), with all source, pixel, input,
+velocity-carry, playback and retirement assertions retained. The bounded final numeric review
+closes without remaining scoped P1/P2 and independently reproduces corrected mirrored values.
+All thirteen implementation/review/inventory threads for this unit are closed.
+Final independently locked Spring consumers pass 6/6 with profiler
+(`ff663e35-5d78-413a-9c8b-6498196e3111`) and 6/6 without optional features
+(`b975133e-bf08-406a-a330-c2dfc7b89693`), without skips. Their executed solver, typed value,
+easing and parent-construction cases retain the separately named unexecuted signature probe;
+the ordinary consumer does not enable GPUI test-support or claim native rendering.
+The final profiling-disabled complete Core library and public Spring target pass 1,340/1,340
+without skips (`63315640-40c5-46da-a37e-dd4f3a6a429c`), including the original generic
+animation owners, candidate/resource lifetimes and all official/added Spring regressions.
+
+Locked Rust 1.95 workspace all-target and independently locked all-target/all-feature checks
+pass. Expanding correctness Clippy to the affected UI components exposes a preexisting
+June 30 test literal, `4..1`, under `reversed_empty_ranges`. That test intentionally supplies
+reversed offsets as data to normalization. An explicit `Range { start: 4, end: 1 }` retains
+the exact same input/assertion without disabling the lint or changing production conversion.
+The first expanded Clippy run fails only on that existing test; the corrected gate and its
+owning test are rerun below. No dependency, lockfile or compiler-floor change follows.
+Final all-target/all-feature correctness Clippy passes for Core/WGPU/Windows, motion, UI core,
+components and docking, retaining existing warnings. The original reversed-range normalization
+test passes with its unchanged assertion (`65a8bce3-08f4-4a60-89f8-4a30de39fa39`).
+Actual Windows Rust 1.93.0 all-target/all-feature checks pass for Core/WGPU/Windows, Canvas,
+platform, benchmark metrics, macros, motion, UI core, components and docking, plus the
+independently locked consumer. The CI minimum-compiler job now includes the affected motion
+and domain packages; this local execution is separate from unexecuted remote CI and foreign
+native compiler/runtime qualification.
+
+Stable production wasm Core/WGPU/Web compilation passes with profiling disabled and enabled.
+The existing nightly/build-std/shared-memory production configuration also passes with profiler
+and multithreading selected. These are compilation gates; Spring runtime/pixels in a browser,
+macOS or Linux are not executed by this unit. Final motion doctests pass 3/3. Root and independent
+consumer formatting checks pass. Existing import-boundary, public API, document-link and release
+document scans and workflow YAML parsing pass, without new dependencies or policy scanners.
+All work is local; no remote CI or publication is performed.
+
+The App reduced-motion preference is a floor for actual Splitter, keyed-list, docking and
+bring-into-view adapters, including active transitions. Domain preferences and captured layout
+sources are not rewritten. The domain adapters' existing wall-clock implementation remains
+separate from the official element's executor clock; this unit makes no general deterministic
+component-timing or velocity-continuity claim. This completes the scoped official Spring and
+shared-domain implementation/qualification. Full refresh, notifications and the bounded Core
+residual inventory, canonical docking, measured costs and actual Nara engine/Editor/game-runtime
+integration remain open. The maintenance handoff follows its separately qualified framework
+baseline and concrete engine consumer; the full foundation goal remains active.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:
