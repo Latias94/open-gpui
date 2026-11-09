@@ -5067,6 +5067,142 @@ fractional/dynamic DPI, numeric costs, the existing foreground-restoration gap, 
 docking and Nara shared-GPU/View adoption remain open. No engine execution owner or UI default
 is selected by these framework results.
 
+## Frame-Time Debug Overlay
+
+The November 9 continuation starts from `7cd732eda7f8c5c80e0d08b737504f720f6fa6f5`
+against fixed Zed `635026fabc38440fce5e1767d125026a17b12012`. Official `07a0bd1220` introduces
+the Apache-2.0 frame-time overlay. The maintained profiler prerequisite already measures draws,
+but the public mode enum, Window controls and complete bitmap Scene consumer were absent.
+Implementation `73472ca230bac117f8cb417d0cd6b0c1364c980e` imports all final-target recipes
+and six official regressions, preserving
+the bounded 1,000-sample history, Hidden/Minimal/Full behavior, duration percentiles, reset and
+lifetime frame count.
+
+The fork adapts ContentMask to the existing exact ClipStack/primitive owner, with identity
+primitive transforms and viewport clipping. Scene geometry errors propagate to the existing
+candidate rollback, keeping the old accepted scene and history until valid retry. Painting
+occurs after root views and outside cache ranges; successful accepted draw checkpoints supply
+the sample duration. Refused and unwinding attempts, old-scene presentation and idle callbacks
+do not add samples. No overlay timer, font shaping, layout invalidation or alternate statistics
+authority is introduced. These are draw-duration readouts, not GPU/compositor latency or
+measured overhead.
+
+Production all-feature Core library checking passes. First focused official/geometry/Window
+owner tests pass 19/19 (`6d7d508d-e2f1-4d21-9bb4-419027f1f5ee`). This includes unchanged official
+percentile/glyph/reset/count behavior, the full rolling window, scaled/exact clips, existing
+scene isolation, cached view replay, no self-refresh loop, old-scene retries, atlas refusal,
+render/accepted-cleanup unwind and actual geometry-refusal recovery.
+
+The first ordinary CPU Scene consumer passes all mode/glyph/history/idle assertions, then exposes
+retained headless resources after close: the historical TestWindow state still owns its renderer
+and atlas (`58e98ed1-d01f-4ca3-bfbe-cb8808f3800e`, 1/2). The consumer's immediate view/resource/
+App lifetime assertions remain intact. The existing prepared-quiescence operation now releases
+the configured renderer and atlas outside its lock before acknowledgement, while a blocked
+retry retains both. An owning regression checks the exact ticket, blocked/retry progression,
+lock-free destructor reentry and single release while diagnostic state remains owned.
+
+The first native overlay trajectory compiles but stops at an existing input-helper assertion:
+the new fixture disabled trace while requiring three pending input samples
+(`c106d71f-841d-4906-9c09-1a13bcf5de96`, 0/1). Enabling trace still reproduces the failure
+(`f65e5ecf-3e93-4582-8aa5-318ccb6706de`), rejecting that initial diagnosis: input measurement
+does not depend on trace. The fixture now uses the existing native settling operation between
+capture/control activity and the reset/measured input batch, preserving the original three-input
+assertion. The unchanged native mode/reset/pixels/resize/input/focus/retirement trajectory then
+passes 1/1 (`e947d79d-e701-4e25-9882-a174123f393b`). Scoped trace restoration remains, and the
+internal no-self-refresh control explicitly disables trace.
+
+With resource quiescence corrected, both actual public CPU consumers pass 2/2
+(`7e3b6055-025e-452c-a28f-91aa0e85e6a1`). They decode all bitmap readouts from complete Scenes,
+exercise mode/reset/history, idle parking, two viewport sizes/reconstruction, platform resize,
+root replacement and exact view/renderer/atlas/App release. Configured CPU renderer outcomes
+are kept distinct from the separate native GPU evidence.
+
+Source review classifies resource retention as a fork retirement-adapter gap. Official
+TestWindow already shares renderer/atlas ownership and its TestPlatform retains an active
+window. The fork adds exact retirement and last-created/diagnostic retention, but had not
+released those resources at its new boundary. The correction preserves the official data
+structure and existing shutdown owner rather than attributing a nonexistent historical-map
+protocol to the official implementation. The owning resource correction and public-reentry
+regression are committed separately at `d928c5459a8ed174d1a6835abd096b3e7a996b5a`.
+
+The final resource regression also reenters public `AsyncApp::update`/`App::shutdown` from
+renderer destruction, checking that the exact ticket remains unquiesced and nonterminal
+throughout destruction. Its first compilation fails because the test calls `expect` on
+`AsyncApp::update`'s unit return; the assertion is corrected to use the actual public signature.
+The complete owner selection then passes 20/20
+(`73889f22-f9a6-4ad6-a081-4580ca3f2db9`), including all six original official tests, seven
+geometry/history controls, six Window/cache/refusal/unwind controls and the resource owner.
+Bounded independent reviews close the overlay integration and resource correction, including
+the corrected public shutdown reentry regression. All five implementation/review threads close.
+Private direct recursive invocation of prepared shutdown is not qualified by the public App
+flow; the existing native-drain phase serializes that flow.
+
+Complete Core/WGPU/Windows library and public integrations pass 1,970/1,970
+(`f315ff03-8b6e-4850-a6af-beb351322295`): Core/public 1,617, WGPU/public 123 and Windows 230.
+The five skips comprise the four existing interactive cases and the explicitly ignored new
+overlay trajectory. The previously failing foreground-restoration test passes unchanged in
+this run; its earlier environmental failures remain recorded and their cause is not proven
+resolved.
+
+The separate ignored overlay rerun fails its Minimal panel-pixel assertion
+(`18d5d4ea-bdbc-4e66-83cd-b6f64eb6b52f`). Source inspection finds that its new controls use
+the last captured generation as their lower bound, although intervening settling can advance
+the window with the same root source. The fixture now snapshots the current accepted generation
+immediately before each mode/reset/placement operation and requires a newer actual Submitted
+frame. The initial Hidden observation explicitly requests a fresh frame. No pixel, input,
+resize, capture, focus or retirement assertion is weakened. The complete ignored trajectory
+passes 1/1 (`39087646-5beb-4a7d-8ad6-ce4b4224467f`), followed by all five actual native
+overlay/profiler/frame-signal/power/visibility trajectories passing unchanged
+(`17389df3-289a-45be-8bb4-9dd1cbb8e380`). This corrects a definite fixture observation gap;
+the recorded pixel failure alone does not establish a renderer defect.
+
+Complete UI core/components/docking/Canvas consumers pass 2,966/2,966
+(`01b26816-5c52-4aaa-8a94-17ac4c3bf589`), preserving all existing interaction, cache,
+overlay, virtualizer and retained-state assertions.
+
+The ordinary independently locked consumer passes 67/67 with optional features enabled
+(`3d9de14a-ccf7-4ace-86f4-36fc24006bc9`, three existing explicitly ignored Vulkan controls)
+and 48/48 with them disabled (`079997c3-8abf-46e8-a6f6-2d15d6bbc8a5`).
+Its new two-case overlay target executes mode values and separately checks unexecuted Window
+signatures; it does not claim a downstream native runtime. Complete profiling-disabled Core
+library and public integrations pass 1,350/1,350
+(`f07e4137-a3a7-4de9-aacb-a07860d1219a`), including the resource-retirement owner and
+public reconstruction. The overlay module, controls and per-window state remain feature-gated.
+The independently locked additive test-support consumer also passes 4/4 with all its features
+(`36187e19-c2f4-4505-86da-cfba1c8ae2d8`), executing actual TestApp window cleanup, handle/
+snapshot ownership, the ordinary utility binary and returning real application/benchmark
+contexts. This is one feature selection, not a rerun of its earlier complete instrumentation
+environment matrix.
+
+A sixth bounded read-only pass confirms the native generation correction with no definite
+P1/P2, then closes. Strict capture assertions can still expose an extra draw between waiting
+and readback, or an extra post-reset draw; this potential false-negative timing scope is not
+silently accepted as another frame's pixels. The same pass identifies source-confirmed official
+animation scheduling, stateful spring integration and system notifications as remaining Core
+mechanisms. Their explicit queue/plan entries are source evidence only, not implementation or
+execution. Relocated display, missing-glyph and pointer-capture APIs are not classified as absent.
+
+Locked Rust 1.95 workspace all-target compilation and both independently locked ordinary/
+additive consumer all-target/all-feature checks pass. Affected Core/WGPU/Windows all-target/
+all-feature correctness Clippy passes with existing warnings retained. Actual Windows Rust
+1.93.0 checks pass for those framework packages and both independent consumers with all targets
+and features; this does not qualify the compiler floor on another OS. Root, ordinary-consumer
+and additive-consumer formatting completes without unrelated tracked changes.
+
+Stable production wasm Core/WGPU/Web compilation passes with profiling disabled and enabled.
+The existing nightly/build-std/shared-memory production configuration also passes with profiling
+and multithreading selected. This is compilation evidence; this unit does not execute the overlay
+in a browser, on macOS or on Linux. Prior renderer/browser qualification retains its own scope.
+Existing import-boundary, public API, release-document, document-link and workflow YAML gates
+pass. Remote CI is not executed.
+
+This completes the scoped overlay implementation and qualification, with the recorded red runs,
+fixture corrections and resource-owner provenance preserved. Draw duration is not compositor
+latency, and no numeric overhead or frame budget is established. The bounded residual inventory
+does not exhaust the fixed-target delta. Remaining animation/spring/notification/platform work,
+historical foreground-test variability, canonical docking, full refresh and Nara GPU/View and
+Editor/game-runtime adoption remain open; the parent goal stays active.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:

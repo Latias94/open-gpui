@@ -1762,11 +1762,117 @@ the optional image edge. Foreign execution, physical loss, DPI, numeric costs, e
 native foreground restoration, complete refresh, canonical docking and engine adoption
 retain their separate scope. This scoped unit is complete; the parent plan remains active.
 
+### Frame-Time Debug Overlay Successor
+
+Continue from `7cd732eda7f8c5c80e0d08b737504f720f6fa6f5` against the unchanged fixed
+target. Official `07a0bd1220` supplies a complete Apache-2.0 framework consumer that is still
+absent from the maintained fork: the public three-mode overlay, per-window sample history,
+bitmap glyph drawing and Window controls. The existing draw-duration profiler is a prerequisite,
+not an equivalent overlay implementation. This unit closes that consumer's scope while the
+parent benchmark/report and complete fixed-target comparisons remain explicit.
+
+Preserve the complete final-target Hidden/Minimal/Full cycle, 1,000-sample rolling window,
+current/P99/P90/max duration readouts, lifetime frame-count formatting, reset semantics and
+all six official regressions. Paint the official bitmap glyphs and translucent panel directly
+through the existing Scene primitive owner, with viewport clipping and the fork's primitive/
+transform ABI. Do not introduce layout/text/view invalidation, a font dependency, a timer or a
+second diagnostics/measurement owner. Profiling-disabled builds retain no overlay state/API.
+
+Attach drawing after the root view and outside cached view ranges, before candidate completion.
+Use the existing draw checkpoint's duration and count completed accepted draws, including hidden
+history, without recording refused or unwinding attempts. A retained scene presented again
+does not create a draw sample. Preserve accepted-versus-Submitted distinction, whole-frame
+refusal, exact clips/leases, focus/input/accessibility and cleanup behavior. Overlay drawing and
+recording must not schedule a fresh frame; explicit mode/reset controls keep the official refresh.
+
+Exercise ordinary public controls and independently locked consumption, actual Scene output,
+mode/reset/resize/reconstruction and exact owner release. Extend native Windows qualification
+with real accepted/Submitted frames and framework GPU capture proving overlay appearance and
+removal, while preserving the existing profiler/input/retirement trajectory. Internal ownership
+tests cover cache reuse, refusal, unwind and idle/old-scene behavior; no test-only public statistics
+API or alternate acceptance mechanism is needed.
+
+The ordinary same-App close/reconstruct consumer exposes existing TestPlatform retention:
+historical window state keeps the configured renderer and atlas after logical/native removal.
+Keep diagnostic window metadata, but release those resources through the prepared quiescence
+operation, outside its state lock and before acknowledgement. Blocked retries must retain the
+same resources and exact ticket. Qualify release/reentry with the owning test and the unchanged
+public consumer; this correction extends the existing retirement owner rather than adding one.
+
+Run focused owner/public/native regressions, relevant complete consumers, profiling-disabled
+controls, locked checks, correctness Clippy, actual declared compiler-floor checks, production
+wasm and existing format/import/API/document gates. Record official source, fork candidate/clip
+adaptations, numerical/OS limits and actual results before scoped qualification. The overlay's
+readouts and a passing fixture do not establish overhead, budgets, full refresh or engine adoption.
+
+### Animation Control And Clock Successor
+
+A November 9 bounded source pass after the overlay identifies the next complete Core consumer
+against fixed Zed `635026fabc38440fce5e1767d125026a17b12012`. Its final
+`elements/animation.rs` blob is `70613f38c5afee3f40430e010e3848e4cd5767ee`.
+Official `d06ebb7c033365a427b5cc8a3e2a2651bcb0c267`,
+`4ed3738c4068495e12d4d78044b005e5ed9d3b8c`,
+`dd04a229dd22700ff43815b8514453e197c333b7` and
+`99e70ee4a02d8dcf1b72f487f81aaf0d3be74f76` supply reduced motion, synchronized repeats,
+per-animation FPS limits and executor time. The fork still has only duration/oneshot/easing,
+wall-clock progression and unconditional next-frame requests. Its qualified global power/cadence
+and separate motion policy do not implement these public animation controls.
+
+Port the complete final-target builders, shared epoch, deduplicated delayed frame requests and
+App reduced-motion behavior, including image animation. Use existing executor, Window and
+candidate/state owners. Preserve official synchronized-phase, limited-rate timer and static
+single-frame regression scenarios, plus ordinary public composition. Qualify window release,
+refused-candidate retry and interaction with existing global cadence without adding a scheduler
+or independent animation authority. This is queued source evidence, not executed behavior or
+an engine animation-policy decision.
+
+### Stateful Spring And Element Successor
+
+Follow the animation-clock prerequisite with official
+`8b1497dbd22fb06f5838a7c0b84a1e54fafa71bc` and its executor-clock correction. Fixed-target
+`spring.rs` blob `efc878061be7c6996993a629c9917034842fc420` supplies typed targets and playback;
+`elements/animation.rs` supplies `with_spring` and Element-ID position/velocity state.
+The fork already provides `MotionSpringPhysics` and `MotionScalarRun` in its separate motion
+crate. The missing mechanism is the complete official public/state/playback integration,
+not all spring physics.
+
+Reconcile fork implementation and policy against the official baseline before selecting a
+shared owner or retiring duplication. Preserve ordinary typed targets and child composition,
+velocity-continuous retargeting, pause/stop/resume, cancellation/completion endpoints and
+reduced-motion scenarios. Qualify retained Element state and candidate refusal through existing
+owners. No public compatibility layer or second animation owner follows merely from keeping
+both old implementations. Implementation and execution remain open.
+
+### System Notification Successor
+
+Official `de827bce2ff1cbb40040bea0ef57c8ac56afd726` supplies the fixed-target Core notification
+types, Platform/App identity, show/withdraw/response methods and TestPlatform observation and
+simulation. The fork has no equivalent public chain; existing macOS system-event observation
+does not implement user notifications. Import the complete framework contract and map its
+supported backend closure, with ordinary public consumers and existing App ingress for callbacks.
+Preserve identity prerequisites, same-tag replacement, body/action responses, callback replacement
+and reentry. Deterministic Core controls do not prove actual OS delivery; qualify each supported
+backend separately and retain explicit unavailable behavior. This independent queued unit does
+not require or create a product notification service.
+
 ## Maintained Baseline Before Engine Adaptation
+
+The [frame-time overlay qualification](../verification.md#frame-time-debug-overlay) records
+implementation `73472ca230bac117f8cb417d0cd6b0c1364c980e` on November 9, with the separate fork
+resource correction `d928c5459a8ed174d1a6835abd096b3e7a996b5a`. Complete official recipes,
+accepted-draw history and existing Scene/candidate/retirement owners pass focused 20, framework/
+public 1,970, final native 5, components 2,966, disabled Core/public 1,350, ordinary enabled/
+disabled 67/48 and additive 4. Locked checks, correctness Clippy, actual Windows Rust 1.93,
+production/shared-memory wasm, formatting and static gates pass. The historical foreground
+case passes unchanged this run; its earlier variability is not proven resolved. All six threads
+close. Continue the source-confirmed animation/clock, spring and independent notification units
+above, then remaining platform/API reconciliation. This bounded inventory is not complete
+fixed-target parity. Numerical budgets, canonical docking and Nara GPU/View/Editor/game-runtime
+selection remain open; no engine UI default follows.
 
 The [conditional hot-reload qualification](../verification.md#conditional-native-hot-reload)
 records the actual native compiler/patch/pixel/state consumer and rejection controls above.
-One existing native foreground-restoration gate remains unqualified. The atlas/renderer and
+At that checkpoint one native foreground-restoration gate was unqualified. The atlas/renderer and
 image-feature successors above have scoped qualification; continue remaining API/platform
 reconciliation. Final hot-reload-disabled
 owners/public 68, ordinary independently locked enabled/disabled 62/47, locked workspace

@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-09T07:20:35+08:00
+timestamp: 2026-11-09T10:20:00+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -18,6 +18,26 @@ verified_by:
 
 # Current State
 
+- The complete official frame-time debug overlay is implemented at
+  `73472ca230bac117f8cb417d0cd6b0c1364c980e`, after
+  `7cd732eda7f8c5c80e0d08b737504f720f6fa6f5`. Complete mode/history/bitmap recipes and all six
+  official tests reuse the existing candidate/clip owner with accepted-draw-only sampling.
+  The separate fork TestPlatform resource-retirement correction is
+  `d928c5459a8ed174d1a6835abd096b3e7a996b5a`. Focused owners pass 20; complete Core/WGPU/
+  Windows library/public consumers pass 1,970 with five skips, including the separately executed
+  new overlay case. Final actual native overlay/profiler/signal/power/visibility passes 5/5,
+  components/docking/Canvas passes 2,966, disabled Core/public passes 1,350, ordinary enabled/
+  disabled consumers pass 67/48 and additive consumers pass 4. The historical foreground case
+  passes unchanged this run without proving its earlier variability resolved. Locked checks,
+  correctness Clippy, actual Windows Rust 1.93 framework/both-consumer checks, stable production
+  wasm profiling off/on, existing nightly shared-memory compilation, formatting and static gates
+  pass. All six implementation/review/inventory threads close. The
+  [record](../../verification.md#frame-time-debug-overlay) preserves actual failures, corrected
+  native frame observation, resource provenance and strict-readback timing limits.
+  A bounded source pass identifies official animation scheduling, stateful spring integration
+  and system notifications as remaining Core mechanisms; these are queued source evidence,
+  not implementations or an exhaustive inventory. Numeric costs, foreign overlay execution,
+  full refresh, canonical docking and Nara GPU/View/Editor adoption remain open.
 - The complete WGPU dependency/shader/WebGL successor is implemented at
   `38d3041acab90cc01cbc9984a8b738a8b2c3a194`, using official WGPU/Naga
   `cddb2f5d80dc0009b2ef6767635140cacf90a007` and an explicitly qualified Windows Rust 1.93
@@ -668,13 +688,21 @@ historical scope and is not current branch or CI qualification.
 
 # Next Action
 
+- Continue the official
+  [animation-control/clock successor](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#animation-control-and-clock-successor),
+  then reconcile the complete
+  [stateful spring integration](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#stateful-spring-and-element-successor)
+  with fork motion owners. Preserve ordinary builders, reduced motion, synchronized repeats,
+  limited-rate scheduling and complete state/playback consumers through existing owners.
+  [System notifications](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#system-notification-successor)
+  have a separate queued complete contract and backend qualification.
 - Continue remaining renderer/API/platform reconciliation after the complete
   [WGPU dependency/shader/WebGL qualification](../../verification.md#wgpu-dependency-shaders-and-webgl)
   and [image feature-policy qualification](../../verification.md#image-dependency-feature-policy).
   Preserve ordinary downstream extension, retained formats, the declared compiler floor
   and independently locked consumers through existing owners.
-  Keep the remaining native foreground-restoration failure visible; its real stateful
-  edit/build/apply/output consumer has passed. Preserve ordinary/release feature exclusion,
+  Keep historical native foreground-restoration failures and the current unchanged pass visible;
+  its real stateful edit/build/apply/output consumer has passed. Preserve ordinary/release feature exclusion,
   the declared compiler floor and the distinct GPUI/fork/external-driver source provenance.
   Successful body patching does not qualify engine adoption.
 - Apply the maintenance skill's official-baseline rule through existing owners. Preserve
@@ -682,7 +710,7 @@ historical scope and is not current branch or CI qualification.
   leases, accepted cache publication and App/post-borrow command authority while reconciling
   the remaining mechanisms. Keep the recorded notification and publisher/backlog limits visible;
   avoid replacing the fork or reapplying completed units.
-- Full fixed-target refresh, the remaining native focus gate, numerical budgets and remaining
+- Full fixed-target refresh, historical native focus variability, numerical budgets and remaining
   renderer/API/platform differences stay open. Qualify prepared CoreText selection/cascade
   on macOS, other native/browser environments and touchpad scroll/inertia/pinch/response timing
   on their actual platforms. Existing getters, HWND/IME regressions and source inspection do not
