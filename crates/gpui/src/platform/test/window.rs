@@ -1570,7 +1570,11 @@ impl PlatformWindow for TestWindow {
             if state.presentation_shutdown_blocked {
                 return PlatformPresentationShutdownOutcome::Rejected;
             }
+            let renderer = state.renderer.take();
+            let atlas =
+                std::mem::replace(&mut state.sprite_atlas, Arc::new(HeadlessAtlas::default()));
             drop(state);
+            drop((renderer, atlas));
             if shutdown.acknowledge_quiesced() {
                 PlatformPresentationShutdownOutcome::Quiesced
             } else {
@@ -2310,6 +2314,15 @@ mod headless_renderer_tests {
         draws: Rc<Cell<usize>>,
         readbacks: Rc<Cell<usize>>,
         last_size: Rc<Cell<Option<Size<DevicePixels>>>>,
+        on_drop: Option<Box<dyn FnOnce()>>,
+    }
+
+    impl Drop for ControlledRenderer {
+        fn drop(&mut self) {
+            if let Some(on_drop) = self.on_drop.take() {
+                on_drop();
+            }
+        }
     }
 
     impl PlatformHeadlessRenderer for ControlledRenderer {
@@ -2353,6 +2366,7 @@ mod headless_renderer_tests {
             draws: draws.clone(),
             readbacks: readbacks.clone(),
             last_size: last_size.clone(),
+            on_drop: None,
         }));
         let initial_draws = window.draw_count();
         for outcome in [
@@ -2402,6 +2416,7 @@ mod headless_renderer_tests {
             draws: Rc::new(Cell::new(0)),
             readbacks: Rc::new(Cell::new(0)),
             last_size: Rc::new(Cell::new(None)),
+            on_drop: None,
         }));
         let previous = cx
             .update_window(handle, |_, window, _| window.presentation_facts())
@@ -2445,6 +2460,81 @@ mod headless_renderer_tests {
             submitted.latest_present_attempt.unwrap().outcome,
             PlatformWindowPresentOutcome::Submitted
         );
+    }
+    #[crate::test]
+    fn quiescence_releases_headless_resources_outside_the_lock_before_native_retirement(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|app| app.set_quit_mode(crate::QuitMode::Explicit));
+        let handle: AnyWindowHandle = cx
+            .open_window(size(px(32.0), px(24.0)), |_, _| Empty)
+            .into();
+        let window = cx.test_window(handle);
+        let drops = Rc::new(Cell::new(0));
+        let atlas: Arc<dyn PlatformAtlas> = Arc::new(HeadlessAtlas::default());
+        let atlas_lifetime = Arc::downgrade(&atlas);
+        let window_state = Rc::downgrade(&window.0);
+        let shutdown_app = cx.update(|app| app.to_async());
+        {
+            let mut state = window.0.lock();
+            state.sprite_atlas = atlas.clone();
+            state.renderer = Some(Box::new(ControlledRenderer {
+                atlas,
+                fail: Rc::new(Cell::new(false)),
+                draws: Rc::new(Cell::new(0)),
+                readbacks: Rc::new(Cell::new(0)),
+                last_size: Rc::new(Cell::new(None)),
+                on_drop: Some(Box::new({
+                    let drops = drops.clone();
+                    move || {
+                        let state = window_state
+                            .upgrade()
+                            .expect("diagnostic state remains owned");
+                        assert!(
+                            state.try_lock().is_some(),
+                            "resource release must permit backend reentry"
+                        );
+                        let shutdown =
+                            state.lock().presentation_shutdown_ticket.clone().expect(
+                                "resource destruction must retain its exact shutdown ticket",
+                            );
+                        assert!(!shutdown.snapshot().quiesced());
+                        assert!(!shutdown.snapshot().native_terminal());
+                        shutdown_app.update(|app| app.shutdown());
+                        assert!(!shutdown.snapshot().quiesced());
+                        assert!(!shutdown.snapshot().native_terminal());
+                        drops.set(drops.get() + 1);
+                    }
+                })),
+            }));
+        }
+        window.block_presentation_shutdown(true);
+        cx.update_window(handle, |_, window, app| window.remove_window(app))
+            .expect("logical removal must keep the pending retirement owner");
+        assert!(!cx.windows().contains(&handle));
+        let shutdown = window
+            .0
+            .lock()
+            .presentation_shutdown_ticket
+            .clone()
+            .expect("pending retirement must retain its exact ticket");
+        assert!(!shutdown.snapshot().quiesced());
+        assert_eq!(drops.get(), 0);
+        assert!(atlas_lifetime.upgrade().is_some());
+        assert_eq!(window.presentation_shutdown_counts().2, 0);
+
+        window.block_presentation_shutdown(false);
+        cx.background_executor
+            .advance_clock(std::time::Duration::from_millis(512));
+        cx.run_until_parked();
+        assert!(shutdown.snapshot().quiesced());
+        assert!(shutdown.snapshot().native_terminal());
+        assert_eq!(drops.get(), 1);
+        assert!(atlas_lifetime.upgrade().is_none());
+        assert!(window.0.lock().renderer.is_none());
+        assert_eq!(window.presentation_shutdown_counts().0, 1);
+        assert!(window.presentation_shutdown_counts().1 >= 2);
+        assert_eq!(window.presentation_shutdown_counts().2, 1);
     }
 }
 
