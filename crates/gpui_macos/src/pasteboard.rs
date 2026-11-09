@@ -1,62 +1,81 @@
-use core::slice;
-use std::ffi::{CStr, c_void};
+use std::ffi::CStr;
 use std::path::PathBuf;
 
-use cocoa::{
-    appkit::{
-        NSFilenamesPboardType, NSPasteboard, NSPasteboardTypePNG, NSPasteboardTypeString,
-        NSPasteboardTypeTIFF,
-    },
-    base::{id, nil},
-    foundation::{NSArray, NSData, NSFastEnumeration, NSString},
+use objc2::{Message, rc::Retained};
+#[expect(
+    deprecated,
+    reason = "Preserve the existing file-copy pasteboard format"
+)]
+use objc2_app_kit::NSFilenamesPboardType;
+use objc2_app_kit::{
+    NSPasteboard, NSPasteboardNameFind, NSPasteboardTypePNG, NSPasteboardTypeString,
+    NSPasteboardTypeTIFF,
 };
-use objc::{msg_send, runtime::Object, sel, sel_impl};
+use objc2_foundation::{NSArray, NSData, NSString};
 use smallvec::SmallVec;
 use strum::IntoEnumIterator as _;
+#[cfg(test)]
+use uuid::Uuid;
 
-use crate::ns_string;
 use open_gpui::{
     ClipboardEntry, ClipboardItem, ClipboardString, ExternalPaths, Image, ImageFormat, hash,
 };
 
 pub struct Pasteboard {
-    inner: id,
-    text_hash_type: id,
-    metadata_type: id,
+    inner: Retained<NSPasteboard>,
+    text_hash_type: Retained<NSString>,
+    metadata_type: Retained<NSString>,
 }
 
 impl Pasteboard {
     pub fn general() -> Self {
-        unsafe { Self::new(NSPasteboard::generalPasteboard(nil)) }
+        Self::new(NSPasteboard::generalPasteboard())
     }
 
     pub fn find() -> Self {
-        unsafe { Self::new(NSPasteboard::pasteboardWithName(nil, NSPasteboardNameFind)) }
+        Self::new(NSPasteboard::pasteboardWithName(unsafe {
+            NSPasteboardNameFind
+        }))
     }
 
     #[cfg(test)]
     pub fn unique() -> Self {
-        unsafe { Self::new(NSPasteboard::pasteboardWithUniqueName(nil)) }
+        let name = NSString::from_str(&format!("open-gpui-test-pasteboard-{}", Uuid::new_v4()));
+        Self::new(NSPasteboard::pasteboardWithName(&name))
     }
 
-    unsafe fn new(inner: id) -> Self {
+    fn new(inner: Retained<NSPasteboard>) -> Self {
+        // These constructors return autoreleased objects, but a Pasteboard can
+        // outlive the autorelease pool in which it was created.
         Self {
             inner,
-            text_hash_type: unsafe { ns_string("open-gpui-text-hash") },
-            metadata_type: unsafe { ns_string("open-gpui-metadata") },
+            text_hash_type: NSString::from_str("open-gpui-text-hash"),
+            metadata_type: NSString::from_str("open-gpui-metadata"),
         }
     }
 
     pub fn read(&self) -> Option<ClipboardItem> {
         unsafe {
             // Check for file paths first
-            let filenames = NSPasteboard::propertyListForType(self.inner, NSFilenamesPboardType);
-            if filenames != nil && NSArray::count(filenames) > 0 {
+            #[expect(
+                deprecated,
+                reason = "Preserve the existing file-copy pasteboard format"
+            )]
+            let filenames = self.inner.propertyListForType(NSFilenamesPboardType);
+            if let Some(filenames) = filenames
+                .as_ref()
+                .and_then(|filenames| filenames.downcast_ref::<NSArray>())
+            {
                 let mut paths = SmallVec::new();
-                for file in filenames.iter() {
-                    let f = NSString::UTF8String(file);
-                    let path = CStr::from_ptr(f).to_string_lossy().into_owned();
-                    paths.push(PathBuf::from(path));
+                for file in filenames {
+                    if let Some(file) = file.downcast_ref::<NSString>() {
+                        let path = file.UTF8String();
+                        if path.is_null() {
+                            continue;
+                        }
+                        let path = CStr::from_ptr(path).to_string_lossy().into_owned();
+                        paths.push(PathBuf::from(path));
+                    }
                 }
                 if !paths.is_empty() {
                     let mut entries = vec![ClipboardEntry::ExternalPaths(ExternalPaths(paths))];
@@ -90,119 +109,93 @@ impl Pasteboard {
     }
 
     fn read_image(&self, format: ImageFormat) -> Option<ClipboardItem> {
-        let ut_type: UTType = format.into();
+        let ut_type = UTType::from(format);
 
-        unsafe {
-            let types: id = self.inner.types();
-            if msg_send![types, containsObject: ut_type.inner()] {
-                self.data_for_type(ut_type.inner_mut()).map(|bytes| {
-                    let bytes = bytes.to_vec();
-                    let id = hash(&bytes);
+        let types = self.inner.types()?;
+        if types.containsObject(ut_type.inner()) {
+            self.data_for_type(ut_type.inner()).map(|bytes| {
+                let id = hash(&bytes);
 
-                    ClipboardItem {
-                        entries: vec![ClipboardEntry::Image(Image { format, bytes, id })],
-                    }
-                })
-            } else {
-                None
-            }
+                ClipboardItem {
+                    entries: vec![ClipboardEntry::Image(Image { format, bytes, id })],
+                }
+            })
+        } else {
+            None
         }
     }
 
-    unsafe fn read_string_from_pasteboard(&self) -> Option<ClipboardEntry> {
-        unsafe {
-            let pasteboard_types: id = self.inner.types();
-            let string_type: id = ns_string("public.utf8-plain-text");
+    fn read_string_from_pasteboard(&self) -> Option<ClipboardEntry> {
+        let pasteboard_types = self.inner.types()?;
+        let string_type = NSString::from_str("public.utf8-plain-text");
 
-            if !msg_send![pasteboard_types, containsObject: string_type] {
-                return None;
-            }
-
-            let data = self.inner.dataForType(string_type);
-            let text_bytes: &[u8] = if data == nil {
-                return None;
-            } else if data.bytes().is_null() {
-                // https://developer.apple.com/documentation/foundation/nsdata/1410616-bytes?language=objc
-                // "If the length of the NSData object is 0, this property returns nil."
-                &[]
-            } else {
-                slice::from_raw_parts(data.bytes() as *mut u8, data.length() as usize)
-            };
-
-            let text = String::from_utf8_lossy(text_bytes).to_string();
-            let metadata = self
-                .data_for_type(self.text_hash_type)
-                .and_then(|hash_bytes| {
-                    let hash_bytes = hash_bytes.try_into().ok()?;
-                    let hash = u64::from_be_bytes(hash_bytes);
-                    let metadata = self.data_for_type(self.metadata_type)?;
-
-                    if hash == ClipboardString::text_hash(&text) {
-                        String::from_utf8(metadata.to_vec()).ok()
-                    } else {
-                        None
-                    }
-                });
-
-            Some(ClipboardEntry::String(ClipboardString { text, metadata }))
+        if !pasteboard_types.containsObject(&string_type) {
+            return None;
         }
+
+        let text_bytes = self.data_for_type(&string_type)?;
+
+        let text = String::from_utf8_lossy(&text_bytes).to_string();
+        let metadata = self
+            .data_for_type(&self.text_hash_type)
+            .and_then(|hash_bytes| {
+                let hash_bytes = hash_bytes.as_slice().try_into().ok()?;
+                let hash = u64::from_be_bytes(hash_bytes);
+                let metadata = self.data_for_type(&self.metadata_type)?;
+
+                if hash == ClipboardString::text_hash(&text) {
+                    String::from_utf8(metadata).ok()
+                } else {
+                    None
+                }
+            });
+
+        Some(ClipboardEntry::String(ClipboardString { text, metadata }))
     }
 
-    unsafe fn data_for_type(&self, kind: id) -> Option<&[u8]> {
-        unsafe {
-            let data = self.inner.dataForType(kind);
-            if data == nil {
-                None
-            } else {
-                Some(slice::from_raw_parts(
-                    data.bytes() as *mut u8,
-                    data.length() as usize,
-                ))
-            }
-        }
+    fn data_for_type(&self, kind: &NSString) -> Option<Vec<u8>> {
+        self.inner.dataForType(kind).map(|data| data.to_vec())
     }
 
     pub fn write(&self, item: ClipboardItem) {
-        unsafe {
-            match item.entries.as_slice() {
-                [] => {
-                    // Writing an empty list of entries just clears the clipboard.
-                    self.inner.clearContents();
-                }
-                [ClipboardEntry::String(string)] => {
-                    self.write_plaintext(string);
-                }
-                [ClipboardEntry::Image(image)] => {
-                    self.write_image(image);
-                }
-                [ClipboardEntry::ExternalPaths(_)] => {}
-                _ => {
-                    // Agus NB: We're currently only writing string entries to the clipboard when we have more than one.
-                    //
-                    // This was the existing behavior before I refactored the outer clipboard code:
-                    // https://github.com/zed-industries/zed/blob/65f7412a0265552b06ce122655369d6cc7381dd6/crates/gpui/src/platform/mac/platform.rs#L1060-L1110
-                    //
-                    // Note how `any_images` is always `false`. We should fix that, but that's orthogonal to the refactor.
+        match item.entries.as_slice() {
+            [] => {
+                // Writing an empty list of entries just clears the clipboard.
+                self.inner.clearContents();
+            }
+            [ClipboardEntry::String(string)] => {
+                self.write_plaintext(string);
+            }
+            [ClipboardEntry::Image(image)] => {
+                self.write_image(image);
+            }
+            [ClipboardEntry::ExternalPaths(_)] => {}
+            _ => {
+                // Agus NB: We're currently only writing string entries to the clipboard when we have more than one.
+                //
+                // This was the existing behavior before I refactored the outer clipboard code:
+                // https://github.com/zed-industries/zed/blob/65f7412a0265552b06ce122655369d6cc7381dd6/crates/gpui/src/platform/mac/platform.rs#L1060-L1110
+                //
+                // Note how `any_images` is always `false`. We should fix that, but that's orthogonal to the refactor.
 
-                    let mut combined = ClipboardString {
-                        text: String::new(),
-                        metadata: None,
-                    };
+                let mut combined = ClipboardString {
+                    text: String::new(),
+                    metadata: None,
+                };
 
-                    for entry in item.entries {
-                        match entry {
-                            ClipboardEntry::String(text) => {
-                                combined.text.push_str(&text.text());
-                                if combined.metadata.is_none() {
-                                    combined.metadata = text.metadata;
-                                }
+                for entry in item.entries {
+                    match entry {
+                        ClipboardEntry::String(text) => {
+                            combined.text.push_str(&text.text());
+                            if combined.metadata.is_none() {
+                                combined.metadata = text.metadata;
                             }
-                            _ => {}
                         }
+                        _ => {}
                     }
-
-                    self.write_plaintext(&combined);
                 }
+
+                self.write_plaintext(&combined);
             }
         }
     }
@@ -211,54 +204,31 @@ impl Pasteboard {
         unsafe {
             self.inner.clearContents();
 
-            let text_bytes = NSData::dataWithBytes_length_(
-                nil,
-                string.text.as_ptr() as *const c_void,
-                string.text.len() as u64,
-            );
+            let text_bytes = NSData::with_bytes(string.text.as_bytes());
             self.inner
-                .setData_forType(text_bytes, NSPasteboardTypeString);
+                .setData_forType(Some(&text_bytes), NSPasteboardTypeString);
 
             if let Some(metadata) = string.metadata.as_ref() {
                 let hash_bytes = ClipboardString::text_hash(&string.text).to_be_bytes();
-                let hash_bytes = NSData::dataWithBytes_length_(
-                    nil,
-                    hash_bytes.as_ptr() as *const c_void,
-                    hash_bytes.len() as u64,
-                );
-                self.inner.setData_forType(hash_bytes, self.text_hash_type);
-
-                let metadata_bytes = NSData::dataWithBytes_length_(
-                    nil,
-                    metadata.as_ptr() as *const c_void,
-                    metadata.len() as u64,
-                );
+                let hash_bytes = NSData::with_bytes(&hash_bytes);
                 self.inner
-                    .setData_forType(metadata_bytes, self.metadata_type);
+                    .setData_forType(Some(&hash_bytes), &self.text_hash_type);
+
+                let metadata_bytes = NSData::with_bytes(metadata.as_bytes());
+                self.inner
+                    .setData_forType(Some(&metadata_bytes), &self.metadata_type);
             }
         }
     }
 
-    unsafe fn write_image(&self, image: &Image) {
-        unsafe {
-            self.inner.clearContents();
+    fn write_image(&self, image: &Image) {
+        self.inner.clearContents();
 
-            let bytes = NSData::dataWithBytes_length_(
-                nil,
-                image.bytes.as_ptr() as *const c_void,
-                image.bytes.len() as u64,
-            );
+        let bytes = NSData::with_bytes(&image.bytes);
 
-            self.inner
-                .setData_forType(bytes, Into::<UTType>::into(image.format).inner_mut());
-        }
+        self.inner
+            .setData_forType(Some(&bytes), UTType::from(image.format).inner());
     }
-}
-
-#[link(name = "AppKit", kind = "framework")]
-unsafe extern "C" {
-    /// [Apple's documentation](https://developer.apple.com/documentation/appkit/nspasteboardnamefind?language=objc)
-    pub static NSPasteboardNameFind: id;
 }
 
 impl From<ImageFormat> for UTType {
@@ -278,102 +248,65 @@ impl From<ImageFormat> for UTType {
 }
 
 // See https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/
-pub struct UTType(id);
+pub struct UTType(Retained<NSString>);
 
 impl UTType {
     pub fn png() -> Self {
         // https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/png
-        Self(unsafe { NSPasteboardTypePNG }) // This is a rare case where there's a built-in NSPasteboardType
+        Self(unsafe { NSPasteboardTypePNG }.retain()) // This is a rare case where there's a built-in NSPasteboardType
     }
 
     pub fn jpeg() -> Self {
         // https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/jpeg
-        Self(unsafe { ns_string("public.jpeg") })
+        Self(NSString::from_str("public.jpeg"))
     }
 
     pub fn gif() -> Self {
         // https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/gif
-        Self(unsafe { ns_string("com.compuserve.gif") })
+        Self(NSString::from_str("com.compuserve.gif"))
     }
 
     pub fn webp() -> Self {
         // https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/webp
-        Self(unsafe { ns_string("org.webmproject.webp") })
+        Self(NSString::from_str("org.webmproject.webp"))
     }
 
     pub fn bmp() -> Self {
         // https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/bmp
-        Self(unsafe { ns_string("com.microsoft.bmp") })
+        Self(NSString::from_str("com.microsoft.bmp"))
     }
 
     pub fn svg() -> Self {
         // https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/svg
-        Self(unsafe { ns_string("public.svg-image") })
+        Self(NSString::from_str("public.svg-image"))
     }
 
     pub fn ico() -> Self {
         // https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/ico
-        Self(unsafe { ns_string("com.microsoft.ico") })
+        Self(NSString::from_str("com.microsoft.ico"))
     }
 
     pub fn tiff() -> Self {
         // https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/tiff
-        Self(unsafe { NSPasteboardTypeTIFF }) // This is a rare case where there's a built-in NSPasteboardType
+        Self(unsafe { NSPasteboardTypeTIFF }.retain()) // This is a rare case where there's a built-in NSPasteboardType
     }
 
     pub fn pnm() -> Self {
         //https://en.wikipedia.org/w/index.php?title=Netpbm&oldid=1336679433 under Uniform Type Identifier
-        Self(unsafe { ns_string("public.pbm") })
+        Self(NSString::from_str("public.pbm"))
     }
 
-    fn inner(&self) -> *const Object {
-        self.0
-    }
-
-    pub fn inner_mut(&self) -> *mut Object {
-        self.0 as *mut _
+    fn inner(&self) -> &NSString {
+        &self.0
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use cocoa::{
-        appkit::{NSFilenamesPboardType, NSPasteboard, NSPasteboardTypeString},
-        base::{id, nil},
-        foundation::{NSArray, NSData},
-    };
-    use std::ffi::c_void;
-
+    use objc2::{rc::autoreleasepool, runtime::AnyObject};
     use open_gpui::{ClipboardEntry, ClipboardItem, ClipboardString, ImageFormat};
 
     use super::*;
-
-    unsafe fn simulate_external_file_copy(pasteboard: &Pasteboard, paths: &[&str]) {
-        unsafe {
-            let ns_paths: Vec<id> = paths.iter().map(|p| ns_string(p)).collect();
-            let ns_array = NSArray::arrayWithObjects(nil, &ns_paths);
-
-            let mut types = vec![NSFilenamesPboardType];
-            types.push(NSPasteboardTypeString);
-
-            let types_array = NSArray::arrayWithObjects(nil, &types);
-            pasteboard.inner.declareTypes_owner(types_array, nil);
-
-            pasteboard
-                .inner
-                .setPropertyList_forType(ns_array, NSFilenamesPboardType);
-
-            let joined = paths.join("\n");
-            let bytes = NSData::dataWithBytes_length_(
-                nil,
-                joined.as_ptr() as *const c_void,
-                joined.len() as u64,
-            );
-            pasteboard
-                .inner
-                .setData_forType(bytes, NSPasteboardTypeString);
-        }
-    }
 
     #[test]
     fn test_string() {
@@ -394,19 +327,153 @@ mod tests {
 
         let text_from_other_app = "text from other app";
         unsafe {
-            let bytes = NSData::dataWithBytes_length_(
-                nil,
-                text_from_other_app.as_ptr() as *const c_void,
-                text_from_other_app.len() as u64,
-            );
+            let bytes = NSData::with_bytes(text_from_other_app.as_bytes());
             pasteboard
                 .inner
-                .setData_forType(bytes, NSPasteboardTypeString);
+                .setData_forType(Some(&bytes), NSPasteboardTypeString);
         }
         assert_eq!(
             pasteboard.read(),
             Some(ClipboardItem::new_string(text_from_other_app.to_string()))
         );
+
+        for text in ["", "héllo\0世界🦀"] {
+            let item = ClipboardItem::new_string(text.to_string());
+            pasteboard.write(item.clone());
+            assert_eq!(pasteboard.read(), Some(item));
+        }
+    }
+
+    #[test]
+    fn test_custom_types_survive_creation_autorelease_pool() {
+        let pasteboard = autoreleasepool(|_| Pasteboard::unique());
+
+        assert_eq!(pasteboard.text_hash_type.to_string(), "open-gpui-text-hash");
+        assert_eq!(pasteboard.metadata_type.to_string(), "open-gpui-metadata");
+
+        let item = ClipboardItem {
+            entries: vec![ClipboardEntry::String(
+                ClipboardString::new("retained pasteboard".to_string())
+                    .with_json_metadata(vec![1, 2]),
+            )],
+        };
+        autoreleasepool(|_| pasteboard.write(item.clone()));
+        assert_eq!(autoreleasepool(|_| pasteboard.read()), Some(item));
+    }
+
+    #[test]
+    fn test_string_and_metadata_survive_read_autorelease_pool() {
+        let pasteboard = autoreleasepool(|_| Pasteboard::unique());
+
+        for (text, metadata) in [
+            ("", ""),
+            ("before\0after", "meta\0data"),
+            ("héllo\0世界🦀", "méta\0数据🦀"),
+        ] {
+            let item = ClipboardItem::new_string_with_metadata(text.into(), metadata.into());
+            autoreleasepool(|_| pasteboard.write(item.clone()));
+            let read_item = autoreleasepool(|_| pasteboard.read());
+            autoreleasepool(|_| pasteboard.write(ClipboardItem { entries: vec![] }));
+
+            assert_eq!(read_item, Some(item));
+            assert_eq!(autoreleasepool(|_| pasteboard.read()), None);
+        }
+    }
+
+    #[test]
+    fn test_images_and_types_survive_autorelease_pools() {
+        let pasteboard = autoreleasepool(|_| Pasteboard::unique());
+
+        for format in ImageFormat::iter() {
+            let ut_type = autoreleasepool(|_| UTType::from(format));
+            for bytes in [vec![], vec![0, 255, 128, 0, 42]] {
+                let id = hash(&bytes);
+                let item = ClipboardItem {
+                    entries: vec![ClipboardEntry::Image(Image { format, bytes, id })],
+                };
+                autoreleasepool(|_| pasteboard.write(item.clone()));
+                let read_item = autoreleasepool(|_| {
+                    assert!(
+                        pasteboard
+                            .inner
+                            .types()
+                            .unwrap()
+                            .containsObject(ut_type.inner())
+                    );
+                    pasteboard.read_image(format)
+                });
+                autoreleasepool(|_| pasteboard.write(ClipboardItem { entries: vec![] }));
+
+                assert_eq!(read_item, Some(item));
+            }
+        }
+    }
+
+    #[test]
+    fn test_empty_item_and_missing_data() {
+        autoreleasepool(|_| {
+            let pasteboard = Pasteboard::unique();
+            pasteboard.write(ClipboardItem::new_string_with_metadata(
+                "text".into(),
+                "metadata".into(),
+            ));
+            pasteboard.write(ClipboardItem { entries: vec![] });
+
+            assert_eq!(pasteboard.read(), None);
+            assert_eq!(pasteboard.data_for_type(&pasteboard.text_hash_type), None);
+            assert_eq!(pasteboard.data_for_type(&pasteboard.metadata_type), None);
+
+            // SAFETY: The declared types are NSString objects with no promised-data owner.
+            unsafe {
+                for kind in [NSPasteboardTypeString, NSPasteboardTypePNG] {
+                    let types = NSArray::from_slice(&[kind]);
+                    pasteboard.inner.declareTypes_owner(&types, None);
+                    assert_eq!(pasteboard.read(), None);
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn test_invalid_metadata_is_ignored() {
+        autoreleasepool(|_| {
+            let pasteboard = Pasteboard::unique();
+            let text = "text";
+            let text_hash = ClipboardString::text_hash(text).to_be_bytes();
+
+            for (hash_bytes, metadata) in [
+                (vec![], Some(vec![])),
+                (vec![0; 7], Some(b"[]".to_vec())),
+                (vec![0; 9], Some(b"[]".to_vec())),
+                (
+                    ClipboardString::text_hash("other text")
+                        .to_be_bytes()
+                        .to_vec(),
+                    Some(b"[]".to_vec()),
+                ),
+                (text_hash.to_vec(), Some(vec![255])),
+                (text_hash.to_vec(), None),
+            ] {
+                let item = ClipboardItem::new_string(text.into());
+                pasteboard.write(item.clone());
+                let hash_data = NSData::with_bytes(&hash_bytes);
+                assert!(
+                    pasteboard
+                        .inner
+                        .setData_forType(Some(&hash_data), &pasteboard.text_hash_type)
+                );
+                if let Some(metadata) = metadata {
+                    let data = NSData::with_bytes(&metadata);
+                    assert!(
+                        pasteboard
+                            .inner
+                            .setData_forType(Some(&data), &pasteboard.metadata_type)
+                    );
+                }
+
+                assert_eq!(pasteboard.read(), Some(item));
+            }
+        });
     }
 
     #[test]
@@ -491,6 +558,78 @@ mod tests {
     }
 
     #[test]
+    fn test_external_paths_survive_read_autorelease_pool() {
+        let pasteboard = autoreleasepool(|_| Pasteboard::unique());
+        let paths = ["/some file with spaces.txt", "/héllo世界🦀.txt"];
+
+        autoreleasepool(|_| {
+            // SAFETY: Each path is serialized as an NSString in a property-list NSArray.
+            unsafe { simulate_external_file_copy(&pasteboard, &paths) };
+        });
+        let item = autoreleasepool(|_| pasteboard.read());
+        autoreleasepool(|_| pasteboard.write(ClipboardItem { entries: vec![] }));
+
+        assert_eq!(
+            item,
+            Some(ClipboardItem {
+                entries: vec![
+                    ClipboardEntry::ExternalPaths(ExternalPaths(
+                        paths.iter().map(PathBuf::from).collect(),
+                    )),
+                    ClipboardEntry::String(ClipboardString::new(paths.join("\n"))),
+                ],
+            })
+        );
+    }
+
+    #[test]
+    #[expect(
+        deprecated,
+        reason = "Preserve the existing file-copy pasteboard format"
+    )]
+    fn test_read_file_property_list_types() {
+        autoreleasepool(|_| {
+            let pasteboard = Pasteboard::unique();
+            let fallback = ClipboardItem::new_string("fallback text".into());
+            let path = NSString::from_str("/test.txt");
+            let non_string = NSData::with_bytes(b"not a path");
+            let empty_paths = NSArray::<NSString>::from_slice(&[]);
+            let non_string_paths = NSArray::from_slice(&[&*non_string]);
+            let mixed_paths = NSArray::<AnyObject>::from_slice(&[&*non_string, &*path]);
+            let property_lists: [&AnyObject; 3] = [&path, &empty_paths, &non_string_paths];
+
+            // SAFETY: NSString, NSData and these NSArray values are valid property lists.
+            unsafe {
+                for property_list in property_lists {
+                    pasteboard.write(fallback.clone());
+                    assert!(
+                        pasteboard
+                            .inner
+                            .setPropertyList_forType(property_list, NSFilenamesPboardType)
+                    );
+                    assert_eq!(pasteboard.read(), Some(fallback.clone()));
+                }
+
+                pasteboard.write(ClipboardItem { entries: vec![] });
+                assert!(
+                    pasteboard
+                        .inner
+                        .setPropertyList_forType(&mixed_paths, NSFilenamesPboardType)
+                );
+            }
+
+            assert_eq!(
+                pasteboard.read(),
+                Some(ClipboardItem {
+                    entries: vec![ClipboardEntry::ExternalPaths(ExternalPaths(
+                        vec![PathBuf::from("/test.txt")].into(),
+                    ))],
+                })
+            );
+        });
+    }
+
+    #[test]
     fn test_read_image() {
         let pasteboard = Pasteboard::unique();
 
@@ -505,15 +644,11 @@ mod tests {
 
         unsafe {
             let ns_png_type = NSPasteboardTypePNG;
-            let types_array = NSArray::arrayWithObjects(nil, &[ns_png_type]);
-            pasteboard.inner.declareTypes_owner(types_array, nil);
+            let types_array = NSArray::from_slice(&[ns_png_type]);
+            pasteboard.inner.declareTypes_owner(&types_array, None);
 
-            let data = NSData::dataWithBytes_length_(
-                nil,
-                png_bytes.as_ptr() as *const c_void,
-                png_bytes.len() as u64,
-            );
-            pasteboard.inner.setData_forType(data, ns_png_type);
+            let data = NSData::with_bytes(png_bytes);
+            pasteboard.inner.setData_forType(Some(&data), ns_png_type);
         }
 
         let item = pasteboard.read().expect("should read PNG image");
@@ -526,6 +661,37 @@ mod tests {
                 assert_eq!(img.bytes, png_bytes);
             }
             other => panic!("expected Image, got {:?}", other),
+        }
+    }
+
+    unsafe fn simulate_external_file_copy(pasteboard: &Pasteboard, paths: &[&str]) {
+        unsafe {
+            let ns_paths = paths
+                .iter()
+                .map(|path| NSString::from_str(path))
+                .collect::<Vec<_>>();
+            let ns_array = NSArray::from_retained_slice(&ns_paths);
+
+            #[expect(
+                deprecated,
+                reason = "Preserve the existing file-copy pasteboard format"
+            )]
+            let types_array = NSArray::from_slice(&[NSFilenamesPboardType, NSPasteboardTypeString]);
+            pasteboard.inner.declareTypes_owner(&types_array, None);
+
+            #[expect(
+                deprecated,
+                reason = "Preserve the existing file-copy pasteboard format"
+            )]
+            pasteboard
+                .inner
+                .setPropertyList_forType(&ns_array, NSFilenamesPboardType);
+
+            let joined = paths.join("\n");
+            let bytes = NSData::with_bytes(joined.as_bytes());
+            pasteboard
+                .inner
+                .setData_forType(Some(&bytes), NSPasteboardTypeString);
         }
     }
 }

@@ -332,29 +332,6 @@ pub(crate) mod foundation {
         }
     }
 
-    pub trait NSData: Sized {
-        unsafe fn dataWithBytes_length_(
-            _: Self,
-            bytes: *const std::ffi::c_void,
-            length: u64,
-        ) -> id {
-            unsafe { msg_send![class!(NSData), dataWithBytes: bytes length: length] }
-        }
-
-        unsafe fn bytes(self) -> *const std::ffi::c_void;
-        unsafe fn length(self) -> NSUInteger;
-    }
-
-    impl NSData for id {
-        unsafe fn bytes(self) -> *const std::ffi::c_void {
-            unsafe { msg_send![self, bytes] }
-        }
-
-        unsafe fn length(self) -> NSUInteger {
-            unsafe { msg_send![self, length] }
-        }
-    }
-
     pub trait NSURL: Sized {
         unsafe fn alloc(_: Self) -> id {
             unsafe { msg_send![class!(NSURL), alloc] }
@@ -470,9 +447,6 @@ pub(crate) mod appkit {
     unsafe extern "C" {
         pub static NSAppKitVersionNumber: f64;
         pub static NSFilenamesPboardType: id;
-        pub static NSPasteboardTypeString: id;
-        pub static NSPasteboardTypeTIFF: id;
-        pub static NSPasteboardTypePNG: id;
         pub static NSAppearanceNameVibrantDark: id;
         pub static NSAppearanceNameVibrantLight: id;
     }
@@ -1163,54 +1137,12 @@ pub(crate) mod appkit {
     }
 
     pub trait NSPasteboard: Sized {
-        unsafe fn generalPasteboard(_: Self) -> id {
-            unsafe { msg_send![class!(NSPasteboard), generalPasteboard] }
-        }
-
-        unsafe fn pasteboardWithName(_: Self, name: id) -> id {
-            unsafe { msg_send![class!(NSPasteboard), pasteboardWithName: name] }
-        }
-
-        unsafe fn pasteboardWithUniqueName(_: Self) -> id {
-            unsafe { msg_send![class!(NSPasteboard), pasteboardWithUniqueName] }
-        }
-
         unsafe fn propertyListForType(self, pasteboard_type: id) -> id;
-        unsafe fn types(self) -> id;
-        unsafe fn dataForType(self, pasteboard_type: id) -> id;
-        unsafe fn clearContents(self);
-        unsafe fn declareTypes_owner(self, types: id, owner: id) -> NSInteger;
-        unsafe fn setData_forType(self, data: id, pasteboard_type: id) -> BOOL;
-        unsafe fn setPropertyList_forType(self, property_list: id, pasteboard_type: id) -> BOOL;
     }
 
     impl NSPasteboard for id {
         unsafe fn propertyListForType(self, pasteboard_type: id) -> id {
             unsafe { msg_send![self, propertyListForType: pasteboard_type] }
-        }
-
-        unsafe fn types(self) -> id {
-            unsafe { msg_send![self, types] }
-        }
-
-        unsafe fn dataForType(self, pasteboard_type: id) -> id {
-            unsafe { msg_send![self, dataForType: pasteboard_type] }
-        }
-
-        unsafe fn clearContents(self) {
-            unsafe { msg_send![self, clearContents] }
-        }
-
-        unsafe fn declareTypes_owner(self, types: id, owner: id) -> NSInteger {
-            unsafe { msg_send![self, declareTypes: types owner: owner] }
-        }
-
-        unsafe fn setData_forType(self, data: id, pasteboard_type: id) -> BOOL {
-            unsafe { msg_send![self, setData: data forType: pasteboard_type] }
-        }
-
-        unsafe fn setPropertyList_forType(self, property_list: id, pasteboard_type: id) -> BOOL {
-            unsafe { msg_send![self, setPropertyList: property_list forType: pasteboard_type] }
         }
     }
 
