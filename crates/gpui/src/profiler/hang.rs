@@ -672,6 +672,7 @@ mod tests {
 
     use open_gpui_scheduler::SpawnTime;
     use proptest::prelude::*;
+    use rand::Rng as _;
     use rand::prelude::*;
 
     use crate::{

@@ -6325,6 +6325,14 @@ impl Window {
         self.capture_frame().into_image()
     }
 
+    /// Borrows the accepted rendered frame's scene for benchmark output checks and batch counts.
+    ///
+    /// This observation does not establish renderer submission or native presentation.
+    #[cfg(feature = "bench-support")]
+    pub fn rendered_scene(&self) -> &crate::Scene {
+        &self.rendered_frame.scene
+    }
+
     /// Renders the current frame's scene and returns pixels plus capture metadata.
     ///
     /// This is an offscreen framework capture. It does not prove that the OS
@@ -14803,7 +14811,7 @@ pub fn outline(
 }
 
 #[cfg(test)]
-mod cached_paint_atlas_tests {
+pub(crate) mod cached_paint_atlas_tests {
     use super::*;
     use crate::{
         AtlasKey, AtlasTextureId, AtlasTextureKind, AtlasTextureLeaseEpoch, AtlasTile, Empty,
@@ -15163,17 +15171,17 @@ mod cached_paint_atlas_tests {
         lease_attempts: usize,
     }
 
-    pub(super) struct RejectOnceAtlas(Mutex<RejectOnceAtlasState>);
+    pub(crate) struct RejectOnceAtlas(Mutex<RejectOnceAtlasState>);
 
     impl RejectOnceAtlas {
-        pub(super) fn new() -> Self {
+        pub(crate) fn new() -> Self {
             Self(Mutex::new(RejectOnceAtlasState {
                 fail_next_lease: false,
                 lease_attempts: 0,
             }))
         }
 
-        pub(super) fn fail_next_lease(&self) {
+        pub(crate) fn fail_next_lease(&self) {
             self.0.lock().fail_next_lease = true;
         }
 

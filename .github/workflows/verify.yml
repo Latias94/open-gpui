@@ -360,6 +360,34 @@ jobs:
           GPUI_LEAK_DETECTION: ''
         run: cargo bench --locked --profile dev --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --features bench-support --bench maintained_harness --target-dir target -- --noplot
 
+      - name: Test randomized tree render equivalence and public consumers
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: |
+          cargo nextest run --locked -p open-gpui --all-features --lib -E 'test(randomized_element_tree::) | test(app::bench_context::tests::frames::) | test(app::cell::tests::) | test(native_event_ingress::)' --test-threads=1 --no-fail-fast --no-tests fail
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --features bench-support --test randomized_tree --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo nextest run --locked --manifest-path tests/fixtures/test-support-consumer/Cargo.toml --test property_path --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Smoke platform and independent randomized tree workloads
+        if: matrix.name == 'windows'
+        shell: pwsh
+        env:
+          GPUI_LEAK_DETECTION: ''
+          BENCH_MEASUREMENT: wall-time
+          SEED: '0'
+          ITERATIONS: '1'
+        run: |
+          cargo bench --locked --profile dev -p open-gpui-platform --features bench-support,open_gpui/stacker --bench randomized_element_tree -- --test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:SEED = $null
+          cargo bench --locked --profile dev --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --features bench-support --bench randomized_tree --target-dir target -- --test
+
+      - name: Test native cached tree pixels and presentation lifecycle
+        if: matrix.name == 'windows'
+        run: cargo nextest run --locked -p open-gpui-windows --all-features --lib -E 'test(native_randomized_tree_cached_color_hide_restore_click_and_retire)' --run-ignored only --test-threads=1 --no-fail-fast --no-tests fail
+
       - name: Test additive support without handle tracking
         if: matrix.name == 'windows'
         shell: pwsh

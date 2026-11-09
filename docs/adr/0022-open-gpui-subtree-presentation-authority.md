@@ -3,6 +3,7 @@
 **Status**: Accepted
 **Date**: 2026-07-20
 **Amended**: 2026-11-08 (composite focus and keyboard activation continuity)
+**Clarified**: 2026-11-10 (fixed-target randomized-tree binding)
 
 ## Context
 
@@ -40,6 +41,17 @@ Nested declarations resolve to the most suppressive state. `Hidden` dominates `I
 dominates `Visible`; a descendant cannot opt back in beneath a suppressed ancestor. Decorative
 leaf omission uses `omit_accessibility_node` and is not an ancestor presentation mechanism.
 
+Fixed-target upstream consumers retain their complete models and supported operations through
+this existing authority. The seeded randomized tree keeps both root and descendant visibility
+mutations, including cached hidden/restored roots, and maps hiding at both render declarations to
+`SubtreePresentation::Hidden`; visible nodes inherit their existing scope without an extra wrapper.
+Its upstream `Style::visibility` paint-only branch is
+the same retired mechanism described above, not a missing fork prerequisite. This is an explicit
+binding difference: layout and painted hiding remain, while the fork also suppresses stale input,
+focus/IME and semantic membership at the admitted frame. It does not add a second visibility
+owner, alias the retired API or replace hiding with layout-removing `Display::None`. Randomized
+render-equivalence and the existing cross-channel presentation workflows qualify the mapping.
+
 ```rust
 use open_gpui::{
     ParentElement as _, SubtreePresentation, SubtreePresentationExt as _, div,
@@ -59,6 +71,12 @@ runs layout and the minimum retained-view reconciliation needed to discard pendi
 state, but skips descendant prepaint and paint work whenever the child has no such reconciliation.
 
 Frame commit first reconciles presentation membership, then publishes retained transactions.
+Div mouse/hover/tooltip state keeps its shared identity across candidate construction. An
+interactive prepaint records membership through the existing stable publication transaction;
+only its accepted-frame discard clears those cells when the subtree is hidden, inert, removed
+or invalid. A refused whole-frame candidate runs neither callback and preserves the presented
+MouseDown. Candidate active styling follows current participation without changing old input
+cells. A visible commit never writes back a captured input snapshot over an irreversible cancel.
 Changing a captured, dragged, hovered, focused, or editing subtree to `Inert` or `Hidden` removes
 the stale binding in that committed frame. Pointer ownership receives exactly one terminal cancel.
 Focus and IME use the existing window focus authority rather than a presentation-specific restore

@@ -1,5 +1,12 @@
 # Independent additive test-support consumer
 
+The `property_path` target also executes two public `#[open_gpui::property_test]` workflows
+through the reexported proptest 1.12 path, without a direct proptest dependency. Each retains
+four generated cases, actual TestPlatform drawing, entity notifications/deferred effects and
+release or shutdown. It is gated by `test-support`; bench-only selection excludes the target's
+body. Run `cargo nextest run --locked --manifest-path tests/fixtures/test-support-consumer/Cargo.toml --test property_path --target-dir target --test-threads=1 --no-fail-fast --no-tests fail`.
+These are verification instructions, not native presentation or GPU qualification.
+
 This native consumer is its own Cargo workspace and owns an independent `Cargo.lock`. It uses
 only public Open GPUI, scheduler, and utility APIs through normal path dependencies. It has no
 Nara dependency and does not inherit the repository workspace's dev-dependency feature selection.

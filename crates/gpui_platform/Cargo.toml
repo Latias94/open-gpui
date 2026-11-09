@@ -26,6 +26,11 @@ test = true
 name = "system_notifications"
 path = "examples/system_notifications.rs"
 
+[[bench]]
+name = "randomized_element_tree"
+harness = false
+required-features = ["bench-support"]
+
 [features]
 default = []
 font-kit = ["open_gpui_macos/font-kit"]
@@ -40,6 +45,10 @@ web-multithreaded = ["open_gpui_web/multithreaded"]
 [dependencies]
 anyhow.workspace = true
 open_gpui.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+open_gpui_bench_metrics.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 open_gpui_macos.workspace = true

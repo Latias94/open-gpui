@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- Seeded randomized element trees and platform tree workloads under `bench-support` preserve official topology, entity-local mutation, cached/hover/animation variants and reproducible workload families. Ordinary benchmark consumers can inspect the accepted rendered Scene without enabling test support.
+- `BoxShadow::new` and its blur, spread and inset builders follow the official CSS-order API.
 - `ForegroundExecutor::to_send` and scheduler `LocalExecutor::to_send` expose the official Send-only submission handles. Worker submissions keep the captured dispatch destination, scheduler lifetime and foreground accounting; output values need Send, without a Sync requirement.
 - Browser Fetch responses stream through the official bounded asynchronous channel, with body-drop cancellation, worker-to-main submission and explicit credential options. Worker startup checks `Atomics.waitAsync` and reports a single-threaded fallback when unavailable.
 - System notifications expose application identity, show/dismiss and body/action response APIs across the native backend closure. Unsupported or unavailable delivery remains best-effort; responses use the existing ordered App update owner, with lazy platform initialization and replaceable handlers.
@@ -19,6 +21,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Breaking Changes and Migration Notes
 
+- The test-support `proptest` reexport now uses official 1.12, and `property_test` passes its reexport path using that version's supported syntax. Consumers mixing the property prelude with their own rand dependency should import the trait from their own RNG version explicitly.
 - Construct `FetchHttpClient` with the originating `ForegroundExecutor::to_send()` handle; the executor-free constructors, `Default` and unsafe single-thread assumptions are removed. `with_user_agent` also takes that handle. Explicitly install the client on the Application before startup; platform factories expose the same construction. GPUI dispatch-facing async-task types use the fixed source `015845a19fc31752c02367567d3b8900a406f9da`; consumers implementing the lower-level scheduler contract must select that source when naming its task types directly.
 - Native callback diagnostics add `NativeCallbackKind::SystemNotificationResponse`; update exhaustive matches over this test/integration enum. Ordinary Platform implementors inherit the default notification no-op methods.
 - Replace `MotionSpringPhysics` with `MotionSpringOptions::new(SpringConfig::new(stiffness, damping, mass))`; the former constructor ordered mass first. Use `with_epsilon` for positional tolerance and the official natural-frequency velocity threshold. Advanced specs use `from_options` / `options`. Review-duration and reported-bounce hints move to `MotionSpringPolicyHints`; they do not change physical sampling. Domain freeze-at-cancel remains distinct from official `SpringPlayback::Cancelled`, which restores the original initial value.
@@ -156,6 +159,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - `open-gpui-devtools` now exposes schema-versioned artifact records and writer sinks for app-owned capture/session/report producers; `xtask devtools` can query, assert, and follow artifacts through stable selectors and bounded wait semantics.
 - Gallery and docking-native now publish deterministic sanitized DevTools fixture artifacts, and DevTools reports include first-pass docking, layout, motion, command, form, and resource findings for headless UI debugging.
 - `open-gpui-devtools` now projects Table behavior through a pre-capture allowlist with session-scoped opaque table, column, and row ordinals plus derived cell ids; raw ids, values, diagnostic source identities, selectors, and deterministic hashes are excluded from live, history, diff, Inspector, export, artifact, report, and Gallery fixture output, while sanitized diagnostic kinds and counts remain observable.
+
+### Fixed
+
+- Native ingress avoids redundant foreground wakes while an App borrow or active post-borrow convergence already owns delivery. Pure animation no longer keeps benchmark idle draining alive. Refused visibility candidates preserve the accepted Div mouse press until an admitted frame removes its interaction membership.
 
 ### Security
 

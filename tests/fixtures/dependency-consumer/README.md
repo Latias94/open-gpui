@@ -1339,3 +1339,66 @@ Neither target establishes OS-native wake delivery, Windows dispatcher behavior,
 `Submitted`, GPU output, native resource retirement, Web Fetch behavior, measured profiler
 overhead or a minimum supported compiler. The actual native App-update-to-Submitted workflow
 and its qualification belong to the separate native consumer and verification record.
+
+## Randomized tree public consumers
+
+The `randomized_tree` test and benchmark targets consume the production randomized-tree API
+from fixed Zed source
+[`635026fabc38440fce5e1767d125026a17b12012`](https://github.com/zed-industries/zed/tree/635026fabc38440fce5e1767d125026a17b12012).
+Both require this fixture's existing `bench-support` feature, which forwards Core and platform
+benchmark support and enables Criterion 0.8.2 and rand 0.9. They use the independent consumer
+lockfile and add no dependencies, test-support, leak-detection or measurement framework.
+
+The five value tests execute configuration builders and density normalization, seeded Bounds
+sampling, deterministic topology and snapshot recreation, stable IDs and seeded mutation replay.
+Insertion and subtree removal check counts and preservation of the next ID across reconstruction.
+The public mutation inventory must contain all sixteen controls, including `RemoveLeaf`.
+These test bodies contain no deliberately unexecuted App or Window closures. They do not launch
+windows; the companion benchmark executes the App and Window workflow.
+
+The benchmark registers `randomized-public/mutation/{ordinary,cached}/{kind}/seed-{7,23}` through
+`#[open_gpui::bench]`, `Criterion<BenchMeasurement>`, `bench_group!` and `bench_main!`. Every
+executed mutation case builds a fresh seeded, wide tree with persistent entities and handlers
+using `new_with_config`, warms both frame buffers and applies its explicitly selected mutation
+with notifications. The existing `bench_batched_task` harness measures the mutation and scheduled
+frame delivery. Setup, snapshot comparisons, reference construction and destruction stay outside
+timing and tracing. This is a small public integration workload; the platform's separate tree
+benchmark owns its full topology/family and workload matrix.
+
+After measurement, the accepted generation must have advanced and `Window::rendered_scene`
+supplies the actual accepted scene. The consumer compares it with freshly rendered plain
+`from_snapshot` and entity-preserving `from_snapshot_with_entities` reconstructions. The scene
+comparison follows renderer batch order and retains primitive geometry, colors, transforms,
+shadow/path/text attributes and every exact clip shape in each primitive's ancestry. It normalizes
+frame-local clip offsets, path IDs and per-window atlas allocation identities and coordinates,
+while preserving which primitives share each texture and tile. Positive and negative
+normalization controls distinguish legal allocation renumbering from incorrect glyph aliasing;
+it does not read back glyph textures or compare pixels. `RootVisibility` additionally restores
+the original root and checks the restored scene against both fresh references. Each original
+and reference root must release its weak handle and invoke its release callback exactly once
+after replacement or window close; no window may remain before the next measured setup.
+Reference windows become active while mounted. After closing them, the consumer reactivates its
+persistent window and asserts active state so restoration is not left behind the inactive frame
+rate limit. Every mutation, including visibility restoration, must advance the accepted generation.
+
+Run these commands serially from the repository root with `CARGO_BUILD_JOBS=1`, reusing `target`.
+The first command exposes the resolved feature graph for review: the benchmark-only graph must
+not activate `open-gpui/test-support` or `open-gpui/leak-detection`.
+
+```text
+cargo tree --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features bench-support -e features -i open-gpui
+cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features bench-support --test randomized_tree --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo bench --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features bench-support --bench randomized_tree --jobs 1 --target-dir target -- --test
+cargo bench --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features bench-support --bench randomized_tree --jobs 1 --target-dir target
+```
+
+Leave `SEED` unset to execute both declared seeds 7 and 23. The shared harness lets `SEED`
+override explicit seeds, so a platform smoke's single-seed setting must not carry into this
+consumer unnoticed. Set `BENCH_MEASUREMENT=wall-time` to omit hardware counters during smoke execution. The
+ordinary benchmark macro supplies `bench_platform`, `bench_text_system` and
+`current_headless_renderer`; this consumer does not replace their renderer selection or lifetime
+owners. The current-platform factory returns no GPU renderer on Windows. Other hosts may create
+their ordinary headless renderer, but accepted-scene equality alone does not prove GPU execution.
+These commands are runnable verification instructions, not a record of successful compilation,
+benchmark execution, native `Submitted`, capture, pixel correctness or measured performance.
+Actual GPU submission/capture and numeric performance retain their separate qualification owners.

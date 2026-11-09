@@ -49,3 +49,8 @@ windows = { version = "0.62", features = [
 name = "maintained_harness"
 harness = false
 required-features = ["bench-support"]
+
+[[bench]]
+name = "randomized_tree"
+harness = false
+required-features = ["bench-support"]

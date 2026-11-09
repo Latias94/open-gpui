@@ -68,6 +68,8 @@ pub mod profiler;
 ))]
 #[expect(missing_docs)]
 pub mod queue;
+#[cfg(any(test, feature = "bench-support"))]
+pub mod randomized_element_tree;
 mod scene;
 mod shared_uri;
 mod spring;

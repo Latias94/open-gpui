@@ -2747,16 +2747,6 @@ impl Interactivity {
                     element_state.map(|element_state| element_state.unwrap_or_default());
 
                 if !window.subtree_presentation().is_interactive()
-                    && let Some(element_state) = element_state.as_mut()
-                {
-                    clear_suppressed_interaction_state(
-                        element_state,
-                        self.hover_listener.as_ref(),
-                        window,
-                        cx,
-                    );
-                }
-                if !window.subtree_presentation().is_interactive()
                     && !self.scroll_viewport_changed_listeners.is_empty()
                     && let Some(scroll_handle) = self.tracked_scroll_handle.as_ref()
                 {
@@ -2918,25 +2908,12 @@ impl Interactivity {
                 let mut element_state =
                     element_state.map(|element_state| element_state.unwrap_or_default());
                 let interactive = window.subtree_presentation().is_interactive();
-                if !interactive && let Some(element_state) = element_state.as_mut() {
-                    if let Some(prediction) = element_state.hover_opacity_prediction.clone() {
-                        window.record_prepaint_window_commit(move |_, _, _| {
-                            prediction.set(HoverOpacityPrediction::default());
-                        });
-                    }
-                    clear_suppressed_interaction_state(
-                        element_state,
-                        self.hover_listener.as_ref(),
-                        window,
-                        cx,
-                    );
-                }
                 let style = self.compute_style_internal(None, element_state.as_mut(), window, cx);
 
                 if let Some(element_state) = element_state.as_mut() {
                     if let Some(clicked_state) = element_state.clicked_state.as_ref() {
                         let clicked_state = clicked_state.borrow();
-                        self.active = Some(clicked_state.element);
+                        self.active = Some(interactive && clicked_state.element);
                     }
                     if self.hover_style.is_some() || self.group_hover_style.is_some() {
                         element_state
@@ -3016,6 +2993,40 @@ impl Interactivity {
                                 .committed_tooltip_hitbox
                                 .get_or_insert_with(Default::default)
                                 .record(hitbox, window);
+                        }
+
+                        if interactive
+                            && hitbox.as_ref().is_some_and(Hitbox::is_active)
+                            && let Some(element_state) = element_state.as_mut()
+                        {
+                            element_state
+                                .clicked_state
+                                .get_or_insert_with(Default::default);
+                            if !self.click_listeners.is_empty()
+                                || !self.aux_click_listeners.is_empty()
+                                || self.drag_listener.is_some()
+                                || self.hover_listener.is_some()
+                                || self.tooltip_builder.is_some()
+                            {
+                                element_state
+                                    .pending_mouse_down
+                                    .get_or_insert_with(Default::default);
+                            }
+                            if self.hover_listener.is_some() {
+                                element_state
+                                    .hover_listener_state
+                                    .get_or_insert_with(Default::default);
+                            }
+                            if self.tooltip_builder.is_some() {
+                                element_state
+                                    .active_tooltip
+                                    .get_or_insert_with(Default::default);
+                            }
+                            record_interaction_membership(
+                                element_state,
+                                self.hover_listener.as_ref(),
+                                window,
+                            );
                         }
 
                         if interactive
@@ -4422,7 +4433,7 @@ impl Interactivity {
             }
         }
 
-        if let Some(element_state) = element_state {
+        if interactive && let Some(element_state) = element_state {
             let clicked_state = element_state
                 .clicked_state
                 .get_or_insert_with(Default::default)
@@ -4472,6 +4483,7 @@ pub struct InteractiveElementState {
     hover_opacity_prediction: Option<Rc<Cell<HoverOpacityPrediction>>>,
     pub(crate) hover_listener_state: Option<Rc<RefCell<bool>>>,
     pub(crate) pending_mouse_down: Option<Rc<RefCell<Option<MouseDownEvent>>>>,
+    interaction_publication: Option<PrepaintPublicationId>,
     /// Keyboard activation retained across redraws and cancelled when an accepted frame withdraws it.
     keyboard_activation: Option<KeyboardActivationState>,
     pub(crate) scroll_handle: Option<ScrollHandle>,
@@ -4491,34 +4503,53 @@ struct PendingKeyboardActivation {
     key_event_revision: u64,
 }
 
-fn clear_suppressed_interaction_state(
+fn record_interaction_membership(
     state: &mut InteractiveElementState,
     hover_listener: Option<&HoverListener>,
     window: &mut Window,
-    cx: &mut App,
 ) {
-    if let Some(clicked) = state.clicked_state.as_ref() {
-        *clicked.borrow_mut() = ElementClickedState::default();
-    }
-    if let Some(hovered) = state.hover_state.as_ref() {
-        *hovered.borrow_mut() = ElementHoverState::default();
-    }
-    if let Some(hovered) = state.hover_listener_state.as_ref() {
-        let was_hovered = mem::take(&mut *hovered.borrow_mut());
-        if was_hovered && let Some(hover_listener) = hover_listener {
-            let hover_listener = hover_listener.clone();
-            window.defer(cx, move |window, cx| {
+    let publication = *state
+        .interaction_publication
+        .get_or_insert_with(Default::default);
+    let clicked = state.clicked_state.clone();
+    let hovered = state.hover_state.clone();
+    let prediction = state.hover_opacity_prediction.clone();
+    let hover_listener_state = state.hover_listener_state.clone();
+    let hover_listener = hover_listener.cloned();
+    let pending = state.pending_mouse_down.clone();
+    let active_tooltip = state.active_tooltip.clone();
+    let committed_hitbox = state.committed_tooltip_hitbox.clone();
+    window.record_prepaint_window_transaction(
+        publication,
+        |_, _, _| {},
+        move |_, window, cx| {
+            if let Some(clicked) = &clicked {
+                *clicked.borrow_mut() = ElementClickedState::default();
+            }
+            if let Some(hovered) = &hovered {
+                *hovered.borrow_mut() = ElementHoverState::default();
+            }
+            if let Some(prediction) = &prediction {
+                prediction.set(HoverOpacityPrediction::default());
+            }
+            let was_hovered = hover_listener_state
+                .as_ref()
+                .is_some_and(|hovered| mem::take(&mut *hovered.borrow_mut()));
+            if let Some(pending) = &pending {
+                pending.borrow_mut().take();
+            }
+            if let Some(active_tooltip) = &active_tooltip {
+                clear_active_tooltip(active_tooltip, window);
+            }
+            if let Some(committed_hitbox) = &committed_hitbox {
+                committed_hitbox.0.committed_id.set(None);
+                committed_hitbox.0.frame_candidate.set(None);
+            }
+            if was_hovered && let Some(hover_listener) = &hover_listener {
                 hover_listener(&false, window, cx);
-            });
-        }
-    }
-    if let Some(pending) = state.pending_mouse_down.as_ref() {
-        pending.borrow_mut().take();
-    }
-    if let Some(active_tooltip) = state.active_tooltip.as_ref() {
-        clear_active_tooltip(active_tooltip, window);
-    }
-    state.committed_tooltip_hitbox.take();
+            }
+        },
+    );
 }
 
 /// Whether or not the element or a group that contains it is clicked by the mouse.

@@ -12,8 +12,6 @@ const DECLARED_MSRV: &str = "1.93";
 const ALLOWED_DUPLICATE_CRATES: &[&str] = &[
     "accesskit_consumer",
     "bindgen",
-    "bit-set",
-    "bit-vec",
     "bitflags",
     "block2",
     "convert_case",
