@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use std::path::Path;
 
-const DECLARED_MSRV: &str = "1.92";
+const DECLARED_MSRV: &str = "1.93";
 
 const ALLOWED_DUPLICATE_CRATES: &[&str] = &[
     "accesskit_consumer",
