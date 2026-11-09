@@ -1258,3 +1258,84 @@ required on the host. These commands define verification instructions, not execu
 CPU TestPlatform delivery and request history establish neither actual operating-system
 notification delivery, authorization, action routing, native rendering nor performance.
 The main verification owner records executed commands and remaining native limits separately.
+
+## Sendable foreground consumers
+
+The `send_foreground` targets consume the official sendable foreground mechanism from Zed
+[`2c2f737ab2f3db793b7a313bc8e5307f1708d2e8`](https://github.com/zed-industries/zed/commit/2c2f737ab2f3db793b7a313bc8e5307f1708d2e8),
+checked against fixed source
+[`635026fabc38440fce5e1767d125026a17b12012`](https://github.com/zed-industries/zed/tree/635026fabc38440fce5e1767d125026a17b12012).
+These test targets require no additional test-only dependencies or feature declarations.
+The framework dependency-source changes have their separate
+[qualification record](../../../docs/verification.md#sendable-foreground-submission-and-web-fetch).
+Both targets use the same test cases with the existing `profiler` feature enabled or disabled;
+native thread tests are excluded on Wasm.
+
+The ordinary independently locked target does not enable `test-support`. Its six runtime tests
+use `ForegroundExecutor::to_send`, cloned `SendForegroundExecutor` handles and the existing
+doc-hidden `PlatformDispatcher` bridge. A small test dispatcher captures the originating thread
+and forwards actual runnables through a standard-library channel. Only that thread drains the
+channel, using the public `profiler::task_timing` guard around each actual poll. This exercises
+the production `PlatformScheduler` dispatch path, without constructing an Application or App,
+fabricating a window identity, starting a native event loop or introducing another library
+scheduler. Background, timer and realtime dispatch fail explicitly if unexpectedly invoked.
+
+The runtime scenarios cover:
+
+- Worker submission with no eager polling; the first owner poll becomes Pending. A worker wakes
+  the original stored waker, the second poll returns a `Cell`, and the registered Task waiter
+  is woken. The task and its `Send` but non-`Sync` output are then consumed on a worker. The
+  future also captures a `Cell`, so neither the future nor its output requires `Sync`.
+- Two distinct captured destinations: a public facade handle and a handle obtained through
+  `SchedulerLocalExecutor::to_send` both submit from one worker. Draining the first destination
+  completes only its task; the second task remains pending until its own destination is drained.
+- The final cloned Send handle retaining both the scheduler and dispatch destination after
+  releasing the local executor, then releasing both when dropped on a worker. This case uses
+  the existing `SchedulerLocalExecutor::new` constructor with the same dispatcher and a closure
+  that does not retain the scheduler, independently testing the Send handle's own retention.
+- Worker cancellation before the first poll, followed by owner cleanup without executing the
+  future body; the captured drop probe is released exactly once on the owner thread.
+- Worker cancellation after a Pending poll, owner cleanup without another user poll, and safe
+  use of the saved waker after cancellation without resurrection or duplicate capture release.
+- Detached Pending work retaining its scheduler and destination after all executor handles are
+  gone, resuming on a worker wake, then releasing its captures, scheduler and destination on
+  completion. Channel disconnection independently checks final destination release.
+
+The separate crate-external `crates/gpui/tests/send_foreground.rs` requires `test-support` and
+uses the existing public `TestAppContext` and CPU TestPlatform. Its first workflow creates two
+independent Apps with real windows. A worker submits and wakes a Send future through the first
+App's handle, and driving the unrelated App cannot advance it. A local consumer awaits the
+`Cell` result, updates the originating root entity, calls `Context::notify`, and returns an
+`Rc` result through the unchanged local executor. An entity observer checks delivery and the
+view's render counter checks automatic dirty drawing. The unrelated root and its render count
+remain unchanged. The test closes both windows and checks exact root/App release. It never
+calls draw while a typed root update holds the root borrow.
+
+The second workflow cancels worker-submitted tasks before and after their first poll and checks
+capture release on the owner, receiver cancellation, unchanged window state and no redraw.
+The third retains cloned Send handles through window close and App release, checks that neither
+root nor App remains alive, and explicitly drives the original test scheduler to finish a later
+submission. Dropping the last Send handle then releases the scheduler. A retained dispatch
+handle does not promise that an event loop is still running.
+
+These are runtime test bodies, with no deliberately unexecuted signature closures. The commands
+below define verification instructions, not a record that the new targets have compiled or run.
+Run them serially from the repository root with `CARGO_BUILD_JOBS=1`, reusing the existing
+lockfiles and build directory:
+
+```text
+cargo nextest run --locked -p open-gpui --no-default-features --features test-support --test send_foreground --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --locked -p open-gpui --no-default-features --features test-support,profiler --test send_foreground --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test send_foreground --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features profiler --test send_foreground --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+The ordinary dispatcher keeps its receiver alive until accepted work has been drained. Its
+defensive closed-channel fallback follows the erased runnable's thread-affine drop policy;
+it can forget a refused off-owner runnable. Admission refusal alone therefore proves neither
+awaitable Task settlement nor capture release, and these tests make no such assertion. Native
+queue refusal/accounting, stalled-loop behavior and teardown retain their separate owner tests.
+Neither target establishes OS-native wake delivery, Windows dispatcher behavior, native
+`Submitted`, GPU output, native resource retirement, Web Fetch behavior, measured profiler
+overhead or a minimum supported compiler. The actual native App-update-to-Submitted workflow
+and its qualification belong to the separate native consumer and verification record.

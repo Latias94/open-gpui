@@ -80,7 +80,7 @@ dependencies = [
  "accesskit_atspi_common",
  "async-channel",
  "async-executor",
- "async-task",
+ "async-task 4.7.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "atspi",
  "futures-lite",
  "futures-util",
@@ -387,7 +387,7 @@ version = "1.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c96bf972d85afc50bf5ab8fe2d54d1586b4e0b46c97c50a0c9e71e2f7bcd812a"
 dependencies = [
- "async-task",
+ "async-task 4.7.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "concurrent-queue",
  "fastrand",
  "futures-lite",
@@ -456,7 +456,7 @@ dependencies = [
  "async-io",
  "async-lock",
  "async-signal",
- "async-task",
+ "async-task 4.7.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "blocking",
  "cfg-if",
  "event-listener",
@@ -512,6 +512,11 @@ name = "async-task"
 version = "4.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b75356056920673b02621b35afd0f7dda9306d03c79a30f5c56c44cf256e3de"
+
+[[package]]
+name = "async-task"
+version = "4.7.1"
+source = "git+https://github.com/zed-industries/async-task.git?rev=015845a19fc31752c02367567d3b8900a406f9da#015845a19fc31752c02367567d3b8900a406f9da"
 
 [[package]]
 name = "async-trait"
@@ -848,7 +853,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e83f8d02be6967315521be875afa792a316e28d57b5a2d401897e2a7921b7f21"
 dependencies = [
  "async-channel",
- "async-task",
+ "async-task 4.7.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures-io",
  "futures-lite",
  "piper",
@@ -4280,7 +4285,7 @@ dependencies = [
  "accesskit",
  "anyhow",
  "async-channel",
- "async-task",
+ "async-task 4.7.1 (git+https://github.com/zed-industries/async-task.git?rev=015845a19fc31752c02367567d3b8900a406f9da)",
  "async-tungstenite",
  "backtrace",
  "bindgen 0.72.1",
@@ -4622,7 +4627,7 @@ dependencies = [
  "accesskit",
  "accesskit_macos",
  "anyhow",
- "async-task",
+ "async-task 4.7.1 (git+https://github.com/zed-industries/async-task.git?rev=015845a19fc31752c02367567d3b8900a406f9da)",
  "bitflags 2.13.0",
  "block2 0.6.2",
  "cbindgen",
@@ -4778,7 +4783,7 @@ dependencies = [
 name = "open-gpui-scheduler"
 version = "0.2.0"
 dependencies = [
- "async-task",
+ "async-task 4.7.1 (git+https://github.com/zed-industries/async-task.git?rev=015845a19fc31752c02367567d3b8900a406f9da)",
  "backtrace",
  "chrono",
  "flume",
@@ -4916,6 +4921,7 @@ name = "open-gpui-web"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "async-channel",
  "console_error_panic_hook",
  "damascene-fonts",
  "futures",
@@ -7916,8 +7922,7 @@ dependencies = [
 [[package]]
 name = "wasm_thread"
 version = "0.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b7516db7f32decdadb1c3b8deb1b7d78b9df7606c5cc2f6241737c2ab3a0258e"
+source = "git+https://github.com/zed-industries/wasm_thread?rev=0cf96c7708dfb97ccf3da50347e25edcf75d6937#0cf96c7708dfb97ccf3da50347e25edcf75d6937"
 dependencies = [
  "futures",
  "js-sys",
@@ -9014,7 +9019,7 @@ dependencies = [
  "async-lock",
  "async-process",
  "async-recursion",
- "async-task",
+ "async-task 4.7.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "async-trait",
  "blocking",
  "enumflags2",

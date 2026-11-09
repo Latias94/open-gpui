@@ -151,30 +151,17 @@ actions!(image, [Quit]);
 fn run_example() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 
+    let app = open_gpui_platform::application();
     #[cfg(not(target_family = "wasm"))]
-    let app = open_gpui_platform::application();
+    let http_client =
+        ReqwestClient::user_agent("gpui example").expect("failed to create HTTP client");
     #[cfg(target_family = "wasm")]
-    let app = open_gpui_platform::application();
+    let http_client = open_gpui_web::FetchHttpClient::new(app.foreground_executor().to_send());
+    let app = app.with_http_client(Arc::new(http_client));
     app.with_assets(Assets {
         base: manifest_dir.join("examples"),
     })
     .run(move |cx: &mut App| {
-        #[cfg(not(target_family = "wasm"))]
-        {
-            let http_client = ReqwestClient::user_agent("gpui example").unwrap();
-            cx.set_http_client(Arc::new(http_client));
-        }
-        #[cfg(target_family = "wasm")]
-        {
-            // Safety: the web examples run single-threaded; the client is
-            // created and used exclusively on the main thread.
-            let http_client = unsafe {
-                open_gpui_web::FetchHttpClient::with_user_agent("gpui example")
-                    .expect("failed to create FetchHttpClient")
-            };
-            cx.set_http_client(Arc::new(http_client));
-        }
-
         cx.activate(true);
         cx.on_action(|_: &Quit, cx| cx.quit());
         cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);

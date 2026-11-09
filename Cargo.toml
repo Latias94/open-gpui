@@ -98,11 +98,11 @@ accesskit_windows = "0.32.1"
 anyhow = "1.0.103"
 arrayvec = "0.7.8"
 ashpd = { version = "0.13", default-features = false, features = ["async-io", "notification", "open_uri", "file_chooser", "settings", "trash"] }
-async-channel = "2.5.0"
+async-channel = { version = "2.5.0", default-features = false }
 async-compression = { version = "0.4", features = ["bzip2", "gzip", "futures-io"] }
 async-fs = "2.1"
 async-tar = { version = "0.6.1", default-features = false, features = ["runtime-tokio"] }
-async-task = "4.7"
+async-task = { git = "https://github.com/zed-industries/async-task.git", rev = "015845a19fc31752c02367567d3b8900a406f9da" }
 async_zip = { version = "0.0.18", features = ["deflate", "deflate64"] }
 backtrace = "0.3"
 bitflags = "2.6.0"
@@ -207,6 +207,7 @@ url = "2.2"
 uuid = { version = "1.1.2", features = ["v4", "v5", "v7", "serde"] }
 walkdir = "2.5"
 wasm-bindgen = "0.2.126"
+wasm_thread = { git = "https://github.com/zed-industries/wasm_thread", rev = "0cf96c7708dfb97ccf3da50347e25edcf75d6937", features = ["es_modules"] }
 web-time = "1.1.0"
 wgpu = { git = "https://github.com/gfx-rs/wgpu", rev = "cddb2f5d80dc0009b2ef6767635140cacf90a007", default-features = false }
 which = "6.0.0"

@@ -24,6 +24,39 @@ The smoke builds a single-threaded web example with Trunk, serves it locally, op
 
 The older `hello_web` example remains useful for local shared-memory and atomics experiments, but it is not the required CI smoke path.
 
+## Browser Fetch
+
+Create a Fetch client from the originating foreground executor and explicitly install it on the
+Application before startup. `WebPlatform::fetch_http_client` and
+`fetch_http_client_with_user_agent` use that platform's same executor. The client can be called
+from workers; browser Fetch and the response pump stay on the main thread. Response chunks use
+a bounded nonblocking channel, and dropping the response body cancels its browser stream.
+Request bodies remain buffered before Fetch. `FetchCredentials` defaults to `SameOrigin` and
+also supports `Omit` and `Include`.
+
+The separate `http-client-test.html` entry in `examples/hello_web` retains the official eight
+worker requests with 32,768 ordered chunks each and adds request/error, backpressure, body-drop
+and missing-`waitAsync` fallback controls. Build with its existing nightly/shared-memory Cargo
+configuration. Its single Rust pipeline avoids concurrent Cargo builds. From that directory,
+build the test entry and serve its output with the isolation headers from `trunk.toml`:
+
+```sh
+trunk build http-client-test.html --filehash false --locked --html-output index.html
+```
+
+Then, from the repository root, run:
+
+```sh
+node crates/gpui_web/examples/hello_web/test_http_client.mjs http://127.0.0.1:8080
+```
+
+Set `CHROME` when the driver cannot find the browser. The driver uses Node's built-in WebSocket
+and an external watchdog. Its hardware-concurrency override supplies eight worker slots without
+depending on the host CPU count. Keep the standalone lock's event-listener version aligned with
+the root and inspect the actual wasm feature graph: `event-listener/std` must remain disabled.
+Browser execution and stable smoke remain distinct from wasm compilation. The exact source,
+results and limits belong to the [verification record](../../docs/verification.md#sendable-foreground-submission-and-web-fetch).
+
 ## Boundaries
 
 This crate does not provide browser platform windows, docking tear-off windows, DOM component rendering, CSS animation integration, or a public web-specific component library. WebGPU availability is a required runtime fact for rendering; shared-memory worker mode is optional and must fail back to the stable single-threaded path when unavailable.

@@ -26,6 +26,131 @@ fn test_foreground_executor_spawn() {
 }
 
 #[test]
+fn test_send_local_executor_worker_submission_and_wakeup() {
+    let scheduler = Arc::new(TestScheduler::new(TestSchedulerConfig::default()));
+    let dispatch_thread = std::thread::current().id();
+    let (runnable_sender, runnable_receiver) = flume::unbounded();
+    let executor = LocalExecutor::new(SessionId::new(0), scheduler, move |runnable| {
+        runnable_sender
+            .send(runnable)
+            .expect("dispatch receiver dropped");
+    });
+    let executor = Arc::new(executor.to_send());
+    let (waker_sender, waker_receiver) = flume::bounded::<Waker>(1);
+    let (result_sender, result_receiver) = flume::bounded(1);
+    let timeout = Duration::from_secs(5);
+
+    let worker = std::thread::spawn({
+        move || {
+            assert_ne!(std::thread::current().id(), dispatch_thread);
+            let mut polls = 0;
+            let task = executor.spawn(future::poll_fn(move |cx| {
+                assert_eq!(std::thread::current().id(), dispatch_thread);
+                polls += 1;
+                if polls == 1 {
+                    waker_sender
+                        .send(cx.waker().clone())
+                        .expect("worker dropped");
+                    Poll::Pending
+                } else {
+                    assert_eq!(polls, 2);
+                    Poll::Ready(std::cell::Cell::new(42))
+                }
+            }));
+            waker_receiver
+                .recv_timeout(timeout)
+                .expect("task was not polled")
+                .wake();
+            result_sender
+                .send(block_on(task).get())
+                .expect("result receiver dropped");
+        }
+    });
+
+    for _ in 0..2 {
+        runnable_receiver
+            .recv_timeout(timeout)
+            .expect("task was not dispatched")
+            .run();
+    }
+    assert_eq!(
+        result_receiver
+            .recv_timeout(timeout)
+            .expect("task did not complete"),
+        42
+    );
+    worker.join().expect("worker panicked");
+}
+
+#[test]
+fn test_send_local_executor_preserves_waker_identity_across_polls() {
+    let scheduler = Arc::new(TestScheduler::new(TestSchedulerConfig::default()));
+    let (runnable_sender, runnable_receiver) = flume::unbounded();
+    let executor = LocalExecutor::new(SessionId::new(0), scheduler, move |runnable| {
+        runnable_sender.send(runnable).expect("schedule task");
+    });
+    let executor = executor.to_send();
+    let task = std::thread::spawn(move || {
+        let mut previous_waker: Option<Waker> = None;
+        executor.spawn(future::poll_fn(move |context| {
+            let cloned = context.waker().clone();
+            assert!(context.waker().will_wake(&cloned));
+            assert!(cloned.will_wake(context.waker()));
+
+            if let Some(previous) = previous_waker.take() {
+                assert!(context.waker().will_wake(&previous));
+                assert!(previous.will_wake(context.waker()));
+                Poll::Ready(())
+            } else {
+                previous_waker = Some(cloned);
+                Poll::Pending
+            }
+        }))
+    })
+    .join()
+    .expect("worker submission must succeed");
+
+    let runnable = runnable_receiver
+        .recv_timeout(Duration::from_secs(5))
+        .expect("receive initial task");
+    let waker = runnable.waker();
+    runnable.run();
+
+    waker.wake_by_ref();
+    runnable_receiver
+        .try_recv()
+        .expect("receive woken task")
+        .run();
+    block_on(task);
+}
+
+#[test]
+fn test_send_local_executor_retains_scheduler() {
+    let scheduler = Arc::new(TestScheduler::new(TestSchedulerConfig::default()));
+    let weak_scheduler = Arc::downgrade(&scheduler);
+    let executor = scheduler.foreground();
+    let send_executor = executor.to_send();
+    let executor_clone = send_executor.clone();
+    drop(send_executor);
+    drop(executor);
+    drop(scheduler);
+
+    let task = std::thread::spawn(move || {
+        let task = executor_clone.spawn(async { 42 });
+        (executor_clone, task)
+    })
+    .join()
+    .expect("worker panicked");
+    let (executor, task) = task;
+    let scheduler = weak_scheduler.upgrade().expect("scheduler was dropped");
+    scheduler.run();
+    assert_eq!(block_on(task), 42);
+    drop(scheduler);
+    drop(executor);
+    assert!(weak_scheduler.upgrade().is_none());
+}
+
+#[test]
 fn test_background_executor_spawn() {
     TestScheduler::once(async |scheduler| {
         let task = scheduler.background().spawn(async move { 42 });

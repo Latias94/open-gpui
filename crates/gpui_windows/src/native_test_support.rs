@@ -107,6 +107,8 @@ mod native_profiler_tests;
 mod native_retirement_timer_tests;
 #[path = "native_scene_color_tests.rs"]
 mod native_scene_color_tests;
+#[path = "native_send_executor_tests.rs"]
+mod native_send_executor_tests;
 #[path = "native_spring_tests.rs"]
 mod native_spring_tests;
 #[path = "native_system_notification_tests.rs"]

@@ -24,7 +24,7 @@ pub use dispatcher::{WebDispatcher, WebDispatcherMode, WebDispatcherSingleThread
 #[cfg(target_family = "wasm")]
 pub use display::WebDisplay;
 #[cfg(target_family = "wasm")]
-pub use http_client::FetchHttpClient;
+pub use http_client::{FetchCredentials, FetchHttpClient};
 #[cfg(target_family = "wasm")]
 pub use keyboard::WebKeyboardLayout;
 #[cfg(target_family = "wasm")]

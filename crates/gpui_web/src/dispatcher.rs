@@ -42,6 +42,7 @@ pub enum WebDispatcherSingleThreadedReason {
     BuiltWithoutMultithreadedFeature,
     DisabledByCaller,
     SharedMemoryUnavailable,
+    WaitAsyncUnavailable,
     WorkerStartupFailed,
 }
 
@@ -49,6 +50,7 @@ pub enum WebDispatcherSingleThreadedReason {
 fn select_dispatcher_mode(
     allow_threads: bool,
     shared_memory_supported: bool,
+    wait_async_supported: bool,
     hardware_concurrency: f64,
 ) -> WebDispatcherMode {
     if !allow_threads {
@@ -58,6 +60,10 @@ fn select_dispatcher_mode(
     } else if !shared_memory_supported {
         WebDispatcherMode::SingleThreaded {
             reason: WebDispatcherSingleThreadedReason::SharedMemoryUnavailable,
+        }
+    } else if !wait_async_supported {
+        WebDispatcherMode::SingleThreaded {
+            reason: WebDispatcherSingleThreadedReason::WaitAsyncUnavailable,
         }
     } else {
         WebDispatcherMode::Multithreaded {
@@ -85,6 +91,19 @@ fn shared_memory_supported() -> bool {
     has_shared_array_buffer && has_atomics && is_shared_buffer
 }
 
+#[cfg(feature = "multithreaded")]
+fn wait_async_supported() -> bool {
+    let global = js_sys::global();
+    let Ok(atomics) = js_sys::Reflect::get(&global, &JsValue::from_str("Atomics")) else {
+        return false;
+    };
+    let Ok(wait_async) = js_sys::Reflect::get(&atomics, &JsValue::from_str("waitAsync")) else {
+        return false;
+    };
+
+    wait_async.is_function()
+}
+
 #[cfg_attr(not(feature = "multithreaded"), allow(dead_code))]
 enum MainThreadItem {
     Runnable {
@@ -107,7 +126,7 @@ enum MainThreadItem {
 struct MainThreadMailbox {
     sender: PriorityQueueSender<MainThreadItem>,
     #[cfg_attr(not(feature = "multithreaded"), allow(dead_code))]
-    receiver: parking_lot::Mutex<PriorityQueueReceiver<MainThreadItem>>,
+    receiver: std::sync::Mutex<PriorityQueueReceiver<MainThreadItem>>,
     signal: AtomicI32,
 }
 
@@ -116,7 +135,7 @@ impl MainThreadMailbox {
         let (sender, receiver) = PriorityQueueReceiver::new();
         Self {
             sender,
-            receiver: parking_lot::Mutex::new(receiver),
+            receiver: std::sync::Mutex::new(receiver),
             signal: AtomicI32::new(0),
         }
     }
@@ -252,7 +271,6 @@ fn mode_after_worker_startup(started_workers: usize) -> WebDispatcherMode {
 
 pub struct WebDispatcher {
     main_thread_id: std::thread::ThreadId,
-    browser_window: web_sys::Window,
     background_sender: PriorityQueueSender<RunnableVariant>,
     main_thread_mailbox: Arc<MainThreadMailbox>,
     mode: WebDispatcherMode,
@@ -260,15 +278,10 @@ pub struct WebDispatcher {
     _background_threads: Vec<wasm_thread::JoinHandle<()>>,
 }
 
-// Safety: `web_sys::Window` is only accessed from the main thread
-// All other fields are `Send + Sync` by construction.
-unsafe impl Send for WebDispatcher {}
-unsafe impl Sync for WebDispatcher {}
-
 impl WebDispatcher {
     pub fn new(browser_window: web_sys::Window, allow_threads: bool) -> Self {
         #[cfg(not(feature = "multithreaded"))]
-        let _ = allow_threads;
+        let _ = (&browser_window, allow_threads);
 
         #[cfg(feature = "multithreaded")]
         let (background_sender, background_receiver) = PriorityQueueReceiver::new();
@@ -281,6 +294,7 @@ impl WebDispatcher {
         let mut mode = select_dispatcher_mode(
             allow_threads,
             shared_memory_supported(),
+            wait_async_supported(),
             browser_window.navigator().hardware_concurrency(),
         );
         #[cfg(not(feature = "multithreaded"))]
@@ -331,7 +345,6 @@ impl WebDispatcher {
 
         Self {
             main_thread_id: std::thread::current().id(),
-            browser_window,
             background_sender,
             main_thread_mailbox,
             mode,
@@ -355,7 +368,7 @@ impl WebDispatcher {
         foreground_queued: bool,
     ) -> bool {
         if self.on_main_thread() {
-            schedule_runnable(&self.browser_window, runnable, priority, foreground_queued)
+            schedule_runnable(&browser_window(), runnable, priority, foreground_queued)
         } else {
             self.main_thread_mailbox.post(
                 priority,
@@ -400,7 +413,7 @@ impl PlatformDispatcher for WebDispatcher {
             let callback = Closure::once_into_js(move || {
                 run_runnable(runnable, false);
             });
-            self.browser_window
+            browser_window()
                 .set_timeout_with_callback_and_timeout_and_arguments_0(
                     callback.unchecked_ref(),
                     millis,
@@ -417,8 +430,7 @@ impl PlatformDispatcher for WebDispatcher {
             let callback = Closure::once_into_js(move || {
                 function();
             });
-            self.browser_window
-                .queue_microtask(callback.unchecked_ref());
+            browser_window().queue_microtask(callback.unchecked_ref());
         } else {
             self.main_thread_mailbox
                 .post(Priority::High, MainThreadItem::RealtimeFunction(function));
@@ -431,7 +443,7 @@ impl PlatformDispatcher for WebDispatcher {
         timeout: Option<Duration>,
     ) -> bool {
         if self.on_main_thread() {
-            schedule_idle_runnable(&self.browser_window, runnable, timeout)
+            schedule_idle_runnable(&browser_window(), runnable, timeout)
         } else {
             self.main_thread_mailbox
                 .post(Priority::Low, MainThreadItem::Idle { runnable, timeout })
@@ -453,6 +465,10 @@ impl PlatformDispatcher for WebDispatcher {
     fn now(&self) -> Instant {
         Instant::now()
     }
+}
+
+fn browser_window() -> web_sys::Window {
+    web_sys::window().expect("must be running in a browser window context")
 }
 
 #[cfg(feature = "multithreaded")]
@@ -764,7 +780,7 @@ mod tests {
     #[test]
     fn disabled_threads_report_caller_opt_out() {
         assert_eq!(
-            select_dispatcher_mode(false, true, 8.0),
+            select_dispatcher_mode(false, true, true, 8.0),
             WebDispatcherMode::SingleThreaded {
                 reason: WebDispatcherSingleThreadedReason::DisabledByCaller,
             }
@@ -775,7 +791,7 @@ mod tests {
     #[test]
     fn missing_shared_memory_reports_single_threaded_fallback() {
         assert_eq!(
-            select_dispatcher_mode(true, false, 8.0),
+            select_dispatcher_mode(true, false, true, 8.0),
             WebDispatcherMode::SingleThreaded {
                 reason: WebDispatcherSingleThreadedReason::SharedMemoryUnavailable,
             }
@@ -784,16 +800,27 @@ mod tests {
 
     #[cfg(feature = "multithreaded")]
     #[test]
+    fn missing_wait_async_reports_single_threaded_fallback() {
+        assert_eq!(
+            select_dispatcher_mode(true, true, false, 8.0),
+            WebDispatcherMode::SingleThreaded {
+                reason: WebDispatcherSingleThreadedReason::WaitAsyncUnavailable,
+            }
+        );
+    }
+
+    #[cfg(feature = "multithreaded")]
+    #[test]
     fn multithreaded_mode_clamps_background_workers() {
         assert_eq!(
-            select_dispatcher_mode(true, true, 1.0),
+            select_dispatcher_mode(true, true, true, 1.0),
             WebDispatcherMode::Multithreaded {
                 background_workers: MIN_BACKGROUND_THREADS,
             }
         );
 
         assert_eq!(
-            select_dispatcher_mode(true, true, 8.0),
+            select_dispatcher_mode(true, true, true, 8.0),
             WebDispatcherMode::Multithreaded {
                 background_workers: 8,
             }

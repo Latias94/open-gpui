@@ -1,5 +1,6 @@
 use crate::dispatcher::{WebDispatcher, WebDispatcherMode};
 use crate::display::WebDisplay;
+use crate::http_client::FetchHttpClient;
 use crate::keyboard::WebKeyboardLayout;
 use crate::window::WebWindow;
 use anyhow::Result;
@@ -173,6 +174,19 @@ impl WebPlatform {
 
     pub fn dispatcher_mode(&self) -> WebDispatcherMode {
         self.dispatcher_mode
+    }
+
+    /// Returns an HTTP client that runs browser Fetch operations on this platform's main thread.
+    pub fn fetch_http_client(&self) -> FetchHttpClient {
+        FetchHttpClient::new(self.foreground_executor.to_send())
+    }
+
+    /// Returns a browser Fetch HTTP client with the given reported user agent.
+    pub fn fetch_http_client_with_user_agent(
+        &self,
+        user_agent: &str,
+    ) -> anyhow::Result<FetchHttpClient> {
+        FetchHttpClient::with_user_agent(self.foreground_executor.to_send(), user_agent)
     }
 
     /// Returns the backend selected by successful browser graphics initialization.

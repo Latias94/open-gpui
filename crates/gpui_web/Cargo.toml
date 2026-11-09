@@ -34,6 +34,7 @@ open_gpui_core_util.workspace = true
 open_gpui_wgpu.workspace = true
 open_gpui_http_client.workspace = true
 anyhow.workspace = true
+async-channel.workspace = true
 futures.workspace = true
 log.workspace = true
 smallvec.workspace = true
@@ -48,7 +49,7 @@ damascene-fonts = { version = "0.4.6", default-features = false, features = [
 ] }
 js-sys = "0.3.103"
 raw-window-handle = "0.6"
-wasm_thread = { version = "0.3", features = ["es_modules"], optional = true }
+wasm_thread = { workspace = true, optional = true }
 web-sys = { version = "0.3.103", features = [
     "console",
     "CompositionEvent",
@@ -72,6 +73,9 @@ web-sys = { version = "0.3.103", features = [
     "MouseEvent",
     "Navigator",
     "PointerEvent",
+    "ReadableStream",
+    "ReadableStreamDefaultReader",
+    "ReadableStreamReadResult",
     "ResizeObserver",
     "ResizeObserverBoxOptions",
     "ResizeObserverEntry",
@@ -82,6 +86,7 @@ web-sys = { version = "0.3.103", features = [
     "VisualViewport",
     "Headers",
     "Request",
+    "RequestCredentials",
     "RequestInit",
     "RequestRedirect",
     "Response",

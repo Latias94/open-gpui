@@ -7,7 +7,7 @@
 ## Problem
 
 Open GPUI initially depended on Zed-maintained external forks after the clean workspace import.
-Those fork dependencies now resolve either to public crates.io packages or Open GPUI-owned forks.
+The original fork dependencies resolve either to public crates.io packages or Open GPUI-owned forks.
 The former `zed-scap` dependency resolves through `open-gpui-scap`, and the former
 `zed-font-kit` dependency resolves through an Open GPUI-owned `font-kit` fork.
 
@@ -388,6 +388,44 @@ Cons:
 
 Decision: implemented for `font-kit` and `open-gpui-scap` where upstream adaptation would remove
 required behavior or create excessive platform risk.
+
+## November 9 Task-Waker Dependency
+
+The fixed-target Send executor/Web Fetch successor requires the canonical task-waker identity
+correction at async-task `015845a19fc31752c02367567d3b8900a406f9da`, selected by Zed
+`67b41bf97607f2dd86319b385040a1310cf24f45`. The former is the actual runtime fix; the
+latter changes the monorepo dependency. The correction constructs the poll-context waker with
+the task header's stored raw-waker vtable, matching its clone factory. Separate references to
+an associated constant can have different addresses and break `will_wake` identity.
+
+The dependency remains Apache-2.0 OR MIT, version 4.7.1 and Rust 1.57. The separately observed
+[upstream review](https://github.com/smol-rs/async-task/pull/108) is still open on November 9.
+Use the exact immutable source rather than creating another scheduler adapter or silently
+equating the registry package's version number with this fix. Core, scheduler and macOS share
+the direct workspace Git dependency, so independent consumers receive the same task types
+without relying on a root-only Cargo patch. Other third-party executors may independently
+retain registry async-task; their task values do not cross the GPUI dispatch contract.
+
+The actual executor regression checks original/clone identity in both directions and across
+worker submission and repeated polls. The old registry control passes in the local debug
+configuration (`9ac65b38-7817-40bc-9f45-28e542753346`); this does not reproduce the official
+failure, and no local red claim follows. The fixed-source complete scheduler suite passes
+31/31. Broader consumer/platform/browser qualification belongs to the owning verification
+record. Retire the pin when an upstream revision or published release contains the same
+correction and passes the affected independent/native/browser consumers. No new dependency
+scanner, owned fork publication or remote repository change is introduced.
+
+The same complete Web consumer also selects official wasm_thread
+`0cf96c7708dfb97ccf3da50347e25edcf75d6937` wherever worker mode is enabled. Its manifest
+retains version 0.3.3 and Apache-2.0 OR MIT. Comparing the Rust runtime files with registry
+0.3.3 finds them identical; the JavaScript loaders instead pass the current object-form
+wasm-bindgen initialization arguments. This fixes deprecated initialization usage and matches
+the fixed-target source. It is not the cause assigned to the reproduced Fetch timeout: the
+complete HTTP regression first passes with the old dependency after importing the official
+std queue synchronization prerequisite. Final exact-source HTTP and eight-/sixteen-worker
+queue regressions pass separately, with all queue workers asynchronously joined. The existing
+compiler, target and standalone-consumer gates qualify this pin without publishing another
+fork or installing root-only Cargo patches.
 
 ## Recommended Work Order
 

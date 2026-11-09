@@ -168,6 +168,19 @@ jobs:
         if: matrix.name == 'windows'
         run: cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test system_notifications --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
 
+      - name: Test sendable foreground scheduling and public App consumers
+        run: cargo nextest run --locked -p open-gpui-scheduler -p open-gpui --all-features --lib --test send_foreground -E 'test(send_foreground) | test(send_local_executor) | binary(send_foreground)' --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Test independent Send consumers with and without profiler
+        if: matrix.name == 'windows'
+        run: |
+          cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test send_foreground --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+          cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features profiler --test send_foreground --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Test native Send dispatch, pixels and retirement
+        if: matrix.name == 'windows'
+        run: cargo nextest run --locked -p open-gpui-windows --all-features --lib -E 'test(native_send_foreground_)' --run-ignored all --test-threads=1 --no-fail-fast --no-tests fail
+
       - name: Test Spring state, shared solver and public composition
         run: |
           cargo nextest run --locked -p open-gpui-motion --test-threads=1 --no-fail-fast --no-tests fail

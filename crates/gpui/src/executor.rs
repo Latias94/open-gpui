@@ -13,6 +13,9 @@ pub use open_gpui_scheduler::{
 #[cfg(all(test, not(target_family = "wasm")))]
 mod runtime_detection_tests;
 
+#[cfg(all(test, not(target_family = "wasm")))]
+mod send_foreground_tests;
+
 /// A pointer to the executor that is currently running,
 /// for spawning background tasks.
 #[derive(Clone)]
@@ -30,6 +33,23 @@ pub struct ForegroundExecutor {
     #[cfg(feature = "profiler")]
     foreground_runnables: Option<crate::profiler::journal::ForegroundRunnableCounter>,
     not_send: PhantomData<Rc<()>>,
+}
+
+/// A thread-safe handle for spawning `Send` futures on the main thread.
+#[derive(Clone)]
+pub struct SendForegroundExecutor {
+    inner: open_gpui_scheduler::SendLocalExecutor,
+}
+
+impl SendForegroundExecutor {
+    /// Enqueues a future to run on the main thread, even when submitted from another thread.
+    #[track_caller]
+    pub fn spawn<R>(&self, future: impl Future<Output = R> + Send + 'static) -> Task<R>
+    where
+        R: Send + 'static,
+    {
+        self.inner.spawn(future)
+    }
 }
 
 /// Extension trait for `Task<Result<T, E>>` that adds `detach_and_log_err` with an `&App` context.
@@ -283,6 +303,13 @@ impl BackgroundExecutor {
 }
 
 impl ForegroundExecutor {
+    /// Creates a thread-safe handle that submits `Send` futures to this foreground executor.
+    pub fn to_send(&self) -> SendForegroundExecutor {
+        SendForegroundExecutor {
+            inner: self.inner.to_send(),
+        }
+    }
+
     /// Creates a new ForegroundExecutor from the given PlatformDispatcher.
     pub fn new(dispatcher: Arc<dyn PlatformDispatcher>) -> Self {
         #[cfg(any(test, feature = "test-support"))]

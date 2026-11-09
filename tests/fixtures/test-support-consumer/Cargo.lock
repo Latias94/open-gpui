@@ -168,7 +168,7 @@ version = "1.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c96bf972d85afc50bf5ab8fe2d54d1586b4e0b46c97c50a0c9e71e2f7bcd812a"
 dependencies = [
- "async-task",
+ "async-task 4.7.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "concurrent-queue",
  "fastrand",
  "futures-lite",
@@ -237,7 +237,7 @@ dependencies = [
  "async-io",
  "async-lock",
  "async-signal",
- "async-task",
+ "async-task 4.7.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "blocking",
  "cfg-if",
  "event-listener",
@@ -282,6 +282,11 @@ name = "async-task"
 version = "4.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b75356056920673b02621b35afd0f7dda9306d03c79a30f5c56c44cf256e3de"
+
+[[package]]
+name = "async-task"
+version = "4.7.1"
+source = "git+https://github.com/zed-industries/async-task.git?rev=015845a19fc31752c02367567d3b8900a406f9da#015845a19fc31752c02367567d3b8900a406f9da"
 
 [[package]]
 name = "async_zip"
@@ -498,7 +503,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e83f8d02be6967315521be875afa792a316e28d57b5a2d401897e2a7921b7f21"
 dependencies = [
  "async-channel",
- "async-task",
+ "async-task 4.7.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures-io",
  "futures-lite",
  "piper",
@@ -2612,7 +2617,7 @@ dependencies = [
  "accesskit",
  "anyhow",
  "async-channel",
- "async-task",
+ "async-task 4.7.1 (git+https://github.com/zed-industries/async-task.git?rev=015845a19fc31752c02367567d3b8900a406f9da)",
  "backtrace",
  "bindgen 0.72.1",
  "bitflags 2.13.0",
@@ -2804,7 +2809,7 @@ dependencies = [
 name = "open-gpui-scheduler"
 version = "0.2.0"
 dependencies = [
- "async-task",
+ "async-task 4.7.1 (git+https://github.com/zed-industries/async-task.git?rev=015845a19fc31752c02367567d3b8900a406f9da)",
  "backtrace",
  "chrono",
  "flume",

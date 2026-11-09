@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- `ForegroundExecutor::to_send` and scheduler `LocalExecutor::to_send` expose the official Send-only submission handles. Worker submissions keep the captured dispatch destination, scheduler lifetime and foreground accounting; output values need Send, without a Sync requirement.
+- Browser Fetch responses stream through the official bounded asynchronous channel, with body-drop cancellation, worker-to-main submission and explicit credential options. Worker startup checks `Atomics.waitAsync` and reports a single-threaded fallback when unavailable.
 - System notifications expose application identity, show/dismiss and body/action response APIs across the native backend closure. Unsupported or unavailable delivery remains best-effort; responses use the existing ordered App update owner, with lazy platform initialization and replaceable handlers.
 - Official stateful Spring animations support typed and custom targets, velocity-preserving retargeting, pause/stop/cancel/completion, arbitrary phase interpolation and animated parent composition. GPUI and the renderer-neutral motion crate expose the same pure solver types. Element samples and next-frame demand publish with accepted frames.
 - With `profiler`, `DebugFrameOverlayMode` and Window controls expose the official hidden/current/detailed draw-time overlay. A rolling 1,000-sample bitmap readout preserves history while hidden and counts completed accepted draws; reset preserves the lifetime count. Direct Scene drawing adds no font/layout dependency or self-refresh timer.
@@ -17,6 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Breaking Changes and Migration Notes
 
+- Construct `FetchHttpClient` with the originating `ForegroundExecutor::to_send()` handle; the executor-free constructors, `Default` and unsafe single-thread assumptions are removed. `with_user_agent` also takes that handle. Explicitly install the client on the Application before startup; platform factories expose the same construction. GPUI dispatch-facing async-task types use the fixed source `015845a19fc31752c02367567d3b8900a406f9da`; consumers implementing the lower-level scheduler contract must select that source when naming its task types directly.
 - Native callback diagnostics add `NativeCallbackKind::SystemNotificationResponse`; update exhaustive matches over this test/integration enum. Ordinary Platform implementors inherit the default notification no-op methods.
 - Replace `MotionSpringPhysics` with `MotionSpringOptions::new(SpringConfig::new(stiffness, damping, mass))`; the former constructor ordered mass first. Use `with_epsilon` for positional tolerance and the official natural-frequency velocity threshold. Advanced specs use `from_options` / `options`. Review-duration and reported-bounce hints move to `MotionSpringPolicyHints`; they do not change physical sampling. Domain freeze-at-cancel remains distinct from official `SpringPlayback::Cancelled`, which restores the original initial value.
 - `Animation` adds public `synced` and `max_fps` fields. Prefer `Animation::new` with `repeat_synced` / `with_max_fps` builders, or initialize the added fields in explicit struct literals. Easing outputs may now overshoot the unit interval if they remain finite.
