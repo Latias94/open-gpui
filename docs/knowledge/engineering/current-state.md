@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-09T23:05:00+08:00
+timestamp: 2026-11-10T03:07:00+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -18,6 +18,35 @@ verified_by:
 
 # Current State
 
+- The complete official randomized-tree/platform-tree successor is implemented and qualified at
+  `b42295d0e535e4105470e80873a6ad7832e81863`, after `f6f3d98d156`. Focused Core/benchmark/
+  AppCell/ingress and tree/presentation/
+  keyboard/atlas passes 181/181 (`3bad5b99-e03a-4112-9294-283ce6c1624b`). The unchanged cached
+  mixed workload exposes a redundant fork wake feedback loop; tracked App-borrow/convergence
+  custody corrects ordinary wake creation, with finite animation red-to-green evidence.
+  Complete dev/stacker and release/non-stacker platform smokes pass 115/115 each; the independently
+  locked benchmark passes 64/64 after restoring activation between reference comparisons.
+  The initial 14/17 run reproduces refused-Hidden mouse-state loss; Div now publishes interaction
+  membership through its existing accepted-frame transaction/discard owner. Two scale/effect-flush
+  fixture corrections preserve all assertions. Production/platform compilation passes, including
+  seventeen groups/five families. Official proptest 1.12 and path-expression support replace the
+  incompatible 1.10 pin; value/property consumers pass 5/5 and 2/2 at their recorded checkpoints.
+  Complete framework/public/Gallery passes 2,014 and components/docking/Canvas 2,974. Final
+  eight-node/Wide native tree and animation pass 2/2 after correcting the geometric sampler's
+  transparent-border/raster-snapping assumptions, retaining geometry-first pixel selection.
+  Ordinary enabled/disabled consumers pass 91/67, additive API/property consumers 6 and disabled
+  Core/public 1,383 pass. Two initial Windows aggregates remain 241/242 with nine skips; explicit
+  keyboard-only and pure-redraw pointer isolation preserve all assertions. Final Windows passes
+  242/242 with nine skips. Separate `1756e8f79aa`, `515e4d77c16` and `36e2567b16c` own wake and
+  fixture corrections. Locked workspace/independent checks, correctness Clippy, actual Windows
+  Rust 1.93 framework/three-consumer checks, production wasm profiling off/on and nightly shared
+  memory, exact bench-only feature graphs, formatting and existing static/YAML gates pass.
+  Final independent smoke also verifies the exact Activated ticket. All eighteen implementation,
+  review and next-unit analysis threads close. No owned Cargo/native helper remains active.
+  ADR 0022 records why tree visibility binds to the existing cross-channel presentation scope.
+  The [record](../../verification.md#randomized-trees-and-platform-tree-workloads) retains source,
+  actual failures and final qualification. Async clipboard/Web paste, remaining fixed-target
+  dispositions, numeric budgets, canonical docking and the real Nara consumer remain open.
 - The official Send foreground/Web Fetch successor is implemented at
   `ff4b3f4b95d48410c7c1d3820e2b2a98444aacab`. Send handles retain the originating scheduler,
   dispatch and counter owners. Fetch uses the official bounded main-thread response pump,
@@ -770,13 +799,12 @@ historical scope and is not current branch or CI qualification.
 
 # Next Action
 
-- Implement the complete
-  [randomized trees and platform tree workloads](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#randomized-tree-and-platform-workload-successor)
-  after the [Send/Fetch qualification](../../verification.md#sendable-foreground-submission-and-web-fetch).
-  Reuse the existing harness and all six official regressions. Preserve seeded workload families,
-  exact scene/cache/candidate behavior and ordinary benchmark consumers; this does not create
-  another measurement owner. Full fixed-target closure and the real Nara consumer still precede
-  framework-maintenance handoff.
+- Execute the complete [asynchronous clipboard/Web paste successor](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#asynchronous-clipboard-and-web-paste-successor)
+  after qualified [randomized trees and platform tree workloads](../../verification.md#randomized-trees-and-platform-tree-workloads).
+  Preserve official ready/error/content behavior and complete input-handler/Web paste consumers,
+  using existing admission/lifetime owners. Windows NUL normalization and macOS pasteboard
+  ownership retain separate source-confirmed dispositions. Full fixed-target closure and the
+  real Nara consumer still precede framework-maintenance handoff.
 - Continue after qualified
   [system notifications](../../verification.md#system-notifications-and-ordered-app-responses),
   [Spring/motion](../../verification.md#official-spring-and-shared-domain-sampling) and the

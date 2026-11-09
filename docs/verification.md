@@ -5857,6 +5857,288 @@ The next complete unit is the planned randomized tree/platform tree workload, wi
 regressions. Foreign-native execution, POSIX driver execution, physical input/scanout, measured
 costs and the real Nara GPU/Host/View consumer remain outside this qualification.
 
+## Randomized Trees And Platform Tree Workloads
+
+The unchanged cached-mixed seed-0 platform smoke initially fails to finish its first warm idle
+drain after 35 successful cases. An isolated diagnostic reproduces the same 44-element narrow
+tree with cached views, hover and 0.15 animation density. Foreground task locations repeatedly
+point to `native_event_ingress.rs`'s ordinary wake. Benchmark frame dispatch deliberately holds
+an App borrow so release completes native delivery inside measurement. Enqueue nevertheless
+spawns a wake first; synchronous draining invalidates its ticket but leaves a ready runnable.
+The benchmark's after-poll frame delivery then perpetuates animation and another stale wake.
+The bounded eight-frame regression fails 0/1 in
+`85a151d9-3f8b-49d3-baea-1b9c70c67809`, consuming the entire pure animation chain in one idle
+drain. This is a fork custody defect, not evidence that the official workload is too large.
+
+The owning correction tracks successful AppRef/AppRefMut borrows and existing active post-borrow
+convergence before creating an ordinary native wake. These guards already promise release
+draining. Failed borrows and untracked raw RefCell borrows do not grant that promise; deferred
+delivery without custody, dedicated unwind/convergence wakes, FIFO and shared budgets retain
+their owners. It is committed separately at `1756e8f79aa298900acac5c9f4b67ce915e90a85`.
+No queued-work cap, animation removal or benchmark source-bound reduction follows.
+The temporary diagnostics are removed. Corrected focused/full workload, native and independent
+qualification remains in progress at this checkpoint.
+
+The corrected final-source focused run passes 181/181
+(`3bad5b99-e03a-4112-9294-283ce6c1624b`), covering the complete tree regressions, benchmark
+frame/idle semantics, native-ingress and AppCell custody, protected/shared-budget convergence,
+presentation, keyboard activation and cached-atlas rejection/retry. The finite animation control
+now leaves continuation frames pending while retaining explicit subsequent progress. This pass
+does not yet qualify the complete platform matrix, independent benchmark or native tree.
+
+This successor starts from local `f6f3d98d156cd2ada88253ff4e4606a0ee50664d`, against fixed
+Zed `635026fabc38440fce5e1767d125026a17b12012`. Official introduction
+`3135cdf8dc8e6800d2b7ad89d62ea4994d892fb6`, complete cached/hover/animation/family successor
+`26abd1c9590827ffc5cca3058ff2a94ea9a34715` and final documentation/ID cleanup supply the
+production tree and its six original regressions. All sixteen mutations, stable paths/IDs,
+nearest-entity notification, weak entity table and removed-scroll cleanup retain the model.
+History/counter access remains test-only. Root exposure uses test or bench-support, and ordinary
+bench-only consumers do not require Core test-support or leak detection.
+
+The platform target preserves all seventeen tree groups, five family streams, name-mixed seeds,
+two warmups, mixed per-iteration reconstruction/close, setup/drop outside timing, reporting and
+the 256-element tall cap. The independent executable exercises ordinary/cached public mutation,
+snapshot reconstruction, accepted scene and release paths. Functional smoke does not establish
+numeric budgets, native GPU pixels or scanout. The separate five TextPanels/LayoutChurn/Scroll
+workloads, primitives and two-revision comparison tooling remain queued; this unit does not
+complete the whole upstream benchmark file or fixed-target refresh.
+
+The first locked production check fails on a missing Scene type in the new getter and the
+upstream `.invisible()` method at two tree render sites. A macro-only restoration then fails
+on missing Visibility/Style fields. Further source/contract inspection establishes intentional
+fork removal at `112798a1d13`, under Accepted
+[ADR 0022](adr/0022-open-gpui-subtree-presentation-authority.md). The macro hypothesis is
+withdrawn and its uncommitted additions removed. Both upstream declarations map to the existing
+SubtreePresentation scope, preserving layout and every mutation while retaining the fork's
+admitted-frame input/focus/IME/accessibility suppression. This is an explicit binding divergence
+from the official late-paint-only mechanism, with a concrete contract and consumers; no retired
+alias or second owner is restored. The getter names `crate::Scene` and observes the already
+accepted rendered frame without establishing submission.
+
+Independent workload review identifies a fork-specific compile defect in MixedRun Drop:
+`remove_window` requires App. Passing the existing callback's App fixes that call without moving
+teardown into measurement. The rejection regression reuses the existing RejectOnceAtlas through
+test-only crate visibility instead of copying another mock. The complete original six tests and
+nine fork controls remain intact, including cached RootVisibility, zero sizes, explicit input/
+clock/focus/scroll, exact clipping/transforms and refused-candidate retry. Production/platform
+compilation and first focused execution are in progress; no runtime qualification is claimed yet.
+
+The first focused test compilation then exposes the queued dependency mismatch. The fork pins
+proptest 1.10.0 / proptest-macro 0.5.0, which does not accept the official macro's `proptest_path`
+argument; the fork also quotes that argument instead of passing a path. Adopt target proptest
+1.12.0 / macro 0.6.0 and its path expression, keeping the original property configuration.
+Both crates declare Rust 1.88, below the existing qualified 1.93 floor; actual minimum-compiler
+qualification still follows. The complete new property runs rather than becoming a fixed-seed
+loop. Existing hang tests explicitly import their own rand 0.9 trait instead of relying on the
+property prelude's now-distinct rand 0.10 trait. Tile canonicalization uses the existing numeric
+TileId field without widening production hashing APIs. The two remaining independent lock
+graphs resolve their actual required property/bit-vector/RNG closure; ordinary/smoke graphs
+without proptest need no artificial package update. An attempted update on the ordinary graph
+correctly reports that the package is absent. Cargo's required optional bit-vec/Serde/Borsh lock
+edges are retained after a locked metadata check rejects their removal; unrelated Windows
+dependency-edge drift is removed instead. No existing unrelated package version is upgraded.
+
+The first executed focused run is 14/17 (`83d9d48d-784c-4f65-ba1d-b8d934ba0715`). All six
+official regressions pass, including the complete four-case randomized full-render comparison.
+A real new rejection control fails: a refused Hidden candidate preserves the accepted scene
+but loses the previously presented MouseDown, so MouseUp produces zero clicks instead of one.
+The accepted-Hidden/recovery control passes. Independent review traces direct shared-Rc cleanup
+in the fork's Div layout/prepaint. The owning correction retains those Rc identities, projects
+candidate active styling through current participation and records interaction membership through
+the existing accepted-frame publication/discard mechanism. Rejected candidates run neither
+callback; accepted hidden/inert/removed/invalid subtrees clear the original shared cells once.
+Necessary listener cells are initialized before publication, including first-mount tooltip/hover
+state. Cleanup precedes user hover termination and never restores an input snapshot over an
+irreversible quiescence. No second lifecycle owner or new window table is introduced.
+
+The other two initial failures are fixture assumptions: spinner quads use device-scaled bounds,
+and a final Entity drop outside an App update needs the existing effect flush. The fixture now
+uses the window scale and releases the root inside that update; clock/alpha/render and all
+weak/entity/scroll-release assertions remain. The corrected randomized, presentation, keyboard
+activation and atlas-admission cohort passes 98/98
+(`30794e66-88cf-4eab-81b3-3583f9b4c9ee`). It includes all seventeen tree controls, the
+refused/accepted mouse trajectories, existing quiescence, hidden cached hover/scroll, focus and
+keyboard activation, and atlas candidate/resource refusal. Independent Div review closes
+without remaining scoped P1/P2 after checking first-frame cell identity, cached journals,
+accepted discard, callback panic and irreversible quiescence.
+
+Ordinary independently locked value consumers pass 5/5
+(`655dc87f-9b56-4813-8df4-5a37406ce424`). The separate test-support consumer passes both
+actual four-case property workflows (`6aa84312-8270-4c57-9f27-b0116a05a378`), without a direct
+proptest dependency. Its generated source updates notify, draw and release the real CPU
+TestPlatform view, and its deferred update/shutdown path observes completed effects and release.
+Bench-only feature selection excludes that property's test-support body. These results do not
+establish a native GPU consumer or numerical benchmark result. Platform/independent workload
+smoke, actual Windows, complete affected cohorts and the final compiler/static matrix follow.
+
+The first dev-profile platform smoke reaches the full-refresh tall family and exits with Windows
+STATUS_STACK_OVERFLOW; the independent smoke is not started. Removing no-op Visible wrappers
+retains Hidden scope and original inheritance but does not eliminate the same-seed overflow.
+The upstream 256-element non-stacker cap explicitly assumes an optimized release build, while
+this functional CI smoke uses unoptimized dev code. Keep all family bounds, seeds and work, and
+select the framework's existing official stacker feature for that dev-profile platform smoke.
+Do not infer release capacity or numeric performance from it. The default release/non-stacker
+configuration remains separately unqualified by these two failed dev attempts.
+
+Final oracle review also finds that the independent consumer erased resource sharing by zeroing
+every texture/tile ID. Its scene-local canonical numbering now preserves texture/tile aliases,
+with positive legal-renumbering and negative distinct-tile/distinct-texture controls executed
+outside measurement. Actual renderer/GPU semantics still require their own consumer.
+
+After the custody correction, exact cached-mixed seed 0 finishes and the complete dev/stacker
+platform matrix passes 115/115 Testing/Success cases. The independent smoke then reaches
+ordinary RootVisibility seed 7 and fails its fresh-scene comparison during restoration. A
+stronger per-mutation generation assertion reproduces a stale empty generation 5 with the
+restored model; reference windows have activated and deactivated the persistent window, so
+its next notification is legitimately inactive-throttled while `settle` does not wait future
+timers. Reactivate the persistent consumer after closing/releasing each independent reference,
+assert active state and keep the strict newer-generation/equal-scene assertions. Limit failure
+output to counts instead of printing the entire scene; equality still compares every primitive.
+The original failed smoke remains a failed run. Complete corrected smoke is pending.
+
+The corrected independent smoke passes all 64/64 ordinary/cached mutation cases with both
+declared seeds, including resource-alias controls, strict generation advancement, full plain/
+entity-reference scene equality, visibility restoration and exact release. The complete
+Core/scheduler/WGPU/platform/Gallery library and public cohort passes 2,014/2,014 with one
+declared skip (`854d63ce-cea0-4231-b967-888e22b38ce6`). Existing retired-presentation compile-fail
+checks and complete Gallery consumers execute in that result. No corresponding native tree,
+release/non-stacker capacity or compiler-floor success is inferred from this checkpoint.
+
+Independent native-fixture review also identifies two false-positive paths before execution:
+outer Hidden presentation could mask the tree model's own visibility, and unchanged color alone
+could not prove cache replay. Restrict sibling button presentation to that button; let public
+RootVisibility alone control the tree. Add test-local render/paint probes and exact accepted-frame
+cache-policy publication, requiring actual replay and notification invalidation rather than
+counting accessibility/inspector bypass as cache evidence. Keep all generation, GPU readback,
+input and retirement assertions. These are fixture-strengthening corrections, not product passes.
+
+Final independent read-only review finds no scoped P1/P2 in native fixture corrections or the
+independent consumer's generation/reactivation changes. Separate ingress review likewise finds
+none, including nested/failed borrows, raw RefCell exclusions, budget yields, unwind and absent
+App weak upgrades. Review source evidence remains distinct from main-owned serial execution.
+
+The first actual native tree compiles but fails before cache/input acceptance when its geometric
+sampler finds no supposedly unobscured root point. Narrow topology, one descendant and removing
+a margin do not correct it. A temporary GPU-color search passes native 1/1
+(`32f6cd22-92db-476c-bf33-3339191a0ecf`) and the ignored animation/tree 2/2
+(`42fdd60d-dbdd-4a98-86c5-f5cc95745f90`), but is replaced rather than accepted as the final
+oracle. One intermediate missing Primitive import fails compilation and is corrected. Source
+inspection identifies the actual sampler defect: Style paints a transparent-background root
+border quad after children. Its full rectangle incorrectly excludes the entire root interior.
+Restore all original eight entity descendants/Wide topology. For equal-root transparent fill
+quads, use actual border widths to constrain the corner-safe interior rather than treating their
+whole rectangle as opaque. Other primitives and shadow raster footprints remain conservative
+exclusions; select the point from geometry before reading its GPU pixel. No model or workload
+capacity reduction remains. The two existing cache/deferred and scene-color native controls
+separately pass 2/2 (`fe91b0f5-bf69-44d2-b615-780a903124ac`); final eight-node sampler execution
+follows after the ongoing release smoke.
+
+The complete unchanged platform matrix additionally passes 115/115 under optimized release
+without stacker, including the seed-0 tall family that overflowed unoptimized dev. Both
+dev/stacker and release/non-stacker retain the same 256-element tall cap and 115 sampled cases;
+this is functional execution, not an arbitrary-depth guarantee or numerical budget. The default
+release compilation reuses Nara's root target with one build job and no source/dependency cleanup.
+Final sampler review also replaces an invalid identity-transform assumption: native raster
+snapping legitimately transforms quads at fractional DPI. Finite actual visual bounds must stay
+within one device pixel of the root's four original edges, inside the sampling safety margin.
+Independent source rereview closes that P2; final eight-node execution remains pending here.
+
+The final original eight-node/Wide native tree and complete generic-animation trajectory pass
+2/2 (`ed6710a1-5507-4b18-b5af-88c4ccb7d2ca`). The selected root sample depends only on Scene
+geometry before GPU readback. Exact accepted/Submitted/nonempty/capture generation, draw-time
+cache allowance, unchanged replay render/paint counters, RootColor invalidation/pixels, model-only
+tree RootVisibility, sibling-button suppression/restoration, WndProc clicks, all three entity
+releases and native/App/platform/OLE retirement execute. Evidence covers Scene-derived offscreen
+GPU pixels of the submitted generation, not a swapchain-buffer read or physical scanout/input.
+
+The first complete Windows cohort is 241/242 with nine declared skips
+(`ec86042b-0ef2-4c49-8ba5-509c39e0629d`). Existing Composite Focus fails its passive snapshot
+assertion; an unchanged focused rerun reproduces it. Bounded refresh-callsite diagnostics show
+one extra admitted refresh from `window/input_dispatch.rs`'s input-modality change, and a real
+newer matching accepted/Submitted generation. Incidental desktop MouseMove after synthetic keys
+changes Keyboard to Mouse; this is not a stale/refused accessibility snapshot. Independent
+Div review rules out publication churn/cleanup as the cause. The keyboard-only fixture now
+declines native pointer input using existing WindowOptions, as the cache/color fixtures already
+do, and asserts that fact. It preserves every idle/render/key/semantic/lifetime assertion and
+passes 1/1 (`2a8f88ca-0b6f-43e8-9701-4100227050e0`). The isolated fixture correction is committed
+at `515e4d77c16`; temporary diagnostic output is removed. The original aggregate remains failed
+until a separately recorded complete rerun.
+
+The next unchanged aggregate is also 241/242 with nine skips
+(`ccf71525-7fd2-41e6-afb6-5359623d038a`): Composite Focus now passes, but the profiler's
+pure-redraw phase adds one latency sample. Its unchanged isolated rerun passes 1/1
+(`bb05ef11-c971-49c3-a213-0b98136e99f7`), so that pass does not erase the aggregate failure
+or establish a production regression. The fixture previously left external pointer input
+enabled while claiming input-free redraw. After all original pointer/key/trace/journal/latency
+assertions, it now calls the existing public pointer-input mutation, waits for the exact
+observed terminal facts and settles before taking the input-free baseline. Only the no-input
+replacement starts with pointer input disabled; frame-signal and overlay consumers retain it.
+All histogram, source, generation, trace and lifetime assertions remain. Independent review
+finds no scoped P1/P2 and both affected native workflows pass 2/2
+(`6fc76358-3e88-4e8c-8b25-e395890025dc`). This separate fixture correction is `36e2567b16c`.
+
+The final complete Windows library cohort passes 242/242 with nine declared interactive skips
+(`35169956-88b5-4dd5-8e9f-db02626e93b2`). Both diagnosed fixture cases execute in this result.
+The new ignored eight-node tree and generic-animation GPU trajectories retain their separately
+executed 2/2 scope above. Neither final pass erases the two initial failed aggregates or extends
+the claim to physical input, compositor scanout or foreign-native execution.
+
+The complete affected UI core/components/docking/Canvas library and integration cohort passes
+2,974/2,974 without skips (`35148ed8-45dc-4dd8-a8a1-618200643ed4`). It retains existing
+controlled command refusal, cached/deferred interaction, viewport lifetime and virtualized
+collection coverage. Ordinary independently locked enabled/disabled consumers, additive public
+property tests and the disabled Core cohort continue separately.
+
+Ordinary independent all-feature consumers pass 91/91 with three declared skips
+(`af8e3221-aca7-4849-9027-1625ddfe208f`); profiler-disabled ordinary consumers pass 67/67
+without skips (`12b57acc-456f-49b5-8fae-a651a912d492`). All-feature additive test-support
+consumers pass 6/6 (`4f5ea635-dd51-4d3f-929b-ed32d24736a0`), including both executed four-case
+public property macros and ordinary/returning-App lifecycle controls. These distinct lock and
+feature graphs do not turn signature-only controls into runtime workflows or qualify foreign OSes.
+
+Final profiler-disabled Core and selected public animation/scheduling/Send/Spring consumers
+pass 1,383/1,383 without skips (`870b00ea-2ec6-4207-a2fc-9c183c682efa`). The full tree regressions
+and shared Div/native-ingress owners execute without optional profiler behavior; bench-only
+feature-graph checks remain separate from this test-support selection.
+
+Locked Rust 1.95 workspace all-target and ordinary independently locked all-target/all-feature
+checks pass. Expanded correctness Clippy passes for Core/scheduler/WGPU/Windows/platform/macros
+and xtask; existing suggestion-level warnings remain outside that correctness gate. Existing
+dependency-checker tests pass 2/2 after removing only the now-stale bit-set/bit-vec duplicate
+allowlist entries. Actual Windows Rust 1.93 framework/ordinary/test-support/hot-reload compiler
+checks, production wasm and final feature/format/static gates are still pending at this point.
+
+Actual Windows Rust 1.93 framework all-target/all-feature checks and the independently locked
+ordinary, additive test-support and hot-reload consumers pass, including the separate reload
+panel. No hot-reload runtime claim follows from its compiler result. The ordinary benchmark's
+reactivation now also observes the exact target's Activated ticket, removing an ignored must-use
+result while retaining the active-state/generation/scene checks. All 64 cases pass again and
+the final independent Rust 1.93 all-target/all-feature check passes after that assertion change.
+The unused benchmark AppContext import is removed; no production or workload inputs change.
+
+Stable production wasm profiling off/on and profiler-enabled nightly shared-memory production
+compilation pass through the existing hello_web atomics/build-std configuration. The first
+profiling-on command names a nonexistent Web profiler feature and is rejected before compiling;
+the corrected command selects `open-gpui/profiler`. No source fix or lock update is needed.
+These are production compiler results, not new browser, test-support-wasm or foreign-native
+execution. The existing test-support-wasm limitation is unchanged.
+
+Resolved feature graphs confirm that platform dev/stacker, platform default release and ordinary
+independent bench-only selections enable neither Core test-support nor leak-detection. Only the
+explicit dev selection enables stacker; default release and independent smoke do not. This checks
+the actual selected graphs rather than inferring lightweight consumption from feature names.
+
+The implementation is committed at `b42295d0e535e4105470e80873a6ad7832e81863`; wake custody and
+the two native input-isolation corrections retain their separate hashes above. Root and ordinary/
+test-support/hot-reload consumer formatting, workflow YAML, whitespace, rebuilt existing xtask
+import-boundary/public-API/document/release gates pass. No new scanner, registry shard, GPU,
+history or scheduler owner is introduced. All eighteen implementation/review/next-unit analysis
+threads close, with no remaining scoped P1/P2 or owned helper process. No remote publication or
+CI execution occurs. Full fixed-target refresh, five remaining platform workloads, gesture/
+clipboard/credential differences, canonical docking, measured costs and Nara's real GPU/Host/View
+consumer remain open. Continue the source-mapped asynchronous clipboard/Web paste successor;
+its new source map does not claim implementation or engine adoption.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:

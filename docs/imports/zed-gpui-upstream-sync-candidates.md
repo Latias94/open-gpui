@@ -53,7 +53,7 @@ official mechanism remains queued until it receives an explicit disposition.
 | `35eaeb94a7` | Already covered | Wayland app-id first-commit behavior is already present locally. |
 | `7c3160b7bf` | Already covered | Wayland startup activation token handling is already present locally. |
 | `0d8a4d4292` | Already covered | Atlas tile-space cleanup is already present locally. |
-| `34cd17ff5e` | Already covered | `BoxShadow` builder API is already present locally. |
+| `34cd17ff5e` | Implemented and qualified at `b42295d0e53` | The July classification was incorrect: the complete builders were absent at `f6f3d98d156`. The randomized-tree unit restores the official `BoxShadow` construction, blur, spread and inset builders consumed by its tree. |
 | `c899d5b590` | Already covered | `Rgba::alpha` is already present locally. |
 | `03a8544040` | Implemented: November 6 successor | The July classification was incorrect: Middle was absent in the inspected fork. The complete Unicode wrapping/truncation successor now adds the public style route and exact run redistribution; its qualification is linked below. |
 | `a873cf402c` | No-op for this sync | The workspace no longer has a `gpui` dependency on `async-process`; only a comment references `async_process`. |
@@ -216,8 +216,8 @@ finds five additional concrete fixed-target mechanisms: gesture recognition/axis
 randomized element-tree workloads and full-render equivalence, sendable foreground submission,
 asynchronous clipboard/error classification, and atomic credential insertion with Apple error
 semantics. Their exact fixed-target owners, complete regression scope and platform limits are
-recorded in the plan. Sendable submission now has its complete qualification below; the other
-four remain queued. Previously qualified benchmark, scheduler and input units retain their own
+recorded in the plan. Sendable submission and randomized trees now have their complete
+qualifications below; gesture, async clipboard and credentials remain queued. Previously qualified benchmark, scheduler and input units retain their own
 scope; similar names do not supply these missing mechanisms or establish exhaustive parity.
 
 The [sendable foreground/Web Fetch successor](../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#sendable-foreground-submission-and-web-fetch-successor)
@@ -229,8 +229,31 @@ The [verification](../verification.md#sendable-foreground-submission-and-web-fet
 the original 2,233/2,235 runtime aggregate with two topology-related failures and nine skips,
 the unchanged cases/native Send 4/4 rerun, and actual compiler-floor/wasm/static checks.
 Queue prerequisite `72676731163` and exact dependency selections retain distinct provenance.
-Next is the complete randomized-tree/platform-tree unit; other residual mechanisms remain
+The randomized-tree/platform-tree successor is separately qualified below; other residual mechanisms remain
 queued. This is not complete API parity or engine adoption.
+
+The [randomized-tree/platform-tree successor](../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#randomized-tree-and-platform-workload-successor)
+is implemented and qualified at `b42295d0e535e4105470e80873a6ad7832e81863`, after `f6f3d98d156`.
+Complete official model/mutations, seventeen tree groups and ordinary consumers retain their scope. Its two render
+visibility declarations deliberately use the existing SubtreePresentation owner: fork
+`112798a1d13` retired the upstream late-paint API under Accepted ADR 0022. This preserves layout
+and all sixteen mutation controls while adding the fork's admitted cross-channel suppression;
+it is not a missing dependency or a claim of source parity. The [record](../verification.md#randomized-trees-and-platform-tree-workloads)
+retains actual compile/review corrections and final-source focused 181, complete framework/
+public/Gallery 2,014, components/docking/Canvas 2,974, dev/stacker and release/non-stacker
+platform 115 each, independent benchmark 64 and final eight-node native/animation 2 passes.
+The fork wake prerequisite is separately committed at `1756e8f79aa`, and keyboard-only native
+fixture isolation at `515e4d77c16` and `36e2567b16c`. Final complete Windows passes 242/242
+with nine skips, preserving both original 241/242 aggregates. Independent consumers, actual
+Windows Rust 1.93, production wasm, exact feature graphs and static/format gates pass.
+Other residual mechanisms and full refresh remain open.
+
+The next [asynchronous clipboard/Web paste unit](../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#asynchronous-clipboard-and-web-paste-successor)
+maps official `d70c45e5bb` plus text-write/paste and key-default prerequisites to existing
+Platform/App/input-handler/Web listener owners. It remains unimplemented; source inspection
+separately records Windows embedded-NUL and macOS pasteboard-retention differences. The default
+desktop ready adapter does not add OS-error classification, and the target does not provide
+HTML/RTF content or browser-request abortion.
 
 A subsequent coherent text refresh should assess resolved-font fallback caches together with
 font-generation and layout invalidation, UAX #14 line breaking, and text synchronization/API

@@ -2140,6 +2140,19 @@ Full refresh, engine adoption and maintenance handoff remain open.
 
 ### Randomized Tree And Platform Workload Successor
 
+The complete cached-mixed smoke additionally reproduces an existing fork scheduling defect:
+post-borrow frame delivery drains its queued native work synchronously, but enqueue has already
+created a foreground wake. Polling that obsolete wake schedules another animation frame and
+another wake, preventing the official benchmark's idle drain from returning. Task-location
+diagnostics confirm the native-ingress runnable. Correct ordinary wake creation at its existing
+owner: a live tracked App borrow or active post-borrow convergence already guarantees a drain.
+The reviewed correction and finite-frame regression are separately committed at `1756e8f79aa`.
+Track only successful `AppRef`/`AppRefMut` custody, retaining the dedicated unwind/convergence
+wakes, deferred delivery without custody and shared drain budgets. Prove the idle contract with
+a finite eight-frame continuation, then rerun the unchanged complete cached-mixed workload.
+Do not cap task polls, omit animation, weaken workloads or infer custody from any raw RefCell
+borrow. Temporary diagnostic output must be removed before qualification.
+
 After the Send/Web Fetch qualification and commit, the next source-backed unit is the complete
 fixed-target randomized tree and its actual platform tree benchmarks. Introduction
 `3135cdf8dc8e6800d2b7ad89d62ea4994d892fb6` supplies topology, mutation, notification and six
@@ -2195,15 +2208,103 @@ Submitted/GPU pixels and numeric performance remain separate evidence.
 The same upstream file's five TextPanels/LayoutChurn/Scroll groups are independent queued
 workloads, as are primitives and two-revision comparison tooling. A completed tree unit does
 not complete that entire file, fixed-target refresh, measured engine costs or Nara adoption.
-This section is source analysis and execution requirements, not an implemented successor.
+The reproduced dev/non-stacker overflow also requires a separate optimized release smoke
+without stacker under the official default's build assumptions. Keep the unchanged tall cap,
+overflowing seed and complete workload matrix. Record the sampled inputs rather than claiming
+all bounds or arbitrary-depth capacity; functional smoke still establishes no numeric budget.
+Execution starts from qualified Send/Fetch `f6f3d98d156cd2ada88253ff4e4606a0ee50664d`.
+Four disjoint lanes own the complete production tree, official/fork render-equivalence tests,
+platform tree workloads and ordinary independent consumers. Main owns root exposure, official
+BoxShadow builders, the bench-only accepted-Scene accessor, manifests/lock edges, CI and serial
+qualification. Keep production code separate from test-only history and preserve ordinary
+bench-support consumption without enabling Core test-support or leak detection. Implementation
+and results remain pending; the source-backed scope above is unchanged.
+
+The first production compile exposes the absent official `.invisible()` binding and a missing
+Scene import in the new accessor. An initial macro-only restoration fails because the fork
+deliberately removed the entire `Style::visibility` mechanism at `112798a1d13` under Accepted
+[ADR 0022](../adr/0022-open-gpui-subtree-presentation-authority.md). Reconcile that contract
+instead of restoring its known late-paint input/focus/accessibility leak. Remove the temporary
+macro additions and map the official tree's two render declarations through the existing
+`SubtreePresentation` scope. Preserve the complete official model and all sixteen mutations,
+including cached RootVisibility; this explicit stronger-channel binding is neither source parity
+nor an omitted mechanism. The getter uses `crate::Scene`. Independent workload review also finds
+and corrects the fork-specific `remove_window(cx)` call in MixedRun teardown, preserving its
+outside-measurement position. Compile/runtime qualification follows these corrections.
+
+Platform compilation also maps the benchmark's default pointer scroll to the current
+`ScrollWheelEvent`/`PlatformInput::ScrollWheel` binding. The complete renamed gesture/source
+mechanism remains its own queued unit; this does not claim that consumer already exists.
+The first property-test compilation reproduces the old proptest 1.10 pin/quoted-path mismatch.
+Adopt official proptest 1.12 and the actual path parameter, preserving four cases, all topologies
+and mutation count; qualify independent reexport/context/shutdown consumers and Rust 1.93.
+The initial executed run passes 14/17 with all six official regressions. One new rejected-Hidden
+mouse control reproduces a fork shared-state cleanup defect; fix it in Div's existing accepted
+publication/discard owner and retain input quiescence. Spinner scale and final root-effect-flush
+fixture corrections preserve their original checks. Exact runs and corrected results belong to
+the [verification record](../verification.md#randomized-trees-and-platform-tree-workloads).
+
+### Asynchronous Clipboard And Web Paste Successor
+
+After the randomized-tree unit, port the complete official asynchronous clipboard and Web paste
+mechanism from `d70c45e5bb1d8b7b3926fba5a6d1c69c23bbc405`, including earlier Web text writing/
+paste `084b5d21f67cdbe06edd2822ce34e58b3cd774f7` and consumed-only key-default suppression
+`5d447d4223f8455db4811ed332c4ad744bb13e40`. The existing WebEventListener already owns
+callback removal before retirement, matching `c97b7c0ea41acf56e9726964eca10c2078e921b0`.
+Bounded fixed-target history inspection finds no later correction/revert of the asynchronous
+read/error/image mechanism. This is source mapping, not implemented qualification.
+
+Preserve synchronous Platform/App methods and add the official Task-returning read with its
+ready desktop default. Reuse AsyncApp::update to obtain the owned Task; do not add a parallel
+AsyncApp clipboard service. Keep Unavailable, Denied and UnsupportedContent distinct. Desktop
+None remains Ok(None), without inventing a general OS-failure/cancellation variant. Start the
+browser read synchronously within the triggering user-activation stack before spawning its wait.
+
+Complete the paste path through PlatformInputHandler, InputHandler, ElementInputHandler and
+EntityInputHandler. Default handling inserts text; overrides receive the complete ClipboardItem.
+Reuse exact handler-generation, input-transaction, accepted-candidate and retirement owners,
+adding the corresponding native input diagnostic operation. DOM text paste stays synchronous;
+capture an image File synchronously, read it asynchronously and reacquire the currently admitted
+handler only at delivery. Never hold a handler checkout or App borrow across await. Preserve
+task cancellation versus browser-request abortion as different facts. Text/Image/ExternalPaths
+remain the content model; skipping HTML/custom formats does not qualify rich-text paste.
+
+Migrate the real TextInputController and ordinary input example. Web key handling must permit
+browser paste when unconsumed and avoid inserting once through the action and again through DOM
+paste. Retain enabled/editable checks at actual delivery and weak entity/window release. Add only
+required existing web-sys Clipboard/ClipboardEvent/ClipboardItem/Blob/DataTransfer features.
+Test ready snapshots, pending/refused reads, cancellation, text/default versus complete-item
+override, handler replacement, focus change, failed candidate recovery and terminal windows.
+Qualify ordinary independent public consumers, actual browser text/image/permission/user-activation
+paths and exact Windows async-read-to-text-to-Submitted consumption separately. Stubbed promises
+prove classifications, not real browser permission behavior; wasm compilation is not execution.
+
+Retain two separately evidenced clipboard differences in the remaining inventory: Windows NUL
+normalization `decbf641b18f1982b3475c037e7c5c554471574f`, and macOS pasteboard ownership
+`914e1c9873b6b85bfeedc5b58e8270885bdd532e` followed by fixed-target Retained conversion
+`e83f1c949512bab023f2f82446ffb4b0e4173fef`. Do not report these as covered by the async adapter.
+Foreign-native execution and the complete engine seam remain separate qualification owners.
 
 ## Maintained Baseline Before Engine Adaptation
 
+The [randomized-tree qualification](../verification.md#randomized-trees-and-platform-tree-workloads)
+records implementation `b42295d0e535e4105470e80873a6ad7832e81863`, after independent wake
+correction `1756e8f79aa` and native-fixture corrections `515e4d77c16`/`36e2567b16c`. Complete
+official model, six regressions, sixteen mutations and seventeen tree groups retain the fixed
+target. Focused 181, complete framework/public/Gallery 2,014, components/docking/Canvas 2,974,
+dev/stacker and release/non-stacker platform 115 each, independent benchmark 64, final native
+tree/animation 2, complete Windows 242, ordinary consumers 91/67, additive consumers 6 and
+disabled Core/public 1,383 pass. Initial failures retain their own records. Actual Windows
+Rust 1.93, locked checks, correctness Clippy, production wasm, exact feature graphs, formatting
+and existing static gates pass. All eighteen lanes close. Continue complete async clipboard/
+Web paste and remaining fixed-target dispositions before the real Nara GPU/Host/View seam;
+this qualified unit does not complete framework refresh, engine adoption or numeric budgets.
+
 The [Send/Fetch qualification](../verification.md#sendable-foreground-submission-and-web-fetch)
-records the latest implementation `ff4b3f4b95d48410c7c1d3820e2b2a98444aacab`, after separately
+records implementation `ff4b3f4b95d48410c7c1d3820e2b2a98444aacab`, after separately
 qualified notifications and Spring/motion. Existing dispatch/admission/profiler and App/native
-owners remain authoritative. Continue the complete randomized tree/platform workload and bounded
-residual inventory before the real Nara GPU/Host/View consumer and framework-maintenance handoff.
+owners remain authoritative. Its randomized-tree successor is qualified above; continue the
+bounded residual inventory before the real Nara GPU/Host/View consumer and maintenance handoff.
 The original all-feature aggregate failures remain recorded beside unchanged scoped passes;
 no complete-refresh, engine-default or numerical-cost claim follows.
 
@@ -2420,7 +2521,7 @@ engine still decides Editor/game execution from its own lifecycle and cost evide
 
 | Field | Decision |
 |---|---|
-| Objective | Bring Open GPUI's extracted GPUI framework closure forward with the highest-value Zed GPUI fixes while preserving the Open GPUI package, license, and dependency boundary. |
+| Objective | Reconcile Open GPUI's extracted framework closure against the fixed Zed target, preserving complete official mechanisms and recording verified equivalence or justified fork adaptations within the package, license and dependency boundary. |
 | Authority | `docs/imports/zed-gpui-import.md`, `docs/imports/zed-fork-dependency-audit.md`, and ADR 0001 define the import boundary. `repo-ref/zed` is reference input, not a source tree to overwrite from. |
 | Execution profile | Breaking changes are allowed when they simplify the framework API or delete obsolete compatibility code. Do not preserve dead fork shims, stale TODO stubs, or Zed-product assumptions when a cleaner Open GPUI boundary exists. |
 | Priority order | Correctness fixes first: HTTP request bodies, Linux clipboard/IME/headless behavior, Windows platform correctness, core runtime leaks and scroll state, then renderer/dependency updates. |
