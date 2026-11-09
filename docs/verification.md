@@ -5631,6 +5631,232 @@ official notification unit is qualified within these explicit limits; sendable f
 Fetch and the remaining fixed-target mechanisms stay queued before engine integration and
 maintenance handoff.
 
+## Sendable Foreground Submission And Web Fetch
+
+Implementation `ff4b3f4b95d48410c7c1d3820e2b2a98444aacab` has completed this scoped
+qualification, with the original all-feature aggregate remaining 2,233/2,235 and two native topology-related
+creation failures; the unchanged cases and both Send native trajectories subsequently pass 4/4.
+The complete ordinary enabled/disabled consumers pass 83/67, disabled Core/public Send 1,351
+and UI core/components/docking/Canvas 2,974 pass. Actual Edge HTTP and 8/16-worker queue
+regressions pass. Locked Rust 1.95 checks, expanded correctness Clippy, actual Windows Rust
+1.93 framework/three-consumer checks, stable production wasm profiling off/on and wasm Clippy
+pass. Stable browser smoke passes after cache-path loss interrupts its first packaging attempt.
+Profiler-enabled nightly/shared-memory production compilation also passes.
+The separate std queue prerequisite is committed at `72676731163c1da1534f7b30b984444924a3353e`.
+The existing checker-floor correction is separately committed at `3de0388762d` without raising
+the declared Rust 1.93 floor. Full refresh, engine integration and maintenance handoff remain open.
+
+The following chronological execution checkpoints retain earlier failures and intermediate
+results; their pending statements describe those checkpoints rather than the current matrix.
+
+This successor starts after local `7d2c071b9550b93654a7ac2cc19a76f49a5b7a31`, against fixed
+Zed `635026fabc38440fce5e1767d125026a17b12012`. Official
+`2c2f737ab2f3db793b7a313bc8e5307f1708d2e8` supplies `SendLocalExecutor`,
+`SendForegroundExecutor` and both `to_send` methods. Preserve their complete Send future/output
+contract, including the original non-Sync Cell result, worker wake and scheduler-retention tests.
+The handles clone the existing dispatch destination rather than rebuilding a foreground/TLS
+owner on the worker. Fork queued accounting, admission refusal and !Send local-future checks
+retain their existing owners. Retaining a scheduler/dispatcher does not retain App/window or
+guarantee that a stopped event loop resumes. Existing erased-runnable refusal can forget its
+task; refusal is not proof that its awaitable Task settles.
+
+The complete Web consumer includes worker routing `b2131e9df8`, streaming/backpressure/body-drop
+`45ae0572c4`, nonblocking synchronization `b0048cde74`, and the shared Send facade. Request
+bodies remain buffered; response bodies use the official eight-chunk channel and main-thread
+ReadableStream pump. The exact credentials, headers, redirect, error and cancellation behavior
+uses the fixed-target source. The obsolete AssertSend wrapper, executor-free constructors and
+whole-response buffering are removed. Platform factories and ordinary image examples use the
+same originating executor and explicitly install their client. Facade construction already
+matches the target's explicit-install policy. Existing !Send UI work keeps its normal executor.
+
+The dispatcher also adopts the target's main-thread Window lookup and waitAsync capability
+check, removing its stored JS Window and unsafe Send/Sync implementations. Fork admission,
+post-borrow and exact queued-count behavior remain unchanged. Missing waitAsync has an explicit
+single-threaded reason; an actual browser control masks the API before worker startup, then
+requires foreground/background fallback tasks to complete on the main thread. The unchanged
+ordinary UI remains beside the separate single-pipeline HTTP entry. The browser fixture retains all eight
+worker requests and 32,768 ordered chunks per response, then exercises request options/errors,
+pending read, backpressure and late-response body cancellation in both configured modes.
+
+The task-waker [dependency record](imports/zed-fork-dependency-audit.md#november-9-task-waker-dependency)
+distinguishes actual fix `015845a19fc31752c02367567d3b8900a406f9da` from Zed's selecting
+commit `67b41bf97607f2dd86319b385040a1310cf24f45`. The old registry debug control passes
+1/1 (`9ac65b38-7817-40bc-9f45-28e542753346`), so no local reproduction is claimed. With the
+exact fixed source, the complete scheduler library passes 31/31
+(`12341d17-96f1-4005-8ea8-c7cbbd77886b`), and focused Core executor/PlatformScheduler/profiler
+owners pass 162/162 (`2a858d18-864e-4ef1-9e7b-2427193f57c8`). Core production compilation
+passes. Independent bounded implementation review finds no scoped P1/P2; public, native,
+browser, dependency/compiler and final static qualification remain in progress.
+
+The crate-external TestApp consumers pass 3/3
+(`bb2a95eb-9963-4207-ba89-2b47de2a75c0`): real worker results notify/redraw the original App,
+unrelated App work does not poll that task, cancellation preserves the view, and Send handles
+retain the scheduler without retaining App/root. The native fixture first fails compilation
+by using BackgroundExecutor-only queries on ForegroundExecutor. It now uses the existing
+underlying scheduler query and BackgroundExecutor thread query, preserving the same assertions.
+Both actual Windows paths then pass 2/2 (`e8145485-03be-40ae-97b0-9071ff0bd90b`), including
+the explicitly selected ignored GPU case. Real dispatch/re-poll, local App effects, two exact
+new Submitted pixel generations, cancellation, stale wakes, exact retirement/release and
+closed-queue refusal/reconstructed Idle accounting retain their full checks.
+
+Browser-driver review reproduces a fork cleanup defect with an in-memory child-process control:
+the driver could unref a live browser or exit before shutdown completed. Cleanup now shares an
+idempotent asynchronous path, terminates only the owned process tree and requires child exit.
+Actual Windows browser execution and final review follow. No physical input/scanout, foreign
+native execution or numerical cost result follows from the native fixture.
+
+The first HTTP fixture setup encounters an uncached, foreign-target deranged package during
+full offline metadata; resolving with `--no-deps` avoids fetching irrelevant target sources.
+Trunk also requires boolean `NO_COLOR=true` rather than the inherited `1`. Its first two
+packing attempts fail after successful Wasm compilation with multiple target artifacts.
+Source inspection of Trunk 0.21.14 identifies the cause: a worker-only HTML page receives an
+additional implicit MAIN pipeline. The separate test entry now uses one MAIN pipeline with
+an empty Rust main; `data-bin` selects its exact artifact and the original UI is unchanged.
+Adding target-name alone was not the correction. The corrected single pipeline builds.
+The browser fixture uses the existing nightly/build-std/atomics configuration, the shared root
+target, one build job, disabled incremental compilation and no debug information, with debug
+assertions retained. These resource settings establish no performance comparison.
+
+The first actual browser run reaches its external 120-second deadline. A second run adds phase
+observation and worker Runtime diagnostics without changing test volume or deadline: initialization
+and missing-waitAsync fallback finish, then the eight-worker stream remains pending until timeout.
+Both browser processes are reaped through the corrected cleanup path. Comparing actual queue
+source identifies missing official `5c9efb75cf73fc56f6316455983e4f04e9330860`: parking_lot's
+unlock/notification may itself wait, despite spinning for acquisition. Core and mailbox now use
+the complete official std synchronization path. Existing fork close/last-sender/private length
+behavior remains; an added held-lock panic test requires non-poisoning public behavior afterward.
+Bounded independent review finds no scoped P1/P2 in the queue adaptation.
+
+After that correction, the same complete HTTP workflow passes in actual Edge: eight worker
+requests each consume 32,768 ordered chunks, both worker/single-threaded control modes pass,
+all six real stream-cancel controls run exactly once and stop producing, and missing-waitAsync
+fallback tasks complete. This checkpoint still uses registry wasm_thread 0.3.3. The subsequent
+official `0cf96c7708dfb97ccf3da50347e25edcf75d6937` selection has identical Rust runtime files
+and object-form JS initialization instead of deprecated positional arguments. Its separate
+dependency adoption is not the cause claimed for the queue fix. Final eight-/sixteen-worker
+queue stress, HTTP replay, native/public/compiler and static qualification follow on the final
+source graph.
+
+Final-source Edge HTTP replay passes the complete eight-response/32,768-chunk workflow, both
+control modes, six body-drop cases and waitAsync fallback without deprecated worker-init
+warnings. Queue stress separately passes 8 and 16 workers, each with 524,288 exact-once items
+over 128 rounds, forbidden-main-wait control and all asynchronous worker joins. Every owned
+browser profile process is gone, and both local HTTP servers are stopped. Driver P2 review
+closes after additional source/in-memory controls for a POSIX leader exiting before cleanup;
+actual POSIX execution remains unqualified. All ten current implementation/review/next-unit
+threads close, including the separately scoped queue prerequisite and next-tree analysis.
+
+The final all-feature scheduler/Core/WGPU/Windows/Gallery library/public cohort executes all
+2,235 selected tests (`adc891b6-f6c4-4bbc-994e-b16e9bdd29c3`): 2,233 pass, two fail and nine
+declared cases remain skipped. The two native failures occur while creating their test windows:
+`rejected_activation_restores_a_non_click_activating_gpui_foreground_window` reports pending
+display-topology refresh, while `advertised_live_window_mutations_commit_native_observed_facts`
+reports topology changed after placement resolution. Neither reaches its target interaction.
+The queue poison/close regressions, final Core/profiler/public Send and existing native runtime
+controls pass in that same source graph. Unchanged failed cases and the explicitly selected
+ignored Send GPU trajectory are rerun together; no display admission or assertion is weakened.
+This records the actual aggregate failure rather than describing it as a green full run.
+
+The unchanged failed cases and both Send native workflows pass together 4/4
+(`52c80514-d7d7-43d4-b603-178a31870f90`). This explicitly executes the ignored GPU trajectory
+against the final queue/source graph and retains all exact generation/pixel/cancellation/
+retirement assertions. It does not establish that earlier native topology/focus variability is
+resolved. Root formatting passes; the excluded independent workspace first reports formatting
+in its new test file, then its own format/apply/check corrects that only. Independent enabled/
+disabled execution and the remaining compiler/static matrix follow.
+
+Independent enabled compilation subsequently stops before test execution: writing the Windows
+dependency's `lib.rmeta` fails with Windows error 112, insufficient disk space. The owned Cargo
+sequence is terminal; the disabled case is never started. A planned stop observes the compiler
+already gone and terminates no process. This is a resource failure, not an independent-test
+pass or a compiler diagnostic against the new API. No further compilation is launched. Earlier
+targeted deletion of four verified old incremental-cache directories was rejected by automatic
+tool policy, and no cache was removed. All source, locks and evidence remain in the worktree.
+
+The unit is not committed or fully qualified at this checkpoint. After sufficient disk is
+available, finish ordinary independent Send execution with profiler on/off, final disabled
+Core/public execution, affected component/docking/Canvas tests, locked workspace and independent
+checks, expanded correctness Clippy, actual Windows Rust 1.93 framework/consumer checks, stable
+single-threaded browser smoke, profiler off/on production wasm and the final static/format gates.
+Existing package/source lock comparison confirms only the required task/worker source changes
+and Web channel edge; unrelated resolver changes are removed. The existing dependency checker
+also needs its tests after synchronizing its stale 1.92 constant with the declared/previously
+qualified 1.93 floor. This is no new scanner or compiler-floor increase. Full fixed-target
+refresh, numerical costs and the real Nara integration consumer remain open.
+
+Non-compiling checks pass: root, ordinary independent and standalone Web-fixture formatting;
+both Node driver syntax checks; existing import-boundary/public-API/doc-link/release-doc checks;
+workflow YAML and both single-MAIN fixture entries; and Nara's added heading/owning evidence
+links. Formatting changes do not alter the executed test logic. At the 19:43 resource checkpoint
+F has approximately 52 MiB free. All owned build handles are terminal, both indexes are empty,
+and no source/qualification commit is created for this unfinished unit. Resume from this reviewed
+worktree after space is restored, without redoing completed browser and runtime evidence unless
+subsequent behavior changes require it.
+
+A subsequent authoritative disk check at 19:45 observes approximately 1.7 GiB available, and
+the independent sequence resumes from its preserved completed dependencies. A further check
+at 19:47 observes approximately 4.4 GiB available. These are changed resource conditions, not
+restarting an assumed live process. Results and any further resource limits remain pending.
+
+The resumed ordinary independent Send target passes all six runtime tests with profiler enabled
+(`a48fb1e5-79ae-416e-8876-2f17e62abf62`) and disabled
+(`8c1f48d8-3d72-4900-a65a-f79f2688cf34`). Neither enables GPUI test-support. Captured
+destination, actual worker wake/re-poll, Cell output, cancellation and final owner release execute
+through public production dispatch. Complete ordinary consumers and disabled Core follow.
+
+Complete ordinary independently locked consumers then pass 83/83 with profiler
+(`d08935c3-eeea-47b0-98b1-4eaf1024c4fc`) and 67/67 without profiler
+(`d14a3ed9-4bdb-4e19-8d6a-777902e7ff7e`), without skips. Complete disabled Core library and
+the actual public Send workflows pass 1,351/1,351
+(`eaeec457-851a-434d-99c0-a667217da5d0`). The HTTP fixture's configured single-threaded
+controls run in its shared-memory build with workers explicitly disabled; they do not claim a
+separate non-shared HTTP execution. Stable non-worker UI/browser smoke has its own gate.
+
+The complete affected UI core/components/docking/Canvas library and integration cohort passes
+2,974/2,974 without skips (`0e6c75fd-e4be-44c5-9126-64f01f32003b`). The existing dependency-
+checker tests pass 2/2 (`1ee5d290-4bf9-458b-b6df-db39a34c558f`) after its constant matches
+the already declared 1.93 compiler floor. No new scanner or new compiler requirement is added.
+
+Locked Rust 1.95 workspace all-target and independently locked all-target/all-feature checks
+pass against the final source graph. Target-specific Linux/macOS production bodies are not
+compiled by Windows-hosted workspace checks. Correctness Clippy and the remaining actual
+minimum-compiler, wasm and stable browser gates follow.
+
+Expanded correctness Clippy passes for scheduler/Core/WGPU/Windows/Web/platform and xtask
+all-target/all-feature selections on Windows. Actual Rust 1.93 affected-framework all-target/
+all-feature compilation passes; independently locked ordinary/test-support/hot-reload checks
+continue separately. These are compiler execution results rather than inferred dependency floors.
+
+Actual Windows Rust 1.93 ordinary independent all-target/all-feature, test-support independent
+all-target/all-feature and hot-reload independent all-target checks also pass. Their existing
+lockfiles retain distinct resolution and the required common async-task source. This unit makes
+no new hot-reload runtime qualification or foreign-native execution claim.
+
+Stable production wasm profiling off/on, actual wasm correctness Clippy and independently locked
+stable smoke compilation pass. The first actual stable-browser attempt stops before browser
+execution when Trunk's second artifact-collection build cannot write a removed fingerprint path
+(Windows error 3). After the owner restores disk capacity and clears build artifacts, the existing
+xtask is rebuilt and the unchanged stable smoke passes in actual Edge. Explicit WebGL, Auto and
+WebGPU each execute ordinary input/capture/docking/activation and PNG pixel controls at 800x600
+and 960x720, DPR 1. All 22 fixed samples, dense high-index quads, alpha and text-region assertions
+pass. Explicit software-adapter refusal and controlled Auto-to-GL fallback retain their checks.
+The browser and local server exit; no owned profile process or listener remains. Application
+frame counters are not submission receipts, and controlled backend absence does not qualify
+hardware/device loss. HTTP single-threaded controls above remain a separate shared-memory build.
+
+Final one-off comparison of all five tracked locks confirms only the exact task/worker source
+changes and Web async-channel edge; existing package versions and metadata remain unchanged.
+Existing import-boundary/public-API/doc-link/release-document scans, both Node syntax checks and
+workflow YAML parsing pass again after the qualification edits. No remote CI or publication runs.
+
+The final nightly production shared-memory check also passes with Core profiling enabled and
+Web multithreading selected, using the existing build-std/atomics/imported-memory configuration.
+Root, ordinary independent and standalone Web-fixture formatting pass. Independent reviews close
+without remaining scoped P1/P2, and all ten implementation/review/analysis threads are closed.
+The next complete unit is the planned randomized tree/platform tree workload, with full official
+regressions. Foreign-native execution, POSIX driver execution, physical input/scanout, measured
+costs and the real Nara GPU/Host/View consumer remain outside this qualification.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:

@@ -2077,8 +2077,8 @@ Close WebPlatform factories, image examples and request consumers, with the offi
 and Web execution keep separate results; wasm compilation alone does not qualify this workflow.
 
 Assess actual dependency differences before implementation. The fixed target selects async-task
-Git `015845a19fc31752c02367567d3b8900a406f9da` for the waker-vtable identity correction
-`67b41bf97607f2dd86319b385040a1310cf24f45`; the fork's crates.io 4.7.1 has the API but is
+Git `015845a19fc31752c02367567d3b8900a406f9da` for the waker-vtable identity correction;
+Zed `67b41bf97607f2dd86319b385040a1310cf24f45` selects that dependency. The fork's crates.io 4.7.1 has the API but is
 not thereby equivalent. The Web channel path needs async-channel with default features disabled
 across the actual feature union; changing only its Web declaration does not remove Core's std
 activation. No compiler-floor change is inferred: retain the fork's existing cfg branches
@@ -2086,14 +2086,126 @@ instead of the unrelated target `cfg_select!` change. Do not import the separate
 state machine merely because it shares a file. This section is source-backed planning, not an
 implemented or qualified successor.
 
+Execution starts after local `7d2c071b9550b93654a7ac2cc19a76f49a5b7a31`. Four disjoint
+implementation lanes cover scheduler/Core, Web Fetch/public factories/examples, ordinary public
+consumers and the actual Windows workflow. Main owns manifests/locks, remaining callsites,
+browser execution and serial Cargo verification. Source inspection confirms the async-task fix
+uses the task header's stored raw-waker vtable and preserves original/clone identity in both
+directions and across polls. Its manifest retains Apache-2.0 OR MIT and Rust 1.57. The separately
+observed upstream PR 108 remains open; a same-version registry dependency is not evidence of
+that fix. Qualify the owning regression before selecting the exact source. Keep Core/macOS/
+scheduler direct task types on the same declared workspace dependency, without a root-only
+patch that disappears for independently locked consumers. Web async-channel must exclude std
+in the actual production graph; native Core explicitly retains std. Preserve the existing
+hello_web UI while adding the complete official auxiliary HTTP browser consumer.
+
+Actual browser execution identifies another complete prerequisite: official
+`5c9efb75cf73fc56f6316455983e4f04e9330860` changes queue Mutex/Condvar and mailbox locking.
+Spinning for acquisition alone does not prevent parking_lot's unlock/notification from waiting
+on the browser main thread. Adopt the full standard-library synchronization path with poison
+recovery, preserving weighted/FIFO behavior, fork last-sender close/notification and private
+length observations. Preserve all existing native queue tests, add actual poison recovery,
+and import the complete official eight-/sixteen-worker, 524,288-item, 128-round browser stress
+and forbidden-main-wait control. Worker thread epilogues must be joined asynchronously.
+This is the official owning fix, not a second task queue or an increased timeout.
+
+The first two Fetch browser runs time out at the unchanged 120-second deadline; phase tracing
+shows successful missing-waitAsync fallback followed by a stuck eight-worker stream. The same
+complete Fetch workflow passes after the queue prerequisite, still using registry wasm_thread.
+The separately inspected fixed `wasm_thread` revision `0cf96c7708dfb97ccf3da50347e25edcf75d6937`
+keeps its Rust files identical to registry 0.3.3 and changes JavaScript initialization to the
+current object-form wasm-bindgen API. Adopt that exact official source without attributing the
+earlier timeout correction to it. Repeat final browser/native/public/compiler qualification
+against this final source graph. Separate MAIN Trunk entries retain the original hello_web UI
+and avoid the automatic default-MAIN build inserted for a worker-only page.
+
+The final-source browser HTTP and 8/16-worker queue matrix pass within their recorded scope.
+The complete runtime/public cohort executes 2,235 tests: 2,233 pass, two native window-creation
+cases fail during topology changes and nine declared cases are skipped. The unchanged failures
+and both native Send workflows then pass together 4/4, including the explicit ignored GPU case.
+The original aggregate remains failed and native topology/focus variability is not repaired.
+Independent compilation initially stops with disk-full error 112 before execution; after capacity
+recovers, complete ordinary enabled/disabled consumers pass 83/67, disabled Core/public Send
+1,351 and UI core/components/docking/Canvas 2,974 pass. Locked Rust 1.95 checks, expanded
+correctness Clippy, actual Windows Rust 1.93 framework/three-consumer checks, stable production
+wasm profiler off/on and wasm Clippy pass. Stable browser smoke passes after cache-path loss
+interrupts its first packaging attempt. Actual WebGL/WebGPU/Auto, both PNG sizes and the original
+interaction/fallback/refusal controls retain their assertions. Profiler-enabled nightly/shared-memory
+production compilation and final formatting/static gates pass. The Send/Fetch implementation is
+`ff4b3f4b95d48410c7c1d3820e2b2a98444aacab`; the separate std queue prerequisite is committed at
+`72676731163c1da1534f7b30b984444924a3353e`. All ten threads and the HTTP/queue fixture
+servers are closed. The [verification record](../verification.md#sendable-foreground-submission-and-web-fetch)
+qualifies this complete unit and preserves every aggregate failure and subsequent scoped pass.
+Full refresh, engine adoption and maintenance handoff remain open.
+
+### Randomized Tree And Platform Workload Successor
+
+After the Send/Web Fetch qualification and commit, the next source-backed unit is the complete
+fixed-target randomized tree and its actual platform tree benchmarks. Introduction
+`3135cdf8dc8e6800d2b7ad89d62ea4994d892fb6` supplies topology, mutation, notification and six
+regressions; `26abd1c9590827ffc5cca3058ff2a94ea9a34715` adds cached/hover/animation, stable
+scrolling, richer drawing and the final workload families. Module documentation follows
+`dde76a1dca5305607a940309ada0568350d1aac6`. The test's `global_id.last()` adaptation from
+`1dd9bbfd71cdb1eed32e3451d661de48a68493fd` already works through the fork's Deref; it does
+not require importing unrelated ID hash optimizations. Earlier harness qualification at
+`5f3a99fad92` did not include this missing module or platform workload. Shallow fork history
+does not prove it was never present earlier.
+
+Import the complete final Config/Bounds/Topology, stable identities/path index, Snapshot, all
+sixteen mutations including RemoveLeaf, nearest-entity notification, deduplicated recolor and
+entity synchronization. Preserve weak entity-table references and removed-subtree scroll-handle
+cleanup. Root exposure follows `cfg(any(test, feature = "bench-support"))`; rendered-ID history
+and counter getter/reset remain test-only instead of growing during ordinary benchmarks.
+Add the missing official BoxShadow builders from
+`34cd17ff5e29b8eef9c48c69c2c56d24a770addc` and bench-only `Window::rendered_scene` over the
+already accepted rendered frame. Reuse existing View/cache, TestApp, benchmark and candidate
+owners, without a new renderer, telemetry or snapshot authority.
+
+Retain all six official regressions:
+
+- `localized_recoloring_notifies_one_entity_until_its_subtree_is_exhausted`;
+- `bounds_sample_within_range_and_reproduce_from_the_seed`;
+- `generated_topologies_include_wide_deep_narrow_and_empty_trees`;
+- `randomized_element_ids_are_unique_and_stable`;
+- `randomized_entities_and_work_counters_support_incremental_benchmarks`;
+- `randomized_element_tree_matches_full_render`.
+
+Adapt scene comparisons to actual fork ClipEnvelope/clip ancestry and transforms, comparing
+draw order, complete effective clipping, geometry, colors and transforms while normalizing only
+cross-window resource identities. Quad counts or clip bounding boxes cannot establish scene
+equivalence. Add deterministic coverage of all sixteen mutations, cached zero-size/reordering/
+hidden/restored boundaries, deletion/entity/scroll release, and refused-candidate retention
+followed by accepted retry against a fresh reference. Preserve existing committed-dependency
+and rejected-presentation regressions. The official property test uses four cases, four 64-node
+topologies plus empty, and 32 mutations; default cached/hover/animation are disabled and random
+selection does not guarantee every mutation. Snapshot excludes live focus/hover/scroll/animation
+time, so their controls need explicit inputs and clocks. Cached mixed excludes RootVisibility;
+that exclusion does not qualify hidden-root behavior.
+
+Port the actual seventeen tree groups: nine ordinary, seven cached and changing-share, retaining
+five families, family-mixed seeds, two warmups, per-iteration mixed reconstruction/close,
+setup/drop outside timing, allocation/scene/family reports and the non-stacker tall cap of 256.
+Register the platform target with `harness = false` and required bench-support, using existing
+Criterion/bench-metrics dependencies and the existing independently locked benchmark consumer.
+Execute tree-group smoke and real build/mutate/draw/close consumption; verify the bench-only
+graph does not activate Core test-support or leak-detection. No gesture/clipboard/credential
+prerequisite or additional measurement framework follows. TestApp scene equality, actual platform
+Submitted/GPU pixels and numeric performance remain separate evidence.
+
+The same upstream file's five TextPanels/LayoutChurn/Scroll groups are independent queued
+workloads, as are primitives and two-revision comparison tooling. A completed tree unit does
+not complete that entire file, fixed-target refresh, measured engine costs or Nara adoption.
+This section is source analysis and execution requirements, not an implemented successor.
+
 ## Maintained Baseline Before Engine Adaptation
 
-The [system-notification qualification](../verification.md#system-notifications-and-ordered-app-responses)
-records the latest implementation `26639a9715aff09ffbc61b92af45014728f02f94`, after the separately
-qualified Spring/motion unit. Existing App ingress, native retirement and ordinary standalone
-consumption retain their owners. Continue sendable foreground/Web Fetch and the bounded residual
-inventory before the real Nara GPU/Host/View consumer and subsequent framework-maintenance
-handoff. No complete-refresh, engine-default or numerical-cost claim follows.
+The [Send/Fetch qualification](../verification.md#sendable-foreground-submission-and-web-fetch)
+records the latest implementation `ff4b3f4b95d48410c7c1d3820e2b2a98444aacab`, after separately
+qualified notifications and Spring/motion. Existing dispatch/admission/profiler and App/native
+owners remain authoritative. Continue the complete randomized tree/platform workload and bounded
+residual inventory before the real Nara GPU/Host/View consumer and framework-maintenance handoff.
+The original all-feature aggregate failures remain recorded beside unchanged scoped passes;
+no complete-refresh, engine-default or numerical-cost claim follows.
 
 The [generic-animation qualification](../verification.md#generic-animation-controls-and-clock)
 records implementation `4ed461f2b591d6e44d84abc742094740fbd607af` after the overlay baseline.

@@ -216,9 +216,21 @@ finds five additional concrete fixed-target mechanisms: gesture recognition/axis
 randomized element-tree workloads and full-render equivalence, sendable foreground submission,
 asynchronous clipboard/error classification, and atomic credential insertion with Apple error
 semantics. Their exact fixed-target owners, complete regression scope and platform limits are
-recorded in the plan. They remain queued after system notifications, with no implemented or
-exhaustive-parity claim. Previously qualified benchmark, scheduler and input units retain their
-own scope; similar names do not supply these missing mechanisms.
+recorded in the plan. Sendable submission now has its complete qualification below; the other
+four remain queued. Previously qualified benchmark, scheduler and input units retain their own
+scope; similar names do not supply these missing mechanisms or establish exhaustive parity.
+
+The [sendable foreground/Web Fetch successor](../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#sendable-foreground-submission-and-web-fetch-successor)
+is implemented at local `ff4b3f4b95d48410c7c1d3820e2b2a98444aacab`. Its official
+`2c2f737ab2` handles and complete worker/main/stream/backpressure/cancellation consumer reuse
+existing owners. Actual Fetch/queue browser workflows, stable WebGL/WebGPU/Auto smoke,
+independent enabled/disabled 83/67, disabled Core/public 1,351 and components 2,974 pass.
+The [verification](../verification.md#sendable-foreground-submission-and-web-fetch) records
+the original 2,233/2,235 runtime aggregate with two topology-related failures and nine skips,
+the unchanged cases/native Send 4/4 rerun, and actual compiler-floor/wasm/static checks.
+Queue prerequisite `72676731163` and exact dependency selections retain distinct provenance.
+Next is the complete randomized-tree/platform-tree unit; other residual mechanisms remain
+queued. This is not complete API parity or engine adoption.
 
 A subsequent coherent text refresh should assess resolved-font fallback caches together with
 font-generation and layout invalidation, UAX #14 line breaking, and text synchronization/API

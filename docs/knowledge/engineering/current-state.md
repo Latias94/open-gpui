@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-09T17:49:16+08:00
+timestamp: 2026-11-09T23:05:00+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -18,6 +18,28 @@ verified_by:
 
 # Current State
 
+- The official Send foreground/Web Fetch successor is implemented at
+  `ff4b3f4b95d48410c7c1d3820e2b2a98444aacab`. Send handles retain the originating scheduler,
+  dispatch and counter owners. Fetch uses the official bounded main-thread response pump,
+  cancellation and explicit credentials; stored JS Window/unsafe Send+Sync are removed.
+  Actual worker-stream timeouts identify the missing official std queue prerequisite, now
+  committed at `72676731163`. Final-source HTTP passes eight 32,768-chunk responses, both
+  configured modes, six body-drop cases and waitAsync fallback. Queue stress passes 8/16
+  workers, 524,288 items/128 rounds per mode and every asynchronous join. Exact async-task and
+  wasm_thread sources are recorded separately from that owning queue correction.
+  The complete runtime/public cohort passes 2,233/2,235 with nine declared skips; both failures
+  refuse native window creation during display-topology changes. Those unchanged cases and
+  both Send native workflows subsequently pass 4/4, including exact Submitted pixels and the
+  ignored GPU trajectory. The original aggregate remains failed. Ordinary independently
+  locked consumers pass 83/67 with profiler on/off, disabled Core/public Send 1,351 and UI
+  core/components/docking/Canvas 2,974 pass. Locked Rust 1.95 checks, expanded correctness
+  Clippy, actual Windows Rust 1.93 framework/three-consumer checks, stable production wasm
+  profiler off/on, wasm Clippy and nightly shared-memory/profiler production compilation pass.
+  Stable browser smoke passes actual WebGL/WebGPU/Auto,
+  both PNG sizes and original interaction/fallback/refusal controls after disk/cache failures.
+  Source and locks are preserved. The [verification record](../../verification.md#sendable-foreground-submission-and-web-fetch)
+  owns failures, exact runs and remaining scope. All ten threads and both local fixture servers
+  are closed; full refresh and the real engine consumer still precede maintenance handoff.
 - The complete official system-notification successor is implemented at
   `26639a9715aff09ffbc61b92af45014728f02f94`, after `b14967342f2`. Core identity/show/dismiss/response,
   TestPlatform observations, native Windows/Linux/macOS transports and the ordinary example
@@ -749,13 +771,18 @@ historical scope and is not current branch or CI qualification.
 # Next Action
 
 - Implement the complete
-  [sendable foreground/Web Fetch successor](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#sendable-foreground-submission-and-web-fetch-successor)
-  through the existing scheduler/admission/profiler owners, after qualified
-  [system notifications](../../verification.md#system-notifications-and-ordered-app-responses)
-  and [Spring/motion reconciliation](../../verification.md#official-spring-and-shared-domain-sampling).
-  Preserve complete official regressions and ordinary independent consumption, keeping Core/native
-  and browser execution scope separate. Actual OS notification delivery remains separately
-  qualified. Continue the
+  [randomized trees and platform tree workloads](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#randomized-tree-and-platform-workload-successor)
+  after the [Send/Fetch qualification](../../verification.md#sendable-foreground-submission-and-web-fetch).
+  Reuse the existing harness and all six official regressions. Preserve seeded workload families,
+  exact scene/cache/candidate behavior and ordinary benchmark consumers; this does not create
+  another measurement owner. Full fixed-target closure and the real Nara consumer still precede
+  framework-maintenance handoff.
+- Continue after qualified
+  [system notifications](../../verification.md#system-notifications-and-ordered-app-responses),
+  [Spring/motion](../../verification.md#official-spring-and-shared-domain-sampling) and the
+  complete Send/Fetch successor. Preserve official regressions and ordinary independent
+  consumption, keeping Core/native and browser execution scope separate. Actual OS notification
+  delivery remains unqualified. Continue the
   [bounded residual inventory](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#bounded-core-residual-inventory)
   through complete official mechanisms; it is not an exhaustive semantic audit.
 - Continue remaining renderer/API/platform reconciliation after the complete
