@@ -451,15 +451,7 @@ impl WebWindowInner {
     }
 
     pub(crate) fn sync_dom_activation(&self) {
-        let is_active = !self.interaction_gate.is_quiesced()
-            && self.browser_window.document().is_some_and(|document| {
-                let is_visible = document_visibility(&self.browser_window).is_visible();
-                let document_has_focus = document.has_focus().unwrap_or(false);
-                let input_element: &web_sys::Element = self.input_element.as_ref();
-                let input_has_focus = document.active_element().as_ref() == Some(input_element);
-
-                is_visible && document_has_focus && input_has_focus
-            });
+        let is_active = self.input_is_focused();
 
         let changed = {
             let mut state = self.state.borrow_mut();
@@ -633,6 +625,29 @@ impl WebWindowInner {
         });
     }
 
+    pub(crate) fn input_is_focused(&self) -> bool {
+        !self.interaction_gate.is_quiesced()
+            && self.is_mapped.get()
+            && self.browser_window.document().is_some_and(|document| {
+                let is_visible = document_visibility(&self.browser_window).is_visible();
+                let document_has_focus = document.has_focus().unwrap_or(false);
+                let input_element: &web_sys::Element = self.input_element.as_ref();
+                let input_has_focus = document.active_element().as_ref() == Some(input_element);
+
+                is_visible && document_has_focus && input_has_focus
+            })
+    }
+
+    pub(crate) fn with_focused_input_handler<R>(
+        &self,
+        f: impl FnOnce(&mut PlatformInputHandler) -> R,
+    ) -> Option<R> {
+        if !self.input_is_focused() {
+            return None;
+        }
+        self.with_input_handler(f)
+    }
+
     pub(crate) fn with_input_handler<R>(
         &self,
         f: impl FnOnce(&mut PlatformInputHandler) -> R,
@@ -677,6 +692,7 @@ impl WebWindowInner {
             "dragleave",
             "keydown",
             "keyup",
+            "paste",
             "compositionstart",
             "compositionupdate",
             "compositionend",

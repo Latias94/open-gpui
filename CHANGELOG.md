@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- `App::read_from_clipboard_async` preserves desktop ready snapshots and supports permission-gated browser text/image reads. Platform-initiated paste forwards the complete `ClipboardItem` through `InputHandler::paste` and `EntityInputHandler::paste`; default handlers insert its text. Web text writing and DOM text/image paste share the existing input-handler lifecycle.
 - Seeded randomized element trees and platform tree workloads under `bench-support` preserve official topology, entity-local mutation, cached/hover/animation variants and reproducible workload families. Ordinary benchmark consumers can inspect the accepted rendered Scene without enabling test support.
 - `BoxShadow::new` and its blur, spread and inset builders follow the official CSS-order API.
 - `ForegroundExecutor::to_send` and scheduler `LocalExecutor::to_send` expose the official Send-only submission handles. Worker submissions keep the captured dispatch destination, scheduler lifetime and foreground accounting; output values need Send, without a Sync requirement.
@@ -21,6 +22,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Breaking Changes and Migration Notes
 
+- Native input diagnostics add `NativeInputHandlerOperation::Paste`; update exhaustive matches. Custom `Platform` implementations inherit a ready asynchronous clipboard read. Web text controls should leave the browser paste shortcut unconsumed and handle DOM paste, while explicit menu actions can await the asynchronous read; binding both paths would duplicate insertion.
 - The test-support `proptest` reexport now uses official 1.12, and `property_test` passes its reexport path using that version's supported syntax. Consumers mixing the property prelude with their own rand dependency should import the trait from their own RNG version explicitly.
 - Construct `FetchHttpClient` with the originating `ForegroundExecutor::to_send()` handle; the executor-free constructors, `Default` and unsafe single-thread assumptions are removed. `with_user_agent` also takes that handle. Explicitly install the client on the Application before startup; platform factories expose the same construction. GPUI dispatch-facing async-task types use the fixed source `015845a19fc31752c02367567d3b8900a406f9da`; consumers implementing the lower-level scheduler contract must select that source when naming its task types directly.
 - Native callback diagnostics add `NativeCallbackKind::SystemNotificationResponse`; update exhaustive matches over this test/integration enum. Ordinary Platform implementors inherit the default notification no-op methods.

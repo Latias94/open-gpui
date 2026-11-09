@@ -155,9 +155,22 @@ impl TextInput {
     }
 
     fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-            self.replace_text_in_range(None, &text.replace("\n", " "), window, cx);
-        }
+        let read = cx.read_from_clipboard_async();
+        cx.spawn_in(window, async move |this, cx| {
+            if let Some(item) = read.await? {
+                let _ = cx.update(|window, cx| {
+                    this.update(cx, |this, cx| {
+                        if this.focus_handle.is_focused(window)
+                            && window.is_focus_handle_rendered(&this.focus_handle)
+                        {
+                            EntityInputHandler::paste(this, item, window, cx);
+                        }
+                    })
+                });
+            }
+            Ok::<_, open_gpui::ClipboardReadError>(())
+        })
+        .detach_and_log_err(cx);
     }
 
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
@@ -285,6 +298,12 @@ impl TextInput {
 }
 
 impl EntityInputHandler for TextInput {
+    fn paste(&mut self, item: ClipboardItem, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(text) = item.text() {
+            self.replace_text_in_range(None, &text.replace('\n', " "), window, cx);
+        }
+    }
+
     fn text_for_range(
         &mut self,
         range_utf16: Range<usize>,
@@ -723,7 +742,10 @@ fn run_example() {
             KeyBinding::new("shift-left", SelectLeft, None),
             KeyBinding::new("shift-right", SelectRight, None),
             KeyBinding::new("cmd-a", SelectAll, None),
+            #[cfg(not(target_family = "wasm"))]
             KeyBinding::new("cmd-v", Paste, None),
+            #[cfg(not(target_family = "wasm"))]
+            KeyBinding::new("ctrl-v", Paste, None),
             KeyBinding::new("cmd-c", Copy, None),
             KeyBinding::new("cmd-x", Cut, None),
             KeyBinding::new("home", Home, None),

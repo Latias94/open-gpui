@@ -17,6 +17,8 @@ use open_gpui_web::{WebPlatform, WebPlatformOptions};
 use open_gpui_wgpu::{WebBackendPreference, WgpuBackend};
 use wasm_bindgen::JsValue;
 
+mod clipboard;
+
 const GRID_COLUMNS: usize = 128;
 const GRID_ROWS: usize = 128;
 const GRID_CELL: f32 = 2.0;
@@ -995,6 +997,10 @@ fn main() {
     }));
     let observed_platform = platform.clone();
     Application::with_platform(platform).run(move |cx: &mut App| {
+        if clipboard::requested() {
+            clipboard::open(cx);
+            return;
+        }
         let graphics_probe = GraphicsProbe {
             config,
             actual_backend: observed_platform.graphics_backend(),

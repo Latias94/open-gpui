@@ -4,10 +4,11 @@ use std::{
 };
 
 use open_gpui::{
-    Capslock, DispatchEventResult, ExternalPaths, FileDropEvent, KeyDownEvent, KeyUpEvent,
-    Keystroke, Modifiers, ModifiersChangedEvent, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, PlatformInput, Point, PointerCancelEvent, PointerCancelReason,
-    ScrollDelta, ScrollWheelEvent, TouchPhase, point, px,
+    Capslock, ClipboardEntry, ClipboardItem, ClipboardString, DispatchEventResult, ExternalPaths,
+    FileDropEvent, Image, ImageFormat, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
+    ModifiersChangedEvent, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, Pixels,
+    PlatformInput, Point, PointerCancelEvent, PointerCancelReason, ScrollDelta, ScrollWheelEvent,
+    TouchPhase, point, px,
 };
 use smallvec::smallvec;
 use wasm_bindgen::prelude::*;
@@ -171,6 +172,7 @@ impl WebWindowInner {
             self.register_dragleave(),
             self.register_key_down(),
             self.register_key_up(),
+            self.register_paste(),
             self.register_composition_start(),
             self.register_composition_update(),
             self.register_composition_end(),
@@ -565,8 +567,6 @@ impl WebWindowInner {
                 return;
             }
 
-            event.prevent_default();
-
             let is_held = event.repeat();
             let key_char = compute_key_char(&event, &key, &modifiers);
 
@@ -583,18 +583,28 @@ impl WebWindowInner {
             }));
 
             if !result.propagate {
+                event.prevent_default();
+                return;
+            }
+
+            if this.interaction_gate.is_quiesced() {
                 return;
             }
 
             if this.is_composing.get() || event.is_composing() {
+                event.prevent_default();
                 return;
             }
 
-            if modifiers.is_subset_of(&Modifiers::shift()) {
-                if let Some(text) = key_char {
-                    let _ = this
-                        .with_input_handler(|handler| handler.replace_text_in_range(None, &text));
-                }
+            if modifiers.is_subset_of(&Modifiers::shift())
+                && let Some(text) = key_char
+                && this
+                    .with_focused_input_handler(|handler| {
+                        handler.replace_text_in_range(None, &text)
+                    })
+                    .is_some()
+            {
+                event.prevent_default();
             }
         })
     }
@@ -630,8 +640,6 @@ impl WebWindowInner {
                 return;
             }
 
-            event.prevent_default();
-
             let key_char = compute_key_char(&event, &key, &modifiers);
 
             let keystroke = Keystroke {
@@ -640,7 +648,105 @@ impl WebWindowInner {
                 key_char,
             };
 
-            this.dispatch_input(PlatformInput::KeyUp(KeyUpEvent { keystroke }));
+            let result = this.dispatch_input(PlatformInput::KeyUp(KeyUpEvent { keystroke }));
+            if !result.propagate {
+                event.prevent_default();
+            }
+        })
+    }
+
+    /// Paste is delivered through the DOM `paste` event rather than
+    /// `Platform::read_from_clipboard`: the browser's asynchronous clipboard
+    /// read API cannot fit that synchronous signature, while `ClipboardEvent`
+    /// exposes `clipboardData` synchronously inside the event. It fires for
+    /// any browser-initiated paste (keyboard, menu bar, context menu).
+    ///
+    /// Text-only pastes reach the input handler synchronously. Pasted image
+    /// files only expose their bytes through asynchronous blob reads, so
+    /// pastes containing images are delivered once those reads resolve — to
+    /// whichever input handler is focused at that point, matching how an
+    /// application-level paste action would behave.
+    fn register_paste(self: &Rc<Self>) -> WebEventListener {
+        let this = Rc::clone(self);
+        self.listen_input("paste", move |event: JsValue| {
+            let event: web_sys::ClipboardEvent = event.unchecked_into();
+            if !this.input_is_focused() {
+                return;
+            }
+            let Some(clipboard_data) = event.clipboard_data() else {
+                return;
+            };
+            let text = clipboard_data
+                .get_data("text/plain")
+                .ok()
+                .filter(|text| !text.is_empty());
+
+            // File handles must be collected synchronously: the browser
+            // clears `clipboardData`'s item list once this handler returns,
+            // while the `File`s themselves stay readable afterwards.
+            let mut image_files = Vec::new();
+            let items = clipboard_data.items();
+            for index in 0..items.length() {
+                let Some(item) = items.get(index) else {
+                    continue;
+                };
+                if item.kind() != "file" {
+                    continue;
+                }
+                let Some(format) = ImageFormat::from_mime_type(&item.type_()) else {
+                    continue;
+                };
+                if let Ok(Some(file)) = item.get_as_file() {
+                    image_files.push((format, file));
+                }
+            }
+
+            if text.is_none() && image_files.is_empty() {
+                return;
+            }
+
+            if image_files.is_empty() {
+                if let Some(text) = text
+                    && this
+                        .with_focused_input_handler(|handler| {
+                            handler.paste(ClipboardItem::new_string(text));
+                        })
+                        .is_some()
+                {
+                    event.prevent_default();
+                }
+                return;
+            }
+            event.prevent_default();
+
+            let this = Rc::downgrade(&this);
+            wasm_bindgen_futures::spawn_local(async move {
+                let mut entries = Vec::new();
+                if let Some(text) = text {
+                    entries.push(ClipboardEntry::String(ClipboardString::new(text)));
+                }
+                for (format, file) in image_files {
+                    match crate::platform::read_blob_bytes(&file).await {
+                        Ok(bytes) => {
+                            entries.push(ClipboardEntry::Image(Image::from_bytes(format, bytes)));
+                        }
+                        Err(error) => {
+                            log::error!(
+                                "failed to read pasted image: {}",
+                                crate::platform::js_error_message(&error)
+                            );
+                        }
+                    }
+                }
+                if entries.is_empty() {
+                    return;
+                }
+                if let Some(this) = this.upgrade() {
+                    let _ = this.with_focused_input_handler(|handler| {
+                        handler.paste(ClipboardItem { entries });
+                    });
+                }
+            });
         })
     }
 

@@ -240,7 +240,9 @@ pub(crate) mod adapter {
             KeyBinding::new("ctrl-c", Copy, Some(TEXT_INPUT_KEY_CONTEXT)),
             KeyBinding::new("cmd-x", Cut, Some(TEXT_INPUT_KEY_CONTEXT)),
             KeyBinding::new("ctrl-x", Cut, Some(TEXT_INPUT_KEY_CONTEXT)),
+            #[cfg(not(target_family = "wasm"))]
             KeyBinding::new("cmd-v", Paste, Some(TEXT_INPUT_KEY_CONTEXT)),
+            #[cfg(not(target_family = "wasm"))]
             KeyBinding::new("ctrl-v", Paste, Some(TEXT_INPUT_KEY_CONTEXT)),
             KeyBinding::new(
                 "ctrl-cmd-space",
@@ -763,9 +765,23 @@ pub(crate) mod adapter {
             if !self.accepts_editing() {
                 return;
             }
-            if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-                self.replace_text_in_range(None, &text, window, cx);
-            }
+            let read = cx.read_from_clipboard_async();
+            cx.spawn_in(window, async move |this, cx| {
+                if let Some(item) = read.await? {
+                    let _ = cx.update(|window, cx| {
+                        this.update(cx, |this, cx| {
+                            if this.accepts_editing()
+                                && this.focus_handle.is_focused(window)
+                                && window.is_focus_handle_rendered(&this.focus_handle)
+                            {
+                                EntityInputHandler::paste(this, item, window, cx);
+                            }
+                        })
+                    });
+                }
+                Ok::<_, open_gpui::ClipboardReadError>(())
+            })
+            .detach_and_log_err(cx);
         }
 
         pub(super) fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
@@ -1984,6 +2000,9 @@ impl Element for EditableTextElement {
         });
     }
 }
+
+#[cfg(test)]
+mod clipboard_tests;
 
 #[cfg(test)]
 mod render_tests {

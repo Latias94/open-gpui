@@ -1,4 +1,6 @@
 use super::display::TestDisplayChangeCallback;
+#[cfg(any(test, feature = "test-support"))]
+use crate::ClipboardReadError;
 use crate::{
     AnyWindowHandle, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle, DevicePixels,
     DisplayId, DummyKeyboardMapper, ForegroundExecutor, Keymap, MouseButton,
@@ -56,6 +58,8 @@ pub(crate) struct TestPlatform {
     active_cursor: Mutex<CursorStyle>,
     pressed_mouse_buttons: Mutex<Option<Vec<MouseButton>>>,
     current_clipboard_item: Mutex<Option<ClipboardItem>>,
+    #[cfg(any(test, feature = "test-support"))]
+    next_clipboard_read: RefCell<Option<Task<Result<Option<ClipboardItem>, ClipboardReadError>>>>,
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     current_primary_item: Mutex<Option<ClipboardItem>>,
     #[cfg(target_os = "macos")]
@@ -150,6 +154,14 @@ pub(crate) struct TestPrompts {
 }
 
 impl TestPlatform {
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn set_next_clipboard_read(
+        &self,
+        read: Task<Result<Option<ClipboardItem>, ClipboardReadError>>,
+    ) {
+        *self.next_clipboard_read.borrow_mut() = Some(read);
+    }
+
     #[cfg(test)]
     pub(crate) fn defer_next_launch(&self) {
         self.defer_next_launch.set(true);
@@ -226,6 +238,8 @@ impl TestPlatform {
             app_menu_action_callback: Default::default(),
             validate_app_menu_command_callback: Default::default(),
             current_clipboard_item: Mutex::new(None),
+            #[cfg(any(test, feature = "test-support"))]
+            next_clipboard_read: RefCell::new(None),
             #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             current_primary_item: Mutex::new(None),
             #[cfg(target_os = "macos")]
@@ -1242,6 +1256,14 @@ impl Platform for TestPlatform {
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
         self.current_clipboard_item.lock().clone()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    fn read_from_clipboard_async(&self) -> Task<Result<Option<ClipboardItem>, ClipboardReadError>> {
+        self.next_clipboard_read
+            .borrow_mut()
+            .take()
+            .unwrap_or_else(|| Task::ready(Ok(self.read_from_clipboard())))
     }
 
     fn write_to_clipboard(&self, item: ClipboardItem) {

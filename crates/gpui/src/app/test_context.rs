@@ -1,15 +1,16 @@
 use crate::{
     Action, AnyView, AnyWindowHandle, App, AppCell, AppContext, AsyncApp, AvailableSpace,
-    BackgroundExecutor, BorrowAppContext, Bounds, Capslock, ClipboardItem, CursorStyle,
-    DispatchEventResult, DisplayId, DrawPhase, Drawable, Element, Empty, EntityId, EventEmitter,
-    ForegroundExecutor, Global, InputEvent, Keystroke, Modifiers, ModifiersChangedEvent,
-    MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, Pixels, Platform,
-    PlatformPointerCaptureReleaseOutcome, PlatformWindowCreationCapabilities,
-    PlatformWindowDispatch, PlatformWindowHitStack, PlatformWindowMutationCapabilities,
-    PlatformWindowMutationTerminal, PlatformWindowPresentOutcome, Point, PowerMode, Render, Result,
-    SharedString, Size, SystemNotification, SystemNotificationResponse, Task, TestDispatcher,
-    TestPlatform, TestScreenCaptureSource, TestWindow, TextSystem, ThermalState, VisualContext,
-    Window, WindowBounds, WindowHandle, WindowMutationDomain, WindowOptions, WindowPlatformFacts,
+    BackgroundExecutor, BorrowAppContext, Bounds, Capslock, ClipboardItem, ClipboardReadError,
+    CursorStyle, DispatchEventResult, DisplayId, DrawPhase, Drawable, Element, Empty, EntityId,
+    EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke, Modifiers,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
+    MouseUpEvent, Pixels, Platform, PlatformPointerCaptureReleaseOutcome,
+    PlatformWindowCreationCapabilities, PlatformWindowDispatch, PlatformWindowHitStack,
+    PlatformWindowMutationCapabilities, PlatformWindowMutationTerminal,
+    PlatformWindowPresentOutcome, Point, PowerMode, Render, Result, SharedString, Size,
+    SystemNotification, SystemNotificationResponse, Task, TestDispatcher, TestPlatform,
+    TestScreenCaptureSource, TestWindow, TextSystem, ThermalState, VisualContext, Window,
+    WindowBounds, WindowHandle, WindowMutationDomain, WindowOptions, WindowPlatformFacts,
     app::GpuiMode, platform::RequestFrameOptions, window::ElementArenaScope,
 };
 use anyhow::{anyhow, bail};
@@ -484,6 +485,15 @@ impl TestAppContext {
     /// This will return the most recent value from `write_to_clipboard`.
     pub fn read_from_clipboard(&self) -> Option<ClipboardItem> {
         self.test_platform.read_from_clipboard()
+    }
+
+    /// Supplies the next asynchronous clipboard read, including its completion or cancellation.
+    /// Later reads return ready snapshots of the simulated clipboard again.
+    pub fn set_next_clipboard_read(
+        &self,
+        read: Task<Result<Option<ClipboardItem>, ClipboardReadError>>,
+    ) {
+        self.test_platform.set_next_clipboard_read(read);
     }
 
     /// Simulates choosing a File in the platform's "Open" dialog.
@@ -2098,6 +2108,9 @@ impl AnyWindowHandle {
 
 #[cfg(test)]
 mod accessibility_tests;
+
+#[cfg(test)]
+mod clipboard_tests;
 
 #[cfg(test)]
 mod pointer_session_tests;

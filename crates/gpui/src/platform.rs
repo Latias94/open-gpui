@@ -3777,6 +3777,17 @@ pub trait Platform: 'static {
     fn read_from_clipboard(&self) -> Option<ClipboardItem>;
     fn write_to_clipboard(&self, item: ClipboardItem);
 
+    /// Reads the clipboard, resolving once its contents are available.
+    ///
+    /// Most platforms read synchronously and return a ready task. Platforms
+    /// whose clipboard access is inherently asynchronous and permission-gated
+    /// (e.g. the browser's async clipboard API) override this method; on those
+    /// platforms [`Platform::read_from_clipboard`] cannot return the clipboard
+    /// contents, so callers that can await should prefer this method.
+    fn read_from_clipboard_async(&self) -> Task<Result<Option<ClipboardItem>, ClipboardReadError>> {
+        Task::ready(Ok(self.read_from_clipboard()))
+    }
+
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     fn read_from_primary(&self) -> Option<ClipboardItem>;
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -7108,6 +7119,12 @@ impl PlatformInputHandler {
         )
     }
 
+    pub fn paste(&mut self, item: ClipboardItem) {
+        self.native_callback(NativeInputHandlerOperation::Paste, |handler, window, cx| {
+            handler.paste(item, window, cx)
+        })
+    }
+
     pub fn bounds_for_range(&mut self, range_utf16: Range<usize>) -> Option<Bounds<Pixels>> {
         let transform = self.transform;
         self.native_callback(
@@ -7310,6 +7327,18 @@ pub trait InputHandler: 'static {
     /// Remove the IME 'composing' state from the document
     /// Corresponds to [unmarkText()](https://developer.apple.com/documentation/appkit/nstextinputclient/1438239-unmarktext)
     fn unmark_text(&mut self, window: &mut Window, cx: &mut App);
+
+    /// Insert a platform-initiated paste at the current selection.
+    ///
+    /// Platforms that deliver paste as an input event rather than through an
+    /// application-defined action (e.g. the DOM `paste` event on web) call
+    /// this with the full clipboard contents. The default implementation
+    /// inserts only the plain-text portion of the item.
+    fn paste(&mut self, item: ClipboardItem, window: &mut Window, cx: &mut App) {
+        if let Some(text) = item.text() {
+            self.replace_text_in_range(None, &text, window, cx);
+        }
+    }
 
     /// Get the bounds of the given document range in untransformed window-layout coordinates.
     /// Corresponds to [firstRect(forCharacterRange:actualRange:)](https://developer.apple.com/documentation/appkit/nstextinputclient/1438240-firstrect)
@@ -7904,6 +7933,40 @@ pub struct ClipboardItem {
     /// The entries in this clipboard item.
     pub entries: Vec<ClipboardEntry>,
 }
+
+/// An error produced by [`Platform::read_from_clipboard_async`].
+///
+/// Callers surface these failures to users, so the variants distinguish
+/// conditions that call for different user-facing guidance.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ClipboardReadError {
+    /// The platform clipboard is not available in this context, e.g. the
+    /// browser does not expose the async clipboard API or the page is not a
+    /// secure context.
+    Unavailable,
+    /// The platform refused access, e.g. the user declined the browser's
+    /// clipboard permission prompt or paste confirmation.
+    Denied(String),
+    /// The clipboard contents could not be converted into a
+    /// [`ClipboardItem`].
+    UnsupportedContent,
+}
+
+impl std::fmt::Display for ClipboardReadError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unavailable => formatter.write_str("the clipboard is unavailable"),
+            Self::Denied(message) => {
+                write!(formatter, "clipboard access was denied: {message}")
+            }
+            Self::UnsupportedContent => {
+                formatter.write_str("the clipboard contents are unsupported")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ClipboardReadError {}
 
 /// Either a ClipboardString or a ClipboardImage
 #[derive(Clone, Debug, Eq, PartialEq)]

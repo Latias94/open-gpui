@@ -52,9 +52,15 @@ raw-window-handle = "0.6"
 wasm_thread = { workspace = true, optional = true }
 web-sys = { version = "0.3.103", features = [
     "console",
+    "Blob",
+    "Clipboard",
+    "ClipboardEvent",
+    "ClipboardItem",
     "CompositionEvent",
     "CssStyleDeclaration",
     "DataTransfer",
+    "DataTransferItem",
+    "DataTransferItemList",
     "Document",
     "DomRect",
     "DragEvent",

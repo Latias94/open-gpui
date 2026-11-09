@@ -128,6 +128,7 @@ pub enum NativeInputHandlerOperation {
     ReplaceTextInRange,
     ReplaceAndMarkTextInRange,
     UnmarkText,
+    Paste,
     BoundsForRange,
     ApplePressAndHoldEnabled,
     ImeCandidateBounds,

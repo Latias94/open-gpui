@@ -1,4 +1,6 @@
 use serde_json::{Value, json};
+
+mod clipboard;
 use std::{
     env, fs,
     io::{ErrorKind, Read, Write},
@@ -252,6 +254,14 @@ fn qualify_browser(cdp: &mut CdpClient, url: &str, allow_unavailable: bool) -> R
             "web smoke backend={requested} actual={actual}: complete input/capture/docking/activation and renderer/resize passed"
         );
     }
+    clipboard::qualify(
+        cdp,
+        &format!(
+            "{url}&backend={}&software={}",
+            if webgl { "webgl" } else { "webgpu" },
+            !webgl
+        ),
+    )?;
     if webgl {
         expect_graphics_refusal(
             cdp,

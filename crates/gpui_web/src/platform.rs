@@ -6,9 +6,10 @@ use crate::window::WebWindow;
 use anyhow::Result;
 use futures::channel::oneshot;
 use open_gpui::{
-    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, DisplayId, DummyKeyboardMapper,
-    ForegroundExecutor, Keymap, Menu, MenuItem, NativeAppNotificationHandler, PathPromptOptions,
-    Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
+    Action, AnyWindowHandle, BackgroundExecutor, ClipboardEntry, ClipboardItem, ClipboardReadError,
+    ClipboardString, DisplayId, DummyKeyboardMapper, ForegroundExecutor, Image, ImageFormat,
+    Keymap, Menu, MenuItem, NativeAppNotificationHandler, PathPromptOptions, Platform,
+    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
     PlatformWindow, PlatformWindowActivationSupport, PlatformWindowCapabilities,
     PlatformWindowCreationCapabilities, PlatformWindowMutationCapabilities, Task, ThermalState,
     WindowAppearance, WindowCreationSupport, WindowInitialPresentationOrder, WindowKind,
@@ -550,7 +551,81 @@ impl Platform for WebPlatform {
         None
     }
 
-    fn write_to_clipboard(&self, _item: ClipboardItem) {}
+    fn read_from_clipboard_async(&self) -> Task<Result<Option<ClipboardItem>, ClipboardReadError>> {
+        let navigator = self.browser_window.navigator();
+        // `navigator.clipboard` is undefined outside secure contexts; probing
+        // first avoids a wasm-bindgen abort from invoking a method on
+        // `undefined`.
+        let Some(clipboard) = browser_clipboard(&navigator, "read") else {
+            return Task::ready(Err(ClipboardReadError::Unavailable));
+        };
+        // `read()` must be called synchronously so it is still covered by the
+        // user activation (e.g. the click on a context-menu item) that
+        // triggered this read.
+        let read = clipboard.read();
+        self.foreground_executor.spawn(async move {
+            let items = wasm_bindgen_futures::JsFuture::from(read)
+                .await
+                .map_err(clipboard_read_rejection_error)?;
+            let mut entries = Vec::new();
+            let mut saw_unsupported_type = false;
+            for item in js_sys::Array::from(&items).iter() {
+                let item: web_sys::ClipboardItem = item.unchecked_into();
+                for mime_type in item.types().iter() {
+                    let Some(mime_type) = mime_type.as_string() else {
+                        continue;
+                    };
+                    // Only fetch blobs for types we can convert; copies from
+                    // other web apps routinely carry `text/html` and
+                    // `web application/...` custom formats whose `getType`
+                    // fetches would be wasted or rejected.
+                    if mime_type == "text/plain" {
+                        match read_clipboard_item_text(&item, &mime_type).await {
+                            Ok(text) if !text.is_empty() => {
+                                entries.push(ClipboardEntry::String(ClipboardString::new(text)));
+                            }
+                            Ok(_) => {}
+                            Err(error) => log_clipboard_entry_error(&mime_type, &error),
+                        }
+                    } else if let Some(format) = ImageFormat::from_mime_type(&mime_type) {
+                        match read_clipboard_item_bytes(&item, &mime_type).await {
+                            Ok(bytes) => {
+                                entries
+                                    .push(ClipboardEntry::Image(Image::from_bytes(format, bytes)));
+                            }
+                            Err(error) => log_clipboard_entry_error(&mime_type, &error),
+                        }
+                    } else {
+                        saw_unsupported_type = true;
+                    }
+                }
+            }
+            if !entries.is_empty() {
+                Ok(Some(ClipboardItem { entries }))
+            } else if saw_unsupported_type {
+                Err(ClipboardReadError::UnsupportedContent)
+            } else {
+                Ok(None)
+            }
+        })
+    }
+
+    fn write_to_clipboard(&self, item: ClipboardItem) {
+        if let Some(text) = item.text()
+            && let Some(clipboard) =
+                browser_clipboard(&self.browser_window.navigator(), "writeText")
+        {
+            let write = clipboard.write_text(&text);
+            wasm_bindgen_futures::spawn_local(async move {
+                if let Err(error) = wasm_bindgen_futures::JsFuture::from(write).await {
+                    log::warn!(
+                        "failed to write clipboard text: {}",
+                        js_error_message(&error)
+                    );
+                }
+            });
+        }
+    }
 
     fn write_credentials(&self, _url: &str, _username: &str, _password: &[u8]) -> Task<Result<()>> {
         Task::ready(Err(anyhow::anyhow!(
@@ -596,6 +671,84 @@ impl Drop for EventListenerHandle {
             )
             .ok();
     }
+}
+
+fn browser_clipboard(navigator: &web_sys::Navigator, method: &str) -> Option<web_sys::Clipboard> {
+    let clipboard = js_sys::Reflect::get(navigator.as_ref(), &"clipboard".into()).ok()?;
+    if clipboard.is_undefined() || clipboard.is_null() {
+        return None;
+    }
+    let method = js_sys::Reflect::get(&clipboard, &method.into()).ok()?;
+    method
+        .is_function()
+        .then(|| clipboard.unchecked_into::<web_sys::Clipboard>())
+}
+
+/// Maps a `navigator.clipboard.read()` rejection to a [`ClipboardReadError`].
+///
+/// Only `NotAllowedError` and `SecurityError` mean the user or browser
+/// refused access; other rejections (e.g. `DataError`) indicate content the
+/// clipboard could not represent, where "allow clipboard access" guidance
+/// would mislead.
+fn clipboard_read_rejection_error(error: JsValue) -> ClipboardReadError {
+    match js_error_name(&error).as_deref() {
+        Some("NotAllowedError") | Some("SecurityError") => {
+            ClipboardReadError::Denied(js_error_message(&error))
+        }
+        _ => ClipboardReadError::UnsupportedContent,
+    }
+}
+
+async fn read_clipboard_item_blob(
+    item: &web_sys::ClipboardItem,
+    mime_type: &str,
+) -> Result<web_sys::Blob, JsValue> {
+    let blob = wasm_bindgen_futures::JsFuture::from(item.get_type(mime_type)).await?;
+    Ok(blob.unchecked_into())
+}
+
+async fn read_clipboard_item_text(
+    item: &web_sys::ClipboardItem,
+    mime_type: &str,
+) -> Result<String, JsValue> {
+    let blob = read_clipboard_item_blob(item, mime_type).await?;
+    let text = wasm_bindgen_futures::JsFuture::from(blob.text()).await?;
+    text.as_string()
+        .ok_or_else(|| JsValue::from_str("blob text is not a string"))
+}
+
+async fn read_clipboard_item_bytes(
+    item: &web_sys::ClipboardItem,
+    mime_type: &str,
+) -> Result<Vec<u8>, JsValue> {
+    let blob = read_clipboard_item_blob(item, mime_type).await?;
+    read_blob_bytes(&blob).await
+}
+
+pub(crate) async fn read_blob_bytes(blob: &web_sys::Blob) -> Result<Vec<u8>, JsValue> {
+    let buffer = wasm_bindgen_futures::JsFuture::from(blob.array_buffer()).await?;
+    Ok(js_sys::Uint8Array::new(&buffer).to_vec())
+}
+
+fn js_error_name(error: &JsValue) -> Option<String> {
+    js_sys::Reflect::get(error, &"name".into())
+        .ok()
+        .and_then(|name| name.as_string())
+}
+
+pub(crate) fn js_error_message(error: &JsValue) -> String {
+    js_sys::Reflect::get(error, &"message".into())
+        .ok()
+        .and_then(|message| message.as_string())
+        .or_else(|| error.as_string())
+        .unwrap_or_else(|| "unknown browser error".to_string())
+}
+
+fn log_clipboard_entry_error(mime_type: &str, error: &JsValue) {
+    log::warn!(
+        "failed to read clipboard entry with type {mime_type}: {}",
+        js_error_message(error)
+    );
 }
 
 fn cursor_restore_listeners(

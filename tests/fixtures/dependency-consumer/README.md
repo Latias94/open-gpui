@@ -1402,3 +1402,59 @@ their ordinary headless renderer, but accepted-scene equality alone does not pro
 These commands are runnable verification instructions, not a record of successful compilation,
 benchmark execution, native `Submitted`, capture, pixel correctness or measured performance.
 Actual GPU submission/capture and numeric performance retain their separate qualification owners.
+
+## Async clipboard and paste consumer
+
+The `clipboard` integration test consumes the official async clipboard and platform paste APIs
+from Zed
+[`d70c45e5bb1d8b7b3926fba5a6d1c69c23bbc405`](https://github.com/zed-industries/zed/commit/d70c45e5bb1d8b7b3926fba5a6d1c69c23bbc405),
+within target
+[`635026fabc38440fce5e1767d125026a17b12012`](https://github.com/zed-industries/zed/tree/635026fabc38440fce5e1767d125026a17b12012).
+It uses the existing independent lockfile and requires no new dependencies or manifest changes.
+
+Without optional features, two executed controls check all three exact `ClipboardReadError`
+variants (`Unavailable`, `Denied(String)`, `UnsupportedContent`), their `Display` and standard
+error contracts, and mixed clipboard entry order, text metadata, image format/bytes, paths and
+text projection. These error values are constructed controls, not permission-denial injection.
+
+With the fixture's existing `bench-support` feature, three additional tests execute actual App
+and Window calls without `test-support`. They construct the existing public
+`bench_platform(None, Arc::new(NoopTextSystem))` and start it through
+`Application::run_embedded`; this platform returns to its caller. `HeadlessAppContext` is gated
+by `test-support` and is not used here. No Criterion benchmark or native platform loop runs.
+
+The runtime cases call `App::read_from_clipboard_async` through a shared App, retain its ready
+task, overwrite the clipboard, and only then poll the task. Both an initially empty `Ok(None)`
+and a full mixed-item snapshot must remain independent of later writes. The paste case directly
+executes `InputHandler::paste` on `ElementInputHandler` against a live Window, comparing the
+default `EntityInputHandler` text replacement with a full-item override. Mixed text/image/path
+items preserve all entries and metadata in the override; the default concatenates the text.
+Image-only and empty items perform no text replacement, and path-only items retain the existing
+path-to-text fallback. The lifetime case closes a real Window, verifies its weak root releases,
+retains the ready read and both async contexts across App release, and checks that late window
+updates fail and the App-owned drop marker releases exactly once.
+
+Run the default controls and then the runtime cases serially, with `CARGO_BUILD_JOBS=1` and the
+repository build directory. Both commands use the independent lockfile without `test-support`:
+
+```text
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --test clipboard --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --features bench-support --test clipboard --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+The companion crate-external `crates/gpui/tests/clipboard.rs` target uses `test-support` and the
+single-use `TestAppContext::set_next_clipboard_read` fixture for pending completion, each exact
+platform error and cancellation. It also drives an actual mouse callback on an accepted frame
+to await a read and paste the full item through the public entity adapter, and rejects a late
+paste after window/entity release. Its direct default-handler case separately covers
+`InputHandler::paste` text fallback. Run that target separately:
+
+```text
+cargo nextest run -p open-gpui --features test-support --test clipboard --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+These commands are verification instructions, not a record of successful execution. Direct
+handler calls do not establish delivery through an installed platform input-handler slot.
+Neither consumer qualifies browser permissions, DOM paste events, native system clipboard
+access, image decoding, renderer output, native `Submitted`, or measured performance. The
+framework owner, browser and native consumers retain those separate responsibilities.
