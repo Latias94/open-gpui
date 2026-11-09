@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- macOS `App::write_credentials_if_not_exists` uses a single Keychain insertion and reports an existing server/account without replacing its secret. The Mac backend exposes reusable typed Keychain operation, cancellation and status errors; the macOS Platform default reports unsupported when a backend lacks atomic insertion.
 - `App::read_from_clipboard_async` preserves desktop ready snapshots and supports permission-gated browser text/image reads. Platform-initiated paste forwards the complete `ClipboardItem` through `InputHandler::paste` and `EntityInputHandler::paste`; default handlers insert its text. Web text writing and DOM text/image paste share the existing input-handler lifecycle.
 - Seeded randomized element trees and platform tree workloads under `bench-support` preserve official topology, entity-local mutation, cached/hover/animation variants and reproducible workload families. Ordinary benchmark consumers can inspect the accepted rendered Scene without enabling test support.
 - `BoxShadow::new` and its blur, spread and inset builders follow the official CSS-order API.
@@ -164,6 +165,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Fixed
 
+- Windows credential reads, writes and deletion run on the existing background executor. Reads accept null account/blob fields and free native storage before propagating conversion errors. Linux uses the fixed upstream oo7 prompt-stream correction so a stream ending before Completed returns an I/O error instead of panicking.
 - Windows clipboard writes replace embedded NULs with spaces before encoding and hashing, preserving the complete normalized text and its metadata. macOS pasteboards and custom type strings retain their Objective-C ownership, and reads return Rust-owned bytes beyond autorelease-pool lifetimes.
 - Native ingress avoids redundant foreground wakes while an App borrow or active post-borrow convergence already owns delivery. Pure animation no longer keeps benchmark idle draining alive. Refused visibility candidates preserve the accepted Div mouse press until an admitted frame removes its interaction membership.
 

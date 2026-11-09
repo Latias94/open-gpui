@@ -86,7 +86,7 @@ open_gpui_util.workspace = true
 uuid.workspace = true
 
 # Always used
-oo7 = { version = "0.6", default-features = false, features = [
+oo7 = { workspace = true, features = [
     "async-std",
     "native_crypto",
 ] }

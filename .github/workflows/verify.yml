@@ -164,6 +164,22 @@ jobs:
       - name: Test system notification values, App responses and native transport
         run: cargo nextest run --locked -p open-gpui -p open-gpui-windows -p open-gpui-linux --all-features --lib --test system_notifications -E 'test(system_notification) | test(notification_simulation_) | binary(system_notifications)' --test-threads=1 --no-fail-fast --no-tests fail
 
+      - name: Test public credential tasks and unsupported add-only default
+        run: cargo nextest run --locked -p open-gpui --all-features --test credentials --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Test independent credential tasks without test support
+        run: cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features bench-support --test credentials --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Test native Windows credential storage, copying and thread ownership
+        if: matrix.name == 'windows'
+        run: cargo nextest run --locked -p open-gpui-windows --all-features --lib -E 'test(credential)' --run-ignored all --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Test typed Keychain errors and independent ordinary API
+        if: matrix.name == 'macos'
+        run: |
+          cargo nextest run --locked -p open-gpui-macos --all-features --lib -E 'test(keychain::)' --test-threads=1 --no-fail-fast --no-tests fail
+          cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test credentials --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+
       - name: Test independent system notification API without optional features
         if: matrix.name == 'windows'
         run: cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test system_notifications --target-dir target --test-threads=1 --no-fail-fast --no-tests fail

@@ -62,6 +62,7 @@ objc2-core-video.workspace = true
 objc2-foundation.workspace = true
 objc2-metal.workspace = true
 objc2-quartz-core.workspace = true
+objc2-security.workspace = true
 objc2-user-notifications = { version = "0.3", default-features = false, features = [
     "std",
     "block2",
@@ -80,6 +81,7 @@ raw-window-handle = "0.6"
 semver.workspace = true
 smallvec.workspace = true
 strum.workspace = true
+thiserror.workspace = true
 open_gpui_util.workspace = true
 uuid.workspace = true
 

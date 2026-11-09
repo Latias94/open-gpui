@@ -84,6 +84,8 @@ mod native_cache_dependency_tests;
 mod native_clipboard_tests;
 #[path = "native_composite_focus_tests.rs"]
 mod native_composite_focus_tests;
+#[path = "native_credentials_tests.rs"]
+pub(super) mod native_credentials_tests;
 #[path = "native_display_observation_tests.rs"]
 mod native_display_observation_tests;
 #[path = "native_embedded_app_tests.rs"]

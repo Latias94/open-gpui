@@ -1458,3 +1458,69 @@ handler calls do not establish delivery through an installed platform input-hand
 Neither consumer qualifies browser permissions, DOM paste events, native system clipboard
 access, image decoding, renderer output, native `Submitted`, or measured performance. The
 framework owner, browser and native consumers retain those separate responsibilities.
+
+## Credential tasks and macOS add-only consumer
+
+The `credentials` integration test consumes the credential APIs and macOS-only add-only method
+from official Zed
+[`79fe6a645f68f8c9230578f154bf99852d9f716f`](https://github.com/zed-industries/zed/commit/79fe6a645f68f8c9230578f154bf99852d9f716f),
+as present at fixed target
+[`635026fabc38440fce5e1767d125026a17b12012`](https://github.com/zed-industries/zed/tree/635026fabc38440fce5e1767d125026a17b12012).
+`App::write_credentials_if_not_exists(&self, url, username, password)` returns
+`Task<Result<bool>>` only on macOS. `true` means creation and `false` means an existing item was
+left unchanged. The Platform default immediately returns
+`this platform does not support atomic credential writes`; it has no read-then-write fallback.
+Ordinary `write_credentials`, `read_credentials` and `delete_credentials` retain their contracts.
+
+With the fixture's existing `bench-support` feature, two runtime tests execute public App,
+Platform and AsyncApp calls through `bench_platform(None, Arc::new(NoopTextSystem))` and
+`Application::run_embedded`, without enabling `test-support`. The platform supplies ready
+credential stubs: read returns `Ok(None)`, and write/delete return `Ok(())`. Reads remain empty
+after a successful stub write. The tests poll tasks after their borrowed input buffers leave
+scope; a separate lifetime case retains tasks and AsyncApp across shutdown and App release,
+then verifies that the App-owned drop marker releases exactly once and tasks still complete.
+These are executed call paths when the tests run, rather than uncalled signature closures.
+
+On macOS, `bench-support` enables a third runtime test that executes the add-only unsupported
+default through both `Rc<dyn Platform>` and a shared `&App`. Ordinary stub writes still succeed,
+but neither add-only call may report creation or a duplicate. The lifetime case also retains an
+add-only task beyond input and App release and checks the exact unsupported error.
+
+Three macOS-only error controls require no optional fixture feature. They consume the backend's
+public `open_gpui_macos::keychain::{KeychainError, KeychainOperation}`, matching official Keychain
+source blob `a40eafcf2032a3cae4282e822a0354fb63aaf51c`. These tests require the fixture's
+target-specific `open_gpui_macos` dependency. Constructed `Security`, `UserCanceled` and
+`InvalidResponse` errors check exact operations, OSStatus values, official secret-free messages,
+and borrowed and owned downcasting after application context is added through `open_gpui::Result`.
+The controls construct errors directly; they do not inject OS statuses, query Keychain, or prove
+native cancellation, absence classification, duplicate handling or persistence. Every credential
+assertion uses a boolean condition and static failure message so failures do not print read tuples
+or test credential buffers.
+
+Run the independent runtime target serially with `CARGO_BUILD_JOBS=1` and the repository build
+directory. It contains two tests on Windows/Linux and six on macOS, including the error controls:
+
+```text
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --features bench-support --test credentials --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+On macOS, run the three standalone error controls without `bench-support` as well. On other
+targets, this feature-free credentials target intentionally contains no tests:
+
+```text
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --test credentials --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+The companion crate-external `crates/gpui/tests/credentials.rs` uses `test-support` without any
+backend dependency. Its two portable tests execute the ready stub contract and App/task/async
+context lifetime; a third test on macOS checks the exact unsupported add-only default. Run it
+separately:
+
+```text
+cargo nextest run -p open-gpui --features test-support --test credentials --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+These commands are verification instructions, not execution results. Windows results do not
+compile or execute the macOS-only API or error controls. Neither consumer qualifies native
+credential storage, interprocess atomicity, native platform loops, renderer output or `Submitted`.
+The native backend tests and platform qualification retain those separate responsibilities.

@@ -12,6 +12,7 @@ mod display;
 mod display_link;
 mod events;
 mod keyboard;
+pub mod keychain;
 mod metal_compat;
 mod pasteboard;
 mod process_info;
