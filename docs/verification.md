@@ -6139,6 +6139,171 @@ clipboard/credential differences, canonical docking, measured costs and Nara's r
 consumer remain open. Continue the source-mapped asynchronous clipboard/Web paste successor;
 its new source map does not claim implementation or engine adoption.
 
+## Asynchronous Clipboard And Web Paste
+
+This successor starts from local `770463485ac9aaf4150475fa84fe90c33fbd4507`, against fixed
+Zed `635026fabc38440fce5e1767d125026a17b12012`. Official
+`d70c45e5bb1d8b7b3926fba5a6d1c69c23bbc405` owns asynchronous reads, error classification and
+complete-item paste. `084b5d21f67cdbe06edd2822ce34e58b3cd774f7` supplies browser text writing
+and DOM paste; `5d447d4223f8455db4811ed332c4ad744bb13e40` preserves unconsumed browser key
+defaults. Existing listener removal already matches `c97b7c0ea41acf56e9726964eca10c2078e921b0`.
+Windows embedded-NUL normalization and macOS pasteboard-retention successors remain separate
+inventory items, not implicit coverage from the desktop ready adapter.
+
+Platform/App keep synchronous reads and add the official Task-returning read, with exact
+Unavailable, Denied and UnsupportedContent errors. Desktop fallback captures its synchronous
+snapshot before returning the ready task. No new AsyncApp service or clipboard lifecycle owner
+is added. Platform paste reuses the existing handler slot, generation, native input transaction
+and candidate-admission owners. Entity overrides receive every original entry; default handlers
+project text through the existing replacement path.
+
+Browser reads start in the triggering call stack before asynchronous waiting. DOM text paste is
+synchronous; image Files are captured before the event returns, then read without retaining an
+App borrow or handler checkout. Delivery reacquires the current admitted, DOM-focused live
+handler. Weak window custody and the existing quiescence/listener retirement prevent late
+delivery. Real TextInput and example actions recheck editing, focus and rendered membership at
+completion. Their Web default paste bindings yield to the DOM event to avoid duplicate insertion.
+The TestPlatform's one-read override supplies controlled pending/error tasks through its existing
+test-support owner; subsequent reads return ordinary ready snapshots. Its storage, setter and
+override are gated to tests/test-support. Ordinary bench-only platforms inherit the official ready
+default without the injection slot; their independently locked consumer checks that path.
+
+The first locked Rust 1.95 production library check passes for Core, Web, Windows and components.
+The independently locked browser smoke consumer also passes its actual wasm compilation. Its
+existing docking warnings retain their scope; the new consumer's unused import is removed.
+Behavioral, native and browser qualification is in progress at this checkpoint.
+
+The initial focused Core/public/component run passes 21/21
+(`9bf836a5-5acb-40d3-8fd8-24a79e9a0548`), including all ten component async-paste cases and
+the existing native-input ordering controls. The seven new internal tests and five additional
+public tests were not selected in this first checkpoint. The actual Windows clipboard and
+existing pending-input trajectory pass 2/2 (`241943fe-7a9e-48f0-a2a8-ba87e386af29`): a real
+Unicode/metadata clipboard snapshot survives a later write, the registered default entity handler
+consumes it, and exact accepted nonempty Submitted generations contain its DirectWrite text.
+HWND retirement, reconstruction and TextSystem release remain asserted. This proves renderer
+submission, not physical keyboard input or compositor scanout.
+
+Independent source review finds no confirmed production defect and identifies two browser-test
+gaps: the initial shared dynamic target could not distinguish stale handlers, and cumulative
+image bytes could hide a missing image in one delivery. The consumer now installs two immutable
+entity targets and waits for a newer accepted-frame publication before releasing the delayed
+File. Each path records entry kinds and the image byte digest; the expected real clipboard PNG
+is independently decoded to its known pixel. Actual browser execution remains pending here.
+
+The first complete focused build stops before running tests: four new internal fixture calls
+use Window's sibling-private `mark_view_dirty`. They are replaced with ordinary entity
+notification; production visibility is not widened for tests. No result is counted for that
+failed compilation. The complete focused selection is rerun after fixture correction and
+formatting.
+
+That complete run passes 32/33 (`10cd2b5c-6e01-4619-9e13-9d2b1a462630`). All seven public
+consumers and six internal lifecycle cases pass. The rejected-image fixture observes an automatic
+TestApp effect-flush retry before its next handler callback, so its expected refusal interval
+has already ended. The test now brackets that interval with the existing outer App update,
+finishing it through unwind-safe cleanup without retaining an App borrow or handler checkout.
+The original rejected-frame, restored-handler, diagnostic-generation and accepted-retry assertions
+remain. Independent testing review also adds a visible, rendered but blurred original input
+alongside a second editable input, so focus refusal is checked independently from tree removal.
+
+The corrected final focused selection passes 34/34
+(`4e6a1a65-44d4-49b2-b979-72970ac7b87e`), including all seven internal lifecycle cases, all
+seven crate-external consumers and eleven component clipboard cases. The rejected candidate
+retains the original handler, an accepted retry installs the replacement, and the visible but
+blurred input remains unchanged. This pass does not replace the complete framework, component,
+independent-consumer or browser cohorts below.
+
+The first complete browser attempt passes WebGL, WebGPU and Auto interaction/activation and both
+PNG sizes, then times out before clipboard operations: the new dedicated consumer does not
+publish the general smoke's `ready` object. Navigation now waits for that consumer's own exact
+URL, painted handler and accepted-frame publication instead of the unrelated general probe.
+No production code changes for this fixture correction. The corrected complete browser gate
+passes (`%TEMP%/open-gpui-clipboard-browser-ready.log`): real permission-granted Unicode text and
+PNG reads, trusted Ctrl-V text/image delivery, actual read-permission denial, framework text
+write and consumed-key single-insertion checks. A real clipboard PNG independently decodes to
+the expected pixel and each async/DOM image delivery retains its kind and byte digest.
+Two fixed handler identities and a newer accepted fence prove delivery-time replacement; a
+retired window receives no late image. Missing API, DataError, delayed completion/Blob and task
+cancellation are explicitly controlled cases, not permission/user-activation or request-abort
+claims. Original rendering, resize, forced-backend refusal and explicit Auto fallback remain.
+
+The first broad runtime command names the Gallery directory instead of its package and is
+rejected before compilation. The corrected package is `open-gpui-ui-foundation-gallery`;
+framework, components and complete Windows qualification continues serially.
+
+The independent correctness review closes both browser evidence gaps with no confirmed production
+defect. Testing review closes the rendered-but-blurred coverage gap and then requires the local
+outer-update test guard to preserve the original panic if effect-flush cleanup also panics. Its
+Drop now follows the existing AnimationFrameBatch handling, propagating cleanup failures only
+outside an existing unwind. All nine implementation, review and next-unit mapping threads are
+closed; the final rejected-candidate rerun and remaining serial gates still follow this checkpoint.
+
+The complete Core/scheduler/WGPU/platform/Gallery library and public-integration cohort passes
+2,028/2,028 with one existing fixture-regeneration skip
+(`421dd561-f1b7-4c53-954f-ec49f36071f5`). It retains the complete interactive Gallery, public text,
+render/atlas, cache, frame/input and task lifecycle controls. The actual runtime is 621.615 seconds;
+this uncontrolled qualification duration is not a performance comparison or budget. Component,
+Windows and independently locked consumer results remain separate gates.
+
+The complete affected UI core/components/docking/Canvas library and integration cohort passes
+2,985/2,985 without skips (`29564022-f4c1-45d3-afca-11338df0d416`). It includes all eleven
+component clipboard regressions alongside the original controlled editing, virtual collections,
+overlay, dock migration, exact result, viewport and retirement workflows. The scoped input-hook
+addition preserves those consumers; it does not complete canonical docking U4-U9.
+
+The complete Windows library cohort passes 243/243 with nine existing interactive skips
+(`c4b35214-fec1-453d-9bf4-011dcc99de62`). The new clipboard trajectory, old pending-input,
+cached/deferred text, composite focus, profiler, native exact-frame and retirement controls all
+execute. Their original assertions and prior platform scopes remain; no ignored physical-input
+or compositor behavior is silently treated as executed.
+
+Ordinary independently locked consumers pass 96/96 with three declared skips in all-feature
+selection (`f9441249-9a48-443b-8b50-bcb0a57f2351`) and 69/69 without skips in the disabled
+selection (`79178566-0bde-4499-9bcd-48b900f5b54d`). All five new ordinary clipboard cases execute
+with existing bench-support and without test-support; two value cases also execute in the disabled
+selection. The default ready snapshot, full-item override and weak App/Window ownership are runtime
+assertions. The direct lower-level handler consumer is not reported as a registered platform
+callback; Windows, browser and internal tests provide that separate path.
+
+Profiler-disabled Core library plus the complete crate-external clipboard consumer passes
+1,379/1,379 without skips (`7ce4c07e-7bfb-477c-9f95-39912c68e98b`). All seven internal
+clipboard cases and all seven public clipboard cases execute in that result, including the final
+cleanup-guard correction. This feature selection retains test-support and does not claim ordinary
+bench-only consumption; the independently locked runtime above supplies that separate evidence.
+
+Locked Rust 1.95 workspace all-target and ordinary independent all-target/all-feature checks
+pass. Correctness Clippy passes for Core, scheduler, WGPU, Windows, Web, components and xtask
+across all targets/features; suggestion-level warnings retain their separate scope. Root formatting
+is applied after the final test-support gate and guard changes; independently locked ordinary
+and browser-consumer formatting checks pass. Actual Rust 1.93 and final production wasm checks
+continue separately, without changing lockfiles or compiler requirements.
+
+Actual Windows Rust 1.93 framework all-target/all-feature checks pass for Core, WGPU, Windows,
+Web's host-side closure and components. The independently locked ordinary consumer also passes
+all-target/all-feature compilation on 1.93. These results preserve the declared compiler floor;
+they do not compile or execute cfg-excluded foreign native implementations. Stable profiler-off/on
+and existing nightly shared-memory production wasm checks follow separately.
+
+Stable production wasm checks pass with profiler disabled and enabled. The existing nightly
+hello_web atomics/build-std configuration also passes production shared-memory/profiler
+compilation. The independently locked smoke consumer supplies its separate stable wasm build
+and actual browser execution above. These results add no new test-support-wasm or foreign-native
+execution claim. No dependency version, lockfile or compiler-floor change is required.
+
+Implementation is committed locally at `5209f4e82c7cef3c095807fcf13cd16fe860b5c6`.
+Final root/ordinary/browser formatting, workflow YAML, whitespace and existing rebuilt xtask
+import/API/document/release gates pass. All nine implementation/review/next-unit mapping threads
+are closed, with no unresolved scoped P1/P2 or owned Cargo/browser/native helper process.
+No remote publication or CI execution occurs. The separately source-mapped desktop clipboard
+successor, remaining fixed-target differences, numeric budgets, canonical docking and real Nara
+GPU/Host/View consumer remain open before maintenance handoff.
+
+The browser gate distinguishes actual permission-granted text/image reads and trusted Ctrl-V
+from explicit missing-API, rejected-Promise and delayed-Blob controls. Cancellation of a GPUI
+task does not abort the browser request. Clipboard restoration covers representable prior content
+in the native fixture and prior plain text in the isolated browser profile; native extra formats,
+ownership and clipboard history are outside those restoration claims. No HTML/RTF model,
+foreign-native execution, physical input/scanout or numeric performance claim follows.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:

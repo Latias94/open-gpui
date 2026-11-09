@@ -217,7 +217,8 @@ randomized element-tree workloads and full-render equivalence, sendable foregrou
 asynchronous clipboard/error classification, and atomic credential insertion with Apple error
 semantics. Their exact fixed-target owners, complete regression scope and platform limits are
 recorded in the plan. Sendable submission and randomized trees now have their complete
-qualifications below; gesture, async clipboard and credentials remain queued. Previously qualified benchmark, scheduler and input units retain their own
+qualifications below; asynchronous clipboard now has its separate qualification, while gesture
+and credentials remain queued. Previously qualified benchmark, scheduler and input units retain their own
 scope; similar names do not supply these missing mechanisms or establish exhaustive parity.
 
 The [sendable foreground/Web Fetch successor](../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#sendable-foreground-submission-and-web-fetch-successor)
@@ -248,10 +249,18 @@ with nine skips, preserving both original 241/242 aggregates. Independent consum
 Windows Rust 1.93, production wasm, exact feature graphs and static/format gates pass.
 Other residual mechanisms and full refresh remain open.
 
-The next [asynchronous clipboard/Web paste unit](../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#asynchronous-clipboard-and-web-paste-successor)
+The [asynchronous clipboard/Web paste unit](../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#asynchronous-clipboard-and-web-paste-successor)
 maps official `d70c45e5bb` plus text-write/paste and key-default prerequisites to existing
-Platform/App/input-handler/Web listener owners. It remains unimplemented; source inspection
-separately records Windows embedded-NUL and macOS pasteboard-retention differences. The default
+Platform/App/input-handler/Web listener owners. It is implemented and qualified at
+`5209f4e82c7cef3c095807fcf13cd16fe860b5c6`, after `770463485ac9`: focused 34, complete framework/
+public/Gallery 2,028, components/docking/Canvas 2,985, complete Windows 243, ordinary enabled/
+disabled consumers 96/69 and disabled Core/public clipboard 1,379 pass.
+The complete browser gate executes real text/image reads and trusted paste plus distinct error,
+cancellation and current-handler controls. The [record](../verification.md#asynchronous-clipboard-and-web-paste)
+retains the actual fixture failures, review corrections, Windows Rust 1.93, locked checks,
+correctness Clippy, production wasm and final format/static gates. All nine lanes close. Source inspection
+separately records Windows embedded-NUL and macOS pasteboard-retention differences, now mapped to
+the [desktop successor](../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#desktop-clipboard-normalization-and-owned-pasteboard-successor). The default
 desktop ready adapter does not add OS-error classification, and the target does not provide
 HTML/RTF content or browser-request abortion.
 

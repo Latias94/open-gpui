@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-10T03:07:00+08:00
+timestamp: 2026-11-10T04:31:00+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -17,6 +17,19 @@ verified_by:
 ---
 
 # Current State
+
+- The complete asynchronous clipboard/Web paste successor is implemented and qualified at
+  `5209f4e82c7cef3c095807fcf13cd16fe860b5c6`, after `770463485ac9`. Focused 34, complete framework/
+  public/Gallery 2,028, components/docking/Canvas 2,985, complete Windows 243, ordinary consumers
+  96/69 and disabled Core/public clipboard 1,379 pass. Actual Windows ready-snapshot/text/
+  Submitted/reconstruction and real browser permission/text/image/trusted-paste workflows execute.
+  Fixed handler identities, accepted fences and per-delivery PNG digests close review gaps;
+  original fixture compilation/effect-flush/navigation failures remain in the
+  [record](../../verification.md#asynchronous-clipboard-and-web-paste). Locked checks, correctness
+  Clippy, actual Windows Rust 1.93, production wasm profiler off/on and nightly shared memory,
+  formatting and existing static/YAML gates pass. No lock or compiler requirement changes.
+  All nine threads close and no owned helper remains. Desktop normalization/pasteboard ownership,
+  remaining fixed-target differences and a real Nara seam consumer still precede maintenance handoff.
 
 - The complete official randomized-tree/platform-tree successor is implemented and qualified at
   `b42295d0e535e4105470e80873a6ad7832e81863`, after `f6f3d98d156`. Focused Core/benchmark/
@@ -799,12 +812,11 @@ historical scope and is not current branch or CI qualification.
 
 # Next Action
 
-- Execute the complete [asynchronous clipboard/Web paste successor](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#asynchronous-clipboard-and-web-paste-successor)
-  after qualified [randomized trees and platform tree workloads](../../verification.md#randomized-trees-and-platform-tree-workloads).
-  Preserve official ready/error/content behavior and complete input-handler/Web paste consumers,
-  using existing admission/lifetime owners. Windows NUL normalization and macOS pasteboard
-  ownership retain separate source-confirmed dispositions. Full fixed-target closure and the
-  real Nara consumer still precede framework-maintenance handoff.
+- Execute the [desktop clipboard normalization and owned-pasteboard successor](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#desktop-clipboard-normalization-and-owned-pasteboard-successor)
+  after qualified [asynchronous clipboard/Web paste](../../verification.md#asynchronous-clipboard-and-web-paste).
+  Preserve official Windows normalized-text/hash agreement and complete macOS typed ownership,
+  Rust-owned NSData and autorelease tests. Keep foreign execution limits explicit. Full fixed-target
+  closure and the real Nara consumer still precede framework-maintenance handoff.
 - Continue after qualified
   [system notifications](../../verification.md#system-notifications-and-ordered-app-responses),
   [Spring/motion](../../verification.md#official-spring-and-shared-domain-sampling) and the

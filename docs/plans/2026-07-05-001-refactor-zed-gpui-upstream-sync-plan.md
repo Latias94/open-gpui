@@ -2252,7 +2252,10 @@ paste `084b5d21f67cdbe06edd2822ce34e58b3cd774f7` and consumed-only key-default s
 `5d447d4223f8455db4811ed332c4ad744bb13e40`. The existing WebEventListener already owns
 callback removal before retirement, matching `c97b7c0ea41acf56e9726964eca10c2078e921b0`.
 Bounded fixed-target history inspection finds no later correction/revert of the asynchronous
-read/error/image mechanism. This is source mapping, not implemented qualification.
+read/error/image mechanism. The November 10 implementation is qualified at
+`5209f4e82c7cef3c095807fcf13cd16fe860b5c6`; the
+[record](../verification.md#asynchronous-clipboard-and-web-paste) retains actual consumer execution,
+initial fixture failures and final corrections rather than treating compilation as acceptance.
 
 Preserve synchronous Platform/App methods and add the official Task-returning read with its
 ready desktop default. Reuse AsyncApp::update to obtain the owned Task; do not add a parallel
@@ -2285,7 +2288,45 @@ normalization `decbf641b18f1982b3475c037e7c5c554471574f`, and macOS pasteboard o
 `e83f1c949512bab023f2f82446ffb4b0e4173fef`. Do not report these as covered by the async adapter.
 Foreign-native execution and the complete engine seam remain separate qualification owners.
 
+### Desktop Clipboard Normalization And Owned Pasteboard Successor
+
+After asynchronous clipboard qualification, finish the two separate desktop differences already
+identified above. Fixed-target Windows `clipboard.rs` matches
+`decbf641b18f1982b3475c037e7c5c554471574f`: replace embedded NULs with spaces before both UTF-16
+encoding and metadata hashing. Preserve optional custom-format registration and HGLOBAL transfer.
+Keep the official `before\0after` plus JSON metadata regression, Unicode/empty/boundary controls,
+external-text metadata invalidation and the existing native async-read/text/Submitted consumer.
+The native fixture must distinguish original input from its exact normalized expectation without
+weakening clipboard sequence/restoration or presentation/retirement assertions.
+
+For macOS, adopt the complete final `pasteboard.rs` from
+`e83f1c949512bab023f2f82446ffb4b0e4173fef`, including the retained-object correction introduced
+by `914e1c9873b6b85bfeedc5b58e8270885bdd532e`. Typed Retained pasteboard/NSString/UTType ownership,
+owned NSData bytes, property-list type/null checks and complete string/metadata/path/image tests
+belong together. The Rust ClipboardItem boundary permits this module to migrate independently;
+existing raw window drag/drop compatibility remains with its current owner. Add the required
+NSPasteboard feature to existing AppKit dependencies and only its lock edges, without upgrading
+objc2 or introducing a parallel Apple platform owner. Preserve the fork's private metadata type
+namespace explicitly rather than claiming Zed-private-format interoperability.
+
+Test autorelease-pool exit before later write/read and retain the resulting Rust item after its
+read pool drains. macOS preserves embedded NULs; Windows normalization is not a shared text rule.
+Actual Mac compilation, main-thread behavior and native execution require the Apple environment;
+Windows gates and source preparation cannot substitute. Existing native/backend CI owns these
+tests. The bounded mapping is not implemented qualification or an exhaustive refresh audit.
+
 ## Maintained Baseline Before Engine Adaptation
+
+The [asynchronous clipboard qualification](../verification.md#asynchronous-clipboard-and-web-paste)
+records implementation `5209f4e82c7cef3c095807fcf13cd16fe860b5c6`, after `770463485ac9`.
+Complete official ready/error/full-item hooks and Web text/image paste reuse admitted input and
+retirement owners. Focused 34, complete framework/public/Gallery 2,028, components 2,985, complete
+Windows 243, ordinary consumers 96/69 and disabled Core/public clipboard 1,379 pass. Real native
+snapshot/text/Submitted/reconstruction and complete browser permissions/trusted-paste/focus/
+cancellation workflows execute. Locked checks, correctness Clippy, actual Windows Rust 1.93,
+production wasm, formatting and existing static gates pass. Nine lanes close. Continue the
+desktop clipboard successor and remaining fixed-target dispositions before the real Nara
+GPU/Host/View seam; no complete-refresh, numeric-budget or maintenance-handoff claim follows.
 
 The [randomized-tree qualification](../verification.md#randomized-trees-and-platform-tree-workloads)
 records implementation `b42295d0e535e4105470e80873a6ad7832e81863`, after independent wake
