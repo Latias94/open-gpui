@@ -3,6 +3,7 @@
 //! Official async/paste contract: zed d70c45e5bb1d8b7b3926fba5a6d1c69c23bbc405,
 //! crates/gpui/src/{app,input,platform}.rs. Fixed reference:
 //! 635026fabc38440fce5e1767d125026a17b12012, at the same paths.
+//! Windows text/hash normalization follows decbf641b18f1982b3475c037e7c5c554471574f.
 //! Delivery uses the public registered handler, without physical keyboard input or a live IME.
 //! Submitted generations qualify renderer acceptance, not compositor scanout.
 //! The clipboard guard restores GPUI-readable/writable entries, including text metadata, on
@@ -71,16 +72,20 @@ impl NativeClipboardRestore {
     }
 
     fn write(&mut self, cx: &App, item: ClipboardItem) {
+        self.write_expected(cx, item.clone(), item);
+    }
+
+    fn write_expected(&mut self, cx: &App, input: ClipboardItem, expected: ClipboardItem) {
         assert_eq!(
             unsafe { GetClipboardSequenceNumber() },
             self.sequence,
             "an external clipboard update must not be overwritten by the test",
         );
-        cx.write_to_clipboard(item.clone());
+        cx.write_to_clipboard(input);
         self.sequence = unsafe { GetClipboardSequenceNumber() };
         self.modified = true;
         assert!(
-            cx.read_from_clipboard().as_ref() == Some(&item),
+            cx.read_from_clipboard().as_ref() == Some(&expected),
             "the real Windows clipboard must contain the exact test item",
         );
     }
@@ -309,6 +314,7 @@ fn wait_for_native_clipboard_submission(
 
 #[test]
 fn native_async_clipboard_snapshot_pastes_into_submitted_text_and_reconstructs_cleanly() {
+    const INPUT_TEXT: &str = "clipboard\0你好 e\u{301}\0😀 𐐀";
     const COPIED_TEXT: &str = "clipboard 你好 e\u{301} 😀 𐐀";
     const METADATA: &str = "{\"native_clipboard_snapshot\":true}";
 
@@ -429,7 +435,11 @@ fn native_async_clipboard_snapshot_pastes_into_submitted_text_and_reconstructs_c
                         COPIED_TEXT.into(),
                         METADATA.into(),
                     );
-                    clipboard.write(cx, expected.clone());
+                    clipboard.write_expected(
+                        cx,
+                        ClipboardItem::new_string_with_metadata(INPUT_TEXT.into(), METADATA.into()),
+                        expected.clone(),
+                    );
                     let task = cx.read_from_clipboard_async();
                     clipboard.write(
                         cx,

@@ -4460,6 +4460,38 @@ mod tests {
         let item = ClipboardItem::new_string_with_json_metadata("abcdef".to_string(), vec![3, 4]);
         write_to_clipboard(item.clone());
         assert_eq!(read_from_clipboard(), Some(item));
+
+        let item =
+            ClipboardItem::new_string_with_json_metadata("before\0after".to_string(), vec![12]);
+        write_to_clipboard(item);
+        assert_eq!(
+            read_from_clipboard(),
+            Some(ClipboardItem::new_string_with_json_metadata(
+                "before after".to_string(),
+                vec![12],
+            )),
+        );
+
+        for (text, expected) in [
+            ("", ""),
+            ("\0", " "),
+            ("\0\0before\0after\0", "  before after "),
+            ("héllo\0世界🦀", "héllo 世界🦀"),
+            ("unchanged 世界🦀", "unchanged 世界🦀"),
+        ] {
+            write_to_clipboard(ClipboardItem::new_string_with_json_metadata(
+                text.to_string(),
+                vec![12],
+            ));
+            assert_eq!(
+                read_from_clipboard(),
+                Some(ClipboardItem::new_string_with_json_metadata(
+                    expected.to_string(),
+                    vec![12],
+                )),
+                "Windows must hash and encode the same normalized text",
+            );
+        }
     }
 
     #[test]

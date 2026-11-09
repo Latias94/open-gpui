@@ -1,4 +1,4 @@
-use std::sync::LazyLock;
+use std::{borrow::Cow, sync::LazyLock};
 
 use anyhow::Result;
 use itertools::Itertools;
@@ -186,14 +186,20 @@ fn is_image_format(format: u32) -> bool {
 }
 
 fn write_string(item: &ClipboardString) -> Result<()> {
-    let wide: Vec<u16> = item.text.encode_utf16().chain(Some(0)).collect_vec();
+    // CF_UNICODETEXT is null-terminated, so replace embedded NUL characters with spaces.
+    let text = if item.text.contains('\0') {
+        Cow::Owned(item.text.replace('\0', " "))
+    } else {
+        Cow::Borrowed(item.text.as_str())
+    };
+    let wide: Vec<u16> = text.encode_utf16().chain(Some(0)).collect_vec();
     set_clipboard_bytes(&wide, CF_UNICODETEXT.0 as u32)?;
 
     if let Some(metadata) = item.metadata.as_ref() {
         if let (Some(hash_format), Some(metadata_format)) =
             (*CLIPBOARD_HASH_FORMAT, *CLIPBOARD_METADATA_FORMAT)
         {
-            let hash_bytes = ClipboardString::text_hash(&item.text).to_ne_bytes();
+            let hash_bytes = ClipboardString::text_hash(&text).to_ne_bytes();
             set_clipboard_bytes(&hash_bytes, hash_format)?;
 
             let wide: Vec<u16> = metadata.encode_utf16().chain(Some(0)).collect_vec();
@@ -403,5 +409,50 @@ impl LockedGlobal {
 impl Drop for LockedGlobal {
     fn drop(&mut self) {
         unsafe { GlobalUnlock(self.global).ok() };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn external_text_replacement_refuses_stale_metadata_without_dropping_private_formats() {
+        let metadata = "[12]";
+        write_to_clipboard(ClipboardItem::new_string_with_metadata(
+            "before\0after".into(),
+            metadata.into(),
+        ));
+        {
+            let _clipboard = ClipboardGuard::open().expect("the clipboard must be available");
+            let hash_format = (*CLIPBOARD_HASH_FORMAT).expect("the hash format must register");
+            let metadata_format =
+                (*CLIPBOARD_METADATA_FORMAT).expect("the metadata format must register");
+            let expected_hash = ClipboardString::text_hash("before after").to_ne_bytes();
+            assert_eq!(
+                get_clipboard_data(hash_format).unwrap().as_bytes(),
+                expected_hash,
+            );
+            assert_eq!(
+                get_clipboard_string(metadata_format).as_deref(),
+                Some(metadata)
+            );
+            let external = "external 世界";
+            let wide: Vec<u16> = external.encode_utf16().chain(Some(0)).collect();
+            set_clipboard_bytes(&wide, CF_UNICODETEXT.0 as u32)
+                .expect("the external text replacement must be admitted");
+            assert_eq!(
+                get_clipboard_data(hash_format).unwrap().as_bytes(),
+                expected_hash,
+            );
+            assert_eq!(
+                get_clipboard_string(metadata_format).as_deref(),
+                Some(metadata)
+            );
+        }
+        assert_eq!(
+            read_from_clipboard(),
+            Some(ClipboardItem::new_string("external 世界".into())),
+        );
     }
 }
