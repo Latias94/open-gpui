@@ -315,7 +315,7 @@ impl Element for Img {
 
                             if let Some(state) = &mut state {
                                 state.frame_index = state.frame_index.min(max_frame_index);
-                                if frame_count > 1 {
+                                if frame_count > 1 && !cx.reduce_motion() {
                                     if window.is_window_active() {
                                         let current_time = cx.background_executor().now();
                                         if let Some(last_frame_time) = state.last_frame_time {
@@ -376,6 +376,7 @@ impl Element for Img {
                             if global_id.is_some()
                                 && data.frame_count() > 1
                                 && window.is_window_active()
+                                && !cx.reduce_motion()
                             {
                                 window.request_animation_frame();
                             }
@@ -726,6 +727,8 @@ impl From<image::ImageError> for ImageCacheError {
 
 #[cfg(test)]
 mod tests {
+    mod reduced_motion;
+
     use super::*;
     use crate::{
         AppContext as _, AtlasAccessOutcome, AtlasRemoveOutcome, Context, Empty, IntoElement,

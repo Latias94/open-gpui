@@ -867,6 +867,9 @@ pub struct App {
     window_update_provenance: WindowUpdateProvenance,
     pub(crate) mode: GpuiMode,
     pub(crate) cursor_hide_mode: CursorHideMode,
+    pub(crate) reduce_motion: bool,
+    /// Origin of the shared clock that phase-locks synced repeating animations.
+    pub(crate) synced_animation_epoch: Instant,
     power_mode: PowerMode,
     /// Whether the app was created by [`Application::new_inaccessible`]. No
     /// accesskit APIs will be called when this flag is set.
@@ -937,6 +940,7 @@ impl App {
             background_executor.is_main_thread(),
             "must construct App on main thread"
         );
+        let synced_animation_epoch = background_executor.now();
         #[cfg(feature = "profiler")]
         let foreground_journal = crate::profiler::journal::install_foreground_journal();
 
@@ -1031,6 +1035,8 @@ impl App {
                 window_open_barrier_depth: 0,
                 window_open_epoch: 0,
                 cursor_hide_mode: CursorHideMode::default(),
+                reduce_motion: false,
+                synced_animation_epoch,
                 power_mode,
                 accessibility_force_disabled: false,
 
@@ -1357,6 +1363,21 @@ impl App {
     /// See [`App::set_cursor_hide_mode`].
     pub fn is_cursor_visible(&self) -> bool {
         self.platform.is_cursor_visible()
+    }
+
+    /// Returns whether non-essential animations (e.g. loading spinners) should
+    /// be rendered in a static state instead of animating.
+    pub fn reduce_motion(&self) -> bool {
+        self.reduce_motion
+    }
+
+    /// Sets whether non-essential animations (e.g. loading spinners) should be
+    /// rendered in a static state instead of animating.
+    pub fn set_reduce_motion(&mut self, reduce_motion: bool) {
+        if self.reduce_motion != reduce_motion {
+            self.reduce_motion = reduce_motion;
+            self.refresh_windows();
+        }
     }
 
     /// Schedules all windows in the application to be redrawn. This can be called

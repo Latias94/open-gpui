@@ -1098,3 +1098,49 @@ cargo check --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.to
 
 These commands are verification instructions, not compilation or execution results.
 The main verification owner records actual results and host/compiler scope separately.
+
+## Generic animation public consumers
+
+The `animation` target consumes the official generic animation controls in fixed Zed source
+`635026fabc38440fce5e1767d125026a17b12012`: App-wide reduced motion, shared-phase repeating
+animations, per-animation FPS caps, finite easing overshoot and `ParentElement` composition.
+It excludes the subsequent spring APIs and introduces no dependencies, features or lock changes.
+These APIs do not require the `profiler` feature.
+
+The ordinary independently locked target uses no GPUI test-support. Its executed tests check
+public builder fields and cloning, ordinary versus synced repetition, FPS-cap value storage,
+finite overshoot, public easing functions and construction of animated parents with children,
+mapping and chains. The parent construction consumes actual element values but does not perform
+layout or paint. A separately named signature test checks exact function pointers and an
+explicitly unexecuted App/Window closure. That closure is type evidence only; it does not
+construct an App or Window or execute their methods.
+
+The separate crate-external `crates/gpui/tests/animation.rs` target requires only `test-support`.
+Its real `HeadlessAppContext` consumer mounts cached entity views at different times and in
+different windows, compares synced phases against an ordinary independently started loop,
+and reconstructs a window without resetting the shared App epoch. Its configured CPU renderer
+receives complete Scenes, checks actual animated-parent and appended-child quads, and verifies
+accepted-generation and `Submitted` presentation facts. It checks cached sibling reuse, exact
+view/App/renderer/atlas release and absence of timer-driven resurrection after window removal.
+The recorder does not render pixels and supplies no GPU, native or performance qualification.
+
+Two further public `TestAppContext` workflows use the deterministic executor clock and ordinary
+App/View APIs. One checks timer-driven capped animation, overlapping redraw timer deduplication,
+retirement with a pending timer and actual callback-driven uncapped animation. The other changes
+the App reduced-motion preference after cached views mount, checks oneshot, repeating and chain
+static endpoints plus finite overshoot, confirms idle parking, and re-enables motion with the
+existing animation clock. Test window options disable unrelated inactive, low-power and thermal
+limits; per-animation cadence is exercised through its normal owner.
+
+Run these targets serially with the existing lockfiles and one Cargo process:
+
+```text
+cargo nextest run --locked -p open-gpui --no-default-features --features test-support --test animation --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --locked -p open-gpui --no-default-features --features test-support,profiler --test animation --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test animation --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features profiler --test animation --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+These commands define the consumer gates. The
+[qualification record](../../../docs/verification.md#generic-animation-controls-and-clock)
+records executed host/compiler modes, initial harness corrections and native limits.

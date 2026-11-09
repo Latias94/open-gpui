@@ -1,8 +1,9 @@
 use open_gpui_scheduler::Instant;
-use std::{rc::Rc, time::Duration};
+use std::{cell::Cell, rc::Rc, time::Duration};
 
 use crate::{
-    AnyElement, App, Element, ElementId, GlobalElementId, InspectorElementId, IntoElement, Window,
+    AnyElement, App, Element, ElementId, GlobalElementId, InspectorElementId, IntoElement,
+    ParentElement, Window,
 };
 
 pub use easing::*;
@@ -15,9 +16,14 @@ pub struct Animation {
     pub duration: Duration,
     /// Whether to repeat this animation when it finishes
     pub oneshot: bool,
-    /// A function that takes a delta between 0 and 1 and returns a new delta
-    /// between 0 and 1 based on the given easing function.
+    /// Whether to derive the phase from a shared clock. See [`Animation::repeat_synced`].
+    pub synced: bool,
+    /// A function that maps normalized time to an animated value.
+    /// The result may exceed 0..1 for easing functions that overshoot.
     pub easing: Rc<dyn Fn(f32) -> f32>,
+    /// The maximum number of times per second this animation re-renders.
+    /// When `None`, the animation re-renders on every frame.
+    pub max_fps: Option<f32>,
 }
 
 impl Animation {
@@ -27,7 +33,9 @@ impl Animation {
         Self {
             duration,
             oneshot: true,
+            synced: false,
             easing: Rc::new(linear),
+            max_fps: None,
         }
     }
 
@@ -37,16 +45,49 @@ impl Animation {
         self
     }
 
-    /// Set the easing function to use for this animation.
-    /// The easing function will take a time delta between 0 and 1 and return a new delta
-    /// between 0 and 1
+    /// Set the animation to loop when it finishes, phase-locked to a clock shared by the whole [`App`].
+    pub fn repeat_synced(mut self) -> Self {
+        self.oneshot = false;
+        self.synced = true;
+        self
+    }
+
+    /// Sets the easing function used to map normalized time to an animated value.
+    ///
+    /// The output is not clamped, allowing physical easing functions such as
+    /// springs to overshoot.
     pub fn with_easing(mut self, easing: impl Fn(f32) -> f32 + 'static) -> Self {
         self.easing = Rc::new(easing);
         self
     }
+
+    /// Limit how often this animation re-renders. Instead of re-rendering on
+    /// every frame, the animation schedules its next render `1 / max_fps`
+    /// seconds after the current one. Values that are not finite and positive,
+    /// or that do not produce a representable nonzero timer interval and
+    /// deadline, are ignored.
+    pub fn with_max_fps(mut self, max_fps: f32) -> Self {
+        self.max_fps = Some(max_fps);
+        self
+    }
+
+    fn frame_interval(&self, now: Instant) -> Option<Duration> {
+        let max_fps = self.max_fps?;
+        if !max_fps.is_finite() || max_fps <= 0.0 {
+            return None;
+        }
+        let interval = Duration::try_from_secs_f32(1.0 / max_fps).ok()?;
+        (!interval.is_zero() && now.checked_add(interval).is_some()).then_some(interval)
+    }
 }
 
 /// An extension trait for adding the animation wrapper to both Elements and Components
+///
+/// Animations rendered through this trait automatically respect
+/// [`App::reduce_motion`](crate::App::reduce_motion): when it is set,
+/// the element is rendered in a static state (the end state for oneshot
+/// animations, the start state for repeating ones) and no animation frames are
+/// scheduled.
 pub trait AnimationExt {
     /// Render this component or element with an animation
     fn with_animation(
@@ -95,6 +136,16 @@ pub struct AnimationElement<E> {
     animator: Box<dyn Fn(E, usize, f32) -> E + 'static>,
 }
 
+impl<E: ParentElement> ParentElement for AnimationElement<E> {
+    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
+        let Some(element) = &mut self.element else {
+            return;
+        };
+
+        element.extend(elements);
+    }
+}
+
 impl<E> AnimationElement<E> {
     /// Returns a new [`AnimationElement<E>`] after applying the given function
     /// to the element being animated.
@@ -115,6 +166,9 @@ impl<E: IntoElement + 'static> IntoElement for AnimationElement<E> {
 struct AnimationState {
     start: Instant,
     animation_ix: usize,
+    /// Whether a throttled re-render (see [`Animation::with_max_fps`]) is
+    /// already scheduled, so overlapping renders don't stack extra timers.
+    delayed_frame_pending: Rc<Cell<bool>>,
 }
 
 impl<E: IntoElement + 'static> Element for AnimationElement<E> {
@@ -138,40 +192,78 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
     ) -> (crate::LayoutId, Self::RequestLayoutState) {
         window.with_element_state(global_id.unwrap(), |state, window| {
             let mut state = state.unwrap_or_else(|| AnimationState {
-                start: Instant::now(),
+                start: cx.background_executor().now(),
                 animation_ix: 0,
+                delayed_frame_pending: Rc::new(Cell::new(false)),
             });
-            let animation_ix = state.animation_ix;
-
-            let mut delta = state.start.elapsed().as_secs_f32()
-                / self.animations[animation_ix].duration.as_secs_f32();
-
-            let mut done = false;
-            if delta > 1.0 {
-                if self.animations[animation_ix].oneshot {
-                    if animation_ix >= self.animations.len() - 1 {
-                        done = true;
-                    } else {
-                        state.start = Instant::now();
-                        state.animation_ix += 1;
-                    }
-                    delta = 1.0;
+            let (animation_ix, delta, done) = if cx.reduce_motion() {
+                let animation_ix = self.animations.len() - 1;
+                let delta = if self.animations[animation_ix].oneshot {
+                    1.0
                 } else {
-                    delta %= 1.0;
+                    0.0
+                };
+                (animation_ix, delta, true)
+            } else {
+                let animation_ix = state.animation_ix;
+                let duration = self.animations[animation_ix].duration;
+
+                let elapsed = if self.animations[animation_ix].synced && !duration.is_zero() {
+                    let elapsed = cx.background_executor().now() - cx.synced_animation_epoch;
+                    // Reduce modulo the duration before f32 conversion, which loses sub-second precision at scale.
+                    Duration::from_nanos((elapsed.as_nanos() % duration.as_nanos()) as u64)
+                } else {
+                    cx.background_executor().now() - state.start
+                };
+                let mut delta = elapsed.as_secs_f32() / duration.as_secs_f32();
+
+                let mut done = false;
+                if delta > 1.0 {
+                    if self.animations[animation_ix].oneshot {
+                        if animation_ix >= self.animations.len() - 1 {
+                            done = true;
+                        } else {
+                            state.start = cx.background_executor().now();
+                            state.animation_ix += 1;
+                        }
+                        delta = 1.0;
+                    } else {
+                        delta %= 1.0;
+                    }
                 }
-            }
+                (animation_ix, delta, done)
+            };
             let delta = (self.animations[animation_ix].easing)(delta);
 
-            debug_assert!(
-                (0.0..=1.0).contains(&delta),
-                "delta should always be between 0 and 1"
-            );
+            debug_assert!(delta.is_finite(), "animated value should be finite");
 
             let element = self.element.take().expect("should only be called once");
             let mut element = (self.animator)(element, animation_ix, delta).into_any_element();
 
             if !done {
-                window.request_animation_frame();
+                match self.animations[animation_ix].frame_interval(cx.background_executor().now()) {
+                    Some(interval) => {
+                        if !state.delayed_frame_pending.get() {
+                            state.delayed_frame_pending.set(true);
+                            let delayed_frame_pending = Rc::downgrade(&state.delayed_frame_pending);
+                            let view = window.current_view();
+                            window
+                                .spawn(cx, async move |cx| {
+                                    cx.background_executor().timer(interval).await;
+                                    cx.update_when_available(move |_, cx| {
+                                        if let Some(pending) = delayed_frame_pending.upgrade() {
+                                            pending.set(false);
+                                            cx.notify(view);
+                                        }
+                                    })
+                                    .await
+                                    .ok();
+                                })
+                                .detach();
+                        }
+                    }
+                    None => window.request_animation_frame(),
+                }
             }
 
             ((element.request_layout(window, cx), element), state)
@@ -259,3 +351,6 @@ mod easing {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

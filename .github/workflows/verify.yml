@@ -150,6 +150,17 @@ jobs:
         if: matrix.name == 'windows'
         run: cargo nextest run --locked -p open-gpui-windows --all-features --lib -E 'test(=platform::native_test_support::native_profiler_tests::native_frame_overlay_modes_reset_resize_preserve_input_and_retirement)' --run-ignored only --test-threads=1 --no-fail-fast --no-tests fail
 
+      - name: Test generic animation scheduling and public composition
+        run: cargo nextest run --locked -p open-gpui --all-features --lib --test animation -E 'test(elements::animation::) | test(elements::img::tests::reduced_motion::) | test(window::animation_tests::) | binary(animation)' --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Test independent animation API without optional features
+        if: matrix.name == 'windows'
+        run: cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test animation --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Test native generic animation pixels and retirement
+        if: matrix.name == 'windows'
+        run: cargo nextest run --locked -p open-gpui-windows --all-features --lib -E 'test(=platform::native_test_support::native_animation_tests::native_generic_animations_progress_reduce_restore_and_retire_pending_frames)' --run-ignored only --test-threads=1 --no-fail-fast --no-tests fail
+
       - name: Test public headless image resource consumers
         if: matrix.name == 'windows'
         run: cargo nextest run --locked -p open-gpui-wgpu --all-features --test images --test-threads=1 --no-fail-fast --no-tests fail

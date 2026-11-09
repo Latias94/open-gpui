@@ -89,6 +89,8 @@ mod a11y_activation_tests;
 #[cfg(test)]
 mod accepted_frame_scheduling_tests;
 #[cfg(test)]
+mod animation_tests;
+#[cfg(test)]
 mod asset_cache_tests;
 mod bring_into_view;
 #[cfg(test)]
