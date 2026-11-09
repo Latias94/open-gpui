@@ -6304,6 +6304,80 @@ in the native fixture and prior plain text in the isolated browser profile; nati
 ownership and clipboard history are outside those restoration claims. No HTML/RTF model,
 foreign-native execution, physical input/scanout or numeric performance claim follows.
 
+## Desktop Clipboard Normalization And Owned Pasteboard
+
+This successor starts from local `7c6b74021cdebec7e03dd558240789797bfad344`, after the complete
+asynchronous clipboard qualification, against fixed Zed
+`635026fabc38440fce5e1767d125026a17b12012`. Windows source
+`decbf641b18f1982b3475c037e7c5c554471574f` matches the fixed-target clipboard owner. macOS
+retention correction `914e1c9873b6b85bfeedc5b58e8270885bdd532e` is included in the complete typed
+Retained successor `e83f1c949512bab023f2f82446ffb4b0e4173fef`, whose pasteboard file also matches
+the fixed target. Private fork metadata namespaces and Windows optional format registration
+retain their existing owners; no cross-product private-format interoperability is claimed.
+
+The unmodified Windows writer fails the original upstream `before\0after`/JSON-metadata
+regression, 0/1 (`84b16f3a-18a4-4d39-87a9-a4863bb04410`): only `before` is read and metadata is
+None. The official correction replaces NULs with spaces once before UTF-16 encoding and uses
+that same text for the metadata hash. The first corrected focused run passes 3/3
+(`ac0d34fb-0e78-4425-ac46-6b095323d67b`), retaining all original Chinese/numeric/metadata cases
+and adding empty, leading/trailing/repeated NUL and Unicode controls. A real external text
+replacement retains both private formats while the reader refuses their now-stale metadata.
+The existing native async snapshot, registered paste, DirectWrite/Submitted generation,
+reconstruction and exact retirement consumer now starts with embedded NUL input and compares
+the complete expected normalized item. Its sequence/restoration assertions remain intact.
+
+macOS adopts typed Retained pasteboard/type/UTType custody and owned NSData bytes as one module.
+The existing Rust ClipboardItem boundary allows that migration without a new Apple platform or
+engine service. Main-thread window drag/drop shims remain with their existing owner; only dead
+pasteboard-exclusive compatibility APIs are removed. AppKit gains its existing NSPasteboard
+feature. Root, ordinary-consumer and browser-consumer locks add only their already-resolved
+bitflags dependency edge, preserving each independent version selection. The first locked Windows
+production check passes with those exact lock changes. Mac source, platform compiler scope,
+independent review and final runtime qualification remain in progress at this checkpoint.
+
+The actual Windows-to-aarch64-Darwin all-target check with `runtime_shaders,font-kit` fails before
+compiling the pasteboard owner: existing `open-gpui-media` includes a missing generated
+`OUT_DIR/bindings.rs`. This is a foreign-host build prerequisite, not a passing Mac compiler
+result or evidence of a pasteboard type error. No fake media/shader output or target-cfg override
+is introduced. The Mac implementation remains source-prepared with native compilation and all
+twelve pasteboard tests awaiting the Apple environment; host Windows checks cannot qualify it.
+
+Independent adversarial source review finds no confirmed correctness defect, verifies the six
+original Mac regressions plus six added ownership/content tests, and retains the unexecuted Mac
+scope above. The complete Windows library cohort passes 244/244 with nine existing interactive
+skips (`e0accdc7-6c1e-42ec-8858-cc67b17fb0da`). It executes both normalized-text controls and the
+modified native snapshot/text/Submitted/reconstruction trajectory alongside all original input,
+frame, profiler and retirement consumers. Full ordinary public clipboard tests pass 7/7
+(`7de7b56a-7dfb-4f33-b062-1dd40b024069`), and the independently locked ordinary clipboard
+consumer passes 5/5 (`a941268a-890f-4bee-a9a7-bc7c82c50b4e`) without test-support. It checks
+the ready snapshot, full-item override and weak App/Window lifetime, not Windows-specific OS
+normalization. Final compiler/static qualification continues separately.
+
+Locked Rust 1.95 workspace all-target and ordinary independent all-target/all-feature checks
+pass. Windows-host correctness Clippy passes for both backend packages across all targets and
+features; the Mac crate's target cfg excludes its implementation in this host result. Root
+formatting is applied, preserving every original native consumer assertion. Actual Windows
+Rust 1.93, the independently locked browser consumer and final static gates continue separately.
+
+Actual Windows Rust 1.93 all-target/all-feature checks pass for the Windows backend and the
+ordinary independent consumer. No compiler-floor change follows. This does not qualify Mac
+compilation: the failed foreign-host attempt remains explicitly separate from these Windows
+results. The default workspace and independent checks validate all three maintained lock edges
+without upgrading any package; hello_web's ignored generated lock is not a maintained artifact.
+
+The independently locked smoke consumer passes its stable wasm check with the new lock edge.
+Root, ordinary and browser-consumer formatting, existing rebuilt xtask import/API/document/release
+checks and whitespace checks pass. No new browser execution is claimed in this desktop-only
+unit. Independent review and next-unit credential mapping are complete; all three threads close,
+with no unresolved scoped source-review P1/P2 or owned Cargo/native helper process.
+
+Qualified Windows implementation is `a7e47b311aa6a721c5dd0991c36893694db13043`.
+Mac source preparation is separately committed at `fe5bb458f2ef23c0def7f8e19aa2327e404504b4`;
+the native Apple compiler/runtime gates remain unexecuted. These are local commits without
+remote publication or CI execution. Full fixed-target closure, the credential successor,
+remaining workload/platform differences, numeric budgets, canonical docking and the real Nara
+GPU/Host/View seam remain open before framework-maintenance handoff.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:

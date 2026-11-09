@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-10T04:31:00+08:00
+timestamp: 2026-11-10T04:57:30+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -17,6 +17,20 @@ verified_by:
 ---
 
 # Current State
+
+- Windows desktop clipboard normalization is implemented and qualified at
+  `a7e47b311aa6a721c5dd0991c36893694db13043`. The official NUL/metadata regression fails before
+  the correction; focused/native 3, complete Windows 244, public clipboard 7 and ordinary
+  independent clipboard 5 pass. The complete typed Mac pasteboard source is prepared at
+  `fe5bb458f2ef23c0def7f8e19aa2327e404504b4`, retaining six official and six added tests.
+  Its native compilation/execution remains pending: the actual foreign-host Darwin attempt stops
+  earlier at missing generated media bindings. Host checks cannot qualify cfg-excluded Mac code.
+  Independent review finds no confirmed defect. Three maintained locks add only existing bitflags
+  edges; locked workspace/consumer checks, Windows correctness Clippy/Rust 1.93, independent wasm,
+  formatting and existing static gates pass. All three threads close with no owned helper left.
+  The [record](../../verification.md#desktop-clipboard-normalization-and-owned-pasteboard)
+  preserves the distinct platform scopes. Continue the credential successor and Mac native gates;
+  fixed-target closure, numerical budgets and the real engine seam still precede maintenance handoff.
 
 - The complete asynchronous clipboard/Web paste successor is implemented and qualified at
   `5209f4e82c7cef3c095807fcf13cd16fe860b5c6`, after `770463485ac9`. Focused 34, complete framework/
@@ -812,11 +826,12 @@ historical scope and is not current branch or CI qualification.
 
 # Next Action
 
-- Execute the [desktop clipboard normalization and owned-pasteboard successor](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#desktop-clipboard-normalization-and-owned-pasteboard-successor)
-  after qualified [asynchronous clipboard/Web paste](../../verification.md#asynchronous-clipboard-and-web-paste).
-  Preserve official Windows normalized-text/hash agreement and complete macOS typed ownership,
-  Rust-owned NSData and autorelease tests. Keep foreign execution limits explicit. Full fixed-target
-  closure and the real Nara consumer still precede framework-maintenance handoff.
+- Continue the [credential storage and add-only Keychain successor](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#credential-storage-and-add-only-keychain-successor),
+  preserving complete official status, cancellation, backend I/O and ownership behavior. The
+  framework add-only API is macOS-only; do not invent a cross-platform atomic fallback.
+  Keep the [Mac pasteboard native gates](../../verification.md#desktop-clipboard-normalization-and-owned-pasteboard)
+  open until actual Apple compilation and all twelve tests execute. Full fixed-target closure
+  and the real Nara consumer still precede framework-maintenance handoff.
 - Continue after qualified
   [system notifications](../../verification.md#system-notifications-and-ordered-app-responses),
   [Spring/motion](../../verification.md#official-spring-and-shared-domain-sampling) and the

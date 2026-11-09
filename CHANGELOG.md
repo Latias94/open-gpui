@@ -164,6 +164,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Fixed
 
+- Windows clipboard writes replace embedded NULs with spaces before encoding and hashing, preserving the complete normalized text and its metadata. macOS pasteboards and custom type strings retain their Objective-C ownership, and reads return Rust-owned bytes beyond autorelease-pool lifetimes.
 - Native ingress avoids redundant foreground wakes while an App borrow or active post-borrow convergence already owns delivery. Pure animation no longer keeps benchmark idle draining alive. Refused visibility candidates preserve the accepted Div mouse press until an admitted frame removes its interaction membership.
 
 ### Security

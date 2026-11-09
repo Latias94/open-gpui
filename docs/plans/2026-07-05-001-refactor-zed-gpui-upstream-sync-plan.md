@@ -2036,7 +2036,7 @@ platform qualification. They refine the candidate queue's existing API/platform 
 | Randomized element-tree workloads | `crates/gpui/src/randomized_element_tree.rs` supplies seeded topology, mutation, entity-local notifications/work counters and `randomized_element_tree_matches_full_render`. Reuse the qualified benchmark owners rather than reopening the harness. |
 | Sendable foreground submission | `crates/gpui/src/executor.rs` and `crates/scheduler/src/executor.rs` add `SendForegroundExecutor` / `SendLocalExecutor`. Preserve worker submission, wake and scheduler-lifetime regressions through the existing admission/retirement owners. This is not a prerequisite for system notifications. |
 | Async clipboard and error classification | Core App/Platform and `crates/gpui_web/src/platform.rs` add `ClipboardReadError`, a default ready task and actual browser permission/content handling. Complete public and input consumers; compilation alone does not qualify browser clipboard behavior. |
-| Atomic credential insertion and Apple errors | Core App/Platform and `crates/gpui_apple/src/keychain.rs` add `write_credentials_if_not_exists` and distinguish user cancellation from absence. Preserve official status controls and qualify atomicity/cancellation on the actual platform. |
+| macOS add-only credentials and backend correctness | Core App/Platform expose macOS-only `write_credentials_if_not_exists`; the Apple Keychain helper distinguishes user cancellation from absence. Its default is unsupported, without a cross-platform atomic fallback. Preserve full official status controls and qualify each actual backend under the complete credential successor below. |
 
 Finish notifications before selecting the next dependency-ordered residual unit. Each successor
 must retain official behavior, adapt proven fork ownership and record independent/public plus
@@ -2315,7 +2315,64 @@ Actual Mac compilation, main-thread behavior and native execution require the Ap
 Windows gates and source preparation cannot substitute. Existing native/backend CI owns these
 tests. The bounded mapping is not implemented qualification or an exhaustive refresh audit.
 
+The November 10 Windows correction is qualified at `a7e47b311aa6a721c5dd0991c36893694db13043`;
+the complete typed Mac source is prepared at `fe5bb458f2ef23c0def7f8e19aa2327e404504b4`.
+The [record](../verification.md#desktop-clipboard-normalization-and-owned-pasteboard) preserves
+the upstream red baseline, corrected focused/native 3, complete Windows 244, public 7 and
+independent 5 passes, exact lock edges and final Windows/compiler/static gates. The actual
+foreign-host Darwin attempt fails earlier in media binding generation. Mac native compilation
+and all twelve pasteboard tests remain open; do not turn source review into execution evidence.
+
+### Credential Storage And Add-Only Keychain Successor
+
+After the desktop clipboard successor, port the complete fixed-target credential owner.
+`95d35c6efddfa6dc34f99bb1873620bd74af806a` extracts typed Apple Keychain operations;
+`abd9b3cbd2b11292358d740b9c6ab3eae7d1ab36` separates cancellation from absence, and
+`79fe6a645f68f8c9230578f154bf99852d9f716f` adds system add-only insertion. Final Keychain blob
+`a40eafcf2032a3cae4282e822a0354fb63aaf51c` matches the fixed target. Keep reusable operation/status
+errors nameable independently from the MacPlatform adapter; the existing Mac package can own
+this module without importing an unrelated Apple rendering or engine service.
+
+The framework's `write_credentials_if_not_exists` is macOS-only. Its Platform default returns an
+unsupported error; it is not a cross-platform read-then-write fallback. MacPlatform delegates to
+one SecItemAdd: the same server/account returns true on creation, false on a duplicate and never
+replaces the existing secret. Ordinary write still updates an existing server item. Read maps only
+item-not-found to None; user cancellation remains a typed error. Preserve delete-missing errors,
+validated Copy results, CFRetained ownership, the four official status/error tests and downcasting
+through anyhow. The application-level CredentialsProvider fallback is outside the Apache
+framework closure and provides no atomicity guarantee; do not import those GPL provider crates
+or copy their policy into Platform.
+
+Complete Windows credential corrections from `8720fd1d093963be0aeb36954c15fd1aca1b94d2` and the
+credential portion of `a0f8fa7bdbbf0269aaf5d5ebfac3ad9adfb576dd`: background I/O, null username/
+blob handling and freeing native storage before propagating UTF-16 conversion failure. Preserve
+the fork namespace, actual missing-item HRESULT handling, size preflight and secret-free errors.
+Keep both official real round trips and actual App/Platform read/write/delete consumers, not
+only helper signatures. Linux's `91d3b962ae32aa725f351c621c6169e1e1a1e881` selects the fixed oo7
+`731c1215edb6905876c6137ab300428c7b8d7c13` correction for a prompt stream ending before Completed;
+fetch and inspect that exact permissive dependency before adopting it. Preserve current label,
+unlock/error and first-match behavior. Web's empty read and unsupported write/delete remain its
+declared capability. No universal credential provider or new secret-storage owner follows.
+
+Add only the required objc2-security/SecBase/SecItem and existing thiserror dependency closure,
+without broad objc2 upgrades. Review every affected maintained lock independently; hello_web's
+ignored generated lock is a local example artifact, not a fourth maintained lock. Use dedicated
+test items and metadata-only diagnostics. Real Apple competing-process insertion and cancellation,
+Windows background execution and system persistence, and Linux Secret Service/prompt termination
+need their actual platform evidence. TestPlatform stubs and status-classification tests cannot
+qualify storage or interprocess atomicity. This is source-mapped next work, not implementation
+or an exhaustive fixed-target closure audit.
+
 ## Maintained Baseline Before Engine Adaptation
+
+The [desktop clipboard record](../verification.md#desktop-clipboard-normalization-and-owned-pasteboard)
+separates qualified Windows `a7e47b311aa` from source-prepared Mac `fe5bb458f2e`. Complete Windows
+244, public clipboard 7 and independent clipboard 5 pass after the reproduced upstream NUL bug.
+Mac typed ownership and all original tests are migrated, while actual Apple compilation/native
+execution remains open after the foreign-host media build failure. Locked checks, Windows
+correctness Clippy/Rust 1.93, independent wasm, formatting and static gates pass. All three lanes
+close. Continue credential correctness, the remaining fixed-target differences and unresolved
+native qualification before the real Nara consumer and maintenance handoff.
 
 The [asynchronous clipboard qualification](../verification.md#asynchronous-clipboard-and-web-paste)
 records implementation `5209f4e82c7cef3c095807fcf13cd16fe860b5c6`, after `770463485ac9`.

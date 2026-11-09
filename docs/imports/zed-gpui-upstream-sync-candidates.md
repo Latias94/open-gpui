@@ -214,7 +214,7 @@ disposition of the 364 commits.
 The subsequent November 9 [bounded Core residual inventory](../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#bounded-core-residual-inventory)
 finds five additional concrete fixed-target mechanisms: gesture recognition/axis locking,
 randomized element-tree workloads and full-render equivalence, sendable foreground submission,
-asynchronous clipboard/error classification, and atomic credential insertion with Apple error
+asynchronous clipboard/error classification, and macOS add-only credential insertion with Apple error
 semantics. Their exact fixed-target owners, complete regression scope and platform limits are
 recorded in the plan. Sendable submission and randomized trees now have their complete
 qualifications below; asynchronous clipboard now has its separate qualification, while gesture
@@ -258,11 +258,22 @@ disabled consumers 96/69 and disabled Core/public clipboard 1,379 pass.
 The complete browser gate executes real text/image reads and trusted paste plus distinct error,
 cancellation and current-handler controls. The [record](../verification.md#asynchronous-clipboard-and-web-paste)
 retains the actual fixture failures, review corrections, Windows Rust 1.93, locked checks,
-correctness Clippy, production wasm and final format/static gates. All nine lanes close. Source inspection
-separately records Windows embedded-NUL and macOS pasteboard-retention differences, now mapped to
-the [desktop successor](../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#desktop-clipboard-normalization-and-owned-pasteboard-successor). The default
+correctness Clippy, production wasm and final format/static gates. All nine lanes close. The
+[desktop successor](../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#desktop-clipboard-normalization-and-owned-pasteboard-successor)
+qualifies Windows NUL/hash correction at `a7e47b311aa6a721c5dd0991c36893694db13043` and prepares
+complete typed Mac pasteboard source at `fe5bb458f2ef23c0def7f8e19aa2327e404504b4`. Windows 244,
+public clipboard 7 and independent clipboard 5 pass. Mac native compilation and twelve tests
+remain open after the actual foreign-host check stops at earlier generated media bindings.
+The [record](../verification.md#desktop-clipboard-normalization-and-owned-pasteboard) preserves
+platform limits, exact lock edges, review and final Windows/compiler/static gates. The default
 desktop ready adapter does not add OS-error classification, and the target does not provide
 HTML/RTF content or browser-request abortion.
+
+The [credential successor](../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#credential-storage-and-add-only-keychain-successor)
+now records exact official add-only/cancellation, Windows native copying/background I/O and
+Linux prompt-stream sources. Framework atomic insertion is macOS-only with an unsupported
+default; application-provider read-then-write policy is outside the Apache framework closure.
+This is source-mapped next work, not implemented storage or an exhaustive refresh audit.
 
 A subsequent coherent text refresh should assess resolved-font fallback caches together with
 font-generation and layout invalidation, UAX #14 line breaking, and text synchronization/API
