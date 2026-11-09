@@ -270,27 +270,48 @@ desktop ready adapter does not add OS-error classification, and the target does 
 HTML/RTF content or browser-request abortion.
 
 The [credential successor](../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#credential-storage-and-add-only-keychain-successor)
-now records exact official add-only/cancellation, Windows native copying/background I/O and
-Linux prompt-stream sources. Framework atomic insertion is macOS-only with an unsupported
-default; application-provider read-then-write policy is outside the Apache framework closure.
-This is source-mapped next work, not implemented storage or an exhaustive refresh audit.
+is implemented at `3f943ea373f4da87a4c8b0f7d5a84e7101874824`, after the separate fork clipboard
+fixture correction `510cfc5613dd02d38d30f2497587cf6abb2995d9`. It adopts complete official
+add-only/cancellation, Windows copying/background I/O and the exact Linux prompt-stream source.
+Framework atomic insertion is macOS-only with an unsupported default; application-provider
+read-then-write policy remains outside the Apache framework closure. Focused Windows 10,
+final complete Windows 255, public enabled/disabled 2 each and ordinary independent 2 pass.
+The [record](../verification.md#credential-storage-and-add-only-keychain) retains the native
+red baseline, actual status/Submitted/resource retirement, two full clipboard failures,
+fixture corrections, locked/compiler/static gates and exact dependency changes. Mac source
+and tests are prepared, but Apple compilation/storage/atomicity and Linux Secret Service
+termination remain open. This is scoped qualification, not an exhaustive refresh audit.
 
-A subsequent coherent text refresh should assess resolved-font fallback caches together with
-font-generation and layout invalidation, UAX #14 line breaking, and text synchronization/API
-changes. The source baseline also advances Taffy from 0.10 to 0.15 and selects Rust 1.98.1. These
-are migration inputs, not a reason to copy the upstream manifest or silently change Open GPUI's
-then-declared Rust 1.92 floor. The WGPU successor explicitly advances the current declared floor
-to Rust 1.93 with actual Windows qualification. Validate the compiler/dependency requirement per
-owning change.
-Completing a few correctness ports does not qualify the complete upstream refresh.
+### Remaining Public Platform Mechanisms
 
-The display successor adds actual wasm32-unknown-unknown production Core/WGPU/Web compilation.
-Its Web test-target attempt stops in unchanged wait-timeout 0.2.1 test-support dependency before
-the backend. The remaining platform/dependency closure must assess the fork's proptest 1.10.0
-pin against target 1.12.0 and the supported test feature sets; a version difference alone is not
-evidence that an upgrade fixes it. The [qualification](../verification.md#connected-displays-and-window-association)
-keeps that failed attempt distinct from production compilation and unexecuted browser/native OS
-scope.
+A bounded November 10 comparison of the fixed target's Platform trait, App entry points and
+public exports identifies these additional missing mechanisms. It accounts for fork renames
+and split owners; it is not an exhaustive comparison of every backend or framework file.
+The credential successor above does not close this list. Use complete official mechanisms
+as the baseline, adapting fork-owned lifetime and admission contracts around them.
+
+| Mechanism | Fixed-target provenance | Current difference and consumer consequence | Disposition |
+| --- | --- | --- | --- |
+| Runtime platform identity and keybindings | `389c22e1c747d1a433c3b51c176936166c9cc1cf`, `platform/platform_info.rs`, keystroke/keybinding parsing, formatting and dispatch. | Core still interprets secondary through compile-target facts. Web host detection does not reach that Core path, so a Mac browser's secondary binding can retain Ctrl semantics. | Next complete unit: backend identity through public binding construction, actual dispatch, Div secondary interactions and ordinary browser consumers. |
+| Startup and live windowing mode | `f37989fbdf840b308892af66516c2b9c3ef3853a`: Application::with_windowing, App::request_windowing, GraphicalEnvironment, Linux WindowingModes and Mac application ActivationPolicy. | Current Linux factory chooses a concrete client once. Embedded App lifetime and display observation do not switch one live App from headless to a specified graphical session. | Separate platform-lifecycle unit, preserving official live-window refusal and environment propagation. |
+| Scoped idle-sleep prevention | `450775244fade36db70af2447be24e74edb43368`, Windows lifetime fix `d2074f4e15d289345a9583ef973470b8bdfad74a`, Apple extraction `40180d9c40e2d20eb63d388bff920818f2910b53`. | Power observation exists, but public ActivityGuard / prevent_idle_sleep acquisition and release do not. | Port complete guard/error semantics through existing platform owners, including same-lifetime Windows reason storage and explicit Web unsupported behavior. |
+| Application restart arguments | `715076597926d566d560b30b806749e1a2166080`, Application::with_restart_arguments and backend argv handling. | Current restart forwards only an executable path; application-supplied data-directory or other arguments cannot survive this API. | Port framework parameter forwarding and native encoding tests; keep product update-helper policy outside the framework. |
+| App-wide native appearance override | `8e4e5a39eed932d943cb7a3e7078885b75d1ea54`, AppKit binding successor `d86aa6e6b9f52046fb299ab57ec884b300190813`. | App/MacPlatform query appearance but cannot override all native titlebars or restore system following through None. | Port official optional override and other-platform no-op semantics through the current Mac owner. |
+
+The original comparison identified resolved-font fallback caches, font-generation/layout
+invalidation, UAX #14 and text synchronization as coherent work, together with Taffy 0.10 to
+0.15. Their subsequent text/layout qualifications above own the implemented scope; these
+historical inputs do not reopen those completed units. The fixed target selects Rust 1.98.1.
+The WGPU successor explicitly advances this fork's declared floor from 1.92 to 1.93 with actual
+Windows qualification. Validate compiler/dependency requirements per owning change rather than
+copying the upstream manifest. Selected qualified units still do not complete the whole refresh.
+
+The earlier display successor qualifies production wasm compilation and records its failed Web
+test-target attempt in wait-timeout 0.2.1 before the backend. Later proptest/randomized-tree and
+browser qualifications above own their updated source and actual execution evidence. Preserve
+the [original failed attempt](../verification.md#connected-displays-and-window-association)
+without treating the old proptest pin as a current pending task or claiming a version difference
+alone fixed it. Foreign-native execution retains its separate platform gates.
 
 ### Profiler And Platform Prerequisite Order
 

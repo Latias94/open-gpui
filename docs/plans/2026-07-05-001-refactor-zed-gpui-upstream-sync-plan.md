@@ -67,8 +67,9 @@ consumer checks alone do not qualify a complete framework refresh.
 
 ### Maintenance Handoff And Engine Feedback
 
-The November 9 owner clarification keeps this continuation responsible for the fixed-target
-refresh and the modular engine-integration assessment before a separate Codex session takes over
+The November 9 owner clarification, reaffirmed on November 10, keeps this continuation
+responsible for the fixed-target refresh and modular engine-integration assessment before a
+separate Codex session takes over
 ongoing Open-GPUI maintenance. That later session consumes concrete feedback from Nara; it is not
 a prerequisite for completing the current work.
 
@@ -2360,10 +2361,84 @@ ignored generated lock is a local example artifact, not a fourth maintained lock
 test items and metadata-only diagnostics. Real Apple competing-process insertion and cancellation,
 Windows background execution and system persistence, and Linux Secret Service/prompt termination
 need their actual platform evidence. TestPlatform stubs and status-classification tests cannot
-qualify storage or interprocess atomicity. This is source-mapped next work, not implementation
-or an exhaustive fixed-target closure audit.
+qualify storage or interprocess atomicity.
+
+Implementation is `3f943ea373f4da87a4c8b0f7d5a84e7101874824`, after the independent fork
+clipboard-fixture correction `510cfc5613dd02d38d30f2497587cf6abb2995d9`. The
+[qualification](../verification.md#credential-storage-and-add-only-keychain) retains the safe
+native red 0/1, focused Windows 10/10, final complete Windows 255/255 with nine skips, public
+enabled/disabled 2/2 each and ordinary independent 2/2. Actual native storage, updates, missing
+items, background thread IDs, six status publications and exact Submitted/GPU/readback/retirement
+execute. Locked workspace/ordinary/smoke checks, correctness Clippy, actual Windows Rust 1.93,
+formatting and static gates pass. Original full clipboard failures and the bounded fixture
+admission correction remain recorded; no product retry is added. Eight implementation,
+research and review threads close. Mac source and eight tests are prepared, while actual Apple
+compilation/storage/cancellation/interprocess atomicity and Unix prompt-termination execution
+remain open. Continue the runtime-platform successor and remaining dispositions before the
+real engine seam; this does not complete the fixed-target refresh.
+
+### Runtime Platform Identity And Secondary Keybindings Successor
+
+After credential qualification, adopt the complete public mechanism introduced by
+`389c22e1c747d1a433c3b51c176936166c9cc1cf`, using the unchanged fixed target's
+`platform/platform_info.rs` and all keybinding consumers. The bounded public Platform/App/export
+audit identifies this as missing: Web host detection exists locally, but Core secondary parsing
+and interaction policy still depend on the compile target. A wasm build in a Mac browser must
+use the host's command semantics rather than inherit non-Mac Ctrl semantics.
+
+Carry official runtime identity through backend/TestPlatform reporting, App access, binding
+construction/parsing, modifier matching, display formatting, dispatch and Div secondary
+interactions. Preserve explicit modifiers, multi-stroke ordering, physical input normalization,
+focus and accepted-candidate authority. Adapt fork callsites to the official mechanism rather
+than retaining a second compile-target interpretation. Do not create an engine-owned identity
+service, shortcut router or another input queue. A new identity type alone is not a complete
+replacement while real components still parse or dispatch with the old policy.
+
+Preserve the target's static/dynamic distinction: Keystroke::parse and KeyBinding::new take
+static input and reject secondary; parse_with_os handles dynamic strings, while KeyBinding::load
+receives App to obtain both actual keyboard mapping and runtime OS. Keystroke and
+KeybindingKeystroke display/unparse receive OperatingSystem explicitly, replacing their direct
+Display implementations. Modifiers secondary helpers, default KeyContext and window shortcut
+labels receive the corresponding App/OS facts. Update fork command adapters, shortcut capture,
+component projections and examples coherently; keep renderer-neutral command data independent
+of App and do not preserve the old DummyKeyboardMapper loading workaround.
+
+PlatformInfo contains OperatingSystem and Native/Web target, including all official enum
+variants without adding an iOS backend. Only Mac uses the secondary platform modifier;
+Option-text-input detection still treats Mac and iOS together. Keep these two rules distinct.
+Web detection preserves Android, iOS/iPadOS, Mac, Windows, FreeBSD, Linux/CrOS and Unknown
+classification in official priority order. TestPlatform supports explicit identity injection,
+and wrapped visual platforms delegate it. The fixed-target identity files match the introducing
+commit; adjacent modifier-only and executor corrections already have their qualified owners.
+The upstream introduction adds no dedicated runtime-identity tests, so existing parser/keymap/
+context/dispatch regressions must be preserved and supplemented with actual identity cases.
+
+Qualify actual public/ordinary consumers and component usage, together with Web host-identity
+controls that distinguish Mac, Windows and Linux semantics. Observe the registered binding's
+label and actual routed result, not only a parser model or uncalled API closure. Preserve
+pending-prefix, focus/retirement and existing native input assertions. Keep actual native OS,
+controlled browser identity and source-only foreign-platform evidence separate. Record API
+migration and default/test platform behavior; changing the build host is not runtime identity.
+
+The same bounded audit also identifies official windowing-mode switching, scoped idle-sleep
+prevention, restart arguments and App-wide native appearance override. Their exact sources,
+consumer consequences and dispositions are in the existing
+[remaining public-platform queue](../imports/zed-gpui-upstream-sync-candidates.md#remaining-public-platform-mechanisms).
+Windowing needs its own complete platform-lifecycle unit; the other three do not require it as
+an artificial prerequisite. Continue the already registered gesture and other framework owners
+as their dependencies permit. These five entries neither exhaust every backend difference nor
+qualify the fixed refresh or Nara's GPU/Host/View seam. The separate framework-maintenance
+session follows the fixed refresh and first real engine consumer, as defined above.
 
 ## Maintained Baseline Before Engine Adaptation
+
+The [credential record](../verification.md#credential-storage-and-add-only-keychain) qualifies
+Windows and ordinary consumers at `3f943ea373f4da87a4c8b0f7d5a84e7101874824`, with the
+separate clipboard-fixture correction `510cfc5613d`. Complete Windows 255, focused 10, public
+enabled/disabled 2 each and independent 2 pass. Actual Windows/compiler/static gates pass;
+Mac native and Linux Secret Service execution remain open. The bounded public-platform audit
+adds five explicit residual dispositions, beginning with runtime identity and secondary
+keybindings. The fixed refresh and first real Nara consumer still precede maintenance handoff.
 
 The [desktop clipboard record](../verification.md#desktop-clipboard-normalization-and-owned-pasteboard)
 separates qualified Windows `a7e47b311aa` from source-prepared Mac `fe5bb458f2e`. Complete Windows

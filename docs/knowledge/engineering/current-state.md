@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-10T04:57:30+08:00
+timestamp: 2026-11-10T05:48:00+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -18,6 +18,22 @@ verified_by:
 
 # Current State
 
+- Credential contracts are implemented at `3f943ea373f4da87a4c8b0f7d5a84e7101874824`, after
+  separate clipboard-fixture correction `510cfc5613dd02d38d30f2497587cf6abb2995d9`. Complete
+  official Mac add-only/typed cancellation/error source, Windows background/native-copying
+  behavior and the exact MIT oo7 prompt-stream pin use the existing owners. Safe native red
+  0/1 precedes focused Windows 10/10; final complete Windows 255/255, public enabled/disabled
+  2 each and ordinary independent 2 pass. The actual native workflow checks six status updates,
+  matching Submitted/GPU readback and exact task/window/text/platform retirement. Two complete
+  clipboard failures and a failed first contention model remain in the
+  [record](../../verification.md#credential-storage-and-add-only-keychain). The final fixture
+  observes actual OpenClipboard admission, keeps full value assertions and adds no product
+  retry. Locked workspace/consumer/smoke checks, correctness Clippy, actual Windows Rust 1.93,
+  formatting/YAML and existing static gates pass. Eight threads close. Actual Apple compilation/
+  Keychain storage/cancellation/competing insertion and Linux Secret Service termination remain
+  open. Continue the runtime-platform/keybinding successor and other fixed-target dispositions
+  before the real Nara consumer and maintenance handoff.
+
 - Windows desktop clipboard normalization is implemented and qualified at
   `a7e47b311aa6a721c5dd0991c36893694db13043`. The official NUL/metadata regression fails before
   the correction; focused/native 3, complete Windows 244, public clipboard 7 and ordinary
@@ -29,8 +45,9 @@ verified_by:
   edges; locked workspace/consumer checks, Windows correctness Clippy/Rust 1.93, independent wasm,
   formatting and existing static gates pass. All three threads close with no owned helper left.
   The [record](../../verification.md#desktop-clipboard-normalization-and-owned-pasteboard)
-  preserves the distinct platform scopes. Continue the credential successor and Mac native gates;
-  fixed-target closure, numerical budgets and the real engine seam still precede maintenance handoff.
+  preserves the distinct platform scopes. The credential successor is qualified separately above;
+  continue the remaining fixed-target dispositions and Mac native gates.
+  Fixed-target closure, numerical budgets and the real engine seam still precede maintenance handoff.
 
 - The complete asynchronous clipboard/Web paste successor is implemented and qualified at
   `5209f4e82c7cef3c095807fcf13cd16fe860b5c6`, after `770463485ac9`. Focused 34, complete framework/
@@ -826,9 +843,11 @@ historical scope and is not current branch or CI qualification.
 
 # Next Action
 
-- Continue the [credential storage and add-only Keychain successor](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#credential-storage-and-add-only-keychain-successor),
-  preserving complete official status, cancellation, backend I/O and ownership behavior. The
-  framework add-only API is macOS-only; do not invent a cross-platform atomic fallback.
+- Continue the [runtime platform and secondary-keybinding successor](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#runtime-platform-identity-and-secondary-keybindings-successor)
+  after the scoped credential qualification. Carry actual host OS through parsing, mapping,
+  formatting, dispatch, Div and fork command/component consumers. The bounded public audit also
+  queues windowing-mode switching, idle-sleep guards, restart arguments and native appearance.
+  Actual Mac Keychain and Linux Secret Service gates remain open; a source port is not native proof.
   Keep the [Mac pasteboard native gates](../../verification.md#desktop-clipboard-normalization-and-owned-pasteboard)
   open until actual Apple compilation and all twelve tests execute. Full fixed-target closure
   and the real Nara consumer still precede framework-maintenance handoff.

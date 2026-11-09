@@ -6378,6 +6378,142 @@ remote publication or CI execution. Full fixed-target closure, the credential su
 remaining workload/platform differences, numeric budgets, canonical docking and the real Nara
 GPU/Host/View seam remain open before framework-maintenance handoff.
 
+## Credential Storage And Add-Only Keychain
+
+The November 10 successor uses fixed Zed target
+`635026fabc38440fce5e1767d125026a17b12012`. Apple extraction
+`95d35c6efddfa6dc34f99bb1873620bd74af806a`, cancellation
+`abd9b3cbd2b11292358d740b9c6ab3eae7d1ab36` and add-only
+`79fe6a645f68f8c9230578f154bf99852d9f716f` form one Keychain owner. Final blob
+`a40eafcf2032a3cae4282e822a0354fb63aaf51c` is the source of the public Mac package module.
+The only production helper extraction isolates owned response decoding for malformed-response
+tests. Ordinary writes still update by server before adding on NotFound. A single SecItemAdd
+implements add-only server/account insertion. Duplicate returns false without replacement;
+absence, cancellation, invalid response and Security errors retain their separate meanings.
+
+The App/Platform add-only method is macOS-only and inherits an unsupported ready default.
+Application-level read-then-write CredentialsProvider policy is outside the extracted framework
+and supplies no atomicity guarantee. Public tests exercise ready TestPlatform/bench-platform
+stubs and owned task/App lifetimes; constructing or downcasting an error does not execute
+Keychain I/O. The Mac helper keeps four official tests plus four response/error/owned-copy
+controls. Windows host checks cannot compile or execute these cfg-excluded tests. The earlier
+foreign-host media-binding generation failure remains the Apple compiler limitation; actual
+Keychain storage, cancellation and competing-process insertion still need native evidence.
+
+Windows follows complete copying correction `8720fd1d093963be0aeb36954c15fd1aca1b94d2`
+and credential-only background-I/O correction `a0f8fa7bdbbf0269aaf5d5ebfac3ad9adfb576dd`.
+Keep the fork's namespace, missing-item HRESULT handling and secret-free size preflight.
+Copy optional null fields safely and free CredReadW storage before returning a UTF-16 error.
+The two official real storage scenarios use unique owned targets, extended with empty/binary
+passwords and Unicode accounts. Other controls exercise null fields, invalid UTF-16 and
+independent owned copies. No assertion prints credential values. Real workflow fixtures
+observe actual native I/O thread IDs; they never enumerate or delete unrelated stored items.
+
+The first safe native thread-placement run fails 0/1
+(`b6ebfe9b-6baf-49c0-ab9b-07a6d326b017`) on the exact off-foreground assertion after real
+write/read/delete, owned-item cleanup and platform retirement. This uses nonempty fields
+against the previous implementation, avoiding its null-field defect. The correction moves
+all three operations to the existing background executor; qualification follows below.
+
+Corrected focused Windows coverage passes 10/10
+(`e2c6eaf6-5219-4d1b-8531-2fc6f2d535c6`). It includes the two original native account scenarios,
+empty/binary and null/invalid/owned-copy controls, three actual App/Platform/native workflows
+and the existing redacted size error. The visible workflow publishes six fixed status changes
+after real storage operations, matches each nonempty Submitted receipt to its accepted window
+generation and verifies text ink with GPU readback. It then retires a consumer suspended after
+actual I/O, checking cancellation, exact native retirement order and release of root, window,
+TextSystem and platform resources. This is not physical-input or scanout evidence.
+
+Crate-external public credentials pass 2/2
+(`9f162a4c-22a0-4134-97e3-f48a0ecf63ab`). The ordinary independently locked consumer passes
+2/2 (`8644e820-3eb4-455c-b58f-c5767e053040`) with bench-support and without test-support.
+These runtime tests execute ready stub calls and task/AsyncApp lifetime controls. They do not
+replace the native storage trajectory, execute the macOS-only API, or prove interprocess
+atomicity. Two independent source reviewers find no confirmed scoped P1/P2; Mac execution and
+Linux prompt termination remain separate open platform gates.
+
+The first complete Windows run executes 253 cases: 252 pass, one existing clipboard case
+fails, and nine interactive cases remain skipped
+(`5f8509c8-4404-434a-b719-2f1d419130bd`). The unchanged normalized-text/metadata test reads None
+for its final nonempty Unicode case. All credential cases pass in that run. No clipboard
+production or test assertion is changed in this unit, and this observation does not establish
+the failure's cause. Preserve the isolated follow-up and final full-cohort result separately;
+a later pass does not prove the intermittent failure resolved.
+
+Isolated unchanged clipboard coverage passes 1/1
+(`56835e8d-b2b7-42f9-bbe6-8c8256edc651`), while the second complete Windows run again passes
+252/253, with None at a different late matrix input
+(`600ea4a8-8e87-4c50-9d68-cdf7806b28ff`). This expands the investigation rather than proving a
+credential regression or an external owner's identity. The fork-added five-case matrix moves
+into clipboard.rs under one actual native lock, retaining every complete text/metadata value
+and calling the real production string writer/reader. The four original public round trips
+and native async/paste/Submitted consumer keep their separate public coverage.
+
+The first contention control incorrectly assumes a second thread's NULL-window OpenClipboard
+creates distinct ownership; that control fails while the other four clipboard cases pass
+(`e31f1ef7-48ed-42d8-889f-4d03e298a220`). Its successor holds the lock with an exact dedicated
+hidden HWND on the owning thread, then verifies public refusal and same-thread release/window
+destruction. That control passes, together with the matrix and original public test, while the
+existing native consumer encounters another read/write admission failure
+(`0359f544-f7fe-4783-abfb-5ad3e7f7c93f`, 4/5). No product retry or data acceptance is changed.
+
+A cfg(test)-only observer now records the actual OpenClipboard return. The clipboard fixture
+may wait at most one second only when that acquisition returns Err. Successful acquisition
+returns the operation's original result immediately, including None or invalid data; complete
+data, metadata, snapshot, restoration and Submitted assertions still fail normally. Native
+writes recheck the original sequence before every attempt. This is a narrow fixture admission
+wait, not a generalized retry framework or a change to official best-effort production I/O.
+The final focused clipboard run passes 5/5
+(`6c6c9c06-ae6f-43af-95ca-c08fc297f090`), observing one actual acquisition refusal before the
+native consumer succeeds. The original failures' exact external holder remains unknown.
+Independent review finds no scoped P1/P2; the initial capture and restoration still retain
+their original contention/race limits. Final complete Windows coverage follows below.
+
+The final complete Windows backend passes 255/255 with nine existing interactive skips
+(`07c003cd-2c28-4d43-859d-9b6ce79db6a3`). This includes both added clipboard controls and all
+credential/native flows. The clipboard fixture correction is a separate local change from
+the official credential mechanism; it does not establish that the best-effort product API
+waits for availability or that other applications cannot replace clipboard contents.
+
+Linux dependency correction `91d3b962ae32aa725f351c621c6169e1e1a1e881` selects MIT oo7
+`731c1215edb6905876c6137ab300428c7b8d7c13` from `https://github.com/zed-industries/oo7`.
+Against registry 0.6.0's recorded source, only prompt.rs changes: a stream ending before
+Completed returns IO(UnexpectedEof), with its constant message, instead of unwrapping None.
+Manifest, public API, feature and license comparisons find no other source change. Retain
+async-std/native_crypto, Linux label/first-match/error behavior and Web's declared unsupported
+storage. Actual prompt termination requires Unix D-Bus/Secret Service; copied expressions or
+Windows cfg-excluded checks cannot qualify that production branch. The patch adds no upstream
+regression test. Its upstream test report is not a locally executed result.
+
+The three maintained backend lock graphs add objc2-security 0.3.2, its existing Core Foundation
+edge and the existing thiserror edge, and replace oo7's registry identity with the exact Git
+source. The ordinary consumer also names the Mac package directly for public typed errors.
+No unrelated package upgrade or compiler-floor change is intended. The ignored generated
+hello_web lock remains a local artifact. Final locked checks, runtime results and platform
+limits are recorded here before committing the unit.
+
+Instrument-disabled Core credentials pass 2/2
+(`255c62a3-1c6e-4741-8547-2165f9e6e217`). Locked Rust 1.95 workspace all-target and ordinary
+independent all-target/all-feature checks pass, as does the independently locked smoke
+consumer's production wasm check. Every maintained lock changes only the declared credential
+closure; independently resolved versions remain independent. Existing built xtask import/API/
+document/release gates and workflow YAML parsing pass. Workflow additions register public,
+ordinary, native Windows and Mac source/test gates; no remote CI execution is claimed.
+
+Final Windows-host correctness Clippy passes for Core/Windows all-target/all-feature scope.
+Actual Rust 1.93 all-target/all-feature checks pass for the Windows backend and independently
+locked ordinary consumer. Root and ordinary formatting checks pass. Mac compilation and
+Linux credential execution are not included in these host results. No compiler-floor change,
+test-capacity reduction, new credential owner or engine-default change follows.
+
+Credential implementation is local `3f943ea373f4da87a4c8b0f7d5a84e7101874824`. The clipboard
+fixture-only correction is separately committed as `510cfc5613dd02d38d30f2497587cf6abb2995d9`.
+All eight implementation/research/review lanes close; no owned Cargo or native helper remains.
+The next bounded source audit records five missing public-platform mechanisms, beginning
+with complete runtime OS identity and secondary keybindings. Full fixed-target closure,
+foreign-native qualification, numeric budgets, canonical docking and the actual Nara
+GPU/Host/View seam remain open before the separate maintenance-session handoff.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:
