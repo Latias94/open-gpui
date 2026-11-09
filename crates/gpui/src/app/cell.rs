@@ -608,6 +608,7 @@ impl Drop for AppBorrowReleaseConvergence<'_> {
 #[doc(hidden)]
 pub struct AppCell {
     app: RefCell<App>,
+    app_borrow_depth: Cell<usize>,
     app_borrow_waiters: RefCell<Vec<oneshot::Sender<()>>>,
     native_events: NativeEventIngress,
     native_captured_drags: NativeCapturedDragOutbox,
@@ -648,6 +649,7 @@ impl AppCell {
         let this = app.this.clone();
         Self {
             app: RefCell::new(app),
+            app_borrow_depth: Cell::new(0),
             app_borrow_waiters: RefCell::new(Vec::new()),
             native_events: NativeEventIngress::new(foreground_executor, this),
             native_captured_drags: NativeCapturedDragOutbox::default(),
@@ -3829,6 +3831,33 @@ impl AppCell {
         true
     }
 
+    pub(super) fn native_work_has_release_custody(&self) -> bool {
+        self.app_borrow_depth.get() > 0 || self.app_borrow_release_convergence_active.get()
+    }
+
+    fn app_borrow_started(&self) {
+        self.app_borrow_depth.set(
+            self.app_borrow_depth
+                .get()
+                .checked_add(1)
+                .expect("App borrow depth overflowed"),
+        );
+    }
+
+    fn app_borrow_finished(&self) {
+        self.app_borrow_depth.set(
+            self.app_borrow_depth
+                .get()
+                .checked_sub(1)
+                .expect("App borrow depth underflowed"),
+        );
+        if std::thread::panicking() {
+            self.native_events.schedule_drain_after_unwind();
+        } else {
+            self.app_borrow_released();
+        }
+    }
+
     #[doc(hidden)]
     #[track_caller]
     pub fn borrow(&self) -> AppRef<'_> {
@@ -3836,8 +3865,10 @@ impl AppCell {
             let thread_id = std::thread::current().id();
             eprintln!("borrowed {thread_id:?}");
         }
+        let app = self.app.borrow();
+        self.app_borrow_started();
         AppRef {
-            app: Some(self.app.borrow()),
+            app: Some(app),
             cell: self,
         }
     }
@@ -3849,8 +3880,10 @@ impl AppCell {
             let thread_id = std::thread::current().id();
             eprintln!("borrowed {thread_id:?}");
         }
+        let app = self.app.borrow_mut();
+        self.app_borrow_started();
         AppRefMut {
-            app: Some(self.app.borrow_mut()),
+            app: Some(app),
             cell: self,
         }
     }
@@ -3862,8 +3895,10 @@ impl AppCell {
             let thread_id = std::thread::current().id();
             eprintln!("borrowed {thread_id:?}");
         }
+        let app = self.app.try_borrow_mut()?;
+        self.app_borrow_started();
         Ok(AppRefMut {
-            app: Some(self.app.try_borrow_mut()?),
+            app: Some(app),
             cell: self,
         })
     }
@@ -4006,11 +4041,7 @@ impl Deref for AppRef<'_> {
 impl Drop for AppRef<'_> {
     fn drop(&mut self) {
         drop(self.app.take());
-        if std::thread::panicking() {
-            self.cell.native_events.schedule_drain_after_unwind();
-        } else {
-            self.cell.app_borrow_released();
-        }
+        self.cell.app_borrow_finished();
         if option_env!("TRACK_THREAD_BORROWS").is_some() {
             let thread_id = std::thread::current().id();
             eprintln!("dropped borrow from {thread_id:?}");
@@ -4045,11 +4076,7 @@ impl DerefMut for AppRefMut<'_> {
 impl Drop for AppRefMut<'_> {
     fn drop(&mut self) {
         drop(self.app.take());
-        if std::thread::panicking() {
-            self.cell.native_events.schedule_drain_after_unwind();
-        } else {
-            self.cell.app_borrow_released();
-        }
+        self.cell.app_borrow_finished();
         if option_env!("TRACK_THREAD_BORROWS").is_some() {
             let thread_id = std::thread::current().id();
             eprintln!("dropped {thread_id:?}");

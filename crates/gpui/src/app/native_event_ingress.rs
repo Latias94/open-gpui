@@ -1038,6 +1038,12 @@ impl NativeEventIngress {
         {
             return;
         }
+        let Some(app) = self.app.upgrade() else {
+            return;
+        };
+        if app.native_work_has_release_custody() {
+            return;
+        }
         let ticket = self.next_wake_ticket.get();
         self.next_wake_ticket.set(
             ticket

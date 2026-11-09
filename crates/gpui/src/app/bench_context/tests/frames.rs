@@ -187,6 +187,39 @@ fn keep_animation_pending(window: &mut Window, frames: Rc<Cell<usize>>) {
     });
 }
 
+fn continue_eight_frames(window: &mut Window, frames: Rc<Cell<usize>>) {
+    window.on_next_frame(move |window, _| {
+        frames.set(frames.get() + 1);
+        if frames.get() < 8 {
+            continue_eight_frames(window, frames);
+        }
+    });
+}
+
+#[test]
+fn idle_drain_leaves_a_pure_animation_frame_chain_pending() {
+    run_benchmark("benchmark-animation-idle-custody", |mut cx| {
+        let mut window = cx.add_empty_window();
+        cx.run_until_idle();
+        let frames = Rc::new(Cell::new(0));
+        window.update(|window, _| continue_eight_frames(window, frames.clone()));
+        cx.run_until_idle();
+        assert!(frames.get() > 0);
+        assert!(
+            frames.get() < 8,
+            "a frame's redundant native wake must not turn animation into ready task work"
+        );
+        assert!(platform_window(&cx, window.window_handle()).frame_scheduled());
+        for _ in 0..8 {
+            cx.run_until_idle();
+        }
+        assert_eq!(frames.get(), 8);
+        cx.bench_iter(|_| ());
+        drop(window);
+        cx.teardown();
+    });
+}
+
 struct RendererSession {
     app: std::rc::Weak<AppCell>,
     window: AnyWindowHandle,
