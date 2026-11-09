@@ -57,7 +57,7 @@ screen-capture = [
 ]
 
 [dev-dependencies]
-open_gpui.workspace = true
+open_gpui = { workspace = true, features = ["test-support"] }
 
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
@@ -91,6 +91,7 @@ oo7 = { version = "0.6", default-features = false, features = [
     "native_crypto",
 ] }
 calloop = "0.14.3"
+notify-rust = "4"
 raw-window-handle = "0.6"
 
 # Used in both windowing options

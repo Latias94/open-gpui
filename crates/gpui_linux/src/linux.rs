@@ -6,6 +6,7 @@ mod keyboard;
 mod platform;
 #[cfg(any(feature = "wayland", feature = "x11"))]
 mod power;
+mod system_notifications;
 #[cfg(any(feature = "wayland", feature = "x11"))]
 mod text_system;
 #[cfg(feature = "wayland")]

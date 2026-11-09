@@ -109,6 +109,8 @@ mod native_retirement_timer_tests;
 mod native_scene_color_tests;
 #[path = "native_spring_tests.rs"]
 mod native_spring_tests;
+#[path = "native_system_notification_tests.rs"]
+mod native_system_notification_tests;
 #[path = "native_text_layout_tests.rs"]
 mod native_text_layout_tests;
 #[path = "native_text_pool_tests.rs"]

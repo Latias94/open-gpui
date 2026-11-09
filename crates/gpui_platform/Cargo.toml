@@ -22,6 +22,10 @@ name = "image_gallery"
 path = "../gpui/examples/image_gallery.rs"
 test = true
 
+[[example]]
+name = "system_notifications"
+path = "examples/system_notifications.rs"
+
 [features]
 default = []
 font-kit = ["open_gpui_macos/font-kit"]

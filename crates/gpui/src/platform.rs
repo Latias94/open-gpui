@@ -3727,6 +3727,38 @@ pub trait Platform: 'static {
     /// Registers a callback invoked when the reported power mode changes.
     fn on_power_mode_change(&self, _callback: NativeAppNotificationHandler) {}
 
+    /// Sets the application's process-wide identity and user-visible name.
+    ///
+    /// The identifier is used for platform identity mechanisms such as the Windows
+    /// AppUserModelID. Call this once, early in startup, before opening windows or
+    /// posting notifications.
+    fn set_app_identity(&self, identifier: &str, name: &str) {
+        _ = (identifier, name);
+    }
+
+    /// Posts a notification to the operating system's notification center.
+    ///
+    /// A matching tag replaces an earlier notification where supported. This is a
+    /// no-op when notification support or delivery is unavailable.
+    fn show_system_notification(&self, notification: SystemNotification) {
+        _ = notification;
+    }
+
+    /// Removes the delivered or pending notification with this tag, where supported.
+    ///
+    /// Retraction is best-effort; some platforms only let notifications age out.
+    fn dismiss_system_notification(&self, tag: &str) {
+        _ = tag;
+    }
+
+    /// Registers the main-thread callback for body or action-button activation.
+    fn on_system_notification_response(
+        &self,
+        callback: Box<dyn FnMut(SystemNotificationResponse)>,
+    ) {
+        _ = callback;
+    }
+
     fn compositor_name(&self) -> &'static str {
         ""
     }
@@ -3899,6 +3931,39 @@ pub trait PlatformDisplay: Debug {
         let origin = point(center.x - offset.width, center.y - offset.height);
         Bounds::new(origin, clipped_window_size)
     }
+}
+
+/// A notification posted to the operating system's notification center,
+/// rather than rendered as in-app UI.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SystemNotification {
+    /// Stable notification identity, returned with responses. Matching tags
+    /// replace earlier notifications where the platform supports it.
+    pub tag: SharedString,
+    /// The notification's headline.
+    pub title: SharedString,
+    /// Additional text displayed below the title.
+    pub body: SharedString,
+    /// Action buttons, omitted on platforms that cannot display them.
+    pub actions: Vec<SystemNotificationAction>,
+}
+
+/// A button offered on a [`SystemNotification`].
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct SystemNotificationAction {
+    /// Identifies the pressed button in [`SystemNotificationResponse::action_id`].
+    pub id: SharedString,
+    /// The button's user-visible label.
+    pub label: SharedString,
+}
+
+/// The user's activation of a [`SystemNotification`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SystemNotificationResponse {
+    /// The activated notification's tag.
+    pub tag: SharedString,
+    /// The action ID, or `None` when the notification body was activated.
+    pub action_id: Option<SharedString>,
 }
 
 /// The operating system's preference for energy use versus performance.

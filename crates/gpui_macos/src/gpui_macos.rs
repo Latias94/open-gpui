@@ -15,6 +15,7 @@ mod keyboard;
 mod metal_compat;
 mod pasteboard;
 mod process_info;
+mod system_notifications;
 
 #[cfg(feature = "screen-capture")]
 mod screen_capture;

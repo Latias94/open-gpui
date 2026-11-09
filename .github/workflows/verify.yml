@@ -161,6 +161,13 @@ jobs:
         if: matrix.name == 'windows'
         run: cargo nextest run --locked -p open-gpui-windows --all-features --lib -E 'test(=platform::native_test_support::native_animation_tests::native_generic_animations_progress_reduce_restore_and_retire_pending_frames)' --run-ignored only --test-threads=1 --no-fail-fast --no-tests fail
 
+      - name: Test system notification values, App responses and native transport
+        run: cargo nextest run --locked -p open-gpui -p open-gpui-windows -p open-gpui-linux --all-features --lib --test system_notifications -E 'test(system_notification) | test(notification_simulation_) | binary(system_notifications)' --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Test independent system notification API without optional features
+        if: matrix.name == 'windows'
+        run: cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test system_notifications --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+
       - name: Test Spring state, shared solver and public composition
         run: |
           cargo nextest run --locked -p open-gpui-motion --test-threads=1 --no-fail-fast --no-tests fail

@@ -1205,3 +1205,56 @@ cargo +1.95.0 nextest run --locked --manifest-path tests/fixtures/dependency-con
 
 These commands define verification instructions, not compilation or execution results. The main
 verification owner records actual results and compiler/platform scope separately.
+
+## System notification public consumers
+
+The `system_notifications` targets consume the official notification API in fixed Zed source
+`635026fabc38440fce5e1767d125026a17b12012`. They introduce no dependencies, features or lockfile
+changes. The ordinary independently locked target enables no GPUI test-support.
+
+Its executed value tests construct owned notifications, action lists and body/action responses,
+check cloning and equality, exercise the action's Hash implementation and preserve arbitrary
+caller action IDs such as `default` and `__closed`. These are value checks, not transport tests.
+A separately named signature test checks exact App function pointers and explicitly unexecuted
+App/Platform closures, including owned mutable callbacks and the shared `&App` receiver.
+Those closures do not construct an Application, start an App or execute backend notification
+methods. The public controls return unit; absence of an error is not a delivery receipt.
+
+The separate crate-external `crates/gpui/tests/system_notifications.rs` requires only
+`test-support`. It constructs actual App/Window consumers through public `TestAppContext` and
+the existing CPU TestPlatform. Its full workflow sets identity before opening a window,
+posts two tags, replaces one without losing the other, delivers a response while the App is
+actively borrowed, updates a real entity, observes `Context::notify` and checks redraw.
+It reconstructs the root view, routes the next action response to the replacement, dismisses
+only the matching tag and verifies exact view/App release. Another workflow replaces a handler
+from within its own delivery, enqueues a nested response through the public simulator and checks
+ordered delivery plus release of the old and replacement callback captures. The first response
+is queued under an active App borrow so the simulator restores its platform callback before
+that handler starts and simulates the nested response. These consumers complement the
+separately ported official Core cases; they do not duplicate those cases.
+
+The `open-gpui-platform` example adapts the official `system_notifications.rs`, including its
+final startup font initialization through the existing checked-in font fixtures on Web. It
+sets identity before posting, provides Show or replace and Dismiss controls and updates its view
+from body/action callbacks. Its status reports requests, because delivery and dismissal are
+best-effort. macOS requires an app bundle and notification authorization. The fixed Linux and
+FreeBSD backend requires a session D-Bus service and does not replace or retract delivered
+notifications. The Web backend does not deliver system notifications. Native Windows uses its
+existing package/AppUserModelID notification path; this example adds no separate installer or
+permission UI.
+
+Run the focused gates serially from the repository root with `CARGO_BUILD_JOBS=1`, reusing
+the existing lockfiles and build directory:
+
+```text
+cargo nextest run --locked -p open-gpui --no-default-features --features test-support --test system_notifications --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test system_notifications --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo check --locked -p open-gpui-platform --all-features --example system_notifications --jobs 1
+```
+
+Launch the native example separately with
+`cargo run -p open-gpui-platform --example system_notifications` and the platform features
+required on the host. These commands define verification instructions, not execution results.
+CPU TestPlatform delivery and request history establish neither actual operating-system
+notification delivery, authorization, action routing, native rendering nor performance.
+The main verification owner records executed commands and remaining native limits separately.

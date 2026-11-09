@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- System notifications expose application identity, show/dismiss and body/action response APIs across the native backend closure. Unsupported or unavailable delivery remains best-effort; responses use the existing ordered App update owner, with lazy platform initialization and replaceable handlers.
 - Official stateful Spring animations support typed and custom targets, velocity-preserving retargeting, pause/stop/cancel/completion, arbitrary phase interpolation and animated parent composition. GPUI and the renderer-neutral motion crate expose the same pure solver types. Element samples and next-frame demand publish with accepted frames.
 - With `profiler`, `DebugFrameOverlayMode` and Window controls expose the official hidden/current/detailed draw-time overlay. A rolling 1,000-sample bitmap readout preserves history while hidden and counts completed accepted draws; reset preserves the lifetime count. Direct Scene drawing adds no font/layout dependency or self-refresh timer.
 - Browser rendering supports explicit WebGPU or WebGL2 selection and automatic WebGPU-to-WebGL2 fallback with a fresh canvas. Packed WebGL data preserves the shared renderer's clip ancestry, local transforms and complete-frame refusal. The browser smoke gate exercises real screenshots, resizing and public input/docking consumers.
@@ -16,6 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Breaking Changes and Migration Notes
 
+- Native callback diagnostics add `NativeCallbackKind::SystemNotificationResponse`; update exhaustive matches over this test/integration enum. Ordinary Platform implementors inherit the default notification no-op methods.
 - Replace `MotionSpringPhysics` with `MotionSpringOptions::new(SpringConfig::new(stiffness, damping, mass))`; the former constructor ordered mass first. Use `with_epsilon` for positional tolerance and the official natural-frequency velocity threshold. Advanced specs use `from_options` / `options`. Review-duration and reported-bounce hints move to `MotionSpringPolicyHints`; they do not change physical sampling. Domain freeze-at-cancel remains distinct from official `SpringPlayback::Cancelled`, which restores the original initial value.
 - `Animation` adds public `synced` and `max_fps` fields. Prefer `Animation::new` with `repeat_synced` / `with_max_fps` builders, or initialize the added fields in explicit struct literals. Easing outputs may now overshoot the unit interval if they remain finite.
 - The maintained workspace requires Rust 1.93 for the official upstream WGPU/Naga revision `cddb2f5d80dc0009b2ef6767635140cacf90a007`, including Vulkan surface teardown and WebGL reconfiguration corrections. Applications passing WGPU types to `open-gpui-wgpu` must select that same source revision; a registry version with the same package version has a different Rust type identity. Earlier Rust 1.92 qualification remains tied to its recorded revisions.

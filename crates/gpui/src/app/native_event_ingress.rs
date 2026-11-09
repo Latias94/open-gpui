@@ -30,7 +30,8 @@ use crate::{
     Action, App, ForegroundExecutor, ModifiersChangedEvent, PlatformInput,
     PlatformWindowActiveStatusObservation, PlatformWindowCommand, PlatformWindowCommandDispatcher,
     PlatformWindowMutationObservation, PointerCancelEvent, PointerCancelReason,
-    RequestFrameOptions, SystemWindowTabController, Task, Window, WindowId,
+    RequestFrameOptions, SystemNotificationResponse, SystemWindowTabController, Task, Window,
+    WindowId,
 };
 
 pub(super) const MAX_NATIVE_WORK_PER_DRAIN: u8 = 64;
@@ -1938,6 +1939,7 @@ impl NativeEventEnvelope {
 pub(super) enum NativeAppEvent {
     OpenUrls(Vec<String>),
     Reopen,
+    SystemNotificationResponse(SystemNotificationResponse),
     SystemSleep,
     SystemWake,
     WillOpenAppMenu,
@@ -1961,6 +1963,12 @@ impl NativeAppEvent {
             Self::Reopen => {
                 if let Some(app_cell) = app.this.upgrade() {
                     app_cell.dispatch_reopen(app);
+                }
+                NativeEventDrainControl::Continue
+            }
+            Self::SystemNotificationResponse(response) => {
+                if let Some(app_cell) = app.this.upgrade() {
+                    app_cell.dispatch_system_notification_response(response, app);
                 }
                 NativeEventDrainControl::Continue
             }
@@ -2024,6 +2032,7 @@ impl NativeAppEvent {
             Self::DisplaysChanged => Some(NativeAppEventCoalesceDomain::Displays),
             Self::OpenUrls(_)
             | Self::Reopen
+            | Self::SystemNotificationResponse(_)
             | Self::SystemSleep
             | Self::SystemWake
             | Self::WillOpenAppMenu
@@ -2036,6 +2045,7 @@ impl NativeAppEvent {
         match self {
             Self::OpenUrls(_) => NativeCallbackKind::OpenUrls,
             Self::Reopen => NativeCallbackKind::Reopen,
+            Self::SystemNotificationResponse(_) => NativeCallbackKind::SystemNotificationResponse,
             Self::SystemSleep => NativeCallbackKind::SystemSleep,
             Self::SystemWake => NativeCallbackKind::SystemWake,
             Self::WillOpenAppMenu => NativeCallbackKind::WillOpenAppMenu,

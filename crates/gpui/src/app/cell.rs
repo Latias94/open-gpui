@@ -44,12 +44,13 @@ use crate::{
     NativeInputInvariantViolation, Pixels, Platform, PlatformFocusedWindow, PlatformInput,
     PlatformPointerCaptureReleaseOutcome, PlatformPresentationShutdownOutcome, PlatformWindow,
     PlatformWindowCommand, PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome, Point,
-    PointerCancelReason, PreparedPlatformPresentationShutdown, WindowActivationCancellationOutcome,
-    WindowActivationTerminal, WindowActivationTicket, WindowControlArea, WindowId,
-    window::WindowInteractionAuthority,
+    PointerCancelReason, PreparedPlatformPresentationShutdown, SystemNotificationResponse,
+    WindowActivationCancellationOutcome, WindowActivationTerminal, WindowActivationTicket,
+    WindowControlArea, WindowId, window::WindowInteractionAuthority,
 };
 
 type OpenUrlsHandler = dyn FnMut(Vec<String>, &mut App);
+type SystemNotificationResponseHandler = dyn FnMut(SystemNotificationResponse, &mut App);
 type AppHandler = dyn FnMut(&mut App);
 type NativeShutdownCriticalCallback = Box<dyn FnOnce(&mut App)>;
 
@@ -634,6 +635,7 @@ pub struct AppCell {
     shutdown_completion_queued: Cell<Option<u64>>,
     open_urls_handler: NativeAppHandlerSlot<OpenUrlsHandler>,
     reopen_handler: NativeAppHandlerSlot<AppHandler>,
+    system_notification_response_handler: NativeAppHandlerSlot<SystemNotificationResponseHandler>,
     platform_input_leases: RefCell<Vec<u64>>,
     input_handler_leases: RefCell<Vec<u64>>,
 }
@@ -673,6 +675,7 @@ impl AppCell {
             shutdown_completion_queued: Cell::new(None),
             open_urls_handler: NativeAppHandlerSlot::default(),
             reopen_handler: NativeAppHandlerSlot::default(),
+            system_notification_response_handler: NativeAppHandlerSlot::default(),
             platform_input_leases: RefCell::new(Vec::new()),
             input_handler_leases: RefCell::new(Vec::new()),
         }
@@ -727,6 +730,23 @@ impl AppCell {
     pub(super) fn dispatch_reopen(&self, app: &mut App) {
         if let Some(mut handler) = self.reopen_handler.checkout() {
             (handler.callback_mut())(app);
+        }
+    }
+
+    pub(super) fn set_system_notification_response_handler(
+        &self,
+        handler: Box<SystemNotificationResponseHandler>,
+    ) {
+        self.system_notification_response_handler.set(handler);
+    }
+
+    pub(super) fn dispatch_system_notification_response(
+        &self,
+        response: SystemNotificationResponse,
+        app: &mut App,
+    ) {
+        if let Some(mut handler) = self.system_notification_response_handler.checkout() {
+            (handler.callback_mut())(response, app);
         }
     }
 

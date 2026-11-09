@@ -7,10 +7,10 @@ use crate::{
     PlatformPointerCaptureReleaseOutcome, PlatformWindowCreationCapabilities,
     PlatformWindowDispatch, PlatformWindowHitStack, PlatformWindowMutationCapabilities,
     PlatformWindowMutationTerminal, PlatformWindowPresentOutcome, Point, PowerMode, Render, Result,
-    Size, Task, TestDispatcher, TestPlatform, TestScreenCaptureSource, TestWindow, TextSystem,
-    ThermalState, VisualContext, Window, WindowBounds, WindowHandle, WindowMutationDomain,
-    WindowOptions, WindowPlatformFacts, app::GpuiMode, platform::RequestFrameOptions,
-    window::ElementArenaScope,
+    SharedString, Size, SystemNotification, SystemNotificationResponse, Task, TestDispatcher,
+    TestPlatform, TestScreenCaptureSource, TestWindow, TextSystem, ThermalState, VisualContext,
+    Window, WindowBounds, WindowHandle, WindowMutationDomain, WindowOptions, WindowPlatformFacts,
+    app::GpuiMode, platform::RequestFrameOptions, window::ElementArenaScope,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt, channel::oneshot};
@@ -527,6 +527,36 @@ impl TestAppContext {
     /// All the urls that have been opened with cx.open_url() during this test.
     pub fn opened_url(&self) -> Option<String> {
         self.test_platform.opened_url.borrow().clone()
+    }
+
+    /// Returns the application identity configured during this test.
+    pub fn app_identity(&self) -> Option<(SharedString, SharedString)> {
+        self.test_platform.app_identity()
+    }
+
+    /// Returns all system notifications shown during this test, in order.
+    pub fn shown_system_notifications(&self) -> Vec<SystemNotification> {
+        self.test_platform.shown_system_notifications()
+    }
+
+    /// Returns the system notifications currently delivered by the test platform.
+    pub fn delivered_system_notifications(&self) -> Vec<SystemNotification> {
+        self.test_platform.delivered_system_notifications()
+    }
+
+    /// Returns dismissed system notification tags in order.
+    pub fn dismissed_system_notifications(&self) -> Vec<SharedString> {
+        self.test_platform.dismissed_system_notifications()
+    }
+
+    /// Simulates notification activation and advances ready foreground work when App is free.
+    /// Active App borrows retain queued responses until their existing release boundary.
+    pub fn simulate_system_notification_response(&self, response: SystemNotificationResponse) {
+        self.test_platform
+            .simulate_system_notification_response(response);
+        if self.app.try_borrow_mut().is_ok() {
+            self.run_until_parked();
+        }
     }
 
     /// Simulates the user resizing the window to the new size.

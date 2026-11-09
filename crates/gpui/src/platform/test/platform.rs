@@ -8,10 +8,10 @@ use crate::{
     PlatformNativeDragHysteresis, PlatformTextSystem, PlatformWindowActivationSupport,
     PlatformWindowCapabilities, PlatformWindowCommandOutcome, PlatformWindowCreationCapabilities,
     PlatformWindowHitStack, PlatformWindowMutationCapabilities, Point, PowerMode, PromptButton,
-    ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, SourceMetadata, Task,
-    TestDisplay, TestWindow, ThermalState, WindowAppearance, WindowCoordinateSpace,
-    WindowCreationSupport, WindowInitialPresentationOrder, WindowMutationSupport, WindowParams,
-    size,
+    ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, SharedString, SourceMetadata,
+    SystemNotification, SystemNotificationResponse, Task, TestDisplay, TestWindow, ThermalState,
+    WindowAppearance, WindowCoordinateSpace, WindowCreationSupport, WindowInitialPresentationOrder,
+    WindowMutationSupport, WindowParams, size,
 };
 use anyhow::Result;
 use futures::channel::oneshot;
@@ -69,6 +69,7 @@ pub(crate) struct TestPlatform {
     quit_requested: RefCell<bool>,
     open_urls_callback: RefCell<Option<Box<dyn FnMut(Vec<String>)>>>,
     reopen_callback: RefCell<Option<Box<dyn FnMut()>>>,
+    system_notifications: RefCell<TestSystemNotifications>,
     system_wake_callback: RefCell<Option<NativeAppNotificationHandler>>,
     system_sleep_callback: RefCell<Option<NativeAppNotificationHandler>>,
     thermal_state: Cell<ThermalState>,
@@ -126,6 +127,15 @@ struct TestPrompt {
     detail: Option<String>,
     answers: Vec<String>,
     tx: oneshot::Sender<usize>,
+}
+
+#[derive(Default)]
+pub(crate) struct TestSystemNotifications {
+    app_identity: Option<(SharedString, SharedString)>,
+    shown: Vec<SystemNotification>,
+    delivered: Vec<SystemNotification>,
+    dismissed: Vec<SharedString>,
+    response_callback: Option<Box<dyn FnMut(SystemNotificationResponse)>>,
 }
 
 #[derive(Default)]
@@ -204,6 +214,7 @@ impl TestPlatform {
             quit_requested: Default::default(),
             open_urls_callback: Default::default(),
             reopen_callback: Default::default(),
+            system_notifications: Default::default(),
             system_wake_callback: Default::default(),
             system_sleep_callback: Default::default(),
             thermal_state: Cell::new(ThermalState::Nominal),
@@ -726,9 +737,85 @@ impl TestPlatform {
     pub(crate) fn did_prompt_for_new_path(&self) -> bool {
         !self.prompts.borrow().new_path.is_empty()
     }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn app_identity(&self) -> Option<(SharedString, SharedString)> {
+        self.system_notifications.borrow().app_identity.clone()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn shown_system_notifications(&self) -> Vec<SystemNotification> {
+        self.system_notifications.borrow().shown.clone()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn delivered_system_notifications(&self) -> Vec<SystemNotification> {
+        self.system_notifications.borrow().delivered.clone()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn dismissed_system_notifications(&self) -> Vec<SharedString> {
+        self.system_notifications.borrow().dismissed.clone()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn simulate_system_notification_response(
+        &self,
+        response: SystemNotificationResponse,
+    ) {
+        let callback = self
+            .system_notifications
+            .borrow_mut()
+            .response_callback
+            .take();
+        if let Some(mut callback) = callback {
+            callback(response);
+            self.system_notifications
+                .borrow_mut()
+                .response_callback
+                .get_or_insert(callback);
+        }
+    }
 }
 
 impl Platform for TestPlatform {
+    fn set_app_identity(&self, identifier: &str, name: &str) {
+        self.system_notifications.borrow_mut().app_identity =
+            Some((identifier.to_owned().into(), name.to_owned().into()));
+    }
+
+    fn show_system_notification(&self, notification: SystemNotification) {
+        let mut state = self.system_notifications.borrow_mut();
+        if state.app_identity.is_none() {
+            return;
+        }
+        if let Some(delivered) = state
+            .delivered
+            .iter_mut()
+            .find(|delivered| delivered.tag == notification.tag)
+        {
+            *delivered = notification.clone();
+        } else {
+            state.delivered.push(notification.clone());
+        }
+        state.shown.push(notification);
+    }
+
+    fn dismiss_system_notification(&self, tag: &str) {
+        let mut state = self.system_notifications.borrow_mut();
+        state
+            .delivered
+            .retain(|notification| notification.tag != tag);
+        state.dismissed.push(tag.to_owned().into());
+    }
+
+    fn on_system_notification_response(
+        &self,
+        callback: Box<dyn FnMut(SystemNotificationResponse)>,
+    ) {
+        self.system_notifications.borrow_mut().response_callback = Some(callback);
+    }
+
     fn background_executor(&self) -> BackgroundExecutor {
         self.background_executor.clone()
     }

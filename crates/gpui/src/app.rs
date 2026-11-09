@@ -53,9 +53,10 @@ use crate::{
     PlatformViewportCapabilities, PlatformWindowCapabilities, PlatformWindowProfile, Point,
     PointerCaptureHandle, PowerMode, Priority, PromptBuilder, PromptButton, PromptHandle,
     PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource,
-    SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextRenderingMode, TextSystem,
-    ThermalState, Window, WindowAppearance, WindowButtonLayout, WindowHandle, WindowId,
-    WindowInvalidator, WindowKind, WindowTransientOwner,
+    SharedString, SubscriberSet, Subscription, SvgRenderer, SystemNotification,
+    SystemNotificationResponse, Task, TextRenderingMode, TextSystem, ThermalState, Window,
+    WindowAppearance, WindowButtonLayout, WindowHandle, WindowId, WindowInvalidator, WindowKind,
+    WindowTransientOwner,
     asset_cache::CachedLoad,
     colors::{Colors, GlobalColors},
     hash, init_app_menus,
@@ -86,6 +87,8 @@ mod native_window_activation;
 mod power_mode_tests;
 #[cfg(test)]
 mod power_tests;
+#[cfg(test)]
+mod system_notification_tests;
 #[cfg(any(test, feature = "test-support"))]
 mod test_app;
 #[cfg(any(test, feature = "test-support"))]
@@ -2109,6 +2112,54 @@ impl App {
     /// schemes at runtime.
     pub fn register_url_scheme(&self, scheme: &str) -> Task<Result<()>> {
         self.platform.register_url_scheme(scheme)
+    }
+
+    /// Sets the application's process-wide identity and user-visible name.
+    ///
+    /// The identifier is used for platform identity mechanisms such as the Windows
+    /// AppUserModelID. Call this once, early in startup, before opening windows or
+    /// posting notifications.
+    pub fn set_app_identity(&self, identifier: &str, name: &str) {
+        self.platform.set_app_identity(identifier, name);
+    }
+
+    /// Posts a notification to the operating system's notification center.
+    ///
+    /// A matching tag replaces an earlier notification where supported. This is a
+    /// no-op when notification support or delivery is unavailable.
+    pub fn show_system_notification(&self, notification: SystemNotification) {
+        self.platform.show_system_notification(notification);
+    }
+
+    /// Removes the delivered or pending notification with this tag, where supported.
+    ///
+    /// Retraction is best-effort; some platforms only let notifications age out.
+    pub fn dismiss_system_notification(&self, tag: &str) {
+        self.platform.dismiss_system_notification(tag);
+    }
+
+    /// Registers the handler for system notification body or action-button activation.
+    ///
+    /// Subsequent registrations replace the handler. Responses enter the ordered App
+    /// callback queue and run in a complete update after active App borrows are released.
+    pub fn on_system_notification_response<F>(&self, callback: F)
+    where
+        F: 'static + FnMut(SystemNotificationResponse, &mut App),
+    {
+        if let Some(app) = self.this.upgrade() {
+            app.set_system_notification_response_handler(Box::new(callback));
+            let app = Rc::downgrade(&app);
+            self.platform
+                .on_system_notification_response(Box::new(move |response| {
+                    if let Some(app) = app.upgrade() {
+                        app.enqueue_native_app_event(
+                            native_event_ingress::NativeAppEvent::SystemNotificationResponse(
+                                response,
+                            ),
+                        );
+                    }
+                }));
+        }
     }
 
     /// Returns the full pathname of the current app bundle.

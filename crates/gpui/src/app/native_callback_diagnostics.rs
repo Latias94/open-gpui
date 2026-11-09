@@ -78,6 +78,7 @@ pub enum NativeBoundaryKind {
 pub enum NativeCallbackKind {
     OpenUrls,
     Reopen,
+    SystemNotificationResponse,
     SystemSleep,
     SystemWake,
     KeyboardLayoutChanged,

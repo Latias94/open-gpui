@@ -257,6 +257,9 @@ pub struct WindowsPlatform {
     power_saving_notification: RefCell<Option<HPOWERNOTIFY>>,
     run_exit: WindowsPlatformRunExit,
     disable_direct_composition: bool,
+    has_package_identity: bool,
+    app_identity: RefCell<Option<(String, String)>>,
+    system_notifications: RefCell<SystemNotificationState>,
     #[cfg(test)]
     lifecycle_test_probe: Rc<NativeWindowLifecycleTestProbe>,
 }
@@ -973,6 +976,9 @@ impl WindowsPlatform {
             power_saving_notification: RefCell::new(None),
             run_exit,
             disable_direct_composition,
+            has_package_identity: has_package_identity(),
+            app_identity: RefCell::new(None),
+            system_notifications: RefCell::new(SystemNotificationState::new()),
             drop_target_helper,
             invalidate_devices: Arc::new(AtomicBool::new(false)),
             #[cfg(test)]
@@ -1020,6 +1026,7 @@ impl WindowsPlatform {
         if self.inner.native_finalization_started.replace(true) {
             return;
         }
+        self.system_notifications.borrow_mut().retire();
         *self.vsync_owner_live.write() = false;
         self.inner.begin_platform_native_finalization(
             self.raw_window_handles.clone(),
@@ -2673,6 +2680,56 @@ impl Platform for WindowsPlatform {
         self.ensure_power_saving_notification();
     }
 
+    fn set_app_identity(&self, identifier: &str, name: &str) {
+        if self.has_package_identity || self.inner.native_finalization_started.get() {
+            return;
+        }
+
+        let identifier_utf16 = windows::core::HSTRING::from(identifier);
+        // SAFETY: `identifier_utf16` outlives the call and is null-terminated.
+        if let Err(error) = unsafe {
+            windows::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID(
+                windows::core::PCWSTR(identifier_utf16.as_ptr()),
+            )
+        } {
+            log::warn!("failed to set the process AppUserModelID: {error}");
+        }
+        *self.app_identity.borrow_mut() = Some((identifier.to_string(), name.to_string()));
+    }
+
+    fn show_system_notification(&self, notification: SystemNotification) {
+        if self.inner.native_finalization_started.get() {
+            return;
+        }
+        let app_identity = self.app_identity.borrow().clone();
+        self.system_notifications
+            .borrow_mut()
+            .show(
+                self.has_package_identity,
+                app_identity
+                    .as_ref()
+                    .map(|(identifier, name)| (identifier.as_str(), name.as_str())),
+                notification,
+            )
+            .log_err();
+    }
+
+    fn dismiss_system_notification(&self, tag: &str) {
+        self.system_notifications.borrow_mut().dismiss(tag);
+    }
+
+    fn on_system_notification_response(
+        &self,
+        callback: Box<dyn FnMut(SystemNotificationResponse)>,
+    ) {
+        if self.inner.native_finalization_started.get() {
+            return;
+        }
+        self.system_notifications
+            .borrow_mut()
+            .on_response(&self.foreground_executor, callback);
+    }
+
     fn set_menus(&self, menus: Vec<Menu>, _keymap: &Keymap) {
         *self.inner.state.menus.borrow_mut() = menus.into_iter().map(|menu| menu.owned()).collect();
     }
@@ -3870,6 +3927,24 @@ struct PlatformWindowCreateContext {
     dispatcher: Option<Arc<WindowsDispatcher>>,
     #[cfg(test)]
     lifecycle_test_probe: Rc<NativeWindowLifecycleTestProbe>,
+}
+
+fn has_package_identity() -> bool {
+    let mut package_full_name_length = 0;
+    let result = unsafe {
+        windows::Win32::Storage::Packaging::Appx::GetCurrentPackageFullName(
+            &mut package_full_name_length,
+            None,
+        )
+    };
+    if result == ERROR_INSUFFICIENT_BUFFER {
+        true
+    } else if result == APPMODEL_ERROR_NO_PACKAGE {
+        false
+    } else {
+        log::warn!("failed to determine whether the process has package identity: {result:?}");
+        false
+    }
 }
 
 fn open_target(target: impl AsRef<OsStr>) -> Result<()> {
