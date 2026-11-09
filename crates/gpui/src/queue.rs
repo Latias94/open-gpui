@@ -2,7 +2,7 @@ use std::{
     collections::VecDeque,
     fmt,
     iter::FusedIterator,
-    sync::{Arc, atomic::AtomicUsize},
+    sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, TryLockError, atomic::AtomicUsize},
 };
 
 use rand::{Rng, SeedableRng, rngs::SmallRng};
@@ -24,8 +24,10 @@ impl<T> PriorityQueues<T> {
 }
 
 struct PriorityQueueState<T> {
-    queues: parking_lot::Mutex<PriorityQueues<T>>,
-    condvar: parking_lot::Condvar,
+    // std's Wasm atomic backend unlocks and notifies without acquiring another
+    // lock. parking_lot can park during those operations, even after try_lock.
+    queues: Mutex<PriorityQueues<T>>,
+    condvar: Condvar,
     receiver_count: AtomicUsize,
     sender_count: AtomicUsize,
 }
@@ -40,7 +42,7 @@ impl<T> PriorityQueueState<T> {
             return Err(SendError(item));
         }
 
-        let mut queues = self.queues.lock();
+        let mut queues = self.queues.lock().unwrap_or_else(PoisonError::into_inner);
         Self::push(&mut queues, priority, item);
         self.condvar.notify_one();
         Ok(())
@@ -56,10 +58,11 @@ impl<T> PriorityQueueState<T> {
         }
 
         let mut queues = loop {
-            if let Some(guard) = self.queues.try_lock() {
-                break guard;
+            match self.queues.try_lock() {
+                Ok(guard) => break guard,
+                Err(TryLockError::Poisoned(error)) => break error.into_inner(),
+                Err(TryLockError::WouldBlock) => std::hint::spin_loop(),
             }
-            std::hint::spin_loop();
         };
         Self::push(&mut queues, priority, item);
         self.condvar.notify_one();
@@ -77,23 +80,24 @@ impl<T> PriorityQueueState<T> {
         };
     }
 
-    fn recv<'a>(&'a self) -> Result<parking_lot::MutexGuard<'a, PriorityQueues<T>>, RecvError> {
-        let mut queues = self.queues.lock();
+    fn recv<'a>(&'a self) -> Result<MutexGuard<'a, PriorityQueues<T>>, RecvError> {
+        let mut queues = self.queues.lock().unwrap_or_else(PoisonError::into_inner);
 
         while queues.is_empty() {
             if self.sender_count.load(std::sync::atomic::Ordering::Acquire) == 0 {
                 return Err(crate::queue::RecvError);
             }
-            self.condvar.wait(&mut queues);
+            queues = self
+                .condvar
+                .wait(queues)
+                .unwrap_or_else(PoisonError::into_inner);
         }
 
         Ok(queues)
     }
 
-    fn try_recv<'a>(
-        &'a self,
-    ) -> Result<Option<parking_lot::MutexGuard<'a, PriorityQueues<T>>>, RecvError> {
-        let mut queues = self.queues.lock();
+    fn try_recv<'a>(&'a self) -> Result<Option<MutexGuard<'a, PriorityQueues<T>>>, RecvError> {
+        let queues = self.queues.lock().unwrap_or_else(PoisonError::into_inner);
 
         let sender_count = self.sender_count.load(std::sync::atomic::Ordering::Relaxed);
         if queues.is_empty() && sender_count == 0 {
@@ -107,14 +111,13 @@ impl<T> PriorityQueueState<T> {
         }
     }
 
-    fn spin_try_recv<'a>(
-        &'a self,
-    ) -> Result<Option<parking_lot::MutexGuard<'a, PriorityQueues<T>>>, RecvError> {
+    fn spin_try_recv<'a>(&'a self) -> Result<Option<MutexGuard<'a, PriorityQueues<T>>>, RecvError> {
         let queues = loop {
-            if let Some(guard) = self.queues.try_lock() {
-                break guard;
+            match self.queues.try_lock() {
+                Ok(guard) => break guard,
+                Err(TryLockError::Poisoned(error)) => break error.into_inner(),
+                Err(TryLockError::WouldBlock) => std::hint::spin_loop(),
             }
-            std::hint::spin_loop();
         };
 
         let sender_count = self.sender_count.load(std::sync::atomic::Ordering::Relaxed);
@@ -158,7 +161,12 @@ impl<T> Drop for PriorityQueueSender<T> {
             .sender_count
             .fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
         if previous == 1 {
-            drop(self.state.queues.lock());
+            drop(
+                self.state
+                    .queues
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner),
+            );
             self.state.condvar.notify_all();
         }
     }
@@ -201,12 +209,12 @@ pub struct RecvError;
 impl<T> PriorityQueueReceiver<T> {
     pub fn new() -> (PriorityQueueSender<T>, Self) {
         let state = PriorityQueueState {
-            queues: parking_lot::Mutex::new(PriorityQueues {
+            queues: Mutex::new(PriorityQueues {
                 high_priority: VecDeque::new(),
                 medium_priority: VecDeque::new(),
                 low_priority: VecDeque::new(),
             }),
-            condvar: parking_lot::Condvar::new(),
+            condvar: Condvar::new(),
             receiver_count: AtomicUsize::new(1),
             sender_count: AtomicUsize::new(1),
         };
@@ -225,12 +233,20 @@ impl<T> PriorityQueueReceiver<T> {
 
     /// Returns whether the queue currently contains no elements.
     pub fn is_empty(&self) -> bool {
-        self.state.queues.lock().is_empty()
+        self.state
+            .queues
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_empty()
     }
 
     /// Returns the number of queued elements across all priorities.
     pub(crate) fn len(&self) -> usize {
-        let queues = self.state.queues.lock();
+        let queues = self
+            .state
+            .queues
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         queues.high_priority.len() + queues.medium_priority.len() + queues.low_priority.len()
     }
 
@@ -405,6 +421,34 @@ mod tests {
     use open_gpui_collections::HashSet;
 
     use super::*;
+
+    #[test]
+    fn poisoned_queue_preserves_non_poisoning_send_receive_and_close_behavior() {
+        let (sender, mut receiver) = PriorityQueueReceiver::new();
+        let state = receiver.state.clone();
+        assert!(
+            std::thread::spawn(move || {
+                let _guard = state.queues.lock().unwrap();
+                panic!("injected queue-owner unwind");
+            })
+            .join()
+            .is_err()
+        );
+        assert!(receiver.state.queues.is_poisoned());
+        assert!(receiver.is_empty());
+        sender.send(Priority::Medium, 1).unwrap();
+        sender.spin_send(Priority::Medium, 2).unwrap();
+        sender.send(Priority::Medium, 3).unwrap();
+        assert_eq!(receiver.len(), 3);
+        assert_eq!(receiver.try_pop().unwrap(), Some(1));
+        assert_eq!(receiver.spin_try_pop().unwrap(), Some(2));
+        assert_eq!(receiver.pop().unwrap(), 3);
+        assert!(receiver.is_empty());
+        drop(sender);
+        assert!(receiver.pop().is_err());
+        assert!(receiver.try_pop().is_err());
+        assert!(receiver.spin_try_pop().is_err());
+    }
 
     #[test]
     fn blocked_receivers_end_when_the_sender_drops() {
