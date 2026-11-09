@@ -1916,6 +1916,8 @@ pub struct Window {
     deferred_force_render: bool,
     #[cfg(feature = "profiler")]
     window_profiler: profiler::WindowProfiler,
+    #[cfg(feature = "profiler")]
+    debug_frame_overlay: crate::debug_overlay::DebugFrameOverlay,
     last_input_modality: InputModality,
     pub(crate) refreshing: bool,
     pub(crate) activation_observers: SubscriberSet<(), AnyObserver>,
@@ -3006,6 +3008,8 @@ impl Window {
             deferred_force_render: false,
             #[cfg(feature = "profiler")]
             window_profiler: profiler::WindowProfiler::new(handle.window_id())?,
+            #[cfg(feature = "profiler")]
+            debug_frame_overlay: crate::debug_overlay::DebugFrameOverlay::new(),
             last_input_modality: InputModality::Mouse,
             refreshing: false,
             activation_observers: SubscriberSet::new(),
@@ -7661,13 +7665,14 @@ impl Window {
             match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.draw_inner(cx))) {
                 Ok(clear) => {
                     let accepted = self.rendered_frame.generation != previous_generation;
-                    self.window_profiler.finish_draw_checkpoint(
+                    let draw_duration = self.window_profiler.finish_draw_checkpoint(
                         checkpoint,
                         frame_dirty.dirty_at,
                         frame_dirty.invalidations,
                         accepted,
                     );
                     if accepted {
+                        self.debug_frame_overlay.record_frame(draw_duration);
                         self.window_profiler
                             .note_accepted_draw_covering_input(update_count_at_draw_start);
                     }
@@ -7773,23 +7778,52 @@ impl Window {
         };
         let roots = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             if !cx.mode.skip_drawing() && self.presentation_is_allowed() {
-                if self.provisional_session_projects_destination_semantics() {
+                let roots = if self.provisional_session_projects_destination_semantics() {
                     self.draw_roots(cx)
                 } else {
                     self.with_subtree_presentation(SubtreePresentation::Inert, |window| {
                         window.draw_roots(cx)
                     })
-                }
+                };
+                #[cfg(feature = "profiler")]
+                self.debug_frame_overlay.paint(
+                    &mut self.next_frame.scene,
+                    self.viewport_size,
+                    self.scale_factor,
+                )?;
+                Ok::<_, SubtreeGeometryError>(roots)
             } else {
-                (
+                Ok((
                     None,
                     self.stale_pointer_session_owner_in_candidate_frame(cx)
                         .map(|owner| (owner, false)),
-                )
+                ))
             }
         }));
         let (candidate_a11y_update, candidate_stale_pointer_owner) = match roots {
-            Ok(roots) => roots,
+            Ok(Ok(roots)) => roots,
+            Ok(Err(error)) => {
+                self.restore_candidate_draw_context(draw_context);
+                let rejected = self.reject_candidate_frame(
+                    authority_checkpoint,
+                    restored_input_handler_index,
+                    rendered_input_handlers_len,
+                    false,
+                    cx,
+                );
+                log::error!(
+                    target: "open_gpui::scene",
+                    "rejected candidate attempt {:?} after debug overlay geometry failure: {error:?}",
+                    rejected.attempt_id,
+                );
+                if self.fresh_initial_presentation_attempts_exhausted() {
+                    self.fail_fresh_initial_presentation(cx);
+                } else {
+                    self.refreshing = true;
+                    self.invalidator.set_dirty(true);
+                }
+                return arena_scope.exit();
+            }
             Err(panic) => {
                 self.restore_candidate_draw_context(draw_context);
                 self.reject_candidate_frame(
@@ -8454,6 +8488,32 @@ impl Window {
     #[cfg(feature = "profiler")]
     pub fn frame_duration_snapshot(&self) -> profiler::FrameDurationSnapshot {
         self.window_profiler.frame_duration_snapshot()
+    }
+
+    /// Returns the current mode of the debug frame overlay.
+    #[cfg(feature = "profiler")]
+    pub fn debug_frame_overlay_mode(&self) -> crate::DebugFrameOverlayMode {
+        self.debug_frame_overlay.mode()
+    }
+
+    /// Sets the debug frame overlay mode and schedules a redraw.
+    #[cfg(feature = "profiler")]
+    pub fn set_debug_frame_overlay_mode(&mut self, mode: crate::DebugFrameOverlayMode) {
+        self.debug_frame_overlay.set_mode(mode);
+        self.refresh();
+    }
+
+    /// Cycles the overlay through hidden, current draw time, and detailed readouts.
+    #[cfg(feature = "profiler")]
+    pub fn cycle_debug_frame_overlay_mode(&mut self) {
+        self.set_debug_frame_overlay_mode(self.debug_frame_overlay.mode().next());
+    }
+
+    /// Clears draw-duration samples while preserving the lifetime accepted-draw count.
+    #[cfg(feature = "profiler")]
+    pub fn reset_debug_frame_overlay_stats(&mut self) {
+        self.debug_frame_overlay.reset_stats();
+        self.refresh();
     }
 
     #[cfg(feature = "profiler")]

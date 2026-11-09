@@ -21,10 +21,10 @@ use open_gpui::profiler::{
     },
 };
 use open_gpui::{
-    FocusHandle, FrameDurationSnapshot, FrameEvent, FrameRequestSource, FrameTiming,
-    FrameTimingCollector, InputLatencySnapshot, InteractiveElement, KeyDownEvent, Keystroke,
-    MouseButton, MouseDownEvent, MouseUpEvent, RequestFrameOptions, WindowHandle,
-    WindowInitialPresentationStatus, fill, profiler, rgb,
+    DebugFrameOverlayMode, FocusHandle, FrameDurationSnapshot, FrameEvent, FrameRequestSource,
+    FrameTiming, FrameTimingCollector, InputLatencySnapshot, InteractiveElement, KeyDownEvent,
+    Keystroke, MouseButton, MouseDownEvent, MouseUpEvent, RequestFrameOptions, WindowFrameCapture,
+    WindowHandle, WindowInitialPresentationStatus, fill, profiler, rgb,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     SW_HIDE, SW_RESTORE, SW_SHOWMINNOACTIVE, SW_SHOWNOACTIVATE,
@@ -313,8 +313,16 @@ impl NativeProfilerWindow {
         );
         let finished_at = Instant::now();
         self.operations.borrow_mut().push((started_at, finished_at));
-        let (input, _) = self.snapshot(app);
-        assert_eq!(input.pending_input_count, 3);
+        let (input, frame) = self.snapshot(app);
+        assert_eq!(
+            input.pending_input_count,
+            3,
+            "input batch must remain pending before native presentation: attempts={}, submitted={}, latency_samples={}, draw_samples={}",
+            input.present_attempt_count,
+            input.submitted_present_count,
+            input.latency_histogram.len(),
+            frame.draw_duration_histogram.len(),
+        );
         assert!(input.latency_histogram.is_empty());
         assert!(input.events_per_frame_histogram.is_empty());
         (started_at, finished_at)
@@ -1617,4 +1625,346 @@ fn native_frame_signals_preserve_coalescing_visibility_retirement_and_vsync_orig
         callback_runs.borrow().as_slice(),
         &[(1, refreshed_generation), (2, callback_generation)]
     );
+}
+
+fn native_frame_overlay_colors(source: NativeProfilerSource) -> ([u8; 3], [u8; 3]) {
+    let color =
+        0x285c80 + source.pointer_inputs * 0x100 + source.key_inputs * 0x10000 + source.redraws;
+    let background = [(color >> 16) as u8, (color >> 8) as u8, color as u8];
+    let panel = background.map(|channel| (f32::from(channel) / 3.).round() as u8);
+    (background, panel)
+}
+
+fn native_frame_overlay_pixel_matches(pixel: &image::Rgba<u8>, expected: [u8; 3]) -> bool {
+    pixel.0[3] == 255
+        && pixel.0[..3]
+            .iter()
+            .zip(expected)
+            .all(|(actual, expected)| actual.abs_diff(expected) <= 3)
+}
+
+fn assert_native_frame_overlay_pixels(
+    capture: &WindowFrameCapture,
+    source: NativeProfilerSource,
+    mode: DebugFrameOverlayMode,
+) {
+    let image = capture.image.as_ref().expect("native overlay RGBA pixels");
+    let (background, panel) = native_frame_overlay_colors(source);
+    let cell = (2. * capture.metadata.scale_factor).max(1.);
+    let lines = match mode {
+        DebugFrameOverlayMode::Hidden => 0,
+        DebugFrameOverlayMode::Minimal => 1,
+        DebugFrameOverlayMode::Full => 5,
+    };
+    let mut background_pixels = 0;
+    let mut panel_pixels = 0;
+    let mut green_rows = [0; 5];
+    let mut panel_left = image.width();
+    let mut panel_top = image.height();
+    let mut panel_right = 0;
+    let mut panel_bottom = 0;
+    for (pixel_x, pixel_y, pixel) in image.enumerate_pixels() {
+        if native_frame_overlay_pixel_matches(pixel, background) {
+            background_pixels += 1;
+        } else if native_frame_overlay_pixel_matches(pixel, panel) {
+            panel_pixels += 1;
+            panel_left = panel_left.min(pixel_x);
+            panel_top = panel_top.min(pixel_y);
+            panel_right = panel_right.max(pixel_x + 1);
+            panel_bottom = panel_bottom.max(pixel_y + 1);
+        } else if native_frame_overlay_pixel_matches(pixel, [0x33, 0xff, 0x33]) {
+            let row = ((pixel_y as f32 + 0.5 - cell * 6.) / (cell * 9.)).floor() as usize;
+            assert!(
+                row < lines,
+                "{mode:?} painted an unexpected green readout at ({pixel_x}, {pixel_y})"
+            );
+            green_rows[row] += 1;
+        }
+    }
+    let total_pixels = u64::from(image.width()) * u64::from(image.height());
+    if mode == DebugFrameOverlayMode::Hidden {
+        assert_eq!(panel_pixels, 0, "Hidden must remove the translucent panel");
+        assert_eq!(green_rows, [0; 5], "Hidden must remove every bitmap glyph");
+        assert_eq!(
+            background_pixels, total_pixels,
+            "Hidden must restore the complete current root Scene"
+        );
+        return;
+    }
+    assert!(
+        background_pixels > total_pixels / 2,
+        "{mode:?} must preserve the root outside its panel"
+    );
+    assert!(
+        panel_pixels > 0,
+        "{mode:?} must blend black alpha 0xAA over the root: generation={}, background_pixels={background_pixels}/{total_pixels}, green_rows={green_rows:?}, expected_panel={panel:?}",
+        capture.metadata.framework_frame_generation,
+    );
+    assert!(
+        green_rows[..lines].iter().all(|count| *count > 0),
+        "{mode:?} must paint all {lines} bitmap readouts: {green_rows:?}"
+    );
+    assert!(panel_left > 0);
+    assert!((panel_top as f32 - cell * 4.).abs() <= 2.);
+    assert!(
+        (panel_bottom as f32 - cell * (8. + 9. * lines as f32)).abs() <= 2.,
+        "{mode:?} must paint its own panel height"
+    );
+    assert!(
+        (panel_right as f32 - (image.width() as f32 - cell * 4.)).abs() <= 2.,
+        "the panel must remain anchored to the current viewport's right edge"
+    );
+}
+
+fn capture_native_frame_overlay(
+    consumer: &NativeProfilerWindow,
+    app: &mut Application,
+    source: NativeProfilerSource,
+    generation: &mut u64,
+    mode: DebugFrameOverlayMode,
+) -> WindowFrameCapture {
+    let (submitted, _) = consumer.wait_for_submission(app, source, *generation);
+    let capture = app
+        .update_for_test(|cx| {
+            consumer.handle.update(cx, |root, window, cx| {
+                assert_eq!(root.source, source);
+                assert_eq!(window.debug_frame_overlay_mode(), mode);
+                assert_eq!(window.focused(cx), Some(root.focus.clone()));
+                assert_eq!(window.committed_focus(cx), Some(root.focus.clone()));
+                assert!(window.is_focus_handle_rendered(&root.focus));
+                assert!(window.platform_facts().accepts_pointer_input);
+                assert_eq!(window.rendered_frame_revision(), submitted);
+                let facts = window.presentation_facts();
+                let image = window
+                    .render_to_image()
+                    .expect("the native overlay must support public framework GPU capture");
+                let capture = window.capture_frame();
+                assert!(capture.unsupported_reason.is_none(), "{capture:?}");
+                assert_eq!(capture.metadata.window_id, consumer.handle.window_id());
+                assert_eq!(capture.metadata.framework_frame_generation, submitted);
+                assert_eq!(facts.frame_accepted_generation, Some(submitted));
+                assert_eq!(facts.present_submitted_generation, Some(submitted));
+                assert_eq!(facts.non_empty_presented_generation, Some(submitted));
+                assert_eq!(capture.metadata.scale_factor, window.scale_factor());
+                assert!(capture.metadata.scale_factor.is_finite());
+                assert!(capture.metadata.scale_factor > 0.);
+                assert_eq!(
+                    capture.metadata.logical_viewport_size,
+                    window.viewport_size()
+                );
+                assert_eq!(
+                    capture.metadata.physical_viewport_size,
+                    window
+                        .viewport_size()
+                        .to_device_pixels(window.scale_factor())
+                );
+                assert_eq!(
+                    image.dimensions(),
+                    (
+                        capture.metadata.physical_viewport_size.width.0 as u32,
+                        capture.metadata.physical_viewport_size.height.0 as u32,
+                    )
+                );
+                assert_eq!(
+                    capture.image.as_ref(),
+                    Some(&image),
+                    "both public capture paths must read the same accepted Scene"
+                );
+                assert_eq!(window.rendered_frame_revision(), submitted);
+                assert_eq!(
+                    window.presentation_facts().latest_present_attempt,
+                    facts.latest_present_attempt,
+                    "framework readback must not create a native present attempt"
+                );
+                capture
+            })
+        })
+        .expect("the exact native overlay consumer must remain live through capture");
+    assert_native_frame_overlay_pixels(&capture, source, mode);
+    *generation = submitted;
+    capture
+}
+
+fn assert_native_frame_overlay_reset_pixels(
+    capture: &WindowFrameCapture,
+    source: NativeProfilerSource,
+) {
+    let image = capture.image.as_ref().expect("native reset RGBA pixels");
+    let (_, panel) = native_frame_overlay_colors(source);
+    let cell = (2. * capture.metadata.scale_factor).max(1.);
+    let left = image.width() as f32 - cell * 80.;
+    for line in 0..4 {
+        let glyph_top = cell * (6. + line as f32 * 9.);
+        for character in [7, 8] {
+            let glyph_left = left + cell * (2. + character as f32 * 6.);
+            for row in 0..7 {
+                for column in 0..5 {
+                    let pixel_x = (glyph_left + cell * (column as f32 + 0.5)).floor() as u32;
+                    let pixel_y = (glyph_top + cell * (row as f32 + 0.5)).floor() as u32;
+                    let expected = if row == 3 { [0x33, 0xff, 0x33] } else { panel };
+                    assert!(
+                        native_frame_overlay_pixel_matches(
+                            image.get_pixel(pixel_x, pixel_y),
+                            expected
+                        ),
+                        "reset must paint '--' in all four duration readouts: line={line}, character={character}, row={row}, column={column}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires a native Windows desktop and DirectX framework readback"]
+fn native_frame_overlay_modes_reset_resize_preserve_input_and_retirement() {
+    discard_stale_quit_messages();
+    let _restore_trace = RestoreNativeProfilerTrace(profiler::trace_enabled());
+    profiler::set_trace_enabled(true);
+    let (_observation_guard, observation) = begin_native_window_test_observation();
+    let platform = Rc::new(WindowsPlatform::new(false).expect("native frame-overlay backend"));
+    let platform_hwnd = platform.handle;
+    let platform_lifetime = Rc::downgrade(&platform);
+    let lifecycle_probe = platform.lifecycle_test_probe.clone();
+    let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
+    platform.begin_vsync_thread();
+    let consumer = NativeProfilerWindow::open(&mut app, &platform);
+    let paints_lifetime = Rc::downgrade(&consumer.paints);
+    let signals_lifetime = Rc::downgrade(&consumer.signals);
+    let mut source = NativeProfilerSource::default();
+    let mut generation = 0;
+    let mut previous_mode = None;
+    let trajectory: [(DebugFrameOverlayMode, fn(&mut Window)); 5] = [
+        (DebugFrameOverlayMode::Hidden, Window::refresh),
+        (DebugFrameOverlayMode::Minimal, |window| {
+            window.set_debug_frame_overlay_mode(DebugFrameOverlayMode::Minimal);
+        }),
+        (
+            DebugFrameOverlayMode::Full,
+            Window::cycle_debug_frame_overlay_mode,
+        ),
+        (
+            DebugFrameOverlayMode::Full,
+            Window::reset_debug_frame_overlay_stats,
+        ),
+        (
+            DebugFrameOverlayMode::Hidden,
+            Window::cycle_debug_frame_overlay_mode,
+        ),
+    ];
+    for (mode, control) in trajectory {
+        app.update_for_test(|cx| {
+            consumer.handle.update(cx, |_, window, _| {
+                generation = window.rendered_frame_revision();
+                if previous_mode.is_some_and(|previous| previous != mode) {
+                    assert_eq!(window.debug_frame_overlay_mode().next(), mode);
+                }
+                control(window);
+                assert_eq!(window.debug_frame_overlay_mode(), mode);
+            })
+        })
+        .expect("public overlay controls must retain the same native window");
+        let capture =
+            capture_native_frame_overlay(&consumer, &mut app, source, &mut generation, mode);
+        if previous_mode == Some(mode) {
+            assert_native_frame_overlay_reset_pixels(&capture, source);
+        }
+        consumer.settle(&mut app);
+        app.update_for_test(|cx| {
+            consumer
+                .handle
+                .update(cx, |_, window, _| window.reset_input_latency_measurements())
+        })
+        .expect("each overlay mode must retain the public input measurement owner");
+        consumer.input(&mut app);
+        source.pointer_inputs += 1;
+        source.key_inputs += 1;
+        capture_native_frame_overlay(&consumer, &mut app, source, &mut generation, mode);
+        let (input, _) = consumer.snapshot(&mut app);
+        assert_native_profiler_outcomes(&input);
+        assert_eq!(input.latency_histogram.len(), 1);
+        assert_eq!(input.events_per_frame_histogram.len(), 1);
+        let pending_inputs = consumer
+            .paints
+            .borrow()
+            .last()
+            .expect("the overlay must retain its actual input-driven paint")
+            .pending_inputs;
+        assert!(pending_inputs >= 3);
+        assert_eq!(input.events_per_frame_histogram.max(), pending_inputs);
+
+        if mode == DebugFrameOverlayMode::Full && previous_mode != Some(mode) {
+            let (request, ticket) = app
+                .update_for_test(|cx| {
+                    consumer.handle.update(cx, |_, window, _| {
+                        generation = window.rendered_frame_revision();
+                        let bounds = window
+                            .platform_facts()
+                            .physical_geometry
+                            .expect("the native overlay must expose actual client geometry")
+                            .client_bounds();
+                        let request = WindowPhysicalPlacementRequest::try_new(Bounds::new(
+                            bounds.origin,
+                            size(
+                                DevicePixels(bounds.size.width.0 + 80),
+                                DevicePixels(bounds.size.height.0 + 48),
+                            ),
+                        ))
+                        .expect("the second client size must be representable");
+                        let ticket = match window.request_physical_window_placement(request) {
+                            WindowMutationDispatch::Queued(ticket) => ticket,
+                            dispatch => panic!("native overlay resize must queue: {dispatch:?}"),
+                        };
+                        (request, ticket)
+                    })
+                })
+                .expect("overlay resize must use the same native placement owner");
+            pump_messages_until_with_delay(
+                "native overlay resize typed terminal observation",
+                Duration::from_millis(5),
+                || ticket.observation().is_some(),
+            );
+            let resized = ticket.observation().expect("the native resize must settle");
+            assert_eq!(resized.domain, ticket.domain());
+            assert_eq!(resized.generation, ticket.generation());
+            assert_eq!(resized.request, ticket.request());
+            assert_eq!(resized.outcome, WindowMutationOutcome::Exact);
+            assert_eq!(
+                resized
+                    .facts
+                    .physical_geometry
+                    .expect("observed resized client")
+                    .client_bounds(),
+                request.client_bounds()
+            );
+            let resized_capture =
+                capture_native_frame_overlay(&consumer, &mut app, source, &mut generation, mode);
+            assert_eq!(
+                resized_capture.metadata.physical_viewport_size,
+                request.client_bounds().size
+            );
+            assert!(
+                resized_capture.metadata.physical_viewport_size.width
+                    > capture.metadata.physical_viewport_size.width
+            );
+            assert!(
+                resized_capture.metadata.physical_viewport_size.height
+                    > capture.metadata.physical_viewport_size.height
+            );
+        }
+        consumer.settle(&mut app);
+        previous_mode = Some(mode);
+    }
+    consumer.retire(&mut app, &platform, &observation, |_| {});
+    assert!(paints_lifetime.upgrade().is_none());
+    assert!(signals_lifetime.upgrade().is_none());
+    drop(app);
+    drop(platform);
+    pump_messages_until_with_delay(
+        "native frame-overlay platform retirement",
+        Duration::from_millis(5),
+        || unsafe { !IsWindow(Some(platform_hwnd)).as_bool() },
+    );
+    assert!(platform_lifetime.upgrade().is_none());
+    assert_eq!(lifecycle_probe.ole_uninitialize_count(), 1);
 }

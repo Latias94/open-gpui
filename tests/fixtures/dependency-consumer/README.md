@@ -1048,3 +1048,53 @@ cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Ca
 The [WGPU qualification](../../../docs/verification.md#wgpu-dependency-shaders-and-webgl)
 records executed results, including the registry 30.0.1 failure control and restored fixed
 source. Reusable commands are not an execution claim for another host or backend.
+
+## Frame debug overlay public consumers
+
+The `debug_overlay` target consumes the official frame overlay introduced by Zed `07a0bd1220`,
+as present in fixed source `635026fabc38440fce5e1767d125026a17b12012`. The existing `profiler`
+feature forwards the Core opt-in. With it disabled, this integration target compiles empty;
+it adds no dependencies, GPUI test-support, feature or lockfile changes.
+
+The ordinary independently locked consumer executes the public `DebugFrameOverlayMode`
+default and Hidden/Minimal/Full cycle. A separately named signature test uses exact function
+pointer types and an explicitly unexecuted Window closure to consume
+`Window::debug_frame_overlay_mode`, `set_debug_frame_overlay_mode`,
+`cycle_debug_frame_overlay_mode` and `reset_debug_frame_overlay_stats`. These Window checks
+are type evidence; they do not construct an App or Window or execute those methods.
+
+The separate crate-external `crates/gpui/tests/debug_overlay.rs` target requires both
+`test-support` and `profiler`. Its headless consumer executes a real public App/Window workflow
+with `NoopTextSystem`, the shared public `HeadlessAtlas` and a custom CPU recording
+`PlatformHeadlessRenderer` installed through `HeadlessAppContext::with_platform`.
+The renderer clones each complete received `Scene` through public `Scene::clone`.
+The test reads actual root quads, translucent panel bounds, viewport clip shapes and green
+bitmap glyph runs, reconstructing the displayed text from those quads. It checks mode
+appearance/removal, hidden accepted-draw history, reset placeholders with the lifetime count
+preserved, repopulated samples, bounded idle callbacks and exact App/view/renderer/atlas
+release across window reconstruction at two viewport sizes. The view uses no text elements,
+and the captured scenes must contain no font sprites.
+
+A second public runtime test uses `TestAppContext` to execute an actual resize and root
+replacement, checking the rendered root's viewport, preserved overlay mode and exact view
+release. It also checks that the public mode/reset controls cause automatic redraw through
+the test context's dirty-effect flush. Complete panel/glyph Scene inspection belongs to the
+headless consumer; this second test does not expose a Scene or attach a renderer.
+
+The configured CPU renderer's presentation facts do not establish GPU execution, actual
+native submission, compositor pixels or performance. Pixel capture is explicitly unsupported
+by the recorder. The native overlay consumer and owner regressions separately qualify their
+own rendering and accepted/refused/unwinding histories.
+
+Run the focused targets from the repository root with `CARGO_BUILD_JOBS=1`, one Cargo process
+at a time, reusing `target` and the existing lockfiles:
+
+```text
+cargo nextest run --locked -p open-gpui --no-default-features --features test-support,profiler --test debug_overlay --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features profiler --test debug_overlay --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo check --locked -p open-gpui --no-default-features --features test-support --test debug_overlay --jobs 1
+cargo check --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test debug_overlay --target-dir target --jobs 1
+```
+
+These commands are verification instructions, not compilation or execution results.
+The main verification owner records actual results and host/compiler scope separately.

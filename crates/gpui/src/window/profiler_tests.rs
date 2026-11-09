@@ -1,5 +1,6 @@
 //! Profiler regressions exercised through real windows and the test platform renderer.
 
+mod overlay;
 mod refresh;
 
 use super::cached_paint_atlas_tests::RejectOnceAtlas;

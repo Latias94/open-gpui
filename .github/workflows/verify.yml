@@ -137,6 +137,19 @@ jobs:
       - name: Test retained image formats and decoder boundary
         run: cargo nextest run --locked -p open-gpui --all-features --lib -E 'test(platform::image_tests::) | test(elements::img::tests::)' --test-threads=1 --no-fail-fast --no-tests fail
 
+      - name: Test frame-time overlay ownership and public consumers
+        run: |
+          cargo nextest run --locked -p open-gpui --all-features --lib -E 'test(debug_overlay::) | test(window::profiler_tests::overlay::) | test(quiescence_releases_headless_resources_)' --test-threads=1 --no-fail-fast --no-tests fail
+          cargo nextest run --locked -p open-gpui --all-features --test debug_overlay --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Test independent frame-time overlay API
+        if: matrix.name == 'windows'
+        run: cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features profiler --test debug_overlay --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Test native frame-time overlay pixels and retirement
+        if: matrix.name == 'windows'
+        run: cargo nextest run --locked -p open-gpui-windows --all-features --lib -E 'test(=platform::native_test_support::native_profiler_tests::native_frame_overlay_modes_reset_resize_preserve_input_and_retirement)' --run-ignored only --test-threads=1 --no-fail-fast --no-tests fail
+
       - name: Test public headless image resource consumers
         if: matrix.name == 'windows'
         run: cargo nextest run --locked -p open-gpui-wgpu --all-features --test images --test-threads=1 --no-fail-fast --no-tests fail

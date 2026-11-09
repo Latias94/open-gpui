@@ -33,6 +33,10 @@ mod asset_cache;
 mod assets;
 mod bounds_tree;
 mod color;
+#[cfg(feature = "profiler")]
+mod debug_overlay;
+#[cfg(feature = "profiler")]
+pub use debug_overlay::*;
 /// The default colors used by GPUI.
 pub mod colors;
 mod element;
