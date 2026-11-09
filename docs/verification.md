@@ -5517,6 +5517,120 @@ residual inventory, canonical docking, measured costs and actual Nara engine/Edi
 integration remain open. The maintenance handoff follows its separately qualified framework
 baseline and concrete engine consumer; the full foundation goal remains active.
 
+## System Notifications And Ordered App Responses
+
+The successor starts from local `b14967342f2665c1c23d1c6a41d24108cf0fc62d` against fixed
+Zed `635026fabc38440fce5e1767d125026a17b12012`. Official introduction
+`de827bce2ff1cbb40040bea0ef57c8ac56afd726` supplies Core notification/action/response values,
+App/Platform identity, show/dismiss and response APIs, TestPlatform observations/simulation,
+and the Windows/Linux/macOS notification transports. The three native modules are unchanged
+between introduction and fixed target; final test gating, backend wiring and example font
+initialization use the fixed-target source. Unsupported or unavailable delivery is best-effort.
+The scoped implementation is local commit `26639a9715aff09ffbc61b92af45014728f02f94`.
+
+The fork adapts App responses through its existing ordered native ingress and generation-aware
+callback checkout/replacement slot. Responses are not coalesced and run through complete App
+updates after active borrows. User registration installs the weak platform wrapper lazily;
+ordinary App construction does not initialize the macOS notification center or request
+authorization. Windows notification state retires with its existing native platform finalization,
+closing the channel, canceling its task and refusing callback resurrection before native teardown.
+No notification broker, second scheduler or engine-specific service is introduced.
+
+The default native dependencies add `notify-rust = "4"` to the Linux package and the fixed-target
+objc2 UserNotifications feature set to macOS. Windows adds only the three required API features.
+The first offline resolution reports the uncached notify-rust index; online resolution through
+the configured proxy adds ten required packages without changing existing package versions.
+Core production compilation then passes. Package metadata declares notify-rust 4.18.2 requires
+Rust 1.89, time 0.3.55 requires 1.88 and objc2-user-notifications 0.3.2 requires 1.71; actual
+minimum-compiler qualification remains separate from those declarations.
+
+Preserve all four official TestApp scenarios and add busy-App order/effect flushing, reentrant
+replacement, unwind recovery, shutdown rejection and weak release. Crate-external tests use a
+real TestApp/view/observer workflow and reconstruction; independent ordinary values/signatures
+do not enable test-support. Windows WinRT construction/XML/action/tag controls and real native
+dispatcher/retirement tests use synthetic activation inputs. They do not establish actual
+notification-center delivery, authorization or physical action clicks. Linux source retains
+the official caller/transport action-ID distinction, no tag replacement and no-op dismiss.
+macOS still requires a real bundle and authorization. Foreign native execution, browser
+notifications, numeric costs and complete fixed-target refresh remain separate scope.
+
+The first focused Core/Windows run passes 18/19
+(`0ae26f20-626e-449c-bb89-746b22594ae7`), including all four official TestApp cases and all
+ten Windows XML/value/native dispatcher/retirement controls. Its new terminal fixture uses
+recoverable `App::shutdown()`, whose existing contract reopens admission after cleanup. It
+now uses the actual native-quit entry point and orders diagnostics by ingress sequence rather
+than assuming terminal-record insertion order. Production shutdown behavior is unchanged.
+The first filter also omits the two crate-external functions, whose names do not include
+`system_notification`; final commands explicitly include `binary(system_notifications)`.
+
+Independent Core review exposes a new helper defect: calling the public simulation helper
+inside an active App update pumps unrelated ready foreground tasks, which may borrow App
+again. A real queued-task regression fails before the fix
+(`a3569dbe-c0d9-4847-b936-84da2a18e511`, `RefCell already borrowed`). Simulation now advances
+the executor only when App can be mutably borrowed; otherwise it queues the response and
+leaves delivery to the existing release boundary. Backend review finds no remaining P1/P2
+in the bounded transport/native-retirement/source scope.
+
+The corrected Core and crate-external workflows pass 12/12
+(`be94ab9a-bda3-4b1a-99e8-2f10e42238dd`), including the real helper regression, all four
+official cases, ordered effects and reconstructed consuming views. The additional native App
+workflow first fails compilation by referring to Core's private `DELIVERED` convenience
+constant; its comparison now uses the exact public `Delivered { input_result: None }` value
+without changing visibility or the assertion. All eleven Windows notification controls then
+pass (`c6432883-995a-479e-b477-7bb545a2cfa9`).
+
+The new native workflow uses the actual Application, WindowsWindow, App wrapper and weak entity.
+Responses injected while App is borrowed enter the pending Application queue before delivery.
+Body and action activation each update the view, flush notification/deferred effects and reach
+a newer nonempty Submitted generation. Source, paint revision, accepted/submitted diagnostics
+and GPU capture generation must agree, with exact RGBA content and marker pixels. Its close
+requires the exact native registration/tickets, entity/paint/native owner release, terminal
+response rejection and final callback/App/platform release. This is an actual native UI
+consumer with synthetic notification responses, not OS notification delivery or display scanout.
+The final bounded consumer/native review finds no remaining P1/P2; all seven implementation
+and review threads and the additional next-unit analysis thread are closed.
+
+Root, ordinary independent and browser-smoke lock inspection confirms ten added required
+packages per graph and no removed or changed existing package version. Independently locked
+time/deranged helper versions remain independently resolved; they need not equal the root graph.
+
+The complete affected Core/WGPU/Windows/Gallery library and public integrations pass
+2,194/2,194 (`4cf7e639-6670-40a8-8431-98d72bea2590`), with eight existing declared skips.
+This includes all eleven Windows notification controls, the actual submitted-pixel workflow,
+the corrected helper and the two crate-external consumers. The broader independently locked
+ordinary consumer with profiler enabled passes 77/77 without skips
+(`baa61b1e-a747-4353-a8d4-d615e277a2cb`). Ordinary value/trait execution and explicitly
+unexecuted signatures retain their distinct scope.
+The ordinary notification target also passes 3/3 without optional features
+(`626ae4d7-975c-45b9-9f77-0d9d1d47828b`). Its value/trait/signature contract needs neither
+profiler nor GPUI test-support; the separate TestApp and actual native consumer own runtime
+delivery evidence.
+The same Core/actual public workflows pass 12/12 without profiler
+(`0b310741-a197-495f-84b3-d9ccc7a38b5c`). Locked Rust 1.95 workspace all-target and
+independently locked all-target/all-feature compilation pass, including the ordinary platform
+example. This Windows-hosted workspace check does not execute or compile the target-specific
+Linux/macOS bodies; their pinned-source comparison remains explicitly separate.
+
+Expanded correctness Clippy passes for Core/WGPU/Windows/platform/Linux/macOS all-target and
+all-feature selections on the Windows host. Actual Rust 1.93 affected-framework all-target/
+all-feature compilation and the independently locked all-target/all-feature consumer also pass.
+These are executed compiler-floor checks, distinct from dependency metadata. Existing docking
+warnings remain visible and do not change this unit's contract. Stable production wasm profiler
+off/on, the existing nightly shared-memory production configuration and the independently
+locked wasm smoke example compile successfully. Web keeps unsupported notification no-ops;
+wasm compilation establishes neither browser notification support nor foreign native execution.
+
+The first final format check finds one assertion's wrapping after replacing the private constant
+reference. `cargo fmt --all` changes only that formatting; root and independently locked consumer
+format checks then pass. Existing import-boundary and public-API checks pass. This unit does not
+rerun the earlier 2,974 component/docking/Canvas cohort because its production code is unchanged.
+Public doc-link/release-docs checks and verification-workflow YAML parsing also pass.
+The historical foreground test passes unchanged in the complete framework run; its earlier
+variability is not proven resolved. No remote publication or CI execution occurs. The complete
+official notification unit is qualified within these explicit limits; sendable foreground/Web
+Fetch and the remaining fixed-target mechanisms stay queued before engine integration and
+maintenance handoff.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:

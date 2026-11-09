@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-09T15:39:30+08:00
+timestamp: 2026-11-09T17:49:16+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -18,6 +18,23 @@ verified_by:
 
 # Current State
 
+- The complete official system-notification successor is implemented at
+  `26639a9715aff09ffbc61b92af45014728f02f94`, after `b14967342f2`. Core identity/show/dismiss/response,
+  TestPlatform observations, native Windows/Linux/macOS transports and the ordinary example
+  retain fixed-target behavior. Responses reuse ordered App updates and generation-aware
+  handler replacement; initialization stays lazy. Windows transport retirement uses existing
+  native finalization. A real helper borrow failure is reproduced and corrected without changing
+  recoverable versus terminal shutdown. Corrected Core/public 12, Windows 11 including actual
+  Submitted-pixel/retirement workflow, complete framework/public/Gallery 2,194, ordinary
+  independent enabled 77 and disabled notification 3 pass. Disabled Core/public notification
+  paths also pass 12. The [record](../../verification.md#system-notifications-and-ordered-app-responses)
+  retains exact failures, source limits and synthetic notification activation scope. All eight
+  implementation/review/next-unit-analysis lanes close. Three lock graphs add only the required
+  notification closure, changing no existing versions. Locked checks, expanded correctness
+  Clippy, actual Windows Rust 1.93 framework/consumer checks, stable production wasm profiling
+  off/on, existing nightly shared-memory and independently locked wasm smoke compilation,
+  formatting and existing import/API/document/release/YAML checks pass. Actual OS notification
+  delivery, foreign native execution, numeric costs, complete refresh and Nara integration remain open.
 - The official stateful Spring successor is implemented at
   `ecbbfa361ae4489b2de4121c5f0ca8b2a1d7aebb`, after `af682e37f36`. The existing motion
   crate owns one pure official solver;
@@ -731,12 +748,14 @@ historical scope and is not current branch or CI qualification.
 
 # Next Action
 
-- Implement complete official
-  [system notifications](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#system-notification-successor)
-  through the existing ordered App ingress and callback owner, after qualified
-  [Spring/motion reconciliation](../../verification.md#official-spring-and-shared-domain-sampling).
-  Preserve all official regressions, identity/platform limits and ordinary independent
-  consumption; actual OS delivery remains separately qualified. Continue the
+- Implement the complete
+  [sendable foreground/Web Fetch successor](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#sendable-foreground-submission-and-web-fetch-successor)
+  through the existing scheduler/admission/profiler owners, after qualified
+  [system notifications](../../verification.md#system-notifications-and-ordered-app-responses)
+  and [Spring/motion reconciliation](../../verification.md#official-spring-and-shared-domain-sampling).
+  Preserve complete official regressions and ordinary independent consumption, keeping Core/native
+  and browser execution scope separate. Actual OS notification delivery remains separately
+  qualified. Continue the
   [bounded residual inventory](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#bounded-core-residual-inventory)
   through complete official mechanisms; it is not an exhaustive semantic audit.
 - Continue remaining renderer/API/platform reconciliation after the complete

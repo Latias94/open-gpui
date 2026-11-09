@@ -1991,6 +1991,38 @@ controls are separate from actual OS delivery. Add only required Windows API fea
 closure before changing dependency versions. No second App callback or notification service
 owner is required.
 
+Implementation starts at local `b14967342f2665c1c23d1c6a41d24108cf0fc62d`. Keep the official
+Core value/Platform/App contract and every backend's supported behavior. The fork installs
+its weak App ingress wrapper lazily when the user registers a response handler, preserving
+macOS's lazy notification-center/authorization boundary. Registration updates the existing
+generation-aware native-App handler slot. Responses are non-coalescing ordered events, delivered
+through complete App updates after active borrows, with handler replacement/unwind and shutdown
+retirement retaining their existing owners. No new notification broker, callback scheduler or
+application identity singleton is required.
+
+Preserve all four official TestApp regressions, then qualify busy-App order/effect flushing,
+reentrant replacement, unwind restoration, shutdown rejection and weak App/handler release.
+Ordinary crate-external and independently locked consumers remain separate from platform
+transport tests. Windows XML/tag/activation-channel controls and Linux response-channel/action
+IDs do not prove real notification-center delivery or physical action clicks. Source-only
+macOS/Linux integration and default unsupported Web behavior keep their platform limits explicit.
+Root and independent locks may add only the required native notification closure; inspect
+resolution before accepting unrelated package changes.
+
+Implementation `26639a9715aff09ffbc61b92af45014728f02f94` completes this scoped successor.
+The [qualification](../verification.md#system-notifications-and-ordered-app-responses) records
+the actual helper borrow failure and terminal-shutdown fixture correction, with no change to
+recoverable App shutdown. Corrected Core/public 12, Windows 11 including actual Submitted pixels
+and retirement, complete framework/public/Gallery 2,194, ordinary independent enabled 77 and
+disabled notification 3, and disabled Core/public notification 12 pass. Eight existing complete-
+cohort skips remain explicit. Locked checks, expanded correctness Clippy, actual Windows Rust
+1.93 framework/consumer checks, stable production wasm profiling off/on, existing nightly
+shared-memory and independent wasm smoke compilation, formatting and import/API checks pass.
+Existing document-link/release checks and verification-workflow YAML parsing also pass.
+All eight implementation/review/next-unit-analysis lanes close without remaining scoped P1/P2.
+Actual OS delivery, foreign native execution, numeric costs and complete refresh remain open;
+continue the complete sendable foreground/Web Fetch successor below.
+
 ### Bounded Core Residual Inventory
 
 The November 9 public-module/export pass compares local `af682e37f36` plus the Spring worktree
@@ -2010,16 +2042,68 @@ Finish notifications before selecting the next dependency-ordered residual unit.
 must retain official behavior, adapt proven fork ownership and record independent/public plus
 affected platform evidence. A root export comparison is not a full semantic or dependency audit.
 
+### Sendable Foreground Submission And Web Fetch Successor
+
+The bounded November 9 successor analysis selects official
+`2c2f737ab2f3db793b7a313bc8e5307f1708d2e8` after notification qualification. Fixed-target
+`crates/scheduler/src/executor.rs` adds `LocalExecutor::to_send` and `SendLocalExecutor`;
+`crates/gpui/src/executor.rs` supplies the thin `ForegroundExecutor::to_send` and
+`SendForegroundExecutor` facade. A Send future and Send output may be submitted from another
+thread, while polling remains on the captured dispatch destination. Preserve Clone and the
+original `Cell` output regression; do not add an unnecessary Sync output bound.
+
+Reuse the existing PlatformScheduler, dispatch authority, admission bool and profiler counters.
+Each enqueue/inline refusal must settle exactly once; queued task timing and nested/unwinding
+poll guards retain their current owners. Clone the originating executor's captured accounting
+instead of rebuilding a foreground/TLS owner on the worker. The existing !Send local-future
+poll/drop contract remains unchanged. A Send handle retaining scheduler/dispatch authority
+does not retain an App, window or running event loop. Existing erased-runnable refusal can
+forget its task; admission rejection is not proof that an awaitable Task has settled.
+
+Preserve upstream `test_send_local_executor_worker_submission_and_wakeup`,
+`test_send_local_executor_retains_scheduler` and `send_foreground_executor_submits_from_worker`.
+Add ordinary independently locked feature-on/off consumers and an actual worker-to-Windows-
+dispatcher-to-App-update-to-Submitted-frame workflow, including wake/re-poll, cancellation,
+refusal accounting and exact native retirement. Retain existing stalled-scheduler, closed-queue
+reconstruction and dispatch-authority release controls. No second universal task queue follows.
+
+The official Web consumer also requires the complete Fetch chain: worker-to-main routing
+`b2131e9df8aa16d7d287f0b098df3088310d00d6`, streaming/backpressure/body-drop cancellation
+`45ae0572c422e5e8dcf73157730d747152d0be52` and nonblocking browser submission
+`b0048cde742ecdef36b36d4a18eec97af99254df`, then the shared Send executor. The current fork's
+executor-free Fetch constructor, AssertSend and whole-response buffering are not equivalent.
+Close WebPlatform factories, image examples and request consumers, with the official eight-worker,
+32,768-chunk-per-response browser regression and cancellation controls. Core/native execution
+and Web execution keep separate results; wasm compilation alone does not qualify this workflow.
+
+Assess actual dependency differences before implementation. The fixed target selects async-task
+Git `015845a19fc31752c02367567d3b8900a406f9da` for the waker-vtable identity correction
+`67b41bf97607f2dd86319b385040a1310cf24f45`; the fork's crates.io 4.7.1 has the API but is
+not thereby equivalent. The Web channel path needs async-channel with default features disabled
+across the actual feature union; changing only its Web declaration does not remove Core's std
+activation. No compiler-floor change is inferred: retain the fork's existing cfg branches
+instead of the unrelated target `cfg_select!` change. Do not import the separate DedicatedExecutor
+state machine merely because it shares a file. This section is source-backed planning, not an
+implemented or qualified successor.
+
 ## Maintained Baseline Before Engine Adaptation
+
+The [system-notification qualification](../verification.md#system-notifications-and-ordered-app-responses)
+records the latest implementation `26639a9715aff09ffbc61b92af45014728f02f94`, after the separately
+qualified Spring/motion unit. Existing App ingress, native retirement and ordinary standalone
+consumption retain their owners. Continue sendable foreground/Web Fetch and the bounded residual
+inventory before the real Nara GPU/Host/View consumer and subsequent framework-maintenance
+handoff. No complete-refresh, engine-default or numerical-cost claim follows.
 
 The [generic-animation qualification](../verification.md#generic-animation-controls-and-clock)
 records implementation `4ed461f2b591d6e44d84abc742094740fbd607af` after the overlay baseline.
 Complete official scheduling and image policy preserve existing candidate, cached-view, App and
 Window owners; independent reviews and the affected runtime/native/component/public/compiler
 matrix above pass. The plan also records the owner's subsequent separate maintenance session,
-immutable consumed revision and actual engine-feedback boundary. Continue stateful Spring/motion
-reconciliation, system notifications and the remaining fixed-target closure before qualifying
-the concrete engine seam. No complete-refresh, engine-default or performance-budget claim follows.
+immutable consumed revision and actual engine-feedback boundary. Spring/motion and system
+notifications now have their separate qualifications above; remaining fixed-target closure
+still precedes the concrete engine seam. No complete-refresh, engine-default or
+performance-budget claim follows.
 
 The [frame-time overlay qualification](../verification.md#frame-time-debug-overlay) records
 implementation `73472ca230bac117f8cb417d0cd6b0c1364c980e` on November 9, with the separate fork
