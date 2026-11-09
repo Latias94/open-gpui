@@ -5,6 +5,7 @@
 //! Window creation and bounded message pumping qualify trace ordering around native submission.
 //! Refresh-aware reports use the callback's captured signal and the window's observed refresh
 //! interval. A controlled view delay only makes attribution observable through this native path.
+//! Pure-redraw phases explicitly decline native pointer input after the pointer/key measurements.
 //! This does not qualify OS input injection, compositor scanout, physical display changes, or
 //! performance overhead.
 
@@ -141,7 +142,11 @@ struct NativeProfilerWindow {
 }
 
 impl NativeProfilerWindow {
-    fn open(app: &mut Application, platform: &WindowsPlatform) -> Self {
+    fn open(
+        app: &mut Application,
+        platform: &WindowsPlatform,
+        accepts_pointer_input: bool,
+    ) -> Self {
         let started_at = Instant::now();
         let paints = Rc::new(RefCell::new(Vec::new()));
         let handle = app
@@ -150,6 +155,7 @@ impl NativeProfilerWindow {
                     WindowOptions {
                         window_bounds: Some(WindowBounds::centered(size(px(320.), px(200.)), cx)),
                         focus_on_appearing: false,
+                        accepts_pointer_input,
                         show: true,
                         ..WindowOptions::default()
                     },
@@ -779,7 +785,7 @@ fn native_profiler_tracks_input_submission_redraw_and_reconstructed_window() {
         .expect("the native consumer must start the opt-in GPUI hang monitor");
     });
     platform.begin_vsync_thread();
-    let consumer = NativeProfilerWindow::open(&mut app, &platform);
+    let consumer = NativeProfilerWindow::open(&mut app, &platform, true);
     let (mut generation, _) =
         consumer.wait_for_submission(&mut app, NativeProfilerSource::default(), 0);
     pump_messages_until_idle("native profiler initial submission follow-up");
@@ -907,6 +913,24 @@ fn native_profiler_tracks_input_submission_redraw_and_reconstructed_window() {
         1
     );
 
+    let pointer_ticket = app
+        .update_for_test(|cx| {
+            consumer.handle.update(cx, |_, window, _| {
+                match window.request_pointer_input(false) {
+                    open_gpui::WindowMutationDispatch::Queued(ticket) => ticket,
+                    dispatch => panic!("pure redraw must isolate pointer input, got {dispatch:?}"),
+                }
+            })
+        })
+        .expect("the measured native window must remain live for pointer isolation");
+    pump_messages_until("native profiler pure-redraw pointer isolation", || {
+        pointer_ticket.observation().is_some()
+    });
+    let pointer_observation = pointer_ticket
+        .observation()
+        .expect("pointer isolation must settle");
+    assert!(pointer_observation.is_exact());
+    assert!(!pointer_observation.facts.accepts_pointer_input);
     consumer.settle(&mut app);
     let (settled_input, settled_frame) = consumer.snapshot(&mut app);
     let followup_events = collector.collect_unseen();
@@ -951,7 +975,7 @@ fn native_profiler_tracks_input_submission_redraw_and_reconstructed_window() {
     assert!(collector.collect_unseen().is_empty());
 
     assert!(profiler::set_trace_enabled(false));
-    let rebuilt = NativeProfilerWindow::open(&mut app, &platform);
+    let rebuilt = NativeProfilerWindow::open(&mut app, &platform, false);
     assert_ne!(rebuilt.handle.window_id(), retired_id);
     let (initial_rebuilt_generation, _) =
         rebuilt.wait_for_submission(&mut app, NativeProfilerSource::default(), 0);
@@ -1311,7 +1335,7 @@ fn native_frame_signals_preserve_coalescing_visibility_retirement_and_vsync_orig
     let platform_hwnd = platform.handle;
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
     let mut collector = app.update_for_test(|cx| cx.foreground_journal().collector());
-    let consumer = NativeProfilerWindow::open(&mut app, &platform);
+    let consumer = NativeProfilerWindow::open(&mut app, &platform, true);
     let mut source = NativeProfilerSource::default();
     let (mut generation, _) = consumer.wait_for_submission(&mut app, source, 0);
     consumer.settle(&mut app);
@@ -1464,7 +1488,7 @@ fn native_frame_signals_preserve_coalescing_visibility_retirement_and_vsync_orig
     );
     assert!(retired_signal.take().is_none());
 
-    let rebuilt = NativeProfilerWindow::open(&mut app, &platform);
+    let rebuilt = NativeProfilerWindow::open(&mut app, &platform, true);
     assert_ne!(
         rebuilt.registration.generation(),
         retired_registration.generation()
@@ -1828,7 +1852,7 @@ fn native_frame_overlay_modes_reset_resize_preserve_input_and_retirement() {
     let lifecycle_probe = platform.lifecycle_test_probe.clone();
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
     platform.begin_vsync_thread();
-    let consumer = NativeProfilerWindow::open(&mut app, &platform);
+    let consumer = NativeProfilerWindow::open(&mut app, &platform, true);
     let paints_lifetime = Rc::downgrade(&consumer.paints);
     let signals_lifetime = Rc::downgrade(&consumer.signals);
     let mut source = NativeProfilerSource::default();
