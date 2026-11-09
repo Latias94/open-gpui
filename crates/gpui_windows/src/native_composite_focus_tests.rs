@@ -4,6 +4,8 @@
 //! synthetic accessibility activation uses the installed production activation handler. Exact
 //! nonempty Submitted generations qualify the accepted tree, not OS input, AT consumption,
 //! physical foreground focus, UIA event receipt or compositor scanout.
+//! This keyboard-only fixture declines native pointer input so incidental desktop mouse messages
+//! cannot change input modality during its passive-frame assertions.
 
 use super::*;
 use crate::native_test_observation::NativeWindowTestMessageDisposition;
@@ -411,6 +413,7 @@ fn native_composite_focus_keyboard_continuity_and_release() {
                 WindowOptions {
                     window_bounds: Some(WindowBounds::centered(size(px(480.), px(300.)), cx)),
                     focus_on_appearing: false,
+                    accepts_pointer_input: false,
                     show: true,
                     inactive_frame_interval: None,
                     low_power_frame_interval: None,
@@ -448,6 +451,7 @@ fn native_composite_focus_keyboard_continuity_and_release() {
     let requests = observe_frame_requests(&native);
     app.update_for_test(|cx| {
         handle.update(cx, |_, window, _| {
+            assert!(!window.accepts_pointer_input());
             assert!(!window.is_a11y_active());
             assert!(window.debug_a11y_tree_json().is_none());
         })
