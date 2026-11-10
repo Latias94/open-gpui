@@ -6767,6 +6767,202 @@ integration remain open. The optional shared-memory runtime is unchanged and is 
 by this unit. Continue the source-prepared restart-arguments successor; completing this scoped
 identity mechanism does not close the framework refresh or its engine-maintenance handoff.
 
+## Restart Arguments And Native Relaunch
+
+Implementation revision is `175a82b47f10b0bc2bb4b5920d54e1be5d70f977`. The results below
+qualify this mechanism's scoped runtime/consumer/compiler contracts, while retaining failed
+complete aggregates and foreign/native-isolation limits. They do not complete the fixed refresh.
+
+The November 10 successor starts after `7ead5105e56b29255ece592e62fd5f2250542131`, adopting
+official `715076597926d566d560b30b806749e1a2166080` and fixed-target PowerShell corrections
+`4c6c4750d3f87f0b93c937c9bda7b50639c0d07d` and
+`bcf6582ce3500df93a8a39366640173e6786cea6`, under unchanged Zed target
+`635026fabc38440fce5e1767d125026a17b12012`. Application configures native OsString values
+in its existing App. Restart observers run before executable/arguments are consumed once and
+delivered through the same Platform owner. The void API does not promise final-target launch
+success or restore consumed requests on failure.
+
+Windows uses the official UTF-16 native command-line encoder and static PowerShell script,
+child-scoped transport environment, environment clearing and deferred foreground spawn. The
+existing utility owner selects PowerShell explicitly, retaining fixed-target Scoop/MSIX/tools/
+system discovery. A PathBuf result avoids losing native executable code units at that seam;
+generic shell selection retains its existing String interface and cmd fallback. Background
+launches use Hidden window style as a fork presentation adaptation. Missing PowerShell or
+failed helper spawn never publishes quit. Linux/Mac use complete official quoted positional
+forwarding through their existing process-group/quit owners; Web and VisualTest remain no-op.
+
+Core/Windows all-feature production libraries pass locked Rust 1.95 checking. Focused unit,
+public and real native results follow below. Initial read-only Core/foreign review finds no
+confirmed P1/P2. Prepared Unix command tests retain raw-byte and empty-argument cases, but
+Windows checking does not compile or execute those backend paths.
+
+Independent consumer review catches two fixture gaps before execution: worker and explicit
+recorder initially share a path, and failure cleanup closes the Job without waiting for native
+termination. Start the worker from its original build output and reserve the special-character
+copied path for the selected target, then compare recorder argv[0]. Keep Job assignment before
+worker release, explicitly terminate and observe test descendants on failure, and bound directory
+cleanup with reported errors. The complex-argv recorder also observes the old worker's native
+process termination before publishing output. The no-argument case covers the separate launcher
+branch without claiming that additional PID observation. These remain fixture changes, with no
+new framework process authority or application updater policy.
+
+Initial focused Core/public/Windows/utility execution passes 44/44
+(`491b5b1d-eb89-4cb4-9d24-22c0d15f961c`), including existing restart-related controls in
+the filter. The first actual independent native run fails 0/2
+(`0e582cd9-fa05-4435-8d3b-c0f869cd3609`) at strict environment absence; worker/recorder
+termination and empty Job observations have completed. Diagnostic execution also fails 0/2
+(`a0b1fe5f-c7f7-4218-b568-4b1db6f7cf5d`), showing all three variables as Some(empty).
+An isolated child-only environment probe reproduces the official script's behavior on
+PowerShell 7.6.9 / .NET 10.0.14: Environment.SetEnvironmentVariable(name, $null) leaves the
+variable present, while Remove-Item of its exact Env path removes it. Correct the owning
+static script to delete those three items after reading them; preserve official argument
+encoding, waiting, launch policy and strict absence checks. This is an evidenced fork
+correction to the inherited script, not a relaxation of the consumer.
+
+The next native run fails 0/2 (`ea4009d2-fef0-4bd4-9175-ea2f1157c9d0`) after the absence
+check passes: PowerShell normalizes argv[0]'s verbatim path prefix. The exact payload is
+preserved, including the unpaired surrogate. Check the selected executable's canonical
+identity separately, requiring it to differ from the original worker, and retain exact
+OsString equality for every argument. A further review removes unbounded Child::wait from
+failure cleanup; bounded native observations now precede Job cleanup. An explicit blocked-worker
+control exercises Job termination. Final results follow below, retaining the original failures.
+
+The next native run fails 0/3 (`a54c6cc9-4cc5-4e1a-bd79-442c3e844261`): both launch cases
+reach the final lifecycle oracle without an App quit event, and the new cleanup control reads
+the worker before its process handle becomes signaled. All exact argument, target-identity,
+transport-absence and launch/worker-exit checks have passed by that point. The first defect is
+in the fork: Windows invokes the queued App quit callback after leaving GetMessage, then calls
+ExitProcess before delivery. Keep pumping after one native quit notification until the existing
+AppCell terminal shutdown authority acknowledges completion through quit_after_terminal_shutdown.
+Native Quit now requests that same terminal authority. Do not add a restart-specific shutdown
+owner or bypass ordered App ingress. The recorder's quit event is moved after an actual timer
+await; the native returning control requires repeated quit requests, exactly one observer,
+asynchronous completion, a first-attempt DestroyWindow refusal and exact settled App/native
+authorities. Its first build catches a fixture typo in an unavailable counter accessor; use
+the existing DestroyEntered event observations instead. The cleanup control independently
+observes the worker's signaled state within five seconds after Job accounting reaches zero.
+
+Independent review of the environment correction also executes child-only probes on PowerShell
+7.6.9/.NET 10.0.14 and Windows PowerShell 5.1, confirming all three variables are absent. After
+prefix and required Hidden-style normalization, the remainder of the static script matches the
+fixed official target. This is an inherited script defect; the queued-quit lifecycle correction
+is fork-specific. Neither source review nor these small child probes replaces the complete
+ordinary worker/recorder qualification below. Restart Manager's synchronous on_quit return
+contract remains a separate successor.
+
+The corrected Windows returning cohort passes 6/6
+(`13bf6bf4-ad3a-449c-af64-381bd7389bdf`), including the new asynchronous observer/retryable
+retirement case, existing last-window policy, retained observer panic and platform cleanup.
+The ordinary feature-free worker/recorder cohort then passes 3/3
+(`eeaffef4-a924-4f72-a507-512f08205159`). These are real process-level relaunches using the
+public Application API and the actual selected PowerShell; both argument branches, exact native
+payload, selected-target identity, temporary environment absence, completed quit observer,
+old-worker termination and bounded failure cleanup execute. No test support or deterministic
+executor supplies this evidence.
+
+Lifecycle review identifies two existing late-platform-quit controls whose setup used the old
+native-quit helper to mean terminal shutdown without a platform request. Preserve their false
+did_quit assertions and use the existing shutdown_for_native_exit_test setup. Remove the
+obsolete helper; production NativeAppEvent::Quit directly requests the existing terminal quit
+owner. Other tests that intend only terminal fencing use the same test-only entry point. The
+Windows callback contract now requires its owner to acknowledge terminal completion; the bare
+platform callback control does so explicitly. Linux's post-loop quit delivery and Mac's
+applicationWillTerminate/default asynchronous hook remain separate lifecycle gaps, with no
+Windows-equivalent execution claim.
+
+The selected-executable oracle has an executed negative control: temporarily omit only the
+fixture's set_restart_path call, leaving production code untouched. The complex native case
+fails 0/1 (`9f8536ab-8a3f-461d-b511-28914d2ef3d1`) precisely because the observed recorder is
+the original build executable rather than the special-character target. Restore the fixture
+call before final qualification. The failure closes the original same-path fixture gap; no
+negative-control change is retained. Final source also acknowledges quit when App ownership
+has already ended, using a weak platform reference rather than adding a strong callback cycle.
+Additional real returning controls cover that lifetime and both synchronous/future observer
+panics after an ordinary native quit request. CI names Core/public ownership, Windows encoding/
+discovery/returning/native relaunch and foreign command tests explicitly; local results do not
+claim remote CI or foreign-native execution.
+
+The first complete final-source Core/public/Windows/utility cohort executes 2,161 cases:
+2,160 pass, one existing clipboard case fails, and ten cases remain skipped
+(`3120538a-b79d-4f55-a37d-b61b5fe17486`). All restart, native returning, late-quit, App
+ingress/shutdown and lifetime controls pass, including both newly added observer-panic variants.
+platform::tests::test_clipboard retains text abcdef but observes None instead of its original
+metadata [3,4], after one native acquisition refusal. This differs from an admission failure:
+the existing fixture correctly does not retry successful-but-invalid data. No clipboard code or
+data assertion changes in this unit. Preserve the original failure and separate follow-up;
+earlier clipboard qualification already records system-level variance, but neither that history
+nor a later pass identifies an external holder or proves this failure's cause.
+
+Within that failed aggregate, complete Core/public coverage passes 1,765/1,765 and utility
+coverage passes 127/127. The single failure belongs to Windows; these package results do not
+turn the complete aggregate green.
+
+The unchanged clipboard cohort passes 5/5
+(`350e52ab-bd40-4125-9f86-df911d37c532`), including the original public round trips,
+same-lock matrix, actual lock contention, stale-metadata refusal and native paste/Submitted
+workflow. Independent source review finds no proven restart regression: the failed free-function
+test does not enter the modified restart/quit path. Missing metadata can also follow format
+registration, native publication, hash validation or private-format read failures. The existing
+output lacks per-operation publication/sequence observations, so its cause remains unresolved.
+The acquisition-refusal output is not labeled with an operation and cannot identify which
+matrix stage was refused. No data retry, weakened expectation or clipboard production change
+is introduced. This residual remains open even if a subsequent complete Windows run passes.
+
+Use one build job and the configured shared target. The affected runtime and ordinary-consumer
+commands are:
+
+```text
+cargo +1.95.0 nextest run --locked -p open-gpui -p open-gpui-windows -p open-gpui-util --all-features --lib --tests --test-threads=1 --no-fail-fast --no-tests fail
+cargo +1.95.0 nextest run --locked -p open-gpui-windows --all-features --lib --test-threads=1 --no-fail-fast --no-tests fail
+cargo +1.95.0 nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --all-features --tests --test-threads=1 --no-fail-fast --no-tests fail
+cargo +1.95.0 nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --tests --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+Final-source ordinary independently locked consumers pass 105/105 with all features
+(`5dd007b9-8370-4445-8152-2ac36498f51e`), with three existing interactive Vulkan surface
+cases skipped, and 75/75 with optional features disabled
+(`f30a6a85-872e-4d56-9e82-0a2864900694`), with no skips. Both execute all three restart
+cases and native mapping, while existing Spring/Send/text/atlas consumers retain their original
+scope. Actual Windows process/argv/quit evidence remains distinct from type-only foreign API
+controls and from the skipped GPU surface trajectories.
+
+Profiler-disabled Core/public restart, lifecycle and shutdown selection passes 59/59
+(`fcb62c55-d380-4b7a-9709-f63f0cc3a599`), with 1,346 cases outside the filter. This includes
+the complete nine Core restart cases and public restart controls, along with existing terminal
+fencing, ingress and observer behavior. The filter also selects existing tests whose names
+contain restart; its count is not a count of new tests. Full Windows and compiler results follow.
+
+The complete Windows follow-up executes 269 cases: 268 pass, one pre-existing activation case
+fails, and ten interactive cases remain skipped
+(`200a6309-0535-483b-861d-dd0a6012b4f5`). Clipboard and every restart/returning/shutdown case
+pass. real_hwnd_activation_terminal_is_exact_and_first_terminal_wins observes ordinary key
+messages in its exact target WndProc stream and fails the existing no-keyboard-message oracle.
+Those records carry no usable physical-versus-injected classification; the current evidence
+does not establish an input source or a restart regression. The test's activation behavior and
+all data assertions remain unchanged. Preserve this failed aggregate separately from the first
+failed aggregate; neither is a whole-framework green result.
+
+The unchanged activation case, all eight returning-platform/App controls and the unchanged
+clipboard round-trip pass together 10/10
+(`a2bfd7af-47ef-408e-8198-fef887b80542`). All exact keyboard, activation, observer, fence,
+retirement and clipboard assertions remain. This focused pass qualifies the changed shutdown
+path and preserves the follow-up, but does not prove the two aggregate failures resolved or
+qualify an isolated interactive-desktop runner. Their observation limits remain open.
+
+Locked Rust 1.95 workspace all-target and independently locked all-feature/all-target checks
+pass. Affected Core/Windows/utility all-feature/all-target Clippy passes with
+-D clippy::correctness; existing advisory warnings remain. Actual Windows Rust 1.93 checks
+pass for Core, Windows, utility and platform owners and the independent consumer, with all
+targets/features selected. Production wasm32-unknown-unknown Core/Web libraries compile with
+profiler disabled and enabled. These are compilation gates, not new browser or foreign-native
+execution. Root/consumer fmt checks and workflow YAML parsing pass. No lock, production
+dependency or compiler-floor change is introduced. All nine implementation/review/source-map
+lanes close; a final process census finds no dedicated restart helper. Existing import,
+public-API, document and release scans pass. Continue the prepared scoped
+idle-sleep successor and remaining native lifecycle/appearance/windowing dispositions, then
+the actual Nara GPU/Host/View seam before maintenance handoff. No numerical cost, whole-framework
+green aggregate, canonical-docking or engine UI default claim follows.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:

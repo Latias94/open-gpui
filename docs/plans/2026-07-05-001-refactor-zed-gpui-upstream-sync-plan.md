@@ -107,6 +107,18 @@ existing loss, atlas, receipt and shutdown contracts. Retained GPU-image samplin
 an actual clipped engine View; the current WGPU Surface branch is not that implementation.
 These source facts add no public API or executed engine qualification.
 
+The November 10 Nara `35badad64539` source map confirms concrete consumer owners:
+WgpuRenderHost::with_device borrows the existing device, immutable WgpuImageOutput and
+producer-local WgpuSubmissionPrefix retain exact image use, and present_window owns encoding/
+submission/composite receipts. Prefer a reusable external-device/target recording extension
+consumed by a Nara-owned adapter; compare the existing public Platform/PlatformWindow path
+without installing a second GPU, device callback or loop. Nara's panel image attachment currently
+requires Arc<winit::Window>, while normal Windows GPUI remains coupled to DirectX/DirectWrite.
+Nara registry WGPU 30.0.1 and this fork's fixed Git WGPU 30.0.0 have distinct Rust type identities.
+Its existing content_window/editor_scene/streams_window consumers are the real-content controls;
+headless injection and application-owned atlas tests do not qualify the engine seam. This map
+does not alter either graph, select the final native owner or freeze new APIs before the consumer.
+
 ### Cached-Dependency Adaptation Requirements
 
 Port `decd2399b1` and `8fa085e397` through existing EntityMap, AnyView and deferred frame journals.
@@ -2499,16 +2511,87 @@ shell spawn keeps the current process alive without restoring consumed options; 
 launcher spawn does not prove the final target started. Preserve that official distinction
 instead of adding retries implicitly. The separate Restart Manager/on_quit return-contract
 change must be reconciled against the fork's existing ingress and native-retirement contracts
-in its own lifecycle disposition. This preparation is source evidence only, not implementation
-or qualification of restart arguments.
+in its own lifecycle disposition. The implementation and scoped qualification below own the
+executed restart evidence; they do not close that separate lifecycle successor.
+
+Execution starts after `7ead5105e56b29255ece592e62fd5f2250542131`. Core owns configuration,
+one-shot delivery and TestPlatform/public consumers; Windows owns its private launch/encoding
+module and existing utility discovery; the other backend lane owns its direct forwarding.
+Main owns the independently locked worker/recorder fixture and serial qualification. The
+Windows fixture uses its existing windows dependency's JobObjects/Threading/Security features,
+blocks worker startup until parent Job assignment and uses only a dedicated explicit target.
+It qualifies complex UTF-16 argv and the no-argument launcher branch, requiring recorder output,
+normal worker exit, restart-before-quit and zero remaining test descendants. Native argv data
+is never inserted into script source. Hiding the background launcher/recorder is a bounded fork
+presentation adaptation; it does not alter the official argument or restart ownership contract.
+Review and actual results remain separate from this execution map.
+
+Actual worker/recorder execution exposes an existing fork lifecycle gap: Windows stops its
+message loop before the App's queued native Quit can run, then calls ExitProcess. The correction
+must keep the existing loop alive after the first request until AppCell's terminal shutdown
+fence calls quit_after_terminal_shutdown. Preserve ordered native ingress, exactly-once quit
+observers, asynchronous observer completion, retryable HWND retirement and the retained-panic
+path. A second restart-specific shutdown authority or a synchronous App borrow is not justified.
+The ordinary fixture marks quit only after its asynchronous observer completes; the returning
+native App control also requires repeated requests to invoke observers once and a failed first
+DestroyWindow to settle before return. This is a fork adaptation exposed by the official restart
+consumer, separate from the queued Restart Manager/on_quit return-contract successor.
+
+The strict transport check also reproduces an inherited official script defect on PowerShell
+7.6.9/.NET 10.0.14: SetEnvironmentVariable(name, $null) retains an empty variable. Remove the
+three exact Env: entries after taking local snapshots and before waiting/launching. The argv
+algorithm and process-wait policy remain official. Independent PowerShell 7 and Windows
+PowerShell 5.1 child probes distinguish absent from empty variables; the full relaunch trajectory
+still owns qualification. Job active-process accounting is not the worker's signaled process
+handle: cleanup must observe the latter within its own bounded deadline.
+
+## Scoped Idle-Sleep Prevention Successor
+
+After restart qualification, adopt the complete fixed-target ActivityGuard and
+App/Platform::prevent_idle_sleep mechanism. Provenance starts at
+`450775244fade36db70af2447be24e74edb43368`, includes Windows handle/reason lifetime correction
+`d2074f4e15d289345a9583ef973470b8bdfad74a` and Apple activity extraction
+`40180d9c40e2d20eb63d388bff920818f2910b53`. Read the final target rather than retain the
+introduction's superseded thread-execution-state counter. Keep the official Send release
+closure and one-shot RAII behavior; application AI/play/build policy remains outside GPUI.
+
+Windows owns the native power-request handle and UTF-16 reason for the same lifetime, releases
+the request before its reason storage and closes partial acquisitions on error. Mac reuses the
+extracted Apple activity owner and official options. Linux needs the complete asynchronous
+portal acquisition/cancellation/release path, including a dropped response receiver and retained
+background release custody; adding only an Inhibit call is incomplete. Headless Linux and Web
+retain explicit unsupported results. TestPlatform observes guard lifetimes through its existing
+executor, while ordinary consumers can use the public guard without engine or test dependencies.
+
+Qualify nested acquisition, independent App requests, cancellation before/after acquisition,
+drop/unwind and cross-thread release, native Windows handle retirement and the reason's actual
+storage lifetime. Use a dedicated ordinary consumer and observe native request resources without
+changing user power settings or forcing sleep. Keep missing portal/foreign native execution
+explicit. Reconcile dependency/features in the existing locks without broad upgrades. This is
+source preparation only; no idle-prevention implementation, power-policy claim or engine
+integration follows from this successor.
 
 ## Maintained Baseline Before Engine Adaptation
+
+The [restart record](../verification.md#restart-arguments-and-native-relaunch) qualifies the
+scoped mechanism at `175a82b47f10b0bc2bb4b5920d54e1be5d70f977`. Native parameters and official
+PowerShell/Unix forwarding use the existing owners; the inherited environment defect and fork
+queued-quit completion gap have distinct executed corrections. Core/public 1,765, utility 127,
+ordinary all/off 105/75, disabled selected 59 and final native follow-up 10 pass. Preserve the
+complete framework 2,160/2,161 and Windows 268/269 failures on unchanged clipboard/keyboard
+controls; scoped follow-ups do not make them green or explain their causes. Locked checks,
+correctness Clippy, actual Windows Rust 1.93, production wasm profiler off/on and formatting
+pass. Nine lanes close. Continue the prepared idle-sleep successor, native appearance, live
+windowing and native-quit/Restart Manager reconciliation. The real Nara consumer still needs
+external-target recording, retained texture use and one device/loop arrangement identified
+above; no source map or successful standalone test completes maintenance handoff.
 
 Runtime identity/keybindings are qualified at `70b993c9660772b157546f46c4a65c0ebd4375e6`,
 with the exact official source and fork adaptations above. Final complete framework 2,130,
 command/components/DevTools/Gallery 1,230, other UI consumers 2,077 and ordinary all/profiler/
 off 102/88/72 pass. Actual native and full browser workflows execute, and Windows Rust 1.93,
-production wasm and static gates pass. Continue restart arguments, scoped idle-sleep guards,
+production wasm and static gates pass. Restart's scoped successor is recorded above;
+continue scoped idle-sleep guards,
 native appearance, live windowing and remaining fixed-target reconciliation before the real
 Nara GPU/Host/View consumer. This does not qualify foreign native execution or maintenance handoff.
 

@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-10T08:21:00+08:00
+timestamp: 2026-11-10T09:40:00+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -17,6 +17,27 @@ verified_by:
 ---
 
 # Current State
+
+- Restart arguments are implemented at `175a82b47f10b0bc2bb4b5920d54e1be5d70f977`, after
+  `7ead5105e56b29255ece592e62fd5f2250542131`,
+  from official `715076597926d566d560b30b806749e1a2166080` and the fixed-target Windows
+  PowerShell corrections. Native argv, one-shot App/Platform delivery and the original quit
+  owners remain intact. Actual execution corrects the inherited PowerShell empty-environment
+  defect and the fork's message-loop exit before queued App Quit. Final ordinary all/off
+  consumers pass 105/75, profiler-disabled selected Core/public cases 59 and native follow-up
+  10 pass. Original complete framework 2,160/2,161 and Windows 268/269 remain failed on
+  unchanged clipboard metadata and keyboard-stream controls; follow-ups do not resolve their
+  causes. The [record](../../verification.md#restart-arguments-and-native-relaunch) retains
+  exact failures, the selected-target negative control and scope. Locked workspace/consumer
+  checks, correctness Clippy, actual Windows Rust 1.93 affected-owner/consumer checks, production
+  wasm profiler off/on and both formatting checks pass. Core/public 1,765 and utility 127
+  pass within the first failed aggregate; no complete aggregate-green claim follows.
+  The Nara source map confirms concrete device/immutable
+  image/composite/prefix owners and GPUI external-device/target-recording gaps; no engine
+  consumer or dependency change follows. Continue the prepared
+  idle-sleep successor and remaining lifecycle/appearance/windowing dispositions before the
+  real Nara consumer and separate maintenance handoff. All nine implementation/review/source
+  lanes are closed and no owned restart helper remains; Cargo stays main-owned and serial.
 
 - Runtime platform identity/keybindings are implemented at
   `70b993c9660772b157546f46c4a65c0ebd4375e6`, from official `389c22e1c747` against fixed
@@ -860,10 +881,12 @@ historical scope and is not current branch or CI qualification.
 
 # Next Action
 
-- Continue the [restart-arguments successor](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#restart-arguments-successor)
-  after scoped runtime-identity qualification. Preserve native argv through the existing
-  Application/App/backend owners and qualify a dedicated worker-to-recorder launcher.
-  The bounded public audit also queues windowing-mode switching, idle-sleep guards and native appearance.
+- Continue the [scoped idle-sleep successor](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#scoped-idle-sleep-prevention-successor)
+  after scoped restart qualification. Preserve complete official RAII, asynchronous cancellation,
+  Windows reason-buffer lifetime and unsupported-platform behavior. Keep restart's original
+  clipboard/keyboard aggregate failures and foreign lifecycle gates visible; focused passes do
+  not resolve those causes. The bounded public audit also queues windowing-mode switching,
+  native appearance and Restart Manager/on_quit completion reconciliation.
   Actual Mac Keychain and Linux Secret Service gates remain open; a source port is not native proof.
   Keep the [Mac pasteboard native gates](../../verification.md#desktop-clipboard-normalization-and-owned-pasteboard)
   open until actual Apple compilation and all twelve tests execute. Full fixed-target closure
