@@ -10,6 +10,14 @@ use std::{ffi::OsString, fs::File, os::fd::AsFd, time::Duration};
 use std::{io::Read as _, os::fd::AsRawFd};
 
 use anyhow::{Context as _, anyhow};
+#[cfg(any(feature = "wayland", feature = "x11"))]
+use ashpd::{
+    desktop::{
+        Request,
+        inhibit::{InhibitFlags, InhibitOptions, InhibitProxy},
+    },
+    enumflags2::BitFlags,
+};
 use calloop::LoopSignal;
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use calloop::channel::Sender;
@@ -21,10 +29,10 @@ use xkbcommon::xkb::{self, Keycode, Keysym, State};
 
 use crate::linux::{LinuxDispatcher, PriorityQueueCalloopReceiver};
 use open_gpui::{
-    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, DisplayId, ForegroundExecutor,
-    Keymap, Menu, MenuItem, MouseButton, NativeAppNotificationHandler, OwnedMenu,
-    PathPromptOptions, Platform, PlatformDisplay, PlatformFocusedWindow, PlatformHoveredWindow,
-    PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
+    Action, ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem, DisplayId,
+    ForegroundExecutor, Keymap, Menu, MenuItem, MouseButton, NativeAppNotificationHandler,
+    OwnedMenu, PathPromptOptions, Platform, PlatformDisplay, PlatformFocusedWindow,
+    PlatformHoveredWindow, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
     PlatformViewportCapabilities, PlatformWindow, PlatformWindowCapabilities, PowerMode, Result,
     RunnableVariant, Task, ThermalState, WindowAppearance, WindowButtonLayout, WindowKind,
     WindowParams,
@@ -49,6 +57,10 @@ const FILE_PICKER_PORTAL_MISSING: &str =
 
 pub(crate) trait LinuxClient {
     fn compositor_name(&self) -> &'static str;
+    #[cfg(any(feature = "wayland", feature = "x11"))]
+    fn is_headless(&self) -> bool {
+        false
+    }
     fn with_common<R>(&self, f: impl FnOnce(&mut LinuxCommon) -> R) -> R;
     fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout>;
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>>;
@@ -417,7 +429,7 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
 
     fn power_mode(&self) -> PowerMode {
         #[cfg(any(feature = "wayland", feature = "x11"))]
-        let windowed = self.inner.compositor_name() != "headless";
+        let windowed = !self.inner.is_headless();
         self.inner.with_common(|common| {
             #[cfg(any(feature = "wayland", feature = "x11"))]
             if windowed {
@@ -429,7 +441,7 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
 
     fn on_power_mode_change(&self, callback: NativeAppNotificationHandler) {
         #[cfg(any(feature = "wayland", feature = "x11"))]
-        let windowed = self.inner.compositor_name() != "headless";
+        let windowed = !self.inner.is_headless();
         self.inner.with_common(|common| {
             if common.power_observation_stopped {
                 return;
@@ -440,6 +452,39 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
                 common.start_power_mode_listener();
             }
         });
+    }
+
+    #[cfg(not(any(feature = "wayland", feature = "x11")))]
+    fn prevent_idle_sleep(&self, reason: &str) -> Task<Result<ActivityGuard>> {
+        Task::ready(Err(anyhow!(
+            "Idle sleep prevention for {reason:?} requires a Linux windowing backend"
+        )))
+    }
+
+    #[cfg(any(feature = "wayland", feature = "x11"))]
+    fn prevent_idle_sleep(&self, reason: &str) -> Task<Result<ActivityGuard>> {
+        if self.inner.is_headless() {
+            return Task::ready(Err(anyhow!(
+                "Idle sleep prevention for {reason:?} requires a Linux windowing backend"
+            )));
+        }
+
+        let executor = self.background_executor();
+        let (guard_tx, guard_rx) = oneshot::channel();
+        executor
+            .spawn({
+                let executor = executor.clone();
+                let reason = reason.to_owned();
+                async move {
+                    guard_tx
+                        .send(inhibit_idle_sleep(reason, executor).await)
+                        .ok();
+                }
+            })
+            .detach();
+        executor
+            .clone()
+            .spawn(async move { await_idle_sleep_prevention(guard_rx, &executor).await })
     }
 
     fn run(&self, on_finish_launching: Box<dyn FnOnce()>) {
@@ -1440,6 +1485,64 @@ pub(super) fn compositor_gpu_hint_from_dev_t(
     })
 }
 
+#[cfg(any(feature = "wayland", feature = "x11"))]
+async fn inhibit_idle_sleep(reason: String, executor: BackgroundExecutor) -> Result<ActivityGuard> {
+    let proxy = InhibitProxy::new()
+        .await
+        .context("Idle sleep prevention portal is unavailable")?;
+    let request = proxy
+        .inhibit(
+            None,
+            BitFlags::from(InhibitFlags::Suspend),
+            InhibitOptions::default().set_reason(reason.as_str()),
+        )
+        .await
+        .context("Failed to request idle sleep prevention")?;
+    request
+        .response()
+        .context("Idle sleep prevention request was rejected")?;
+    Ok(release_on_drop(request, executor))
+}
+
+#[cfg(any(feature = "wayland", feature = "x11"))]
+fn release_on_drop(request: Request<()>, executor: BackgroundExecutor) -> ActivityGuard {
+    ActivityGuard::new(move || {
+        executor
+            .spawn(async move {
+                request
+                    .close()
+                    .await
+                    .context("Failed to release idle sleep prevention")
+                    .log_err();
+            })
+            .detach();
+    })
+}
+
+#[cfg(any(feature = "wayland", feature = "x11"))]
+async fn await_idle_sleep_prevention(
+    guard_rx: oneshot::Receiver<Result<ActivityGuard>>,
+    executor: &BackgroundExecutor,
+) -> Result<ActivityGuard> {
+    match futures::future::select(guard_rx, executor.timer(Duration::from_secs(10))).await {
+        futures::future::Either::Left((Ok(result), _)) => result,
+        futures::future::Either::Left((Err(_), _)) => {
+            Err(anyhow!("Idle sleep prevention request was abandoned"))
+        }
+        futures::future::Either::Right(_) => Err(anyhow!(
+            "Idle sleep prevention acquisition timed out after 10 seconds"
+        )),
+    }
+}
+
+#[cfg(test)]
+#[path = "idle_sleep_prevention_tests.rs"]
+mod idle_sleep_prevention_tests;
+
+#[cfg(all(test, target_os = "linux", any(feature = "wayland", feature = "x11")))]
+#[path = "idle_sleep_portal_tests.rs"]
+mod idle_sleep_portal_tests;
+
 #[cfg(test)]
 #[path = "restart_arguments_tests.rs"]
 mod restart_arguments_tests;
@@ -1447,6 +1550,7 @@ mod restart_arguments_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(any(feature = "wayland", feature = "x11"))]
     use open_gpui::{Point, px};
 
     #[test]
@@ -1598,6 +1702,7 @@ mod tests {
         );
     }
 
+    #[cfg(any(feature = "wayland", feature = "x11"))]
     #[test]
     fn test_is_within_click_distance() {
         let zero = Point::new(px(0.0), px(0.0));

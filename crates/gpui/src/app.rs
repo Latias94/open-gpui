@@ -42,6 +42,7 @@ pub use test_context::*;
 #[cfg(any(test, feature = "test-support"))]
 pub use visual_test_context::*;
 
+use crate::ActivityGuard;
 #[cfg(any(feature = "inspector", debug_assertions))]
 use crate::InspectorElementRegistry;
 use crate::{
@@ -77,6 +78,8 @@ mod embedded_tests;
 mod entity_map;
 #[cfg(any(test, feature = "test-support"))]
 mod headless_app_context;
+#[cfg(test)]
+mod idle_sleep_tests;
 mod missing_glyphs;
 mod native_callback_diagnostics;
 mod native_captured_drag;
@@ -1949,6 +1952,11 @@ impl App {
     /// Returns the current thermal state of the system.
     pub fn thermal_state(&self) -> ThermalState {
         self.platform.thermal_state()
+    }
+
+    /// Prevents idle sleep while the returned guard is held.
+    pub fn prevent_idle_sleep(&self, reason: &str) -> Task<Result<ActivityGuard>> {
+        self.platform.prevent_idle_sleep(reason)
     }
 
     /// Returns the operating system's power mode, or [`PowerMode::Unknown`]

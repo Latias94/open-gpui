@@ -6,9 +6,9 @@ use crate::window::WebWindow;
 use anyhow::Result;
 use futures::channel::oneshot;
 use open_gpui::{
-    Action, AnyWindowHandle, BackgroundExecutor, ClipboardEntry, ClipboardItem, ClipboardReadError,
-    ClipboardString, DisplayId, DummyKeyboardMapper, ForegroundExecutor, Image, ImageFormat,
-    Keymap, Menu, MenuItem, NativeAppNotificationHandler, PathPromptOptions, Platform,
+    Action, ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardEntry, ClipboardItem,
+    ClipboardReadError, ClipboardString, DisplayId, DummyKeyboardMapper, ForegroundExecutor, Image,
+    ImageFormat, Keymap, Menu, MenuItem, NativeAppNotificationHandler, PathPromptOptions, Platform,
     PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
     PlatformWindow, PlatformWindowActivationSupport, PlatformWindowCapabilities,
     PlatformWindowCreationCapabilities, PlatformWindowMutationCapabilities, Task, ThermalState,
@@ -523,6 +523,12 @@ impl Platform for WebPlatform {
 
     fn on_thermal_state_change(&self, callback: NativeAppNotificationHandler) {
         self.callbacks.borrow_mut().thermal_state_change = Some(callback);
+    }
+
+    fn prevent_idle_sleep(&self, reason: &str) -> Task<Result<ActivityGuard>> {
+        Task::ready(Err(anyhow::anyhow!(
+            "Idle sleep prevention for {reason:?} is not supported in the browser"
+        )))
     }
 
     fn compositor_name(&self) -> &'static str {

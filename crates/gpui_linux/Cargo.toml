@@ -59,6 +59,9 @@ screen-capture = [
 [dev-dependencies]
 open_gpui = { workspace = true, features = ["test-support"] }
 
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+zbus = { version = "=5.16.0", default-features = false, features = ["async-io"] }
+
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 accesskit.workspace = true
@@ -95,7 +98,7 @@ notify-rust = "4"
 raw-window-handle = "0.6"
 
 # Used in both windowing options
-ashpd = { workspace = true, optional = true }
+ashpd = { workspace = true, optional = true, features = ["inhibit"] }
 swash = { version = "0.2.6" }
 bitflags = { workspace = true, optional = true }
 filedescriptor = { version = "0.8.2", optional = true }

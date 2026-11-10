@@ -5,7 +5,7 @@
 //! - Deterministic task scheduling via TestDispatcher
 //! - Controllable time via `advance_clock`
 
-use crate::ScreenCaptureSource;
+use crate::{ActivityGuard, ScreenCaptureSource};
 use crate::{
     AnyWindowHandle, BackgroundExecutor, ClipboardItem, DevicePixels, ForegroundExecutor, Keymap,
     Menu, MenuItem, MouseButton, NativeAppNotificationHandler, OwnedMenu, PathPromptOptions,
@@ -332,6 +332,12 @@ impl Platform for VisualTestPlatform {
     }
 
     fn on_thermal_state_change(&self, _callback: NativeAppNotificationHandler) {}
+
+    fn prevent_idle_sleep(&self, reason: &str) -> Task<Result<ActivityGuard>> {
+        Task::ready(Err(anyhow::anyhow!(
+            "Idle sleep prevention for {reason:?} is not supported in visual tests"
+        )))
+    }
 }
 
 #[cfg(test)]

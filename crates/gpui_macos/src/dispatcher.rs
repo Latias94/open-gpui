@@ -1,3 +1,4 @@
+use crate::activity::AppleActivity;
 use dispatch2::{DispatchQueue, DispatchQueueGlobalPriority, DispatchTime, GlobalQueueIdentifier};
 use mach2::{
     kern_return::KERN_SUCCESS,
@@ -9,7 +10,7 @@ use mach2::{
         thread_precedence_policy_data_t, thread_time_constraint_policy_data_t,
     },
 };
-use open_gpui::{PlatformDispatcher, Priority, RunnableMeta, RunnableVariant};
+use open_gpui::{ActivityGuard, PlatformDispatcher, Priority, RunnableMeta, RunnableVariant};
 use open_gpui_util::ResultExt;
 
 use async_task::Runnable;
@@ -18,6 +19,7 @@ use objc::{
     runtime::{BOOL, YES},
     sel, sel_impl,
 };
+use objc2_foundation::NSActivityOptions;
 use std::{ffi::c_void, ptr::NonNull, time::Duration};
 
 pub(crate) struct MacDispatcher;
@@ -76,6 +78,13 @@ impl PlatformDispatcher for MacDispatcher {
             set_audio_thread_priority().log_err();
             f();
         });
+    }
+
+    fn prevent_app_nap(&self, reason: &str) -> ActivityGuard {
+        AppleActivity::begin(
+            reason,
+            NSActivityOptions::UserInitiatedAllowingIdleSystemSleep,
+        )
     }
 }
 

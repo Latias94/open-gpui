@@ -2,8 +2,8 @@ use super::display::TestDisplayChangeCallback;
 #[cfg(any(test, feature = "test-support"))]
 use crate::ClipboardReadError;
 use crate::{
-    AnyWindowHandle, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle, DevicePixels,
-    DisplayId, DummyKeyboardMapper, ForegroundExecutor, Keymap, MouseButton,
+    ActivityGuard, AnyWindowHandle, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle,
+    DevicePixels, DisplayId, DummyKeyboardMapper, ForegroundExecutor, Keymap, MouseButton,
     NativeAppNotificationHandler, NoopTextSystem, PathPromptOptions, Pixels, Platform,
     PlatformDisplay, PlatformDisplaySnapshot, PlatformFocusedWindow, PlatformHeadlessRenderer,
     PlatformHoveredWindow, PlatformKeyboardLayout, PlatformKeyboardMapper,
@@ -24,7 +24,10 @@ use std::{
     ffi::OsString,
     path::{Path, PathBuf},
     rc::{Rc, Weak},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::Duration,
 };
 
@@ -72,6 +75,9 @@ pub(crate) struct TestPlatform {
     pub opened_url: RefCell<Option<String>>,
     pub text_system: Arc<dyn PlatformTextSystem>,
     pub expect_restart: RefCell<Option<oneshot::Sender<(Option<PathBuf>, Vec<OsString>)>>>,
+    idle_sleep_prevention_count: Arc<AtomicUsize>,
+    idle_sleep_prevention_delay: Cell<Duration>,
+    idle_sleep_prevention_fails: Cell<bool>,
     quit_requested: RefCell<bool>,
     open_urls_callback: RefCell<Option<Box<dyn FnMut(Vec<String>)>>>,
     reopen_callback: RefCell<Option<Box<dyn FnMut()>>>,
@@ -272,6 +278,9 @@ impl TestPlatform {
             next_window_close_during_initial_presentation: RefCell::new(false),
             next_window_defer_frame_requests: RefCell::new(false),
             expect_restart: Default::default(),
+            idle_sleep_prevention_count: Arc::new(AtomicUsize::new(0)),
+            idle_sleep_prevention_delay: Cell::new(Duration::ZERO),
+            idle_sleep_prevention_fails: Cell::new(false),
             quit_requested: Default::default(),
             open_urls_callback: Default::default(),
             reopen_callback: Default::default(),
@@ -802,6 +811,21 @@ impl TestPlatform {
     }
 
     #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn active_idle_sleep_preventions(&self) -> usize {
+        self.idle_sleep_prevention_count.load(Ordering::SeqCst)
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn set_idle_sleep_prevention_delay(&self, delay: Duration) {
+        self.idle_sleep_prevention_delay.set(delay);
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn set_idle_sleep_prevention_fails(&self, fails: bool) {
+        self.idle_sleep_prevention_fails.set(fails);
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn app_identity(&self) -> Option<(SharedString, SharedString)> {
         self.system_notifications.borrow().app_identity.clone()
     }
@@ -941,6 +965,32 @@ impl Platform for TestPlatform {
 
     fn thermal_state(&self) -> ThermalState {
         self.thermal_state.get()
+    }
+
+    fn prevent_idle_sleep(&self, reason: &str) -> Task<Result<ActivityGuard>> {
+        let count = self.idle_sleep_prevention_count.clone();
+        let fails = self.idle_sleep_prevention_fails.get();
+        let reason = reason.to_owned();
+        let acquire = move || {
+            if fails {
+                anyhow::bail!("Idle sleep prevention for {reason:?} is set to fail in this test");
+            }
+            count.fetch_add(1, Ordering::SeqCst);
+            Ok(ActivityGuard::new(move || {
+                count.fetch_sub(1, Ordering::SeqCst);
+            }))
+        };
+
+        let delay = self.idle_sleep_prevention_delay.get();
+        if delay.is_zero() {
+            Task::ready(acquire())
+        } else {
+            let delay = self.background_executor.timer(delay);
+            self.foreground_executor.spawn(async move {
+                delay.await;
+                acquire()
+            })
+        }
     }
 
     fn run(&self, on_finish_launching: Box<dyn FnOnce()>) {

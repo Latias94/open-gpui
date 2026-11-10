@@ -109,6 +109,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             libdbus-1-dev \
+            dbus \
             libfontconfig1-dev \
             libfreetype6-dev \
             libpipewire-0.3-dev \
@@ -172,6 +173,35 @@ jobs:
           cargo nextest run --locked -p open-gpui --all-features --test platform_info --test-threads=1 --no-fail-fast --no-tests fail
           cargo nextest run --locked -p open-gpui-command -p open-gpui-ui-components --all-features --test runtime_keybindings --test-threads=1 --no-fail-fast --no-tests fail
           cargo nextest run --locked -p open-gpui-web --lib -E 'test(platform_info::)' --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Test scoped activity ownership and public controls
+        run: cargo nextest run --locked -p open-gpui --all-features --lib --test idle_sleep -E 'test(app::idle_sleep_tests::) | binary(idle_sleep)' --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Test scoped activity without profiler
+        run: cargo nextest run --locked -p open-gpui --no-default-features --features test-support --lib --test idle_sleep -E 'test(app::idle_sleep_tests::) | binary(idle_sleep)' --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Test Windows native activity lifetime and close refusal
+        if: matrix.name == 'windows'
+        run: cargo nextest run --locked -p open-gpui-windows --all-features --lib -E 'test(platform::activity::tests::)' --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Test ordinary scoped activity with and without profiler
+        run: |
+          cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test idle_sleep --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+          cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --all-features --test idle_sleep --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Test Linux idle-sleep acquisition and cancellation
+        if: matrix.name == 'linux'
+        run: |
+          cargo nextest run --locked -p open-gpui-linux --all-features --lib -E 'test(idle_sleep_prevention_tests::)' --test-threads=1 --no-fail-fast --no-tests fail
+          cargo nextest run --locked -p open-gpui-linux --no-default-features --lib -E 'test(headless_idle_sleep_prevention_is_unsupported)' --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Test macOS typed activity acquisition and release
+        if: matrix.name == 'macos'
+        run: cargo nextest run --locked -p open-gpui-macos --all-features --lib -E 'test(activity::tests::)' --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Test Linux isolated portal acquisition and actual release
+        if: matrix.name == 'linux'
+        run: cargo nextest run --locked -p open-gpui-linux --all-features --lib -E 'test(idle_sleep_portal_tests::)' --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Test restart argument ownership and public configuration
         run: cargo nextest run --locked -p open-gpui --all-features --lib --test restart -E 'test(app::restart_tests::) | binary(restart)' --test-threads=1 --no-fail-fast --no-tests fail

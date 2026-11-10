@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- `ActivityGuard` owns scoped operating-system activity until drop. `App::prevent_idle_sleep` acquires native sleep inhibition; `BackgroundExecutor::prevent_app_nap` separately prevents App Nap throttling on Apple platforms and is a no-op elsewhere. Test contexts expose acquisition counts, delay and error controls.
+
 - `Application::with_restart_arguments` configures owned native arguments for the next restart. The selected executable and each argument reach the existing platform launcher without shell-source interpolation.
 - `App::platform_info` reports the runtime host operating system separately from Native/Web delivery. Browser keyboard conventions follow the detected host, including macOS Command bindings, while tests can explicitly select an identity.
 - macOS `App::write_credentials_if_not_exists` uses a single Keychain insertion and reports an existing server/account without replacing its secret. The Mac backend exposes reusable typed Keychain operation, cancellation and status errors; the macOS Platform default reports unsupported when a backend lacks atomic insertion.
@@ -24,6 +26,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Optional native debug hot reload follows the official GPUI/Subsecond 0.7.10 mechanism: build/process-matched patches, foreground application, window refresh, and typed, stateless and stored erased View render boundaries. Run with `dx serve --hot-patch`; compatible render-body edits preserve existing model state. Release/WebAssembly transport exclusion, failed loads, required restarts and disconnects remain explicit. The independently locked native consumer provides an actual edit/build/apply and Submitted-scene pixel acceptance procedure, including the required upstream dx x64 jump-stub backport for the qualified Windows tool.
 
 ### Breaking Changes and Migration Notes
+
+- Custom `Platform` implementations must provide `prevent_idle_sleep(&str) -> Task<Result<ActivityGuard>>`. Await the acquisition and retain its guard for the operation; dropping an unpolled ready acquisition also releases its activity. Unsupported implementations should return an explicit error. `PlatformDispatcher::prevent_app_nap` has a default no-op.
 
 - Windows keeps its message loop alive after a native quit request until App shutdown settles. Applications retain their App quit API; direct platform callback owners must acknowledge completed shutdown through `quit_after_terminal_shutdown` instead of merely returning.
 

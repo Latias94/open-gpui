@@ -42,6 +42,9 @@ use open_gpui::*;
 #[path = "restart.rs"]
 mod restart;
 
+#[path = "activity.rs"]
+mod activity;
+
 #[derive(Default)]
 pub(crate) struct RegisteredWindows {
     windows: RwLock<SmallVec<[RegisteredWindow; 4]>>,
@@ -2301,6 +2304,10 @@ impl Platform for WindowsPlatform {
 
     fn thermal_state(&self) -> ThermalState {
         ThermalState::Nominal
+    }
+
+    fn prevent_idle_sleep(&self, reason: &str) -> Task<Result<ActivityGuard>> {
+        Task::ready(activity::prevent_idle_sleep(reason))
     }
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {

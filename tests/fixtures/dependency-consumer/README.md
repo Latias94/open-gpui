@@ -1634,3 +1634,28 @@ renderer retirement, physical input or foreign OS launchers. Linux and Mac tests
 separate backend gates. The fixture promotes its existing target-specific windows dependency
 for the recorder binary and enables only its native process/Job feature closure; no framework
 production dependency or compiler-floor change follows.
+
+## Scoped activity consumer
+
+The `idle_sleep` target consumes the public ActivityGuard, App/Platform idle-sleep acquisition
+and BackgroundExecutor/PlatformDispatcher App Nap interfaces from official Zed
+`450775244fade36db70af2447be24e74edb43368`, reconciled with the fixed target. Ordinary Rust
+cases retain Send ownership, one-shot release, noop and unwind without test support.
+
+On Windows, the dedicated `idle_sleep_probe` binary creates an ordinary headless native App.
+Its worker warms the existing scheduler, acquires eight real power-request guards, releases
+four independently, releases the remainder on another thread and observes process handle
+counts. The non-Apple App Nap default creates no native power request. The parent requires a
+completed report, the actual App quit callback and successful process exit within thirty
+seconds. Failure cleanup kills and observes only its owned worker with a bounded deadline;
+temporary report files belong to its exclusively created directory. It starts no user app,
+opens no visible window, changes no persistent power setting and never forces sleep.
+
+```text
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --test idle_sleep --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --all-features --test idle_sleep --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+These commands are instructions rather than results. Process resource observations do not
+measure OS power-policy enforcement or energy use. Mac activity and Linux portal acquisition/
+Request::close retain their own native gates; a Windows run cannot qualify them.

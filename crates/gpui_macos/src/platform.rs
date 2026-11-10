@@ -1,6 +1,7 @@
 use crate::{
     BoolExt, MacDispatcher, MacDisplayTopologyHandle, MacDisplayTopologyRefresh,
     MacDisplayTopologyRetry, MacKeyboardLayout, MacKeyboardMapper, MacWindow, MacWindowRegistry,
+    activity::AppleActivity,
     events::key_to_native,
     keychain, ns_string,
     pasteboard::Pasteboard,
@@ -33,17 +34,18 @@ use objc::{
     runtime::{Class, Object, Sel},
     sel, sel_impl,
 };
+use objc2_foundation::NSActivityOptions;
 use open_gpui::{
-    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, DisplayId, ForegroundExecutor,
-    KeyContext, Keymap, Menu, MenuItem, MouseButton, NativeAppNotificationHandler,
-    NavigationDirection, OsMenu, OwnedMenu, PathPromptOptions, Platform, PlatformDisplay,
-    PlatformDisplaySnapshot, PlatformFocusedWindow, PlatformHoveredWindow, PlatformKeyboardLayout,
-    PlatformKeyboardMapper, PlatformTextSystem, PlatformViewportCapabilities, PlatformWindow,
-    PlatformWindowActivationSupport, PlatformWindowCapabilities,
-    PlatformWindowCreationCapabilities, PlatformWindowMutationCapabilities, PowerMode, Result,
-    SystemMenuType, Task, ThermalState, WindowAppearance, WindowCoordinateSpace,
-    WindowCreationSupport, WindowInitialPresentationOrder, WindowKind, WindowMutationSupport,
-    WindowParams,
+    Action, ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem, DisplayId,
+    ForegroundExecutor, KeyContext, Keymap, Menu, MenuItem, MouseButton,
+    NativeAppNotificationHandler, NavigationDirection, OsMenu, OwnedMenu, PathPromptOptions,
+    Platform, PlatformDisplay, PlatformDisplaySnapshot, PlatformFocusedWindow,
+    PlatformHoveredWindow, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
+    PlatformViewportCapabilities, PlatformWindow, PlatformWindowActivationSupport,
+    PlatformWindowCapabilities, PlatformWindowCreationCapabilities,
+    PlatformWindowMutationCapabilities, PowerMode, Result, SystemMenuType, Task, ThermalState,
+    WindowAppearance, WindowCoordinateSpace, WindowCreationSupport, WindowInitialPresentationOrder,
+    WindowKind, WindowMutationSupport, WindowParams,
 };
 use open_gpui_util::{
     ResultExt,
@@ -1274,6 +1276,13 @@ impl Platform for MacPlatform {
 
     fn thermal_state(&self) -> ThermalState {
         process_info::thermal_state()
+    }
+
+    fn prevent_idle_sleep(&self, reason: &str) -> Task<Result<ActivityGuard>> {
+        Task::ready(Ok(AppleActivity::begin(
+            reason,
+            NSActivityOptions::UserInitiated,
+        )))
     }
 
     fn power_mode(&self) -> PowerMode {

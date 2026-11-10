@@ -6,6 +6,7 @@
 
 extern crate self as cocoa;
 
+mod activity;
 mod cocoa_compat;
 mod dispatcher;
 mod display;

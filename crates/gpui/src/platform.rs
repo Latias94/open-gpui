@@ -121,6 +121,25 @@ pub use threaded_dispatcher::ThreadedDispatcher;
 #[cfg(any(test, feature = "test-support"))]
 pub use visual_test::VisualTestPlatform;
 
+/// Keeps an operating system activity, such as an idle sleep inhibitor, alive until dropped.
+pub struct ActivityGuard {
+    _release: open_gpui_core_util::Deferred<Box<dyn FnOnce() + Send>>,
+}
+
+impl ActivityGuard {
+    /// Runs `release` when the guard is dropped.
+    pub fn new(release: impl FnOnce() + Send + 'static) -> Self {
+        Self {
+            _release: open_gpui_core_util::defer(Box::new(release)),
+        }
+    }
+
+    /// A guard for platforms without a corresponding activity.
+    pub fn noop() -> Self {
+        Self::new(|| {})
+    }
+}
+
 /// One immutable observation of a platform window's physical client geometry.
 ///
 /// The client bounds and scale factor belong to the same validated observation. Consumers should
@@ -3725,6 +3744,7 @@ pub trait Platform: 'static {
 
     fn thermal_state(&self) -> ThermalState;
     fn on_thermal_state_change(&self, callback: NativeAppNotificationHandler);
+    fn prevent_idle_sleep(&self, reason: &str) -> Task<Result<ActivityGuard>>;
 
     /// Returns the operating system's power mode, or [`PowerMode::Unknown`]
     /// when the platform cannot determine it.
@@ -5935,6 +5955,10 @@ pub trait PlatformDispatcher: Send + Sync {
 
     fn increase_timer_resolution(&self) -> TimerResolutionGuard {
         open_gpui_core_util::defer(Box::new(|| {}))
+    }
+
+    fn prevent_app_nap(&self, _reason: &str) -> ActivityGuard {
+        ActivityGuard::noop()
     }
 
     #[cfg(any(test, feature = "test-support"))]

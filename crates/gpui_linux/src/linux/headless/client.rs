@@ -61,6 +61,11 @@ impl HeadlessClient {
 }
 
 impl LinuxClient for HeadlessClient {
+    #[cfg(any(feature = "wayland", feature = "x11"))]
+    fn is_headless(&self) -> bool {
+        true
+    }
+
     fn with_common<R>(&self, f: impl FnOnce(&mut LinuxCommon) -> R) -> R {
         f(&mut self.0.borrow_mut().common)
     }
