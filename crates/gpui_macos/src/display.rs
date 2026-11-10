@@ -1,18 +1,17 @@
 mod native;
 mod topology;
 
-use self::native::{MacNativeDisplayBatch, MacNativeDisplayRow};
-use cocoa::base::id;
+use self::native::{MacDisplayObservation, MacNativeDisplayBatch, MacNativeDisplayRow};
+use objc2::{Message as _, rc::Retained};
+use objc2_app_kit::NSScreen;
 use open_gpui::{Bounds, DisplayId, Pixels, PlatformDisplay, PlatformDisplaySnapshot};
 use smallvec::SmallVec;
 use std::{rc::Rc, sync::Arc, time::Duration};
 use uuid::Uuid;
 
 pub(crate) use self::topology::{
-    MacDisplayTopologyAuthority, MacDisplayTopologyFailure, MacDisplayTopologyHandle,
-    MacDisplayTopologyListener, MacDisplayTopologyRefresh, MacDisplayTopologyRefreshRequest,
-    MacDisplayTopologyRetry, MacDisplayTopologySubscription, MacDisplayTopologyUnavailable,
-    MacDisplayTopologyWeak,
+    MacDisplayTopologyFailure, MacDisplayTopologyHandle, MacDisplayTopologyRefresh,
+    MacDisplayTopologyRetry, MacDisplayTopologySubscription,
 };
 
 /// Detached facts for one display in a committed macOS topology publication.
@@ -72,7 +71,7 @@ impl MacDisplayTopologyCandidate {
     }
 
     fn try_new(
-        mut rows: SmallVec<[MacNativeDisplayRow; 4]>,
+        mut rows: SmallVec<[MacDisplayObservation; 4]>,
     ) -> Result<Self, MacDisplayTopologyFailure> {
         if rows.is_empty() {
             return Err(invalid_candidate("display topology is empty"));
@@ -80,7 +79,7 @@ impl MacDisplayTopologyCandidate {
 
         let mut primary_display_id = None;
         for (index, row) in rows.iter().enumerate() {
-            if row.screen.is_null() {
+            if row.screen_identity == 0 {
                 return Err(invalid_candidate(
                     "display topology contains a null NSScreen object",
                 ));
@@ -110,7 +109,7 @@ impl MacDisplayTopologyCandidate {
                         "display topology contains duplicate native display identities",
                     ));
                 }
-                if previous.screen == row.screen {
+                if previous.screen_identity == row.screen_identity {
                     return Err(invalid_candidate(
                         "display topology contains duplicate NSScreen objects",
                     ));
@@ -181,7 +180,8 @@ impl MacDisplayTopologySnapshot {
         .expect("validated macOS topology must project to a valid platform snapshot")
     }
 
-    pub(crate) fn primary_display(&self) -> MacDisplay {
+    #[cfg(test)]
+    fn primary_display(&self) -> MacDisplay {
         self.display(self.primary_display_id)
             .expect("validated display snapshots retain their primary display")
     }
@@ -208,15 +208,15 @@ impl MacDisplayTopologySnapshot {
             return Err(MacDisplayTopologyFailure::SnapshotChanged(self.generation));
         }
         let row = batch
-            .row(display_id)
+            .into_row(display_id)
             .ok_or(MacDisplayTopologyFailure::UnknownTarget(display_id))?;
-        if row.display != expected_display {
+        if row.observation.display != expected_display {
             return Err(MacDisplayTopologyFailure::SnapshotChanged(self.generation));
         }
         Ok(ValidatedMacDisplayTarget {
             generation: self.generation,
             screen: row.screen,
-            display: row.display,
+            display: row.observation.display,
         })
     }
 
@@ -224,16 +224,21 @@ impl MacDisplayTopologySnapshot {
     /// re-enumerating the complete desktop topology.
     pub(crate) fn validate_native_screen(
         &self,
-        screen: id,
+        screen: &NSScreen,
     ) -> Result<ValidatedMacDisplayTarget, MacDisplayTopologyFailure> {
-        let row = unsafe { MacNativeDisplayRow::observe(screen)? };
-        self.validate_native_row(row)
+        let row = MacNativeDisplayRow::observe(screen.retain())?;
+        let generation = self.validate_native_observation(row.observation)?;
+        Ok(ValidatedMacDisplayTarget {
+            generation,
+            screen: row.screen,
+            display: row.observation.display,
+        })
     }
 
-    fn validate_native_row(
+    fn validate_native_observation(
         &self,
-        row: MacNativeDisplayRow,
-    ) -> Result<ValidatedMacDisplayTarget, MacDisplayTopologyFailure> {
+        row: MacDisplayObservation,
+    ) -> Result<u64, MacDisplayTopologyFailure> {
         let expected_display = self
             .display(row.display.display_id)
             .ok_or(MacDisplayTopologyFailure::SnapshotChanged(self.generation))?;
@@ -242,11 +247,7 @@ impl MacDisplayTopologySnapshot {
         {
             return Err(MacDisplayTopologyFailure::SnapshotChanged(self.generation));
         }
-        Ok(ValidatedMacDisplayTarget {
-            generation: self.generation,
-            screen: row.screen,
-            display: row.display,
-        })
+        Ok(self.generation)
     }
 
     fn has_same_facts(&self, candidate: &MacDisplayTopologyCandidate) -> bool {
@@ -262,7 +263,7 @@ impl MacDisplayTopologySnapshot {
 #[derive(Debug)]
 pub(crate) struct ValidatedMacDisplayTarget {
     generation: u64,
-    screen: id,
+    screen: Retained<NSScreen>,
     display: MacDisplay,
 }
 
@@ -271,8 +272,8 @@ impl ValidatedMacDisplayTarget {
         self.generation
     }
 
-    pub(crate) fn screen(&self) -> id {
-        self.screen
+    pub(crate) fn screen(&self) -> &NSScreen {
+        &self.screen
     }
 
     pub(crate) fn display(&self) -> MacDisplay {
@@ -297,9 +298,8 @@ fn invalid_candidate(message: impl Into<Arc<str>>) -> MacDisplayTopologyFailure 
 mod tests {
     use super::{
         MacDisplay, MacDisplayTopologyCandidate, MacDisplayTopologyFailure,
-        MacDisplayTopologySnapshot, display_id_from_uuid, native::MacNativeDisplayRow,
+        MacDisplayTopologySnapshot, display_id_from_uuid, native::MacDisplayObservation,
     };
-    use cocoa::base::nil;
     use open_gpui::{Bounds, PlatformDisplay, point, px, size};
     use smallvec::{SmallVec, smallvec};
     use uuid::Uuid;
@@ -326,9 +326,9 @@ mod tests {
         }
     }
 
-    fn row(native_display_id: u32, display: MacDisplay, is_primary: bool) -> MacNativeDisplayRow {
-        MacNativeDisplayRow {
-            screen: std::ptr::without_provenance_mut(native_display_id as usize),
+    fn row(native_display_id: u32, display: MacDisplay, is_primary: bool) -> MacDisplayObservation {
+        MacDisplayObservation {
+            screen_identity: native_display_id as usize,
             native_display_id,
             display,
             is_primary,
@@ -356,6 +356,17 @@ mod tests {
             MacDisplayTopologyCandidate::try_new(smallvec![
                 row(1, primary, true),
                 row(1, secondary, false),
+            ]),
+            Err(MacDisplayTopologyFailure::InvalidCandidate(_))
+        ));
+        let duplicated_screen = MacDisplayObservation {
+            screen_identity: 1,
+            ..row(2, secondary, false)
+        };
+        assert!(matches!(
+            MacDisplayTopologyCandidate::try_new(smallvec![
+                row(1, primary, true),
+                duplicated_screen
             ]),
             Err(MacDisplayTopologyFailure::InvalidCandidate(_))
         ));
@@ -401,14 +412,13 @@ mod tests {
 
         assert_eq!(
             snapshot
-                .validate_native_row(row(2, secondary, false))
-                .unwrap()
-                .generation(),
+                .validate_native_observation(row(2, secondary, false))
+                .unwrap(),
             1
         );
         let replacement = display(3, 1_920.0, 0.0, 1.0, 1_920.0);
         assert!(matches!(
-            snapshot.validate_native_row(row(2, replacement, false)),
+            snapshot.validate_native_observation(row(2, replacement, false)),
             Err(MacDisplayTopologyFailure::SnapshotChanged(1))
         ));
     }
@@ -416,8 +426,8 @@ mod tests {
     #[test]
     fn test_rows_never_publish_null_screen_identity() {
         let primary = display(1, 0.0, 0.0, 2.0, 1_880.0);
-        let row = MacNativeDisplayRow {
-            screen: nil,
+        let row = MacDisplayObservation {
+            screen_identity: 0,
             native_display_id: 1,
             display: primary,
             is_primary: true,

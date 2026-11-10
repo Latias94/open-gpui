@@ -22,7 +22,6 @@ members = [
     "crates/gpui_windows",
     "crates/http_client",
     "crates/http_client_tls",
-    "crates/media",
     "crates/motion",
     "crates/path",
     "crates/resource",
@@ -80,7 +79,6 @@ open_gpui_http_client_tls = { package = "open-gpui-http-client-tls", version = "
 open_gpui_linux = { package = "open-gpui-linux", version = "0.2.0", path = "crates/gpui_linux", default-features = false }
 open_gpui_macos = { package = "open-gpui-macos", version = "0.2.0", path = "crates/gpui_macos", default-features = false }
 open_gpui_macros = { package = "open-gpui-macros", version = "0.2.0", path = "crates/gpui_macros" }
-open_gpui_media = { package = "open-gpui-media", version = "0.2.0", path = "crates/media" }
 open_gpui_motion = { package = "open-gpui-motion", version = "0.2.0", path = "crates/motion" }
 open_gpui_path = { package = "open-gpui-path", version = "0.2.0", path = "crates/path" }
 open_gpui_platform = { package = "open-gpui-platform", version = "0.2.0", path = "crates/gpui_platform", default-features = false }
@@ -162,16 +160,25 @@ libc = "0.2"
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
 mach2 = "0.5"
 nix = "0.29"
-objc = "0.2"
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["NSGraphics"] }
 objc2-core-foundation = "0.3"
 objc2-core-graphics = "0.3"
+objc2-core-media = { version = "=0.3.2", default-features = false, features = ["CMSampleBuffer", "objc2-core-video"] }
 objc2-core-text = "0.3"
 objc2-core-video = "0.3"
 objc2-foundation = "0.3"
 objc2-metal = "0.3"
 objc2-quartz-core = "0.3"
+objc2-screen-capture-kit = { version = "=0.3.2", default-features = false, features = [
+    "block2",
+    "dispatch2",
+    "objc2-core-graphics",
+    "objc2-core-media",
+    "SCShareableContent",
+    "SCStream",
+    "std",
+] }
 objc2-security = { version = "0.3.2", default-features = false, features = ["std", "SecBase", "SecItem"] }
 oo7 = { git = "https://github.com/zed-industries/oo7", rev = "731c1215edb6905876c6137ab300428c7b8d7c13", version = "0.6", default-features = false }
 parking_lot = "0.12.1"

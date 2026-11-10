@@ -425,13 +425,13 @@ jobs:
         if: matrix.name == 'linux'
         run: cargo nextest run -p open-gpui-linux --all-features --locked --no-fail-fast
 
-      - name: Check macOS font surface
+      - name: Check macOS AppKit, font and capture surface
         if: matrix.name == 'macos'
-        run: cargo check -p open-gpui-apple -p open-gpui-macos --features font-kit --locked
+        run: cargo check -p open-gpui-apple -p open-gpui-macos --features font-kit,screen-capture --all-targets --locked
 
-      - name: Test macOS font surface
+      - name: Test macOS framework surface with capture bindings
         if: matrix.name == 'macos'
-        run: cargo nextest run -p open-gpui-apple -p open-gpui-macos --features font-kit --locked --no-fail-fast
+        run: cargo nextest run -p open-gpui-apple -p open-gpui-macos --features font-kit,screen-capture --locked --no-fail-fast
 
       - name: Check Windows platform surface
         if: matrix.name == 'windows'

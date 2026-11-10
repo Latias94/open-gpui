@@ -61,6 +61,21 @@ content-verified reconstruction anchor rather than an asserted source-history pa
 [current sync queue](zed-gpui-upstream-sync-candidates.md#fixed-revisions-and-provenance) owns the
 complete evidence, later comparison pins and fixed maintenance target.
 
+## November 11 Mac AppKit And Capture Binding Successor
+
+The fixed target replaces handwritten Cocoa shims with `objc2` across the Mac input, AppKit
+and display owners. Official `4b47ceb9d328035bde5ef99009e674d9fee07fb7` replaces the initially
+imported Media crate and its bindgen path with the published ScreenCaptureKit and CoreMedia
+0.3.2 bindings. The native capture producer emits the same retained CoreVideo buffer already
+used by Core and the Apple surface renderer. These dependencies are selected only by Mac
+`screen-capture`; other backends retain their existing capture paths. The historical import
+set above records Media's original provenance, not a current workspace member. Unrelated
+legacy transitive bindings in other platform dependencies are outside this replacement.
+ScreenCaptureKit requires macOS 12.3. Capture-enabled application binaries that support earlier
+macOS 12 releases weak-link the framework, as Zed does in its final application build script.
+The [ordinary consumer](../../tests/fixtures/dependency-consumer/README.md) records that link
+configuration and the retained buffer interface separately from native runtime qualification.
+
 ## November 8 Benchmark Measurement Dependency
 
 The complete benchmark successor additionally imports `crates/bench_metrics` from fixed Zed

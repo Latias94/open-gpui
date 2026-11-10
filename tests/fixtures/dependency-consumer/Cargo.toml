@@ -20,6 +20,7 @@ wayland = ["open_gpui/wayland"]
 vulkan-surface = ["wgpu/vulkan", "wgpu/wgsl"]
 wgpu-renderer = ["dep:open_gpui_wgpu"]
 bench-support = ["open_gpui/bench-support", "open_gpui_platform/bench-support", "dep:criterion", "dep:rand"]
+mac-screen-capture = ["dep:open_gpui_macos", "open_gpui_macos/screen-capture"]
 
 [dependencies]
 image = { version = "0.25.4", default-features = false, features = ["avif"], optional = true }
@@ -57,6 +58,7 @@ open_gpui_platform = { package = "open-gpui-platform", path = "../../../crates/g
 [target.'cfg(target_os = "macos")'.dependencies]
 open_gpui_platform = { package = "open-gpui-platform", path = "../../../crates/gpui_platform", default-features = false, features = ["font-kit"] }
 open_gpui_apple = { package = "open-gpui-apple", path = "../../../crates/gpui_apple", default-features = false }
+open_gpui_macos = { package = "open-gpui-macos", path = "../../../crates/gpui_macos", default-features = false, optional = true }
 core-foundation = "=0.10.1"
 
 [target.'cfg(target_os = "windows")'.dev-dependencies]

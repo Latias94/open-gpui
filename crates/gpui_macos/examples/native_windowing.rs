@@ -29,14 +29,14 @@ mod macos {
         future::{Either, select},
     };
     use objc2::{MainThreadMarker, rc::Retained, runtime::AnyObject};
-    use objc2_app_kit::NSApplicationActivationPolicy;
+    use objc2_app_kit::{NSApplicationActivationPolicy, NSWindow};
     use objc2_foundation::{
         NSDate, NSNotification, NSNotificationCenter, NSPoint, NSRunLoop, NSString,
     };
     use open_gpui::{
         ActivationPolicy, Bounds, Empty, GraphicalEnvironment, Platform, PlatformWindow, Result,
-        Task, WindowBounds, WindowHandle, WindowId, WindowKind, WindowParams, WindowingRequest,
-        point, px, size,
+        Task, WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowId, WindowKind,
+        WindowParams, WindowingRequest, point, px, size,
     };
     use open_gpui_macos::MacPlatform;
     use raw_window_handle::RawWindowHandle;
@@ -230,6 +230,35 @@ mod macos {
             let native_window: Retained<AnyObject> = unsafe { objc2::msg_send![&*view, window] };
             (window, view, native_window)
         });
+        let typed_window = native_window
+            .downcast_ref::<NSWindow>()
+            .expect("the native view belongs to an NSWindow");
+        assert!(
+            typed_window
+                .childWindows()
+                .is_none_or(|children| children.is_empty())
+        );
+        let content = typed_window
+            .contentView()
+            .expect("normal AppKit content view");
+        window.set_background_appearance(WindowBackgroundAppearance::Blurred);
+        assert_eq!(
+            window.background_appearance(),
+            WindowBackgroundAppearance::Blurred
+        );
+        typed_window.setContentView(None);
+        window.set_background_appearance(WindowBackgroundAppearance::Blurred);
+        assert_eq!(
+            window.background_appearance(),
+            WindowBackgroundAppearance::Transparent,
+        );
+        typed_window.setContentView(Some(&content));
+        window.set_background_appearance(WindowBackgroundAppearance::Blurred);
+        assert_eq!(
+            window.background_appearance(),
+            WindowBackgroundAppearance::Blurred
+        );
+        window.set_background_appearance(WindowBackgroundAppearance::Opaque);
         let callbacks = Rc::new(Cell::new(0));
         let callback_dropped = Rc::new(Cell::new(false));
         window.on_active_status_change(Box::new({

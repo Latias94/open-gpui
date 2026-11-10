@@ -87,6 +87,10 @@ owns exact provenance; actual verification and remaining platform scope stay in 
 Historical exclusions are evaluated against their exact current source and required behavior;
 they do not establish a continuing license rejection of a permissively licensed revision.
 
+The Mac capture successor replaces the initially imported Media crate with the fixed target's
+optional typed ScreenCaptureKit and CoreMedia bindings. The [import record](../imports/zed-gpui-import.md#november-11-mac-appkit-and-capture-binding-successor)
+records the package selection and retained CoreVideo surface type.
+
 `gpui-component` will be forked or imported only after the core Open GPUI workspace can build and
 run at least one native example. Its first integration target is dependency rewiring and smoke
 compatibility, not a broad component redesign.

@@ -1,32 +1,23 @@
-use super::{
-    MacWindowState, NSDragOperation, NSDragOperationCopy, NSDragOperationMove, NSDragOperationNone,
-    get_window_state, native_window_matches_handle,
-};
+use super::{MacWindowState, NSDragOperation, get_window_state, native_window_matches_handle};
 use block2::RcBlock;
-use cocoa::{
-    base::id,
-    foundation::{NSInteger, NSPoint, NSUInteger},
-};
-use objc::runtime::{Object, Sel};
 use objc2::{
     AnyThread, MainThreadMarker, Message,
     rc::Retained,
-    runtime::{AnyObject, ProtocolObject},
+    runtime::{AnyObject, ProtocolObject, Sel},
 };
 use objc2_app_kit::{
-    NSDraggingImageComponent, NSDraggingImageComponentIconKey, NSDraggingItem, NSPasteboardWriting,
-    NSWorkspace,
+    NSDraggingContext, NSDraggingImageComponent, NSDraggingImageComponentIconKey, NSDraggingItem,
+    NSPasteboardWriting, NSWorkspace,
 };
-use objc2_foundation::{NSArray, NSMutableArray, NSRect, NSSize, NSString, NSURL};
+use objc2_foundation::{
+    NSArray, NSInteger, NSMutableArray, NSPoint, NSRect, NSSize, NSString, NSUInteger, NSURL,
+};
 use objc2_uniform_type_identifiers::{UTType, UTTypeData, UTTypeFolder};
 use open_gpui::{
     ExternalDragPayload, FileDropEvent, MouseButton, PlatformExternalDragSession, PlatformInput,
 };
 use parking_lot::Mutex;
 use std::{cell::OnceCell, ffi::CString, os::unix::ffi::OsStrExt, ptr::NonNull, rc::Rc, sync::Arc};
-
-const NSDRAGGING_CONTEXT_OUTSIDE_APPLICATION: NSInteger = 0;
-const NSDRAGGING_CONTEXT_WITHIN_APPLICATION: NSInteger = 1;
 
 pub(super) struct MacExternalDrag {
     session: PlatformExternalDragSession,
@@ -41,7 +32,7 @@ struct MacNativeDragSession {
 }
 
 impl MacExternalDrag {
-    unsafe fn bind_native_session(&self, native_session: id) -> bool {
+    unsafe fn bind_native_session(&self, native_session: *mut AnyObject) -> bool {
         // SAFETY: AppKit supplies a live NSDraggingSession on its main thread. Retaining it
         // keeps the native identity valid until completion or window retirement.
         let Some(object) = (unsafe { Retained::retain(native_session.cast::<AnyObject>()) }) else {
@@ -63,9 +54,12 @@ impl MacExternalDrag {
             .is_some_and(|native| native.sequence == sequence)
     }
 
-    fn matches_native_session(&self, native_session: id, sequence: NSInteger) -> bool {
+    fn matches_native_session(&self, native_session: *mut AnyObject, sequence: NSInteger) -> bool {
         self.native_session.get().is_some_and(|native| {
-            Retained::as_ptr(&native.object).cast_mut().cast::<Object>() == native_session
+            Retained::as_ptr(&native.object)
+                .cast_mut()
+                .cast::<AnyObject>()
+                == native_session
                 && native.sequence == sequence
         })
     }
@@ -73,7 +67,7 @@ impl MacExternalDrag {
 
 pub(super) fn update_left_mouse_down_event(
     state: &mut MacWindowState,
-    native_event: id,
+    native_event: *mut AnyObject,
     event: &PlatformInput,
 ) {
     match event {
@@ -193,7 +187,9 @@ pub(super) fn start_external_drag(
             return false;
         }
 
-        let native_window_ptr = Retained::as_ptr(&native_window).cast_mut().cast::<Object>();
+        let native_window_ptr = Retained::as_ptr(&native_window)
+            .cast_mut()
+            .cast::<AnyObject>();
         if !native_window_matches_handle(native_window_ptr, handle) {
             return false;
         }
@@ -247,11 +243,11 @@ pub(super) fn start_external_drag(
     }
 }
 
-pub(super) fn is_drag_from_this_window(this: &Object, dragging_info: id) -> bool {
+pub(super) fn is_drag_from_this_window(this: &AnyObject, dragging_info: *mut AnyObject) -> bool {
     // SAFETY: AppKit supplies NSDraggingInfo for the live destination callback.
     let source: *mut AnyObject =
         unsafe { objc2::msg_send![&*dragging_info.cast::<AnyObject>(), draggingSource] };
-    source.cast::<Object>().cast_const() == this as *const Object
+    source.cast::<AnyObject>().cast_const() == this as *const AnyObject
 }
 
 fn admit_file_drop(
@@ -277,7 +273,7 @@ fn admit_file_drop(
 
 pub(super) fn send_file_drop_event(
     window_state: Arc<Mutex<MacWindowState>>,
-    dragging_info: id,
+    dragging_info: *mut AnyObject,
     event: FileDropEvent,
 ) -> bool {
     // SAFETY: AppKit supplies a live NSDraggingInfo during each destination callback.
@@ -293,7 +289,7 @@ pub(super) fn send_file_drop_event(
         if state.is_closed() || state.interaction_is_quiesced() {
             return false;
         }
-        let source_session = if native_source.cast::<Object>() == state.native_window {
+        let source_session = if native_source.cast::<AnyObject>() == state.native_window {
             let Some(source) = state
                 .external_drag
                 .as_ref()
@@ -319,10 +315,10 @@ pub(super) fn send_file_drop_event(
 }
 
 pub(super) extern "C" fn dragging_session_source_operation_mask(
-    this: &Object,
+    this: &AnyObject,
     _: Sel,
-    native_session: id,
-    context: NSInteger,
+    native_session: *mut AnyObject,
+    context: NSDraggingContext,
 ) -> NSDragOperation {
     // SAFETY: AppKit invokes this selector on the registered GPUI window, whose
     // WINDOW_STATE_IVAR refers to its exact owning MacWindowState.
@@ -330,27 +326,27 @@ pub(super) extern "C" fn dragging_session_source_operation_mask(
     let source = {
         let state = window_state.lock();
         if state.is_closed() || state.interaction_is_quiesced() {
-            return NSDragOperationNone;
+            return NSDragOperation::None;
         }
         state.external_drag.clone()
     };
     let Some(source) = source else {
-        return NSDragOperationNone;
+        return NSDragOperation::None;
     };
     if !unsafe { source.bind_native_session(native_session) } {
-        return NSDragOperationNone;
+        return NSDragOperation::None;
     }
     match context {
-        NSDRAGGING_CONTEXT_OUTSIDE_APPLICATION => NSDragOperationCopy,
-        NSDRAGGING_CONTEXT_WITHIN_APPLICATION => NSDragOperationCopy | NSDragOperationMove,
-        _ => NSDragOperationCopy | NSDragOperationMove,
+        NSDraggingContext::OutsideApplication => NSDragOperation::Copy,
+        NSDraggingContext::WithinApplication => NSDragOperation::Copy | NSDragOperation::Move,
+        _ => NSDragOperation::Copy | NSDragOperation::Move,
     }
 }
 
 pub(super) extern "C" fn dragging_session_will_begin(
-    this: &Object,
+    this: &AnyObject,
     _: Sel,
-    native_session: id,
+    native_session: *mut AnyObject,
     _: NSPoint,
 ) {
     // SAFETY: AppKit invokes this selector on the registered GPUI window, whose
@@ -369,9 +365,9 @@ pub(super) extern "C" fn dragging_session_will_begin(
 }
 
 pub(super) extern "C" fn dragging_session_ended(
-    this: &Object,
+    this: &AnyObject,
     _: Sel,
-    native_session: id,
+    native_session: *mut AnyObject,
     _: NSPoint,
     _: NSDragOperation,
 ) {

@@ -80,6 +80,15 @@ optional backend method. Its ordinary `bench-support` App executes the unsupport
 alongside the existing native-control and close workflow. It does not qualify compositor blur;
 the affected Linux native tests retain that separate platform scope.
 
+On macOS, `mac-screen-capture` enables the ordinary Mac backend's optional capture support.
+The `apple_screen_capture` target type-checks source enumeration, metadata, stream callbacks
+and direct conversion of a retained capture buffer to a `Surface` element. The test does not
+start capture or request screen-recording permission. Run the compile gate with
+`cargo check --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --features mac-screen-capture --test apple_screen_capture --target-dir target`.
+The fixture build script weak-links ScreenCaptureKit on the final application targets, as Zed
+does. Downstream binaries with capture enabled that deploy to macOS 12.0–12.2 need the same
+`-Wl,-weak_framework,ScreenCaptureKit` linker argument. Capture itself requires macOS 12.3.
+
 Run these commands from the repository root. For dependency maintenance, generate or refresh the
 consumer lockfile, then review and commit it:
 

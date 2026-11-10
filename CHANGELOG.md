@@ -8,6 +8,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- macOS uses typed AppKit input, window and menu bindings, and optional ScreenCaptureKit now emits the same retained CoreVideo buffer used by the surface element. Capture-enabled binaries that support macOS 12.0–12.2 should weak-link ScreenCaptureKit; capture requires 12.3.
+- The obsolete `open-gpui-media` workspace package and handwritten Cocoa bindings are removed. The public capture and surface buffer types are unchanged.
+
 - Wayland deduplicates committed IME cursor rectangles and prefers advertised ext background blur with KDE fallback. `Window::set_client_corner_radii` forwards independent client-drawn corners; the maintained window-shadow example supplies its drawn radii.
 - Linux validates shared XKB contexts without local includes for resolved keymaps and splits Wayland/X11 features. X11 `WM_CLASS` writes terminate both fields. Wayland requires `wayland-backend` 0.3.15 and `wayland-protocols` 0.32.10.
 

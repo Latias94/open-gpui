@@ -608,7 +608,8 @@ mod tests {
         MacDisplayTopologyUnavailable, notify_display_topology_listener,
     };
     use crate::display::{
-        MacDisplay, MacDisplayTopologyCandidate, display_id_from_uuid, native::MacNativeDisplayRow,
+        MacDisplay, MacDisplayTopologyCandidate, display_id_from_uuid,
+        native::MacDisplayObservation,
     };
     use open_gpui::{Bounds, PlatformDisplay, point, px, size};
     use smallvec::smallvec;
@@ -644,9 +645,9 @@ mod tests {
         }
     }
 
-    fn row(native_display_id: u32, display: MacDisplay, is_primary: bool) -> MacNativeDisplayRow {
-        MacNativeDisplayRow {
-            screen: std::ptr::without_provenance_mut(native_display_id as usize),
+    fn row(native_display_id: u32, display: MacDisplay, is_primary: bool) -> MacDisplayObservation {
+        MacDisplayObservation {
+            screen_identity: native_display_id as usize,
             native_display_id,
             display,
             is_primary,

@@ -45,12 +45,13 @@ static SIMPLE_FULLSCREEN_APP_STATE: Mutex<SimpleFullscreenAppState> =
     Mutex::new(SimpleFullscreenAppState::new());
 
 fn set_simple_fullscreen_presentation_options(presentation_options: NSUInteger) {
-    // SAFETY: Simple fullscreen and native close run on AppKit's main thread. No window or
-    // application-presentation state lock is held while AppKit can invoke delegate callbacks.
-    unsafe {
-        let app = NSApplication::sharedApplication(nil);
-        let _: () = msg_send![app, setPresentationOptions: presentation_options];
-    }
+    let Some(marker) = crate::main_thread_marker() else {
+        return;
+    };
+    let app = NSApplication::sharedApplication(marker);
+    app.setPresentationOptions(NSApplicationPresentationOptions::from_bits_retain(
+        presentation_options,
+    ));
 }
 
 pub(super) fn release_simple_fullscreen_presentation_options(saved: Option<SimpleFullscreenState>) {
@@ -72,8 +73,7 @@ fn native_fullscreen_blocks_simple_fullscreen(
 }
 
 fn simple_fullscreen_style_mask(saved_style_mask: NSWindowStyleMask) -> NSWindowStyleMask {
-    NSWindowStyleMask::NSBorderlessWindowMask
-        | (saved_style_mask & NSWindowStyleMaskNonactivatingPanel)
+    NSWindowStyleMask::Borderless | (saved_style_mask & NSWindowStyleMask::NonactivatingPanel)
 }
 
 pub(super) fn window_bounds_from_client_bounds(
@@ -97,8 +97,8 @@ pub(super) fn window_bounds_from_client_bounds(
 
 struct SimpleFullscreenTarget {
     window_state: Weak<Mutex<MacWindowState>>,
-    native_window: Retained<NativeWindow>,
-    native_view: Retained<Objc2Object>,
+    native_window: Retained<NSWindow>,
+    native_view: Retained<AnyObject>,
     handle: AnyWindowHandle,
 }
 
@@ -127,7 +127,7 @@ impl SimpleFullscreenTarget {
         }
     }
 
-    fn native_id(&self) -> id {
+    fn native_id(&self) -> *mut AnyObject {
         Retained::as_ptr(&self.native_window).cast_mut().cast()
     }
 
@@ -160,7 +160,7 @@ impl SimpleFullscreenTarget {
         }
         // SAFETY: Revalidate after the style setter, which may synchronously close the window.
         unsafe {
-            let _: () = msg_send![self.native_id(), setFrame: frame display: YES];
+            let _: () = msg_send![self.native_id(), setFrame: frame, display: Bool::YES];
         }
         self.satisfies(requirement)
     }
@@ -182,7 +182,7 @@ impl SimpleFullscreenTarget {
         // activation has passed through the existing transient-owner and activation-policy gate.
         unsafe {
             let native_view = Retained::as_ptr(&self.native_view).cast_mut();
-            let _: BOOL = msg_send![self.native_id(), makeFirstResponder: native_view];
+            let _: Bool = msg_send![self.native_id(), makeFirstResponder: native_view];
         }
     }
 }
@@ -197,20 +197,17 @@ impl MacWindow {
             return false;
         }
 
-        // SAFETY: The original native window is retained and admitted. These AppKit getters run
-        // outside the window and application-presentation locks.
-        let (frame, style_mask, screen_frame, presentation_options) = unsafe {
-            let native_window = target.native_id();
-            let style_mask = NSWindow::styleMask(native_window);
-            if style_mask.contains(NSWindowStyleMask::NSFullScreenWindowMask) {
+        let (frame, style_mask, screen_frame, presentation_options) = {
+            let style_mask = target.native_window.styleMask();
+            if style_mask.contains(NSWindowStyleMask::FullScreen) {
                 return false;
             }
-            let screen = NSWindow::screen(native_window);
-            let screen_frame = (!screen.is_null()).then(|| NSScreen::frame(screen));
-            let app = NSApplication::sharedApplication(nil);
-            let presentation_options: NSUInteger = msg_send![app, presentationOptions];
+            let screen = target.native_window.screen();
+            let screen_frame = screen.as_ref().map(|screen| screen.frame());
+            let app = NSApplication::sharedApplication(target.native_window.mtm());
+            let presentation_options = app.presentationOptions().bits();
             (
-                NSWindow::frame(native_window),
+                target.native_window.frame(),
                 style_mask,
                 screen_frame,
                 presentation_options,
@@ -333,8 +330,7 @@ mod tests {
         SimpleFullscreenState {
             frame: NSRect::new(NSPoint::new(-1200.0, 80.0), NSSize::new(900.0, 640.0)),
             bounds: Bounds::new(point(px(-1200.0), px(180.0)), size(px(900.0), px(640.0))),
-            style_mask: NSWindowStyleMask::NSTitledWindowMask
-                | NSWindowStyleMask::NSResizableWindowMask,
+            style_mask: NSWindowStyleMask::Titled | NSWindowStyleMask::Resizable,
         }
     }
 
@@ -413,11 +409,11 @@ mod tests {
         let saved = saved_state();
         assert_eq!(
             simple_fullscreen_style_mask(saved.style_mask),
-            NSWindowStyleMask::NSBorderlessWindowMask,
+            NSWindowStyleMask::Borderless,
         );
         assert_eq!(
-            simple_fullscreen_style_mask(saved.style_mask | NSWindowStyleMaskNonactivatingPanel),
-            NSWindowStyleMaskNonactivatingPanel,
+            simple_fullscreen_style_mask(saved.style_mask | NSWindowStyleMask::NonactivatingPanel),
+            NSWindowStyleMask::NonactivatingPanel,
         );
     }
 

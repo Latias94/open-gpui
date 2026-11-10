@@ -35,7 +35,7 @@ test-support = ["open_gpui/test-support", "open_gpui_apple/test-support"]
 bench-support = ["open_gpui/bench-support", "open_gpui_apple/bench-support"]
 runtime_shaders = ["open_gpui_apple/runtime_shaders"]
 font-kit = ["open_gpui_apple/font-kit"]
-screen-capture = ["open_gpui/screen-capture", "dep:open_gpui_media"]
+screen-capture = ["open_gpui/screen-capture", "dep:objc2-core-media", "dep:objc2-screen-capture-kit"]
 
 [dependencies]
 open_gpui.workspace = true
@@ -52,7 +52,7 @@ core-foundation-sys.workspace = true
 core-graphics = "0.24"
 ctor.workspace = true
 derive_more.workspace = true
-dispatch2 = "0.3.1"
+dispatch2 = { version = "0.3.1", features = ["block2", "objc2"] }
 foreign-types = "0.5"
 futures.workspace = true
 image.workspace = true
@@ -60,28 +60,49 @@ itertools.workspace = true
 libc.workspace = true
 log.workspace = true
 open_gpui_apple.workspace = true
-open_gpui_media = { workspace = true, optional = true }
 open_gpui_scheduler.workspace = true
-objc.workspace = true
 objc2.workspace = true
 objc2-app-kit = { workspace = true, features = [
+    "NSAlert",
     "NSAppearance",
     "NSApplication",
+    "NSButton",
+    "NSCell",
+    "NSColor",
+    "NSControl",
+    "NSCursor",
+    "NSDocumentController",
+    "NSDragging",
     "NSDraggingItem",
+    "NSEvent",
     "NSImage",
+    "NSMenu",
+    "NSMenuItem",
+    "NSOpenPanel",
+    "NSPanel",
     "NSPasteboard",
     "NSResponder",
     "NSRunningApplication",
+    "NSSavePanel",
+    "NSScreen",
+    "NSScroller",
+    "NSTrackingArea",
+    "NSView",
+    "NSVisualEffectView",
     "NSWindow",
     "NSWindowRestoration",
     "NSWorkspace",
     "block2",
+    "objc2-core-foundation",
     "objc2-uniform-type-identifiers",
 ] }
 objc2-core-foundation.workspace = true
+objc2-core-graphics = { workspace = true, features = ["CGColor", "CGDirectDisplay", "objc2"] }
+objc2-core-media = { workspace = true, optional = true }
 objc2-core-video.workspace = true
 objc2-foundation.workspace = true
 objc2-quartz-core.workspace = true
+objc2-screen-capture-kit = { workspace = true, optional = true }
 objc2-uniform-type-identifiers = { version = "0.3", default-features = false, features = ["std", "UTCoreTypes", "UTType"] }
 objc2-user-notifications = { version = "0.3", default-features = false, features = [
     "std",

@@ -1,39 +1,38 @@
 use super::{
     MacDisplay, MacDisplayTopologyCandidate, MacDisplayTopologyFailure, display_id_from_uuid,
 };
-use crate::ns_string;
-use cocoa::{
-    appkit::NSScreen,
-    base::{BOOL, YES, id, nil},
-    foundation::{NSArray, NSDictionary, NSRect},
-};
+use crate::main_thread_marker;
 use core_foundation::base::CFRelease;
 use core_foundation::uuid::{CFUUIDGetUUIDBytes, CFUUIDRef};
 use core_graphics::{
     display::{CGDirectDisplayID, CGDisplay, CGDisplayBounds, CGDisplayIsMain},
     geometry::CGRect,
 };
-use objc::{msg_send, sel, sel_impl};
+use objc2::{rc::Retained, sel};
+use objc2_app_kit::NSScreen;
+use objc2_foundation::{NSNumber, NSObjectProtocol, NSRect, ns_string};
 use open_gpui::{Bounds, Pixels, point, px, refresh_interval_from_hz, size};
 use smallvec::SmallVec;
 use std::{sync::Arc, time::Duration};
 use uuid::Uuid;
 
 #[derive(Clone, Copy, Debug)]
-pub(super) struct MacNativeDisplayRow {
-    pub(super) screen: id,
+pub(super) struct MacDisplayObservation {
+    pub(super) screen_identity: usize,
     pub(super) native_display_id: CGDirectDisplayID,
     pub(super) display: MacDisplay,
     pub(super) is_primary: bool,
 }
 
-impl MacNativeDisplayRow {
-    pub(super) unsafe fn observe(screen: id) -> Result<Self, MacDisplayTopologyFailure> {
-        if screen == nil {
-            return Err(native_collection_failure("AppKit returned a null NSScreen"));
-        }
+#[derive(Debug)]
+pub(super) struct MacNativeDisplayRow {
+    pub(super) screen: Retained<NSScreen>,
+    pub(super) observation: MacDisplayObservation,
+}
 
-        let native_display_id = unsafe { native_display_id_for_screen(screen)? };
+impl MacNativeDisplayRow {
+    pub(super) fn observe(screen: Retained<NSScreen>) -> Result<Self, MacDisplayTopologyFailure> {
+        let native_display_id = native_display_id_for_screen(&screen)?;
         if native_display_id == 0 {
             return Err(native_collection_failure(
                 "AppKit returned the null CoreGraphics display identity",
@@ -47,19 +46,19 @@ impl MacNativeDisplayRow {
         let bounds = checked_bounds(native_bounds).ok_or_else(|| {
             native_collection_failure("CoreGraphics returned invalid display bounds")
         })?;
-        let screen_frame = unsafe { NSScreen::frame(screen) };
-        let visible_frame = unsafe { NSScreen::visibleFrame(screen) };
+        let screen_frame = screen.frame();
+        let visible_frame = screen.visibleFrame();
         validate_appkit_frames(screen_frame, visible_frame, bounds)?;
         let visible_bounds = visible_bounds_from_appkit_frames(bounds, screen_frame, visible_frame);
-        let scale_factor = unsafe { NSScreen::backingScaleFactor(screen) as f32 };
+        let scale_factor = screen.backingScaleFactor() as f32;
         if !scale_factor.is_finite() || scale_factor <= 0.0 {
             return Err(native_collection_failure(
                 "AppKit returned an invalid display backing scale factor",
             ));
         }
 
-        Ok(Self {
-            screen,
+        let observation = MacDisplayObservation {
+            screen_identity: Retained::as_ptr(&screen).addr(),
             native_display_id,
             display: MacDisplay {
                 display_id,
@@ -67,22 +66,23 @@ impl MacNativeDisplayRow {
                 scale_factor,
                 bounds,
                 visible_bounds,
-                refresh_interval: unsafe { native_refresh_interval(screen, native_display_id) },
+                refresh_interval: native_refresh_interval(&screen, native_display_id),
             },
             is_primary,
+        };
+        Ok(Self {
+            screen,
+            observation,
         })
     }
 }
 
-unsafe fn native_refresh_interval(
-    screen: id,
+fn native_refresh_interval(
+    screen: &NSScreen,
     native_display_id: CGDirectDisplayID,
 ) -> Option<Duration> {
-    let supports_maximum: BOOL =
-        unsafe { msg_send![screen, respondsToSelector: sel!(maximumFramesPerSecond)] };
-    let screen_hertz = if supports_maximum == YES {
-        let frames_per_second: isize = unsafe { msg_send![screen, maximumFramesPerSecond] };
-        frames_per_second as f64
+    let screen_hertz = if screen.respondsToSelector(sel!(maximumFramesPerSecond)) {
+        screen.maximumFramesPerSecond() as f64
     } else {
         0.0
     };
@@ -93,7 +93,7 @@ unsafe fn native_refresh_interval(
     })
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(super) struct MacNativeDisplayBatch {
     pub(super) rows: SmallVec<[MacNativeDisplayRow; 4]>,
     pub(super) candidate: MacDisplayTopologyCandidate,
@@ -127,24 +127,19 @@ impl MacNativeDisplayBatch {
             ));
         }
 
-        let screens = unsafe { NSScreen::screens(nil) };
-        if screens == nil {
-            return Err(native_collection_failure(
-                "AppKit returned a null screen collection",
-            ));
-        }
-        let screen_count = unsafe { NSArray::count(screens) };
-        if screen_count as usize != active_display_ids.len() {
+        let marker = main_thread_marker()
+            .ok_or_else(|| native_collection_failure("AppKit displays require the main thread"))?;
+        let screens = NSScreen::screens(marker);
+        if screens.len() != active_display_ids.len() {
             return Err(native_collection_failure(
                 "AppKit and CoreGraphics returned incomplete display sets",
             ));
         }
 
-        let mut rows = SmallVec::<[MacNativeDisplayRow; 4]>::with_capacity(screen_count as usize);
-        for index in 0..screen_count {
-            let screen = unsafe { NSArray::objectAtIndex(screens, index) };
-            let row = unsafe { MacNativeDisplayRow::observe(screen)? };
-            if (index == 0) != row.is_primary {
+        let mut rows = SmallVec::<[MacNativeDisplayRow; 4]>::with_capacity(screens.len());
+        for (index, screen) in screens.iter().enumerate() {
+            let row = MacNativeDisplayRow::observe(screen)?;
+            if (index == 0) != row.observation.is_primary {
                 return Err(native_collection_failure(
                     "AppKit and CoreGraphics disagree about the primary display",
                 ));
@@ -154,7 +149,7 @@ impl MacNativeDisplayBatch {
 
         let mut appkit_display_ids = rows
             .iter()
-            .map(|row| row.native_display_id)
+            .map(|row| row.observation.native_display_id)
             .collect::<SmallVec<[_; 4]>>();
         appkit_display_ids.sort_unstable();
         if appkit_display_ids.as_slice() != active_display_ids.as_slice() {
@@ -163,24 +158,24 @@ impl MacNativeDisplayBatch {
             ));
         }
 
-        let candidate = MacDisplayTopologyCandidate::try_new(rows.clone())?;
-        rows.sort_unstable_by_key(|row| u64::from(row.display.display_id));
+        let candidate =
+            MacDisplayTopologyCandidate::try_new(rows.iter().map(|row| row.observation).collect())?;
+        rows.sort_unstable_by_key(|row| u64::from(row.observation.display.display_id));
         Ok(Self { rows, candidate })
     }
 
     fn has_same_native_mapping(&self, other: &Self) -> bool {
         self.rows.len() == other.rows.len()
             && self.rows.iter().zip(&other.rows).all(|(left, right)| {
-                left.display.display_id == right.display.display_id
-                    && left.native_display_id == right.native_display_id
+                left.observation.display.display_id == right.observation.display.display_id
+                    && left.observation.native_display_id == right.observation.native_display_id
             })
     }
 
-    pub(super) fn row(&self, display_id: open_gpui::DisplayId) -> Option<MacNativeDisplayRow> {
+    pub(super) fn into_row(self, display_id: open_gpui::DisplayId) -> Option<MacNativeDisplayRow> {
         self.rows
-            .iter()
-            .copied()
-            .find(|row| row.display.display_id == display_id)
+            .into_iter()
+            .find(|row| row.observation.display.display_id == display_id)
     }
 }
 
@@ -221,23 +216,19 @@ fn native_display_uuid(
     ]))
 }
 
-unsafe fn native_display_id_for_screen(
-    screen: id,
+fn native_display_id_for_screen(
+    screen: &NSScreen,
 ) -> Result<CGDirectDisplayID, MacDisplayTopologyFailure> {
-    let device_description = unsafe { NSScreen::deviceDescription(screen) };
-    if device_description == nil {
-        return Err(native_collection_failure(
-            "AppKit returned no device description for NSScreen",
-        ));
-    }
-    let screen_number_key = unsafe { ns_string("NSScreenNumber") };
-    let screen_number = unsafe { device_description.objectForKey_(screen_number_key) };
-    if screen_number == nil {
-        return Err(native_collection_failure(
-            "NSScreen device description has no CoreGraphics display identity",
-        ));
-    }
-    Ok(unsafe { msg_send![screen_number, unsignedIntegerValue] })
+    let screen_number = screen
+        .deviceDescription()
+        .objectForKey(ns_string!("NSScreenNumber"))
+        .and_then(|value| value.downcast::<NSNumber>().ok())
+        .ok_or_else(|| {
+            native_collection_failure(
+                "NSScreen device description has no CoreGraphics display identity",
+            )
+        })?;
+    Ok(screen_number.unsignedIntValue())
 }
 
 fn checked_bounds(rect: CGRect) -> Option<Bounds<Pixels>> {
@@ -379,7 +370,7 @@ fn native_collection_failure(message: impl Into<Arc<str>>) -> MacDisplayTopology
 #[cfg(test)]
 mod tests {
     use super::visible_bounds_from_appkit_frames;
-    use cocoa::foundation::{NSPoint, NSRect, NSSize};
+    use objc2_foundation::{NSPoint, NSRect, NSSize};
     use open_gpui::{Bounds, point, px, size};
 
     #[test]
