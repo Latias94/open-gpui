@@ -6,6 +6,7 @@ members = [
     "crates/collections",
     "crates/devtools",
     "crates/form",
+    "crates/github_releases",
     "crates/open-gpui-command",
     "crates/gpui",
     "crates/gpui_apple",
@@ -69,6 +70,7 @@ open_gpui_command = { package = "open-gpui-command", version = "0.2.0", path = "
 open_gpui_devtools = { package = "open-gpui-devtools", version = "0.2.0", path = "crates/devtools" }
 open_gpui_docking = { package = "open-gpui-docking", version = "0.2.0", path = "crates/gpui_docking" }
 open_gpui_form = { package = "open-gpui-form", version = "0.2.0", path = "crates/form" }
+open_gpui_github_releases = { package = "open-gpui-github-releases", version = "0.2.0", path = "crates/github_releases" }
 open_gpui_core_util = { package = "open-gpui-core-util", version = "0.2.0", path = "crates/gpui_util" }
 open_gpui_ui_components = { package = "open-gpui-ui-components", version = "0.2.0", path = "crates/ui_components" }
 open_gpui_ui_core = { package = "open-gpui-ui-core", version = "0.2.0", path = "crates/ui_core" }
@@ -104,7 +106,8 @@ async-channel = { version = "2.5.0", default-features = false }
 async-compression = { version = "0.4", features = ["bzip2", "gzip", "futures-io"] }
 async-fs = "2.1"
 async-process = "2.5.0"
-async-tar = { version = "0.6.1", default-features = false, features = ["runtime-tokio"] }
+async-std = { version = "1.12", features = ["unstable"] }
+async-tar = { git = "https://github.com/zed-industries/async-tar", rev = "bd3ad6f89df9a9da7a8535958756d6bf465936a0" }
 async-task = { git = "https://github.com/zed-industries/async-task.git", rev = "015845a19fc31752c02367567d3b8900a406f9da" }
 async_zip = { version = "0.0.18", features = ["deflate", "deflate64"] }
 backtrace = "0.3"
@@ -182,11 +185,11 @@ quote = "1.0.9"
 rand = "0.9"
 rayon = "1.8"
 regex = "1.5"
-reqwest = { version = "=0.13.4", default-features = false, features = ["charset", "http2", "multipart", "rustls", "socks", "stream", "system-proxy"] }
+reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "33bc764aa15ff7b200bf7c93bd96e24878d53e14", package = "zed-reqwest", version = "0.12.15-zed", default-features = false, features = ["http2", "macos-system-configuration", "rustls-tls-native-roots", "socks", "stream"] }
 rust-embed = { version = "8.11", features = ["include-exclude"] }
 rustc-hash = "2.1.0"
 rustls = "0.23.26"
-rustls-platform-verifier = "0.5.0"
+rustls-platform-verifier = "0.7"
 scap = { package = "open-gpui-scap", version = "0.1.0-beta.1", default-features = false }
 schemars = { version = "1.0", features = ["indexmap2"] }
 semver = { version = "1.0", features = ["serde"] }
@@ -219,6 +222,7 @@ walkdir = "2.5"
 wasm-bindgen = "0.2.126"
 wasm_thread = { git = "https://github.com/zed-industries/wasm_thread", rev = "0cf96c7708dfb97ccf3da50347e25edcf75d6937", features = ["es_modules"] }
 web-time = "1.1.0"
+webpki-roots = "1.0.10"
 wgpu = { git = "https://github.com/gfx-rs/wgpu", rev = "cddb2f5d80dc0009b2ef6767635140cacf90a007", default-features = false }
 which = "6.0.0"
 windows-core = "0.62"

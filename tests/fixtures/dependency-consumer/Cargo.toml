@@ -25,6 +25,7 @@ open_gpui = { package = "open-gpui", path = "../../../crates/gpui", default-feat
 open_gpui_platform = { package = "open-gpui-platform", path = "../../../crates/gpui_platform", default-features = false }
 open_gpui_ui_components = { package = "open-gpui-ui-components", path = "../../../crates/ui_components" }
 open_gpui_docking = { package = "open-gpui-docking", path = "../../../crates/gpui_docking" }
+open_gpui_http_client = { package = "open-gpui-http-client", path = "../../../crates/http_client" }
 open_gpui_util = { package = "open-gpui-util", path = "../../../crates/util" }
 open_gpui_wgpu = { package = "open-gpui-wgpu", path = "../../../crates/gpui_wgpu", default-features = false, optional = true }
 criterion = { version = "0.8.2", optional = true }
@@ -35,11 +36,15 @@ taffy = "=0.15.0"
 wgpu = { git = "https://github.com/gfx-rs/wgpu", rev = "cddb2f5d80dc0009b2ef6767635140cacf90a007", default-features = false, features = ["std"] }
 
 [dev-dependencies]
+anyhow = "1.0"
 serde_json = "1.0"
 
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
 async-process = "2.5.0"
 smol = "2.0"
+open_gpui_github_releases = { package = "open-gpui-github-releases", path = "../../../crates/github_releases" }
+open_gpui_reqwest_client = { package = "open-gpui-reqwest-client", path = "../../../crates/reqwest_client" }
+reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "33bc764aa15ff7b200bf7c93bd96e24878d53e14", package = "zed-reqwest", version = "0.12.15-zed", default-features = false }
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 open_gpui_platform = { package = "open-gpui-platform", path = "../../../crates/gpui_platform", default-features = false, features = ["x11", "wayland"] }

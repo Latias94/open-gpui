@@ -13,7 +13,6 @@ const DISALLOWED_DEPENDENCY_NAMES: &[&str] = &[
 ];
 const DISALLOWED_ZED_GIT_SOURCES: &[&str] = &[
     "zed-industries/font-kit",
-    "zed-industries/reqwest",
     "zed-industries/scap",
     "zed-industries/wgpu",
     "zed-industries/xim",
@@ -416,14 +415,12 @@ zlog = { version = '0.1' }
         let failures = manifest_failures(
             r#"
 [dependencies]
-reqwest = { git = 'https://github.com/zed-industries/reqwest.git', package = 'zed-reqwest', version = '0.12.15-zed' }
 wgpu = { git = 'https://github.com/zed-industries/wgpu.git' }
 font-kit = { git = 'https://github.com/zed-industries/font-kit.git', package = 'zed-font-kit' }
 xim = { git = 'https://github.com/zed-industries/xim.git', package = 'zed-xim' }
 "#,
         );
 
-        assert!(has_failure(&failures, "zed-industries/reqwest.git"));
         assert!(has_failure(&failures, "zed-industries/wgpu.git"));
         assert!(has_failure(&failures, "zed-industries/font-kit.git"));
         assert!(has_failure(&failures, "zed-industries/xim.git"));
@@ -455,6 +452,18 @@ scap = { git = 'https://github.com/Latias94/scap', branch = 'main', package = 'o
             failures.is_empty(),
             "expected Open GPUI scap fork to be allowed, got: {failures:?}"
         );
+    }
+
+    #[test]
+    fn manifest_scan_allows_official_reqwest_fork() {
+        let failures = manifest_failures(
+            r#"
+[dependencies]
+reqwest = { git = 'https://github.com/zed-industries/reqwest.git', rev = '33bc764aa15ff7b200bf7c93bd96e24878d53e14', package = 'zed-reqwest', version = '0.12.15-zed' }
+"#,
+        );
+
+        assert!(failures.is_empty(), "{failures:?}");
     }
 
     #[test]

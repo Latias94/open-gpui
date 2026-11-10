@@ -1,0 +1,25 @@
+Open GPUI
+
+Open GPUI is an independent fork of the Apache-2.0 GPUI framework code
+originally developed in the Zed repository by Zed Industries.
+
+Portions derived from Zed github_releases:
+  Copyright 2022 - 2025 Zed Industries, Inc.
+  Licensed under the Apache License, Version 2.0.
+  Source: https://github.com/zed-industries/zed
+  Snapshot: 635026fabc38440fce5e1767d125026a17b12012
+  Original paths: crates/github_releases/src/github_releases.rs
+                  crates/github_releases/src/releases.rs
+  Source commits:
+    ead2d9eac0d34fa957421ea74aede6440b6ff926
+    02d47bf64fcece0edc5b849d25e3a60a67d01c83
+    992c7d469c392c97b48710eab7776ff1850b1f7b
+
+Open GPUI modifications:
+  Copyright 2026 Mingzhen Zhuang and Open GPUI contributors.
+  Licensed under the Apache License, Version 2.0, unless a file explicitly
+  states otherwise.
+
+Third-party dependencies retain their own copyright notices and license terms.
+A release distribution should include the applicable third-party notices
+generated from the resolved dependency graph.

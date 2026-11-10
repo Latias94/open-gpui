@@ -107,6 +107,26 @@ The [support-primitives qualification](../verification.md#process-reaping-dedica
 records the actual resolved graph, target compilation and retained Windows process-tree owner.
 It does not claim Darwin process execution or a second engine process service.
 
+## November 10 HTTP And Release Download Dependencies
+
+The complete HTTP/release-download successor selects the fixed Zed target's `zed-reqwest`
+revision `33bc764aa15ff7b200bf7c93bd96e24878d53e14`, declared MIT OR Apache-2.0 in its manifest
+with both license texts present. The exact source exposes request-local redirect policies while
+retaining the caller's original client configuration. The previous registry adaptation rebuilt
+clients for redirects, requiring a parallel configuration/cache and still failing to preserve
+arbitrary imported-client settings. That historical source disposition is superseded under
+ADR 0001; remove the cache rather than maintain the difference for its own sake. Reqwest is an
+ordinary dependency of the native HTTP implementation, not a new engine transport owner.
+
+The separate Apache-2.0 `github_releases` owner is imported as `open-gpui-github-releases` from
+fixed target `635026fabc38440fce5e1767d125026a17b12012`. It consumes Core's BackgroundExecutor,
+HTTP and utilities, leaving the HTTP abstraction independent of those higher-level owners.
+The official archive dependency is MIT/Apache-2.0 async-tar
+`bd3ad6f89df9a9da7a8535958756d6bf465936a0`; its length-driven PAX records and futures-based
+runtime replace the registry parser/Tokio bridge. Platform TLS initialization follows official
+rustls-platform-verifier 0.7 and bundled WebPKI roots on initialization failure. Source selection
+and license evidence do not establish native TLS, browser execution or engine adoption.
+
 ## November 10 Shared Apple Package
 
 The shared Apple successor adopts the Apache-2.0 `gpui_apple` framework closure as

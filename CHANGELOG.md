@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- HTTP requests support complete-request deadlines, and the native client supports per-read idle timeouts. Redirect overrides use the original client's configuration. Platform TLS initialization falls back to bundled WebPKI roots if loading the platform verifier fails.
+
+- `open-gpui-github-releases` owns release discovery and background-task downloads with digest normalization, status validation and staging. Its fixed official archive parser handles PAX values containing embedded newlines.
+
 - `DedicatedExecutor` reuses a dedicated task session. Dedicated-thread task delivery is nonblocking and preserves cancellation or detachment before the root task arrives. `SharedString` accepts characters and deserializes directly through `SmolStr`.
 
 - Darwin command children share the official `async-process` reaper with `smol`, including adopted PIDs, asynchronous file pipes and owned cleanup on spawn failure.
@@ -50,6 +54,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Optional native debug hot reload follows the official GPUI/Subsecond 0.7.10 mechanism: build/process-matched patches, foreground application, window refresh, and typed, stateless and stored erased View render boundaries. Run with `dx serve --hot-patch`; compatible render-body edits preserve existing model state. Release/WebAssembly transport exclusion, failed loads, required restarts and disconnects remain explicit. The independently locked native consumer provides an actual edit/build/apply and Submitted-scene pixel acceptance procedure, including the required upstream dx x64 jump-stub backport for the qualified Windows tool.
 
 ### Breaking Changes and Migration Notes
+
+- GitHub APIs move out of `open_gpui_http_client::{github, github_download}` into `open_gpui_github_releases`. Pass a `BackgroundExecutor` to `download_server_binary` / `download_server_raw_binary` and await their returned `Task`. The lower HTTP package no longer reexports `anyhow` helpers or owns native archive/download dependencies.
+
+- The native HTTP implementation selects official `zed-reqwest` revision `33bc764aa15ff7b200bf7c93bd96e24878d53e14`. Direct consumers passing reqwest clients must select that same package/source. The former registry-client reconstruction cache is removed; request-local redirects preserve imported client configuration. Custom `HttpRequestExt` implementations must provide `timeout`.
 
 - Native blocking executor APIs, scoped background futures and the `block_on` reexport are unavailable on WebAssembly. Web quit observers run asynchronously as best-effort cleanup; native shutdown retains its bounded wait. Enable `open-gpui/wasm-threads` for dedicated Web workers with a shared-memory build; the Web backend forwards it from `multithreaded`.
 

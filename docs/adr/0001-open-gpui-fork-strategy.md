@@ -77,6 +77,16 @@ Owned forks must preserve the required behavior, keep their delta documented, re
 and have focused verification gates. Open GPUI must not drop capabilities merely to avoid carrying
 an owned fork.
 
+The November 10 HTTP successor selects the fixed target's MIT OR Apache-2.0 `zed-reqwest`
+revision `33bc764aa15ff7b200bf7c93bd96e24878d53e14`. Its request-local redirect policy preserves
+the original client's proxy, TLS, headers and read timeout. The earlier registry migration's
+client reconstruction cache cannot preserve arbitrary externally supplied client configuration,
+so it is superseded rather than becoming a permanent fork constraint. The
+[import record](../imports/zed-gpui-import.md#november-10-http-and-release-download-dependencies)
+owns exact provenance; actual verification and remaining platform scope stay in the owning plan.
+Historical exclusions are evaluated against their exact current source and required behavior;
+they do not establish a continuing license rejection of a permissively licensed revision.
+
 `gpui-component` will be forked or imported only after the core Open GPUI workspace can build and
 run at least one native example. Its first integration target is dependency rewiring and smoke
 compatibility, not a broad component redesign.

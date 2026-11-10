@@ -4,6 +4,17 @@ This application is its own Cargo workspace. It consumes Open GPUI through path 
 without inheriting the repository workspace's dependency resolution or lockfile. Its own
 `Cargo.lock` records the consumer resolution.
 
+The `http_downloads` target composes public request deadline/redirect extensions, executes
+release metadata discovery against a local in-memory HTTP implementation and checks normalized
+digests. Its uninvoked download closure type-checks the executor-bound Task API without writing
+files or starting a worker. The native download dependency is separate from the portable HTTP
+abstraction. A fourth case consumes the exact official reqwest package directly, imports its
+custom client through the framework API, follows a real loopback redirect and reads the response
+with the original User-Agent preserved. Run
+`cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --test http_downloads --target-dir target --test-threads=1 --no-fail-fast --no-tests fail`.
+The framework's separate download regressions execute staging, digest verification, cleanup
+and archive extraction; its Reqwest regressions use loopback, not an external GitHub service.
+
 The `support_primitives` target executes public character conversion and SharedString serde.
 Uninvoked native closures type-check DedicatedExecutor construction and command spawning; they
 do not execute a native task or process. Its direct `smol`/`async-process` type identity assertion

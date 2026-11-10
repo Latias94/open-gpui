@@ -1,15 +1,13 @@
 use std::error::Error;
 use std::sync::{LazyLock, OnceLock};
-use std::{
-    borrow::Cow, collections::HashMap, mem, pin::Pin, sync::Mutex, task::Poll, time::Duration,
-};
+use std::{borrow::Cow, mem, pin::Pin, task::Poll, time::Duration};
 
 use open_gpui_core_util::defer;
 
 use anyhow::anyhow;
 use bytes::{BufMut, Bytes, BytesMut};
-use futures::{AsyncRead, FutureExt as _, TryStreamExt as _};
-use open_gpui_http_client::{RedirectPolicy, Url, http};
+use futures::{AsyncRead, FutureExt as _, Stream as _, TryStreamExt as _};
+use open_gpui_http_client::{RedirectPolicy, RequestTimeout, Url, http};
 use regex::Regex;
 use reqwest::{
     header::{HeaderMap, HeaderValue},
@@ -24,14 +22,16 @@ pub struct ReqwestClient {
     client: reqwest::Client,
     proxy: Option<Url>,
     user_agent: Option<HeaderValue>,
-    use_platform_tls: bool,
-    redirect_clients: Mutex<HashMap<RedirectPolicy, reqwest::Client>>,
     handle: tokio::runtime::Handle,
 }
 
 impl ReqwestClient {
-    fn builder() -> reqwest::ClientBuilder {
-        reqwest::Client::builder()
+    /// Shared connection-management configuration for every client this type
+    /// builds. `read_timeout` sets an idle timeout on each body read (see
+    /// [`ReqwestClient::proxy_user_agent_and_read_timeout`]); `None` leaves
+    /// reads without a timeout.
+    fn builder(read_timeout: Option<Duration>) -> reqwest::ClientBuilder {
+        let builder = reqwest::Client::builder()
             .use_rustls_tls()
             .connect_timeout(Duration::from_secs(10))
             // Detect and drop connections that have silently gone bad on a
@@ -42,43 +42,57 @@ impl ReqwestClient {
             .pool_idle_timeout(Duration::from_secs(30))
             .http2_keep_alive_interval(Duration::from_secs(15))
             .http2_keep_alive_timeout(Duration::from_secs(10))
-            .http2_keep_alive_while_idle(true)
+            .http2_keep_alive_while_idle(true);
+        match read_timeout {
+            Some(read_timeout) => builder.read_timeout(read_timeout),
+            None => builder,
+        }
     }
 
     pub fn new() -> Self {
-        Self::builder()
+        Self::builder(None)
             .build()
             .expect("Failed to initialize HTTP client")
             .into()
     }
 
     pub fn user_agent(agent: &str) -> anyhow::Result<Self> {
-        let user_agent = HeaderValue::from_str(agent)?;
         let mut map = HeaderMap::new();
-        map.insert(http::header::USER_AGENT, user_agent.clone());
-        let client = Self::builder().default_headers(map).build()?;
-        let mut client: ReqwestClient = client.into();
-        client.user_agent = Some(user_agent);
-        Ok(client)
+        map.insert(http::header::USER_AGENT, HeaderValue::from_str(agent)?);
+        let client = Self::builder(None).default_headers(map).build()?;
+        Ok(client.into())
     }
 
     pub fn proxy_and_user_agent(proxy: Option<Url>, user_agent: &str) -> anyhow::Result<Self> {
+        Self::proxy_user_agent_and_read_timeout(proxy, user_agent, None)
+    }
+
+    /// Like [`ReqwestClient::proxy_and_user_agent`], but also applies a
+    /// per-read idle timeout. `read_timeout` fires only after that long with no
+    /// bytes received on a response body and resets on every chunk, so it
+    /// aborts a silently stalled stream without disturbing a healthy one that
+    /// merely goes quiet between chunks. Callers streaming long-lived responses
+    /// (e.g. LLM completions, which can pause for tens of seconds during
+    /// provider-side reasoning while keep-alive bytes still flow) should size
+    /// it comfortably above the provider's keep-alive interval.
+    ///
+    /// Note: on macOS the timeout is measured against a monotonic clock that
+    /// pauses during system sleep, so it does not fire from a suspend alone;
+    /// callers that need prompt detection of a connection killed while
+    /// suspended must re-validate the stream on wake themselves.
+    pub fn proxy_user_agent_and_read_timeout(
+        proxy: Option<Url>,
+        user_agent: &str,
+        read_timeout: Option<Duration>,
+    ) -> anyhow::Result<Self> {
         let user_agent = HeaderValue::from_str(user_agent)?;
 
         let mut map = HeaderMap::new();
         map.insert(http::header::USER_AGENT, user_agent.clone());
-        let mut client = Self::builder().default_headers(map);
+        let mut client = Self::builder(read_timeout).default_headers(map);
         let client_has_proxy;
 
         if let Some(proxy) = proxy.as_ref().and_then(|proxy_url| {
-            if !matches!(
-                proxy_url.scheme(),
-                "http" | "https" | "socks4" | "socks4a" | "socks5" | "socks5h"
-            ) {
-                log::error!("Unsupported proxy URL scheme '{}'", proxy_url.scheme());
-                return None;
-            }
-
             reqwest::Proxy::all(proxy_url.clone())
                 .inspect_err(|e| {
                     log::error!(
@@ -102,60 +116,7 @@ impl ReqwestClient {
         let mut client: ReqwestClient = client.into();
         client.proxy = client_has_proxy.then_some(proxy).flatten();
         client.user_agent = Some(user_agent);
-        client.use_platform_tls = true;
         Ok(client)
-    }
-
-    fn client_for_redirect_policy(
-        &self,
-        redirect_policy: Option<&RedirectPolicy>,
-    ) -> anyhow::Result<reqwest::Client> {
-        let Some(redirect_policy) = redirect_policy else {
-            return Ok(self.client.clone());
-        };
-
-        if let Some(client) = self
-            .redirect_clients
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .get(redirect_policy)
-            .cloned()
-        {
-            return Ok(client);
-        }
-
-        let mut builder = Self::builder().redirect(reqwest_redirect_policy(redirect_policy));
-
-        if let Some(user_agent) = self.user_agent.clone() {
-            let mut headers = HeaderMap::new();
-            headers.insert(http::header::USER_AGENT, user_agent);
-            builder = builder.default_headers(headers);
-        }
-
-        if let Some(proxy_url) = self.proxy.as_ref() {
-            let proxy = reqwest::Proxy::all(proxy_url.clone())?;
-            builder = builder.proxy(proxy.no_proxy(reqwest::NoProxy::from_env()));
-        }
-
-        if self.use_platform_tls {
-            builder = builder.use_preconfigured_tls(open_gpui_http_client_tls::tls_config());
-        }
-
-        let client = builder.build()?;
-        self.redirect_clients
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .insert(redirect_policy.clone(), client.clone());
-
-        Ok(client)
-    }
-}
-
-fn reqwest_redirect_policy(redirect_policy: &RedirectPolicy) -> redirect::Policy {
-    match redirect_policy {
-        RedirectPolicy::NoFollow => redirect::Policy::none(),
-        RedirectPolicy::FollowLimit(limit) => redirect::Policy::limited(*limit as usize),
-        RedirectPolicy::FollowAll => redirect::Policy::limited(100),
     }
 }
 
@@ -181,8 +142,6 @@ impl From<reqwest::Client> for ReqwestClient {
             handle,
             proxy: None,
             user_agent: None,
-            use_platform_tls: false,
-            redirect_clients: Mutex::default(),
         }
     }
 }
@@ -315,15 +274,19 @@ impl open_gpui_http_client::HttpClient for ReqwestClient {
     > {
         let (parts, body) = req.into_parts();
 
-        let client = match self.client_for_redirect_policy(parts.extensions.get::<RedirectPolicy>())
-        {
-            Ok(client) => client,
-            Err(error) => return async move { Err(error) }.boxed(),
-        };
-
-        let mut request = client.request(parts.method, parts.uri.to_string());
-        request = request.headers(parts.headers);
-        let request = request.body(match body.0 {
+        let mut request_builder = self.client.request(parts.method, parts.uri.to_string());
+        request_builder = request_builder.headers(parts.headers);
+        if let Some(redirect_policy) = parts.extensions.get::<RedirectPolicy>() {
+            request_builder = request_builder.redirect_policy(match redirect_policy {
+                RedirectPolicy::NoFollow => redirect::Policy::none(),
+                RedirectPolicy::FollowLimit(limit) => redirect::Policy::limited(*limit as usize),
+                RedirectPolicy::FollowAll => redirect::Policy::limited(100),
+            });
+        }
+        if let Some(timeout) = parts.extensions.get::<RequestTimeout>() {
+            request_builder = request_builder.timeout(timeout.0);
+        }
+        let request = request_builder.body(match body.0 {
             open_gpui_http_client::Inner::Empty => reqwest::Body::default(),
             open_gpui_http_client::Inner::Bytes(cursor) => cursor.into_inner().into(),
             open_gpui_http_client::Inner::AsyncReader(stream) => {
@@ -345,10 +308,15 @@ impl open_gpui_http_client::HttpClient for ReqwestClient {
                 .version(response.version());
             *builder.headers_mut().unwrap() = headers;
 
-            let bytes = response
-                .bytes_stream()
-                .map_err(futures::io::Error::other)
-                .into_async_read();
+            // Keep the original Tokio context when reading on other executors:
+            // Reqwest's per-read timeout creates a new timer on each chunk.
+            let mut bytes = Box::pin(response.bytes_stream());
+            let bytes = futures::stream::poll_fn(move |cx| {
+                let _guard = handle.enter();
+                bytes.as_mut().poll_next(cx)
+            })
+            .map_err(futures::io::Error::other)
+            .into_async_read();
             let body = open_gpui_http_client::AsyncBody::from_reader(bytes);
 
             builder.body(body).map_err(|e| anyhow!(e))
@@ -359,15 +327,73 @@ impl open_gpui_http_client::HttpClient for ReqwestClient {
 
 #[cfg(test)]
 mod tests {
-    use std::io::{Read as _, Write as _};
-    use std::net::TcpListener;
+    use std::io::{BufRead as _, BufReader, Read as _, Write as _};
+    use std::net::{TcpListener, TcpStream};
     use std::time::{Duration, Instant};
 
+    use futures::AsyncReadExt as _;
     use open_gpui_http_client::{
-        AsyncBody, HttpClient, Method, RedirectPolicy, Request as HttpRequest, Url,
+        AsyncBody, HttpClient, HttpRequestExt as _, Method, RedirectPolicy, Request as HttpRequest,
+        StatusCode, Url,
     };
 
-    use crate::{ReqwestClient, reqwest_redirect_policy};
+    use crate::ReqwestClient;
+
+    fn loopback_client(read_timeout: Option<Duration>) -> ReqwestClient {
+        let mut builder = reqwest::Client::builder().no_proxy();
+        if let Some(read_timeout) = read_timeout {
+            builder = builder.read_timeout(read_timeout);
+        }
+        builder.build().unwrap().into()
+    }
+
+    fn read_request(listener: &TcpListener) -> (TcpStream, Vec<String>) {
+        listener.set_nonblocking(true).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut stream = loop {
+            match listener.accept() {
+                Ok((stream, _)) => break stream,
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::WouldBlock
+                        && Instant::now() < deadline =>
+                {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => panic!("failed to accept a loopback request: {error}"),
+            }
+        };
+        stream.set_nonblocking(false).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        stream
+            .set_write_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut reader = BufReader::new(&mut stream);
+        let mut headers = Vec::new();
+        loop {
+            let mut line = String::new();
+            assert_ne!(reader.read_line(&mut line).unwrap(), 0);
+            if line == "\r\n" {
+                break;
+            }
+            headers.push(line);
+        }
+        drop(reader);
+        (stream, headers)
+    }
+
+    fn assert_connection_closed(mut stream: TcpStream) {
+        stream
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        let mut buffer = [0; 1];
+        match stream.read(&mut buffer) {
+            Ok(0) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => {}
+            result => panic!("the client should close the connection: {result:?}"),
+        }
+    }
 
     /// Regression test: `StreamReader::poll_next` used to drop the reader it
     /// `take()`s whenever the reader returned `Poll::Pending`, so the next
@@ -438,7 +464,7 @@ mod tests {
             ready: false,
         };
 
-        let client = ReqwestClient::new();
+        let client = loopback_client(None);
         let request = HttpRequest::builder()
             .method(Method::PUT)
             .uri(format!("http://{address}/upload"))
@@ -447,6 +473,219 @@ mod tests {
             .unwrap();
         let response = futures::executor::block_on(client.send(request)).unwrap();
         assert!(response.status().is_success());
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn test_request_timeout_applies_while_reading_response_body() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = read_request(&listener);
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 1\r\n\r\n")
+                .unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(1)))
+                .unwrap();
+            let mut buffer = [0; 1];
+            match stream.read(&mut buffer) {
+                Ok(_) => {}
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+                    ) => {}
+                Err(error) => panic!("failed while waiting for the client to close: {error}"),
+            }
+        });
+
+        let client = loopback_client(None);
+        let request = HttpRequest::get(format!("http://{address}/"))
+            .timeout(Duration::from_millis(100))
+            .body(AsyncBody::default())
+            .unwrap();
+        let started_at = Instant::now();
+        let mut response = futures::executor::block_on(client.send(request)).unwrap();
+        let mut body = Vec::new();
+        let result = futures::executor::block_on(response.body_mut().read_to_end(&mut body));
+        assert!(result.is_err(), "the response body should time out");
+        assert!(
+            started_at.elapsed() < Duration::from_millis(500),
+            "the request timeout should not wait for the server to close the connection"
+        );
+        drop(response);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn test_request_timeout_applies_after_redirect_before_response_headers() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = read_request(&listener);
+            stream
+                .write_all(
+                    b"HTTP/1.1 302 Found\r\nlocation: /target\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+                )
+                .unwrap();
+            drop(stream);
+            let (stream, headers) = read_request(&listener);
+            assert!(headers[0].starts_with("GET /target "));
+            assert_connection_closed(stream);
+        });
+
+        let client = loopback_client(Some(Duration::from_secs(5)));
+        let request = HttpRequest::get(format!("http://{address}/redirect"))
+            .follow_redirects(RedirectPolicy::FollowLimit(3))
+            .timeout(Duration::from_millis(200))
+            .body(AsyncBody::default())
+            .unwrap();
+        let error = futures::executor::block_on(client.send(request))
+            .err()
+            .unwrap();
+        assert!(error.downcast_ref::<reqwest::Error>().unwrap().is_timeout());
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn test_imported_client_redirect_policies_preserve_proxy_user_agent_and_read_timeout() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let proxy = Url::parse(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
+        let server = std::thread::spawn(move || {
+            for follow in [false, false, true, true] {
+                let (mut stream, headers) = read_request(&listener);
+                assert!(headers[0].starts_with("GET http://127.0.0.1:1/redirect "));
+                assert!(
+                    headers
+                        .iter()
+                        .any(|header| header.eq_ignore_ascii_case("user-agent: imported-agent\r\n"))
+                );
+                let content_length = if follow { 0 } else { 1 };
+                let response = format!(
+                    "HTTP/1.1 302 Found\r\nlocation: http://127.0.0.1:1/target\r\ncontent-length: {content_length}\r\nconnection: close\r\n\r\n"
+                );
+                stream.write_all(response.as_bytes()).unwrap();
+                let stream = if follow {
+                    drop(stream);
+                    let (mut stream, headers) = read_request(&listener);
+                    assert!(headers[0].starts_with("GET http://127.0.0.1:1/target "));
+                    assert!(headers.iter().any(|header| {
+                        header.eq_ignore_ascii_case("user-agent: imported-agent\r\n")
+                    }));
+                    stream
+                        .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 1\r\n\r\n")
+                        .unwrap();
+                    stream
+                } else {
+                    stream
+                };
+                assert_connection_closed(stream);
+            }
+        });
+
+        let client = ReqwestClient::from(
+            reqwest::Client::builder()
+                .proxy(reqwest::Proxy::all(proxy).unwrap().no_proxy(None))
+                .user_agent("imported-agent")
+                .read_timeout(Duration::from_millis(100))
+                .redirect_policy(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap(),
+        );
+
+        for (policy, expected_status) in [
+            (None, StatusCode::FOUND),
+            (Some(RedirectPolicy::NoFollow), StatusCode::FOUND),
+            (Some(RedirectPolicy::FollowLimit(3)), StatusCode::OK),
+            (Some(RedirectPolicy::FollowAll), StatusCode::OK),
+        ] {
+            let request = HttpRequest::get("http://127.0.0.1:1/redirect")
+                .when_some(policy, |request, policy| request.follow_redirects(policy))
+                .timeout(Duration::from_secs(3))
+                .body(AsyncBody::default())
+                .unwrap();
+            let mut response = futures::executor::block_on(client.send(request)).unwrap();
+            assert_eq!(response.status(), expected_status);
+            let mut body = Vec::new();
+            let started_at = Instant::now();
+            let error = futures::executor::block_on(response.body_mut().read_to_end(&mut body))
+                .unwrap_err();
+            assert!(
+                error
+                    .get_ref()
+                    .unwrap()
+                    .downcast_ref::<reqwest::Error>()
+                    .unwrap()
+                    .is_timeout()
+            );
+            assert!(started_at.elapsed() < Duration::from_secs(1));
+            drop(response);
+        }
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn test_imported_client_redirect_policy_preserves_proxy_bypass() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            for _ in 0..2 {
+                let (mut stream, headers) = read_request(&listener);
+                assert!(headers[0].starts_with("GET /direct "));
+                stream
+                    .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
+                    .unwrap();
+            }
+        });
+
+        let client = ReqwestClient::from(
+            reqwest::Client::builder()
+                .proxy(
+                    reqwest::Proxy::all("http://127.0.0.1:1")
+                        .unwrap()
+                        .no_proxy(reqwest::NoProxy::from_string("127.0.0.1")),
+                )
+                .build()
+                .unwrap(),
+        );
+        for policy in [None, Some(RedirectPolicy::NoFollow)] {
+            let request = HttpRequest::get(format!("http://{address}/direct"))
+                .when_some(policy, |request, policy| request.follow_redirects(policy))
+                .timeout(Duration::from_secs(3))
+                .body(AsyncBody::default())
+                .unwrap();
+            let response = futures::executor::block_on(client.send(request)).unwrap();
+            assert!(response.status().is_success());
+        }
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn test_read_timeout_resets_between_body_chunks_outside_tokio() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = read_request(&listener);
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 6\r\nconnection: close\r\n\r\n")
+                .unwrap();
+            for byte in b"abcdef" {
+                std::thread::sleep(Duration::from_millis(100));
+                stream.write_all(&[*byte]).unwrap();
+            }
+        });
+
+        let client = loopback_client(Some(Duration::from_millis(300)));
+        let request = HttpRequest::get(format!("http://{address}/stream"))
+            .follow_redirects(RedirectPolicy::FollowAll)
+            .timeout(Duration::from_secs(3))
+            .body(AsyncBody::default())
+            .unwrap();
+        let mut response = futures::executor::block_on(client.send(request)).unwrap();
+        let mut body = Vec::new();
+        futures::executor::block_on(response.body_mut().read_to_end(&mut body)).unwrap();
+        assert_eq!(body, b"abcdef");
         server.join().unwrap();
     }
 
@@ -517,7 +756,7 @@ mod tests {
             stream.write_all(response.as_bytes()).unwrap();
         });
 
-        let client = ReqwestClient::new();
+        let client = loopback_client(None);
         let request = HttpRequest::builder()
             .method(Method::PUT)
             .uri(format!("http://{redirect_address}/upload"))
@@ -577,48 +816,5 @@ mod tests {
                 "An unsupported proxy URL should add no proxy to the client!"
             )
         }
-    }
-
-    #[test]
-    fn test_user_agent_is_recorded_for_redirect_clients() {
-        let client = ReqwestClient::user_agent("test-agent").unwrap();
-        assert_eq!(client.user_agent().unwrap().to_str().unwrap(), "test-agent");
-        client
-            .client_for_redirect_policy(Some(&RedirectPolicy::FollowAll))
-            .unwrap();
-    }
-
-    #[test]
-    fn test_redirect_policy_clients_build_with_upstream_reqwest() {
-        let client = ReqwestClient::new();
-        client
-            .client_for_redirect_policy(Some(&RedirectPolicy::NoFollow))
-            .unwrap();
-        client
-            .client_for_redirect_policy(Some(&RedirectPolicy::FollowLimit(3)))
-            .unwrap();
-        client
-            .client_for_redirect_policy(Some(&RedirectPolicy::FollowAll))
-            .unwrap();
-
-        let _ = reqwest_redirect_policy(&RedirectPolicy::NoFollow);
-    }
-
-    #[test]
-    fn test_redirect_policy_clients_are_cached() {
-        let client = ReqwestClient::new();
-        client
-            .client_for_redirect_policy(Some(&RedirectPolicy::FollowLimit(3)))
-            .unwrap();
-        client
-            .client_for_redirect_policy(Some(&RedirectPolicy::FollowLimit(3)))
-            .unwrap();
-
-        let cache = client
-            .redirect_clients
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        assert_eq!(cache.len(), 1);
-        assert!(cache.contains_key(&RedirectPolicy::FollowLimit(3)));
     }
 }

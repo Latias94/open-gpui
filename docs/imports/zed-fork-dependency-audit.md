@@ -1,13 +1,15 @@
 # Zed Fork Dependency Audit
 
 **Date**: 2026-06-06
-**Status**: Resolved
+**Status**: Historical audit with maintained November successors
 **Related**: [ADR 0001](../adr/0001-open-gpui-fork-strategy.md), [Verification](../verification.md)
 
 ## Problem
 
 Open GPUI initially depended on Zed-maintained external forks after the clean workspace import.
-The original fork dependencies resolve either to public crates.io packages or Open GPUI-owned forks.
+The initial resolution selected public crates.io packages or Open GPUI-owned forks. The fixed-target
+November successors below supersede individual historical selections when the official mechanism
+needs an exact dependency source.
 The former `zed-scap` dependency resolves through `open-gpui-scap`, and the former
 `zed-font-kit` dependency resolves through an Open GPUI-owned `font-kit` fork.
 
@@ -32,7 +34,7 @@ flowchart TD
 
 | Fork | Resolution | Compatibility note | Evidence |
 | --- | --- | --- | --- |
-| `zed-reqwest` | Replaced with crates.io `reqwest = "=0.13.4"`. | Zed's fork added per-request `RequestBuilder::redirect_policy`; `reqwest_client` caches same-config clients with the requested upstream client-level redirect policy when a request carries `RedirectPolicy`. The 0.13 upgrade keeps the redirect-client adapter and removes the `rustls-pemfile` advisory path. | `cargo check -p open-gpui-reqwest-client --all-features`; `cargo audit` |
+| `zed-reqwest` | November 10 selects official `33bc764aa15ff7b200bf7c93bd96e24878d53e14`, superseding registry `=0.13.4`. | The exact source is MIT OR Apache-2.0. Its request-local redirect policy preserves an imported client's actual settings; the former reconstruction cache could not. Remove that cache instead of preserving a registry-only constraint. The source reintroduces rustls-pemfile 2.2, whose RUSTSEC-2025-0134 notice is informational unmaintained status, not a reported vulnerability; no advisory suppression is added. | [Current import and dependency evidence](zed-gpui-import.md#november-10-http-and-release-download-dependencies); affected HTTP/public-consumer qualification in the owning plan |
 | `zed-scap` package | Replaced with the Open GPUI-owned `open-gpui-scap` fork at `https://github.com/Latias94/scap`, branch `main`. | The fork keeps the public `scap` crate API by setting `[lib] name = "scap"` while using an owned package name. It also adapts the Windows path to `windows-capture = 1.5.0` by using `Frame::timestamp()`. | `cargo check --locked` in `Latias94/scap`; `cargo package --no-verify` in `Latias94/scap`; `cargo check -p gpui_windows --all-features --locked`; `cargo run -p xtask -- scan-import-boundary` |
 | `zed-scap` transitive `windows-capture` drift | Superseded by the `open-gpui-scap` migration. | Earlier recovery pinned `windows-capture = 1.4.0` while Open GPUI still consumed `zed-scap`; the owned fork now adapts to `windows-capture = 1.5.0` instead. | Historical evidence: `cargo check -p gpui_windows --all-features`; current evidence is covered by the `open-gpui-scap` row. |
 | `zed-xim` | Replaced with crates.io `xim = "=0.5.0"`. | Zed's fork exposed a `Client::reset_ic` helper. Upstream `xim 0.5.0` removed that helper but still exposes `ClientCore::send_req` and `Request::ResetIc`, so `gpui_linux` now sends the same XIM reset request directly. | WSL Ubuntu: `cargo check -p gpui_linux --all-features` |
@@ -44,7 +46,7 @@ flowchart TD
 
 | Fork | Current source | Reverse dependency evidence | Public candidate | Risk | Recommendation |
 | --- | --- | --- | --- | --- | --- |
-| None | No remaining Zed-maintained external fork dependencies. | `gpui`, `gpui_linux`, and `gpui_windows` use `open-gpui-scap` under `screen-capture` / all-features. | `open-gpui-scap = 0.1.0-beta.1` from `Latias94/scap`. | Low | Keep the Open GPUI-owned fork until upstream `scap` can provide the required API and feature surface. |
+| Required fixed-target sources | The current import record and candidate queue own exact reqwest, calloop, async-process and async-tar revisions; WGPU uses its qualified gfx-rs revision. | Actual roots and resolved dependency graphs are qualified per complete mechanism. | Registry alternatives remain candidates when they preserve required behavior. | Source-specific | Follow ADR 0001; do not retain historical exclusions or remove behavior merely to reduce fork count. |
 
 ## Evidence Commands
 
@@ -436,7 +438,7 @@ fork or installing root-only Cargo patches.
 
 | Metric | Target | Measurement |
 | --- | --- | --- |
-| Zed Git source count | Keep at zero for migrated fork dependencies | `rg 'github.com/zed-industries/(scap|font-kit)|zed-industries/wgpu' Cargo.toml Cargo.lock` |
+| Retired Git source count | Keep retired scap/font-kit/WGPU sources out; selected official HTTP/process/archive/loop sources are explicit exceptions | Existing import-boundary scan and source-specific records |
 | Zed package dependency count | Keep at zero for retired fork packages | `rg 'zed-scap|zed-font-kit' Cargo.toml Cargo.lock` |
 | Verification gate | Still passes after each migration | `cargo run -p xtask -- verify` |
 | Focused package checks | Targeted crate builds after migration | `cargo check -p <crate>` |
