@@ -334,7 +334,7 @@ fn run_native_font_installation(scenario: NativeFontInstallationScenario) {
     let (_observation_guard, observation) = begin_native_window_test_observation();
     let observation_cursor = observation.cursor();
     let platform = Rc::new(
-        WindowsPlatform::new(false)
+        WindowsPlatform::new_windowed_for_test()
             .expect("the native font DirectWrite/DirectX platform must initialize"),
     );
     let platform_hwnd = platform.handle;
@@ -382,7 +382,9 @@ fn run_native_font_installation(scenario: NativeFontInstallationScenario) {
         text_system.resolve_font(&font("IBM Plex Sans")),
         control_font
     );
-    platform.begin_vsync_thread();
+    platform
+        .begin_vsync_thread()
+        .expect("native vsync provider should start");
 
     let paints = Rc::new(RefCell::new(Vec::new()));
     let (child, window) = app.update_for_test(|cx| {

@@ -31,7 +31,7 @@ use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1;
 
 use crate::linux::wayland::{display::WaylandDisplay, serial::SerialKind};
 use crate::linux::{
-    Globals, Output, WaylandClientStatePtr,
+    Globals, Output, PendingActivation, WaylandClientStatePtr,
     interaction_gate::{WindowInteractionGate, accesskit_adapter},
 };
 use open_gpui::{
@@ -247,6 +247,7 @@ struct InProgressConfigure {
 }
 
 pub struct WaylandWindowState {
+    _connection_lease: Rc<()>,
     surface_state: WaylandSurfaceState,
     pub surface: wl_surface::WlSurface,
     app_id: Option<String>,
@@ -599,16 +600,22 @@ fn activate_wayland_window(state: &WaylandWindowState) -> PlatformWindowCommandO
     let Some(activation) = &state.globals.activation else {
         return PlatformWindowCommandOutcome::Unsupported;
     };
-    let token = activation.get_activation_token(&state.globals.qh, ());
-    state
-        .client
-        .set_pending_window_activation(token.id(), state.surface.id(), state.handle);
-    let serial = state.client.get_serial(SerialKind::MousePress);
+    let token = activation.get_activation_token(
+        &state.globals.qh,
+        PendingActivation::Window {
+            surface: state.surface.id(),
+            handle: state.handle,
+        },
+    );
     if let Some(app_id) = state.app_id.clone() {
         token.set_app_id(app_id);
     }
-    token.set_serial(serial, &state.globals.seat);
-    token.set_surface(&state.surface);
+    if let Some(context) = state.client.activation_context() {
+        token.set_serial(context.serial.as_raw(), &state.globals.seat);
+        token.set_surface(&context.requesting_surface);
+    } else {
+        token.set_surface(&state.surface);
+    }
     token.commit();
     PlatformWindowCommandOutcome::Accepted
 }
@@ -662,6 +669,7 @@ impl WaylandWindowState {
         options: WindowParams,
         creation: WaylandWindowCreationProjection,
         transient_for: Option<AnyWindowHandle>,
+        connection_lease: Rc<()>,
     ) -> anyhow::Result<Self> {
         let initially_shown = options.show;
         let renderer = {
@@ -699,6 +707,7 @@ impl WaylandWindowState {
         }
 
         Ok(Self {
+            _connection_lease: connection_lease,
             surface_state,
             surface,
             app_id: None,
@@ -907,6 +916,7 @@ impl WaylandWindow {
         appearance: WindowAppearance,
         transient_owner: Option<WaylandTransientOwner>,
         target_output: Option<wl_output::WlOutput>,
+        connection_lease: Rc<()>,
     ) -> anyhow::Result<(Self, ObjectId)> {
         let creation = WaylandWindowCreationProjection::new(params.window_bounds, &params.kind);
         let transient_for = transient_owner.as_ref().map(|owner| owner.handle);
@@ -946,6 +956,7 @@ impl WaylandWindow {
                     params,
                     creation,
                     transient_for,
+                    connection_lease,
                 )?)),
                 callbacks: Rc::new(RefCell::new(Callbacks::default())),
                 frame_loop: Rc::new(Cell::new(FrameLoop::Unconfigured)),

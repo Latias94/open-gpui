@@ -13,9 +13,8 @@ use anyhow::{Context as _, anyhow};
 use block2::RcBlock;
 use cocoa::{
     appkit::{
-        NSApplication, NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular,
-        NSControl as _, NSEventModifierFlags, NSMenu, NSMenuItem, NSModalResponse, NSOpenPanel,
-        NSSavePanel, NSVisualEffectState, NSVisualEffectView, NSWindow,
+        NSApplication, NSControl as _, NSEventModifierFlags, NSMenu, NSMenuItem, NSModalResponse,
+        NSOpenPanel, NSSavePanel, NSVisualEffectState, NSVisualEffectView, NSWindow,
     },
     base::{BOOL, NO, YES, id, nil, selector},
     foundation::{
@@ -34,23 +33,26 @@ use objc::{
     runtime::{Class, Object, Sel},
     sel, sel_impl,
 };
-use objc2::{rc::Retained, runtime::AnyObject};
+use objc2::{
+    rc::Retained,
+    runtime::{AnyObject, Bool},
+};
 use objc2_app_kit::{
     NSAppearance, NSAppearanceNameAqua, NSAppearanceNameDarkAqua, NSAppearanceNameVibrantDark,
-    NSAppearanceNameVibrantLight,
+    NSAppearanceNameVibrantLight, NSApplicationActivationPolicy,
 };
 use objc2_foundation::NSActivityOptions;
 use open_gpui::{
-    Action, ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem, DisplayId,
-    ForegroundExecutor, KeyContext, Keymap, Menu, MenuItem, MouseButton,
-    NativeAppNotificationHandler, NavigationDirection, OsMenu, OwnedMenu, PathPromptOptions,
-    Platform, PlatformDisplay, PlatformDisplaySnapshot, PlatformFocusedWindow,
+    Action, ActivationPolicy, ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem,
+    DisplayId, ForegroundExecutor, GraphicalEnvironment, KeyContext, Keymap, Menu, MenuItem,
+    MouseButton, NativeAppNotificationHandler, NavigationDirection, OsMenu, OwnedMenu,
+    PathPromptOptions, Platform, PlatformDisplay, PlatformDisplaySnapshot, PlatformFocusedWindow,
     PlatformHoveredWindow, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
     PlatformViewportCapabilities, PlatformWindow, PlatformWindowActivationSupport,
     PlatformWindowCapabilities, PlatformWindowCreationCapabilities,
     PlatformWindowMutationCapabilities, PowerMode, Result, SystemMenuType, Task, ThermalState,
     WindowAppearance, WindowCoordinateSpace, WindowCreationSupport, WindowInitialPresentationOrder,
-    WindowKind, WindowMutationSupport, WindowParams,
+    WindowKind, WindowMutationSupport, WindowParams, WindowingRequest,
 };
 use open_gpui_util::{
     ResultExt,
@@ -196,6 +198,8 @@ pub(crate) struct MacPlatformState {
     display_topology: MacDisplayTopologyHandle,
     window_registry: MacWindowRegistry,
     headless: bool,
+    activation_policy: ActivationPolicy,
+    application_created: bool,
     general_pasteboard: Pasteboard,
     find_pasteboard: Pasteboard,
     reopen: Option<Box<dyn FnMut()>>,
@@ -219,6 +223,22 @@ pub(crate) struct MacPlatformState {
     system_notifications: crate::system_notifications::SystemNotificationState,
 }
 
+/// The activation policy that stands for a windowing mode: an app is headless while it has no
+/// Dock icon or menu bar.
+fn activation_policy_for(request: &WindowingRequest) -> ActivationPolicy {
+    match request {
+        WindowingRequest::Headless => ActivationPolicy::Accessory,
+        WindowingRequest::Windowed(_) => ActivationPolicy::Regular,
+    }
+}
+
+fn native_activation_policy(policy: ActivationPolicy) -> NSApplicationActivationPolicy {
+    match policy {
+        ActivationPolicy::Regular => NSApplicationActivationPolicy::Regular,
+        ActivationPolicy::Accessory => NSApplicationActivationPolicy::Accessory,
+    }
+}
+
 impl MacPlatform {
     pub fn new(headless: bool) -> Self {
         let dispatcher = Arc::new(MacDispatcher::new());
@@ -239,6 +259,8 @@ impl MacPlatform {
         Self(
             Mutex::new(MacPlatformState {
                 headless,
+                activation_policy: ActivationPolicy::Regular,
+                application_created: false,
                 text_system,
                 background_executor: BackgroundExecutor::new(dispatcher.clone()),
                 foreground_executor: ForegroundExecutor::new(dispatcher),
@@ -810,6 +832,20 @@ impl Platform for MacPlatform {
 
         unsafe {
             let app: id = msg_send![APP_CLASS, sharedApplication];
+            // An accessory app must not register in the Dock during launch, so its
+            // policy has to precede the run loop. `Regular` is applied in
+            // `did_finish_launching` instead: setting it this early leaves the menu
+            // bar of an unbundled app launched from a terminal unclickable.
+            let policy = {
+                let mut state = self.0.lock();
+                state.application_created = true;
+                state.activation_policy
+            };
+            if policy == ActivationPolicy::Accessory {
+                let _: Bool = objc2::msg_send![app.cast::<AnyObject>(),
+                    setActivationPolicy: native_activation_policy(policy)
+                ];
+            }
             let app_delegate: id = msg_send![APP_DELEGATE_CLASS, new];
             app.setDelegate_(app_delegate);
 
@@ -824,6 +860,7 @@ impl Platform for MacPlatform {
             (*app).set_ivar(MAC_PLATFORM_IVAR, null_mut::<c_void>());
             (*NSWindow::delegate(app)).set_ivar(MAC_PLATFORM_IVAR, null_mut::<c_void>());
         }
+        self.0.lock().application_created = false;
     }
 
     fn quit(&self) {
@@ -872,6 +909,53 @@ impl Platform for MacPlatform {
             let app = NSApplication::sharedApplication(nil);
             app.activateIgnoringOtherApps_(ignoring_other_apps.to_objc());
         }
+    }
+
+    fn set_activation_policy(&self, policy: ActivationPolicy) {
+        let mut state = self.0.lock();
+        state.activation_policy = policy;
+        let should_apply = state.application_created && !state.headless;
+        drop(state);
+        if should_apply {
+            unsafe {
+                let app: id = msg_send![APP_CLASS, sharedApplication];
+                let _: Bool = objc2::msg_send![app.cast::<AnyObject>(),
+                    setActivationPolicy: native_activation_policy(policy)
+                ];
+            }
+        }
+    }
+
+    fn set_initial_windowing(&self, request: WindowingRequest) {
+        self.set_activation_policy(activation_policy_for(&request));
+    }
+
+    fn request_windowing(&self, request: WindowingRequest) -> Task<Result<()>> {
+        let state = self.0.lock();
+        if state.headless {
+            return Task::ready(Err(anyhow!(
+                "a platform created headless has no application to switch windowing modes"
+            )));
+        }
+        let policy = activation_policy_for(&request);
+        if state.activation_policy == policy {
+            return Task::ready(Err(match request {
+                WindowingRequest::Headless => anyhow!("already headless"),
+                WindowingRequest::Windowed(_) => anyhow!("already windowed"),
+            }));
+        }
+        if let Err(error) = state.window_registry.ensure_windowing_can_change() {
+            return Task::ready(Err(error));
+        }
+        drop(state);
+        self.set_activation_policy(policy);
+        Task::ready(Ok(()))
+    }
+
+    fn graphical_environment(&self) -> Option<GraphicalEnvironment> {
+        let state = self.0.lock();
+        (!state.headless && state.activation_policy == ActivationPolicy::Regular)
+            .then(GraphicalEnvironment::detect)
     }
 
     fn hide(&self) {
@@ -1534,7 +1618,10 @@ extern "C" fn will_finish_launching(_this: &mut Object, _: Sel, _: id) {
 extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
     unsafe {
         let app: id = msg_send![APP_CLASS, sharedApplication];
-        app.setActivationPolicy_(NSApplicationActivationPolicyRegular);
+        let policy = get_mac_platform(this).0.lock().activation_policy;
+        let _: Bool = objc2::msg_send![app.cast::<AnyObject>(),
+            setActivationPolicy: native_activation_policy(policy)
+        ];
 
         let notification_center: *mut Object =
             msg_send![class!(NSNotificationCenter), defaultCenter];

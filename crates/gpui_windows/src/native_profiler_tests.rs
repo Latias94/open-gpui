@@ -748,7 +748,8 @@ fn native_profiler_tracks_input_submission_redraw_and_reconstructed_window() {
     let mut collector = FrameTimingCollector::new();
     let (_observation_guard, observation) = begin_native_window_test_observation();
     let platform = Rc::new(
-        WindowsPlatform::new(false).expect("the native profiler Windows backend must initialize"),
+        WindowsPlatform::new_windowed_for_test()
+            .expect("the native profiler Windows backend must initialize"),
     );
     let platform_hwnd = platform.handle;
     let platform_lifetime = Rc::downgrade(&platform);
@@ -784,7 +785,9 @@ fn native_profiler_tracks_input_submission_redraw_and_reconstructed_window() {
         )
         .expect("the native consumer must start the opt-in GPUI hang monitor");
     });
-    platform.begin_vsync_thread();
+    platform
+        .begin_vsync_thread()
+        .expect("native vsync provider should start");
     let consumer = NativeProfilerWindow::open(&mut app, &platform, true);
     let (mut generation, _) =
         consumer.wait_for_submission(&mut app, NativeProfilerSource::default(), 0);
@@ -1331,7 +1334,8 @@ fn native_frame_signals_preserve_coalescing_visibility_retirement_and_vsync_orig
     let _restore_trace = RestoreNativeProfilerTrace(profiler::trace_enabled());
     profiler::set_trace_enabled(false);
     let (_observation_guard, observation) = begin_native_window_test_observation();
-    let platform = Rc::new(WindowsPlatform::new(false).expect("native frame-signal backend"));
+    let platform =
+        Rc::new(WindowsPlatform::new_windowed_for_test().expect("native frame-signal backend"));
     let platform_hwnd = platform.handle;
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
     let mut collector = app.update_for_test(|cx| cx.foreground_journal().collector());
@@ -1513,7 +1517,9 @@ fn native_frame_signals_preserve_coalescing_visibility_retirement_and_vsync_orig
     assert!(rebuilt.native.state.frame_signal.take().is_none());
     collector.collect_unseen();
 
-    platform.begin_vsync_thread();
+    platform
+        .begin_vsync_thread()
+        .expect("native vsync provider should start");
     let captured = (0..MAX_MESSAGE_PUMP_ATTEMPTS)
         .find_map(|_| {
             if let Some(signal) = rebuilt.native.state.frame_signal.take() {
@@ -1846,12 +1852,15 @@ fn native_frame_overlay_modes_reset_resize_preserve_input_and_retirement() {
     let _restore_trace = RestoreNativeProfilerTrace(profiler::trace_enabled());
     profiler::set_trace_enabled(true);
     let (_observation_guard, observation) = begin_native_window_test_observation();
-    let platform = Rc::new(WindowsPlatform::new(false).expect("native frame-overlay backend"));
+    let platform =
+        Rc::new(WindowsPlatform::new_windowed_for_test().expect("native frame-overlay backend"));
     let platform_hwnd = platform.handle;
     let platform_lifetime = Rc::downgrade(&platform);
     let lifecycle_probe = platform.lifecycle_test_probe.clone();
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
-    platform.begin_vsync_thread();
+    platform
+        .begin_vsync_thread()
+        .expect("native vsync provider should start");
     let consumer = NativeProfilerWindow::open(&mut app, &platform, true);
     let paints_lifetime = Rc::downgrade(&consumer.paints);
     let signals_lifetime = Rc::downgrade(&consumer.signals);

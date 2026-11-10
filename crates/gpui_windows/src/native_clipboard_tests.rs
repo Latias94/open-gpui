@@ -316,7 +316,7 @@ fn native_async_clipboard_snapshot_pastes_into_submitted_text_and_reconstructs_c
     discard_stale_quit_messages();
     let (_observation_guard, observation) = begin_native_window_test_observation();
     let platform = Rc::new(
-        WindowsPlatform::new(false)
+        WindowsPlatform::new_windowed_for_test()
             .expect("the native DirectWrite/DirectX clipboard platform must initialize"),
     );
     let platform_hwnd = platform.handle;
@@ -324,7 +324,9 @@ fn native_async_clipboard_snapshot_pastes_into_submitted_text_and_reconstructs_c
     let weak_platform_text_system = Arc::downgrade(&platform.text_system());
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
     let weak_text_system = Arc::downgrade(&app.text_system());
-    platform.begin_vsync_thread();
+    platform
+        .begin_vsync_thread()
+        .expect("native vsync provider should start");
 
     let mut snapshot: Option<ClipboardItem> = None;
     let mut retired_slot: Option<PlatformInputHandlerSlot> = None;

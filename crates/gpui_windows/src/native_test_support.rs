@@ -128,6 +128,8 @@ mod native_text_layout_tests;
 mod native_text_pool_tests;
 #[path = "native_view_component_tests.rs"]
 mod native_view_component_tests;
+#[path = "native_windowing_tests.rs"]
+mod native_windowing_tests;
 
 const MAX_MESSAGE_PUMP_ATTEMPTS: usize = 512;
 const MAX_STALE_QUIT_MESSAGES: usize = 16;
@@ -746,7 +748,8 @@ fn real_hwnd_lifecycle_and_input_dispatch_converge_with_bounded_message_pump() {
     discard_stale_quit_messages();
 
     let platform = Rc::new(
-        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+        WindowsPlatform::new_windowed_for_test()
+            .expect("non-headless Windows platform should initialize"),
     );
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
     let window = app
@@ -912,7 +915,8 @@ fn owned_nonactivating_first_show_preserves_z_order_and_later_activation() {
     discard_stale_quit_messages();
 
     let platform = Rc::new(
-        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+        WindowsPlatform::new_windowed_for_test()
+            .expect("non-headless Windows platform should initialize"),
     );
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
     let owner = app
@@ -1078,7 +1082,8 @@ fn retiring_owner_detaches_live_transient_child_without_tearing_it_down() {
     discard_stale_quit_messages();
 
     let platform = Rc::new(
-        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+        WindowsPlatform::new_windowed_for_test()
+            .expect("non-headless Windows platform should initialize"),
     );
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
     let owner = app
@@ -1220,7 +1225,8 @@ fn sibling_dialogs_hold_modal_parent_disabled_until_the_last_child_closes() {
     discard_stale_quit_messages();
 
     let platform = Rc::new(
-        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+        WindowsPlatform::new_windowed_for_test()
+            .expect("non-headless Windows platform should initialize"),
     );
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
     let owner = app
@@ -1351,7 +1357,8 @@ fn owned_nonactivating_maximized_first_show_preserves_focus_and_restore_bounds()
     discard_stale_quit_messages();
 
     let platform = Rc::new(
-        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+        WindowsPlatform::new_windowed_for_test()
+            .expect("non-headless Windows platform should initialize"),
     );
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
     let owner = app
@@ -1578,7 +1585,8 @@ fn asymmetric_activation_policy_preserves_click_and_programmatic_independence() 
     discard_stale_quit_messages();
 
     let platform = Rc::new(
-        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+        WindowsPlatform::new_windowed_for_test()
+            .expect("non-headless Windows platform should initialize"),
     );
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
     let owner = app
@@ -1725,7 +1733,8 @@ fn rejected_activation_restores_a_non_click_activating_gpui_foreground_window() 
     discard_stale_quit_messages();
 
     let platform = Rc::new(
-        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+        WindowsPlatform::new_windowed_for_test()
+            .expect("non-headless Windows platform should initialize"),
     );
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
     let native_sentinel = NativeForegroundTestWindow::create(16, 16);
@@ -1883,7 +1892,8 @@ fn minimized_rejected_activation_cannot_escape_the_native_command_scope() {
     discard_stale_quit_messages();
 
     let platform = Rc::new(
-        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+        WindowsPlatform::new_windowed_for_test()
+            .expect("non-headless Windows platform should initialize"),
     );
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
     let foreground = app
@@ -1999,7 +2009,8 @@ fn owned_permanently_nonactivating_window_preserves_owner_and_rejects_activation
     discard_stale_quit_messages();
 
     let platform = Rc::new(
-        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+        WindowsPlatform::new_windowed_for_test()
+            .expect("non-headless Windows platform should initialize"),
     );
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
     let owner = app
@@ -2114,7 +2125,8 @@ fn real_hwnd_initial_presentation_is_post_commit_idle_and_retries_rejection() {
     discard_stale_quit_messages();
 
     let platform = Rc::new(
-        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+        WindowsPlatform::new_windowed_for_test()
+            .expect("non-headless Windows platform should initialize"),
     );
     let synchronous_results = Rc::new(RefCell::new(Vec::new()));
     let prepared_client_bounds = Rc::new(Cell::new(None));
@@ -2325,7 +2337,8 @@ fn real_hwnd_initial_presentation_does_not_touch_a_same_hwnd_registration_replac
     discard_stale_quit_messages();
 
     let platform = Rc::new(
-        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+        WindowsPlatform::new_windowed_for_test()
+            .expect("non-headless Windows platform should initialize"),
     );
     let replacement_observed = Rc::new(Cell::new(false));
     platform
@@ -2463,7 +2476,8 @@ fn real_hwnd_presenting_placement_is_generation_bound_before_reveal() {
     discard_stale_quit_messages();
 
     let platform = Rc::new(
-        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+        WindowsPlatform::new_windowed_for_test()
+            .expect("non-headless Windows platform should initialize"),
     );
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
     let initial_bounds = app
@@ -2619,7 +2633,8 @@ fn real_hwnd_windowed_initial_presentation_rejects_client_drift_before_retry() {
     discard_stale_quit_messages();
 
     let platform = Rc::new(
-        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+        WindowsPlatform::new_windowed_for_test()
+            .expect("non-headless Windows platform should initialize"),
     );
     let prepared_client_bounds = Rc::new(Cell::new(None));
     let perturb_next_reveal = Rc::new(Cell::new(true));
@@ -2736,7 +2751,8 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
             .expect("interactive native runner must expose the system pointer state");
 
     let platform = Rc::new(
-        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+        WindowsPlatform::new_windowed_for_test()
+            .expect("non-headless Windows platform should initialize"),
     );
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
     let session = WindowProvisionalSession::new(73)
@@ -4073,7 +4089,8 @@ fn hidden_initial_presentation_keeps_deferred_placement_unpublished_until_forced
     discard_stale_quit_messages();
 
     let platform = Rc::new(
-        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+        WindowsPlatform::new_windowed_for_test()
+            .expect("non-headless Windows platform should initialize"),
     );
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
     let initial_bounds = app
@@ -4187,7 +4204,8 @@ fn hidden_initial_presentation_commits_sampled_facts_for_physical_placement() {
     discard_stale_quit_messages();
 
     let platform = Rc::new(
-        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+        WindowsPlatform::new_windowed_for_test()
+            .expect("non-headless Windows platform should initialize"),
     );
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
     let initial_bounds = app
@@ -4298,7 +4316,8 @@ fn successful_pointer_input_mutation_rolls_back_when_terminal_facts_cannot_be_ob
     discard_stale_quit_messages();
 
     let platform = Rc::new(
-        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+        WindowsPlatform::new_windowed_for_test()
+            .expect("non-headless Windows platform should initialize"),
     );
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
     let window = app
@@ -4381,7 +4400,8 @@ fn successful_activation_policy_mutation_rolls_back_when_terminal_facts_cannot_b
     discard_stale_quit_messages();
 
     let platform = Rc::new(
-        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+        WindowsPlatform::new_windowed_for_test()
+            .expect("non-headless Windows platform should initialize"),
     );
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
     let window = app
@@ -4469,7 +4489,8 @@ fn successful_physical_placement_rolls_back_when_terminal_facts_cannot_be_observ
     discard_stale_quit_messages();
 
     let platform = Rc::new(
-        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+        WindowsPlatform::new_windowed_for_test()
+            .expect("non-headless Windows platform should initialize"),
     );
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
     let window = app
@@ -4574,7 +4595,8 @@ fn partial_deferred_merge_failure_rejects_activation_and_restores_native_placeme
     discard_stale_quit_messages();
 
     let platform = Rc::new(
-        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+        WindowsPlatform::new_windowed_for_test()
+            .expect("non-headless Windows platform should initialize"),
     );
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
     let foreground = app
@@ -4811,7 +4833,8 @@ fn real_hwnd_reserved_callbacks_deliver_after_commit_and_retire_after_rollback()
     discard_stale_quit_messages();
 
     let platform = Rc::new(
-        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+        WindowsPlatform::new_windowed_for_test()
+            .expect("non-headless Windows platform should initialize"),
     );
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
     let success_cursor = app.update_for_test(|cx| {
@@ -4980,7 +5003,8 @@ fn repeated_native_minimize_preserves_frame_callback_through_restore() {
     discard_stale_quit_messages();
 
     let platform = Rc::new(
-        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+        WindowsPlatform::new_windowed_for_test()
+            .expect("non-headless Windows platform should initialize"),
     );
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
     let window = app
@@ -5073,7 +5097,8 @@ fn native_mouse_leave_dispatches_exact_input_before_hover_fact() {
     discard_stale_quit_messages();
 
     let platform = Rc::new(
-        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+        WindowsPlatform::new_windowed_for_test()
+            .expect("non-headless Windows platform should initialize"),
     );
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
     let window = app
@@ -5257,7 +5282,8 @@ fn nested_native_close_is_prevented_while_should_close_slot_is_checked_out() {
     discard_stale_quit_messages();
 
     let platform = Rc::new(
-        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+        WindowsPlatform::new_windowed_for_test()
+            .expect("non-headless Windows platform should initialize"),
     );
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
     let window = app
@@ -5327,7 +5353,8 @@ fn failed_native_destroy_keeps_window_registered_and_callbacks_live() {
     discard_stale_quit_messages();
 
     let platform = Rc::new(
-        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+        WindowsPlatform::new_windowed_for_test()
+            .expect("non-headless Windows platform should initialize"),
     );
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
     let window = app
@@ -5393,7 +5420,8 @@ fn failed_destroy_during_platform_window_retirement_retries_without_losing_owner
     discard_stale_quit_messages();
 
     let platform = Rc::new(
-        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+        WindowsPlatform::new_windowed_for_test()
+            .expect("non-headless Windows platform should initialize"),
     );
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
     let window = app
@@ -5463,7 +5491,8 @@ fn borrowed_renderer_rejects_quiescence_without_destroying_the_real_hwnd() {
     discard_stale_quit_messages();
 
     let platform = Rc::new(
-        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+        WindowsPlatform::new_windowed_for_test()
+            .expect("non-headless Windows platform should initialize"),
     );
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
     let window = app
@@ -5550,7 +5579,8 @@ fn native_interactive_runner_sentinel_proves_system_pointer_delivery_and_capture
     }
 
     let platform = Rc::new(
-        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+        WindowsPlatform::new_windowed_for_test()
+            .expect("non-headless Windows platform should initialize"),
     );
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
     let window = app
@@ -5729,7 +5759,8 @@ fn opaque_hit_transparent_window_cannot_be_inferred_visually_transparent() {
     );
     discard_stale_quit_messages();
 
-    let platform = WindowsPlatform::new(false).expect("Windows platform should initialize");
+    let platform =
+        WindowsPlatform::new_windowed_for_test().expect("Windows platform should initialize");
     let virtual_screen = native_test_virtual_screen_bounds()
         .expect("interactive native runner must expose a non-empty virtual desktop");
     let left = virtual_screen.origin.x.0 + virtual_screen.size.width.0 / 2 - 80;
@@ -5768,7 +5799,8 @@ fn framework_pointer_capture_release_is_native_terminal_without_duplicate_cancel
     discard_stale_quit_messages();
 
     let platform = Rc::new(
-        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+        WindowsPlatform::new_windowed_for_test()
+            .expect("non-headless Windows platform should initialize"),
     );
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
     let window = app
@@ -5868,7 +5900,8 @@ fn capture_acquisition_loss_reentrant_to_set_capture_cancels_after_mouse_down() 
     discard_stale_quit_messages();
 
     let platform = Rc::new(
-        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+        WindowsPlatform::new_windowed_for_test()
+            .expect("non-headless Windows platform should initialize"),
     );
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
     let source = app
@@ -6014,7 +6047,8 @@ fn deactivation_releases_child_capture_and_cancels_pointer_once() {
     discard_stale_quit_messages();
 
     let platform = Rc::new(
-        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+        WindowsPlatform::new_windowed_for_test()
+            .expect("non-headless Windows platform should initialize"),
     );
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
     let source = app
@@ -6203,7 +6237,8 @@ fn panicking_pointer_cancel_reservation_releases_native_capture_before_abi_recov
     discard_stale_quit_messages();
 
     let platform = Rc::new(
-        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+        WindowsPlatform::new_windowed_for_test()
+            .expect("non-headless Windows platform should initialize"),
     );
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
     let window = app
@@ -6327,7 +6362,8 @@ fn programmatic_close_while_captured_is_terminal_and_invariant_free() {
     discard_stale_quit_messages();
 
     let platform = Rc::new(
-        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+        WindowsPlatform::new_windowed_for_test()
+            .expect("non-headless Windows platform should initialize"),
     );
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
     let window = app
@@ -6424,7 +6460,8 @@ fn real_hwnd_activation_terminal_is_exact_and_first_terminal_wins() {
     record_phase("sentinel creation");
 
     let platform = Rc::new(
-        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+        WindowsPlatform::new_windowed_for_test()
+            .expect("non-headless Windows platform should initialize"),
     );
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
     let foreground = app
@@ -7197,7 +7234,8 @@ fn quiesced_real_hwnd_retries_native_revocation_and_cannot_reactivate() {
     discard_stale_quit_messages();
 
     let platform = Rc::new(
-        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+        WindowsPlatform::new_windowed_for_test()
+            .expect("non-headless Windows platform should initialize"),
     );
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
     let window = app
@@ -7345,7 +7383,8 @@ fn failed_dialog_construction_rolls_back_hwnd_drag_drop_and_modal_parent() {
     discard_stale_quit_messages();
 
     let platform = Rc::new(
-        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+        WindowsPlatform::new_windowed_for_test()
+            .expect("non-headless Windows platform should initialize"),
     );
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
     let parent = app
@@ -7462,7 +7501,8 @@ fn app_and_platform_drop_destroy_child_and_message_windows_synchronously() {
     discard_stale_quit_messages();
 
     let platform = Rc::new(
-        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+        WindowsPlatform::new_windowed_for_test()
+            .expect("non-headless Windows platform should initialize"),
     );
     let platform_hwnd = platform.handle;
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
@@ -7831,7 +7871,8 @@ fn construction_retirement_pending_survives_immediate_platform_drop() {
     discard_stale_quit_messages();
 
     let platform = Rc::new(
-        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+        WindowsPlatform::new_windowed_for_test()
+            .expect("non-headless Windows platform should initialize"),
     );
     let platform_hwnd = platform.handle;
     let platform_inner = platform.inner.clone();
@@ -7888,7 +7929,8 @@ fn registered_child_platform_finalization_retries_multiple_destroy_rejections() 
     discard_stale_quit_messages();
 
     let platform = Rc::new(
-        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+        WindowsPlatform::new_windowed_for_test()
+            .expect("non-headless Windows platform should initialize"),
     );
     let platform_hwnd = platform.handle;
     let platform_inner = platform.inner.clone();
@@ -7946,7 +7988,8 @@ fn platform_finalization_waits_for_transient_child_terminal_before_parent_destro
     discard_stale_quit_messages();
 
     let platform = Rc::new(
-        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+        WindowsPlatform::new_windowed_for_test()
+            .expect("non-headless Windows platform should initialize"),
     );
     let platform_hwnd = platform.handle;
     let lifecycle_probe = platform.lifecycle_test_probe.clone();
@@ -8064,7 +8107,8 @@ fn mismatched_registered_generation_blocks_teardown_without_raw_destroy() {
     discard_stale_quit_messages();
 
     let platform = Rc::new(
-        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+        WindowsPlatform::new_windowed_for_test()
+            .expect("non-headless Windows platform should initialize"),
     );
     let platform_hwnd = platform.handle;
     let platform_inner = platform.inner.clone();
@@ -8174,7 +8218,8 @@ fn unknown_registered_hwnd_blocks_raw_teardown_until_external_terminal() {
     discard_stale_quit_messages();
 
     let platform = Rc::new(
-        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+        WindowsPlatform::new_windowed_for_test()
+            .expect("non-headless Windows platform should initialize"),
     );
     let platform_hwnd = platform.handle;
     let platform_inner = platform.inner.clone();
@@ -8223,7 +8268,8 @@ fn platform_message_destroy_failure_retains_ole_until_terminal_retry() {
     discard_stale_quit_messages();
 
     let platform = Rc::new(
-        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+        WindowsPlatform::new_windowed_for_test()
+            .expect("non-headless Windows platform should initialize"),
     );
     let platform_hwnd = platform.handle;
     let platform_inner = platform.inner.clone();

@@ -26,6 +26,10 @@ test = true
 name = "system_notifications"
 path = "examples/system_notifications.rs"
 
+[[example]]
+name = "toggle_headless"
+path = "examples/toggle_headless.rs"
+
 [[bench]]
 name = "randomized_element_tree"
 harness = false

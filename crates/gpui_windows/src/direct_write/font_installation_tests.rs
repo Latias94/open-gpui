@@ -20,7 +20,7 @@ const NOTO_EMOJI: &[u8] = include_bytes!("../../../../tests/fixtures/fonts/NotoE
 #[test]
 fn loading_an_alias_preserves_the_first_observed_face_identity() -> Result<()> {
     let devices = DirectXDevices::new()?;
-    let platform = DirectWriteTextSystem::new(&devices)?;
+    let platform = DirectWriteTextSystem::new(Some(&devices))?;
     platform.add_fonts(vec![Cow::Borrowed(IBM_PLEX)])?;
     let descriptor = font("IBM Plex Sans");
     let original = platform.font_id(&descriptor)?;
@@ -50,7 +50,7 @@ fn loading_an_alias_preserves_the_first_observed_face_identity() -> Result<()> {
 #[test]
 fn installed_weight_reselects_a_matched_family_and_preserves_old_glyphs() -> Result<()> {
     let devices = DirectXDevices::new()?;
-    let platform = Arc::new(DirectWriteTextSystem::new(&devices)?);
+    let platform = Arc::new(DirectWriteTextSystem::new(Some(&devices))?);
     let text = Arc::new(TextSystem::new(platform.clone()));
     text.add_fonts(vec![Cow::Borrowed(LILEX_REGULAR)])?;
     let descriptor = font("Lilex").bold();
@@ -120,7 +120,7 @@ fn installed_weight_reselects_a_matched_family_and_preserves_old_glyphs() -> Res
 #[test]
 fn installed_named_fallback_reselects_the_primary_and_shapes_the_private_face() -> Result<()> {
     let devices = DirectXDevices::new()?;
-    let platform = Arc::new(DirectWriteTextSystem::new(&devices)?);
+    let platform = Arc::new(DirectWriteTextSystem::new(Some(&devices))?);
     let text = Arc::new(TextSystem::new(platform.clone()));
     text.add_fonts(vec![Cow::Borrowed(IBM_PLEX)])?;
     let mut descriptor = font("IBM Plex Sans");
@@ -216,7 +216,7 @@ fn installed_named_fallback_reselects_the_primary_and_shapes_the_private_face() 
 #[test]
 fn failed_batch_keeps_the_published_collection_until_a_later_success() -> Result<()> {
     let devices = DirectXDevices::new()?;
-    let platform = Arc::new(DirectWriteTextSystem::new(&devices)?);
+    let platform = Arc::new(DirectWriteTextSystem::new(Some(&devices))?);
     let text = TextSystem::new(platform.clone());
     text.add_fonts(vec![Cow::Borrowed(LILEX_REGULAR)])?;
     let descriptor = font("Lilex").bold();
@@ -285,7 +285,7 @@ fn failed_batch_keeps_the_published_collection_until_a_later_success() -> Result
 fn a_cold_native_face_cache_preserves_a_retained_synthetic_run_after_real_bold_installation()
 -> Result<()> {
     let devices = DirectXDevices::new()?;
-    let platform = DirectWriteTextSystem::new(&devices)?;
+    let platform = DirectWriteTextSystem::new(Some(&devices))?;
     platform.add_fonts(vec![Cow::Borrowed(LILEX_REGULAR)])?;
     let descriptor = font("Lilex").bold();
     let old_id = platform.font_id(&descriptor)?;
@@ -355,7 +355,7 @@ fn a_cold_native_face_cache_preserves_a_retained_synthetic_run_after_real_bold_i
 fn unchanged_selections_reuse_loaded_ids_and_keep_feature_configs_after_multiple_installs()
 -> Result<()> {
     let devices = DirectXDevices::new()?;
-    let platform = DirectWriteTextSystem::new(&devices)?;
+    let platform = DirectWriteTextSystem::new(Some(&devices))?;
     platform.add_fonts(vec![Cow::Borrowed(IBM_PLEX)])?;
     let descriptors = [
         font("IBM Plex Sans"),
@@ -393,7 +393,7 @@ fn unchanged_selections_reuse_loaded_ids_and_keep_feature_configs_after_multiple
 fn system_collection_refresh_revalidates_existing_selections_without_losing_loaded_ids()
 -> Result<()> {
     let devices = DirectXDevices::new()?;
-    let platform = DirectWriteTextSystem::new(&devices)?;
+    let platform = DirectWriteTextSystem::new(Some(&devices))?;
     platform.add_fonts(vec![Cow::Borrowed(IBM_PLEX)])?;
     let descriptor = font("IBM Plex Sans");
     let original = platform.font_id(&descriptor)?;
@@ -424,7 +424,7 @@ fn system_collection_refresh_revalidates_existing_selections_without_losing_load
 #[test]
 fn an_unregistered_native_synthetic_face_keeps_its_simulation_when_shaped_again() -> Result<()> {
     let devices = DirectXDevices::new()?;
-    let platform = DirectWriteTextSystem::new(&devices)?;
+    let platform = DirectWriteTextSystem::new(Some(&devices))?;
     platform.add_fonts(vec![Cow::Borrowed(LILEX_REGULAR)])?;
     let native = unsafe {
         platform

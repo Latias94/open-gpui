@@ -892,7 +892,7 @@ fn native_text_layout_submits_complete_unicode_source_and_notified_redraw() {
     let (_observation_guard, observation) = begin_native_window_test_observation();
     let observation_cursor = observation.cursor();
     let platform = Rc::new(
-        WindowsPlatform::new(false)
+        WindowsPlatform::new_windowed_for_test()
             .expect("the native DirectWrite/DirectX platform must initialize"),
     );
     let platform_hwnd = platform.handle;
@@ -904,7 +904,9 @@ fn native_text_layout_submits_complete_unicode_source_and_notified_redraw() {
     let text_system = app.text_system();
     let weak_text_system = Arc::downgrade(&text_system);
     drop(text_system);
-    platform.begin_vsync_thread();
+    platform
+        .begin_vsync_thread()
+        .expect("native vsync provider should start");
 
     let paints = Rc::new(RefCell::new(Vec::new()));
     let window = app

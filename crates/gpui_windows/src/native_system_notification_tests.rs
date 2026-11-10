@@ -435,14 +435,17 @@ fn notification_submitted_frame(
 fn native_system_notification_app_view_submits_body_and_action_then_releases() {
     discard_stale_quit_messages();
     let (_observation_guard, observation) = begin_native_window_test_observation();
-    let platform = Rc::new(WindowsPlatform::new(false).expect("native notification App backend"));
+    let platform =
+        Rc::new(WindowsPlatform::new_windowed_for_test().expect("native notification App backend"));
     let platform_hwnd = platform.handle;
     let platform_lifetime = Rc::downgrade(&platform);
     let platform_inner_lifetime = Rc::downgrade(&platform.inner);
     let lifecycle = platform.lifecycle_test_probe.clone();
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
     let mut weak_app = app.update_for_test(|cx| cx.to_async());
-    platform.begin_vsync_thread();
+    platform
+        .begin_vsync_thread()
+        .expect("native vsync provider should start");
     let paint = Rc::new(Cell::new(None));
     let paint_lifetime = Rc::downgrade(&paint);
     let handle = app

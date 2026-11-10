@@ -260,7 +260,9 @@ features = [
     "Win32_System_Performance",
     "Win32_System_Pipes",
     "Win32_System_Power",
+    "Win32_System_RemoteDesktop",
     "Win32_System_RestartManager",
+    "Win32_System_StationsAndDesktops",
     "Win32_System_SystemInformation",
     "Win32_System_SystemServices",
     "Win32_System_Threading",
@@ -286,3 +288,6 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(rust_analyzer)", "cfg(nigh
 dbg_macro = "deny"
 todo = "deny"
 unwrap_used = "warn"
+
+[patch.crates-io]
+calloop = { git = "https://github.com/zed-industries/calloop", rev = "3759371fee14c40066d64777e2a36b6ffcc22590" }

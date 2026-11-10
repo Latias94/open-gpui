@@ -140,6 +140,143 @@ impl ActivityGuard {
     }
 }
 
+/// Controls whether an application participates in foreground system UI.
+///
+/// Only macOS uses this policy. Windowing requests select Accessory while headless and
+/// Regular while windowed. Accessory applications may still open windows explicitly.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum ActivationPolicy {
+    /// Participates in foreground UI, including the macOS Dock and menu bar.
+    #[default]
+    Regular,
+    /// Retains window support without foreground application UI.
+    Accessory,
+}
+
+/// The Unix display session that a platform should connect to.
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+#[derive(Clone, Debug, Default)]
+pub struct GraphicalEnvironment {
+    /// The Wayland socket name, relative to the runtime directory or absolute.
+    pub wayland_display: Option<OsString>,
+    /// The X11 display name.
+    pub x11_display: Option<OsString>,
+    /// The directory containing Wayland sockets.
+    pub xdg_runtime_dir: Option<OsString>,
+    /// An optional one-shot Wayland activation token for a later windowed connection.
+    /// Detection leaves this unset; a connected environment never retains a consumed token.
+    pub activation_token: Option<String>,
+}
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+impl GraphicalEnvironment {
+    /// Reads display variables without connecting or consuming an activation token.
+    pub fn detect() -> Self {
+        Self {
+            wayland_display: std::env::var_os("WAYLAND_DISPLAY"),
+            x11_display: std::env::var_os("DISPLAY"),
+            xdg_runtime_dir: std::env::var_os("XDG_RUNTIME_DIR"),
+            activation_token: None,
+        }
+    }
+
+    /// Applies this session's display variables to a child command, removing absent values.
+    /// Leaves the child's activation token unchanged.
+    pub fn apply_to(&self, command: &mut std::process::Command) {
+        for (name, value) in [
+            ("WAYLAND_DISPLAY", &self.wayland_display),
+            ("DISPLAY", &self.x11_display),
+            ("XDG_RUNTIME_DIR", &self.xdg_runtime_dir),
+        ] {
+            match value {
+                Some(value) => command.env(name, value),
+                None => command.env_remove(name),
+            };
+        }
+    }
+
+    /// Selects Wayland, X11 or headless without attempting a connection.
+    pub fn guess_compositor(&self) -> &'static str {
+        let is_set =
+            |value: &Option<OsString>| value.as_ref().is_some_and(|value| !value.is_empty());
+        if cfg!(feature = "wayland") && is_set(&self.wayland_display) {
+            "Wayland"
+        } else if cfg!(feature = "x11") && is_set(&self.x11_display) {
+            "X11"
+        } else {
+            "Headless"
+        }
+    }
+}
+
+/// The Windows session whose desktop should host the application's windows.
+#[cfg(target_os = "windows")]
+#[derive(Clone, Debug, Default)]
+pub struct GraphicalEnvironment {
+    /// The session ID; None selects this process's own session.
+    pub session_id: Option<u32>,
+}
+
+#[cfg(target_os = "windows")]
+impl GraphicalEnvironment {
+    /// Returns this process's session, when Windows can determine it.
+    pub fn detect() -> Self {
+        let mut session_id = 0;
+        // SAFETY: The output pointer remains valid for the native call.
+        let result = unsafe {
+            windows::Win32::System::RemoteDesktop::ProcessIdToSessionId(
+                windows::Win32::System::Threading::GetCurrentProcessId(),
+                &mut session_id,
+            )
+        };
+        Self {
+            session_id: result.is_ok().then_some(session_id),
+        }
+    }
+
+    /// Leaves the command unchanged; children inherit their parent's Windows session.
+    pub fn apply_to(&self, _command: &mut std::process::Command) {}
+}
+
+/// The graphical session to connect to; currently carries no data on this platform.
+#[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "windows")))]
+#[derive(Clone, Debug, Default)]
+pub struct GraphicalEnvironment;
+
+#[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "windows")))]
+impl GraphicalEnvironment {
+    /// Returns this process's graphical environment.
+    pub fn detect() -> Self {
+        Self
+    }
+
+    /// Leaves the command unchanged on this platform.
+    pub fn apply_to(&self, _command: &mut std::process::Command) {}
+}
+
+/// A mode requested through [`App::request_windowing`].
+#[derive(Clone, Debug)]
+pub enum WindowingRequest {
+    /// Lays out windows and handles input without a graphical display connection.
+    Headless,
+    /// Connects to the supplied graphical session.
+    Windowed(GraphicalEnvironment),
+}
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+bitflags::bitflags! {
+    /// The modes a platform is allowed to start in or switch to.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct WindowingModes: u8 {
+        /// Connected to a Wayland compositor.
+        const WAYLAND = 1 << 0;
+        /// Connected to an X server.
+        const X11 = 1 << 1;
+        /// No graphical display connection.
+        const HEADLESS = 1 << 2;
+    }
+}
+
 /// One immutable observation of a platform window's physical client geometry.
 ///
 /// The client bounds and scale factor belong to the same validated observation. Consumers should
@@ -3555,26 +3692,7 @@ pub fn guess_compositor() -> &'static str {
         return "Headless";
     }
 
-    #[cfg(feature = "wayland")]
-    let wayland_display = std::env::var_os("WAYLAND_DISPLAY");
-    #[cfg(not(feature = "wayland"))]
-    let wayland_display: Option<std::ffi::OsString> = None;
-
-    #[cfg(feature = "x11")]
-    let x11_display = std::env::var_os("DISPLAY");
-    #[cfg(not(feature = "x11"))]
-    let x11_display: Option<std::ffi::OsString> = None;
-
-    let use_wayland = wayland_display.is_some_and(|display| !display.is_empty());
-    let use_x11 = x11_display.is_some_and(|display| !display.is_empty());
-
-    if use_wayland {
-        "Wayland"
-    } else if use_x11 {
-        "X11"
-    } else {
-        "Headless"
-    }
+    GraphicalEnvironment::detect().guess_compositor()
 }
 
 #[doc(hidden)]
@@ -3591,6 +3709,37 @@ pub trait Platform: 'static {
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>);
     fn quit(&self);
+    /// Selects the initial mode before the platform starts its run loop.
+    fn set_initial_windowing(&self, _request: WindowingRequest) {}
+
+    /// Requests a mode change on a capable backend.
+    fn request_windowing(&self, _request: WindowingRequest) -> Task<Result<()>> {
+        Task::ready(Err(anyhow::anyhow!(
+            "this platform cannot switch between headless and windowed modes"
+        )))
+    }
+
+    /// Validates the caller's native custody before applying a mode change.
+    ///
+    /// Deferred backends must retain `validate` with the request and invoke it immediately
+    /// before replacing the connection. A failed validation must preserve the old connection.
+    /// The callback uses existing application ownership and may refuse after initial admission.
+    #[doc(hidden)]
+    fn request_windowing_with_validation(
+        &self,
+        request: WindowingRequest,
+        validate: Box<dyn Fn() -> Result<()>>,
+    ) -> Task<Result<()>> {
+        if let Err(error) = validate() {
+            return Task::ready(Err(error));
+        }
+        self.request_windowing(request)
+    }
+
+    /// Reports the connected graphical environment, without a consumed activation token.
+    fn graphical_environment(&self) -> Option<GraphicalEnvironment> {
+        None
+    }
     /// Accepts a terminal application exit request on the current platform thread.
     ///
     /// The default delegates to [`Platform::quit`]. Backends whose ordinary quit request is
@@ -3604,6 +3753,8 @@ pub trait Platform: 'static {
     /// Requests a restart with the selected executable and ordered native arguments.
     fn restart(&self, binary_path: Option<PathBuf>, arguments: Vec<OsString>);
     fn activate(&self, ignoring_other_apps: bool);
+    /// Selects the application activation policy; has no effect outside macOS.
+    fn set_activation_policy(&self, _policy: ActivationPolicy) {}
     fn hide(&self);
     fn hide_other_apps(&self);
     fn unhide_other_apps(&self);

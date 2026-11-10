@@ -248,7 +248,8 @@ fn wait_for_embedded_submission(
 fn native_embedded_visual_host_updates_awaits_submits_and_releases_exact_owners() {
     discard_stale_quit_messages();
     let (_guard, observation) = begin_native_window_test_observation();
-    let platform = Rc::new(WindowsPlatform::new(false).expect("embedded native Windows backend"));
+    let platform =
+        Rc::new(WindowsPlatform::new_windowed_for_test().expect("embedded native Windows backend"));
     let platform_hwnd = platform.handle;
     let platform_lifetime = Rc::downgrade(&platform);
     let lifecycle_probe = platform.lifecycle_test_probe.clone();
@@ -335,7 +336,9 @@ fn native_embedded_visual_host_updates_awaits_submits_and_releases_exact_owners(
             notifications.set(notifications.get() + 1)
         })
     });
-    platform.begin_vsync_thread();
+    platform
+        .begin_vsync_thread()
+        .expect("native vsync provider should start");
     let initial = wait_for_embedded_submission(&app, &visual, handle, 0, 0);
     let requests_before = frame_requests.get();
     let deferred = Rc::new(Cell::new(0));

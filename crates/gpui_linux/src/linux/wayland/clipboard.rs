@@ -1,19 +1,19 @@
 use std::{
+    cell::{Cell, RefCell},
+    collections::HashMap,
     fs::File,
     io::{ErrorKind, Write},
     os::fd::{AsRawFd, BorrowedFd, OwnedFd},
+    rc::Rc,
 };
 
-use calloop::{LoopHandle, PostAction};
+use calloop::{LoopHandle, PostAction, RegistrationToken};
 use filedescriptor::Pipe;
 use strum::IntoEnumIterator;
 use wayland_client::{Connection, protocol::wl_data_offer::WlDataOffer};
 use wayland_protocols::wp::primary_selection::zv1::client::zwp_primary_selection_offer_v1::ZwpPrimarySelectionOfferV1;
 
-use crate::linux::{
-    WaylandClientStatePtr,
-    platform::{PIPE_READ_TIMEOUT, read_fd_with_timeout},
-};
+use crate::linux::platform::{PIPE_READ_TIMEOUT, read_fd_with_timeout};
 use open_gpui::{ClipboardEntry, ClipboardItem, Image, ImageFormat, hash};
 
 /// Text mime types that we'll offer to other programs.
@@ -26,7 +26,9 @@ pub(crate) const ALLOWED_TEXT_MIME_TYPES: [&str; 2] = ["text/plain;charset=utf-8
 
 pub(crate) struct Clipboard {
     connection: Connection,
-    loop_handle: LoopHandle<'static, WaylandClientStatePtr>,
+    loop_handle: LoopHandle<'static, ()>,
+    transfers: Rc<RefCell<HashMap<u64, RegistrationToken>>>,
+    next_transfer: Cell<u64>,
     self_mime: String,
 
     // Internal clipboard
@@ -139,13 +141,12 @@ impl<T: ReceiveData> DataOffer<T> {
 }
 
 impl Clipboard {
-    pub fn new(
-        connection: Connection,
-        loop_handle: LoopHandle<'static, WaylandClientStatePtr>,
-    ) -> Self {
+    pub fn new(connection: Connection, loop_handle: LoopHandle<'static, ()>) -> Self {
         Self {
             connection,
             loop_handle,
+            transfers: Rc::new(RefCell::new(HashMap::new())),
+            next_transfer: Cell::new(0),
             self_mime: format!("pid/{}", std::process::id()),
 
             contents: None,
@@ -233,31 +234,68 @@ impl Clipboard {
     }
 
     fn send_internal(&self, fd: OwnedFd, bytes: Vec<u8>) {
+        let id = self.next_transfer.get();
+        let Some(next) = id.checked_add(1) else {
+            log::error!("Wayland clipboard transfer identifiers exhausted");
+            return;
+        };
+        self.next_transfer.set(next);
+        let transfers = self.transfers.clone();
+        let file = File::from(fd);
+        // SAFETY: `file` owns a live descriptor for both calls and remains alive until registration.
+        let flags = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_GETFL) };
+        if flags == -1
+            || unsafe { libc::fcntl(file.as_raw_fd(), libc::F_SETFL, flags | libc::O_NONBLOCK) }
+                == -1
+        {
+            log::error!(
+                "failed to configure Wayland clipboard pipe: {}",
+                std::io::Error::last_os_error()
+            );
+            return;
+        }
         let mut written = 0;
-        self.loop_handle
-            .insert_source(
-                calloop::generic::Generic::new(
-                    File::from(fd),
-                    calloop::Interest::WRITE,
-                    calloop::Mode::Level,
-                ),
-                move |_, file, _| {
-                    let file = unsafe { file.get_mut() };
-                    loop {
-                        match file.write(&bytes[written..]) {
-                            Ok(n) if written + n == bytes.len() => {
-                                written += n;
-                                break Ok(PostAction::Remove);
-                            }
-                            Ok(n) => written += n,
-                            Err(err) if err.kind() == ErrorKind::WouldBlock => {
-                                break Ok(PostAction::Continue);
-                            }
-                            Err(_) => break Ok(PostAction::Remove),
+        let result = self.loop_handle.insert_source(
+            calloop::generic::Generic::new(file, calloop::Interest::WRITE, calloop::Mode::Level),
+            move |_, file, _| {
+                let file = unsafe { file.get_mut() };
+                let action = loop {
+                    match file.write(&bytes[written..]) {
+                        Ok(n) if written + n == bytes.len() => {
+                            written += n;
+                            break PostAction::Remove;
                         }
+                        Ok(0) => break PostAction::Remove,
+                        Ok(n) => written += n,
+                        Err(err) if err.kind() == ErrorKind::WouldBlock => {
+                            break PostAction::Continue;
+                        }
+                        Err(_) => break PostAction::Remove,
                     }
-                },
-            )
-            .unwrap();
+                };
+                if matches!(action, PostAction::Remove) {
+                    transfers.borrow_mut().remove(&id);
+                }
+                Ok(action)
+            },
+        );
+        match result {
+            Ok(token) => {
+                self.transfers.borrow_mut().insert(id, token);
+            }
+            Err(error) => log::error!("failed to register Wayland clipboard transfer: {error}"),
+        }
+    }
+
+    pub(crate) fn stop_transfers(&self) {
+        for (_, token) in self.transfers.borrow_mut().drain() {
+            self.loop_handle.remove(token);
+        }
+    }
+}
+
+impl Drop for Clipboard {
+    fn drop(&mut self) {
+        self.stop_transfers();
     }
 }

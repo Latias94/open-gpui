@@ -179,7 +179,8 @@ fn two_hwnd_reentrant_paint_defers_ime_until_native_frame_command() {
     discard_stale_quit_messages();
     let (_observation_guard, observation) = begin_native_window_test_observation();
     let platform = Rc::new(
-        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+        WindowsPlatform::new_windowed_for_test()
+            .expect("non-headless Windows platform should initialize"),
     );
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
     let input = NativePaintInput::default();

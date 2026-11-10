@@ -7,6 +7,7 @@ mod window_observation;
 mod xim_handler;
 
 pub(crate) use client::*;
+pub(crate) use clipboard::wait_for_clipboard_handovers;
 pub(crate) use display::*;
 pub(crate) use event::*;
 pub(crate) use window::*;

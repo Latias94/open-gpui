@@ -14,7 +14,7 @@ use windows::Win32::Graphics::DirectWrite::{
 #[test]
 fn tabs_preserve_native_advances_and_cursor() -> Result<()> {
     let devices = DirectXDevices::new()?;
-    let platform = Arc::new(DirectWriteTextSystem::new(&devices)?);
+    let platform = Arc::new(DirectWriteTextSystem::new(Some(&devices))?);
     let text_system = WindowTextSystem::new(Arc::new(TextSystem::new(platform.clone())));
     for family in ["Consolas", "Segoe UI"] {
         let font = Font {
@@ -139,7 +139,7 @@ fn tabs_preserve_native_advances_and_cursor() -> Result<()> {
 #[test]
 fn tabs_preserve_distinct_font_runs_and_native_hit_positions() -> Result<()> {
     let devices = DirectXDevices::new()?;
-    let platform = Arc::new(DirectWriteTextSystem::new(&devices)?);
+    let platform = Arc::new(DirectWriteTextSystem::new(Some(&devices))?);
     let fonts = [
         Font {
             family: "Consolas".into(),
@@ -275,7 +275,7 @@ fn unicode_paragraph_separators_preserve_shaped_line_cursor() -> Result<()> {
 
 fn check_unicode_separator_cursor(separator: char) -> Result<()> {
     let devices = DirectXDevices::new()?;
-    let platform = Arc::new(DirectWriteTextSystem::new(&devices)?);
+    let platform = Arc::new(DirectWriteTextSystem::new(Some(&devices))?);
     let font = Font {
         family: "Segoe UI".into(),
         ..Default::default()
@@ -384,7 +384,7 @@ fn explicit_disabled_ligature_features_override_native_defaults() -> Result<()> 
 
 fn check_typography(features: FontFeatures, expected: &[u32; 3]) -> Result<()> {
     let devices = DirectXDevices::new()?;
-    let platform = DirectWriteTextSystem::new(&devices)?;
+    let platform = DirectWriteTextSystem::new(Some(&devices))?;
     let typography = unsafe { platform.components.factory.CreateTypography()? };
     apply_font_features(&typography, &features)?;
     assert_eq!(unsafe { typography.GetFontFeatureCount() }, 3);

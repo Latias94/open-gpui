@@ -386,7 +386,9 @@ fn native_composite_focus_keyboard_continuity_and_release() {
     discard_stale_quit_messages();
     let (_guard, observation) = begin_native_window_test_observation();
     let cursor = observation.cursor();
-    let platform = Rc::new(WindowsPlatform::new(false).expect("native composite Windows backend"));
+    let platform = Rc::new(
+        WindowsPlatform::new_windowed_for_test().expect("native composite Windows backend"),
+    );
     let platform_hwnd = platform.handle;
     let platform_lifetime = Rc::downgrade(&platform);
     let lifecycle_probe = platform.lifecycle_test_probe.clone();
@@ -398,7 +400,9 @@ fn native_composite_focus_keyboard_continuity_and_release() {
         cx.set_global(CompositeAppLifetime { _token: token });
         lifetime
     });
-    platform.begin_vsync_thread();
+    platform
+        .begin_vsync_thread()
+        .expect("native vsync provider should start");
     let renders = Rc::new(Cell::new(0));
     let mut expected = CompositeSource {
         role: Role::Menu,

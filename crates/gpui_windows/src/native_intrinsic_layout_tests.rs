@@ -409,7 +409,8 @@ fn close_intrinsic_window(
 fn native_intrinsic_layout_submits_notified_geometry_and_releases_exact_owners() {
     discard_stale_quit_messages();
     let (_guard, observation) = begin_native_window_test_observation();
-    let platform = Rc::new(WindowsPlatform::new(false).expect("native intrinsic platform"));
+    let platform =
+        Rc::new(WindowsPlatform::new_windowed_for_test().expect("native intrinsic platform"));
     let platform_hwnd = platform.handle;
     let platform_lifetime = Rc::downgrade(&platform);
     let lifecycle_probe = platform.lifecycle_test_probe.clone();
@@ -419,7 +420,9 @@ fn native_intrinsic_layout_submits_notified_geometry_and_releases_exact_owners()
         .add_fonts(vec![std::borrow::Cow::Borrowed(IBM_PLEX)])
         .expect("the native intrinsic fixture must install its exact font");
     let global_lifetime = Arc::downgrade(&app.text_system());
-    platform.begin_vsync_thread();
+    platform
+        .begin_vsync_thread()
+        .expect("native vsync provider should start");
     let paints = Rc::new(RefCell::new(Vec::new()));
     let handle = open_intrinsic_window(&mut app, &paints, false);
     let registration = platform

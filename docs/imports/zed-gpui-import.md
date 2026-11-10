@@ -75,3 +75,20 @@ Core consumes it only through `bench-support`; ordinary test support remains ind
 official Criterion 0.8.2 API is retained, including all throughput variants, primary measurement
 selection and secondary reports. This import does not add the retired GPL `perf` tooling crate.
 Executed behavior and platform limits belong to the existing verification record.
+
+## November 10 Windowing Event-Loop Prerequisite
+
+The fixed target selects `zed-industries/calloop` at
+`3759371fee14c40066d64777e2a36b6ffcc22590` through a crates.io patch. Its idle budget,
+reentrant-idle handling and zero-timeout continuation are required for the complete Linux
+windowing successor's apply-between-dispatch behavior. Registry 0.14.4/0.14.5 are not equivalent
+to those two official changes; wake persistence and source removal are already present in
+registry. The Git pin is not a superset of later registry channel/timer corrections.
+
+The root and independently maintained platform-consumer/browser-example roots explicitly
+select the same source, including calloop-wayland-source's calloop types. A dependency library
+cannot export its root patch to downstream Cargo workspaces; ordinary native consumers must
+declare that source selection themselves, as the independent fixture documents. This is an
+upstream dependency prerequisite, not a second scheduler or an engine-specific loop owner.
+Actual runtime scheduling, native switching and remaining source differences retain the
+scope recorded in the existing plan and verification guide.

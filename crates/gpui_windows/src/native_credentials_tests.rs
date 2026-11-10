@@ -580,7 +580,7 @@ fn native_credential_background_io_submits_status_and_retires_owned_task_and_win
     let (_window_observation_guard, observation) = begin_native_window_test_observation();
     let observation_cursor = observation.cursor();
     let platform = Rc::new(
-        WindowsPlatform::new(false)
+        WindowsPlatform::new_windowed_for_test()
             .expect("the native credential DirectWrite and DirectX platform must initialize"),
     );
     let platform_hwnd = platform.handle;
@@ -590,7 +590,9 @@ fn native_credential_background_io_submits_status_and_retires_owned_task_and_win
     let platform_text_lifetime = Arc::downgrade(&platform.text_system());
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
     let app_text_lifetime = Arc::downgrade(&app.text_system());
-    platform.begin_vsync_thread();
+    platform
+        .begin_vsync_thread()
+        .expect("native vsync provider should start");
 
     let paint = Rc::new(RefCell::new(None));
     let completions = Rc::new(Cell::new(0));

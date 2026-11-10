@@ -447,6 +447,7 @@ fn dispatch_frame_request(callbacks: &RefCell<Callbacks>, mut options: RequestFr
 }
 
 pub struct X11WindowState {
+    _connection_lease: Rc<()>,
     pub destroyed: bool,
     client: X11ClientStatePtr,
     executor: ForegroundExecutor,
@@ -1081,6 +1082,7 @@ impl X11WindowState {
         transient_owner: Option<X11TransientOwner>,
         supports_xinput_gestures: bool,
         is_bgr: bool,
+        connection_lease: Rc<()>,
     ) -> anyhow::Result<Self> {
         let x_screen_index = resolve_x11_screen_index(
             params.display_id,
@@ -1466,6 +1468,7 @@ impl X11WindowState {
             let display = Rc::new(X11Display::new(xcb, scale_factor, x_screen_index)?);
 
             Ok(Self {
+                _connection_lease: connection_lease,
                 client,
                 executor,
                 display,
@@ -1627,6 +1630,7 @@ impl X11Window {
         transient_owner: Option<X11TransientOwner>,
         supports_xinput_gestures: bool,
         is_bgr: bool,
+        connection_lease: Rc<()>,
     ) -> anyhow::Result<Self> {
         let ptr = X11WindowStatePtr {
             state: Rc::new(RefCell::new(X11WindowState::new(
@@ -1646,6 +1650,7 @@ impl X11Window {
                 transient_owner,
                 supports_xinput_gestures,
                 is_bgr,
+                connection_lease,
             )?)),
             callbacks: Rc::new(RefCell::new(Callbacks::default())),
             xcb: xcb.clone(),
@@ -2057,7 +2062,13 @@ impl X11WindowStatePtr {
                 return;
             };
             let foreground = state.executor.clone();
-            let timer = client.0.borrow().common.background_executor.timer(delay);
+            let timer = client
+                .0
+                .borrow()
+                .common
+                .borrow()
+                .background_executor
+                .timer(delay);
             (foreground, timer)
         };
         let task = foreground.spawn(async move {
@@ -2082,7 +2093,13 @@ impl X11WindowStatePtr {
                 return;
             };
             let foreground = state.executor.clone();
-            let timer = client.0.borrow().common.background_executor.timer(delay);
+            let timer = client
+                .0
+                .borrow()
+                .common
+                .borrow()
+                .background_executor
+                .timer(delay);
             (foreground, timer)
         };
         foreground

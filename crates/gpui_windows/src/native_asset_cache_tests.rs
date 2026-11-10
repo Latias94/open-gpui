@@ -359,7 +359,8 @@ fn wait_for_native_asset_submission(
 fn native_owning_asset_consumers_share_notify_submit_evict_and_retire() {
     discard_stale_quit_messages();
     let (_guard, observation) = begin_native_window_test_observation();
-    let platform = Rc::new(WindowsPlatform::new(false).expect("native owning asset platform"));
+    let platform =
+        Rc::new(WindowsPlatform::new_windowed_for_test().expect("native owning asset platform"));
     let platform_hwnd = platform.handle;
     let platform_lifetime = Rc::downgrade(&platform);
     let lifecycle_probe = platform.lifecycle_test_probe.clone();
@@ -464,7 +465,9 @@ fn native_owning_asset_consumers_share_notify_submit_evict_and_retire() {
         })
     });
     drop(roots);
-    platform.begin_vsync_thread();
+    platform
+        .begin_vsync_thread()
+        .expect("native vsync provider should start");
     let mut pending =
         handles.map(|handle| wait_for_native_asset_submission(&app, &visual, handle, None, 0));
     for index in 0..handles.len() {

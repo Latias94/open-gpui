@@ -643,7 +643,7 @@ fn native_scene_oklab_pixels_match_independent_gamma_oracle_and_notified_frame()
     let (_observation_guard, observation) = begin_native_window_test_observation();
     let observation_cursor = observation.cursor();
     let platform = Rc::new(
-        WindowsPlatform::new(false)
+        WindowsPlatform::new_windowed_for_test()
             .expect("the real DirectWrite/DirectX Windows platform must initialize"),
     );
     let platform_hwnd = platform.handle;
@@ -655,7 +655,9 @@ fn native_scene_oklab_pixels_match_independent_gamma_oracle_and_notified_frame()
     let text_system = app.text_system();
     let weak_text_system = Arc::downgrade(&text_system);
     drop(text_system);
-    platform.begin_vsync_thread();
+    platform
+        .begin_vsync_thread()
+        .expect("native vsync provider should start");
     let diagnostic_cursor = app.update_for_test(|cx| {
         cx.native_boundary_diagnostics(NativeBoundaryDiagnosticCursor::default())
             .cursor

@@ -71,7 +71,7 @@ struct GPUState {
 }
 
 struct DirectWriteState {
-    gpu_state: GPUState,
+    gpu_state: Option<GPUState>,
     system_font_collection: IDWriteFontCollection1,
     custom_font_collection: IDWriteFontCollection1,
     fonts: Vec<FontInfo>,
@@ -259,7 +259,8 @@ fn readback_color_texture(
 }
 
 impl DirectWriteTextSystem {
-    pub(crate) fn new(directx_devices: &DirectXDevices) -> Result<Self> {
+    /// Creates the text system, able to rasterize color glyphs once it has `directx_devices`.
+    pub(crate) fn new(directx_devices: Option<&DirectXDevices>) -> Result<Self> {
         let factory: IDWriteFactory5 = unsafe { DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)? };
         // The `IDWriteInMemoryFontFileLoader` here is supported starting from
         // Windows 10 Creators Update, which consequently requires the entire
@@ -272,7 +273,7 @@ impl DirectWriteTextSystem {
         let locale = HSTRING::from_wide(&locale);
         let text_renderer = TextRendererWrapper::new();
 
-        let gpu_state = GPUState::new(directx_devices)?;
+        let gpu_state = directx_devices.map(GPUState::new).transpose()?;
 
         let system_subpixel_rendering = get_system_subpixel_rendering();
         let system_ui_font_name = get_system_ui_font_name();
@@ -317,6 +318,11 @@ impl DirectWriteTextSystem {
 
     pub(crate) fn handle_gpu_lost(&self, directx_devices: &DirectXDevices) -> Result<()> {
         self.state.write().handle_gpu_lost(directx_devices)
+    }
+
+    /// Releases GPU resources while retaining installed fonts and shaping caches.
+    pub(crate) fn release_gpu(&self) {
+        self.state.write().gpu_state = None;
     }
 }
 
@@ -1118,6 +1124,10 @@ impl DirectWriteState {
         params: &RenderGlyphParams,
         glyph_bounds: Bounds<DevicePixels>,
     ) -> Result<Vec<u8>> {
+        let gpu_state = self
+            .gpu_state
+            .as_ref()
+            .context("cannot rasterize color glyphs while headless")?;
         let bitmap_size = glyph_bounds.size;
         let subpixel_shift = params
             .subpixel_variant
@@ -1214,7 +1224,7 @@ impl DirectWriteState {
                     };
                     let bounds = bounds(point(color_bounds.left, color_bounds.top), color_size);
                     glyph_layers.push(GlyphLayerTexture::new(
-                        &self.gpu_state,
+                        gpu_state,
                         run_color,
                         bounds,
                         &alpha_data,
@@ -1230,7 +1240,6 @@ impl DirectWriteState {
             }
         }
 
-        let gpu_state = &self.gpu_state;
         let params_buffer = {
             let desc = D3D11_BUFFER_DESC {
                 ByteWidth: std::mem::size_of::<GlyphLayerTextureParams>() as u32,
@@ -1472,7 +1481,7 @@ impl DirectWriteState {
         try_to_recover_from_device_lost(|| {
             GPUState::new(directx_devices).context("Recreating GPU state for DirectWrite")
         })
-        .map(|gpu_state| self.gpu_state = gpu_state)
+        .map(|gpu_state| self.gpu_state = Some(gpu_state))
     }
 }
 

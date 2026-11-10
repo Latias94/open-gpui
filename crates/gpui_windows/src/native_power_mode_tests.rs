@@ -168,7 +168,7 @@ fn native_power_mode_recovers_after_initial_status_query_failure() {
 fn native_power_mode_initializes_and_delivers_busy_app_notifications_in_order() {
     discard_stale_quit_messages();
     assert_eq!(
-        WindowsPlatformState::new(None).power_mode.get(),
+        WindowsPlatformState::new().power_mode.get(),
         PowerMode::Unknown
     );
     let platform = Rc::new(WindowsPlatform::new(true).expect("native power-mode backend"));
@@ -825,7 +825,8 @@ impl NativePowerModeWindow {
 #[test]
 fn native_low_power_configuration_defers_callbacks_and_recovers_submitted_source() {
     discard_stale_quit_messages();
-    let platform = Rc::new(WindowsPlatform::new(false).expect("native low-power frame backend"));
+    let platform =
+        Rc::new(WindowsPlatform::new_windowed_for_test().expect("native low-power frame backend"));
     let hwnd = platform.handle;
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
     pump_messages_until_with_delay(

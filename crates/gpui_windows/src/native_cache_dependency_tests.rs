@@ -126,12 +126,15 @@ fn native_cached_deferred_canvas_keeps_model_subscription_after_replay() {
     discard_stale_quit_messages();
     let (_observation_guard, observation) = begin_native_window_test_observation();
     let platform = Rc::new(
-        WindowsPlatform::new(false).expect("non-headless Windows platform should initialize"),
+        WindowsPlatform::new_windowed_for_test()
+            .expect("non-headless Windows platform should initialize"),
     );
     let platform_hwnd = platform.handle;
     let lifecycle_probe = platform.lifecycle_test_probe.clone();
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
-    platform.begin_vsync_thread();
+    platform
+        .begin_vsync_thread()
+        .expect("native vsync provider should start");
 
     for deferred_parent in [false, true] {
         for deferred_child in [false, true] {

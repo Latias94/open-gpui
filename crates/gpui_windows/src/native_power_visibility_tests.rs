@@ -359,7 +359,8 @@ fn native_visibility_tracks_presentation_and_retires_exact_hwnd_callbacks() {
     discard_stale_quit_messages();
     let (_observation_guard, observation) = begin_native_window_test_observation();
     let platform = Rc::new(
-        WindowsPlatform::new(false).expect("the native visibility backend must initialize"),
+        WindowsPlatform::new_windowed_for_test()
+            .expect("the native visibility backend must initialize"),
     );
     let platform_hwnd = platform.handle;
     let platform_lifetime = Rc::downgrade(&platform);
@@ -436,7 +437,9 @@ fn native_visibility_tracks_presentation_and_retires_exact_hwnd_callbacks() {
         WM_WINDOWPOSCHANGED,
         0,
     );
-    platform.begin_vsync_thread();
+    platform
+        .begin_vsync_thread()
+        .expect("native vsync provider should start");
 
     pump_messages_until("native initial visibility", || events.borrow().len() == 1);
     let initial_submission = wait_for_native_visibility_submission(&mut app, handle, 0);

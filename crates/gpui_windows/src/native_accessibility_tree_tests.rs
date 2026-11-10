@@ -263,13 +263,16 @@ fn native_synthetic_a11y_activation_snapshot_update_and_release() {
     discard_stale_quit_messages();
     let (_guard, observation) = begin_native_window_test_observation();
     let cursor = observation.cursor();
-    let platform = Rc::new(WindowsPlatform::new(false).expect("native a11y Windows backend"));
+    let platform =
+        Rc::new(WindowsPlatform::new_windowed_for_test().expect("native a11y Windows backend"));
     let platform_hwnd = platform.handle;
     let platform_lifetime = Rc::downgrade(&platform);
     let lifecycle_probe = platform.lifecycle_test_probe.clone();
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
     let text_system_lifetime = Arc::downgrade(&app.text_system());
-    platform.begin_vsync_thread();
+    platform
+        .begin_vsync_thread()
+        .expect("native vsync provider should start");
     let probe = Rc::new(NativeA11yProbe::default());
     let handle = app
         .update_for_test(|cx| {

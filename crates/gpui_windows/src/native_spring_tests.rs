@@ -636,13 +636,16 @@ fn spring_restore_active_trajectory(
 fn native_springs_retarget_playback_reduce_motion_and_retire_active_frames() {
     discard_stale_quit_messages();
     let (_observation_guard, observation) = begin_native_window_test_observation();
-    let platform = Rc::new(WindowsPlatform::new(false).expect("native Spring backend"));
+    let platform =
+        Rc::new(WindowsPlatform::new_windowed_for_test().expect("native Spring backend"));
     let platform_hwnd = platform.handle;
     let platform_lifetime = Rc::downgrade(&platform);
     let lifecycle_probe = platform.lifecycle_test_probe.clone();
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
     let mut weak_app = app.update_for_test(|cx| cx.to_async());
-    platform.begin_vsync_thread();
+    platform
+        .begin_vsync_thread()
+        .expect("native vsync provider should start");
     let consumer = NativeSpringWindow::open(&mut app, &platform);
     let root_lifetime = consumer.root.clone();
     let paint_lifetime = Rc::downgrade(&consumer.paint);

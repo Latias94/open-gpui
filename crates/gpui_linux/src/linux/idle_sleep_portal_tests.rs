@@ -1,10 +1,9 @@
 //! Protocol tests require Linux, a windowing feature, and the `dbus-run-session` and
 //! `dbus-daemon` executables (provided by the `dbus` package on Debian/Ubuntu).
 //! Each test reexecutes itself on a private session bus; no desktop portal is needed.
-//! HeadlessClient supplies the real Linux executor; acquisition uses the portal helpers.
+//! LinuxPlatform supplies the real Linux executor; acquisition uses the portal helpers.
 
 use super::{LinuxPlatform, await_idle_sleep_prevention, inhibit_idle_sleep};
-use crate::linux::HeadlessClient;
 use anyhow::Result;
 use futures::{
     channel::oneshot,
@@ -370,9 +369,7 @@ fn begin_inhibition(
 fn normal_drop_closes_request_once() {
     private_session("normal_drop_closes_request_once", async {
         let portal = Portal::new().await;
-        let platform = LinuxPlatform {
-            inner: HeadlessClient::new(),
-        };
+        let platform = LinuxPlatform::new(open_gpui::WindowingModes::HEADLESS);
         let executor = platform.background_executor();
         let (delivery, guard_rx) = begin_inhibition(&executor);
         let request = portal.pending().await;
@@ -397,9 +394,7 @@ fn normal_drop_closes_request_once() {
 fn cancelled_receiver_closes_late_success_once() {
     private_session("cancelled_receiver_closes_late_success_once", async {
         let portal = Portal::new().await;
-        let platform = LinuxPlatform {
-            inner: HeadlessClient::new(),
-        };
+        let platform = LinuxPlatform::new(open_gpui::WindowingModes::HEADLESS);
         let executor = platform.background_executor();
         let (delivery, guard_rx) = begin_inhibition(&executor);
         let mut waiting = Box::pin(await_idle_sleep_prevention(guard_rx, &executor));
@@ -417,9 +412,7 @@ fn cancelled_receiver_closes_late_success_once() {
 fn timed_out_receiver_closes_late_success_once() {
     private_session("timed_out_receiver_closes_late_success_once", async {
         let portal = Portal::new().await;
-        let platform = LinuxPlatform {
-            inner: HeadlessClient::new(),
-        };
+        let platform = LinuxPlatform::new(open_gpui::WindowingModes::HEADLESS);
         let executor = platform.background_executor();
         let cx = TestAppContext::single();
         let (delivery, guard_rx) = begin_inhibition(&executor);
@@ -454,9 +447,7 @@ fn timed_out_receiver_closes_late_success_once() {
 fn guard_closes_request_after_platform_drop() {
     private_session("guard_closes_request_after_platform_drop", async {
         let portal = Portal::new().await;
-        let platform = LinuxPlatform {
-            inner: HeadlessClient::new(),
-        };
+        let platform = LinuxPlatform::new(open_gpui::WindowingModes::HEADLESS);
         let executor = platform.background_executor();
         let (delivery, guard_rx) = begin_inhibition(&executor);
         let request = portal.pending().await;

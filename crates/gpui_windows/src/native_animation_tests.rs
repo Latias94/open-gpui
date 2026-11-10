@@ -469,13 +469,16 @@ fn animation_phase_distance(first: f32, second: f32) -> f32 {
 fn native_generic_animations_progress_reduce_restore_and_retire_pending_frames() {
     discard_stale_quit_messages();
     let (_observation_guard, observation) = begin_native_window_test_observation();
-    let platform = Rc::new(WindowsPlatform::new(false).expect("native animation backend"));
+    let platform =
+        Rc::new(WindowsPlatform::new_windowed_for_test().expect("native animation backend"));
     let platform_hwnd = platform.handle;
     let platform_lifetime = Rc::downgrade(&platform);
     let lifecycle_probe = platform.lifecycle_test_probe.clone();
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
     let mut weak_app = app.update_for_test(|cx| cx.to_async());
-    platform.begin_vsync_thread();
+    platform
+        .begin_vsync_thread()
+        .expect("native vsync provider should start");
     let consumer = NativeAnimationWindow::open(&mut app, &platform);
     let root_lifetime = consumer.root.clone();
     let paint_lifetimes = consumer.paints.each_ref().map(Rc::downgrade);

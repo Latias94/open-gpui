@@ -116,7 +116,8 @@ fn settled_native_terminal_accepts_queued_closed_without_error(cx: &mut TestAppC
         .get(&dependent.window_id())
         .expect("the held callback must retain the exact retirement barrier")
         .presentation_shutdown
-        .clone();
+        .clone()
+        .expect("the dispatched retirement must retain its prepared presentation authority");
     let ticket = shutdown.ticket().clone();
 
     cx.app.settle_native_window_terminal(dependent.window_id());
@@ -202,7 +203,8 @@ fn native_terminal_before_quiescence_is_not_a_successful_settlement(cx: &mut Tes
         .get(&window.window_id())
         .expect("rejected quiescence must retain its retirement authority")
         .presentation_shutdown
-        .clone();
+        .clone()
+        .expect("rejected quiescence must retain its prepared presentation authority");
     assert!(!shutdown.snapshot().quiesced());
 
     cx.app.settle_native_window_terminal(window.window_id());

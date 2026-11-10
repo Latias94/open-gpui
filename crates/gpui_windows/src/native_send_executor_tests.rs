@@ -626,7 +626,8 @@ fn assert_send_pixel(capture: &WindowFrameCapture, position: Point<Pixels>, colo
 fn native_send_foreground_app_view_repolls_cancels_submits_and_releases() {
     discard_stale_quit_messages();
     let (_observation_guard, observation) = begin_native_window_test_observation();
-    let platform = Rc::new(WindowsPlatform::new(false).expect("native send-executor backend"));
+    let platform =
+        Rc::new(WindowsPlatform::new_windowed_for_test().expect("native send-executor backend"));
     let platform_hwnd = platform.handle;
     let platform_lifetime = Rc::downgrade(&platform);
     let inner_lifetime = Rc::downgrade(&platform.inner);
@@ -635,7 +636,9 @@ fn native_send_foreground_app_view_repolls_cancels_submits_and_releases() {
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
     let mut weak_app = app.update_for_test(|cx| cx.to_async());
     let executor = app.update_for_test(|cx| cx.foreground_executor().to_send());
-    platform.begin_vsync_thread();
+    platform
+        .begin_vsync_thread()
+        .expect("native vsync provider should start");
     let consumer = NativeSendWindow::open(&mut app, &platform);
     let handle = consumer.handle;
     let root_lifetime = consumer.root.clone();

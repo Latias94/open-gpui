@@ -1977,7 +1977,7 @@ impl WindowsWindowInner {
                 unsafe { MonitorFromRect(suggested_rect, MONITOR_DEFAULTTONEAREST) };
             if suggested_monitor.is_invalid()
                 || retained
-                    .validated_native_display(suggested_monitor)
+                    .and_then(|retained| retained.validated_native_display(suggested_monitor))
                     .is_none_or(|display| display.observation().scale_factor() != new_scale_factor)
             {
                 coordinator.request_display_topology_refresh();

@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- `Application::with_windowing`, `App::request_windowing` and `GraphicalEnvironment` retain an application while a capable native backend switches between headless and graphical operation. Linux exposes explicit allowed `WindowingModes`; application `ActivationPolicy` controls macOS Dock/menu participation separately from each window's activation policy.
+
 - `App::set_window_appearance` overrides macOS native window chrome with any `WindowAppearance`; passing `None` restores system following. Other platforms retain the default no-op through `Platform::set_window_appearance`.
 
 - `ActivityGuard` owns scoped operating-system activity until drop. `App::prevent_idle_sleep` acquires native sleep inhibition; `BackgroundExecutor::prevent_app_nap` separately prevents App Nap throttling on Apple platforms and is a no-op elsewhere. Test contexts expose acquisition counts, delay and error controls.
@@ -28,6 +30,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Optional native debug hot reload follows the official GPUI/Subsecond 0.7.10 mechanism: build/process-matched patches, foreground application, window refresh, and typed, stateless and stored erased View render boundaries. Run with `dx serve --hot-patch`; compatible render-body edits preserve existing model state. Release/WebAssembly transport exclusion, failed loads, required restarts and disconnects remain explicit. The independently locked native consumer provides an actual edit/build/apply and Submitted-scene pixel acceptance procedure, including the required upstream dx x64 jump-stub backport for the qualified Windows tool.
 
 ### Breaking Changes and Migration Notes
+
+- Native Windows graphical initialization occurs before the launch callback rather than at platform construction. `WindowsPlatform::new(false)` starts without a GPU; enter the launch callback or complete `Platform::request_windowing` before opening graphical windows. Fixed-headless constructors remain unable to attach later. Windowing changes require complete window and native-resource retirement. Deferred platform implementations preserve the caller's validation through physical connection replacement.
 
 - Custom `Platform` implementations must provide `prevent_idle_sleep(&str) -> Task<Result<ActivityGuard>>`. Await the acquisition and retain its guard for the operation; dropping an unpolled ready acquisition also releases its activity. Unsupported implementations should return an explicit error. `PlatformDispatcher::prevent_app_nap` has a default no-op.
 
@@ -177,6 +181,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - `open-gpui-devtools` now projects Table behavior through a pre-capture allowlist with session-scoped opaque table, column, and row ordinals plus derived cell ids; raw ids, values, diagnostic source identities, selectors, and deterministic hashes are excluded from live, history, diff, Inspector, export, artifact, report, and Gallery fixture output, while sanitized diagnostic kinds and counts remain observable.
 
 ### Fixed
+
+- Window closure retains its native owner when presentation-shutdown preparation panics, retries through the existing retirement queue and keeps windowing changes blocked until exact native completion. Linux mode changes also discard stale Wayland drag reads, release queued foreground captures and stop owned timers without canceling a standalone executor returned before application launch.
 
 - Debug source labels respond to the host's secondary modifier even with sibling keyboard focus, update their underline when the pointer crosses the displayed text bounds, and preserve ordinary clicks when the modifier is absent.
 - Windows credential reads, writes and deletion run on the existing background executor. Reads accept null account/blob fields and free native storage before propagating conversion errors. Linux uses the fixed upstream oo7 prompt-stream correction so a stream ending before Completed returns an I/O error instead of panicking.

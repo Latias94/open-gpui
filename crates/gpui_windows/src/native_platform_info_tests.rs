@@ -559,7 +559,8 @@ fn assert_native_platform_pixels(capture: &WindowFrameCapture, paint: &Paint) {
 fn native_runtime_os_loads_routes_labels_text_and_exact_window_retirement() {
     discard_stale_quit_messages();
     let (_guard, observation) = begin_native_window_test_observation();
-    let platform = Rc::new(WindowsPlatform::new(false).expect("native runtime-OS platform"));
+    let platform =
+        Rc::new(WindowsPlatform::new_windowed_for_test().expect("native runtime-OS platform"));
     assert_eq!(platform.platform_info(), WINDOWS_INFO);
     let platform_hwnd = platform.handle;
     let platform_lifetime = Rc::downgrade(&platform);
@@ -601,7 +602,9 @@ fn native_runtime_os_loads_routes_labels_text_and_exact_window_retirement() {
             KeyBinding::load("f8", Box::new(Contextual), Some(predicate), true, None, app).unwrap();
         app.bind_keys([contextual]);
     });
-    platform.begin_vsync_thread();
+    platform
+        .begin_vsync_thread()
+        .expect("native vsync provider should start");
     let consumer = NativePlatformWindow::open(&mut app, &platform);
     let registration = consumer.registration;
     let hwnd = registration.as_raw();

@@ -21,6 +21,7 @@ use open_gpui::{
 };
 
 struct HeadlessWindowState {
+    _lease: Rc<()>,
     bounds: Bounds<Pixels>,
     window_bounds: WindowBounds,
     input_callback: PlatformInputCallbackSlot,
@@ -71,9 +72,10 @@ impl raw_window_handle::HasDisplayHandle for HeadlessWindow {
 }
 
 impl HeadlessWindow {
-    pub(crate) fn new(params: WindowParams) -> Self {
+    pub(crate) fn new(params: WindowParams, lease: Rc<()>) -> Self {
         let window_bounds = params.window_bounds;
         Self(Rc::new(RefCell::new(HeadlessWindowState {
+            _lease: lease,
             bounds: window_bounds.get_bounds(),
             window_bounds,
             input_callback: PlatformInputCallbackSlot::default(),
@@ -334,24 +336,27 @@ mod display_tests {
     #[test]
     fn headless_window_keeps_placement_without_a_physical_display() {
         let bounds = Bounds::new(point(px(-120.0), px(30.0)), size(px(960.0), px(720.0)));
-        let window = HeadlessWindow::new(WindowParams {
-            window_bounds: WindowBounds::Maximized(bounds),
-            bounds,
-            titlebar: None,
-            kind: WindowKind::Normal,
-            is_movable: true,
-            is_resizable: true,
-            is_minimizable: true,
-            accepts_pointer_input: true,
-            focus_on_appearing: false,
-            activation_policy: WindowActivationPolicy::default(),
-            transient_for: None,
-            show: false,
-            provisional_session: None,
-            icon: None,
-            display_id: None,
-            window_min_size: None,
-        });
+        let window = HeadlessWindow::new(
+            WindowParams {
+                window_bounds: WindowBounds::Maximized(bounds),
+                bounds,
+                titlebar: None,
+                kind: WindowKind::Normal,
+                is_movable: true,
+                is_resizable: true,
+                is_minimizable: true,
+                accepts_pointer_input: true,
+                focus_on_appearing: false,
+                activation_policy: WindowActivationPolicy::default(),
+                transient_for: None,
+                show: false,
+                provisional_session: None,
+                icon: None,
+                display_id: None,
+                window_min_size: None,
+            },
+            Rc::new(()),
+        );
 
         assert!(window.display().is_none());
         assert_eq!(window.platform_facts().display_id, None);

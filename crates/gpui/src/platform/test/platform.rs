@@ -31,6 +31,10 @@ use std::{
     time::Duration,
 };
 
+#[cfg(test)]
+pub(crate) type TestWindowingRequestHandler =
+    Rc<dyn Fn(crate::WindowingRequest, Box<dyn Fn() -> Result<()>>) -> Task<Result<()>>>;
+
 /// TestPlatform implements the Platform trait for use in tests.
 pub(crate) struct TestPlatform {
     pub(crate) platform_info: Cell<crate::PlatformInfo>,
@@ -77,6 +81,10 @@ pub(crate) struct TestPlatform {
     pub expect_restart: RefCell<Option<oneshot::Sender<(Option<PathBuf>, Vec<OsString>)>>>,
     #[cfg(test)]
     pub(crate) window_appearance_requests: RefCell<Vec<Option<WindowAppearance>>>,
+    #[cfg(test)]
+    pub(crate) initial_windowing_requests: RefCell<Vec<crate::WindowingRequest>>,
+    #[cfg(test)]
+    pub(crate) windowing_request_handler: RefCell<Option<TestWindowingRequestHandler>>,
     idle_sleep_prevention_count: Arc<AtomicUsize>,
     idle_sleep_prevention_delay: Cell<Duration>,
     idle_sleep_prevention_fails: Cell<bool>,
@@ -282,6 +290,10 @@ impl TestPlatform {
             expect_restart: Default::default(),
             #[cfg(test)]
             window_appearance_requests: Default::default(),
+            #[cfg(test)]
+            initial_windowing_requests: Default::default(),
+            #[cfg(test)]
+            windowing_request_handler: Default::default(),
             idle_sleep_prevention_count: Arc::new(AtomicUsize::new(0)),
             idle_sleep_prevention_delay: Cell::new(Duration::ZERO),
             idle_sleep_prevention_fails: Cell::new(false),
@@ -994,6 +1006,27 @@ impl Platform for TestPlatform {
                 delay.await;
                 acquire()
             })
+        }
+    }
+
+    #[cfg(test)]
+    fn set_initial_windowing(&self, request: crate::WindowingRequest) {
+        self.initial_windowing_requests.borrow_mut().push(request);
+    }
+
+    #[cfg(test)]
+    fn request_windowing_with_validation(
+        &self,
+        request: crate::WindowingRequest,
+        validate: Box<dyn Fn() -> Result<()>>,
+    ) -> Task<Result<()>> {
+        if let Err(error) = validate() {
+            return Task::ready(Err(error));
+        }
+        let handler = self.windowing_request_handler.borrow().clone();
+        match handler {
+            Some(handler) => handler(request, validate),
+            None => self.request_windowing(request),
         }
     }
 

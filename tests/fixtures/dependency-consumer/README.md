@@ -1686,3 +1686,93 @@ host's normal native platform initialization prerequisites; it changes no persis
 The root `test-support` consumer separately checks unchanged appearance observers and rendered
 frame revisions. macOS override/clear behavior, system tracking and native titlebars require the
 separate Mac backend gates; neither this Windows control nor the benchmark platform qualifies them.
+
+## Startup and live windowing consumer
+
+Linux windowing uses the fixed upstream calloop idle-dispatch corrections. Cargo does not
+inherit dependency workspaces' root patches, so a standalone consumer that includes the native
+platform must select the same source in its own workspace root:
+
+```toml
+[patch.crates-io]
+calloop = { git = "https://github.com/zed-industries/calloop", rev = "3759371fee14c40066d64777e2a36b6ffcc22590" }
+```
+
+This fixture declares that patch and independently locks the Git revision. The direct Linux
+dependency and calloop-wayland-source must resolve to the same calloop source; matching
+package names or compatible version numbers do not make their Rust types interchangeable.
+The ordinary and browser example roots each declare their own patch.
+
+The `windowing` target consumes `WindowingRequest`, the host's `GraphicalEnvironment`, application
+`ActivationPolicy`, `Application::with_windowing`, and the App/Platform mode-request and environment
+interfaces. Linux and FreeBSD also consume `WindowingModes` and the public
+`open_gpui_platform::linux(allowed_modes)` factory. These APIs come from official Zed
+[`f37989fbdf840b308892af66516c2b9c3ef3853a`](https://github.com/zed-industries/zed/commit/f37989fbdf840b308892af66516c2b9c3ef3853a),
+as present at fixed target
+[`635026fabc38440fce5e1767d125026a17b12012`](https://github.com/zed-industries/zed/tree/635026fabc38440fce5e1767d125026a17b12012).
+The port also includes the launch/display-refresh integration from
+[`f495dd0f77b69e287ed72c1168dc02965f08be7d`](https://github.com/zed-industries/zed/commit/f495dd0f77b69e287ed72c1168dc02965f08be7d);
+its exact forwarding, refresh and native-retirement coverage belongs to the Core/backend gates.
+Application policy remains distinct from the existing per-window `WindowActivationPolicy`.
+
+Feature-free cases check the ordinary public signatures and graphical environment behavior.
+Linux/FreeBSD inspect child `Command` overrides for replacement, removal, repeated application,
+unrelated-variable preservation and the child's unchanged activation token. No command is started
+and no process-global environment variable is written. Windows detects the actual process session
+and checks that applying a different session to a child command leaves its environment unchanged.
+An actual `current_platform(true)` on Windows repeatedly refuses both live requests, including
+after startup-mode and activation-policy calls, while retaining its text system and reporting no
+graphical connection. It never launches an App or enters the native loop on a test-runner thread.
+
+With `bench-support`, one ordinary App runs on the existing returning benchmark platform with
+`NoopTextSystem` and no renderer. It consumes actual unsupported Tasks from both App and Platform,
+changes and reads retained entity state after failures, and opens/closes/reopens the same retained
+root three times. Both requests fail while each Window is open; after closure and dispatcher
+drain, requests reach the platform's unsupported default again. Initial-mode and activation-policy
+setters retain their documented no-op behavior on this platform. These are failure/recovery and
+consumer-lifetime controls; they do not simulate a successful display-connection switch.
+
+Run the independent configurations serially with `CARGO_BUILD_JOBS=1`, the existing lockfile and
+the shared build directory:
+
+```text
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --test windowing --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --features bench-support --test windowing --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+The companion crate-external target checks the same public environment contract and executes
+default unsupported Tasks and open-window refusal with a retained root through `TestAppContext`:
+
+```text
+cargo nextest run -p open-gpui --features test-support --test windowing --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+The ordinary `toggle_headless` example is registered in `open-gpui-platform` and requires neither
+`test-support` nor `bench-support`. Run it from a terminal on Windows/macOS, or enable the desired
+compiled display backends on Linux/FreeBSD:
+
+```text
+cargo run -p open-gpui-platform --example toggle_headless
+cargo run -p open-gpui-platform --example toggle_headless --features wayland,x11
+```
+
+It starts headless through the switchable application factory, retains Todo entities, and uses the
+same App for `create`, `ls`, `open`, `close`, another `create`, and `open` again. The printed entity
+IDs and addresses let a human inspect retained state. `close` waits for the exact window's native
+terminal notification before requesting headless mode; a bounded timeout reports pending
+retirement without bypassing readiness. Closing via the window manager follows the same tracked
+retirement path. Backend errors are reported while the command loop stays available. `quit` and
+stdin EOF request ordinary graceful shutdown. Linux/FreeBSD `open` accepts explicit `DISPLAY`,
+`WAYLAND_DISPLAY`, `XDG_RUNTIME_DIR` and `XDG_ACTIVATION_TOKEN` assignments; Windows accepts
+`SESSION=id`. Plain `open` detects the process environment. Use `close` before choosing another
+connection. The ordinary `headless()` facade stays fixed headless and cannot attach later.
+
+The [windowing qualification record](../../../docs/verification.md#startup-and-live-windowing-lifecycle)
+distinguishes executed results from these instructions. Native Windows controls require normal
+platform initialization; the example additionally needs an interactive graphical
+session, fonts and graphics support, and Linux/FreeBSD require an enabled reachable display
+backend. macOS must run the example on the actual main thread. Benchmark `run_embedded` does not
+establish a returning native engine loop, an external Host/View adapter, shared GPU ownership,
+native rendering/input, successful detach/reattach, compositor presentation or performance.
+Backend-specific session refusal, display freshness, activation, GPU retirement and switching
+qualification retain their separate native gates.

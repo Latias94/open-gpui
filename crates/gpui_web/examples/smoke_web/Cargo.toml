@@ -1,5 +1,8 @@
 [workspace]
 
+[patch.crates-io]
+calloop = { git = "https://github.com/zed-industries/calloop", rev = "3759371fee14c40066d64777e2a36b6ffcc22590" }
+
 [package]
 name = "smoke_web"
 version = "0.1.0"

@@ -100,7 +100,7 @@ fn native_display_observation_rereads_without_windows_and_retires_exact_window_c
     discard_stale_quit_messages();
     let (_observation_guard, observation) = begin_native_window_test_observation();
     let platform = Rc::new(
-        WindowsPlatform::new(false)
+        WindowsPlatform::new_windowed_for_test()
             .expect("the native display-observation backend must initialize"),
     );
     let platform_hwnd = platform.handle;
@@ -198,7 +198,9 @@ fn native_display_observation_rereads_without_windows_and_retires_exact_window_c
             .expect("the display window must own a text cache");
         (root.downgrade(), window_text_lifetime)
     });
-    platform.begin_vsync_thread();
+    platform
+        .begin_vsync_thread()
+        .expect("native vsync provider should start");
     wait_for_display_window_submission(&mut app, handle);
     pump_messages_until_idle("display consumer initial native follow-up");
     let original_binding = native_window.state.display.get();

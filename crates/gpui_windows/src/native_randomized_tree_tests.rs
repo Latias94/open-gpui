@@ -473,13 +473,15 @@ fn synthetic_tree_button(
 fn native_randomized_tree_cached_color_hide_restore_click_and_retire() {
     discard_stale_quit_messages();
     let (_observation_guard, observation) = begin_native_window_test_observation();
-    let platform = Rc::new(WindowsPlatform::new(false).expect("native tree backend"));
+    let platform = Rc::new(WindowsPlatform::new_windowed_for_test().expect("native tree backend"));
     let platform_hwnd = platform.handle;
     let platform_lifetime = Rc::downgrade(&platform);
     let lifecycle_probe = platform.lifecycle_test_probe.clone();
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
     let mut weak_app = app.update_for_test(|cx| cx.to_async());
-    platform.begin_vsync_thread();
+    platform
+        .begin_vsync_thread()
+        .expect("native vsync provider should start");
     let presses = Rc::new(Cell::new(0));
     let clicks = Rc::new(Cell::new(0));
     let counters = Rc::new(NativeRandomizedTreeCounters::default());

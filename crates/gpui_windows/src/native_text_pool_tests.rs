@@ -55,7 +55,8 @@ fn native_app_reconstruction_releases_wrapped_text_system_and_direct_write() {
     for _ in 0..3 {
         discard_stale_quit_messages();
         let platform = Rc::new(
-            WindowsPlatform::new(false).expect("the native text platform should initialize"),
+            WindowsPlatform::new_windowed_for_test()
+                .expect("the native text platform should initialize"),
         );
         let platform_hwnd = platform.handle;
         let lifecycle_probe = platform.lifecycle_test_probe.clone();
@@ -91,7 +92,9 @@ fn native_app_reconstruction_releases_wrapped_text_system_and_direct_write() {
             .last_created_hwnd()
             .expect("the native wrapped text window must own an HWND");
         pump_messages_until_idle("native wrapped text initial presentation");
-        platform.begin_vsync_thread();
+        platform
+            .begin_vsync_thread()
+            .expect("native vsync provider should start");
         wait_for_native_text_submission(&mut app, window);
         let (window_text, retained_line) = app.update_for_test(|cx| {
             window

@@ -23,6 +23,12 @@ path = "examples/native_window_appearance.rs"
 harness = false
 test = false
 
+[[example]]
+name = "native_windowing"
+path = "examples/native_windowing.rs"
+harness = false
+test = false
+
 [features]
 default = ["open_gpui/default"]
 test-support = ["open_gpui/test-support"]
@@ -62,7 +68,7 @@ open_gpui_media.workspace = true
 open_gpui_scheduler.workspace = true
 objc.workspace = true
 objc2.workspace = true
-objc2-app-kit = { workspace = true, features = ["NSAppearance", "NSPasteboard"] }
+objc2-app-kit = { workspace = true, features = ["NSAppearance", "NSPasteboard", "NSRunningApplication"] }
 objc2-core-foundation.workspace = true
 objc2-core-video.workspace = true
 objc2-foundation.workspace = true

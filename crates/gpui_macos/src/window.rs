@@ -131,6 +131,7 @@ pub(crate) struct MacWindowRegistry(Arc<Mutex<MacWindowRegistryState>>);
 #[derive(Default)]
 struct MacWindowRegistryState {
     windows: HashMap<WindowId, Weak<RegisteredMacWindow>>,
+    native_resources: Vec<Weak<()>>,
 }
 
 struct RegisteredMacWindow {
@@ -164,6 +165,30 @@ enum MacTransientOwnerResolution {
 }
 
 impl MacWindowRegistry {
+    fn retain_native_resources(&self) -> Arc<()> {
+        let resources = Arc::new(());
+        let mut registry = self.0.lock();
+        registry
+            .native_resources
+            .retain(|entry| entry.strong_count() > 0);
+        registry.native_resources.push(Arc::downgrade(&resources));
+        resources
+    }
+
+    pub(crate) fn ensure_windowing_can_change(&self) -> Result<()> {
+        let mut registry = self.0.try_lock().ok_or_else(|| {
+            anyhow!("macOS window registry is busy while changing windowing mode")
+        })?;
+        registry
+            .native_resources
+            .retain(|entry| entry.strong_count() > 0);
+        anyhow::ensure!(
+            registry.native_resources.is_empty(),
+            "cannot change macOS windowing mode while native window resources are retained"
+        );
+        Ok(())
+    }
+
     fn observe_transient_owner(&self, owner: AnyWindowHandle) -> MacTransientOwnerResolution {
         let entry = {
             let Some(mut registry) = self.0.try_lock() else {
@@ -1661,6 +1686,7 @@ struct MacWindowState {
     transient_ordering_in_progress: bool,
     attempted_window_draw: bool,
     interaction_quiesced: Arc<AtomicBool>,
+    _native_resources: Arc<()>,
 }
 
 impl MacWindowState {
@@ -2909,6 +2935,7 @@ impl MacWindow {
             ));
         }
 
+        let native_resources = window_registry.retain_native_resources();
         unsafe {
             let creation = MacWindowCreationProjection::new(
                 window_bounds,
@@ -3112,6 +3139,7 @@ impl MacWindow {
                     transient_ordering_in_progress: false,
                     attempted_window_draw: false,
                     interaction_quiesced: Arc::new(AtomicBool::new(false)),
+                    _native_resources: native_resources,
                 })),
                 presentation_shutdown_authority,
                 false,

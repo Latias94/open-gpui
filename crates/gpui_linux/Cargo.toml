@@ -46,7 +46,6 @@ x11 = [
     "x11rb",
     "xkbcommon",
     "xim",
-    "x11-clipboard",
     "filedescriptor",
     "open",
     "scap?/x11",
@@ -144,4 +143,3 @@ xim = { version = "=0.5.0", features = [
     "x11rb-xcb",
     "x11rb-client",
 ], optional = true }
-x11-clipboard = { version = "0.9.3", optional = true }

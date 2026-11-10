@@ -260,7 +260,7 @@ enum NativeWindowTerminalObservation {
 
 struct NativeWindowRetirementBarrier {
     state: NativeWindowRetirementState,
-    presentation_shutdown: PreparedPlatformPresentationShutdown,
+    presentation_shutdown: Option<PreparedPlatformPresentationShutdown>,
     pending_retirement: Option<NativeWindowRetirement>,
 }
 
@@ -1391,7 +1391,19 @@ impl AppCell {
         );
     }
 
-    fn enqueue_window_retirement(&self, window_id: WindowId, retirement: NativeWindowRetirement) {
+    /// Attempts presentation preparation while retaining the native owner, then registers
+    /// retirement custody before resuming any preparation panic. Unprepared owners enter the
+    /// existing queue even when native retirement has dependencies, allowing preparation to
+    /// progress before shutdown needs their exact presentation authorities.
+    fn enqueue_window_retirement(
+        &self,
+        window_id: WindowId,
+        mut retirement: NativeWindowRetirement,
+    ) {
+        let preparation_panic = catch_unwind(AssertUnwindSafe(|| {
+            retirement.prepare_presentation_shutdown();
+        }))
+        .err();
         if self.native_window_terminal_was_observed(window_id) {
             self.complete_native_pointer_capture_releases_for_native_window_terminal(window_id);
         } else {
@@ -1403,12 +1415,13 @@ impl AppCell {
                 }
             }
         }
-        let waiting_for_dependencies = self
-            .native_window_retirement_dependencies
-            .borrow()
-            .get(&window_id)
-            .is_some_and(|dependencies| !dependencies.is_empty());
         let presentation_shutdown = retirement.presentation_shutdown();
+        let waiting_for_dependencies = presentation_shutdown.is_some()
+            && self
+                .native_window_retirement_dependencies
+                .borrow()
+                .get(&window_id)
+                .is_some_and(|dependencies| !dependencies.is_empty());
         let mut retirement = Some(retirement);
         let (state, pending_retirement) = if waiting_for_dependencies {
             (
@@ -1431,6 +1444,9 @@ impl AppCell {
             self.native_events.enqueue_window_retirement(
                 retirement.expect("queued retirement must retain its platform owner"),
             );
+        }
+        if let Some(payload) = preparation_panic {
+            resume_unwind(payload);
         }
     }
 
@@ -1513,6 +1529,9 @@ impl AppCell {
         }
     }
 
+    /// Settles a native terminal against its exact presentation authority. An observation
+    /// received before preparation retains retirement and dependency custody until the real
+    /// ticket is published and checked, before quiescence can conceal a protocol violation.
     pub(super) fn settle_native_window_terminal(&self, window_id: WindowId) {
         self.close_native_window_activation_target(window_id);
         self.observed_native_window_terminals
@@ -1524,8 +1543,9 @@ impl AppCell {
             .native_window_retirements
             .borrow()
             .get(&window_id)
-            .map(|barrier| {
-                let ticket = barrier.presentation_shutdown.ticket();
+            .and_then(|barrier| barrier.presentation_shutdown.as_ref())
+            .map(|shutdown| {
+                let ticket = shutdown.ticket();
                 let acknowledged = ticket.acknowledge_native_terminal();
                 (acknowledged, ticket.snapshot())
             });
@@ -1556,6 +1576,14 @@ impl AppCell {
                 );
             }
             None if self
+                .native_window_retirements
+                .borrow()
+                .contains_key(&window_id) =>
+            {
+                self.request_active_shutdown_completion();
+                return;
+            }
+            None if self
                 .observed_native_window_terminals
                 .borrow()
                 .get(&window_id)
@@ -1571,26 +1599,24 @@ impl AppCell {
         self.request_active_shutdown_completion();
     }
 
-    fn pending_native_window_presentation_shutdowns(
-        &self,
-    ) -> Vec<PreparedPlatformPresentationShutdown> {
-        self.native_window_retirements
-            .borrow()
-            .values()
-            .map(|barrier| barrier.presentation_shutdown.clone())
-            .collect()
-    }
-
+    /// Includes late-prepared retirement authorities in the shutdown fence. Unprepared owners
+    /// keep the fence pending until their queued preparation retry publishes a real ticket.
     fn quiesce_shutdown_presentations(&self, fence: &mut NativeShutdownFence) -> bool {
+        let retirements = self.native_window_retirements.borrow();
+        let mut all_presentations_quiesced = retirements
+            .values()
+            .all(|barrier| barrier.presentation_shutdown.is_some());
         merge_presentation_shutdowns(
             fence
                 .presentation_shutdowns
                 .as_mut()
                 .expect("shutdown preparation must own presentation authorities"),
-            self.pending_native_window_presentation_shutdowns(),
+            retirements
+                .values()
+                .filter_map(|barrier| barrier.presentation_shutdown.clone()),
         );
+        drop(retirements);
 
-        let mut all_presentations_quiesced = true;
         for shutdown in fence
             .presentation_shutdowns
             .as_ref()
@@ -1699,6 +1725,35 @@ impl AppCell {
 
     fn native_window_retirement_barriers_are_clear(&self) -> bool {
         self.native_window_retirements.borrow().is_empty()
+    }
+
+    pub(super) fn windowing_transition_generation(&self) -> u64 {
+        self.next_shutdown_generation.get()
+    }
+
+    pub(super) fn validate_windowing_transition(
+        &self,
+        shutdown_generation: u64,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !self.native_events.is_terminated()
+                && !self.shutdown_fence_owns_effect_flush()
+                && self.shutdown_completion_queued.get().is_none()
+                && self.next_shutdown_generation.get() == shutdown_generation,
+            "cannot switch windowing modes during shutdown"
+        );
+        anyhow::ensure!(
+            self.window_interaction_authorities.borrow().is_empty(),
+            "cannot switch windowing modes while windows are open"
+        );
+        anyhow::ensure!(
+            self.pointer_capture_release_barriers_are_clear()
+                && self.native_window_retirement_barriers_are_clear()
+                && self.platform_input_leases.borrow().is_empty()
+                && self.input_handler_leases.borrow().is_empty(),
+            "cannot switch windowing modes while native window resources are retiring"
+        );
+        Ok(())
     }
 
     pub(super) fn begin_shutdown_fence(
@@ -3540,20 +3595,74 @@ impl AppCell {
                                 .get_mut(&window_id)
                                 .expect("dispatchable retirement must retain its exact barrier")
                                 .state = NativeWindowRetirementState::AwaitingNativeTerminal;
-                            let attempt = catch_unwind(AssertUnwindSafe(|| retirement.retire()));
+                            let attempt = catch_unwind(AssertUnwindSafe(|| {
+                                let shutdown = retirement.prepare_presentation_shutdown();
+                                {
+                                    let mut retirements =
+                                        self.native_window_retirements.borrow_mut();
+                                    let barrier = retirements.get_mut(&window_id).expect(
+                                        "preparing retirement must retain its exact barrier",
+                                    );
+                                    if let Some(existing) = &barrier.presentation_shutdown {
+                                        assert!(
+                                            existing.same_authority(&shutdown),
+                                            "retirement retry must retain its exact presentation authority"
+                                        );
+                                    }
+                                    barrier.presentation_shutdown = Some(shutdown.clone());
+                                }
+                                terminal.set_generation(
+                                    NativeBoundaryGeneration::PresentationShutdown(
+                                        shutdown.snapshot().generation(),
+                                    ),
+                                );
+                                if self.native_window_terminal_was_observed(window_id) {
+                                    self.settle_native_window_terminal(window_id);
+                                    if !self
+                                        .native_window_retirements
+                                        .borrow()
+                                        .contains_key(&window_id)
+                                    {
+                                        return None;
+                                    }
+                                }
+                                if self
+                                    .native_window_retirement_dependencies
+                                    .borrow()
+                                    .get(&window_id)
+                                    .is_some_and(|dependencies| !dependencies.is_empty())
+                                {
+                                    return None;
+                                }
+                                Some(retirement.retire())
+                            }));
                             match attempt {
-                                Ok(NativeWindowRetirementAttempt::Accepted) => {
+                                Ok(None) => {
+                                    let mut retirements =
+                                        self.native_window_retirements.borrow_mut();
+                                    if let Some(barrier) = retirements.get_mut(&window_id) {
+                                        barrier.state =
+                                            NativeWindowRetirementState::WaitingForDependencies;
+                                        barrier.pending_retirement = Some(retirement);
+                                        terminal.settle(NativeBoundaryDisposition::Rejected);
+                                    } else {
+                                        terminal.settle(NativeBoundaryDisposition::Stale);
+                                    }
+                                    drop(retirements);
+                                    self.request_active_shutdown_completion();
+                                }
+                                Ok(Some(NativeWindowRetirementAttempt::Accepted)) => {
                                     if self.native_window_terminal_was_observed(window_id) {
                                         self.settle_native_window_terminal(window_id);
                                     }
                                     self.request_active_shutdown_completion();
                                     terminal.settle(NativeBoundaryDisposition::DELIVERED);
                                 }
-                                Ok(NativeWindowRetirementAttempt::NativeWindowTerminal) => {
+                                Ok(Some(NativeWindowRetirementAttempt::NativeWindowTerminal)) => {
                                     self.settle_native_window_terminal(window_id);
                                     terminal.settle(NativeBoundaryDisposition::DELIVERED);
                                 }
-                                Ok(NativeWindowRetirementAttempt::Rejected) => {
+                                Ok(Some(NativeWindowRetirementAttempt::Rejected)) => {
                                     self.defer_native_window_retirement_retry(retirement);
                                     self.request_active_shutdown_completion();
                                     terminal.settle(NativeBoundaryDisposition::Rejected);

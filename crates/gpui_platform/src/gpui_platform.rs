@@ -21,6 +21,21 @@ pub fn headless() -> open_gpui::Application {
     open_gpui::Application::with_platform(current_platform(true))
 }
 
+/// Returns a Linux or FreeBSD app that may switch among `allowed_modes`.
+///
+/// It starts windowed in the process's own environment, or headless if that names no allowed
+/// display server. Set another initial mode with [`open_gpui::Application::with_windowing`], and
+/// switch later with [`open_gpui::App::request_windowing`]. Unlike [`headless`], this factory
+/// retains the ability to attach to an allowed display server later.
+/// To transfer an inherited Wayland socket, construct the platform with
+/// `open_gpui_linux::linux_platform_with_startup` and pass it to
+/// [`open_gpui::Application::with_platform`]. This factory does not adopt a Host descriptor
+/// from `WAYLAND_SOCKET` or mutate the running Host's environment.
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+pub fn linux(allowed_modes: open_gpui::WindowingModes) -> open_gpui::Application {
+    open_gpui::Application::with_platform(open_gpui_linux::linux_platform(allowed_modes))
+}
+
 /// Unlike `application`, this function returns a single-threaded web application.
 #[cfg(target_family = "wasm")]
 pub fn single_threaded_web() -> open_gpui::Application {

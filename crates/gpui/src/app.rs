@@ -42,7 +42,6 @@ pub use test_context::*;
 #[cfg(any(test, feature = "test-support"))]
 pub use visual_test_context::*;
 
-use crate::ActivityGuard;
 #[cfg(any(feature = "inspector", debug_assertions))]
 use crate::InspectorElementRegistry;
 use crate::{
@@ -63,6 +62,7 @@ use crate::{
     colors::{Colors, GlobalColors},
     hash, init_app_menus,
 };
+use crate::{ActivationPolicy, ActivityGuard, GraphicalEnvironment, WindowingRequest};
 
 mod action_dispatch;
 mod async_context;
@@ -104,6 +104,8 @@ mod visual_test_context;
 #[cfg(test)]
 mod window_appearance_tests;
 mod window_registry;
+#[cfg(test)]
+mod windowing_tests;
 pub(crate) use cell::NativeCallbackLease;
 pub use cell::{AppCell, AppRef, AppRefMut};
 #[doc(hidden)]
@@ -328,6 +330,15 @@ impl Application {
     /// By default, [`QuitMode::Default`] is used.
     pub fn with_quit_mode(self, mode: QuitMode) -> Self {
         self.0.borrow_mut().quit_mode = mode;
+        self
+    }
+
+    /// Selects the platform's initial windowing mode before launch.
+    ///
+    /// Switching backends retain the same application and native loop. This does not select
+    /// an external event loop or renderer. Fixed-headless platforms cannot later attach.
+    pub fn with_windowing(self, request: WindowingRequest) -> Self {
+        self.0.borrow().platform.set_initial_windowing(request);
         self
     }
 
@@ -1896,6 +1907,60 @@ impl App {
     /// Instructs the platform to activate the application by bringing it to the foreground.
     pub fn activate(&self, ignoring_other_apps: bool) {
         self.platform.activate(ignoring_other_apps);
+    }
+
+    /// Sets the application's initial or current activation policy on macOS.
+    ///
+    /// Regular policy participates in the Dock/menu bar; Accessory can still open windows.
+    /// A windowing request selects the corresponding policy. Activate explicitly afterward
+    /// when switching to Regular. Other platforms ignore this setting.
+    pub fn set_activation_policy(&mut self, policy: ActivationPolicy) {
+        self.platform.set_activation_policy(policy);
+    }
+
+    /// Requests a switch between headless and a supplied graphical session.
+    ///
+    /// All windows and their native retirement/capture custody must be released first.
+    /// Backends reject unsupported, forbidden, duplicate or already-current modes and
+    /// preserve their previous connection if a new connection fails. Close the graphical
+    /// connection before selecting a different one. Dropping the task does not withdraw a
+    /// request already admitted by the platform.
+    pub fn request_windowing(&self, request: WindowingRequest) -> Task<Result<()>> {
+        if self.quitting {
+            return Task::ready(Err(anyhow!(
+                "cannot switch windowing modes during shutdown"
+            )));
+        }
+        if !self.windows.is_empty() {
+            return Task::ready(Err(anyhow!(
+                "cannot switch windowing modes while windows are open"
+            )));
+        }
+        let application = self.this.clone();
+        let Some(owner) = application.upgrade() else {
+            return Task::ready(Err(anyhow!(
+                "application was released before the windowing switch"
+            )));
+        };
+        let shutdown_generation = owner.windowing_transition_generation();
+        drop(owner);
+        self.platform.request_windowing_with_validation(
+            request,
+            Box::new(move || {
+                application
+                    .upgrade()
+                    .ok_or_else(|| anyhow!("application was released before the windowing switch"))?
+                    .validate_windowing_transition(shutdown_generation)
+            }),
+        )
+    }
+
+    /// Reports the connected graphical session, or None while headless or unsupported.
+    ///
+    /// Apply it to child commands to use the connected session rather than stale process
+    /// display variables. The returned environment has no consumed activation token.
+    pub fn graphical_environment(&self) -> Option<GraphicalEnvironment> {
+        self.platform.graphical_environment()
     }
 
     /// Hide the application at the platform level.

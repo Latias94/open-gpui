@@ -418,19 +418,26 @@ pub(super) fn handles(app: &App) -> Vec<AnyWindowHandle> {
         .collect()
 }
 
+/// Transfers removed windows into native retirement before releasing interaction authority
+/// or notifying close observers. Retirement retains the owner across preparation unwind;
+/// an observer panic takes precedence over a preparation panic.
 pub(super) fn finish_window_update(app: &mut App, id: WindowId, window: Box<Window>) -> Option<()> {
     if window.removed {
-        let first_panic = unregister_removed_window(app, id);
-        if let Some(cell) = app.this.upgrade() {
-            cell.enqueue_native_window_retirement(id, window);
-        } else {
-            // There is no retirement queue left to prove renderer quiescence. Retain the
-            // platform owner rather than dropping a surface that may still have submitted work.
-            log::error!(
-                "removed window lost its AppCell before native retirement; retaining the backend owner until process teardown"
-            );
-            std::mem::forget(window);
-        }
+        let retirement_panic = catch_unwind(AssertUnwindSafe(|| {
+            if let Some(cell) = app.this.upgrade() {
+                cell.enqueue_native_window_retirement(id, window);
+            } else {
+                // There is no retirement queue left to prove renderer quiescence. Retain the
+                // platform owner rather than dropping a surface that may still have submitted work.
+                log::error!(
+                    "removed window lost its AppCell before native retirement; retaining the backend owner until process teardown"
+                );
+                std::mem::forget(window);
+            }
+        }))
+        .err();
+        let mut first_panic = unregister_removed_window(app, id);
+        retain_first_panic(&mut first_panic, retirement_panic);
         if let Some(payload) = first_panic {
             resume_unwind(payload);
         }

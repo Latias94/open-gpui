@@ -1,12 +1,9 @@
 use super::LinuxPlatform;
-use crate::linux::HeadlessClient;
 use open_gpui::Platform as _;
 
 #[test]
 fn headless_idle_sleep_prevention_is_unsupported() {
-    let platform = LinuxPlatform {
-        inner: HeadlessClient::new(),
-    };
+    let platform = LinuxPlatform::new(open_gpui::WindowingModes::HEADLESS);
     let error = smol::block_on(platform.prevent_idle_sleep("headless activity"))
         .err()
         .expect("headless acquisition should be unsupported");

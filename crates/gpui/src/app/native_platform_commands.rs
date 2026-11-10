@@ -209,7 +209,7 @@ enum NativeWindowRetirementOwner {
 pub(super) struct NativeWindowRetirement {
     window_id: WindowId,
     owner: NativeWindowRetirementOwner,
-    presentation_shutdown: PreparedPlatformPresentationShutdown,
+    presentation_shutdown: Option<PreparedPlatformPresentationShutdown>,
     retry_attempts: u8,
 }
 
@@ -249,12 +249,11 @@ impl NativeShutdownCompletion {
 }
 
 impl NativeWindowRetirement {
-    pub(super) fn new(window_id: WindowId, mut window: Box<Window>) -> Self {
-        let presentation_shutdown = window.claim_presentation_shutdown();
+    pub(super) fn new(window_id: WindowId, window: Box<Window>) -> Self {
         Self::with_owner(
             window_id,
             NativeWindowRetirementOwner::Window(Some(window)),
-            presentation_shutdown,
+            None,
         )
     }
 
@@ -266,14 +265,14 @@ impl NativeWindowRetirement {
         Self::with_owner(
             window_id,
             NativeWindowRetirementOwner::Platform(Some(platform_window)),
-            presentation_shutdown,
+            Some(presentation_shutdown),
         )
     }
 
     fn with_owner(
         window_id: WindowId,
         owner: NativeWindowRetirementOwner,
-        presentation_shutdown: PreparedPlatformPresentationShutdown,
+        presentation_shutdown: Option<PreparedPlatformPresentationShutdown>,
     ) -> Self {
         Self {
             window_id,
@@ -287,8 +286,24 @@ impl NativeWindowRetirement {
         self.window_id
     }
 
-    pub(super) fn presentation_shutdown(&self) -> PreparedPlatformPresentationShutdown {
+    pub(super) fn presentation_shutdown(&self) -> Option<PreparedPlatformPresentationShutdown> {
         self.presentation_shutdown.clone()
+    }
+
+    /// Prepares the exact presentation authority while borrowing the retained window owner.
+    /// Retained-resource cleanup and backend preparation may unwind; the owner remains in
+    /// this retirement so the existing native queue can retry preparation.
+    pub(super) fn prepare_presentation_shutdown(&mut self) -> PreparedPlatformPresentationShutdown {
+        if self.presentation_shutdown.is_none() {
+            let NativeWindowRetirementOwner::Window(Some(window)) = &mut self.owner else {
+                panic!("unprepared retirement must retain its GPUI window owner");
+            };
+            self.presentation_shutdown = Some(window.claim_presentation_shutdown());
+        }
+        self.presentation_shutdown
+            .as_ref()
+            .expect("prepared retirement must retain its presentation authority")
+            .clone()
     }
 
     pub(super) fn pending_diagnostic(&self, sequence: u64) -> NativeBoundaryDiagnostic {
@@ -296,9 +311,9 @@ impl NativeWindowRetirement {
             sequence,
             NativeBoundaryTarget::Window(self.window_id),
             NativeBoundaryKind::Command(NativePlatformCommandKind::RetireNativeWindow),
-            Some(NativeBoundaryGeneration::PresentationShutdown(
-                self.presentation_shutdown.snapshot().generation(),
-            )),
+            self.presentation_shutdown.as_ref().map(|shutdown| {
+                NativeBoundaryGeneration::PresentationShutdown(shutdown.snapshot().generation())
+            }),
         )
     }
 
@@ -310,12 +325,16 @@ impl NativeWindowRetirement {
     }
 
     fn retire_native_window(&self) -> PlatformNativeWindowRetirementOutcome {
+        let shutdown = self
+            .presentation_shutdown
+            .as_ref()
+            .expect("native retirement must follow presentation preparation");
         match &self.owner {
             NativeWindowRetirementOwner::Window(Some(window)) => window
                 .platform_window
-                .retire_native_window(self.presentation_shutdown.ticket()),
+                .retire_native_window(shutdown.ticket()),
             NativeWindowRetirementOwner::Platform(Some(platform_window)) => {
-                platform_window.retire_native_window(self.presentation_shutdown.ticket())
+                platform_window.retire_native_window(shutdown.ticket())
             }
             NativeWindowRetirementOwner::Window(None)
             | NativeWindowRetirementOwner::Platform(None) => {
@@ -332,12 +351,16 @@ impl NativeWindowRetirement {
     }
 
     pub(super) fn retire(&mut self) -> NativeWindowRetirementAttempt {
-        if !self.presentation_shutdown.snapshot().quiesced()
-            && self.presentation_shutdown.quiesce() != PlatformPresentationShutdownOutcome::Quiesced
+        let shutdown = self
+            .presentation_shutdown
+            .as_ref()
+            .expect("retirement dispatch must publish its prepared presentation authority");
+        if !shutdown.snapshot().quiesced()
+            && shutdown.quiesce() != PlatformPresentationShutdownOutcome::Quiesced
         {
             return NativeWindowRetirementAttempt::Rejected;
         }
-        if !self.presentation_shutdown.snapshot().quiesced() {
+        if !shutdown.snapshot().quiesced() {
             return NativeWindowRetirementAttempt::Rejected;
         }
         match self.retire_native_window() {
@@ -346,11 +369,7 @@ impl NativeWindowRetirement {
                 NativeWindowRetirementAttempt::Accepted
             }
             PlatformNativeWindowRetirementOutcome::NativeWindowTerminal => {
-                if !self
-                    .presentation_shutdown
-                    .ticket()
-                    .acknowledge_native_terminal()
-                {
+                if !shutdown.ticket().acknowledge_native_terminal() {
                     return NativeWindowRetirementAttempt::Rejected;
                 }
                 self.drop_owner();

@@ -551,7 +551,8 @@ fn close_image_window(
 fn native_encoded_and_embedded_images_animate_replace_and_release_exact_owners() {
     discard_stale_quit_messages();
     let (_guard, observation) = begin_native_window_test_observation();
-    let platform = Rc::new(WindowsPlatform::new(false).expect("native image platform"));
+    let platform =
+        Rc::new(WindowsPlatform::new_windowed_for_test().expect("native image platform"));
     let platform_hwnd = platform.handle;
     let platform_lifetime = Rc::downgrade(&platform);
     let lifecycle_probe = platform.lifecycle_test_probe.clone();
@@ -565,7 +566,9 @@ fn native_encoded_and_embedded_images_animate_replace_and_release_exact_owners()
         cx.native_boundary_diagnostics(NativeBoundaryDiagnosticCursor::default())
             .cursor
     });
-    platform.begin_vsync_thread();
+    platform
+        .begin_vsync_thread()
+        .expect("native vsync provider should start");
     let counters = Rc::new(NativeImageCounters::default());
     let handle = open_image_window(&mut app, &counters, false);
     let registration = platform

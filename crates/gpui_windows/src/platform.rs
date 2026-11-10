@@ -246,7 +246,10 @@ pub struct WindowsPlatform {
     inner: Rc<WindowsPlatformInner>,
     raw_window_handles: Arc<RegisteredWindows>,
     recovered_directx_devices: Arc<RwLock<Option<DirectXDevices>>>,
-    vsync_owner_live: Arc<RwLock<bool>>,
+    initial_windowing: RefCell<Option<WindowingRequest>>,
+    initial_windowing_applied: Cell<bool>,
+    windowing_transition: Cell<bool>,
+    vsync_owner_live: RefCell<Option<Arc<RwLock<bool>>>>,
     // The below members will never change throughout the entire lifecycle of the app.
     headless: bool,
     icon: HICON,
@@ -257,7 +260,7 @@ pub struct WindowsPlatform {
     drop_target_helper: Option<IDropTargetHelper>,
     /// Flag to instruct the `VSyncProvider` thread to invalidate the directx devices
     /// as resizing them has failed, causing us to have lost at least the render target.
-    invalidate_devices: Arc<AtomicBool>,
+    invalidate_devices: RefCell<Arc<AtomicBool>>,
     handle: HWND,
     suspend_resume_notification: RefCell<Option<HPOWERNOTIFY>>,
     power_saving_notification: RefCell<Option<HPOWERNOTIFY>>,
@@ -269,6 +272,27 @@ pub struct WindowsPlatform {
     system_notifications: RefCell<SystemNotificationState>,
     #[cfg(test)]
     lifecycle_test_probe: Rc<NativeWindowLifecycleTestProbe>,
+}
+
+struct WindowingTransitionGuard<'a>(&'a Cell<bool>);
+
+impl Drop for WindowingTransitionGuard<'_> {
+    fn drop(&mut self) {
+        self.0.set(false);
+    }
+}
+
+struct PendingGpuAttachment<'a> {
+    platform: &'a WindowsPlatform,
+    committed: bool,
+}
+
+impl Drop for PendingGpuAttachment<'_> {
+    fn drop(&mut self) {
+        if !self.committed {
+            self.platform.detach_gpu();
+        }
+    }
 }
 
 pub(crate) struct WindowsPlatformInner {
@@ -461,6 +485,7 @@ pub(crate) struct WindowsPlatformState {
     /// Shared with each window so `WM_SETCURSOR` can read it directly.
     pub(crate) cursor_visible: Arc<AtomicBool>,
     directx_devices: RefCell<Option<DirectXDevices>>,
+    gpu_generation: Cell<usize>,
     power_mode: Cell<PowerMode>,
 }
 
@@ -823,14 +848,15 @@ struct PlatformCallbacks {
 }
 
 impl WindowsPlatformState {
-    fn new(directx_devices: Option<DirectXDevices>) -> Self {
+    fn new() -> Self {
         let callbacks = PlatformCallbacks::default();
         let jump_list = JumpList::new();
         Self {
             callbacks,
             jump_list: RefCell::new(jump_list),
             cursor_visible: Arc::new(AtomicBool::new(true)),
-            directx_devices: RefCell::new(directx_devices),
+            directx_devices: RefCell::new(None),
+            gpu_generation: Cell::new(0),
             power_mode: Cell::new(PowerMode::Unknown),
             menus: RefCell::new(Vec::new()),
         }
@@ -854,22 +880,29 @@ impl WindowsPlatform {
         Self::new_with_run_exit(headless, WindowsPlatformRunExit::ReturnToCaller)
     }
 
+    #[cfg(test)]
+    fn new_windowed_for_test() -> Result<Self> {
+        let platform = Self::new(false)?;
+        platform.connect_initially();
+        anyhow::ensure!(
+            platform.is_windowed(),
+            "native fixture requires an interactive window station"
+        );
+        Ok(platform)
+    }
+
     fn new_with_run_exit(headless: bool, run_exit: WindowsPlatformRunExit) -> Result<Self> {
         let mut construction_guard = WindowsPlatformConstructionGuard::initialize()?;
-        let (directx_devices, text_system, direct_write_text_system) = if !headless {
-            let devices = DirectXDevices::new().context("Creating DirectX devices")?;
+        let (text_system, direct_write_text_system) = if !headless {
             let dw_text_system = Arc::new(
-                DirectWriteTextSystem::new(&devices)
-                    .context("Error creating DirectWriteTextSystem")?,
+                DirectWriteTextSystem::new(None).context("Error creating DirectWriteTextSystem")?,
             );
             (
-                Some(devices),
                 dw_text_system.clone() as Arc<dyn PlatformTextSystem>,
                 Some(dw_text_system),
             )
         } else {
             (
-                None,
                 Arc::new(open_gpui::NoopTextSystem::new()) as Arc<dyn PlatformTextSystem>,
                 None,
             )
@@ -883,7 +916,6 @@ impl WindowsPlatform {
         };
         let raw_window_handles = Arc::new(RegisteredWindows::default());
         let recovered_directx_devices = Arc::new(RwLock::new(None));
-        let vsync_owner_live = Arc::new(RwLock::new(true));
         #[cfg(test)]
         let lifecycle_test_probe = Rc::new(NativeWindowLifecycleTestProbe::default());
 
@@ -893,7 +925,6 @@ impl WindowsPlatform {
             validation_number,
             main_sender: Some(main_sender),
             main_receiver: Some(main_receiver),
-            directx_devices,
             recovered_directx_devices: recovered_directx_devices.clone(),
             raw_window_handles: raw_window_handles.clone(),
             dispatcher: None,
@@ -972,7 +1003,10 @@ impl WindowsPlatform {
             handle,
             raw_window_handles,
             recovered_directx_devices,
-            vsync_owner_live,
+            initial_windowing: RefCell::new(None),
+            initial_windowing_applied: Cell::new(false),
+            windowing_transition: Cell::new(false),
+            vsync_owner_live: RefCell::new(None),
             headless,
             icon,
             background_executor,
@@ -988,7 +1022,7 @@ impl WindowsPlatform {
             app_identity: RefCell::new(None),
             system_notifications: RefCell::new(SystemNotificationState::new()),
             drop_target_helper,
-            invalidate_devices: Arc::new(AtomicBool::new(false)),
+            invalidate_devices: RefCell::new(Arc::new(AtomicBool::new(false))),
             #[cfg(test)]
             lifecycle_test_probe,
         };
@@ -1035,7 +1069,7 @@ impl WindowsPlatform {
             return;
         }
         self.system_notifications.borrow_mut().retire();
-        *self.vsync_owner_live.write() = false;
+        self.stop_vsync_thread();
         self.inner.begin_platform_native_finalization(
             self.raw_window_handles.clone(),
             self.handle,
@@ -1145,7 +1179,7 @@ impl WindowsPlatform {
             recovered_directx_devices: self.recovered_directx_devices.clone(),
             disable_direct_composition: self.disable_direct_composition,
             directx_devices: self.inner.state.directx_devices.borrow().clone().unwrap(),
-            invalidate_devices: self.invalidate_devices.clone(),
+            invalidate_devices: self.invalidate_devices.borrow().clone(),
             #[cfg(test)]
             lifecycle_test_probe: self.lifecycle_test_probe.clone(),
         }
@@ -1157,6 +1191,15 @@ impl WindowsPlatform {
         options: WindowParams,
         expected_generation: Option<u64>,
     ) -> Result<Box<dyn PlatformWindow>> {
+        anyhow::ensure!(
+            !self.inner.native_finalization_started.get() && !self.terminal_shutdown_complete.get(),
+            "cannot open windows after terminal shutdown has started"
+        );
+        anyhow::ensure!(
+            !self.windowing_transition.get(),
+            "windowing transition is in progress"
+        );
+        anyhow::ensure!(self.is_windowed(), "cannot open windows while headless");
         self.inner.refresh_display_topology_now();
         let display_topology = self.inner.exact_display_topology_snapshot().map_err(
             |unavailable| {
@@ -1246,21 +1289,146 @@ impl WindowsPlatform {
             .map(|hwnd| hwnd.as_raw())
     }
 
-    fn begin_vsync_thread(&self) {
-        let Some(directx_devices) = self.inner.state.directx_devices.borrow().clone() else {
+    fn is_windowed(&self) -> bool {
+        self.inner.state.directx_devices.borrow().is_some()
+    }
+
+    /// Applies the selected initial mode before the launch callback can open windows.
+    ///
+    /// # Panics
+    /// Panics if an interactive process cannot initialize DirectX.
+    fn connect_initially(&self) {
+        if self.initial_windowing_applied.replace(true) || self.headless {
             return;
+        }
+        let request = self
+            .initial_windowing
+            .borrow_mut()
+            .take()
+            .unwrap_or_else(|| WindowingRequest::Windowed(GraphicalEnvironment::detect()));
+        let WindowingRequest::Windowed(environment) = request else {
+            return;
+        };
+        if let Err(error) = check_can_show_windows(&environment) {
+            log::info!("starting headless: {error:#}");
+            return;
+        }
+        self.apply_windowing(WindowingRequest::Windowed(environment), &|| Ok(()))
+            .unwrap_or_else(|error| panic!("failed to initialize DirectX: {error:#}"));
+    }
+
+    fn validate_windowing_transition(&self) -> Result<()> {
+        anyhow::ensure!(
+            !self.headless,
+            "a platform created headless can't switch windowing modes"
+        );
+        anyhow::ensure!(
+            !self.terminal_shutdown_complete.get() && !self.inner.native_finalization_started.get(),
+            "cannot switch windowing modes after terminal shutdown has started"
+        );
+        anyhow::ensure!(
+            self.raw_window_handles.read().is_empty(),
+            "cannot switch windowing modes while native windows remain"
+        );
+        anyhow::ensure!(
+            self.inner.native_retirement_is_settled(),
+            "cannot switch windowing modes while native retirement remains"
+        );
+        Ok(())
+    }
+
+    fn apply_windowing(
+        &self,
+        request: WindowingRequest,
+        validate: &dyn Fn() -> Result<()>,
+    ) -> Result<()> {
+        anyhow::ensure!(
+            !self.windowing_transition.replace(true),
+            "a windowing transition is already in progress"
+        );
+        let _transition = WindowingTransitionGuard(&self.windowing_transition);
+        validate()?;
+        self.validate_windowing_transition()?;
+        match request {
+            WindowingRequest::Headless => {
+                anyhow::ensure!(self.is_windowed(), "already headless");
+                validate()?;
+                self.validate_windowing_transition()?;
+                self.detach_gpu();
+            }
+            WindowingRequest::Windowed(environment) => {
+                anyhow::ensure!(!self.is_windowed(), "already windowed");
+                check_can_show_windows(&environment)?;
+                self.attach_gpu(validate)?;
+            }
+        }
+        self.initial_windowing_applied.set(true);
+        Ok(())
+    }
+
+    fn attach_gpu(&self, validate: &dyn Fn() -> Result<()>) -> Result<()> {
+        let mut attachment = PendingGpuAttachment {
+            platform: self,
+            committed: false,
+        };
+        let devices = DirectXDevices::new().context("Creating DirectX devices")?;
+        if let Some(text_system) = &self.direct_write_text_system {
+            text_system.handle_gpu_lost(&devices)?;
+        }
+        validate()?;
+        self.validate_windowing_transition()?;
+        *self.invalidate_devices.borrow_mut() = Arc::new(AtomicBool::new(false));
+        *self.inner.state.directx_devices.borrow_mut() = Some(devices);
+        self.begin_vsync_thread()?;
+        attachment.committed = true;
+        self.inner.refresh_display_topology_now();
+        Ok(())
+    }
+
+    fn stop_vsync_thread(&self) {
+        if let Some(owner_live) = self.vsync_owner_live.borrow_mut().take() {
+            *owner_live.write() = false;
+        }
+    }
+
+    fn detach_gpu(&self) {
+        self.stop_vsync_thread();
+        self.recovered_directx_devices.write().take();
+        self.invalidate_devices
+            .borrow()
+            .store(false, Ordering::Release);
+        if let Some(text_system) = &self.direct_write_text_system {
+            text_system.release_gpu();
+        }
+        self.inner.state.directx_devices.borrow_mut().take();
+    }
+
+    fn begin_vsync_thread(&self) -> Result<()> {
+        if self.vsync_owner_live.borrow().is_some() {
+            return Ok(());
+        }
+        let Some(directx_devices) = self.inner.state.directx_devices.borrow().clone() else {
+            return Ok(());
         };
         let Some(direct_write_text_system) = &self.direct_write_text_system else {
-            return;
+            return Ok(());
         };
+        let generation = self
+            .inner
+            .state
+            .gpu_generation
+            .get()
+            .checked_add(1)
+            .context("Windows GPU attachment generation exhausted")?;
+        let vsync_owner_live = Arc::new(RwLock::new(true));
         let mut directx_device = directx_devices;
         let platform_window: SafeHwnd = self.handle.into();
         let validation_number = self.inner.validation_number;
         let all_windows = Arc::downgrade(&self.raw_window_handles);
         let text_system = Arc::downgrade(direct_write_text_system);
-        let invalidate_devices = self.invalidate_devices.clone();
+        let invalidate_devices = self.invalidate_devices.borrow().clone();
         let recovered_directx_devices = self.recovered_directx_devices.clone();
-        let vsync_owner_live = self.vsync_owner_live.clone();
+        let thread_owner_live = vsync_owner_live.clone();
 
         std::thread::Builder::new()
             .name("VSyncProvider".to_owned())
@@ -1269,12 +1437,17 @@ impl WindowsPlatform {
                 loop {
                     let signal_source = vsync_provider.wait_for_vsync();
                     let signal_at = PlatformFrameSignal::capture(open_gpui_scheduler::Instant::now);
-                    if !*vsync_owner_live.read() {
+                    if !*thread_owner_live.read() {
                         break;
                     }
-                    if check_device_lost(&directx_device.device)
-                        || invalidate_devices.fetch_and(false, Ordering::Acquire)
-                    {
+                    let needs_recovery = with_live_vsync_owner(&thread_owner_live, || {
+                        check_device_lost(&directx_device.device)
+                            || invalidate_devices.swap(false, Ordering::AcqRel)
+                    });
+                    let Some(needs_recovery) = needs_recovery else {
+                        break;
+                    };
+                    if needs_recovery {
                         if let Err(err) = handle_gpu_device_lost(
                             &mut directx_device,
                             platform_window.as_raw(),
@@ -1282,7 +1455,8 @@ impl WindowsPlatform {
                             &all_windows,
                             &text_system,
                             &recovered_directx_devices,
-                            &vsync_owner_live,
+                            &thread_owner_live,
+                            generation,
                         ) {
                             log::error!(
                                 "Failed to recover DirectX device after device lost: {err:?}"
@@ -1298,7 +1472,7 @@ impl WindowsPlatform {
                         &all_windows,
                         registered_windows,
                         |registered_window| {
-                            with_live_vsync_owner(&vsync_owner_live, || unsafe {
+                            with_live_vsync_owner(&thread_owner_live, || unsafe {
                                 all_windows.record_frame_signal(
                                     registered_window,
                                     signal_at,
@@ -1315,7 +1489,10 @@ impl WindowsPlatform {
                     );
                 }
             })
-            .unwrap();
+            .context("Starting the Windows vsync provider")?;
+        self.inner.state.gpu_generation.set(generation);
+        *self.vsync_owner_live.borrow_mut() = Some(vsync_owner_live);
+        Ok(())
     }
 }
 
@@ -2311,10 +2488,9 @@ impl Platform for WindowsPlatform {
     }
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
+        self.connect_initially();
+        self.inner.refresh_display_topology_now();
         on_finish_launching();
-        if !self.headless {
-            self.begin_vsync_thread();
-        }
 
         let mut quit_notified = false;
         let mut msg = MSG::default();
@@ -2382,7 +2558,29 @@ impl Platform for WindowsPlatform {
 
     fn quit_after_terminal_shutdown(&self) {
         self.terminal_shutdown_complete.set(true);
+        self.stop_vsync_thread();
+        self.recovered_directx_devices.write().take();
         unsafe { PostQuitMessage(0) };
+    }
+
+    fn set_initial_windowing(&self, request: WindowingRequest) {
+        *self.initial_windowing.borrow_mut() = Some(request);
+    }
+
+    fn request_windowing(&self, request: WindowingRequest) -> Task<Result<()>> {
+        Task::ready(self.apply_windowing(request, &|| Ok(())))
+    }
+
+    fn request_windowing_with_validation(
+        &self,
+        request: WindowingRequest,
+        validate: Box<dyn Fn() -> Result<()>>,
+    ) -> Task<Result<()>> {
+        Task::ready(self.apply_windowing(request, validate.as_ref()))
+    }
+
+    fn graphical_environment(&self) -> Option<GraphicalEnvironment> {
+        self.is_windowed().then(GraphicalEnvironment::detect)
     }
 
     fn restart(&self, binary_path: Option<PathBuf>, arguments: Vec<OsString>) {
@@ -2430,7 +2628,11 @@ impl Platform for WindowsPlatform {
     fn display_snapshot(&self) -> PlatformDisplaySnapshot {
         self.inner
             .retained_display_topology_snapshot()
-            .platform_snapshot()
+            .map(|snapshot| snapshot.platform_snapshot())
+            .unwrap_or_else(|| {
+                PlatformDisplaySnapshot::try_new(None, Vec::new(), None)
+                    .expect("an unpublished display topology has no displays or primary identity")
+            })
     }
 
     fn on_displays_changed(&self, callback: Box<dyn FnMut()>) {
@@ -2952,7 +3154,7 @@ impl Platform for WindowsPlatform {
 
 impl WindowsPlatformInner {
     fn new(context: &mut PlatformWindowCreateContext, platform_handle: HWND) -> Result<Rc<Self>> {
-        let state = WindowsPlatformState::new(context.directx_devices.take());
+        let state = WindowsPlatformState::new();
         let dispatcher = context
             .dispatcher
             .as_ref()
@@ -2973,11 +3175,7 @@ impl WindowsPlatformInner {
             foreground_executor,
             platform_handle: platform_handle.into(),
             raw_window_handles: context.raw_window_handles.clone(),
-            display_topology: RefCell::new(
-                WindowsDisplayTopologyAuthority::from_native().map_err(|error| {
-                    anyhow!("collecting the initial Windows display topology: {error}")
-                })?,
-            ),
+            display_topology: RefCell::new(WindowsDisplayTopologyAuthority::from_native()),
             displays_changed_scheduled: Cell::new(false),
             native_retirement: RefCell::new(WindowsNativeRetirementCoordinator::default()),
             native_finalization_started: Cell::new(false),
@@ -2986,7 +3184,9 @@ impl WindowsPlatformInner {
         }))
     }
 
-    pub(crate) fn retained_display_topology_snapshot(&self) -> WindowsDisplayTopologySnapshot {
+    pub(crate) fn retained_display_topology_snapshot(
+        &self,
+    ) -> Option<WindowsDisplayTopologySnapshot> {
         self.display_topology.borrow().retained_snapshot()
     }
 
@@ -3057,6 +3257,10 @@ impl WindowsPlatformInner {
                 generation,
                 failure,
             } => {
+                if self.retained_display_topology_snapshot().is_none() {
+                    log::debug!("Windows display topology remains unavailable: {failure}");
+                    return;
+                }
                 log::error!(
                     "retaining Windows display topology generation {} after refresh failure: {}",
                     generation,
@@ -3167,7 +3371,6 @@ impl WindowsPlatformInner {
         }
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     fn native_retirement_is_settled(&self) -> bool {
         let coordinator = self.native_retirement.borrow();
         coordinator.pending_windows.is_empty()
@@ -3665,7 +3868,7 @@ impl WindowsPlatformInner {
             WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD => self.run_foreground_task(),
             WM_GPUI_DOCK_MENU_ACTION => self.handle_dock_action_event(lparam.0 as _),
             WM_GPUI_KEYBOARD_LAYOUT_CHANGED => self.handle_keyboard_layout_change(),
-            WM_GPUI_GPU_DEVICE_LOST => self.handle_device_lost(),
+            WM_GPUI_GPU_DEVICE_LOST => self.handle_device_lost(lparam),
             WM_GPUI_REFRESH_DISPLAY_TOPOLOGY => self.handle_display_topology_refresh(),
             WM_GPUI_DISPLAYS_CHANGED => self.handle_displays_changed(),
             _ => unreachable!(),
@@ -3813,9 +4016,14 @@ impl WindowsPlatformInner {
         Some(1)
     }
 
-    fn handle_device_lost(&self) -> Option<isize> {
+    fn handle_device_lost(&self, lparam: LPARAM) -> Option<isize> {
+        if self.native_finalization_started.get()
+            || self.state.directx_devices.borrow().is_none()
+            || self.state.gpu_generation.get() != lparam.0 as usize
+        {
+            return Some(0);
+        }
         let directx_devices = self.recovered_directx_devices.read().clone()?;
-        self.state.directx_devices.borrow_mut().take();
         *self.state.directx_devices.borrow_mut() = Some(directx_devices);
 
         Some(0)
@@ -3825,6 +4033,7 @@ impl WindowsPlatformInner {
 #[cfg(test)]
 thread_local! {
     static FAIL_NEXT_INITIAL_POWER_STATUS_QUERY: Cell<bool> = const { Cell::new(false) };
+    static AFTER_GPU_RECOVERY_CREATION: RefCell<Option<Box<dyn FnOnce()>>> = const { RefCell::new(None) };
 }
 
 fn query_system_power_status() -> windows::core::Result<SYSTEM_POWER_STATUS> {
@@ -3940,7 +4149,6 @@ struct PlatformWindowCreateContext {
     validation_number: usize,
     main_sender: Option<PriorityQueueSender<RunnableVariant>>,
     main_receiver: Option<PriorityQueueReceiver<RunnableVariant>>,
-    directx_devices: Option<DirectXDevices>,
     recovered_directx_devices: Arc<RwLock<Option<DirectXDevices>>>,
     raw_window_handles: Arc<RegisteredWindows>,
     dispatcher: Option<Arc<WindowsDispatcher>>,
@@ -4160,6 +4368,46 @@ fn check_device_lost(device: &ID3D11Device) -> bool {
     }
 }
 
+/// Checks that the requested session is this process's interactive window station.
+fn check_can_show_windows(environment: &GraphicalEnvironment) -> Result<()> {
+    let current = GraphicalEnvironment::detect()
+        .session_id
+        .context("cannot determine this process's Windows session")?;
+    if let Some(requested) = environment.session_id {
+        anyhow::ensure!(
+            requested == current,
+            "windows can only be shown in this process's session ({current}), not session {requested}"
+        );
+    }
+    anyhow::ensure!(
+        is_window_station_visible(),
+        "this process's window station is not interactive, so it can't show windows"
+    );
+    Ok(())
+}
+
+fn is_window_station_visible() -> bool {
+    use windows::Win32::System::StationsAndDesktops::{
+        GetProcessWindowStation, GetUserObjectInformationW, UOI_FLAGS, USEROBJECTFLAGS,
+    };
+
+    let Ok(station) = (unsafe { GetProcessWindowStation() }) else {
+        return false;
+    };
+    let mut flags = USEROBJECTFLAGS::default();
+    // SAFETY: flags is valid for writes of the requested USEROBJECTFLAGS size.
+    let result = unsafe {
+        GetUserObjectInformationW(
+            HANDLE(station.0),
+            UOI_FLAGS,
+            Some(std::ptr::from_mut(&mut flags).cast()),
+            std::mem::size_of::<USEROBJECTFLAGS>() as u32,
+            None,
+        )
+    };
+    result.is_ok() && flags.dwFlags & WSF_VISIBLE as u32 != 0
+}
+
 fn handle_gpu_device_lost(
     directx_devices: &mut DirectXDevices,
     platform_window: HWND,
@@ -4168,30 +4416,44 @@ fn handle_gpu_device_lost(
     text_system: &std::sync::Weak<DirectWriteTextSystem>,
     recovered_directx_devices: &RwLock<Option<DirectXDevices>>,
     vsync_owner_live: &RwLock<bool>,
+    generation: usize,
 ) -> Result<()> {
     // Here we wait a bit to ensure the system has time to recover from the device lost state.
     // If we don't wait, the final drawing result will be blank.
     std::thread::sleep(std::time::Duration::from_millis(350));
 
-    *directx_devices = try_to_recover_from_device_lost(|| {
+    if !*vsync_owner_live.read() {
+        return Ok(());
+    }
+    let devices = try_to_recover_from_device_lost(|| {
         DirectXDevices::new().context("Failed to recreate new DirectX devices after device lost")
     })?;
-    log::info!("DirectX devices successfully recreated.");
-    *recovered_directx_devices.write() = Some(directx_devices.clone());
-
-    with_live_vsync_owner(vsync_owner_live, || unsafe {
-        PostMessageW(
-            Some(platform_window),
-            WM_GPUI_GPU_DEVICE_LOST,
-            WPARAM(validation_number),
-            LPARAM::default(),
-        )
-        .log_err();
-    });
-
-    if let Some(text_system) = text_system.upgrade() {
-        text_system.handle_gpu_lost(&directx_devices)?;
+    #[cfg(test)]
+    if let Some(after_creation) = AFTER_GPU_RECOVERY_CREATION.with_borrow_mut(|hook| hook.take()) {
+        after_creation();
     }
+    let committed = with_live_vsync_owner(vsync_owner_live, || -> Result<()> {
+        if let Some(text_system) = text_system.upgrade() {
+            text_system.handle_gpu_lost(&devices)?;
+        }
+        *recovered_directx_devices.write() = Some(devices.clone());
+        *directx_devices = devices;
+        unsafe {
+            PostMessageW(
+                Some(platform_window),
+                WM_GPUI_GPU_DEVICE_LOST,
+                WPARAM(validation_number),
+                LPARAM(generation as isize),
+            )
+            .log_err();
+        }
+        Ok(())
+    });
+    let Some(committed) = committed else {
+        return Ok(());
+    };
+    committed?;
+    log::info!("DirectX devices successfully recreated.");
     if let Some(all_windows) = all_windows.upgrade() {
         let registered_windows = all_windows.read().clone();
         let registered_windows =
@@ -5733,7 +5995,7 @@ mod tests {
 
     #[test]
     fn nonactivating_first_appearance_preserves_lifetime_activation() {
-        let platform = Rc::new(super::WindowsPlatform::new(false).unwrap());
+        let platform = Rc::new(super::WindowsPlatform::new_windowed_for_test().unwrap());
         let mut app = Application::with_platform(platform.clone());
         let window = app
             .update_for_test(|cx| {
@@ -5800,7 +6062,7 @@ mod tests {
 
     #[test]
     fn advertised_live_window_mutations_commit_native_observed_facts() {
-        let platform = Rc::new(super::WindowsPlatform::new(false).unwrap());
+        let platform = Rc::new(super::WindowsPlatform::new_windowed_for_test().unwrap());
         let mut app = Application::with_platform(platform.clone());
         let window = app
             .update_for_test(|cx| {
@@ -6046,7 +6308,7 @@ mod tests {
 
     #[test]
     fn native_mutation_failure_settles_rejected_and_rolls_back_facts() {
-        let platform = Rc::new(super::WindowsPlatform::new(false).unwrap());
+        let platform = Rc::new(super::WindowsPlatform::new_windowed_for_test().unwrap());
         let mut app = Application::with_platform(platform.clone());
         let window = app
             .update_for_test(|cx| {
@@ -6124,7 +6386,7 @@ mod tests {
 
     #[test]
     fn native_rejection_does_not_fabricate_committed_facts() {
-        let platform = Rc::new(super::WindowsPlatform::new(false).unwrap());
+        let platform = Rc::new(super::WindowsPlatform::new_windowed_for_test().unwrap());
         let mut app = Application::with_platform(platform.clone());
         let window = app
             .update_for_test(|cx| {
@@ -6193,7 +6455,7 @@ mod tests {
         crate::native_test_scenario::native_test_confirm_scenario_behavior(
             "event-driven-geometry-wake",
         );
-        let platform = Rc::new(super::WindowsPlatform::new(false).unwrap());
+        let platform = Rc::new(super::WindowsPlatform::new_windowed_for_test().unwrap());
         let mut app = Application::with_platform(platform.clone())
             .with_quit_mode(open_gpui::QuitMode::Explicit);
         let window = app
@@ -6379,7 +6641,7 @@ mod tests {
 
     #[test]
     fn hidden_window_defers_live_placement_until_first_activation() {
-        let platform = Rc::new(super::WindowsPlatform::new(false).unwrap());
+        let platform = Rc::new(super::WindowsPlatform::new_windowed_for_test().unwrap());
         let mut app = Application::with_platform(platform.clone());
         let window = app
             .update_for_test(|cx| {
@@ -6449,7 +6711,7 @@ mod tests {
 
     #[test]
     fn ordinary_window_merges_physical_placement_before_first_presentation() {
-        let platform = Rc::new(super::WindowsPlatform::new(false).unwrap());
+        let platform = Rc::new(super::WindowsPlatform::new_windowed_for_test().unwrap());
         let mut app = Application::with_platform(platform.clone());
         let (window, native_window, request, dispatch) = app.update_for_test(|cx| {
             let window = cx

@@ -251,7 +251,7 @@ fn native_pending_input_routes_modifiers_chords_and_focus_between_real_text_hand
     let (_observation_guard, observation) = begin_native_window_test_observation();
     let observation_cursor = observation.cursor();
     let platform = Rc::new(
-        WindowsPlatform::new(false)
+        WindowsPlatform::new_windowed_for_test()
             .expect("the native DirectWrite/DirectX input platform must initialize"),
     );
     let platform_hwnd = platform.handle;
@@ -259,7 +259,9 @@ fn native_pending_input_routes_modifiers_chords_and_focus_between_real_text_hand
     let weak_platform_text_system = Arc::downgrade(&platform.text_system());
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
     let weak_text_system = Arc::downgrade(&app.text_system());
-    platform.begin_vsync_thread();
+    platform
+        .begin_vsync_thread()
+        .expect("native vsync provider should start");
 
     let primary = Rc::new(NativePendingTextState::default());
     let secondary = Rc::new(NativePendingTextState::default());

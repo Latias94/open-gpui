@@ -815,8 +815,9 @@ fn assert_closed_view_callback(app: &mut Application, window_id: WindowId, callb
 fn native_generic_views_compose_rebuild_cache_notify_and_release_exact_owners() {
     discard_stale_quit_messages();
     let (_observation_guard, observation) = begin_native_window_test_observation();
-    let platform =
-        Rc::new(WindowsPlatform::new(false).expect("native generic-view Windows backend"));
+    let platform = Rc::new(
+        WindowsPlatform::new_windowed_for_test().expect("native generic-view Windows backend"),
+    );
     let platform_hwnd = platform.handle;
     let platform_lifetime = Rc::downgrade(&platform);
     let lifecycle = platform.lifecycle_test_probe.clone();
@@ -850,7 +851,9 @@ fn native_generic_views_compose_rebuild_cache_notify_and_release_exact_owners() 
             _lifetime: global,
         })
     });
-    platform.begin_vsync_thread();
+    platform
+        .begin_vsync_thread()
+        .expect("native vsync provider should start");
 
     let consumer = NativeViewWindow::open(&mut app, &platform);
     let mut composition = NativeViewComposition {

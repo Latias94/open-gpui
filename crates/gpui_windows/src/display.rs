@@ -441,28 +441,49 @@ pub(crate) enum WindowsDisplayTopologyRefresh {
 }
 
 pub(crate) struct WindowsDisplayTopologyAuthority {
-    current: WindowsDisplayTopologySnapshot,
+    current: Option<WindowsDisplayTopologySnapshot>,
     status: WindowsDisplayTopologyStatus,
     request_epoch: u64,
     refresh_message_scheduled: bool,
 }
 
 impl WindowsDisplayTopologyAuthority {
-    pub(crate) fn from_native() -> Result<Self, WindowsDisplayTopologyFailure> {
-        Ok(Self::new(WindowsDisplayTopologyCandidate::from_native()?))
+    pub(crate) fn from_native() -> Self {
+        match WindowsDisplayTopologyCandidate::from_native() {
+            Ok(candidate) => Self::new(candidate),
+            Err(failure) => {
+                log::info!("starting without a complete Windows display topology: {failure}");
+                Self::unavailable(failure)
+            }
+        }
+    }
+
+    fn unavailable(failure: WindowsDisplayTopologyFailure) -> Self {
+        Self {
+            current: None,
+            status: WindowsDisplayTopologyStatus::Degraded(failure),
+            request_epoch: 0,
+            refresh_message_scheduled: false,
+        }
     }
 
     fn new(candidate: WindowsDisplayTopologyCandidate) -> Self {
         Self {
-            current: WindowsDisplayTopologySnapshot::new(1, candidate),
+            current: Some(WindowsDisplayTopologySnapshot::new(1, candidate)),
             status: WindowsDisplayTopologyStatus::Complete,
             request_epoch: 0,
             refresh_message_scheduled: false,
         }
     }
 
-    pub(crate) fn retained_snapshot(&self) -> WindowsDisplayTopologySnapshot {
+    pub(crate) fn retained_snapshot(&self) -> Option<WindowsDisplayTopologySnapshot> {
         self.current.clone()
+    }
+
+    fn current_generation(&self) -> u64 {
+        self.current
+            .as_ref()
+            .map_or(0, |current| current.generation)
     }
 
     pub(crate) fn is_degraded(&self) -> bool {
@@ -473,7 +494,10 @@ impl WindowsDisplayTopologyAuthority {
         &self,
     ) -> Result<WindowsDisplayTopologySnapshot, WindowsDisplayTopologyUnavailable> {
         match &self.status {
-            WindowsDisplayTopologyStatus::Complete => Ok(self.current.clone()),
+            WindowsDisplayTopologyStatus::Complete => Ok(self
+                .current
+                .clone()
+                .expect("complete display topology must retain its native publication")),
             WindowsDisplayTopologyStatus::RefreshPending => {
                 Err(WindowsDisplayTopologyUnavailable::RefreshPending {
                     request_epoch: self.request_epoch,
@@ -534,7 +558,7 @@ impl WindowsDisplayTopologyAuthority {
             || !matches!(self.status, WindowsDisplayTopologyStatus::RefreshPending)
         {
             return WindowsDisplayTopologyRefresh::Superseded {
-                generation: self.current.generation,
+                generation: self.current_generation(),
                 request_epoch: self.request_epoch,
             };
         }
@@ -544,27 +568,31 @@ impl WindowsDisplayTopologyAuthority {
             Err(failure) => {
                 self.status = WindowsDisplayTopologyStatus::Degraded(failure.clone());
                 return WindowsDisplayTopologyRefresh::RetainedAfterFailure {
-                    generation: self.current.generation,
+                    generation: self.current_generation(),
                     failure,
                 };
             }
         };
-        if self.current.has_same_facts(&candidate) {
+        if self
+            .current
+            .as_ref()
+            .is_some_and(|current| current.has_same_facts(&candidate))
+        {
             self.status = WindowsDisplayTopologyStatus::Complete;
             return WindowsDisplayTopologyRefresh::Unchanged {
-                generation: self.current.generation,
+                generation: self.current_generation(),
             };
         }
-        let Some(generation) = self.current.generation.checked_add(1) else {
+        let Some(generation) = self.current_generation().checked_add(1) else {
             let failure = WindowsDisplayTopologyFailure::GenerationExhausted;
             self.status = WindowsDisplayTopologyStatus::Degraded(failure.clone());
             return WindowsDisplayTopologyRefresh::RetainedAfterFailure {
-                generation: self.current.generation,
+                generation: self.current_generation(),
                 failure,
             };
         };
-        let previous_generation = self.current.generation;
-        self.current = WindowsDisplayTopologySnapshot::new(generation, candidate);
+        let previous_generation = self.current_generation();
+        self.current = Some(WindowsDisplayTopologySnapshot::new(generation, candidate));
         self.status = WindowsDisplayTopologyStatus::Complete;
         WindowsDisplayTopologyRefresh::Published {
             previous_generation,
@@ -942,7 +970,39 @@ mod tests {
             refresh(&mut authority, Ok(initial)),
             WindowsDisplayTopologyRefresh::Unchanged { generation: 1 }
         );
-        assert_eq!(authority.retained_snapshot().generation(), 1);
+        assert_eq!(authority.retained_snapshot().unwrap().generation(), 1);
+    }
+
+    #[test]
+    fn unavailable_startup_has_no_publication_and_refresh_publishes_the_first_real_generation() {
+        let failure =
+            WindowsDisplayTopologyFailure::NativeCollection("no interactive displays".into());
+        let mut authority = WindowsDisplayTopologyAuthority::unavailable(failure.clone());
+        assert!(authority.retained_snapshot().is_none());
+        assert!(authority.exact_snapshot().is_err());
+        assert_eq!(
+            refresh(&mut authority, Err(failure.clone())),
+            WindowsDisplayTopologyRefresh::RetainedAfterFailure {
+                generation: 0,
+                failure
+            }
+        );
+        assert!(authority.retained_snapshot().is_none());
+        let primary = display(1, 0, 1_920, 1.0, 1);
+        let secondary = display(2, -1_920, 1_920, 1.5, 2);
+        let candidate = candidate(primary, secondary);
+        assert_eq!(
+            refresh(&mut authority, Ok(candidate.clone())),
+            WindowsDisplayTopologyRefresh::Published {
+                previous_generation: 0,
+                generation: 1
+            }
+        );
+        assert_eq!(authority.exact_snapshot().unwrap().generation(), 1);
+        assert_eq!(
+            refresh(&mut authority, Ok(candidate)),
+            WindowsDisplayTopologyRefresh::Unchanged { generation: 1 }
+        );
     }
 
     #[test]
@@ -1000,7 +1060,7 @@ mod tests {
             refresh(&mut authority, Ok(changed)),
             WindowsDisplayTopologyRefresh::Unchanged { generation: 2 }
         );
-        let snapshot = authority.retained_snapshot();
+        let snapshot = authority.retained_snapshot().unwrap();
         assert_eq!(snapshot.generation(), 2);
         assert_eq!(
             snapshot
@@ -1119,6 +1179,8 @@ mod tests {
         );
         assert_eq!(
             previous
+                .as_ref()
+                .expect("the initial display publication must remain retained")
                 .display(secondary.display_id)
                 .unwrap()
                 .refresh_interval(),
@@ -1173,7 +1235,7 @@ mod tests {
         let primary = display(1, 0, 1_920, 1.0, 1);
         let secondary = display(2, -1_920, 1_920, 1.5, 2);
         let authority = WindowsDisplayTopologyAuthority::new(candidate(primary, secondary));
-        let snapshot = authority.retained_snapshot();
+        let snapshot = authority.retained_snapshot().unwrap();
 
         assert_eq!(snapshot.primary_display(), primary);
         let observation = snapshot
@@ -1228,7 +1290,7 @@ mod tests {
             refresh(&mut authority, Ok(new)),
             WindowsDisplayTopologyRefresh::Published { generation: 2, .. }
         ));
-        let snapshot = authority.retained_snapshot();
+        let snapshot = authority.retained_snapshot().unwrap();
         assert!(snapshot.display(old_secondary.display_id).is_none());
         assert_eq!(snapshot.display(replacement.display_id), Some(replacement));
     }
@@ -1289,7 +1351,7 @@ mod tests {
         let primary = display(1, 0, 1_920, 1.0, 1);
         let secondary = display(2, -1_920, 1_920, 1.5, 2);
         let mut authority = WindowsDisplayTopologyAuthority::new(candidate(primary, secondary));
-        authority.current.generation = u64::MAX;
+        authority.current.as_mut().unwrap().generation = u64::MAX;
         let before = authority.retained_snapshot();
         let changed_secondary = display(2, -1_920, 1_840, 1.5, 2);
 

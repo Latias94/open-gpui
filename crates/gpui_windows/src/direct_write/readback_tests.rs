@@ -150,8 +150,8 @@ fn color_readback_releases_staging_texture_for_repeated_reads() -> Result<()> {
 
 #[test]
 fn directwrite_color_emoji_rasterization_reads_back_identical_pixels() -> Result<()> {
-    let devices = DirectXDevices::new()?;
-    let platform = DirectWriteTextSystem::new(&devices)?;
+    let platform = DirectWriteTextSystem::new(None)?;
+    assert!(platform.state.read().gpu_state.is_none());
     let font = Font {
         family: "Segoe UI Emoji".into(),
         ..Default::default()
@@ -186,6 +186,17 @@ fn directwrite_color_emoji_rasterization_reads_back_identical_pixels() -> Result
     let state = platform.state.read();
     let bounds = state.raster_bounds(&platform.components, &params)?;
     assert!(bounds.size.width.0 > 0 && bounds.size.height.0 > 0);
+    assert_eq!(
+        state
+            .rasterize_color(&platform.components, &params, bounds)
+            .unwrap_err()
+            .to_string(),
+        "cannot rasterize color glyphs while headless"
+    );
+    drop(state);
+    let devices = DirectXDevices::new()?;
+    platform.handle_gpu_lost(&devices)?;
+    let state = platform.state.read();
     let first = state
         .rasterize_color(&platform.components, &params, bounds)
         .context("reading back the first DirectWrite color emoji")?;
@@ -243,6 +254,41 @@ fn directwrite_color_emoji_rasterization_reads_back_identical_pixels() -> Result
             "DirectWrite color emoji on iteration {iteration}"
         );
     }
+
+    drop(state);
+    platform.release_gpu();
+    assert!(platform.state.read().gpu_state.is_none());
+    assert_eq!(platform.font_id(&font)?, font_id);
+    let reshaped = platform.layout_line(
+        text,
+        font_size,
+        &[FontRun {
+            len: text.len(),
+            font_id,
+        }],
+    );
+    assert_eq!(reshaped.width, shaped.width);
+    assert_eq!(reshaped.runs[0].font_id, run.font_id);
+    assert_eq!(reshaped.runs[0].glyphs[0].id, glyph.id);
+    assert_eq!(
+        platform
+            .state
+            .read()
+            .rasterize_color(&platform.components, &params, bounds)
+            .unwrap_err()
+            .to_string(),
+        "cannot rasterize color glyphs while headless"
+    );
+    drop(devices);
+    let devices = DirectXDevices::new()?;
+    platform.handle_gpu_lost(&devices)?;
+    assert_eq!(
+        platform
+            .state
+            .read()
+            .rasterize_color(&platform.components, &params, bounds)?,
+        first
+    );
 
     Ok(())
 }
