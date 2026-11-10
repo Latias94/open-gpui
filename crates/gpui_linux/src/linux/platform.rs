@@ -11,6 +11,8 @@ use std::{ffi::OsString, fs::File, os::fd::AsFd, time::Duration};
 #[cfg(feature = "wayland")]
 use std::{io::Read as _, os::fd::AsRawFd};
 
+#[cfg(any(feature = "wayland", feature = "x11"))]
+use anyhow::ensure;
 use anyhow::{Context as _, anyhow};
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use ashpd::{
@@ -1666,6 +1668,24 @@ pub(super) fn is_within_click_distance(a: Point<Pixels>, b: Point<Pixels>) -> bo
     diff.x.abs() <= DOUBLE_CLICK_DISTANCE && diff.y.abs() <= DOUBLE_CLICK_DISTANCE
 }
 
+/// Creates an XKB context for keymaps supplied by Wayland or X11.
+///
+/// Server keymaps are already resolved and need no local keyboard definitions.
+/// Loading default include paths can fail on systems without those files.
+#[cfg(any(feature = "wayland", feature = "x11"))]
+pub(super) fn new_xkb_context() -> anyhow::Result<xkb::Context> {
+    validate_xkb_context(xkb::Context::new(xkb::CONTEXT_NO_DEFAULT_INCLUDES))
+}
+
+#[cfg(any(feature = "wayland", feature = "x11"))]
+fn validate_xkb_context(context: xkb::Context) -> anyhow::Result<xkb::Context> {
+    ensure!(
+        !context.get_raw_ptr().is_null(),
+        "libxkbcommon failed to create an XKB context"
+    );
+    Ok(context)
+}
+
 #[cfg(any(feature = "wayland", feature = "x11"))]
 pub(super) fn get_xkb_compose_state(cx: &xkb::Context) -> Option<xkb::compose::State> {
     let mut locales = Vec::default();
@@ -2145,6 +2165,10 @@ mod windowing_tests;
 #[path = "native_windowing_tests.rs"]
 mod native_windowing_tests;
 
+#[cfg(all(test, any(feature = "wayland", feature = "x11")))]
+#[path = "platform/xkb_context_tests.rs"]
+mod xkb_context_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2295,6 +2319,23 @@ mod tests {
         assert_eq!(
             receiver.into_iter().collect::<Vec<_>>(),
             ["sleep", "wake", "replacement sleep"]
+        );
+    }
+
+    #[cfg(any(feature = "wayland", feature = "x11"))]
+    #[test]
+    fn rejects_null_xkb_context() {
+        let context = unsafe {
+            // libxkbcommon permits unref on null, matching the value returned by Context::new on failure.
+            xkb::Context::from_raw_ptr(std::ptr::null_mut())
+        };
+        let error = validate_xkb_context(context)
+            .err()
+            .expect("null XKB context should be rejected");
+
+        assert_eq!(
+            error.to_string(),
+            "libxkbcommon failed to create an XKB context"
         );
     }
 

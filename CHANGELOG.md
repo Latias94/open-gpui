@@ -8,6 +8,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- Wayland deduplicates committed IME cursor rectangles and prefers advertised ext background blur with KDE fallback. `Window::set_client_corner_radii` forwards independent client-drawn corners; the maintained window-shadow example supplies its drawn radii.
+- Linux validates shared XKB contexts without local includes for resolved keymaps and splits Wayland/X11 features. X11 `WM_CLASS` writes terminate both fields. Wayland requires `wayland-backend` 0.3.15 and `wayland-protocols` 0.32.10.
+
 - Web text supports the official `CanvasFontFallback` policy: emoji by default, disabled or conservative horizontal CJK fallback. Whole-grapheme Canvas measurement/rasterization uses the existing glyph atlas, selected face properties and post-fallback missing-glyph reports.
 - `CosmicTextSystem::font_weight_and_style` reports the selected face. WebPlatform exposes the official backend/fallback constructors, and the platform convenience crate exposes `application_with_web_backend`.
 - WebPlatform requests the bundled font's actual `Inter Variable` family, correcting the previous `Inter` request that silently selected a monospace fallback.

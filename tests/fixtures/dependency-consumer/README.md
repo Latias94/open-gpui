@@ -75,6 +75,11 @@ WGPU's texture format type supplies the preview label. It adds no document or hi
 The platform dependency enables `x11` and `wayland` on Linux and FreeBSD, and `font-kit` on macOS.
 Windows uses the shared platform dependency without additional fixture-selected features.
 
+The `native_window_controls` target also consumes `Window::set_client_corner_radii` and the
+optional backend method. Its ordinary `bench-support` App executes the unsupported no-op
+alongside the existing native-control and close workflow. It does not qualify compositor blur;
+the affected Linux native tests retain that separate platform scope.
+
 Run these commands from the repository root. For dependency maintenance, generate or refresh the
 consumer lockfile, then review and commit it:
 

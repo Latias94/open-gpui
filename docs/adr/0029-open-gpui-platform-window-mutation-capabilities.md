@@ -96,6 +96,11 @@ creation and preserved when a generic native geometry refresh cannot observe tha
 Native backends project their observable capabilities into this authority; they do not introduce
 an optimistic parallel fact source.
 
+Background observation is independent of alpha mutation admission. A backend may declare that
+its background fact reflects native changes even when the application can set alpha only at
+creation. Wayland uses this for compositor Blur capability changes; the existing state-change
+callback refreshes its effective background without granting live mutation support.
+
 The public `zoom_window`, `minimize_window`, and `toggle_fullscreen` helpers are state-only typed
 wrappers over that placement authority. They return a `must_use` dispatch and do not attach stale
 restore geometry to a state transition. The backend trait no longer exposes parallel legacy

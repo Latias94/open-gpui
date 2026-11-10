@@ -1,10 +1,10 @@
 #![cfg_attr(target_family = "wasm", no_main)]
 
 use open_gpui::{
-    App, Bounds, Context, CursorStyle, Decorations, HitboxBehavior, Hsla, MouseButton, Pixels,
-    Point, ResizeEdge, Size, Window, WindowBackgroundAppearance, WindowBounds, WindowDecorations,
-    WindowOptions, black, canvas, div, green, point, prelude::*, px, rgb, size, transparent_black,
-    white,
+    App, Bounds, Context, Corners, CursorStyle, Decorations, HitboxBehavior, Hsla, MouseButton,
+    Pixels, Point, ResizeEdge, Size, Window, WindowBackgroundAppearance, WindowBounds,
+    WindowDecorations, WindowOptions, black, canvas, div, green, point, prelude::*, px, rgb, size,
+    transparent_black, white,
 };
 use open_gpui_platform::application;
 
@@ -24,6 +24,23 @@ impl Render for WindowShadow {
         let border_size = px(1.0);
         let grey = rgb(0x808080);
         window.set_client_inset(shadow_size);
+        window.set_client_corner_radii(match decorations {
+            Decorations::Server => Corners::default(),
+            Decorations::Client { tiling } => Corners {
+                top_left: if tiling.top || tiling.left {
+                    px(0.0)
+                } else {
+                    rounding
+                },
+                top_right: if tiling.top || tiling.right {
+                    px(0.0)
+                } else {
+                    rounding
+                },
+                bottom_left: px(0.0),
+                bottom_right: px(0.0),
+            },
+        });
 
         div()
             .id("window-backdrop")
@@ -82,7 +99,7 @@ impl Render for WindowShadow {
                     .on_mouse_move(|_e, window, _cx| window.refresh())
                     .on_mouse_down(MouseButton::Left, move |e, window, _cx| {
                         let size = window.window_bounds().get_bounds().size;
-                        let pos = e.position;
+                        let pos = e.window_event().position;
 
                         match resize_edge(pos, shadow_size, size) {
                             Some(edge) => window.start_window_resize(edge),
@@ -170,8 +187,10 @@ impl Render for WindowShadow {
                                                     },
                                                 )
                                                 .on_click(|e, window, _| {
-                                                    if e.is_right_click() {
-                                                        window.show_window_menu(e.position());
+                                                    if e.window_event().is_right_click() {
+                                                        window.show_window_menu(
+                                                            e.window_event().position(),
+                                                        );
                                                     }
                                                 })
                                                 .text_color(black())

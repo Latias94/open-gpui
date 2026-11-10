@@ -6272,7 +6272,7 @@ impl Window {
             facts.accepts_activation = self.platform_facts.accepts_activation;
             facts.focus_on_click = self.platform_facts.focus_on_click;
         }
-        if !capabilities.alpha.is_live() {
+        if !capabilities.alpha.is_live() && !self.platform_window.observes_background_appearance() {
             facts.background_appearance = self.platform_facts.background_appearance;
         }
         if !capabilities.topmost.is_live() {
@@ -7264,6 +7264,11 @@ impl Window {
     pub fn set_client_inset(&mut self, inset: Pixels) {
         self.client_inset = Some(inset);
         self.platform_window.set_client_inset(inset);
+    }
+
+    /// Sets client-drawn corner radii so platform effects can match the window's shape.
+    pub fn set_client_corner_radii(&mut self, radii: Corners<Pixels>) {
+        self.platform_window.set_client_corner_radii(radii);
     }
 
     /// Returns the client_inset value by [`Self::set_client_inset`].

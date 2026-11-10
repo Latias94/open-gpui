@@ -19,6 +19,7 @@ use wayland_client::{
     Proxy,
     protocol::{wl_callback, wl_output, wl_seat, wl_surface},
 };
+use wayland_protocols::ext::background_effect::v1::client::ext_background_effect_surface_v1;
 use wayland_protocols::wp::viewporter::client::wp_viewport;
 use wayland_protocols::xdg::decoration::zv1::client::zxdg_toplevel_decoration_v1;
 use wayland_protocols::xdg::shell::client::xdg_toplevel::{self};
@@ -40,18 +41,18 @@ use crate::linux::{
     interaction_gate::{WindowInteractionGate, accesskit_adapter},
 };
 use open_gpui::{
-    AnyWindowHandle, Bounds, Capslock, CursorStyle, Decorations, DevicePixels, ExternalDragPayload,
-    FrameRequestSource, GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay,
-    PlatformExternalDragSession, PlatformFrameSignal, PlatformInput, PlatformInputCallback,
-    PlatformInputCallbackSlot, PlatformInputHandler, PlatformInputHandlerSlot,
-    PlatformNativeWindowRetirementOutcome, PlatformPresentationShutdownOutcome,
-    PlatformShouldCloseCallbackSlot, PlatformWindow, PlatformWindowActiveStatusObservation,
-    PlatformWindowCommand, PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome,
-    PlatformWindowDispatch, PlatformWindowInteractionQuiescence, PlatformWindowMutationObservation,
-    PlatformWindowMutationUnobservedTerminal, PlatformWindowPresentOutcome, Point,
-    PreparedPlatformPresentationShutdown, PromptButton, PromptLevel, RequestFrameOptions,
-    ResizeEdge, Scene, Size, Tiling, WindowActivationPolicy, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls,
+    AnyWindowHandle, Bounds, Capslock, Corners, CursorStyle, Decorations, DevicePixels,
+    ExternalDragPayload, FrameRequestSource, GpuSpecs, Modifiers, Pixels, PlatformAtlas,
+    PlatformDisplay, PlatformExternalDragSession, PlatformFrameSignal, PlatformInput,
+    PlatformInputCallback, PlatformInputCallbackSlot, PlatformInputHandler,
+    PlatformInputHandlerSlot, PlatformNativeWindowRetirementOutcome,
+    PlatformPresentationShutdownOutcome, PlatformShouldCloseCallbackSlot, PlatformWindow,
+    PlatformWindowActiveStatusObservation, PlatformWindowCommand, PlatformWindowCommandDispatcher,
+    PlatformWindowCommandOutcome, PlatformWindowDispatch, PlatformWindowInteractionQuiescence,
+    PlatformWindowMutationObservation, PlatformWindowMutationUnobservedTerminal,
+    PlatformWindowPresentOutcome, Point, PreparedPlatformPresentationShutdown, PromptButton,
+    PromptLevel, RequestFrameOptions, ResizeEdge, Scene, Size, Tiling, WindowActivationPolicy,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls,
     WindowCreationFacts, WindowDecorations, WindowKind, WindowMutationDomain,
     WindowMutationRequest, WindowParams, WindowPlacementState, WindowPlatformFacts,
     WindowPresentationShutdownTicket, WindowVisibility,
@@ -230,13 +231,16 @@ impl WaylandWindowBackgroundProjection {
     fn new(
         requested: WindowBackgroundAppearance,
         decorations: WindowDecorations,
-        blur_supported: bool,
+        background_effects_supported: bool,
+        kde_blur_supported: bool,
     ) -> Self {
         let observed_appearance = match requested {
             WindowBackgroundAppearance::Opaque | WindowBackgroundAppearance::Transparent => {
                 requested
             }
-            WindowBackgroundAppearance::Blurred if blur_supported => {
+            WindowBackgroundAppearance::Blurred
+                if background_effects_supported || kde_blur_supported =>
+            {
                 WindowBackgroundAppearance::Blurred
             }
             WindowBackgroundAppearance::Blurred
@@ -288,7 +292,8 @@ pub struct WaylandWindowState {
     pub surface: wl_surface::WlSurface,
     app_id: Option<String>,
     appearance: WindowAppearance,
-    blur: Option<org_kde_kwin_blur::OrgKdeKwinBlur>,
+    kde_blur: Option<org_kde_kwin_blur::OrgKdeKwinBlur>,
+    background_effects: Option<ext_background_effect_surface_v1::ExtBackgroundEffectSurfaceV1>,
     viewport: Option<wp_viewport::WpViewport>,
     outputs: HashMap<ObjectId, Output>,
     display: Option<(ObjectId, Output)>,
@@ -299,6 +304,7 @@ pub struct WaylandWindowState {
     scale: f32,
     input_handler: PlatformInputHandlerSlot,
     decorations: WindowDecorations,
+    requested_background_appearance: WindowBackgroundAppearance,
     background_appearance: WindowBackgroundAppearance,
     fullscreen: bool,
     maximized: bool,
@@ -321,6 +327,7 @@ pub struct WaylandWindowState {
     in_progress_window_controls: Option<WindowControls>,
     window_controls: WindowControls,
     client_inset: Option<Pixels>,
+    client_corner_radii: Corners<Pixels>,
     accesskit_adapter: Option<accesskit_unix::Adapter>,
     creation: WaylandWindowCreationProjection,
     initially_shown: bool,
@@ -990,7 +997,8 @@ impl WaylandWindowState {
             surface_state,
             surface,
             app_id: None,
-            blur: None,
+            kde_blur: None,
+            background_effects: None,
             viewport,
             globals,
             outputs: HashMap::default(),
@@ -1002,6 +1010,7 @@ impl WaylandWindowState {
             input_handler: PlatformInputHandlerSlot::default(),
             decorations: WindowDecorations::Client,
             background_appearance: WindowBackgroundAppearance::Opaque,
+            requested_background_appearance: WindowBackgroundAppearance::Opaque,
             fullscreen: false,
             maximized: false,
             visibility: WindowVisibility::Visible,
@@ -1022,6 +1031,7 @@ impl WaylandWindowState {
             in_progress_window_controls: None,
             window_controls: WindowControls::default(),
             client_inset: None,
+            client_corner_radii: Corners::default(),
             accesskit_adapter: None,
             creation,
             initially_shown,
@@ -1180,9 +1190,11 @@ impl WaylandWindowState {
 
     pub fn is_transparent(&self) -> bool {
         WaylandWindowBackgroundProjection::new(
-            self.background_appearance,
+            self.requested_background_appearance,
             self.decorations,
-            self.globals.blur_manager.is_some(),
+            self.globals.background_effects_manager.is_some()
+                && self.globals.background_effects_blur.get(),
+            self.globals.kde_blur_manager.is_some(),
         )
         .renderer_transparent
     }
@@ -1278,8 +1290,13 @@ impl Drop for WaylandWindow {
         state.renderer.destroy();
 
         // Destroy blur first, this has no dependencies.
-        if let Some(blur) = &state.blur {
+        if let Some(blur) = state.kde_blur.take() {
             blur.release();
+        }
+
+        // Destroy background effects, this has no dependencies.
+        if let Some(background_effects) = state.background_effects.take() {
+            background_effects.destroy();
         }
 
         // Decorations must be destroyed before the xdg state.
@@ -1402,6 +1419,9 @@ impl WaylandWindow {
         if let Some(parent) = parent {
             parent.add_child(&this.0, blocking);
         }
+
+        #[cfg(test)]
+        window_effect_tests::observe_creation(&this);
 
         Ok((this, surface.id()))
     }
@@ -1783,6 +1803,20 @@ impl WaylandWindowStatePtr {
         }
     }
 
+    pub(super) fn background_effects_changed(&self) {
+        let state = self.state.borrow_mut();
+        if !state.can_mutate_surface() {
+            return;
+        }
+        let previous = state.background_appearance;
+        update_window(state);
+        let changed = self.state.borrow().background_appearance != previous;
+        self.request_redraw();
+        if changed {
+            self.emit_window_state_change();
+        }
+    }
+
     pub fn handle_xdg_surface_event(&self, event: xdg_surface::Event) {
         let signal_at = PlatformFrameSignal::capture(Instant::now);
         if let xdg_surface::Event::Configure { serial } = event {
@@ -1823,7 +1857,7 @@ impl WaylandWindowStatePtr {
                     // Limit interactive resizes to once per vblank
                     if configure.resizing && state.resize_throttle {
                         state.surface_state.ack_configure(serial);
-                        drop(state);
+                        update_window(state);
                         if state_changed {
                             self.emit_window_state_change();
                         }
@@ -1882,7 +1916,7 @@ impl WaylandWindowStatePtr {
             );
 
             let initial_configure = self.frame_loop.get() == FrameLoop::Unconfigured;
-            drop(state);
+            update_window(state);
             if initial_configure {
                 self.frame(signal_at, FrameRequestSource::NativeCallback);
             } else {
@@ -1986,6 +2020,7 @@ impl WaylandWindowStatePtr {
             if acknowledged.is_none() {
                 return;
             }
+            update_window(state);
         }
         self.finish_popup_resize(popup_configure);
         if !self.is_live() {
@@ -1999,6 +2034,9 @@ impl WaylandWindowStatePtr {
     }
 
     pub fn handle_toplevel_decoration_event(&self, event: zxdg_toplevel_decoration_v1::Event) {
+        if !self.is_live() {
+            return;
+        }
         if let zxdg_toplevel_decoration_v1::Event::Configure { mode } = event {
             match mode {
                 WEnum::Value(zxdg_toplevel_decoration_v1::Mode::ServerSide) => {
@@ -2356,6 +2394,9 @@ impl WaylandWindowStatePtr {
     }
 
     pub fn set_size_and_scale(&self, size: Option<Size<Pixels>>, scale: Option<f32>) {
+        if !self.is_live() {
+            return;
+        }
         let (size, scale) = {
             let mut state = self.state.borrow_mut();
             if size.is_none_or(|size| size == state.bounds.size)
@@ -2379,13 +2420,17 @@ impl WaylandWindowStatePtr {
             fun(size, scale);
         }
 
-        {
-            let state = self.state.borrow();
-            if let Some(viewport) = &state.viewport {
-                viewport
-                    .set_destination(f32::from(size.width) as i32, f32::from(size.height) as i32);
-            }
+        if !self.is_live() {
+            return;
         }
+        let state = self.state.borrow_mut();
+        if let Some(viewport) = &state.viewport {
+            viewport.set_destination(
+                f32::from(state.bounds.size.width) as i32,
+                f32::from(state.bounds.size.height) as i32,
+            );
+        }
+        update_window(state);
     }
 
     pub fn resize(&self, size: Size<Pixels>) {
@@ -2943,10 +2988,16 @@ impl PlatformWindow for WaylandWindow {
 
     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
         let mut state = self.borrow_mut();
+        if !state.can_mutate_surface() {
+            return;
+        }
+        state.requested_background_appearance = background_appearance;
         let projection = WaylandWindowBackgroundProjection::new(
             background_appearance,
             state.decorations,
-            state.globals.blur_manager.is_some(),
+            state.globals.background_effects_manager.is_some()
+                && state.globals.background_effects_blur.get(),
+            state.globals.kde_blur_manager.is_some(),
         );
         if state.background_appearance == projection.observed_appearance {
             return;
@@ -2958,6 +3009,10 @@ impl PlatformWindow for WaylandWindow {
 
     fn background_appearance(&self) -> WindowBackgroundAppearance {
         self.borrow().background_appearance
+    }
+
+    fn observes_background_appearance(&self) -> bool {
+        true
     }
 
     fn is_subpixel_rendering_supported(&self) -> bool {
@@ -3216,6 +3271,9 @@ impl PlatformWindow for WaylandWindow {
 
     fn request_decorations(&self, decorations: WindowDecorations) {
         let mut state = self.borrow_mut();
+        if !state.can_mutate_surface() {
+            return;
+        }
         match state.surface_state.decoration().as_ref() {
             Some(decoration) => {
                 decoration.set_mode(decorations.to_xdg());
@@ -3241,8 +3299,23 @@ impl PlatformWindow for WaylandWindow {
 
     fn set_client_inset(&self, inset: Pixels) {
         let mut state = self.borrow_mut();
+        if !state.can_mutate_surface() {
+            return;
+        }
         if Some(inset) != state.client_inset {
             state.client_inset = Some(inset);
+            update_window(state);
+            self.0.request_redraw();
+        }
+    }
+
+    fn set_client_corner_radii(&self, radii: Corners<Pixels>) {
+        let mut state = self.borrow_mut();
+        if !state.can_mutate_surface() {
+            return;
+        }
+        if radii != state.client_corner_radii {
+            state.client_corner_radii = radii;
             update_window(state);
             self.0.request_redraw();
         }
@@ -3253,7 +3326,7 @@ impl PlatformWindow for WaylandWindow {
         if state.interaction_gate.is_quiesced() {
             return;
         }
-        state.client.update_ime_position(bounds);
+        state.client.update_ime_position(&self.0, bounds);
     }
 
     fn can_start_external_drag(&self) -> bool {
@@ -3310,38 +3383,114 @@ impl PlatformWindow for WaylandWindow {
     }
 }
 
+fn add_rounded_rect(
+    area: Bounds<i32>,
+    radii: Corners<Pixels>,
+    mut add_rectangle: impl FnMut(i32, i32, i32, i32),
+) {
+    if area.size.width <= 0 || area.size.height <= 0 {
+        return;
+    }
+
+    let clamp_radius = |radius: Pixels| {
+        radius
+            .to_i32()
+            .max(0)
+            .min(area.size.width / 2)
+            .min(area.size.height / 2)
+    };
+    let top_left = clamp_radius(radii.top_left);
+    let top_right = clamp_radius(radii.top_right);
+    let bottom_left = clamp_radius(radii.bottom_left);
+    let bottom_right = clamp_radius(radii.bottom_right);
+
+    let corner_inset = |radius: i32, row: i32| {
+        if row >= radius {
+            return 0;
+        }
+        let y = f64::from(radius) - (f64::from(row) + 0.5);
+        let x = (f64::from(radius).powi(2) - y * y).sqrt();
+        (f64::from(radius) - x - 0.5).ceil() as i32
+    };
+
+    for (left_radius, right_radius, bottom) in [
+        (top_left, top_right, false),
+        (bottom_left, bottom_right, true),
+    ] {
+        for row in 0..left_radius.max(right_radius) {
+            let left_inset = corner_inset(left_radius, row);
+            let right_inset = corner_inset(right_radius, row);
+            let width = area.size.width - left_inset - right_inset;
+            if width <= 0 {
+                continue;
+            }
+            let y = if bottom {
+                area.origin.y + area.size.height - row - 1
+            } else {
+                area.origin.y + row
+            };
+            add_rectangle(area.origin.x + left_inset, y, width, 1);
+        }
+    }
+
+    let top_height = top_left.max(top_right);
+    let bottom_height = bottom_left.max(bottom_right);
+    let height = area.size.height - top_height - bottom_height;
+    if height > 0 {
+        add_rectangle(
+            area.origin.x,
+            area.origin.y + top_height,
+            area.size.width,
+            height,
+        );
+    }
+}
+
+#[cfg(test)]
+#[path = "window_effect_tests.rs"]
+mod window_effect_tests;
+
 fn update_window(mut state: RefMut<WaylandWindowState>) {
-    if state.presentation_shutdown_blocks_surface() {
+    if !state.can_mutate_surface() {
         state.clear_presentation_bookkeeping();
         return;
     }
 
     let projection = WaylandWindowBackgroundProjection::new(
-        state.background_appearance,
+        state.requested_background_appearance,
         state.decorations,
-        state.globals.blur_manager.is_some(),
+        state.globals.background_effects_manager.is_some()
+            && state.globals.background_effects_blur.get(),
+        state.globals.kde_blur_manager.is_some(),
     );
+    state.background_appearance = projection.observed_appearance;
 
     state
         .renderer
         .update_transparency(projection.renderer_transparent);
-    let opaque_area = state.window_bounds.map(|v| f32::from(v) as i32);
-    opaque_area.inset(f32::from(state.inset()) as i32);
+    let area = inset_by_tiling(
+        state.bounds.map_origin(|_| px(0.0)),
+        state.inset(),
+        state.tiling,
+    )
+    .map(|value| value.to_i32())
+    .map_size(|value| value.max(0));
 
     let region = state
         .globals
         .compositor
         .create_region(&state.globals.qh, ());
-    region.add(
-        opaque_area.origin.x,
-        opaque_area.origin.y,
-        opaque_area.size.width,
-        opaque_area.size.height,
-    );
 
-    // Note that rounded corners make this rectangle API hard to work with.
-    // As this is common when using CSD, let's just disable this API.
+    // Client decorations include transparent shadows and antialiased corners,
+    // so don't promise the compositor an opaque region.
     if projection.compositor_opaque_region {
+        region.add(
+            area.origin.x,
+            area.origin.y,
+            area.size.width,
+            area.size.height,
+        );
+
         // Promise the compositor that this region of the window surface
         // contains no transparent pixels. This allows the compositor to skip
         // updating whatever is behind the surface for better performance.
@@ -3350,17 +3499,60 @@ fn update_window(mut state: RefMut<WaylandWindowState>) {
         state.surface.set_opaque_region(None);
     }
 
-    if let Some(ref blur_manager) = state.globals.blur_manager {
+    // Prefer the ext-background-effect protocol, as it is DE agnostic and
+    // replaces the deprecated kde-blur protocol, which is no longer supported
+    // since KDE Plasma 6.7.
+    // https://invent.kde.org/plasma/kwin/-/commit/7f9e0aa1cd2c2ab4fea1097800893b6f780089eb
+    let background_effects_manager = state
+        .globals
+        .background_effects_manager
+        .clone()
+        .filter(|_| state.globals.background_effects_blur.get());
+    if background_effects_manager.is_none() {
+        if let Some(effect) = state.background_effects.take() {
+            effect.destroy();
+        }
+    } else if let Some(blur) = state.kde_blur.take() {
+        if let Some(manager) = &state.globals.kde_blur_manager {
+            manager.unset(&state.surface);
+        }
+        blur.release();
+    }
+    if let Some(ref background_effects_manager) = background_effects_manager {
         if projection.blur_enabled {
-            if state.blur.is_none() {
-                let blur = blur_manager.create(&state.surface, &state.globals.qh, ());
-                state.blur = Some(blur);
+            if state.background_effects.is_none() {
+                log::debug!("Using ext-background-effect protocol");
+                let background_effects = background_effects_manager.get_background_effect(
+                    &state.surface,
+                    &state.globals.qh,
+                    (),
+                );
+                state.background_effects = Some(background_effects);
             }
-            state.blur.as_ref().unwrap().commit();
+
+            add_rounded_rect(area, state.client_corner_radii, |x, y, width, height| {
+                region.add(x, y, width, height);
+            });
+
+            state
+                .background_effects
+                .as_ref()
+                .unwrap()
+                .set_blur_region(Some(&region));
+        } else if let Some(background_effects) = state.background_effects.take() {
+            background_effects.destroy();
+        }
+    } else if let Some(ref blur_manager) = state.globals.kde_blur_manager {
+        if projection.blur_enabled {
+            if state.kde_blur.is_none() {
+                log::debug!("Using kde-blur protocol");
+                let blur = blur_manager.create(&state.surface, &state.globals.qh, ());
+                state.kde_blur = Some(blur);
+            }
+            state.kde_blur.as_ref().unwrap().commit();
         } else {
-            // It probably doesn't hurt to clear the blur for opaque windows
             blur_manager.unset(&state.surface);
-            if let Some(b) = state.blur.take() {
+            if let Some(b) = state.kde_blur.take() {
                 b.release()
             }
         }
@@ -3623,6 +3815,7 @@ mod creation_projection_tests {
             WindowBackgroundAppearance::Opaque,
             WindowDecorations::Server,
             true,
+            false,
         );
         assert_eq!(
             opaque.observed_appearance,
@@ -3636,6 +3829,7 @@ mod creation_projection_tests {
             WindowBackgroundAppearance::Opaque,
             WindowDecorations::Client,
             true,
+            false,
         );
         assert!(client_decorated.renderer_transparent);
         assert!(!client_decorated.compositor_opaque_region);
@@ -3644,6 +3838,7 @@ mod creation_projection_tests {
             WindowBackgroundAppearance::Transparent,
             WindowDecorations::Server,
             true,
+            false,
         );
         assert!(transparent.renderer_transparent);
         assert!(!transparent.compositor_opaque_region);
@@ -3653,6 +3848,7 @@ mod creation_projection_tests {
             WindowBackgroundAppearance::Blurred,
             WindowDecorations::Server,
             true,
+            false,
         );
         assert_eq!(
             blurred.observed_appearance,
@@ -3666,6 +3862,7 @@ mod creation_projection_tests {
             WindowBackgroundAppearance::Blurred,
             WindowDecorations::Server,
             false,
+            false,
         );
         assert_eq!(
             blur_adjusted.observed_appearance,
@@ -3678,8 +3875,12 @@ mod creation_projection_tests {
             WindowBackgroundAppearance::MicaBackdrop,
             WindowBackgroundAppearance::MicaAltBackdrop,
         ] {
-            let adjusted =
-                WaylandWindowBackgroundProjection::new(requested, WindowDecorations::Server, true);
+            let adjusted = WaylandWindowBackgroundProjection::new(
+                requested,
+                WindowDecorations::Server,
+                true,
+                false,
+            );
             assert_eq!(
                 adjusted.observed_appearance,
                 WindowBackgroundAppearance::Transparent

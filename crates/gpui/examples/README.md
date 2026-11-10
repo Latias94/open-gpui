@@ -61,7 +61,9 @@ with `cargo nextest run -p open-gpui-platform --all-features --example image_gal
 - `set_menus` shows application menu setup.
 - `window` demonstrates creating normal, dialog, popup, and floating windows.
 - `window_positioning` demonstrates window bounds and placement.
-- `window_shadow` demonstrates window shadow styling.
+- `window_shadow` demonstrates client-drawn shadows and forwards the drawn corner radii to
+  the platform. Run `cargo run -p open-gpui-platform --example window_shadow`. On Linux,
+  select the backend with `--features wayland` or `--features x11`.
 
 ## Specialized examples
 

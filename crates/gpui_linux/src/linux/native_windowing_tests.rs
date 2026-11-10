@@ -21,6 +21,7 @@ const EXEC_SOCKET: &str = "GPUI_LINUX_NATIVE_WINDOWING_SOCKET_IDENTITY";
 const MISSING_STARTUP_DISPLAY: &str = "/gpui-test/missing-owned-startup-socket";
 const INITIAL_COLOR: u32 = 0x315ea8;
 const INPUT_COLOR: u32 = 0xb85c24;
+const NATIVE_APP_ID: &str = "org.open-gpui.native-windowing";
 
 #[derive(Clone, Copy, Debug, Default)]
 struct PaintStamp {
@@ -274,6 +275,7 @@ async fn roundtrip(
             cx.open_window(
                 WindowOptions {
                     show,
+                    app_id: Some(NATIVE_APP_ID.to_owned()),
                     window_bounds: Some(WindowBounds::Windowed(open_gpui::Bounds::new(
                         point(px(30.0), px(30.0)),
                         size(px(160.0), px(100.0)),
@@ -282,6 +284,15 @@ async fn roundtrip(
                 },
                 |window, cx| cx.new(|cx| Painted::new(render_count.clone(), window, cx)),
             )
+        })?;
+        cx.update_window(window.into(), |_, window, _| {
+            window.set_client_corner_radii(open_gpui::Corners {
+                top_left: px(4.0),
+                top_right: px(8.0),
+                bottom_right: px(12.0),
+                bottom_left: px(16.0),
+            });
+            window.refresh();
         })?;
         let refusal = cx
             .update(|cx| cx.request_windowing(WindowingRequest::Headless))
@@ -384,8 +395,8 @@ async fn exercise_x11_keyboard(
     use x11rb::{
         connection::Connection as _,
         protocol::xproto::{
-            ConnectionExt as _, EventMask, KEY_PRESS_EVENT, KEY_RELEASE_EVENT, KeyButMask,
-            KeyPressEvent,
+            AtomEnum, ConnectionExt as _, EventMask, KEY_PRESS_EVENT, KEY_RELEASE_EVENT,
+            KeyButMask, KeyPressEvent,
         },
     };
 
@@ -426,6 +437,45 @@ async fn exercise_x11_keyboard(
             ))
         })
     })??;
+    for app_id in [
+        NATIVE_APP_ID,
+        "org.open-gpui.native-windowing.updated",
+        "",
+        NATIVE_APP_ID,
+    ] {
+        cx.update_window(handle.into(), |_, window, _| window.set_app_id(app_id))?;
+        let expected = format!("{app_id}\0{app_id}\0").into_bytes();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let property = connection
+                .get_property(
+                    false,
+                    native_window,
+                    AtomEnum::WM_CLASS,
+                    AtomEnum::STRING,
+                    0,
+                    u32::MAX,
+                )?
+                .reply()?;
+            if property.format == 8
+                && property.type_ == u32::from(AtomEnum::STRING)
+                && property.bytes_after == 0
+                && property.value == expected
+            {
+                break;
+            }
+            anyhow::ensure!(
+                Instant::now() < deadline,
+                "X11 WM_CLASS must contain two complete NUL-terminated fields: expected={expected:?}, format={}, actual={:?}",
+                property.format,
+                property.value,
+            );
+            cx.background_executor()
+                .timer(Duration::from_millis(10))
+                .await;
+        }
+    }
+    println!("NATIVE_X11_WM_CLASS_TERMINATED complete_fields=2");
     let press = KeyPressEvent {
         response_type: KEY_PRESS_EVENT,
         detail: keycode,

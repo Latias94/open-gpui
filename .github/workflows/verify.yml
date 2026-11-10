@@ -416,7 +416,10 @@ jobs:
 
       - name: Check Linux platform surface
         if: matrix.name == 'linux'
-        run: cargo check -p open-gpui-linux --all-features --locked
+        run: |
+          cargo check -p open-gpui-linux --all-features --locked
+          cargo check -p open-gpui-linux --no-default-features --features wayland --lib --locked
+          cargo check -p open-gpui-linux --no-default-features --features x11 --lib --locked
 
       - name: Test Linux platform surface
         if: matrix.name == 'linux'

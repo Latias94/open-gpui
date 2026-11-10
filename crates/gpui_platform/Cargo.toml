@@ -23,6 +23,10 @@ path = "../gpui/examples/image_gallery.rs"
 test = true
 
 [[example]]
+name = "window_shadow"
+path = "../gpui/examples/window_shadow.rs"
+
+[[example]]
 name = "system_notifications"
 path = "examples/system_notifications.rs"
 

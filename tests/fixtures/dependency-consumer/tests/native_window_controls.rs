@@ -3,7 +3,8 @@
 //! bench-support executes an ordinary embedded App without test-support or a renderer.
 
 use open_gpui::{
-    AnyWindowHandle, Bounds, Pixels, PlatformWindow, Window, WindowKind, WindowOptions, point,
+    AnyWindowHandle, Bounds, Corners, Pixels, PlatformWindow, Window, WindowKind, WindowOptions,
+    point,
     popup::{
         PopupAnchor, PopupConstraintAdjustment, PopupGravity, PopupNotSupportedError, PopupOptions,
     },
@@ -33,6 +34,7 @@ fn downstream_native_window_controls_and_complete_popup_schema_are_type_only() {
     let _: fn(&Window, Pixels) = Window::set_exclusive_zone;
     let _: fn(&Window) = Window::toggle_simple_fullscreen;
     let _: fn(&Window) -> bool = Window::is_simple_fullscreen;
+    let _: fn(&mut Window, Corners<Pixels>) = Window::set_client_corner_radii;
     let _window_type_only = |window: &Window, region: Vec<Bounds<Pixels>>| -> bool {
         window.set_input_region(Some(&region));
         drop(region);
@@ -43,6 +45,7 @@ fn downstream_native_window_controls_and_complete_popup_schema_are_type_only() {
         window.is_simple_fullscreen()
     };
     let _backend_type_only = |window: &dyn PlatformWindow, region: &[Bounds<Pixels>]| -> bool {
+        window.set_client_corner_radii(Corners::all(px(6.0)));
         window.set_input_region(Some(region));
         window.set_input_region(Some(&[]));
         window.set_input_region(None);
@@ -115,6 +118,13 @@ fn downstream_ordinary_app_executes_noop_controls_and_refuses_native_popups() {
                 window.set_exclusive_edge(open_gpui::layer_shell::Anchor::TOP);
                 window.toggle_simple_fullscreen();
                 window.toggle_simple_fullscreen();
+                window.set_client_corner_radii(Corners {
+                    top_left: px(4.0),
+                    top_right: px(8.0),
+                    bottom_right: px(12.0),
+                    bottom_left: px(16.0),
+                });
+                window.set_client_corner_radii(Corners::default());
                 assert!(!window.is_simple_fullscreen());
                 original
             })
