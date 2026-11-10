@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-10T15:30:00+08:00
+timestamp: 2026-11-10T15:52:20+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -17,6 +17,19 @@ verified_by:
 ---
 
 # Current State
+
+- Native quit/Restart Manager is implemented at `10f14f08be8572eaa802e4fb1cfcaf2d05e268c3`
+  from official `7f2a2c3c3ee2f23f28772dee7661fb98d3910990`. The bool callback reuses ordered
+  AppCell shutdown and exact retirement; Windows retains generation-bound routing, terminal
+  acknowledgement, observer-panic containment and its existing process-exit policy. Core 7,
+  corrected Windows 6 and independently locked all-target compilation pass. The
+  [record](../../verification.md#native-quit-completion-and-restart-manager) preserves the initial
+  Windows 4/6 failure and corrections. All three implementation/review lanes close. Upstream
+  maintenance now trusts unchanged official coverage and qualifies affected fork seams instead
+  of repeating unrelated suites/matrices. Linux/Mac signature migration adds no foreign
+  termination execution or wait policy; Web quit remains unsupported. Continue shared Apple
+  topology and final fixed-target closure, then the real Nara GPU/Host/View consumer before
+  separate framework maintenance. No renderer/loop/default selection follows.
 
 - Startup/live windowing is implemented at `c1d8204f2da7069f40ea8e0420a37a5c0f210474`, after
   separate clipboard-fixture correction `1c33677716c`. Complete official modes, persistent Linux
@@ -35,7 +48,7 @@ verified_by:
   correctness Clippy, actual Windows Rust 1.93 framework/three-consumer checks, production wasm
   off/on/smoke, fmt/YAML and static gates pass. All sixteen lanes close. The
   [record](../../verification.md#startup-and-live-windowing-lifecycle) retains failures, exact runs
-  and scope. Continue native quit/Restart Manager, shared Apple topology and final fixed-target
+  and scope. Continue shared Apple topology and final fixed-target
   closure, then the actual Nara GPU/Host/View consumer before separate framework maintenance.
 
 - Native appearance is implemented at `0b0ea5416656c2c43c242c01e2a665e21d3814ba` after
@@ -942,12 +955,11 @@ historical scope and is not current branch or CI qualification.
 
 # Next Action
 
-- Continue the [native-quit/forced-session successor](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#native-quit-and-forced-session-successor)
-  after scoped live-windowing qualification. Preserve official bool completion and forced-session
-  semantics through the existing terminal retirement fence and ordered native ingress. Keep the
-  original aggregate failures, default WSLg thread-exit crash and foreign lifecycle gates visible;
-  configured/focused passes do not resolve their causes. Shared Apple topology and the final
-  fixed-target difference audit remain separate prerequisites.
+- Continue shared Apple topology and the final fixed-target difference audit after qualified
+  [native quit/session shutdown](../../verification.md#native-quit-completion-and-restart-manager).
+  Trust unchanged official coverage and concentrate compilation/regressions on affected fork
+  seams. Keep the original aggregate failures, default WSLg thread-exit crash and foreign lifecycle
+  gates visible; configured/focused passes do not resolve their causes.
   Actual Mac Keychain and Linux Secret Service gates remain open; a source port is not native proof.
   Keep the [Mac pasteboard native gates](../../verification.md#desktop-clipboard-normalization-and-owned-pasteboard)
   open until actual Apple compilation and all twelve tests execute. Full fixed-target closure

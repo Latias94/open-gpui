@@ -1,5 +1,11 @@
 # Verification
 
+During upstream synchronization, trust unchanged official implementations and their existing
+upstream coverage. Use affected compilation, public-consumer checks and focused regressions for
+fork changes and integration seams. Broader suites and platform/compiler matrices require an
+affected contract, an observed failure or a release claim. The complete local gate below remains
+available for release/integration checkpoints; it is not required for every upstream port.
+
 Run the local Open GPUI gate with:
 
 ```sh
@@ -7497,6 +7503,52 @@ not performed. Continue the prepared native-quit/forced-session successor, share
 and final fixed-target difference audit, then the actual Nara GPU/Host/View consumer before the
 separate maintenance-session handoff. Live windowing retains one standalone platform loop and
 its own backend renderer; it does not supply external pumping, shared targets or engine adoption.
+
+## Native Quit Completion And Restart Manager
+
+Implementation `10f14f08be8572eaa802e4fb1cfcaf2d05e268c3`, following
+`e7b2d848f555ef13d5ff4c9d4b5141ae7710f8b9`, ports official
+`7f2a2c3c3ee2f23f28772dee7661fb98d3910990`, retained at fixed target
+`635026fabc38440fce5e1767d125026a17b12012`. Platform::on_quit now returns a synchronous
+completion bool. Windows application windows forward confirmed session shutdown to the
+validated platform owner; canceled sessions remain a no-op. Completed shutdown flushes logs
+and uses the existing ExitProcess path, preserving its aws-lc teardown constraint. A false
+result posts the official best-effort quit request without acknowledging terminal retirement.
+
+The fork adaptation reuses AppCell's ordered Quit event, one bounded post-borrow convergence
+and its existing exact native-exit predicate. Busy App access, pending presentation/capture
+and native retirement cannot be replaced by a queued-event receipt. No second lifecycle
+queue or completion counter is introduced. Actual application-window forwarding retains
+RegisteredWindowAuthority and uses the available WM_USER + 12 message slot. The ordinary
+Windows message loop retains the existing terminal acknowledgement.
+
+On Windows 11 with Rust 1.95.0, the focused Core selection passes 7/7
+(`685e8f6e-9146-4f22-bd6b-8dbb74d484fc`): actual callback busy/deferred completion,
+exact retained native terminal, missing App and existing retirement/capture/panic controls.
+The first Windows selection passes 4/6 (`3c9ca5a1-2abc-42d5-8f7f-f2fd5f221948`).
+Synchronous callback execution exposed an observer panic escaping the ordinary message loop;
+the loop now catches only the quit callback and continues terminal progress, matching its
+previous queued-task boundary. The original observer-panic test is unchanged. The new session
+fixture's single filtered PeekMessageW did not observe WM_QUIT; a bounded unfiltered pump
+now observes the actual request while processing preceding messages. Final Windows passes
+6/6 (`e9ac71b2-af7e-47cc-be2c-ee69b92ac16c`), with 282 outside the selection. This includes
+real HWND/session routing, the asynchronous observer/retryable-destruction trajectory and an
+isolated production-exit child that verifies the callback and log-flush markers before exit 0.
+No session broadcasts or unrelated process termination occur.
+
+The separately locked ordinary dependency consumer passes all-target compilation, including
+the changed native platform and profiler-disabled Core. It runs no consumer tests and adds no
+new runtime/platform claim. Existing compiler-floor and dependency selections are unchanged.
+Root formatting/whitespace and existing import-boundary, public-API-tier, document-link and
+release-inventory checks pass. All three implementation/review lanes are closed; no remote
+publication or CI execution occurs.
+
+Independent review of the fork completion, callback unwind and exact native routing finds
+no outstanding P1/P2. Linux, Mac, Web and VisualTest retain the official callback signature.
+Linux post-loop and Mac will-terminate still ignore its result; this unit adds no foreign
+termination wait policy or execution claim. Web quit remains unsupported. Verification follows
+the targeted upstream-trust policy above: unrelated component, docking, font/render, compiler
+floor and platform matrices retain their prior evidence rather than being rerun for this port.
 
 ## Focused Product Gates
 

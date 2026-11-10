@@ -2739,7 +2739,16 @@ runs, failures and remaining native/compiler gates.
 
 ## Native Quit And Forced Session Successor
 
-After live-windowing qualification, reconcile complete official
+Verification follows the November 10 maintenance direction: trust unchanged official behavior,
+compile affected owners/consumers and concentrate regressions and review on fork adaptations.
+For this unit, qualify callback completion against the existing asynchronous retirement fence
+and Windows session routing through the existing native harness. Components, docking, fonts,
+rendering and unrelated compiler/platform matrices do not need another acceptance cycle.
+Expand only for an observed failure or a changed contract. This rule also governs later sync
+units; earlier exhaustive qualification records remain historical evidence.
+
+After live-windowing qualification, implementation `10f14f08be8572eaa802e4fb1cfcaf2d05e268c3`
+reconciles complete official
 `7f2a2c3c3ee2f23f28772dee7661fb98d3910990` against the same fixed target. Platform::on_quit
 returns whether shutdown actually completed synchronously; a busy App cannot report success
 merely because its Quit event was queued. Missing App is settled, while live App readiness must
@@ -2752,18 +2761,32 @@ validated platform owner. Preserve the official canceled-session no-op, synchron
 shutdown/flush path and best-effort queued fallback when Windows may terminate the process.
 Distinguish forced OS termination from graceful native retirement: an uncompleted asynchronous
 fence must never become a successful lifecycle receipt. Any process-exit control runs only in
-an isolated child with exact expected exit/cleanup markers. Exercise App free/busy/reentrant,
-retrying HWND destruction, canceled and repeated session messages, missing callbacks and wrong
-native generations. Do not send session broadcasts or terminate unrelated processes.
+an isolated child with exact expected exit/cleanup markers. Cover the fork's busy/deferred
+completion and existing native retirement through focused regressions; inspect unchanged
+official cancellation and message-validation logic rather than duplicating its full test space.
+Do not send session broadcasts or terminate unrelated processes.
 
 Migrate the callback signature through Linux, Mac, Web, TestPlatform, VisualTest and ordinary
 public consumers. Linux post-loop and Mac applicationWillTerminate callbacks need explicit
 readiness/dispatch scope; merely ignoring the new bool cannot prove useful shutdown completed.
-Keep actual Apple execution separate from source preparation. Add the existing independently
-locked consumer and feature-off checks, preserving current native restart, shutdown/panic and
-terminal-request tests. This successor does not add a second quit queue or lifecycle manager.
+Keep actual Apple execution separate from source preparation. Compile the existing independently
+locked consumer and retain relevant native restart, shutdown/panic and terminal-request tests.
+This successor does not add a second quit queue or lifecycle manager.
+
+The [qualification](../verification.md#native-quit-completion-and-restart-manager) records
+Core 7/7, corrected Windows 6/6 and independently locked all-target compilation. The initial
+Windows 4/6 exposes a fork callback-unwind regression and a new fixture's filtered-message
+assumption; the owning corrections preserve the original observer-panic assertions. Independent
+bounded review finds no outstanding P1/P2 and all three lanes close. Foreign callback signatures
+are migrated without claiming a new termination wait policy or native execution. Continue
+shared Apple topology and the final fixed-target audit before the actual Nara consumer.
 
 ## Maintained Baseline Before Engine Adaptation
+
+The [native-quit record](../verification.md#native-quit-completion-and-restart-manager) qualifies
+`10f14f08be8572eaa802e4fb1cfcaf2d05e268c3` through affected Core/Windows regressions and public
+compilation. The upstream-trust rule above governs remaining ports. Shared Apple topology,
+final residual dispositions and the real Nara GPU/Host/View consumer still precede handoff.
 
 The [startup/live-windowing record](../verification.md#startup-and-live-windowing-lifecycle)
 qualifies implementation `c1d8204f2da7069f40ea8e0420a37a5c0f210474`, following separate fixture
@@ -2773,8 +2796,8 @@ correction `1c33677716c`. Core/public enabled/disabled 126 each, final Windows 2
 framework/three-consumer checks, production wasm, fmt/static gates pass. Preserve the failed
 2,221-case aggregate and default WSLg native thread-exit SIGSEGV; neither cause is proved by
 subsequent scoped passes. Apple native remains open after the foreign attempt stops at the
-host C toolchain's unsupported Apple flags. Sixteen lanes close. Continue the prepared native
-quit/Restart Manager successor, shared Apple topology and remaining fixed-target audit, then
+host C toolchain's unsupported Apple flags. Sixteen lanes close. Continue shared Apple topology
+and remaining fixed-target audit, then
 the actual Nara consumer. This lifecycle unit selects no engine renderer, loop or UI default.
 
 The [appearance record](../verification.md#native-window-appearance-and-platform-no-op)

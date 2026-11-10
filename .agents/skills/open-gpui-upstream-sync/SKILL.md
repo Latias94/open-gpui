@@ -101,9 +101,11 @@ of adding a name resolver, synchronization engine or second dependency-policy sc
 ## Verify And Record
 
 Use the [verification guide](../../../docs/verification.md) for existing commands and platform
-claims. Run focused behavioral regressions first, then affected core/component/platform cohorts
-and independent-consumer compilation. Serialize Cargo in the checkout and reuse the caller's
-configured target. Formatting and broad checks follow a stable edit checkpoint.
+claims. Trust unchanged official mechanisms and their upstream regression coverage. Compile the
+affected packages and public consumers; run existing regressions for changed behavior and add
+tests for fork adaptations, integration seams or concrete defects. Expand to broader cohorts or
+platform/compiler matrices only when the affected contract, a failure or a release claim needs
+them. Serialize Cargo in the checkout and reuse the caller's configured target.
 
 Where practical, show the regression failing before the owning fix. Preserve failures and actual
 rerun results; distinguish source inspection, compilation, headless execution and native submitted
