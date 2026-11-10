@@ -214,16 +214,18 @@ fn open_consumer(
 }
 
 fn key_down(visual: &mut VisualTestContext, key: &str) {
+    let os = visual.update(|_, cx| cx.platform_info().os);
     visual.simulate_event(KeyDownEvent {
-        keystroke: Keystroke::parse(key).unwrap(),
+        keystroke: Keystroke::parse_with_os(key, os).unwrap(),
         is_held: false,
         prefer_character_input: false,
     });
 }
 
 fn key_up(visual: &mut VisualTestContext, key: &str) {
+    let os = visual.update(|_, cx| cx.platform_info().os);
     visual.simulate_event(KeyUpEvent {
-        keystroke: Keystroke::parse(key).unwrap(),
+        keystroke: Keystroke::parse_with_os(key, os).unwrap(),
     });
 }
 

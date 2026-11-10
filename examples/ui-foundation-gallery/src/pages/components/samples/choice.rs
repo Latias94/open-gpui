@@ -1,5 +1,5 @@
 use super::*;
-use open_gpui::{KeyBinding, KeyContext, Keymap, actions};
+use open_gpui::{App, KeyBinding, KeyContext, Keymap, actions};
 use open_gpui_command::{
     CommandAvailabilityMap, CommandCenter, CommandContribution, CommandDescriptor,
     CommandKeyBinding, CommandKeyBindingPatch, CommandKeyBindingRegistry, CommandKeymapResolution,
@@ -723,7 +723,8 @@ actions!(
 );
 
 /// Returns command palette samples backed by real component state.
-pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 9] {
+pub fn command_samples(tokens: ThemeTokens, cx: &App) -> [CommandSample; 9] {
+    let os = cx.platform_info().os;
     let ranked_items: Arc<[CommandItemDescriptor]> = vec![
         CommandItemDescriptor::new("archive", "Archive").keyword("file"),
         CommandItemDescriptor::new("open-file", "Open File").shortcut("Ctrl+O"),
@@ -793,7 +794,7 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 9] {
         .map(|action| action.command_id().to_owned())
         .unwrap();
     let command_center_palette =
-        CommandPaletteProjection::from_center_for_keymap(&command_center, "workspace", &keymap);
+        CommandPaletteProjection::from_center_for_keymap(&command_center, "workspace", &keymap, os);
     let command_center_snapshot = command_center_palette
         .index_snapshot()
         .clone()
@@ -842,7 +843,7 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 9] {
     let mut provider_controller = CommandPaletteController::new()
         .provider_with_loading("recent-provider", "Searching provider commands");
     let provider_update = provider_controller
-        .set_query_for_keymap(&mut provider_center, provider_query, &provider_keymap)
+        .set_query_for_keymap(&mut provider_center, provider_query, &provider_keymap, os)
         .expect("gallery provider response is valid");
     let provider_palette = provider_update.into_palette_projection();
     let provider_status = provider_palette
@@ -910,6 +911,7 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 9] {
         &context_center,
         "focused",
         &context_keymap,
+        os,
     );
     let context_shortcut_diagnostics = Arc::from(context_palette.shortcut_diagnostics().to_vec());
     let context_snapshot = context_palette
@@ -969,7 +971,7 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 9] {
     );
     let mut keymap_resolution_keymap = Keymap::default();
     let keymap_resolution_report =
-        keymap_resolution_center.install_key_bindings(&mut keymap_resolution_keymap);
+        keymap_resolution_center.install_key_bindings(&mut keymap_resolution_keymap, cx);
     debug_assert!(
         keymap_resolution_report.is_clean(),
         "gallery keymap resolution bindings should project cleanly"
@@ -980,6 +982,7 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 9] {
             &keymap_resolution_center,
             "ctrl-k ctrl-o",
             &keymap_resolution_keymap,
+            cx,
         )
         .expect("gallery shortcut inspector sequence is valid");
     let shortcut_inspector =
@@ -993,6 +996,7 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 9] {
                         &keymap_resolution_center,
                         sequence,
                         &keymap_resolution_keymap,
+                        cx,
                     )
                     .expect("gallery keymap resolution sequence is valid")
                     .into_resolution()
@@ -1015,14 +1019,14 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 9] {
         ],
     );
     let keybinding_editor_projection =
-        keybinding_editor_registry.project(keymap_resolution_center.actions());
+        keybinding_editor_registry.project(keymap_resolution_center.actions(), cx);
     let keybinding_editor = CommandKeyBindingEditorState::from_projection(
         &keybinding_editor_projection,
         CommandKeyBindingEditorFilter::new()
             .query("workspace")
             .conflicts_only(),
     );
-    let keybinding_capture = CommandKeyBindingCaptureState::from_sequence("ctrl-k ctrl-s");
+    let keybinding_capture = CommandKeyBindingCaptureState::from_sequence("ctrl-k ctrl-s", os);
     let keybinding_edit_target = keybinding_editor_projection
         .projected_entries()
         .iter()
@@ -1041,8 +1045,11 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 9] {
         )
         .context("Workspace"),
     );
-    let keybinding_edit_preview = keybinding_editor_registry
-        .preview_patch(keymap_resolution_center.actions(), keybinding_edit_patch);
+    let keybinding_edit_preview = keybinding_editor_registry.preview_patch(
+        keymap_resolution_center.actions(),
+        keybinding_edit_patch,
+        cx,
+    );
     let keybinding_edit_preview = CommandKeyBindingEditorPreviewState::from_patch_preview(
         &keybinding_edit_preview,
         CommandKeyBindingEditorFilter::new().query("workspace"),
@@ -1051,6 +1058,7 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 9] {
         &keymap_resolution_center,
         "keymap",
         &keymap_resolution_keymap,
+        os,
     );
     let keymap_resolution_shortcut_diagnostics =
         Arc::from(keymap_resolution_palette.shortcut_diagnostics().to_vec());
@@ -1088,6 +1096,7 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 9] {
         &diagnostics_center,
         "offline",
         &Keymap::default(),
+        os,
     );
     let diagnostics_status_items = Arc::from(diagnostics_palette.status_items().to_vec());
     let diagnostics_provider_status = diagnostics_palette.provider_status().cloned();

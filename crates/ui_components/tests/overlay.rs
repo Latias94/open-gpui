@@ -6432,3 +6432,215 @@ fn native_action_tooltip_registers_its_visible_window_layer(cx: &mut open_gpui::
     assert!(!tooltip.focus_active());
     assert!(cx.debug_bounds("tooltip:tooltip:content").is_some());
 }
+
+mod action_tooltip_shortcut_labels {
+    use super::*;
+    use open_gpui::{
+        AppContext, Bounds, DevicePixels, Font, FontId, FontMetrics, FontRun, GlyphId, KeyBinding,
+        KeyBindingContextPredicate, LineLayout, NoopTextSystem, OperatingSystem, Pixels,
+        PlatformTextSystem, RenderGlyphParams, TestApp, TextRenderingMode,
+    };
+    use std::{
+        borrow::Cow,
+        sync::{Arc, Mutex},
+    };
+
+    #[derive(Default)]
+    struct TooltipTextRecorder {
+        lines: Mutex<Vec<String>>,
+    }
+
+    impl PlatformTextSystem for TooltipTextRecorder {
+        fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> open_gpui::Result<()> {
+            NoopTextSystem.add_fonts(fonts)
+        }
+
+        fn all_font_names(&self) -> Vec<String> {
+            NoopTextSystem.all_font_names()
+        }
+
+        fn font_id(&self, descriptor: &Font) -> open_gpui::Result<FontId> {
+            NoopTextSystem.font_id(descriptor)
+        }
+
+        fn font_metrics(&self, font_id: FontId) -> FontMetrics {
+            NoopTextSystem.font_metrics(font_id)
+        }
+
+        fn typographic_bounds(
+            &self,
+            font_id: FontId,
+            glyph_id: GlyphId,
+        ) -> open_gpui::Result<Bounds<f32>> {
+            NoopTextSystem.typographic_bounds(font_id, glyph_id)
+        }
+
+        fn advance(
+            &self,
+            font_id: FontId,
+            glyph_id: GlyphId,
+        ) -> open_gpui::Result<open_gpui::Size<f32>> {
+            NoopTextSystem.advance(font_id, glyph_id)
+        }
+
+        fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId> {
+            NoopTextSystem.glyph_for_char(font_id, ch)
+        }
+
+        fn glyph_raster_bounds(
+            &self,
+            params: &RenderGlyphParams,
+        ) -> open_gpui::Result<Bounds<DevicePixels>> {
+            NoopTextSystem.glyph_raster_bounds(params)
+        }
+
+        fn rasterize_glyph(
+            &self,
+            params: &RenderGlyphParams,
+            bounds: Bounds<DevicePixels>,
+        ) -> open_gpui::Result<(open_gpui::Size<DevicePixels>, Vec<u8>)> {
+            NoopTextSystem.rasterize_glyph(params, bounds)
+        }
+
+        fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout {
+            self.lines.lock().unwrap().push(text.to_owned());
+            NoopTextSystem.layout_line(text, font_size, runs)
+        }
+
+        fn recommended_rendering_mode(
+            &self,
+            font_id: FontId,
+            font_size: Pixels,
+        ) -> TextRenderingMode {
+            NoopTextSystem.recommended_rendering_mode(font_id, font_size)
+        }
+    }
+
+    struct ActionTooltipProbe {
+        focus: FocusHandle,
+        explicit_context: bool,
+    }
+
+    impl Render for ActionTooltipProbe {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let theme = ThemeResolver::current(window, cx);
+            let trigger = div()
+                .id("runtime-action-tooltip-trigger")
+                .w(px(80.0))
+                .h(px(32.0))
+                .tooltip_show_delay(Duration::ZERO)
+                .when(self.explicit_context, |trigger| {
+                    trigger.tooltip(Tooltip::scoped(
+                        theme.clone(),
+                        Tooltip::for_action_in_context(
+                            "Runtime action tooltip",
+                            TooltipRuntimeAction,
+                            "TooltipEditor",
+                        ),
+                    ))
+                })
+                .when(!self.explicit_context, |trigger| {
+                    trigger.tooltip(Tooltip::scoped(
+                        theme,
+                        Tooltip::for_action("Runtime action tooltip", TooltipRuntimeAction),
+                    ))
+                });
+            div()
+                .size_full()
+                .key_context("TooltipWorkspace")
+                .track_focus(&self.focus)
+                .on_action(|_: &TooltipRuntimeAction, _, _| {})
+                .child(trigger)
+        }
+    }
+
+    fn assert_drawn_shortcut(explicit_context: bool) {
+        let text = Arc::new(TooltipTextRecorder::default());
+        let mut app = TestApp::with_text_system(text.clone());
+        app.update(|cx| {
+            let bindings = [
+                KeyBinding::load(
+                    "secondary-k",
+                    Box::new(TooltipRuntimeAction),
+                    Some(Rc::new(
+                        KeyBindingContextPredicate::parse("TooltipWorkspace").unwrap(),
+                    )),
+                    false,
+                    None,
+                    cx,
+                )
+                .unwrap(),
+                KeyBinding::load(
+                    "cmd-shift-o",
+                    Box::new(TooltipRuntimeAction),
+                    Some(Rc::new(
+                        KeyBindingContextPredicate::parse("TooltipEditor").unwrap(),
+                    )),
+                    false,
+                    None,
+                    cx,
+                )
+                .unwrap(),
+            ];
+            cx.bind_keys(bindings);
+        });
+        let (active_label, context_label) = app.read(|cx| match cx.platform_info().os {
+            OperatingSystem::Mac => ("⌘K", "⌘⇧O"),
+            OperatingSystem::Windows => ("ctrl-K", "⊞shift-O"),
+            OperatingSystem::Linux | OperatingSystem::FreeBsd => ("ctrl-K", "❖shift-O"),
+            OperatingSystem::Ios | OperatingSystem::Android | OperatingSystem::Unknown => {
+                ("ctrl-K", "cmd-shift-O")
+            }
+        });
+        let mut window = app.open_window(|_, cx| ActionTooltipProbe {
+            focus: cx.focus_handle(),
+            explicit_context,
+        });
+        window.update(|view, window, cx| {
+            view.focus.focus(window, cx);
+        });
+        app.update(|cx| {
+            cx.update_window(window.handle().into(), |_, window, cx| {
+                window.draw(cx).clear(cx)
+            })
+            .unwrap();
+        });
+        text.lines.lock().unwrap().clear();
+        window.simulate_mouse_move(point(px(16.0), px(16.0)));
+        app.run_until_parked();
+        app.update(|cx| {
+            cx.update_window(window.handle().into(), |_, window, cx| {
+                window.draw(cx).clear(cx)
+            })
+            .unwrap();
+        });
+        let lines = text.lines.lock().unwrap();
+        let (expected, other_context) = if explicit_context {
+            (context_label, active_label)
+        } else {
+            (active_label, context_label)
+        };
+        assert!(
+            lines.iter().any(|line| line == "Runtime action tooltip"),
+            "the actual tooltip must render: {lines:?}"
+        );
+        assert!(
+            lines.iter().any(|line| line == expected),
+            "missing rendered shortcut {expected:?}: {lines:?}"
+        );
+        assert!(
+            !lines.iter().any(|line| line == other_context),
+            "the tooltip must select the requested context: {lines:?}"
+        );
+    }
+
+    #[test]
+    fn action_tooltip_draws_the_registered_active_context_shortcut() {
+        assert_drawn_shortcut(false);
+    }
+
+    #[test]
+    fn action_tooltip_draws_the_registered_explicit_context_shortcut() {
+        assert_drawn_shortcut(true);
+    }
+}

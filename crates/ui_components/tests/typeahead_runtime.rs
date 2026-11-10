@@ -22,8 +22,9 @@ fn draw(cx: &mut VisualTestContext) {
 }
 
 fn dispatch_key(cx: &mut VisualTestContext, key: &str) {
-    let keystroke = Keystroke::parse(key).expect("test keystroke should parse");
     cx.update(|window, cx| {
+        let keystroke = Keystroke::parse_with_os(key, cx.platform_info().os)
+            .expect("test keystroke should parse");
         window.dispatch_keystroke(keystroke, cx);
     });
 }

@@ -3,7 +3,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use open_gpui::{Action, App, InvalidKeystrokeError, KeyContext, Keymap, Keystroke, Window};
+use open_gpui::{
+    Action, App, InvalidKeystrokeError, KeyContext, Keymap, Keystroke, OperatingSystem, Window,
+};
 
 use crate::{
     CommandAvailabilityMap, CommandContextStack, CommandContribution, CommandDispatchOutcome,
@@ -15,7 +17,7 @@ use crate::{
     CommandProviderSource, CommandProviderStaleResponse, CommandProviderStatus,
     CommandRegistryError, CommandRegistrySnapshot, CommandScopeId, CommandScopeProjection,
     CommandShortcutDiagnostic, CommandShortcutDiagnosticKind, CommandSourceId, CommandUsageHistory,
-    GpuiCommandActionMap, MemoryCommandHistory, ScopedCommandRegistry, parse_command_key_sequence,
+    GpuiCommandActionMap, MemoryCommandHistory, ScopedCommandRegistry,
 };
 
 /// Handle for a registered command source within one command scope.
@@ -604,18 +606,27 @@ impl CommandCenter {
     }
 
     /// Projects command-id key bindings into concrete GPUI key bindings.
-    pub fn key_binding_projection(&self) -> CommandKeyBindingProjection {
-        self.key_bindings.project(&self.actions)
+    pub fn key_binding_projection(&self, cx: &App) -> CommandKeyBindingProjection {
+        self.key_bindings.project(&self.actions, cx)
     }
 
     /// Adds valid command-id key bindings to a GPUI keymap and returns projection diagnostics.
-    pub fn add_key_bindings_to_keymap(&self, keymap: &mut Keymap) -> CommandKeyBindingProjection {
-        self.key_bindings.add_to_keymap(&self.actions, keymap)
+    pub fn add_key_bindings_to_keymap(
+        &self,
+        keymap: &mut Keymap,
+        cx: &App,
+    ) -> CommandKeyBindingProjection {
+        self.key_bindings.add_to_keymap(&self.actions, keymap, cx)
     }
 
     /// Installs valid command-id key bindings into a GPUI keymap and returns a report.
-    pub fn install_key_bindings(&self, keymap: &mut Keymap) -> CommandKeyBindingInstallReport {
-        self.key_bindings.install_into_keymap(&self.actions, keymap)
+    pub fn install_key_bindings(
+        &self,
+        keymap: &mut Keymap,
+        cx: &App,
+    ) -> CommandKeyBindingInstallReport {
+        self.key_bindings
+            .install_into_keymap(&self.actions, keymap, cx)
     }
 
     /// Installs valid command-id key bindings into the app-level GPUI keymap.
@@ -627,15 +638,17 @@ impl CommandCenter {
     pub fn preview_key_binding_patch(
         &self,
         patch: CommandKeyBindingPatch,
+        cx: &App,
     ) -> CommandKeyBindingPatchPreview {
-        self.key_bindings.preview_patch(&self.actions, patch)
+        self.key_bindings.preview_patch(&self.actions, patch, cx)
     }
 
-    /// Resolves typed keystrokes against the center's active scopes and key contexts.
+    /// Resolves backend-normalized event keystrokes without applying keyboard mapping again.
     pub fn resolve_key_input_for_keymap(
         &self,
         input: &[Keystroke],
         keymap: &Keymap,
+        os: OperatingSystem,
     ) -> CommandKeymapResolution {
         let registry = self.scope_projection().into_snapshot();
         self.actions.resolve_keymap_input(
@@ -644,17 +657,26 @@ impl CommandCenter {
             keymap,
             self.context_stack.key_contexts(),
             input,
+            os,
         )
     }
 
-    /// Parses and resolves a whitespace-separated GPUI key sequence.
+    /// Resolves binding syntax using the same App and keyboard mapping as binding installation.
     pub fn resolve_key_sequence_for_keymap(
         &self,
         sequence: &str,
         keymap: &Keymap,
+        cx: &App,
     ) -> Result<CommandKeymapResolution, InvalidKeystrokeError> {
-        let input = parse_command_key_sequence(sequence)?;
-        Ok(self.resolve_key_input_for_keymap(&input, keymap))
+        let registry = self.scope_projection().into_snapshot();
+        self.actions.resolve_keymap_sequence(
+            sequence,
+            &registry,
+            &self.availability,
+            keymap,
+            self.context_stack.key_contexts(),
+            cx,
+        )
     }
 
     /// Projects active scopes before availability, shortcut, or history ranking.
@@ -679,7 +701,11 @@ impl CommandCenter {
     }
 
     /// Projects a UI-neutral command snapshot with app-level keymap shortcuts.
-    pub fn snapshot_for_keymap(&self, keymap: &Keymap) -> CommandRegistrySnapshot {
+    pub fn snapshot_for_keymap(
+        &self,
+        keymap: &Keymap,
+        os: OperatingSystem,
+    ) -> CommandRegistrySnapshot {
         let scoped = self.scope_projection().into_snapshot();
         let available = scoped.with_availability(&self.availability);
         let with_shortcuts = self
@@ -688,17 +714,18 @@ impl CommandCenter {
                 &available,
                 keymap,
                 self.context_stack.key_contexts(),
+                os,
             );
         self.rank_snapshot(with_shortcuts)
     }
 
     /// Projects a UI-neutral command snapshot with focused-window shortcut precedence.
-    pub fn snapshot_for_window(&self, window: &Window) -> CommandRegistrySnapshot {
+    pub fn snapshot_for_window(&self, window: &Window, cx: &App) -> CommandRegistrySnapshot {
         let scoped = self.scope_projection().into_snapshot();
         let available = scoped.with_availability(&self.availability);
         let with_shortcuts = self
             .actions
-            .registry_snapshot_with_window_shortcuts(&available, window);
+            .registry_snapshot_with_window_shortcuts(&available, window, cx);
         self.rank_snapshot(with_shortcuts)
     }
 
@@ -706,6 +733,7 @@ impl CommandCenter {
     pub fn shortcut_diagnostics_for_keymap(
         &self,
         keymap: &Keymap,
+        os: OperatingSystem,
     ) -> Vec<CommandShortcutDiagnostic> {
         let scoped = self.scope_projection().into_snapshot();
         let visible = self.rank_snapshot(scoped.with_availability(&self.availability));
@@ -714,6 +742,7 @@ impl CommandCenter {
                 &visible,
                 keymap,
                 self.context_stack.key_contexts(),
+                os,
             ),
         )
     }
@@ -722,12 +751,13 @@ impl CommandCenter {
     pub fn shortcut_diagnostics_for_window(
         &self,
         window: &Window,
+        cx: &App,
     ) -> Vec<CommandShortcutDiagnostic> {
         let scoped = self.scope_projection().into_snapshot();
         let visible = self.rank_snapshot(scoped.with_availability(&self.availability));
         self.filter_hidden_orphan_shortcut_diagnostics(
             self.actions
-                .shortcut_diagnostics_for_window(&visible, window),
+                .shortcut_diagnostics_for_window(&visible, window, cx),
         )
     }
 
@@ -763,8 +793,9 @@ impl CommandCenter {
         &self,
         query: &str,
         keymap: &Keymap,
+        os: OperatingSystem,
     ) -> CommandRegistrySnapshot {
-        self.search_rank_snapshot(self.snapshot_for_keymap(keymap), query)
+        self.search_rank_snapshot(self.snapshot_for_keymap(keymap, os), query)
     }
 
     /// Searches and ranks the center snapshot with focused-window shortcuts.
@@ -772,8 +803,9 @@ impl CommandCenter {
         &self,
         query: &str,
         window: &Window,
+        cx: &App,
     ) -> CommandRegistrySnapshot {
-        self.search_rank_snapshot(self.snapshot_for_window(window), query)
+        self.search_rank_snapshot(self.snapshot_for_window(window, cx), query)
     }
 
     /// Builds a command menu tree from the center snapshot.
@@ -782,13 +814,13 @@ impl CommandCenter {
     }
 
     /// Builds a command menu tree from the center keymap snapshot.
-    pub fn menu_tree_for_keymap(&self, keymap: &Keymap) -> CommandMenuTree {
-        CommandMenuTree::from_registry_snapshot(&self.snapshot_for_keymap(keymap))
+    pub fn menu_tree_for_keymap(&self, keymap: &Keymap, os: OperatingSystem) -> CommandMenuTree {
+        CommandMenuTree::from_registry_snapshot(&self.snapshot_for_keymap(keymap, os))
     }
 
     /// Builds a command menu tree from the center window snapshot.
-    pub fn menu_tree_for_window(&self, window: &Window) -> CommandMenuTree {
-        CommandMenuTree::from_registry_snapshot(&self.snapshot_for_window(window))
+    pub fn menu_tree_for_window(&self, window: &Window, cx: &App) -> CommandMenuTree {
+        CommandMenuTree::from_registry_snapshot(&self.snapshot_for_window(window, cx))
     }
 
     /// Dispatches a command through GPUI app routing and records usage on success.
@@ -1045,7 +1077,7 @@ mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    use open_gpui::{Action, KeyBinding, KeyContext, Keymap, Keystroke, actions};
+    use open_gpui::{Action, KeyBinding, KeyContext, Keymap, Keystroke, OperatingSystem, actions};
 
     use crate::{
         CommandAvailabilityMap, CommandCenter, CommandContextStack, CommandContribution,
@@ -1065,11 +1097,14 @@ mod tests {
     #[action(no_json)]
     struct CenterDispatchProbe;
 
-    fn display_shortcut(keystrokes: &str) -> String {
-        crate::command_shortcut_label(&KeyBinding::new(keystrokes, OpenWorkspace, None))
+    fn display_shortcut(keystrokes: &'static str) -> String {
+        crate::command_shortcut_label(
+            &KeyBinding::new(keystrokes, OpenWorkspace, None),
+            OperatingSystem::Windows,
+        )
     }
 
-    fn display_shortcut_opt(keystrokes: &str) -> Option<String> {
+    fn display_shortcut_opt(keystrokes: &'static str) -> Option<String> {
         Some(display_shortcut(keystrokes))
     }
 
@@ -1121,7 +1156,7 @@ mod tests {
             KeyBinding::new("ctrl-o", OpenWorkspace, None),
             KeyBinding::new("ctrl-shift-o", OpenWorkspace, None),
         ]);
-        let snapshot = center.snapshot_for_keymap(&keymap);
+        let snapshot = center.snapshot_for_keymap(&keymap, OperatingSystem::Windows);
         let descriptors = snapshot.descriptors().collect::<Vec<_>>();
 
         assert_eq!(descriptors.len(), 1);
@@ -1138,9 +1173,13 @@ mod tests {
             center.projection_diagnostics()[0].kind(),
             CommandProjectionDiagnosticKind::DuplicateCommandId
         );
-        assert!(center.shortcut_diagnostics_for_keymap(&keymap).is_empty());
+        assert!(
+            center
+                .shortcut_diagnostics_for_keymap(&keymap, OperatingSystem::Windows)
+                .is_empty()
+        );
 
-        let menu = center.menu_tree_for_keymap(&keymap);
+        let menu = center.menu_tree_for_keymap(&keymap, OperatingSystem::Windows);
         assert!(
             menu.entries().iter().all(|entry| {
                 entry
@@ -1151,8 +1190,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn center_resolves_keymap_input_for_active_context_stack() {
+    #[open_gpui::test]
+    fn center_resolves_keymap_input_for_active_context_stack(cx: &mut open_gpui::TestAppContext) {
         let mut center = CommandCenter::new("center-v1");
         center
             .register_source(
@@ -1188,10 +1227,10 @@ mod tests {
             );
 
         let mut keymap = Keymap::default();
-        center.install_key_bindings(&mut keymap);
+        cx.read(|cx| center.install_key_bindings(&mut keymap, cx));
 
-        let pending = center
-            .resolve_key_sequence_for_keymap("ctrl-k", &keymap)
+        let pending = cx
+            .read(|cx| center.resolve_key_sequence_for_keymap("ctrl-k", &keymap, cx))
             .unwrap();
         assert!(pending.is_pending());
         assert_eq!(
@@ -1203,8 +1242,8 @@ mod tests {
             ["workspace.open"]
         );
 
-        let matched = center
-            .resolve_key_sequence_for_keymap("ctrl-k ctrl-o", &keymap)
+        let matched = cx
+            .read(|cx| center.resolve_key_sequence_for_keymap("ctrl-k ctrl-o", &keymap, cx))
             .unwrap();
         assert_eq!(
             matched
@@ -1213,8 +1252,8 @@ mod tests {
             Some("workspace.open")
         );
 
-        let mode_match = center
-            .resolve_key_sequence_for_keymap("ctrl-s", &keymap)
+        let mode_match = cx
+            .read(|cx| center.resolve_key_sequence_for_keymap("ctrl-s", &keymap, cx))
             .unwrap();
         assert_eq!(
             mode_match
@@ -1299,7 +1338,7 @@ mod tests {
             KeyBinding::new("ctrl-e", OpenWorkspace, Some("Editor")),
             KeyBinding::new("ctrl-s", SaveWorkspace, Some("Workspace")),
         ]);
-        let snapshot = center.snapshot_for_keymap(&keymap);
+        let snapshot = center.snapshot_for_keymap(&keymap, OperatingSystem::Windows);
 
         assert_eq!(
             center
@@ -1509,8 +1548,12 @@ mod tests {
         assert_eq!(center.previous_query("save"), Some("save file".into()));
     }
 
-    #[test]
-    fn center_projects_command_key_bindings_into_gpui_keymap() {
+    #[open_gpui::test]
+    fn center_projects_command_key_bindings_into_gpui_keymap(cx: &mut open_gpui::TestAppContext) {
+        cx.set_platform_info(open_gpui::PlatformInfo {
+            os: OperatingSystem::Windows,
+            target: open_gpui::PlatformTarget::Native,
+        });
         let mut center = CommandCenter::new("center-v1");
         center
             .register_action("workspace.open", OpenWorkspace)
@@ -1525,7 +1568,7 @@ mod tests {
         );
 
         let mut keymap = Keymap::default();
-        let projection = center.add_key_bindings_to_keymap(&mut keymap);
+        let projection = cx.read(|cx| center.add_key_bindings_to_keymap(&mut keymap, cx));
 
         assert!(
             projection.diagnostics().is_empty(),
@@ -1572,6 +1615,7 @@ mod tests {
                 &keymap,
                 &OpenWorkspace,
                 &[KeyContext::parse("Workspace mode=normal").unwrap()],
+                OperatingSystem::Windows,
             ),
             display_shortcut_opt("ctrl-k ctrl-o")
         );
@@ -1595,13 +1639,15 @@ mod tests {
         assert!(bindings[0].action().partial_eq(&OpenWorkspace));
 
         assert_eq!(handle.unregister(&mut center), 2);
-        let projection = center.key_binding_projection();
+        let projection = cx.read(|cx| center.key_binding_projection(cx));
         assert!(projection.key_bindings().is_empty());
         assert!(projection.diagnostics().is_empty());
     }
 
-    #[test]
-    fn center_reports_command_key_binding_projection_diagnostics() {
+    #[open_gpui::test]
+    fn center_reports_command_key_binding_projection_diagnostics(
+        cx: &mut open_gpui::TestAppContext,
+    ) {
         let mut center = CommandCenter::new("center-v1");
         center.register_action("workspace.open", OpenWorkspace);
         center.register_key_bindings(
@@ -1612,7 +1658,7 @@ mod tests {
             ],
         );
 
-        let projection = center.key_binding_projection();
+        let projection = cx.read(|cx| center.key_binding_projection(cx));
 
         assert!(projection.key_bindings().is_empty());
         assert_eq!(
@@ -1638,8 +1684,14 @@ mod tests {
         );
     }
 
-    #[test]
-    fn center_reports_command_key_binding_conflicts_and_install_report() {
+    #[open_gpui::test]
+    fn center_reports_command_key_binding_conflicts_and_install_report(
+        cx: &mut open_gpui::TestAppContext,
+    ) {
+        cx.set_platform_info(open_gpui::PlatformInfo {
+            os: OperatingSystem::Windows,
+            target: open_gpui::PlatformTarget::Native,
+        });
         let mut center = CommandCenter::new("center-v1");
         center
             .register_action("workspace.open", OpenWorkspace)
@@ -1657,7 +1709,7 @@ mod tests {
             [CommandKeyBinding::new("workspace.save", "ctrl-p").context("Workspace")],
         );
 
-        let projection = center.key_binding_projection();
+        let projection = cx.read(|cx| center.key_binding_projection(cx));
 
         assert!(projection.diagnostics().is_empty());
         assert_eq!(projection.key_bindings().len(), 3);
@@ -1682,7 +1734,7 @@ mod tests {
         );
 
         let mut keymap = Keymap::default();
-        let report = center.install_key_bindings(&mut keymap);
+        let report = cx.read(|cx| center.install_key_bindings(&mut keymap, cx));
 
         assert_eq!(report.installed_count(), 3);
         assert_eq!(report.conflicts(), projection.conflicts());
@@ -1698,8 +1750,10 @@ mod tests {
         assert!(bindings[1].action().partial_eq(&OpenWorkspace));
     }
 
-    #[test]
-    fn center_previews_key_binding_patch_without_mutating_registry() {
+    #[open_gpui::test]
+    fn center_previews_key_binding_patch_without_mutating_registry(
+        cx: &mut open_gpui::TestAppContext,
+    ) {
         let mut center = CommandCenter::new("center-v1");
         center
             .register_action("workspace.open", OpenWorkspace)
@@ -1712,7 +1766,7 @@ mod tests {
             ],
         );
 
-        let before = center.key_binding_projection();
+        let before = cx.read(|cx| center.key_binding_projection(cx));
         assert!(before.conflicts().is_empty());
         let target = before
             .projected_entries()
@@ -1721,10 +1775,15 @@ mod tests {
             .expect("save binding")
             .edit_target();
 
-        let preview = center.preview_key_binding_patch(CommandKeyBindingPatch::replace(
-            target,
-            CommandKeyBinding::new("workspace.save", "ctrl-p").context("Workspace"),
-        ));
+        let preview = cx.read(|cx| {
+            center.preview_key_binding_patch(
+                CommandKeyBindingPatch::replace(
+                    target,
+                    CommandKeyBinding::new("workspace.save", "ctrl-p").context("Workspace"),
+                ),
+                cx,
+            )
+        });
 
         assert_eq!(preview.outcome(), CommandKeyBindingPatchOutcome::Replaced);
         assert!(preview.changed());
@@ -1740,7 +1799,7 @@ mod tests {
             ["workspace.open", "workspace.save"]
         );
 
-        let after = center.key_binding_projection();
+        let after = cx.read(|cx| center.key_binding_projection(cx));
         assert!(after.conflicts().is_empty());
         assert_eq!(
             after
@@ -1752,8 +1811,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn center_reports_missing_key_binding_patch_target() {
+    #[open_gpui::test]
+    fn center_reports_missing_key_binding_patch_target(cx: &mut open_gpui::TestAppContext) {
         let mut center = CommandCenter::new("center-v1");
         center.register_action("workspace.open", OpenWorkspace);
         center.register_key_bindings(
@@ -1761,14 +1820,19 @@ mod tests {
             [CommandKeyBinding::new("workspace.open", "ctrl-p").context("Workspace")],
         );
 
-        let preview = center.preview_key_binding_patch(CommandKeyBindingPatch::remove(
-            CommandKeyBindingEditTarget::new(
-                "workspace-defaults",
-                "workspace.open",
-                "ctrl-missing",
+        let preview = cx.read(|cx| {
+            center.preview_key_binding_patch(
+                CommandKeyBindingPatch::remove(
+                    CommandKeyBindingEditTarget::new(
+                        "workspace-defaults",
+                        "workspace.open",
+                        "ctrl-missing",
+                    )
+                    .context("Workspace"),
+                ),
+                cx,
             )
-            .context("Workspace"),
-        ));
+        });
 
         assert_eq!(
             preview.outcome(),
@@ -1780,8 +1844,12 @@ mod tests {
         assert!(preview.projection().is_strictly_clean());
     }
 
-    #[test]
-    fn center_reports_global_key_binding_context_conflicts() {
+    #[open_gpui::test]
+    fn center_reports_global_key_binding_context_conflicts(cx: &mut open_gpui::TestAppContext) {
+        cx.set_platform_info(open_gpui::PlatformInfo {
+            os: OperatingSystem::Windows,
+            target: open_gpui::PlatformTarget::Native,
+        });
         let mut center = CommandCenter::new("center-v1");
         center
             .register_action("workspace.open", OpenWorkspace)
@@ -1795,7 +1863,7 @@ mod tests {
             [CommandKeyBinding::new("workspace.save", "ctrl-g").context("Workspace")],
         );
 
-        let projection = center.key_binding_projection();
+        let projection = cx.read(|cx| center.key_binding_projection(cx));
 
         assert!(projection.diagnostics().is_empty());
         assert!(projection.is_clean());
@@ -1819,7 +1887,7 @@ mod tests {
         );
 
         let mut keymap = Keymap::default();
-        let report = center.install_key_bindings(&mut keymap);
+        let report = cx.read(|cx| center.install_key_bindings(&mut keymap, cx));
         assert_eq!(report.installed_count(), 2);
         assert!(report.has_conflicts());
 

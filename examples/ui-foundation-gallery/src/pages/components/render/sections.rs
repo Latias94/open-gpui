@@ -330,7 +330,7 @@ pub(super) fn render_components_section(
                 this.hidden()
             })
             .child(component_command_samples_section(
-                pages::components::command_samples(snapshot.tokens),
+                pages::components::command_samples(snapshot.tokens, cx),
                 snapshot.tokens,
             ))
             .into_any_element(),

@@ -167,6 +167,23 @@ jobs:
       - name: Test public credential tasks and unsupported add-only default
         run: cargo nextest run --locked -p open-gpui --all-features --test credentials --test-threads=1 --no-fail-fast --no-tests fail
 
+      - name: Test runtime platform identity and public keybinding workflows
+        run: |
+          cargo nextest run --locked -p open-gpui --all-features --test platform_info --test-threads=1 --no-fail-fast --no-tests fail
+          cargo nextest run --locked -p open-gpui-command -p open-gpui-ui-components --all-features --test runtime_keybindings --test-threads=1 --no-fail-fast --no-tests fail
+          cargo nextest run --locked -p open-gpui-web --lib -E 'test(platform_info::)' --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Test independent runtime platform conventions without test support
+        run: cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features bench-support --test platform_info --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Test independent native keyboard mapping without test support
+        if: matrix.name == 'windows'
+        run: cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test mapped_keybindings --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Test native runtime OS routing, labels and retirement
+        if: matrix.name == 'windows'
+        run: cargo nextest run --locked -p open-gpui-windows --all-features --lib -E 'test(=platform::native_test_support::native_platform_info_tests::native_runtime_os_loads_routes_labels_text_and_exact_window_retirement)' --run-ignored only --test-threads=1 --no-fail-fast --no-tests fail
+
       - name: Test independent credential tasks without test support
         run: cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features bench-support --test credentials --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
 

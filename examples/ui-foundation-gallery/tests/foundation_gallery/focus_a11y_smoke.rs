@@ -78,7 +78,9 @@ fn assert_tree_excludes_text(update: &accesskit::TreeUpdate, canary: &str) {
 }
 
 fn devtools_semantic_payload(scenario_id: &str, contract_id: &str) -> serde_json::Value {
-    let collection = pages::devtools::devtools_gallery_collection();
+    let test = open_gpui::TestAppContext::single();
+    let commands = test.read(pages::devtools::GalleryDevtoolsCommandSamples::from_app);
+    let collection = pages::devtools::devtools_gallery_collection(&commands);
     let accessibility = collection
         .snapshots
         .iter()

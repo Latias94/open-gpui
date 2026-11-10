@@ -809,7 +809,9 @@ fn components_page_choice_samples_expose_listbox_and_select_contracts() {
 fn components_page_search_samples_expose_combobox_and_command_contracts() {
     let tokens = ThemeTokens::default();
     let comboboxes = pages::components::combobox_samples(tokens);
-    let commands = pages::components::command_samples(tokens);
+    let test = open_gpui::TestAppContext::single();
+    let commands = test.read(|cx| pages::components::command_samples(tokens, cx));
+    let os = test.read(|cx| cx.platform_info().os);
 
     let framework = &comboboxes[0].state;
     let empty_combo = &comboboxes[1].state;
@@ -902,11 +904,11 @@ fn components_page_search_samples_expose_combobox_and_command_contracts() {
     assert_eq!(registry.groups()[0].label(), "Workspace");
     assert_eq!(
         registry.items()[0].shortcut(),
-        Some(display_shortcut("ctrl-shift-p").as_str())
+        Some(display_shortcut("ctrl-shift-p", os).as_str())
     );
     assert_eq!(
         registry.items()[1].shortcut(),
-        Some(display_shortcut("ctrl-s").as_str())
+        Some(display_shortcut("ctrl-s", os).as_str())
     );
     assert!(registry.loop_navigation());
     assert!(registry.group_navigation());
@@ -959,7 +961,7 @@ fn components_page_search_samples_expose_combobox_and_command_contracts() {
             .group_items(0)
             .next()
             .and_then(|item| item.shortcut()),
-        Some(display_shortcut("ctrl-alt-o").as_str())
+        Some(display_shortcut("ctrl-alt-o", os).as_str())
     );
 
     assert_eq!(commands[6].id, "diagnostics-empty");
@@ -1020,7 +1022,7 @@ fn components_page_search_samples_expose_combobox_and_command_contracts() {
             .map(|item| (item.label().to_owned(), item.shortcut().map(str::to_owned))),
         Some((
             "Open Focused Editor".to_string(),
-            Some(display_shortcut("ctrl-e"))
+            Some(display_shortcut("ctrl-e", os))
         ))
     );
     assert_eq!(
@@ -1031,7 +1033,7 @@ fn components_page_search_samples_expose_combobox_and_command_contracts() {
             .map(|item| (item.label().to_owned(), item.shortcut().map(str::to_owned))),
         Some((
             "Format Focused Editor".to_string(),
-            Some(display_shortcut("ctrl-shift-f"))
+            Some(display_shortcut("ctrl-shift-f", os))
         ))
     );
 
@@ -1059,11 +1061,11 @@ fn components_page_search_samples_expose_combobox_and_command_contracts() {
         vec![
             (
                 "workspace.open".to_string(),
-                Some(display_shortcut("ctrl-k ctrl-o"))
+                Some(display_shortcut("ctrl-k ctrl-o", os))
             ),
             (
                 "workspace.save".to_string(),
-                Some(display_shortcut("ctrl-s"))
+                Some(display_shortcut("ctrl-s", os))
             ),
         ]
     );

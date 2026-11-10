@@ -2253,6 +2253,13 @@ unsafe extern "system" fn collect_point_bound_window(hwnd: HWND, data: LPARAM) -
 }
 
 impl Platform for WindowsPlatform {
+    fn platform_info(&self) -> open_gpui::PlatformInfo {
+        open_gpui::PlatformInfo {
+            os: open_gpui::OperatingSystem::Windows,
+            target: open_gpui::PlatformTarget::Native,
+        }
+    }
+
     fn background_executor(&self) -> BackgroundExecutor {
         self.background_executor.clone()
     }

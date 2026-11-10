@@ -98,7 +98,8 @@ fn focus_and_draw(cx: &mut VisualTestContext, handle: &FocusHandle) {
 }
 
 fn key_down(cx: &mut VisualTestContext, key: &str) {
-    let keystroke = Keystroke::parse(key).expect("valid test keystroke");
+    let os = cx.update(|_, cx| cx.platform_info().os);
+    let keystroke = Keystroke::parse_with_os(key, os).expect("valid test keystroke");
     cx.update(|window, cx| {
         window.dispatch_event(
             KeyDownEvent {
@@ -113,7 +114,8 @@ fn key_down(cx: &mut VisualTestContext, key: &str) {
 }
 
 fn key_up(cx: &mut VisualTestContext, key: &str) {
-    let keystroke = Keystroke::parse(key).expect("valid test keystroke");
+    let os = cx.update(|_, cx| cx.platform_info().os);
+    let keystroke = Keystroke::parse_with_os(key, os).expect("valid test keystroke");
     cx.update(|window, cx| {
         window.dispatch_event(KeyUpEvent { keystroke }.to_platform_input(), cx);
     });

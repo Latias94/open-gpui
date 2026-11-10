@@ -1524,3 +1524,82 @@ These commands are verification instructions, not execution results. Windows res
 compile or execute the macOS-only API or error controls. Neither consumer qualifies native
 credential storage, interprocess atomicity, native platform loops, renderer output or `Submitted`.
 The native backend tests and platform qualification retain those separate responsibilities.
+
+## Runtime operating system consumer
+
+The `platform_info` integration target consumes official Zed
+[`389c22e1c747d1a433c3b51c176936166c9cc1cf`](https://github.com/zed-industries/zed/commit/389c22e1c747d1a433c3b51c176936166c9cc1cf),
+as present at fixed target
+[`635026fabc38440fce5e1767d125026a17b12012`](https://github.com/zed-industries/zed/tree/635026fabc38440fce5e1767d125026a17b12012).
+`PlatformInfo { os, target }` distinguishes host conventions from application delivery.
+The two feature-free controls cover all seven `OperatingSystem` variants and both
+`PlatformTarget` variants, dynamic `parse_with_os`, explicit `display`/`unparse`, static
+`parse` rejection of `secondary`, explicit-modifier preservation, binding labels and OS defaults
+in `KeyContext`. Only `Mac` resolves `secondary` to Command; the other variants use Control.
+
+With the existing `bench-support` feature, one additional test runs `Application::run_embedded`
+over `bench_platform(None, Arc::new(NoopTextSystem))` without enabling `test-support`.
+It checks the platform and App's actual native host identity, loads owned dynamic bindings
+through `KeyBinding::load(..., &App)`, draws a real Render tree, dispatches single keys, a held
+repeat, explicit Control/platform keys and a chord to registered action listeners, and compares
+rendered labels with `Window::keystroke_text_for`. An OS-scoped action consumes the default key
+context. Activation drains the existing threaded dispatcher and requires the exact ticket's
+`Activated` result before checking Window activity. Focus changes cancel a pending prefix before
+the sibling receives its suffix. Closing
+with a pending prefix releases the exact root and its observation, and retained async contexts
+cannot update the retired Window or released App. The benchmark platform has no public identity
+injection API: other OS conventions are exercised by the explicit pure controls.
+
+Run both independent configurations serially with `CARGO_BUILD_JOBS=1`, the existing lockfile
+and the shared build directory:
+
+```text
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --test platform_info --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --features bench-support --test platform_info --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+The companion public target uses `TestAppContext::set_platform_info` to execute all fourteen
+OS/target combinations in one App on one host. Its actual window input callbacks exercise
+single/repeated actions, chords, explicit-modifier controls and labels, same-focus prefix
+preservation, sibling/blur cancellation, the 999 ms / 1000 ms prefix fallback boundary, and
+exact entity release with no timer or observer delivery after retirement:
+
+```text
+cargo nextest run -p open-gpui --features test-support --test platform_info --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+One bounded Windows native test uses the actual `WindowsPlatform`, App, registered HWND,
+DirectWrite and DirectX. Public binding loading uses the installed keyboard mapper. Synthetic
+keys enter the native input callback; an explicit `WM_CHAR` enters the focused native text slot.
+Shortcut labels, input text and an action/source marker must belong to the same visible,
+accepted scene with a nonempty `Submitted` record. `capture_frame` re-renders that scene for
+GPU readback; it does not read the earlier swapchain submission. Exact text is checked in
+shaped source; pixel checks establish row ink and marker colors, not exact glyph images.
+The test changes focus between real text handlers, executes an actual prefix-timeout fallback,
+then closes with another live timed prefix, checks exact registration/generation retirement and
+handler/root release, opens a successor that cannot inherit that prefix, and retires the App,
+platform message window and OLE owner. This test is ignored by default because it needs an
+interactive Windows desktop and a DirectX GPU:
+
+```text
+cargo nextest run -p open-gpui-windows --lib -E 'test(=platform::native_test_support::native_platform_info_tests::native_runtime_os_loads_routes_labels_text_and_exact_window_retirement)' --run-ignored only --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+These commands are verification instructions, not execution results. Independent scenes are
+discarded and use `NoopTextSystem`; public test-platform frames do not establish native
+`Submitted` or GPU output. Even the native case does not establish physical key translation,
+foreground acquisition, live IME composition, browser user-agent detection, other native OS
+backends, compositor scanout or performance. Injected `Web` identity exercises shared host
+conventions and does not launch a browser.
+
+On Windows, `mapped_keybindings` uses ordinary dependencies and the actual native App mapper,
+without `test-support` or `bench-support`. A child process enters the backend's blocking
+`Application::run` and checks shifted single-key and chord installation, string preflight,
+pending/full palette resolution and already-normalized event input. The parent requires a
+completion marker and successful exit within thirty seconds. It opens no native Window and
+does not qualify a returning external loop. The fixture adds only the existing command package's
+Windows dev-dependency edge to its independently maintained lockfile:
+
+```text
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --test mapped_keybindings --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+```

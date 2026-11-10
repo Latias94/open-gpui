@@ -6,8 +6,8 @@ use std::sync::{
 };
 
 use open_gpui::{
-    KeyBinding, KeyContext, Keymap, ScrollViewportChangeSource, ScrollViewportSnapshot, actions,
-    bounds, point, px, size,
+    App, KeyBinding, KeyContext, Keymap, ScrollViewportChangeSource, ScrollViewportSnapshot,
+    actions, bounds, point, px, size,
 };
 use open_gpui_command::{
     CommandAvailabilityMap, CommandContribution, CommandDescriptor, CommandIconDescriptor,
@@ -113,6 +113,29 @@ actions!(
     [OpenCommandPalette, SaveWorkspace, ToggleDevtools]
 );
 
+/// App-prepared command diagnostic samples shared by live and headless Gallery captures.
+///
+/// These samples deliberately include invalid bindings and conflicts. They describe projection
+/// and resolution against the supplied App's keyboard conventions, not the installed shell keymap.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GalleryDevtoolsCommandSamples {
+    keybindings: SnapshotProbeSnapshot,
+    keymap: CommandKeymapResolution,
+}
+
+impl GalleryDevtoolsCommandSamples {
+    /// Prepares diagnostic samples on the owning App thread without retaining the App or bindings.
+    pub fn from_app(cx: &App) -> Self {
+        let projection = command_keybinding_projection_sample(cx);
+        Self {
+            keybindings: devtools_command::command_keybinding_projection_probe_snapshot(
+                &projection,
+            ),
+            keymap: command_keymap_resolution_sample(cx),
+        }
+    }
+}
+
 /// Allowlisted shell facts that Gallery contributes to its live DevTools workbench.
 #[derive(Clone, PartialEq)]
 pub struct GalleryDevtoolsLiveFacts {
@@ -122,6 +145,7 @@ pub struct GalleryDevtoolsLiveFacts {
     density: String,
     control_size: String,
     theme: ThemeContext,
+    command_samples: GalleryDevtoolsCommandSamples,
     focus: Option<gpui::GpuiRuntimeFocusSnapshot>,
     overlay: Option<WindowOverlaySnapshot>,
 }
@@ -157,6 +181,7 @@ impl GalleryDevtoolsLiveFacts {
         density: impl AsRef<str>,
         control_size: impl AsRef<str>,
         theme: ThemeContext,
+        command_samples: GalleryDevtoolsCommandSamples,
     ) -> Self {
         Self {
             active_page: sanitize_sensitive_text(active_page.as_ref()),
@@ -165,6 +190,7 @@ impl GalleryDevtoolsLiveFacts {
             density: sanitize_sensitive_text(density.as_ref()),
             control_size: sanitize_sensitive_text(control_size.as_ref()),
             theme,
+            command_samples,
             focus: None,
             overlay: None,
         }
@@ -181,7 +207,7 @@ impl GalleryDevtoolsLiveFacts {
         self
     }
 
-    fn default_devtools_page() -> Self {
+    fn default_devtools_page(command_samples: &GalleryDevtoolsCommandSamples) -> Self {
         Self::new(
             "devtools",
             1040.0,
@@ -189,6 +215,7 @@ impl GalleryDevtoolsLiveFacts {
             "comfortable",
             "md",
             ThemeContext::light(),
+            command_samples.clone(),
         )
     }
 }
@@ -342,18 +369,24 @@ impl GalleryDevtoolsWorkbench {
 }
 
 /// Returns the deterministic devtools inspector state used by the gallery.
-pub fn devtools_gallery_state() -> DevtoolsInspectorState {
-    DevtoolsInspectorState::from_session_frame(devtools_gallery_session_frame())
+pub fn devtools_gallery_state(
+    command_samples: &GalleryDevtoolsCommandSamples,
+) -> DevtoolsInspectorState {
+    DevtoolsInspectorState::from_session_frame(devtools_gallery_session_frame(command_samples))
 }
 
 /// Returns the deterministic target/domain/event capture used by the gallery.
-pub fn devtools_gallery_capture() -> DevtoolsCapture {
-    devtools_gallery_session_frame().capture
+pub fn devtools_gallery_capture(
+    command_samples: &GalleryDevtoolsCommandSamples,
+) -> DevtoolsCapture {
+    devtools_gallery_session_frame(command_samples).capture
 }
 
 /// Returns the latest deterministic session frame used by the gallery workbench.
-pub fn devtools_gallery_session_frame() -> DevtoolsSessionFrame {
-    let mut session = devtools_gallery_session();
+pub fn devtools_gallery_session_frame(
+    command_samples: &GalleryDevtoolsCommandSamples,
+) -> DevtoolsSessionFrame {
+    let mut session = devtools_gallery_session(command_samples);
     session
         .refresh()
         .expect("gallery devtools session first refresh succeeds");
@@ -363,8 +396,10 @@ pub fn devtools_gallery_session_frame() -> DevtoolsSessionFrame {
 }
 
 /// Returns a sanitized deterministic two-frame session export for offline replay tests.
-pub fn devtools_gallery_session_export() -> DevtoolsSessionExport {
-    let mut session = devtools_gallery_session();
+pub fn devtools_gallery_session_export(
+    command_samples: &GalleryDevtoolsCommandSamples,
+) -> DevtoolsSessionExport {
+    let mut session = devtools_gallery_session(command_samples);
     session
         .refresh()
         .expect("gallery devtools session first refresh succeeds");
@@ -389,9 +424,11 @@ pub struct GalleryDevtoolsHeadlessArtifacts {
     pub report_record: DevtoolsArtifactRecord,
 }
 
-/// Builds deterministic Gallery DevTools artifacts without launching a GUI window.
-pub fn devtools_gallery_headless_artifacts() -> GalleryDevtoolsHeadlessArtifacts {
-    gallery_devtools_artifacts(devtools_gallery_session_export())
+/// Builds deterministic Gallery artifacts from prepared samples without launching a GUI window.
+pub fn devtools_gallery_headless_artifacts(
+    command_samples: &GalleryDevtoolsCommandSamples,
+) -> GalleryDevtoolsHeadlessArtifacts {
+    gallery_devtools_artifacts(devtools_gallery_session_export(command_samples))
 }
 
 fn gallery_devtools_artifacts(
@@ -431,9 +468,9 @@ fn devtools_gallery_artifact_metadata(
         .timestamp_ms(DEVTOOLS_GALLERY_ARTIFACT_TIMESTAMP_MS + sequence)
 }
 
-fn devtools_gallery_session() -> DevtoolsSession {
+fn devtools_gallery_session(command_samples: &GalleryDevtoolsCommandSamples) -> DevtoolsSession {
     devtools_gallery_session_with_facts(Arc::new(Mutex::new(
-        GalleryDevtoolsLiveFacts::default_devtools_page(),
+        GalleryDevtoolsLiveFacts::default_devtools_page(command_samples),
     )))
 }
 
@@ -479,6 +516,7 @@ fn devtools_gallery_provider_capture(
         refresh_index,
         &live_facts.theme,
         live_facts.overlay.as_ref(),
+        &live_facts.command_samples,
         table_session,
     );
     let base_capture = DevtoolsCapture::from_snapshot_collection(collection);
@@ -575,8 +613,10 @@ fn gallery_shell_live_payload(
 }
 
 /// Returns the deterministic snapshot collection used by the gallery.
-pub fn devtools_gallery_collection() -> SnapshotCollection {
-    devtools_gallery_capture().snapshot_collection()
+pub fn devtools_gallery_collection(
+    command_samples: &GalleryDevtoolsCommandSamples,
+) -> SnapshotCollection {
+    devtools_gallery_capture(command_samples).snapshot_collection()
 }
 
 /// Returns the raw Table behavior input projected by the Gallery DevTools session.
@@ -621,6 +661,7 @@ fn devtools_gallery_legacy_collection(
     refresh_index: u64,
     theme: &ThemeContext,
     overlay: Option<&WindowOverlaySnapshot>,
+    command_samples: &GalleryDevtoolsCommandSamples,
     table_session: Arc<Mutex<TableDevtoolsSession>>,
 ) -> SnapshotCollection {
     let mut registry = DevtoolsRegistry::default();
@@ -647,20 +688,22 @@ fn devtools_gallery_legacy_collection(
             .expect("valid command registry probe"),
         )
         .expect("unique command registry probe");
+    let keybindings = command_samples.keybindings.clone();
     registry
         .register(
             devtools_command::command_keybinding_projection_snapshot_probe(
                 "command.keybindings",
-                command_keybinding_projection_sample,
+                move || Ok(keybindings.clone()),
             )
             .expect("valid command keybinding probe"),
         )
         .expect("unique command keybinding probe");
+    let keymap = command_samples.keymap.clone();
     registry
         .register(
             devtools_command::command_keymap_resolution_snapshot_probe(
                 "command.keymap",
-                command_keymap_resolution_sample,
+                move || keymap.clone(),
             )
             .expect("valid command keymap probe"),
         )
@@ -941,10 +984,10 @@ fn command_registry_sample() -> CommandRegistrySnapshot {
     )
 }
 
-fn command_keybinding_projection_sample() -> CommandKeyBindingProjection {
+fn command_keybinding_projection_sample(cx: &App) -> CommandKeyBindingProjection {
     let mut registry = CommandKeyBindingRegistry::new();
     registry.register(
-        "gallery-defaults",
+        "gallery-diagnostic-sample",
         [
             CommandKeyBinding::new("gallery.command_palette.open", "ctrl-k").context("Gallery"),
             CommandKeyBinding::new("gallery.devtools.toggle", "ctrl-k").context("Gallery"),
@@ -953,10 +996,10 @@ fn command_keybinding_projection_sample() -> CommandKeyBindingProjection {
         ],
     );
 
-    registry.project(&command_action_map())
+    registry.project(&command_action_map(), cx)
 }
 
-fn command_keymap_resolution_sample() -> CommandKeymapResolution {
+fn command_keymap_resolution_sample(cx: &App) -> CommandKeymapResolution {
     let registry = command_registry_sample();
     let actions = command_action_map();
     let mut keymap = Keymap::default();
@@ -973,6 +1016,7 @@ fn command_keymap_resolution_sample() -> CommandKeymapResolution {
             &CommandAvailabilityMap::new(),
             &keymap,
             &contexts,
+            cx,
         )
         .expect("gallery command keymap sample should resolve")
 }
@@ -1073,9 +1117,12 @@ fn unmounted_framework_diagnostics() -> Vec<SnapshotDiagnostic> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn devtools_gallery_state_exposes_redacted_snapshots_and_diagnostics() {
-        let state = devtools_gallery_state();
+    #[open_gpui::test]
+    fn devtools_gallery_state_exposes_redacted_snapshots_and_diagnostics(
+        cx: &mut open_gpui::TestAppContext,
+    ) {
+        let command_samples = cx.update(|app| GalleryDevtoolsCommandSamples::from_app(app));
+        let state = devtools_gallery_state(&command_samples);
         let rows = state.snapshot_rows();
         let form_snapshot = form_devtools_dogfood_snapshot();
         let expected_form_redactions = form_snapshot.fields.len()
@@ -1138,9 +1185,13 @@ mod tests {
         );
         assert!(rows.iter().any(|row| row.probe_id.as_str() == "theme"));
         assert_eq!(state.diagnostics().len(), 1);
-        let capture_target_count = devtools_gallery_capture().targets.targets.len();
+        let capture_target_count = devtools_gallery_capture(&command_samples)
+            .targets
+            .targets
+            .len();
         assert_eq!(state.target_rows().len(), capture_target_count);
-        let event_state = devtools_gallery_state().with_filter("motion-frame-demand");
+        let event_state =
+            devtools_gallery_state(&command_samples).with_filter("motion-frame-demand");
         assert!(event_state.event_rows().iter().any(|row| {
             row.event_id == "gallery.motion-frame-demand" && row.kind_label == "instant"
         }));

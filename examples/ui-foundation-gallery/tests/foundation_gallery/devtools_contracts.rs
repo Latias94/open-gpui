@@ -1,5 +1,5 @@
 use super::*;
-use open_gpui::ClipboardItem;
+use open_gpui::{ClipboardItem, OperatingSystem, PlatformInfo, PlatformTarget, TestAppContext};
 use open_gpui_devtools::{
     DevtoolsArtifactJsonlSink, DevtoolsArtifactSink, DevtoolsDiffKind, DevtoolsDiffStatus,
     DevtoolsSessionFrame, SnapshotEnvelope, adapters::opaque_stable_id,
@@ -9,6 +9,16 @@ use open_gpui_ui_components::theme::{ThemeContext, ThemeDefinition, ThemeRegistr
 use open_gpui_ui_core::ThemeDesignScales;
 
 const DEVTOOLS_CLIPBOARD_ROUTE_CANARY: &str = "gallery-clipboard-route-canary-019f4ad7";
+
+fn headless_command_samples(
+    cx: &mut TestAppContext,
+) -> pages::devtools::GalleryDevtoolsCommandSamples {
+    cx.set_platform_info(PlatformInfo {
+        os: OperatingSystem::Windows,
+        target: PlatformTarget::Native,
+    });
+    cx.update(|app| pages::devtools::GalleryDevtoolsCommandSamples::from_app(app))
+}
 
 fn assert_devtools_canaries_absent(serialized: &str) {
     for canary in devtools_sensitive_source_forms() {
@@ -151,9 +161,10 @@ fn assert_form_validation_projection(
     }
 }
 
-#[test]
-fn devtools_gallery_collects_registry_backed_snapshots() {
-    let collection = pages::devtools::devtools_gallery_collection();
+#[open_gpui::test]
+fn devtools_gallery_collects_registry_backed_snapshots(cx: &mut TestAppContext) {
+    let samples = headless_command_samples(cx);
+    let collection = pages::devtools::devtools_gallery_collection(&samples);
     let probe_ids = collection
         .snapshots
         .iter()
@@ -257,9 +268,10 @@ fn devtools_gallery_collects_registry_backed_snapshots() {
     assert_eq!(collection.diagnostics.len(), 1);
 }
 
-#[test]
-fn devtools_gallery_capture_projects_targets_domains_and_events() {
-    let capture = pages::devtools::devtools_gallery_capture();
+#[open_gpui::test]
+fn devtools_gallery_capture_projects_targets_domains_and_events(cx: &mut TestAppContext) {
+    let samples = headless_command_samples(cx);
+    let capture = pages::devtools::devtools_gallery_capture(&samples);
     let target_ids = capture
         .targets
         .targets
@@ -316,11 +328,12 @@ fn devtools_gallery_capture_projects_targets_domains_and_events() {
     assert_devtools_canaries_absent(&serde_json::to_string(&capture).unwrap());
 }
 
-#[test]
-fn devtools_gallery_session_frame_exposes_history_and_diff() {
-    let frame = pages::devtools::devtools_gallery_session_frame();
-    let export = pages::devtools::devtools_gallery_session_export();
-    let state = pages::devtools::devtools_gallery_state();
+#[open_gpui::test]
+fn devtools_gallery_session_frame_exposes_history_and_diff(cx: &mut TestAppContext) {
+    let samples = headless_command_samples(cx);
+    let frame = pages::devtools::devtools_gallery_session_frame(&samples);
+    let export = pages::devtools::devtools_gallery_session_export(&samples);
+    let state = pages::devtools::devtools_gallery_state(&samples);
     let session_frame = state.session_frame().expect("session frame summary");
     let diff = frame
         .diff_from_previous
@@ -451,9 +464,10 @@ fn devtools_gallery_inspector_copies_validating_form_detail(
     assert_devtools_canaries_absent(&clipboard_json);
 }
 
-#[test]
-fn devtools_gallery_headless_artifacts_use_artifact_records() {
-    let artifacts = pages::devtools::devtools_gallery_headless_artifacts();
+#[open_gpui::test]
+fn devtools_gallery_headless_artifacts_use_artifact_records(cx: &mut TestAppContext) {
+    let samples = headless_command_samples(cx);
+    let artifacts = pages::devtools::devtools_gallery_headless_artifacts(&samples);
     let mut sink = DevtoolsArtifactJsonlSink::new(Vec::new());
 
     sink.write_record(&artifacts.session_record)
@@ -496,9 +510,12 @@ fn devtools_gallery_headless_artifacts_use_artifact_records() {
     assert_devtools_canaries_absent(&report_json);
 }
 
-#[test]
-fn devtools_gallery_accessibility_artifact_is_bound_to_focus_a11y_scenarios() {
-    let artifacts = pages::devtools::devtools_gallery_headless_artifacts();
+#[open_gpui::test]
+fn devtools_gallery_accessibility_artifact_is_bound_to_focus_a11y_scenarios(
+    cx: &mut TestAppContext,
+) {
+    let samples = headless_command_samples(cx);
+    let artifacts = pages::devtools::devtools_gallery_headless_artifacts(&samples);
     let expected_scenarios = pages::focus_a11y::FOCUS_A11Y_SCENARIOS
         .iter()
         .map(|scenario| scenario.scenario_id)
@@ -542,9 +559,10 @@ fn devtools_gallery_accessibility_artifact_is_bound_to_focus_a11y_scenarios() {
     assert_eq!(root.payload.as_ref().unwrap()["scenario_count"], 4);
 }
 
-#[test]
-fn devtools_gallery_headless_fixtures_match_producer_output() {
-    let artifacts = pages::devtools::devtools_gallery_headless_artifacts();
+#[open_gpui::test]
+fn devtools_gallery_headless_fixtures_match_producer_output(cx: &mut TestAppContext) {
+    let samples = headless_command_samples(cx);
+    let artifacts = pages::devtools::devtools_gallery_headless_artifacts(&samples);
     let session_json = serde_json::to_string_pretty(&artifacts.session_export).unwrap();
     let report_json = serde_json::to_string_pretty(&artifacts.report).unwrap();
 
@@ -554,10 +572,11 @@ fn devtools_gallery_headless_fixtures_match_producer_output() {
     assert_fixture_matches("gallery-report.json", &report_json);
 }
 
-#[test]
+#[open_gpui::test]
 #[ignore = "regenerates checked-in DevTools fixtures"]
-fn regenerate_devtools_gallery_headless_fixtures() {
-    let artifacts = pages::devtools::devtools_gallery_headless_artifacts();
+fn regenerate_devtools_gallery_headless_fixtures(cx: &mut TestAppContext) {
+    let samples = headless_command_samples(cx);
+    let artifacts = pages::devtools::devtools_gallery_headless_artifacts(&samples);
     let fixture_dir = gallery_fixture_dir();
 
     std::fs::create_dir_all(&fixture_dir).expect("fixture directory can be created");
@@ -579,8 +598,9 @@ fn regenerate_devtools_gallery_headless_fixtures() {
     .expect("gallery report fixture can be written");
 }
 
-#[test]
-fn devtools_gallery_workbench_refreshes_from_shell_live_facts() {
+#[open_gpui::test]
+fn devtools_gallery_workbench_refreshes_from_shell_live_facts(cx: &mut TestAppContext) {
+    let samples = headless_command_samples(cx);
     let mut workbench = pages::devtools::GalleryDevtoolsWorkbench::new(
         pages::devtools::GalleryDevtoolsLiveFacts::new(
             "tokens",
@@ -589,6 +609,7 @@ fn devtools_gallery_workbench_refreshes_from_shell_live_facts() {
             "comfortable",
             "md",
             open_gpui_ui_components::theme::ThemeContext::light(),
+            samples.clone(),
         ),
     );
     let initial_generation = workbench.current_generation().expect("seeded frame");
@@ -601,6 +622,7 @@ fn devtools_gallery_workbench_refreshes_from_shell_live_facts() {
             "compact",
             "sm",
             open_gpui_ui_components::theme::ThemeContext::dark(),
+            samples.clone(),
         ))
         .expect("live facts refresh succeeds");
     let frame_json = serde_json::to_string(&frame).unwrap();
@@ -634,6 +656,7 @@ fn devtools_gallery_workbench_refreshes_from_shell_live_facts() {
             "comfortable",
             "md",
             open_gpui_ui_components::theme::ThemeContext::light(),
+            samples,
         ))
         .expect("sensitive-looking live facts refresh succeeds");
     let sensitive_json = serde_json::to_string(&sensitive_frame).unwrap();
@@ -642,6 +665,75 @@ fn devtools_gallery_workbench_refreshes_from_shell_live_facts() {
     assert!(!sensitive_json.contains("/Users/alice"));
     assert!(!sensitive_json.contains("secret"));
     assert!(workbench.retained_frames() <= workbench.history_limit());
+}
+
+#[open_gpui::test]
+fn devtools_gallery_workbench_refreshes_published_command_samples(cx: &mut TestAppContext) {
+    cx.set_platform_info(PlatformInfo {
+        os: OperatingSystem::Windows,
+        target: PlatformTarget::Web,
+    });
+    let first = cx.update(|app| pages::devtools::GalleryDevtoolsCommandSamples::from_app(app));
+    let facts = |samples| {
+        pages::devtools::GalleryDevtoolsLiveFacts::new(
+            "devtools",
+            1040.0,
+            "desktop",
+            "comfortable",
+            "md",
+            ThemeContext::light(),
+            samples,
+        )
+    };
+    let mut workbench = pages::devtools::GalleryDevtoolsWorkbench::new(facts(first));
+    let before = workbench.inspector_state().current_capture();
+
+    cx.set_platform_info(PlatformInfo {
+        os: OperatingSystem::Mac,
+        target: PlatformTarget::Web,
+    });
+    let second = cx.update(|app| pages::devtools::GalleryDevtoolsCommandSamples::from_app(app));
+    let expected = pages::devtools::devtools_gallery_capture(&second);
+    let frame = workbench
+        .refresh_with_facts(facts(second))
+        .expect("refreshed command samples are captured by the existing workbench");
+    let export = workbench.artifacts().session_export;
+
+    for probe_id in ["command.keybindings", "command.keymap"] {
+        let find = |capture: &open_gpui_devtools::DevtoolsCapture| {
+            capture
+                .snapshots
+                .iter()
+                .find(|snapshot| snapshot.probe_id.as_str() == probe_id)
+                .expect("command diagnostic sample in Gallery capture")
+                .clone()
+        };
+        let before = find(&before);
+        let after = find(&frame.capture);
+        assert_ne!(
+            before.tree, after.tree,
+            "{probe_id} must reflect the new App OS"
+        );
+        assert_eq!(
+            after,
+            find(&expected),
+            "{probe_id} must use the newly published DTO"
+        );
+        assert!(
+            frame
+                .diff_from_previous
+                .as_ref()
+                .unwrap()
+                .rows
+                .iter()
+                .any(|row| {
+                    row.kind == DevtoolsDiffKind::Snapshot
+                        && row.status == DevtoolsDiffStatus::Changed
+                        && row.identity == format!("{probe_id}:command")
+                })
+        );
+        assert_eq!(find(&export.frames.last().unwrap().capture), after);
+    }
 }
 
 #[open_gpui::test]
@@ -725,9 +817,10 @@ fn normalize_json(value: &str) -> String {
     value.replace("\r\n", "\n").trim_end().to_owned()
 }
 
-#[test]
-fn devtools_gallery_snapshots_reflect_component_sample_state() {
-    let collection = pages::devtools::devtools_gallery_collection();
+#[open_gpui::test]
+fn devtools_gallery_snapshots_reflect_component_sample_state(cx: &mut TestAppContext) {
+    let samples = headless_command_samples(cx);
+    let collection = pages::devtools::devtools_gallery_collection(&samples);
     let form = collection
         .snapshots
         .iter()
@@ -816,9 +909,10 @@ fn devtools_gallery_snapshots_reflect_component_sample_state() {
     assert!(!resource_json.contains("gallery-secret"));
 }
 
-#[test]
-fn devtools_gallery_layout_snapshot_reflects_scroll_viewport_geometry() {
-    let collection = pages::devtools::devtools_gallery_collection();
+#[open_gpui::test]
+fn devtools_gallery_layout_snapshot_reflects_scroll_viewport_geometry(cx: &mut TestAppContext) {
+    let samples = headless_command_samples(cx);
+    let collection = pages::devtools::devtools_gallery_collection(&samples);
     let layout = collection
         .snapshots
         .iter()
@@ -835,9 +929,10 @@ fn devtools_gallery_layout_snapshot_reflects_scroll_viewport_geometry() {
     assert!(!layout_json.contains("InitialLayout"));
 }
 
-#[test]
-fn devtools_gallery_command_snapshots_reflect_command_runtime_facts() {
-    let collection = pages::devtools::devtools_gallery_collection();
+#[open_gpui::test]
+fn devtools_gallery_command_snapshots_describe_diagnostic_samples(cx: &mut TestAppContext) {
+    let samples = headless_command_samples(cx);
+    let collection = pages::devtools::devtools_gallery_collection(&samples);
     let command_json = collection
         .snapshots
         .iter()
@@ -849,6 +944,9 @@ fn devtools_gallery_command_snapshots_reflect_command_runtime_facts() {
 
     assert!(command_json.contains("Command registry"));
     assert!(command_json.contains("gallery.command_palette.open"));
+    assert!(command_json.contains("gallery-diagnostic-sample"));
+    assert!(command_json.contains("\"key_binding_count\":2"));
+    assert!(!command_json.contains("installed_key_binding_count"));
     assert!(command_json.contains("\"conflict_count\":1"));
     assert!(command_json.contains("\"diagnostic_count\":2"));
     assert!(command_json.contains("invalid-context"));
@@ -857,9 +955,10 @@ fn devtools_gallery_command_snapshots_reflect_command_runtime_facts() {
     assert!(command_json.contains("Pending commands"));
 }
 
-#[test]
-fn devtools_gallery_timeline_snapshot_reflects_motion_frame_demand() {
-    let collection = pages::devtools::devtools_gallery_collection();
+#[open_gpui::test]
+fn devtools_gallery_timeline_snapshot_reflects_motion_frame_demand(cx: &mut TestAppContext) {
+    let samples = headless_command_samples(cx);
+    let collection = pages::devtools::devtools_gallery_collection(&samples);
     let timeline = collection
         .snapshots
         .iter()
@@ -874,9 +973,10 @@ fn devtools_gallery_timeline_snapshot_reflects_motion_frame_demand() {
     assert!(!timeline_json.contains("UpdateRender"));
 }
 
-#[test]
-fn devtools_gallery_reports_unmounted_framework_diagnostics() {
-    let state = pages::devtools::devtools_gallery_state();
+#[open_gpui::test]
+fn devtools_gallery_reports_unmounted_framework_diagnostics(cx: &mut TestAppContext) {
+    let samples = headless_command_samples(cx);
+    let state = pages::devtools::devtools_gallery_state(&samples);
     let diagnostics = state.diagnostics();
 
     assert_eq!(diagnostics.len(), 1);

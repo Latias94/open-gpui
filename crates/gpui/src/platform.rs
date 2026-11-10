@@ -2,6 +2,7 @@ mod app_menu;
 mod atlas;
 mod keyboard;
 mod keystroke;
+mod platform_info;
 
 #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
 mod threaded_dispatcher;
@@ -83,6 +84,7 @@ pub use app_menu::*;
 pub use atlas::*;
 pub use keyboard::*;
 pub use keystroke::*;
+pub use platform_info::{OperatingSystem, PlatformInfo, PlatformTarget};
 
 /// Whether the platform is presenting a window's frames.
 ///
@@ -3560,6 +3562,9 @@ pub type NativeAppNotificationHandler = Arc<dyn Fn() + Send + Sync>;
 
 #[expect(missing_docs)]
 pub trait Platform: 'static {
+    /// Returns the host OS and application target reported by this backend.
+    fn platform_info(&self) -> PlatformInfo;
+
     fn background_executor(&self) -> BackgroundExecutor;
     fn foreground_executor(&self) -> ForegroundExecutor;
     fn text_system(&self) -> Arc<dyn PlatformTextSystem>;

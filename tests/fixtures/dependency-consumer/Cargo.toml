@@ -38,6 +38,7 @@ open_gpui_macos = { package = "open-gpui-macos", path = "../../../crates/gpui_ma
 core-foundation = "=0.10.1"
 
 [target.'cfg(target_os = "windows")'.dev-dependencies]
+open_gpui_command = { package = "open-gpui-command", path = "../../../crates/open-gpui-command" }
 raw-window-handle = "0.6"
 windows = { version = "0.62", features = [
     "Win32_Foundation",

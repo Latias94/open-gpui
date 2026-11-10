@@ -29,6 +29,7 @@ use std::{
 
 /// TestPlatform implements the Platform trait for use in tests.
 pub(crate) struct TestPlatform {
+    pub(crate) platform_info: Cell<crate::PlatformInfo>,
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
 
@@ -193,6 +194,53 @@ impl TestPlatform {
         >,
     ) -> Rc<Self> {
         Rc::new_cyclic(|weak| TestPlatform {
+            platform_info: Cell::new(crate::PlatformInfo {
+                os: {
+                    #[cfg(target_os = "macos")]
+                    {
+                        crate::OperatingSystem::Mac
+                    }
+                    #[cfg(target_os = "windows")]
+                    {
+                        crate::OperatingSystem::Windows
+                    }
+                    #[cfg(target_os = "linux")]
+                    {
+                        crate::OperatingSystem::Linux
+                    }
+                    #[cfg(target_os = "freebsd")]
+                    {
+                        crate::OperatingSystem::FreeBsd
+                    }
+                    #[cfg(target_os = "ios")]
+                    {
+                        crate::OperatingSystem::Ios
+                    }
+                    #[cfg(target_os = "android")]
+                    {
+                        crate::OperatingSystem::Android
+                    }
+                    #[cfg(target_family = "wasm")]
+                    {
+                        crate::OperatingSystem::Unknown
+                    }
+                    #[cfg(not(any(
+                        target_os = "macos",
+                        target_os = "windows",
+                        target_os = "linux",
+                        target_os = "freebsd",
+                        target_os = "ios",
+                        target_os = "android",
+                        target_family = "wasm"
+                    )))]
+                    compile_error!("unsupported test platform operating system")
+                },
+                target: if cfg!(target_family = "wasm") {
+                    crate::PlatformTarget::Web
+                } else {
+                    crate::PlatformTarget::Native
+                },
+            }),
             background_executor: executor,
             foreground_executor,
             #[cfg(any(test, feature = "test-support"))]
@@ -793,6 +841,10 @@ impl TestPlatform {
 }
 
 impl Platform for TestPlatform {
+    fn platform_info(&self) -> crate::PlatformInfo {
+        self.platform_info.get()
+    }
+
     fn set_app_identity(&self, identifier: &str, name: &str) {
         self.system_notifications.borrow_mut().app_identity =
             Some((identifier.to_owned().into(), name.to_owned().into()));
@@ -1327,5 +1379,57 @@ impl PlatformKeyboardLayout for TestKeyboardLayout {
 
     fn name(&self) -> &str {
         "open-gpui.keyboard.example"
+    }
+}
+
+#[cfg(test)]
+mod platform_info_tests {
+    use super::*;
+    use crate::{OperatingSystem, PlatformInfo, PlatformTarget, TestDispatcher};
+
+    #[test]
+    fn default_identity_matches_native_host_or_unknown_browser() {
+        let dispatcher = Arc::new(TestDispatcher::new(0));
+        let platform = TestPlatform::new(
+            BackgroundExecutor::new(dispatcher.clone()),
+            ForegroundExecutor::new(dispatcher),
+        );
+        let expected = if cfg!(target_family = "wasm") {
+            PlatformInfo {
+                os: OperatingSystem::Unknown,
+                target: PlatformTarget::Web,
+            }
+        } else {
+            PlatformInfo {
+                os: match std::env::consts::OS {
+                    "macos" => OperatingSystem::Mac,
+                    "windows" => OperatingSystem::Windows,
+                    "linux" => OperatingSystem::Linux,
+                    "freebsd" => OperatingSystem::FreeBsd,
+                    "ios" => OperatingSystem::Ios,
+                    "android" => OperatingSystem::Android,
+                    os => panic!("unsupported test host {os}"),
+                },
+                target: PlatformTarget::Native,
+            }
+        };
+        assert_eq!(platform.platform_info(), expected);
+
+        let backend: Rc<dyn Platform> = platform.clone();
+        for os in [
+            OperatingSystem::Mac,
+            OperatingSystem::Windows,
+            OperatingSystem::Linux,
+            OperatingSystem::FreeBsd,
+            OperatingSystem::Ios,
+            OperatingSystem::Android,
+            OperatingSystem::Unknown,
+        ] {
+            for target in [PlatformTarget::Native, PlatformTarget::Web] {
+                let identity = PlatformInfo { os, target };
+                platform.platform_info.set(identity);
+                assert_eq!(backend.platform_info(), identity);
+            }
+        }
     }
 }

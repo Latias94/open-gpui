@@ -1087,21 +1087,23 @@ fn capslock_from_keyboard_event(event: &web_sys::KeyboardEvent) -> Capslock {
 }
 
 pub(crate) fn is_mac_platform(browser_window: &web_sys::Window) -> bool {
-    let navigator = browser_window.navigator();
+    matches!(
+        platform_info(browser_window).os,
+        open_gpui::OperatingSystem::Mac | open_gpui::OperatingSystem::Ios
+    )
+}
 
+pub(crate) fn platform_info(browser_window: &web_sys::Window) -> open_gpui::PlatformInfo {
+    let navigator = browser_window.navigator();
+    let user_agent = navigator.user_agent().unwrap_or_default();
     #[allow(deprecated)]
     // navigator.platform() is deprecated but navigator.userAgentData is not widely available yet
-    if let Ok(platform) = navigator.platform() {
-        if platform.contains("Mac") {
-            return true;
-        }
-    }
-
-    if let Ok(user_agent) = navigator.user_agent() {
-        return user_agent.contains("Mac");
-    }
-
-    false
+    let platform = navigator.platform().unwrap_or_default();
+    crate::platform_info::from_navigator_report(
+        &user_agent,
+        &platform,
+        navigator.max_touch_points(),
+    )
 }
 
 fn is_modifier_only_key(key: &str) -> bool {

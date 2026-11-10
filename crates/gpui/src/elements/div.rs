@@ -54,6 +54,8 @@ type StackSafe<T> = T;
 mod accessibility;
 #[cfg(test)]
 mod keyboard_activation_tests;
+#[cfg(all(test, debug_assertions))]
+mod platform_info_tests;
 mod scroll;
 mod tooltip;
 
@@ -3457,29 +3459,20 @@ impl Interactivity {
                     )
                     .ok();
 
-                    if let Some(source_location) = self.source_location
-                        && text_displayed_bounds.contains(&window.mouse_position())
-                        && window.modifiers().secondary()
-                    {
-                        let secondary_held = window.modifiers().secondary();
-                        window.on_key_event({
-                            move |e: &crate::ModifiersChangedEvent, _phase, window, _cx| {
-                                if e.modifiers.secondary() != secondary_held
-                                    && text_displayed_bounds.contains(&window.mouse_position())
-                                {
-                                    window.refresh();
-                                }
-                            }
-                        });
-
+                    if let Some(source_location) = self.source_location {
+                        let secondary_held = window.modifiers().secondary(cx);
                         let was_hovered = hitbox.is_hovered(window);
+                        let label_hovered =
+                            text_displayed_bounds.contains(&window.mouse_position());
                         let current_view = window.current_view();
                         window.on_mouse_event({
                             let hitbox = hitbox.clone();
-                            move |_: &MouseMoveEvent, phase, window, cx| {
+                            move |event: &MouseMoveEvent, phase, window, cx| {
                                 if phase == DispatchPhase::Capture {
                                     let hovered = hitbox.is_hovered(window);
-                                    if hovered != was_hovered {
+                                    let over_label =
+                                        hovered && text_displayed_bounds.contains(&event.position);
+                                    if hovered != was_hovered || over_label != label_hovered {
                                         cx.notify(current_view)
                                     }
                                 }
@@ -3492,6 +3485,7 @@ impl Interactivity {
                                 if text_displayed_bounds.contains(&e.position)
                                     && phase.capture()
                                     && hitbox.is_mouse_event_target(window)
+                                    && e.modifiers.secondary(cx)
                                 {
                                     cx.stop_propagation();
                                     let Ok(dir) = std::env::current_dir() else {
@@ -3507,18 +3501,20 @@ impl Interactivity {
                                 }
                             }
                         });
-                        window.paint_quad(crate::outline(
-                            crate::Bounds {
-                                origin: hitbox.layout_bounds().origin
-                                    + crate::point(crate::px(0.), FONT_SIZE - px(2.)),
-                                size: crate::Size {
-                                    width: text_layout_bounds.size.width,
-                                    height: crate::px(1.),
+                        if secondary_held && label_hovered {
+                            window.paint_quad(crate::outline(
+                                crate::Bounds {
+                                    origin: hitbox.layout_bounds().origin
+                                        + crate::point(crate::px(0.), FONT_SIZE - px(2.)),
+                                    size: crate::Size {
+                                        width: text_layout_bounds.size.width,
+                                        height: crate::px(1.),
+                                    },
                                 },
-                            },
-                            crate::red(),
-                            BorderStyle::default(),
-                        ))
+                                crate::red(),
+                                BorderStyle::default(),
+                            ));
+                        }
                     }
                 }
             };

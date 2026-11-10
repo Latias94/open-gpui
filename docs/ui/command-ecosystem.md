@@ -145,7 +145,9 @@ keymap.add_bindings([
 ]);
 
 let command_index =
-    CommandIndexSnapshot::from_registry_snapshot(&center.snapshot_for_keymap(&keymap));
+    CommandIndexSnapshot::from_registry_snapshot(
+        &center.snapshot_for_keymap(&keymap, cx.platform_info().os),
+    );
 
 let open_action =
     ActionDescriptor::from_command_descriptor(center.snapshot().descriptor("workspace.open").unwrap())
@@ -160,6 +162,14 @@ Applications can keep one center per app, workspace, plugin host, window, or sur
 deliberately app-owned state, not a global singleton.
 
 ## Context Stack And Shortcuts
+
+The examples use `cx` for the owning App. Host conventions come from
+`cx.platform_info().os`, independently of whether the App runs natively or in a browser.
+Pure label and normalized-event projections receive that OS explicitly. Loading bindings,
+previewing edits and preflighting binding-syntax strings receive `&App` so they use the same
+keyboard mapper as installation. Already-normalized backend events are not mapped again.
+Static `KeyBinding::new` requires explicit modifiers; dynamic `secondary-` bindings use
+`KeyBinding::load(..., cx)`.
 
 `CommandContextStack` keeps command scopes and GPUI key contexts adjacent but distinct:
 
@@ -188,7 +198,7 @@ keymap.add_bindings([
     KeyBinding::new("ctrl-e", OpenWorkspace, Some("Editor")),
 ]);
 
-let snapshot = center.snapshot_for_keymap(&keymap);
+let snapshot = center.snapshot_for_keymap(&keymap, cx.platform_info().os);
 ```
 
 In the example above, an `editor` contribution can override a `workspace` command descriptor, and
@@ -221,12 +231,12 @@ let shortcuts = center.register_key_bindings(
 );
 
 let mut keymap = Keymap::default();
-let report = center.install_key_bindings(&mut keymap);
+let report = center.install_key_bindings(&mut keymap, cx);
 assert!(report.is_clean());
 assert_eq!(report.installed_count(), 2);
 
 center.set_key_contexts([KeyContext::parse("Workspace mode=normal")?]);
-let snapshot = center.snapshot_for_keymap(&keymap);
+let snapshot = center.snapshot_for_keymap(&keymap, cx.platform_info().os);
 
 shortcuts.unregister(&mut center);
 ```
@@ -263,7 +273,7 @@ custom input surface needs to ask what a typed key sequence means before dispatc
 resolver keeps GPUI as the keymap authority, then maps the matched GPUI actions back to command ids:
 
 ```rust
-let resolution = center.resolve_key_sequence_for_keymap("ctrl-k ctrl-o", &keymap)?;
+let resolution = center.resolve_key_sequence_for_keymap("ctrl-k ctrl-o", &keymap, cx)?;
 
 if let Some(command) = resolution.primary_dispatchable_command() {
     center.dispatch_in_app(command.command_id(), current_query.as_str(), cx);
@@ -280,6 +290,7 @@ let preflight = controller.preflight_key_sequence_for_keymap(
     &center,
     "ctrl-k ctrl-o",
     &keymap,
+    cx,
 )?;
 
 if let Some(command_id) = preflight.primary_dispatchable_command_id() {
@@ -324,8 +335,10 @@ valid sequence into the same GPUI display syntax used by projection rows and car
 strings so key capture widgets do not need to expose GPUI parser internals in their visual state.
 
 Lower-level framework code can call `GpuiCommandActionMap::resolve_keymap_sequence` directly with an
-explicit registry snapshot, availability resolver, keymap, and `KeyContext` stack. `parse_command_key_sequence`
-is also public for callers that want to keep parsed `Keystroke` buffers between key events.
+explicit registry snapshot, availability resolver, keymap, `KeyContext` stack and owning App.
+`parse_command_key_sequence(source, os)` is a pure syntax parser; it does not apply keyboard
+layout mapping. Use `resolve_key_input_for_keymap(input, keymap, os)` for backend-normalized
+event buffers, and `resolve_key_sequence_for_keymap(source, keymap, cx)` for binding syntax.
 
 ## Dynamic Providers
 
@@ -405,7 +418,9 @@ use open_gpui_ui_components::{Command, CommandPaletteController};
 let mut palette_controller = CommandPaletteController::new()
     .provider_with_loading("recent-files", "Searching recent files");
 
-let update = palette_controller.set_query_for_keymap(&mut center, "readme", &keymap)?;
+let update = palette_controller.set_query_for_keymap(
+    &mut center, "readme", &keymap, cx.platform_info().os,
+)?;
 let command = Command::new("workspace-palette", "Workspace commands")
     .palette_projection(update.palette_projection());
 ```
@@ -425,13 +440,17 @@ center
 
 let mut palette_controller = CommandPaletteController::new().with_query("open");
 
-if let Some(update) = palette_controller.previous_query_for_keymap(&mut center, &keymap) {
+if let Some(update) = palette_controller.previous_query_for_keymap(
+    &mut center, &keymap, cx.platform_info().os,
+) {
     let update = update?;
     // update.query() == "open settings"
     // update.palette_projection() is ready for Command::palette_projection(...)
 }
 
-if let Some(update) = palette_controller.next_query_for_keymap(&mut center, &keymap) {
+if let Some(update) = palette_controller.next_query_for_keymap(
+    &mut center, &keymap, cx.platform_info().os,
+) {
     let update = update?;
     // Moving past the newest matching entry restores the original "open" draft query.
 }
@@ -470,6 +489,7 @@ let palette_projection = CommandPaletteProjection::from_center_for_keymap(
     &center,
     provider_projection.query(),
     &keymap,
+    cx.platform_info().os,
 );
 let command = Command::new("workspace-palette", "Workspace commands")
     .palette_projection(&palette_projection)
@@ -537,8 +557,8 @@ center.set_availability(
         .hidden("workspace.close"),
 );
 
-let visible_snapshot = center.snapshot_for_keymap(&keymap);
-let menu_tree = center.menu_tree_for_keymap(&keymap);
+let visible_snapshot = center.snapshot_for_keymap(&keymap, cx.platform_info().os);
+let menu_tree = center.menu_tree_for_keymap(&keymap, cx.platform_info().os);
 ```
 
 Applications own the policy that decides those states. The command crate only applies the result
@@ -566,7 +586,7 @@ that should not become a GPUI action, keep the command id stable and handle it d
 `on_select` instead of calling `dispatch_in_window`.
 
 For custom ranking, call `center.search_snapshot(query)` or
-`center.search_snapshot_for_keymap(query, &keymap)` before converting the result into
+`center.search_snapshot_for_keymap(query, &keymap, cx.platform_info().os)` before converting the result into
 `CommandIndexSnapshot`.
 
 ## Shortcut Diagnostics
@@ -578,7 +598,7 @@ effective keymap projection:
 ```rust
 use open_gpui_command::CommandShortcutDiagnosticKind;
 
-let diagnostics = center.shortcut_diagnostics_for_keymap(&keymap);
+let diagnostics = center.shortcut_diagnostics_for_keymap(&keymap, cx.platform_info().os);
 assert!(
     diagnostics
         .iter()

@@ -18,6 +18,7 @@ use open_gpui_wgpu::{WebBackendPreference, WgpuBackend};
 use wasm_bindgen::JsValue;
 
 mod clipboard;
+mod platform_info;
 
 const GRID_COLUMNS: usize = 128;
 const GRID_ROWS: usize = 128;
@@ -999,6 +1000,10 @@ fn main() {
     Application::with_platform(platform).run(move |cx: &mut App| {
         if clipboard::requested() {
             clipboard::open(cx);
+            return;
+        }
+        if platform_info::requested() {
+            platform_info::open(cx);
             return;
         }
         let graphics_probe = GraphicsProbe {

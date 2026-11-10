@@ -77,6 +77,10 @@ impl VisualTestPlatform {
 }
 
 impl Platform for VisualTestPlatform {
+    fn platform_info(&self) -> crate::PlatformInfo {
+        self.platform.platform_info()
+    }
+
     fn background_executor(&self) -> BackgroundExecutor {
         self.background_executor.clone()
     }
@@ -327,4 +331,36 @@ impl Platform for VisualTestPlatform {
     }
 
     fn on_thermal_state_change(&self, _callback: NativeAppNotificationHandler) {}
+}
+
+#[cfg(test)]
+mod platform_info_tests {
+    use super::*;
+    use crate::{OperatingSystem, PlatformInfo, PlatformTarget, TestPlatform};
+
+    #[test]
+    fn wrapper_delegates_live_backend_identity() {
+        let dispatcher = Arc::new(TestDispatcher::new(0));
+        let backend = TestPlatform::new(
+            BackgroundExecutor::new(dispatcher.clone()),
+            ForegroundExecutor::new(dispatcher),
+        );
+        let visual = VisualTestPlatform::new(backend.clone(), 1);
+
+        for os in [
+            OperatingSystem::Mac,
+            OperatingSystem::Windows,
+            OperatingSystem::Linux,
+            OperatingSystem::FreeBsd,
+            OperatingSystem::Ios,
+            OperatingSystem::Android,
+            OperatingSystem::Unknown,
+        ] {
+            for target in [PlatformTarget::Native, PlatformTarget::Web] {
+                let identity = PlatformInfo { os, target };
+                backend.platform_info.set(identity);
+                assert_eq!(visual.platform_info(), identity);
+            }
+        }
+    }
 }

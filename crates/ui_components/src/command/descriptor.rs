@@ -4,7 +4,7 @@ use crate::action::{ActionDescriptor, ResolvedActionIcon, ResolvedActionState};
 use crate::choice::{self, ChoiceItemProjection, ChoiceSelectionMode};
 use crate::listbox::ListboxOptionDescriptor;
 use crate::overlay::OverlayDisclosureOpenMode;
-use open_gpui::{InvalidKeystrokeError, Keymap, Keystroke, Window};
+use open_gpui::{App, InvalidKeystrokeError, Keymap, OperatingSystem, Window};
 use open_gpui_command::{
     CommandCenter, CommandDescriptor, CommandKeyBindingConflict, CommandKeyBindingDiagnostic,
     CommandKeyBindingEditTarget, CommandKeyBindingPatch, CommandKeyBindingPatchOperation,
@@ -250,13 +250,14 @@ impl CommandPaletteProjection {
         center: &CommandCenter,
         query: impl Into<String>,
         keymap: &Keymap,
+        os: OperatingSystem,
     ) -> Self {
         let query = query.into();
         Self::from_parts(
             query.clone(),
-            center.search_snapshot_for_keymap(query.as_str(), keymap),
+            center.search_snapshot_for_keymap(query.as_str(), keymap, os),
             center.provider_statuses().cloned(),
-            center.shortcut_diagnostics_for_keymap(keymap),
+            center.shortcut_diagnostics_for_keymap(keymap, os),
         )
     }
 
@@ -265,13 +266,14 @@ impl CommandPaletteProjection {
         center: &CommandCenter,
         query: impl Into<String>,
         window: &Window,
+        cx: &App,
     ) -> Self {
         let query = query.into();
         Self::from_parts(
             query.clone(),
-            center.search_snapshot_for_window(query.as_str(), window),
+            center.search_snapshot_for_window(query.as_str(), window, cx),
             center.provider_statuses().cloned(),
-            center.shortcut_diagnostics_for_window(window),
+            center.shortcut_diagnostics_for_window(window, cx),
         )
     }
 
@@ -460,8 +462,9 @@ impl CommandPaletteController {
         &self,
         center: &CommandCenter,
         keymap: &Keymap,
+        os: OperatingSystem,
     ) -> CommandPaletteProjection {
-        CommandPaletteProjection::from_center_for_keymap(center, self.query.as_str(), keymap)
+        CommandPaletteProjection::from_center_for_keymap(center, self.query.as_str(), keymap, os)
     }
 
     /// Projects current state for focused-window shortcut precedence without refreshing providers.
@@ -469,24 +472,26 @@ impl CommandPaletteController {
         &self,
         center: &CommandCenter,
         window: &Window,
+        cx: &App,
     ) -> CommandPaletteProjection {
-        CommandPaletteProjection::from_center_for_window(center, self.query.as_str(), window)
+        CommandPaletteProjection::from_center_for_window(center, self.query.as_str(), window, cx)
     }
 
-    /// Resolves one app-level key sequence for shortcut inspectors and dispatch preflight.
+    /// Resolves binding syntax with the installation App for shortcut and dispatch preflight.
     ///
     /// This does not dispatch. It keeps GPUI and `CommandCenter` as the keymap authority, then
-    /// carries the controller query alongside the typed keymap resolution so app shells can use the
+    /// carries the controller query alongside the mapped keymap resolution so app shells can use the
     /// same query when they later call command dispatch.
     pub fn preflight_key_sequence_for_keymap(
         &self,
         center: &CommandCenter,
         sequence: &str,
         keymap: &Keymap,
+        cx: &App,
     ) -> Result<CommandPaletteKeymapPreflight, InvalidKeystrokeError> {
         Ok(CommandPaletteKeymapPreflight::new(
             self.query.clone(),
-            center.resolve_key_sequence_for_keymap(sequence, keymap)?,
+            center.resolve_key_sequence_for_keymap(sequence, keymap, cx)?,
         ))
     }
 
@@ -496,6 +501,7 @@ impl CommandPaletteController {
         center: &mut CommandCenter,
         query: impl Into<String>,
         keymap: &Keymap,
+        os: OperatingSystem,
     ) -> Result<CommandPaletteControllerUpdate, CommandRegistryError> {
         let query_changed = self.set_query_from_input(center, query);
         let (provider_projections, pending_provider_requests) =
@@ -505,7 +511,7 @@ impl CommandPaletteController {
             query_changed,
             provider_projections,
             pending_provider_requests,
-            self.projection_for_keymap(center, keymap),
+            self.projection_for_keymap(center, keymap, os),
         ))
     }
 
@@ -515,6 +521,7 @@ impl CommandPaletteController {
         center: &mut CommandCenter,
         query: impl Into<String>,
         window: &Window,
+        cx: &App,
     ) -> Result<CommandPaletteControllerUpdate, CommandRegistryError> {
         let query_changed = self.set_query_from_input(center, query);
         let (provider_projections, pending_provider_requests) =
@@ -524,7 +531,7 @@ impl CommandPaletteController {
             query_changed,
             provider_projections,
             pending_provider_requests,
-            self.projection_for_window(center, window),
+            self.projection_for_window(center, window, cx),
         ))
     }
 
@@ -533,10 +540,11 @@ impl CommandPaletteController {
         &mut self,
         center: &mut CommandCenter,
         keymap: &Keymap,
+        os: OperatingSystem,
     ) -> Option<Result<CommandPaletteControllerUpdate, CommandRegistryError>> {
         let query =
             self.query_history_query(center, CommandPaletteQueryHistoryDirection::Previous)?;
-        Some(self.set_query_from_history_for_keymap(center, query, keymap))
+        Some(self.set_query_from_history_for_keymap(center, query, keymap, os))
     }
 
     /// Moves to the next matching query in command-center history and projects keymap state.
@@ -544,9 +552,10 @@ impl CommandPaletteController {
         &mut self,
         center: &mut CommandCenter,
         keymap: &Keymap,
+        os: OperatingSystem,
     ) -> Option<Result<CommandPaletteControllerUpdate, CommandRegistryError>> {
         let query = self.query_history_query(center, CommandPaletteQueryHistoryDirection::Next)?;
-        Some(self.set_query_from_history_for_keymap(center, query, keymap))
+        Some(self.set_query_from_history_for_keymap(center, query, keymap, os))
     }
 
     /// Moves to the previous matching query in command-center history and projects window state.
@@ -554,10 +563,11 @@ impl CommandPaletteController {
         &mut self,
         center: &mut CommandCenter,
         window: &Window,
+        cx: &App,
     ) -> Option<Result<CommandPaletteControllerUpdate, CommandRegistryError>> {
         let query =
             self.query_history_query(center, CommandPaletteQueryHistoryDirection::Previous)?;
-        Some(self.set_query_from_history_for_window(center, query, window))
+        Some(self.set_query_from_history_for_window(center, query, window, cx))
     }
 
     /// Moves to the next matching query in command-center history and projects window state.
@@ -565,9 +575,10 @@ impl CommandPaletteController {
         &mut self,
         center: &mut CommandCenter,
         window: &Window,
+        cx: &App,
     ) -> Option<Result<CommandPaletteControllerUpdate, CommandRegistryError>> {
         let query = self.query_history_query(center, CommandPaletteQueryHistoryDirection::Next)?;
-        Some(self.set_query_from_history_for_window(center, query, window))
+        Some(self.set_query_from_history_for_window(center, query, window, cx))
     }
 
     /// Applies an async provider response and projects app-level keymap state.
@@ -578,6 +589,7 @@ impl CommandPaletteController {
         request: &CommandProviderRequest,
         response: CommandProviderResponse,
         keymap: &Keymap,
+        os: OperatingSystem,
     ) -> Option<Result<CommandPaletteControllerUpdate, CommandRegistryError>> {
         let provider_projection =
             self.apply_provider_response(center, provider_id, request, response)?;
@@ -587,7 +599,7 @@ impl CommandPaletteController {
                 false,
                 [provider_projection],
                 Vec::<CommandPalettePendingProviderRequest>::new(),
-                self.projection_for_keymap(center, keymap),
+                self.projection_for_keymap(center, keymap, os),
             )
         }))
     }
@@ -600,6 +612,7 @@ impl CommandPaletteController {
         request: &CommandProviderRequest,
         response: CommandProviderResponse,
         window: &Window,
+        cx: &App,
     ) -> Option<Result<CommandPaletteControllerUpdate, CommandRegistryError>> {
         let provider_projection =
             self.apply_provider_response(center, provider_id, request, response)?;
@@ -609,7 +622,7 @@ impl CommandPaletteController {
                 false,
                 [provider_projection],
                 Vec::<CommandPalettePendingProviderRequest>::new(),
-                self.projection_for_window(center, window),
+                self.projection_for_window(center, window, cx),
             )
         }))
     }
@@ -666,6 +679,7 @@ impl CommandPaletteController {
         center: &mut CommandCenter,
         query: String,
         keymap: &Keymap,
+        os: OperatingSystem,
     ) -> Result<CommandPaletteControllerUpdate, CommandRegistryError> {
         let (query, query_changed, provider_projections, pending_provider_requests) =
             self.set_query_from_history(center, query)?;
@@ -674,7 +688,7 @@ impl CommandPaletteController {
             query_changed,
             provider_projections,
             pending_provider_requests,
-            self.projection_for_keymap(center, keymap),
+            self.projection_for_keymap(center, keymap, os),
         ))
     }
 
@@ -683,6 +697,7 @@ impl CommandPaletteController {
         center: &mut CommandCenter,
         query: String,
         window: &Window,
+        cx: &App,
     ) -> Result<CommandPaletteControllerUpdate, CommandRegistryError> {
         let (query, query_changed, provider_projections, pending_provider_requests) =
             self.set_query_from_history(center, query)?;
@@ -691,7 +706,7 @@ impl CommandPaletteController {
             query_changed,
             provider_projections,
             pending_provider_requests,
-            self.projection_for_window(center, window),
+            self.projection_for_window(center, window, cx),
         ))
     }
 
@@ -1012,8 +1027,8 @@ pub struct CommandKeyBindingCaptureState {
 }
 
 impl CommandKeyBindingCaptureState {
-    /// Parses a raw key sequence captured by a keybinding input surface.
-    pub fn from_sequence(sequence: impl Into<String>) -> Self {
+    /// Parses captured keybinding input using the supplied host operating system.
+    pub fn from_sequence(sequence: impl Into<String>, os: OperatingSystem) -> Self {
         let raw_sequence = sequence.into();
         if raw_sequence.trim().is_empty() {
             return Self {
@@ -1023,13 +1038,13 @@ impl CommandKeyBindingCaptureState {
             };
         }
 
-        match parse_command_key_sequence(&raw_sequence) {
+        match parse_command_key_sequence(&raw_sequence, os) {
             Ok(input) => Self {
                 raw_sequence,
                 input_label: Some(
                     input
                         .iter()
-                        .map(Keystroke::unparse)
+                        .map(|keystroke| keystroke.unparse(os))
                         .collect::<Vec<_>>()
                         .join(" "),
                 ),
@@ -1048,7 +1063,7 @@ impl CommandKeyBindingCaptureState {
         &self.raw_sequence
     }
 
-    /// Returns the normalized display label when parsing succeeded.
+    /// Returns normalized keybinding syntax suitable for a patch when parsing succeeded.
     pub fn input_label(&self) -> Option<&str> {
         self.input_label.as_deref()
     }

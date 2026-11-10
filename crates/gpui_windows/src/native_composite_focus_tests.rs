@@ -289,7 +289,8 @@ fn key(
                 .unwrap(),
         )
     });
-    let keystroke = Keystroke::parse(key)
+    let os = app.update_for_test(|cx| cx.platform_info().os);
+    let keystroke = Keystroke::parse_with_os(key, os)
         .expect("composite key")
         .with_simulated_ime();
     let input = if down {

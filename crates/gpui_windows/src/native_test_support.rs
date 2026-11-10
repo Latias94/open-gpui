@@ -100,6 +100,8 @@ mod native_intrinsic_layout_tests;
 mod native_paint_tests;
 #[path = "native_pending_input_tests.rs"]
 mod native_pending_input_tests;
+#[path = "native_platform_info_tests.rs"]
+mod native_platform_info_tests;
 #[path = "native_power_mode_tests.rs"]
 mod native_power_mode_tests;
 #[path = "native_power_visibility_tests.rs"]

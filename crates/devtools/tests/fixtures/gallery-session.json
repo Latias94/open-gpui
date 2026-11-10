@@ -948,7 +948,7 @@
                     "label": "Command keybindings",
                     "payload": {
                       "projected_binding_count": 2,
-                      "installed_key_binding_count": 2,
+                      "key_binding_count": 2,
                       "diagnostic_count": 2,
                       "conflict_count": 1,
                       "clean": false,
@@ -967,7 +967,7 @@
                             "id": "command.keybindings.projected.0.gallery.command_palette.open",
                             "label": "gallery.command_palette.open",
                             "payload": {
-                              "source": "gallery-defaults",
+                              "source": "gallery-diagnostic-sample",
                               "command_id": "gallery.command_palette.open",
                               "keystrokes": "ctrl-K",
                               "raw_keystrokes": "ctrl-k",
@@ -980,7 +980,7 @@
                             "id": "command.keybindings.projected.1.gallery.devtools.toggle",
                             "label": "gallery.devtools.toggle",
                             "payload": {
-                              "source": "gallery-defaults",
+                              "source": "gallery-diagnostic-sample",
                               "command_id": "gallery.devtools.toggle",
                               "keystrokes": "ctrl-K",
                               "raw_keystrokes": "ctrl-k",
@@ -1003,7 +1003,7 @@
                             "label": "missing-action gallery.command_palette.missing",
                             "payload": {
                               "kind": "missing-action",
-                              "source": "gallery-defaults",
+                              "source": "gallery-diagnostic-sample",
                               "command_id": "gallery.command_palette.missing",
                               "keystrokes": "ctrl-m",
                               "context": null,
@@ -1016,7 +1016,7 @@
                             "label": "invalid-context gallery.workspace.save",
                             "payload": {
                               "kind": "invalid-context",
-                              "source": "gallery-defaults",
+                              "source": "gallery-diagnostic-sample",
                               "command_id": "gallery.workspace.save",
                               "keystrokes": "ctrl-s",
                               "context": "Gallery &&",
@@ -1046,7 +1046,7 @@
                                 "id": "command.keybindings.conflicts.0.entries.0.gallery.command_palette.open",
                                 "label": "gallery.command_palette.open",
                                 "payload": {
-                                  "source": "gallery-defaults",
+                                  "source": "gallery-diagnostic-sample",
                                   "command_id": "gallery.command_palette.open"
                                 },
                                 "children": []
@@ -1055,7 +1055,7 @@
                                 "id": "command.keybindings.conflicts.0.entries.1.gallery.devtools.toggle",
                                 "label": "gallery.devtools.toggle",
                                 "payload": {
-                                  "source": "gallery-defaults",
+                                  "source": "gallery-diagnostic-sample",
                                   "command_id": "gallery.devtools.toggle"
                                 },
                                 "children": []
@@ -3305,7 +3305,7 @@
                   "label": "Command keybindings",
                   "payload": {
                     "projected_binding_count": 2,
-                    "installed_key_binding_count": 2,
+                    "key_binding_count": 2,
                     "diagnostic_count": 2,
                     "conflict_count": 1,
                     "clean": false,
@@ -3324,7 +3324,7 @@
                           "id": "command.keybindings.projected.0.gallery.command_palette.open",
                           "label": "gallery.command_palette.open",
                           "payload": {
-                            "source": "gallery-defaults",
+                            "source": "gallery-diagnostic-sample",
                             "command_id": "gallery.command_palette.open",
                             "keystrokes": "ctrl-K",
                             "raw_keystrokes": "ctrl-k",
@@ -3337,7 +3337,7 @@
                           "id": "command.keybindings.projected.1.gallery.devtools.toggle",
                           "label": "gallery.devtools.toggle",
                           "payload": {
-                            "source": "gallery-defaults",
+                            "source": "gallery-diagnostic-sample",
                             "command_id": "gallery.devtools.toggle",
                             "keystrokes": "ctrl-K",
                             "raw_keystrokes": "ctrl-k",
@@ -3360,7 +3360,7 @@
                           "label": "missing-action gallery.command_palette.missing",
                           "payload": {
                             "kind": "missing-action",
-                            "source": "gallery-defaults",
+                            "source": "gallery-diagnostic-sample",
                             "command_id": "gallery.command_palette.missing",
                             "keystrokes": "ctrl-m",
                             "context": null,
@@ -3373,7 +3373,7 @@
                           "label": "invalid-context gallery.workspace.save",
                           "payload": {
                             "kind": "invalid-context",
-                            "source": "gallery-defaults",
+                            "source": "gallery-diagnostic-sample",
                             "command_id": "gallery.workspace.save",
                             "keystrokes": "ctrl-s",
                             "context": "Gallery &&",
@@ -3403,7 +3403,7 @@
                               "id": "command.keybindings.conflicts.0.entries.0.gallery.command_palette.open",
                               "label": "gallery.command_palette.open",
                               "payload": {
-                                "source": "gallery-defaults",
+                                "source": "gallery-diagnostic-sample",
                                 "command_id": "gallery.command_palette.open"
                               },
                               "children": []
@@ -3412,7 +3412,7 @@
                               "id": "command.keybindings.conflicts.0.entries.1.gallery.devtools.toggle",
                               "label": "gallery.devtools.toggle",
                               "payload": {
-                                "source": "gallery-defaults",
+                                "source": "gallery-diagnostic-sample",
                                 "command_id": "gallery.devtools.toggle"
                               },
                               "children": []
@@ -5595,7 +5595,7 @@
                     "label": "Command keybindings",
                     "payload": {
                       "projected_binding_count": 2,
-                      "installed_key_binding_count": 2,
+                      "key_binding_count": 2,
                       "diagnostic_count": 2,
                       "conflict_count": 1,
                       "clean": false,
@@ -5614,7 +5614,7 @@
                             "id": "command.keybindings.projected.0.gallery.command_palette.open",
                             "label": "gallery.command_palette.open",
                             "payload": {
-                              "source": "gallery-defaults",
+                              "source": "gallery-diagnostic-sample",
                               "command_id": "gallery.command_palette.open",
                               "keystrokes": "ctrl-K",
                               "raw_keystrokes": "ctrl-k",
@@ -5627,7 +5627,7 @@
                             "id": "command.keybindings.projected.1.gallery.devtools.toggle",
                             "label": "gallery.devtools.toggle",
                             "payload": {
-                              "source": "gallery-defaults",
+                              "source": "gallery-diagnostic-sample",
                               "command_id": "gallery.devtools.toggle",
                               "keystrokes": "ctrl-K",
                               "raw_keystrokes": "ctrl-k",
@@ -5650,7 +5650,7 @@
                             "label": "missing-action gallery.command_palette.missing",
                             "payload": {
                               "kind": "missing-action",
-                              "source": "gallery-defaults",
+                              "source": "gallery-diagnostic-sample",
                               "command_id": "gallery.command_palette.missing",
                               "keystrokes": "ctrl-m",
                               "context": null,
@@ -5663,7 +5663,7 @@
                             "label": "invalid-context gallery.workspace.save",
                             "payload": {
                               "kind": "invalid-context",
-                              "source": "gallery-defaults",
+                              "source": "gallery-diagnostic-sample",
                               "command_id": "gallery.workspace.save",
                               "keystrokes": "ctrl-s",
                               "context": "Gallery &&",
@@ -5693,7 +5693,7 @@
                                 "id": "command.keybindings.conflicts.0.entries.0.gallery.command_palette.open",
                                 "label": "gallery.command_palette.open",
                                 "payload": {
-                                  "source": "gallery-defaults",
+                                  "source": "gallery-diagnostic-sample",
                                   "command_id": "gallery.command_palette.open"
                                 },
                                 "children": []
@@ -5702,7 +5702,7 @@
                                 "id": "command.keybindings.conflicts.0.entries.1.gallery.devtools.toggle",
                                 "label": "gallery.devtools.toggle",
                                 "payload": {
-                                  "source": "gallery-defaults",
+                                  "source": "gallery-diagnostic-sample",
                                   "command_id": "gallery.devtools.toggle"
                                 },
                                 "children": []
@@ -7915,7 +7915,7 @@
                   "label": "Command keybindings",
                   "payload": {
                     "projected_binding_count": 2,
-                    "installed_key_binding_count": 2,
+                    "key_binding_count": 2,
                     "diagnostic_count": 2,
                     "conflict_count": 1,
                     "clean": false,
@@ -7934,7 +7934,7 @@
                           "id": "command.keybindings.projected.0.gallery.command_palette.open",
                           "label": "gallery.command_palette.open",
                           "payload": {
-                            "source": "gallery-defaults",
+                            "source": "gallery-diagnostic-sample",
                             "command_id": "gallery.command_palette.open",
                             "keystrokes": "ctrl-K",
                             "raw_keystrokes": "ctrl-k",
@@ -7947,7 +7947,7 @@
                           "id": "command.keybindings.projected.1.gallery.devtools.toggle",
                           "label": "gallery.devtools.toggle",
                           "payload": {
-                            "source": "gallery-defaults",
+                            "source": "gallery-diagnostic-sample",
                             "command_id": "gallery.devtools.toggle",
                             "keystrokes": "ctrl-K",
                             "raw_keystrokes": "ctrl-k",
@@ -7970,7 +7970,7 @@
                           "label": "missing-action gallery.command_palette.missing",
                           "payload": {
                             "kind": "missing-action",
-                            "source": "gallery-defaults",
+                            "source": "gallery-diagnostic-sample",
                             "command_id": "gallery.command_palette.missing",
                             "keystrokes": "ctrl-m",
                             "context": null,
@@ -7983,7 +7983,7 @@
                           "label": "invalid-context gallery.workspace.save",
                           "payload": {
                             "kind": "invalid-context",
-                            "source": "gallery-defaults",
+                            "source": "gallery-diagnostic-sample",
                             "command_id": "gallery.workspace.save",
                             "keystrokes": "ctrl-s",
                             "context": "Gallery &&",
@@ -8013,7 +8013,7 @@
                               "id": "command.keybindings.conflicts.0.entries.0.gallery.command_palette.open",
                               "label": "gallery.command_palette.open",
                               "payload": {
-                                "source": "gallery-defaults",
+                                "source": "gallery-diagnostic-sample",
                                 "command_id": "gallery.command_palette.open"
                               },
                               "children": []
@@ -8022,7 +8022,7 @@
                               "id": "command.keybindings.conflicts.0.entries.1.gallery.devtools.toggle",
                               "label": "gallery.devtools.toggle",
                               "payload": {
-                                "source": "gallery-defaults",
+                                "source": "gallery-diagnostic-sample",
                                 "command_id": "gallery.devtools.toggle"
                               },
                               "children": []
@@ -11283,7 +11283,7 @@
                       "label": "Command keybindings",
                       "payload": {
                         "projected_binding_count": 2,
-                        "installed_key_binding_count": 2,
+                        "key_binding_count": 2,
                         "diagnostic_count": 2,
                         "conflict_count": 1,
                         "clean": false,
@@ -11302,7 +11302,7 @@
                               "id": "command.keybindings.projected.0.gallery.command_palette.open",
                               "label": "gallery.command_palette.open",
                               "payload": {
-                                "source": "gallery-defaults",
+                                "source": "gallery-diagnostic-sample",
                                 "command_id": "gallery.command_palette.open",
                                 "keystrokes": "ctrl-K",
                                 "raw_keystrokes": "ctrl-k",
@@ -11315,7 +11315,7 @@
                               "id": "command.keybindings.projected.1.gallery.devtools.toggle",
                               "label": "gallery.devtools.toggle",
                               "payload": {
-                                "source": "gallery-defaults",
+                                "source": "gallery-diagnostic-sample",
                                 "command_id": "gallery.devtools.toggle",
                                 "keystrokes": "ctrl-K",
                                 "raw_keystrokes": "ctrl-k",
@@ -11338,7 +11338,7 @@
                               "label": "missing-action gallery.command_palette.missing",
                               "payload": {
                                 "kind": "missing-action",
-                                "source": "gallery-defaults",
+                                "source": "gallery-diagnostic-sample",
                                 "command_id": "gallery.command_palette.missing",
                                 "keystrokes": "ctrl-m",
                                 "context": null,
@@ -11351,7 +11351,7 @@
                               "label": "invalid-context gallery.workspace.save",
                               "payload": {
                                 "kind": "invalid-context",
-                                "source": "gallery-defaults",
+                                "source": "gallery-diagnostic-sample",
                                 "command_id": "gallery.workspace.save",
                                 "keystrokes": "ctrl-s",
                                 "context": "Gallery &&",
@@ -11381,7 +11381,7 @@
                                   "id": "command.keybindings.conflicts.0.entries.0.gallery.command_palette.open",
                                   "label": "gallery.command_palette.open",
                                   "payload": {
-                                    "source": "gallery-defaults",
+                                    "source": "gallery-diagnostic-sample",
                                     "command_id": "gallery.command_palette.open"
                                   },
                                   "children": []
@@ -11390,7 +11390,7 @@
                                   "id": "command.keybindings.conflicts.0.entries.1.gallery.devtools.toggle",
                                   "label": "gallery.devtools.toggle",
                                   "payload": {
-                                    "source": "gallery-defaults",
+                                    "source": "gallery-diagnostic-sample",
                                     "command_id": "gallery.devtools.toggle"
                                   },
                                   "children": []
@@ -11431,7 +11431,7 @@
                       "label": "Command keybindings",
                       "payload": {
                         "projected_binding_count": 2,
-                        "installed_key_binding_count": 2,
+                        "key_binding_count": 2,
                         "diagnostic_count": 2,
                         "conflict_count": 1,
                         "clean": false,
@@ -11450,7 +11450,7 @@
                               "id": "command.keybindings.projected.0.gallery.command_palette.open",
                               "label": "gallery.command_palette.open",
                               "payload": {
-                                "source": "gallery-defaults",
+                                "source": "gallery-diagnostic-sample",
                                 "command_id": "gallery.command_palette.open",
                                 "keystrokes": "ctrl-K",
                                 "raw_keystrokes": "ctrl-k",
@@ -11463,7 +11463,7 @@
                               "id": "command.keybindings.projected.1.gallery.devtools.toggle",
                               "label": "gallery.devtools.toggle",
                               "payload": {
-                                "source": "gallery-defaults",
+                                "source": "gallery-diagnostic-sample",
                                 "command_id": "gallery.devtools.toggle",
                                 "keystrokes": "ctrl-K",
                                 "raw_keystrokes": "ctrl-k",
@@ -11486,7 +11486,7 @@
                               "label": "missing-action gallery.command_palette.missing",
                               "payload": {
                                 "kind": "missing-action",
-                                "source": "gallery-defaults",
+                                "source": "gallery-diagnostic-sample",
                                 "command_id": "gallery.command_palette.missing",
                                 "keystrokes": "ctrl-m",
                                 "context": null,
@@ -11499,7 +11499,7 @@
                               "label": "invalid-context gallery.workspace.save",
                               "payload": {
                                 "kind": "invalid-context",
-                                "source": "gallery-defaults",
+                                "source": "gallery-diagnostic-sample",
                                 "command_id": "gallery.workspace.save",
                                 "keystrokes": "ctrl-s",
                                 "context": "Gallery &&",
@@ -11529,7 +11529,7 @@
                                   "id": "command.keybindings.conflicts.0.entries.0.gallery.command_palette.open",
                                   "label": "gallery.command_palette.open",
                                   "payload": {
-                                    "source": "gallery-defaults",
+                                    "source": "gallery-diagnostic-sample",
                                     "command_id": "gallery.command_palette.open"
                                   },
                                   "children": []
@@ -11538,7 +11538,7 @@
                                   "id": "command.keybindings.conflicts.0.entries.1.gallery.devtools.toggle",
                                   "label": "gallery.devtools.toggle",
                                   "payload": {
-                                    "source": "gallery-defaults",
+                                    "source": "gallery-diagnostic-sample",
                                     "command_id": "gallery.devtools.toggle"
                                   },
                                   "children": []
@@ -16089,7 +16089,7 @@
                     "label": "Command keybindings",
                     "payload": {
                       "projected_binding_count": 2,
-                      "installed_key_binding_count": 2,
+                      "key_binding_count": 2,
                       "diagnostic_count": 2,
                       "conflict_count": 1,
                       "clean": false,
@@ -16108,7 +16108,7 @@
                             "id": "command.keybindings.projected.0.gallery.command_palette.open",
                             "label": "gallery.command_palette.open",
                             "payload": {
-                              "source": "gallery-defaults",
+                              "source": "gallery-diagnostic-sample",
                               "command_id": "gallery.command_palette.open",
                               "keystrokes": "ctrl-K",
                               "raw_keystrokes": "ctrl-k",
@@ -16121,7 +16121,7 @@
                             "id": "command.keybindings.projected.1.gallery.devtools.toggle",
                             "label": "gallery.devtools.toggle",
                             "payload": {
-                              "source": "gallery-defaults",
+                              "source": "gallery-diagnostic-sample",
                               "command_id": "gallery.devtools.toggle",
                               "keystrokes": "ctrl-K",
                               "raw_keystrokes": "ctrl-k",
@@ -16144,7 +16144,7 @@
                             "label": "missing-action gallery.command_palette.missing",
                             "payload": {
                               "kind": "missing-action",
-                              "source": "gallery-defaults",
+                              "source": "gallery-diagnostic-sample",
                               "command_id": "gallery.command_palette.missing",
                               "keystrokes": "ctrl-m",
                               "context": null,
@@ -16157,7 +16157,7 @@
                             "label": "invalid-context gallery.workspace.save",
                             "payload": {
                               "kind": "invalid-context",
-                              "source": "gallery-defaults",
+                              "source": "gallery-diagnostic-sample",
                               "command_id": "gallery.workspace.save",
                               "keystrokes": "ctrl-s",
                               "context": "Gallery &&",
@@ -16187,7 +16187,7 @@
                                 "id": "command.keybindings.conflicts.0.entries.0.gallery.command_palette.open",
                                 "label": "gallery.command_palette.open",
                                 "payload": {
-                                  "source": "gallery-defaults",
+                                  "source": "gallery-diagnostic-sample",
                                   "command_id": "gallery.command_palette.open"
                                 },
                                 "children": []
@@ -16196,7 +16196,7 @@
                                 "id": "command.keybindings.conflicts.0.entries.1.gallery.devtools.toggle",
                                 "label": "gallery.devtools.toggle",
                                 "payload": {
-                                  "source": "gallery-defaults",
+                                  "source": "gallery-diagnostic-sample",
                                   "command_id": "gallery.devtools.toggle"
                                 },
                                 "children": []
@@ -16224,7 +16224,7 @@
                     "label": "Command keybindings",
                     "payload": {
                       "projected_binding_count": 2,
-                      "installed_key_binding_count": 2,
+                      "key_binding_count": 2,
                       "diagnostic_count": 2,
                       "conflict_count": 1,
                       "clean": false,
@@ -16243,7 +16243,7 @@
                             "id": "command.keybindings.projected.0.gallery.command_palette.open",
                             "label": "gallery.command_palette.open",
                             "payload": {
-                              "source": "gallery-defaults",
+                              "source": "gallery-diagnostic-sample",
                               "command_id": "gallery.command_palette.open",
                               "keystrokes": "ctrl-K",
                               "raw_keystrokes": "ctrl-k",
@@ -16256,7 +16256,7 @@
                             "id": "command.keybindings.projected.1.gallery.devtools.toggle",
                             "label": "gallery.devtools.toggle",
                             "payload": {
-                              "source": "gallery-defaults",
+                              "source": "gallery-diagnostic-sample",
                               "command_id": "gallery.devtools.toggle",
                               "keystrokes": "ctrl-K",
                               "raw_keystrokes": "ctrl-k",
@@ -16279,7 +16279,7 @@
                             "label": "missing-action gallery.command_palette.missing",
                             "payload": {
                               "kind": "missing-action",
-                              "source": "gallery-defaults",
+                              "source": "gallery-diagnostic-sample",
                               "command_id": "gallery.command_palette.missing",
                               "keystrokes": "ctrl-m",
                               "context": null,
@@ -16292,7 +16292,7 @@
                             "label": "invalid-context gallery.workspace.save",
                             "payload": {
                               "kind": "invalid-context",
-                              "source": "gallery-defaults",
+                              "source": "gallery-diagnostic-sample",
                               "command_id": "gallery.workspace.save",
                               "keystrokes": "ctrl-s",
                               "context": "Gallery &&",
@@ -16322,7 +16322,7 @@
                                 "id": "command.keybindings.conflicts.0.entries.0.gallery.command_palette.open",
                                 "label": "gallery.command_palette.open",
                                 "payload": {
-                                  "source": "gallery-defaults",
+                                  "source": "gallery-diagnostic-sample",
                                   "command_id": "gallery.command_palette.open"
                                 },
                                 "children": []
@@ -16331,7 +16331,7 @@
                                 "id": "command.keybindings.conflicts.0.entries.1.gallery.devtools.toggle",
                                 "label": "gallery.devtools.toggle",
                                 "payload": {
-                                  "source": "gallery-defaults",
+                                  "source": "gallery-diagnostic-sample",
                                   "command_id": "gallery.devtools.toggle"
                                 },
                                 "children": []

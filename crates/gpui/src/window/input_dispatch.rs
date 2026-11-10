@@ -69,6 +69,10 @@ fn normalize_platform_input(
             PlatformInput::PointerCanceled(pointer_canceled)
         }
         PlatformInput::ModifiersChanged(modifiers_changed) => {
+            #[cfg(debug_assertions)]
+            if window.modifiers.secondary(cx) != modifiers_changed.modifiers.secondary(cx) {
+                window.refresh();
+            }
             window.modifiers = modifiers_changed.modifiers;
             window.capslock = modifiers_changed.capslock;
             PlatformInput::ModifiersChanged(modifiers_changed)

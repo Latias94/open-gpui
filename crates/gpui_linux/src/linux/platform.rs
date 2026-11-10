@@ -336,6 +336,17 @@ pub(crate) struct LinuxPlatform<P> {
 }
 
 impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
+    fn platform_info(&self) -> open_gpui::PlatformInfo {
+        open_gpui::PlatformInfo {
+            os: if cfg!(target_os = "freebsd") {
+                open_gpui::OperatingSystem::FreeBsd
+            } else {
+                open_gpui::OperatingSystem::Linux
+            },
+            target: open_gpui::PlatformTarget::Native,
+        }
+    }
+
     fn background_executor(&self) -> BackgroundExecutor {
         self.inner
             .with_common(|common| common.background_executor.clone())

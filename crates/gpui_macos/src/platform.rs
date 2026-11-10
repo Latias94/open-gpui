@@ -454,11 +454,17 @@ impl MacPlatform {
                         .find_or_first(|binding| {
                             binding.predicate().is_none_or(|predicate| {
                                 predicate.eval(DEFAULT_CONTEXT.get_or_init(|| {
-                                    let mut workspace_context = KeyContext::new_with_defaults();
+                                    let mut workspace_context = KeyContext::new_with_defaults(
+                                        open_gpui::OperatingSystem::Mac,
+                                    );
                                     workspace_context.add("Workspace");
-                                    let mut pane_context = KeyContext::new_with_defaults();
+                                    let mut pane_context = KeyContext::new_with_defaults(
+                                        open_gpui::OperatingSystem::Mac,
+                                    );
                                     pane_context.add("Pane");
-                                    let mut editor_context = KeyContext::new_with_defaults();
+                                    let mut editor_context = KeyContext::new_with_defaults(
+                                        open_gpui::OperatingSystem::Mac,
+                                    );
                                     editor_context.add("Editor");
 
                                     pane_context.extend(&editor_context);
@@ -712,6 +718,13 @@ fn macos_window_capabilities(kind: &WindowKind) -> PlatformWindowCapabilities {
 }
 
 impl Platform for MacPlatform {
+    fn platform_info(&self) -> open_gpui::PlatformInfo {
+        open_gpui::PlatformInfo {
+            os: open_gpui::OperatingSystem::Mac,
+            target: open_gpui::PlatformTarget::Native,
+        }
+    }
+
     fn background_executor(&self) -> BackgroundExecutor {
         self.0.lock().background_executor.clone()
     }

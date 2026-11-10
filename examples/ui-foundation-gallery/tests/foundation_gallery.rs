@@ -42,11 +42,11 @@ use std::time::Duration;
 
 open_gpui::actions!(foundation_gallery_shortcut_test, [DisplayShortcutCommand]);
 
-fn display_shortcut(keystrokes: &str) -> String {
+fn display_shortcut(keystrokes: &'static str, os: open_gpui::OperatingSystem) -> String {
     open_gpui::KeyBinding::new(keystrokes, DisplayShortcutCommand, None)
         .keystrokes()
         .iter()
-        .map(ToString::to_string)
+        .map(|stroke| stroke.display(os).to_string())
         .collect::<Vec<_>>()
         .join(" ")
 }

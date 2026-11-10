@@ -15,6 +15,8 @@ mod logging;
 #[cfg(target_family = "wasm")]
 mod platform;
 #[cfg(any(target_family = "wasm", test))]
+mod platform_info;
+#[cfg(any(target_family = "wasm", test))]
 mod pointer_session;
 #[cfg(target_family = "wasm")]
 mod window;

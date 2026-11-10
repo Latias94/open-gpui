@@ -162,7 +162,7 @@ fn draw(root: &Entity<KeyboardAdmissionRoot>, window: &mut Window, app: &mut App
 fn key_down(window: &mut Window, app: &mut App, key: &str) {
     window.dispatch_event(
         KeyDownEvent {
-            keystroke: Keystroke::parse(key).unwrap(),
+            keystroke: Keystroke::parse_with_os(key, app.platform_info().os).unwrap(),
             is_held: false,
             prefer_character_input: false,
         }
@@ -174,7 +174,7 @@ fn key_down(window: &mut Window, app: &mut App, key: &str) {
 fn key_up(window: &mut Window, app: &mut App, key: &str) {
     window.dispatch_event(
         KeyUpEvent {
-            keystroke: Keystroke::parse(key).unwrap(),
+            keystroke: Keystroke::parse_with_os(key, app.platform_info().os).unwrap(),
         }
         .to_platform_input(),
         app,

@@ -3899,6 +3899,7 @@ dependencies = [
  "criterion",
  "image",
  "open-gpui",
+ "open-gpui-command",
  "open-gpui-docking",
  "open-gpui-macos",
  "open-gpui-platform",

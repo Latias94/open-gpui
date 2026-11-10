@@ -1,6 +1,7 @@
 use serde_json::{Value, json};
 
 mod clipboard;
+mod platform_info;
 use std::{
     env, fs,
     io::{ErrorKind, Read, Write},
@@ -254,6 +255,14 @@ fn qualify_browser(cdp: &mut CdpClient, url: &str, allow_unavailable: bool) -> R
             "web smoke backend={requested} actual={actual}: complete input/capture/docking/activation and renderer/resize passed"
         );
     }
+    platform_info::qualify(
+        cdp,
+        &format!(
+            "{url}&backend={}&software={}",
+            if webgl { "webgl" } else { "webgpu" },
+            !webgl
+        ),
+    )?;
     clipboard::qualify(
         cdp,
         &format!(

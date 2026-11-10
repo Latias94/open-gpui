@@ -7,8 +7,8 @@ use std::time::Duration;
 
 use open_gpui::prelude::*;
 use open_gpui::{
-    Action, AnyElement, AnyView, App, Context, ElementId, IntoElement, KeyBinding, KeyContext,
-    ParentElement, PortalAnchorHandle, Render, RenderOnce, SharedString, Styled, Window, div,
+    Action, AnyElement, AnyView, App, Context, ElementId, IntoElement, KeyContext, ParentElement,
+    PortalAnchorHandle, Render, RenderOnce, SharedString, Styled, Window, div,
 };
 use open_gpui_ui_core::{
     InitialFocusIntent, OverlayLayerKind, OverlayPlacementAlignment, OverlayPlacementInput,
@@ -527,7 +527,7 @@ fn action_tooltip_builder(
     let label = label.into();
     move |window, cx| {
         let key_binding =
-            key_binding_text_for_action(window, action.as_ref(), key_context.as_ref());
+            key_binding_text_for_action(window, action.as_ref(), key_context.as_ref(), cx);
         cx.new(|_| ActionTooltipView {
             label: label.clone(),
             key_binding,
@@ -540,6 +540,7 @@ fn key_binding_text_for_action(
     window: &Window,
     action: &dyn Action,
     key_context: Option<&KeyContext>,
+    cx: &App,
 ) -> Option<SharedString> {
     let binding = match key_context {
         Some(key_context) => {
@@ -548,16 +549,7 @@ fn key_binding_text_for_action(
         None => window.highest_precedence_binding_for_action(action),
     }?;
 
-    Some(key_binding_text(&binding).into())
-}
-
-fn key_binding_text(binding: &KeyBinding) -> String {
-    binding
-        .keystrokes()
-        .iter()
-        .map(ToString::to_string)
-        .collect::<Vec<_>>()
-        .join(" ")
+    Some(open_gpui_command::command_shortcut_label(&binding, cx.platform_info().os).into())
 }
 
 struct TextTooltipView {

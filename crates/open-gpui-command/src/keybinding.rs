@@ -4,8 +4,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 use open_gpui::{
-    Action, App, DummyKeyboardMapper, InvalidKeystrokeError, KeyBinding,
-    KeyBindingContextPredicate, KeyContext, Keymap, Keystroke,
+    Action, App, InvalidKeystrokeError, KeyBinding, KeyBindingContextPredicate, KeyContext, Keymap,
+    Keystroke, OperatingSystem,
 };
 
 use crate::{
@@ -54,8 +54,19 @@ impl CommandKeyBinding {
 }
 
 /// Parses a whitespace-separated GPUI key sequence such as `ctrl-k ctrl-o`.
-pub fn parse_command_key_sequence(sequence: &str) -> Result<Vec<Keystroke>, InvalidKeystrokeError> {
-    sequence.split_whitespace().map(Keystroke::parse).collect()
+/// Resolves `secondary-` using the supplied host operating system.
+///
+/// This returns raw parsed strokes without keyboard-layout mapping. Use the App-based
+/// sequence resolver to preflight binding syntax; event-input resolvers expect strokes
+/// already normalized by the input backend.
+pub fn parse_command_key_sequence(
+    sequence: &str,
+    os: OperatingSystem,
+) -> Result<Vec<Keystroke>, InvalidKeystrokeError> {
+    sequence
+        .split_whitespace()
+        .map(|source| Keystroke::parse_with_os(source, os))
+        .collect()
 }
 
 /// Availability-aware state for a keymap-resolved command.
@@ -118,10 +129,11 @@ impl CommandKeymapResolvedCommand {
         actions: &GpuiCommandActionMap,
         registry: &CommandRegistrySnapshot,
         availability: &impl CommandAvailabilityResolver,
+        os: OperatingSystem,
     ) -> Option<Self> {
         let command_id = actions.command_id_for_action(binding.action())?.to_owned();
         Some(Self {
-            shortcut: command_shortcut_label(binding),
+            shortcut: command_shortcut_label(binding, os),
             state: command_keymap_command_state(command_id.as_str(), registry, availability),
             command_id,
         })
@@ -158,7 +170,7 @@ pub struct CommandKeymapResolution {
 }
 
 impl CommandKeymapResolution {
-    /// Resolves typed keystrokes into command ids through a GPUI keymap and context stack.
+    /// Resolves backend-normalized event keystrokes without applying keyboard mapping again.
     pub fn resolve(
         actions: &GpuiCommandActionMap,
         registry: &CommandRegistrySnapshot,
@@ -166,12 +178,19 @@ impl CommandKeymapResolution {
         keymap: &Keymap,
         context_stack: &[KeyContext],
         input: &[Keystroke],
+        os: OperatingSystem,
     ) -> Self {
         let (bindings, pending) = keymap.bindings_for_input(input, context_stack);
         let matched_commands = bindings
             .iter()
             .filter_map(|binding| {
-                CommandKeymapResolvedCommand::from_binding(binding, actions, registry, availability)
+                CommandKeymapResolvedCommand::from_binding(
+                    binding,
+                    actions,
+                    registry,
+                    availability,
+                    os,
+                )
             })
             .collect::<Vec<_>>();
         let pending_commands = command_keymap_pending_commands(
@@ -181,10 +200,14 @@ impl CommandKeymapResolution {
             keymap,
             context_stack,
             input,
+            os,
         );
 
         Self {
-            input: input.iter().map(Keystroke::unparse).collect(),
+            input: input
+                .iter()
+                .map(|keystroke| keystroke.unparse(os))
+                .collect(),
             matched_commands,
             pending,
             pending_commands,
@@ -244,7 +267,7 @@ impl GpuiCommandActionMap {
             .map(|candidate| candidate.command_id())
     }
 
-    /// Resolves typed keystrokes into command ids through a GPUI keymap and context stack.
+    /// Resolves backend-normalized event keystrokes without applying keyboard mapping again.
     pub fn resolve_keymap_input(
         &self,
         registry: &CommandRegistrySnapshot,
@@ -252,11 +275,21 @@ impl GpuiCommandActionMap {
         keymap: &Keymap,
         context_stack: &[KeyContext],
         input: &[Keystroke],
+        os: OperatingSystem,
     ) -> CommandKeymapResolution {
-        CommandKeymapResolution::resolve(self, registry, availability, keymap, context_stack, input)
+        CommandKeymapResolution::resolve(
+            self,
+            registry,
+            availability,
+            keymap,
+            context_stack,
+            input,
+            os,
+        )
     }
 
-    /// Parses and resolves a whitespace-separated GPUI key sequence.
+    /// Resolves binding syntax using the same App and keyboard mapping as binding installation.
+    /// Keyboard equivalents are disabled to match command binding projection.
     pub fn resolve_keymap_sequence(
         &self,
         sequence: &str,
@@ -264,9 +297,19 @@ impl GpuiCommandActionMap {
         availability: &impl CommandAvailabilityResolver,
         keymap: &Keymap,
         context_stack: &[KeyContext],
+        cx: &App,
     ) -> Result<CommandKeymapResolution, InvalidKeystrokeError> {
-        let input = parse_command_key_sequence(sequence)?;
-        Ok(self.resolve_keymap_input(registry, availability, keymap, context_stack, &input))
+        let os = cx.platform_info().os;
+        let input = parse_command_key_sequence(sequence, os)?
+            .into_iter()
+            .map(|keystroke| {
+                cx.keyboard_mapper()
+                    .map_key_equivalent(keystroke, false)
+                    .inner()
+                    .clone()
+            })
+            .collect::<Vec<_>>();
+        Ok(self.resolve_keymap_input(registry, availability, keymap, context_stack, &input, os))
     }
 }
 
@@ -277,6 +320,7 @@ fn command_keymap_pending_commands(
     keymap: &Keymap,
     context_stack: &[KeyContext],
     input: &[Keystroke],
+    os: OperatingSystem,
 ) -> Vec<CommandKeymapResolvedCommand> {
     let mut seen = BTreeSet::<(String, String)>::new();
     keymap
@@ -288,6 +332,7 @@ fn command_keymap_pending_commands(
                 actions,
                 registry,
                 availability,
+                os,
             )?;
             seen.insert((command.command_id.clone(), command.shortcut.clone()))
                 .then_some(command)
@@ -737,8 +782,8 @@ impl CommandKeyBindingRegistry {
         &self.entries
     }
 
-    /// Projects registered command-id bindings into concrete GPUI key bindings.
-    pub fn project(&self, actions: &GpuiCommandActionMap) -> CommandKeyBindingProjection {
+    /// Projects command-id bindings using the app's keyboard mapper and host operating system.
+    pub fn project(&self, actions: &GpuiCommandActionMap, cx: &App) -> CommandKeyBindingProjection {
         let mut projected = Vec::new();
         let mut diagnostics = Vec::new();
 
@@ -770,10 +815,10 @@ impl CommandKeyBindingRegistry {
                 context_predicate,
                 false,
                 None,
-                &DummyKeyboardMapper,
+                cx,
             ) {
                 Ok(key_binding) => projected.push(ProjectedCommandKeyBinding {
-                    keystrokes: command_shortcut_label(&key_binding),
+                    keystrokes: command_shortcut_label(&key_binding, cx.platform_info().os),
                     raw_keystrokes: binding.keystrokes().to_owned(),
                     key_binding,
                     source_id: entry.source_id().clone(),
@@ -816,8 +861,10 @@ impl CommandKeyBindingRegistry {
         &self,
         actions: &GpuiCommandActionMap,
         keymap: &mut Keymap,
+        cx: &App,
     ) -> CommandKeyBindingProjection {
-        self.install_into_keymap(actions, keymap).into_projection()
+        self.install_into_keymap(actions, keymap, cx)
+            .into_projection()
     }
 
     /// Installs valid projected GPUI key bindings into an app keymap.
@@ -825,8 +872,9 @@ impl CommandKeyBindingRegistry {
         &self,
         actions: &GpuiCommandActionMap,
         keymap: &mut Keymap,
+        cx: &App,
     ) -> CommandKeyBindingInstallReport {
-        let projection = self.project(actions);
+        let projection = self.project(actions, cx);
         keymap.add_bindings(projection.key_bindings().iter().cloned());
         CommandKeyBindingInstallReport::new(projection)
     }
@@ -837,7 +885,7 @@ impl CommandKeyBindingRegistry {
         actions: &GpuiCommandActionMap,
         cx: &mut App,
     ) -> CommandKeyBindingInstallReport {
-        let projection = self.project(actions);
+        let projection = self.project(actions, cx);
         cx.bind_keys(projection.key_bindings().iter().cloned());
         CommandKeyBindingInstallReport::new(projection)
     }
@@ -847,11 +895,12 @@ impl CommandKeyBindingRegistry {
         &self,
         actions: &GpuiCommandActionMap,
         patch: CommandKeyBindingPatch,
+        cx: &App,
     ) -> CommandKeyBindingPatchPreview {
         let mut entries = self.entries.clone();
         let outcome = patch.apply_to_entries(&mut entries);
         let candidate = Self { entries };
-        CommandKeyBindingPatchPreview::new(patch, outcome, candidate.project(actions))
+        CommandKeyBindingPatchPreview::new(patch, outcome, candidate.project(actions, cx))
     }
 }
 
@@ -1192,7 +1241,7 @@ impl CommandKeyBindingInstallReport {
 
 #[cfg(test)]
 mod tests {
-    use open_gpui::{KeyBinding, KeyContext, Keymap, actions};
+    use open_gpui::{KeyBinding, KeyContext, Keymap, OperatingSystem, actions};
 
     use crate::{
         CommandAvailabilityMap, CommandContribution, CommandDescriptor, CommandRegistrySnapshot,
@@ -1248,7 +1297,7 @@ mod tests {
         ]);
         let contexts = [KeyContext::parse("Workspace").unwrap()];
 
-        let pending_input = parse_command_key_sequence("ctrl-k").unwrap();
+        let pending_input = parse_command_key_sequence("ctrl-k", OperatingSystem::Windows).unwrap();
         let pending = CommandKeymapResolution::resolve(
             &action_map(),
             &registry_snapshot(),
@@ -1256,6 +1305,7 @@ mod tests {
             &keymap,
             &contexts,
             &pending_input,
+            OperatingSystem::Windows,
         );
 
         assert_eq!(pending.input_label(), "ctrl-k");
@@ -1271,7 +1321,8 @@ mod tests {
             ["workspace.save", "workspace.open"]
         );
 
-        let matched_input = parse_command_key_sequence("ctrl-k ctrl-o").unwrap();
+        let matched_input =
+            parse_command_key_sequence("ctrl-k ctrl-o", OperatingSystem::Windows).unwrap();
         let matched = CommandKeymapResolution::resolve(
             &action_map(),
             &registry_snapshot(),
@@ -1279,6 +1330,7 @@ mod tests {
             &keymap,
             &contexts,
             &matched_input,
+            OperatingSystem::Windows,
         );
 
         assert!(!matched.is_pending());
@@ -1294,8 +1346,10 @@ mod tests {
         );
     }
 
-    #[test]
-    fn keymap_resolution_reports_availability_and_registry_state() {
+    #[open_gpui::test]
+    fn keymap_resolution_reports_availability_and_registry_state(
+        cx: &mut open_gpui::TestAppContext,
+    ) {
         let mut keymap = Keymap::default();
         keymap.add_bindings([
             KeyBinding::new("ctrl-s", SaveWorkspace, Some("Workspace")),
@@ -1307,14 +1361,17 @@ mod tests {
             .disabled("workspace.save", "Read-only")
             .hidden("workspace.hidden");
 
-        let disabled = action_map()
-            .resolve_keymap_sequence(
-                "ctrl-s",
-                &registry_snapshot(),
-                &availability,
-                &keymap,
-                &contexts,
-            )
+        let disabled = cx
+            .read(|cx| {
+                action_map().resolve_keymap_sequence(
+                    "ctrl-s",
+                    &registry_snapshot(),
+                    &availability,
+                    &keymap,
+                    &contexts,
+                    cx,
+                )
+            })
             .unwrap();
         assert_eq!(
             disabled.primary_command().map(|command| command.state()),
@@ -1324,28 +1381,34 @@ mod tests {
         );
         assert!(disabled.primary_dispatchable_command().is_none());
 
-        let hidden = action_map()
-            .resolve_keymap_sequence(
-                "ctrl-h",
-                &registry_snapshot(),
-                &availability,
-                &keymap,
-                &contexts,
-            )
+        let hidden = cx
+            .read(|cx| {
+                action_map().resolve_keymap_sequence(
+                    "ctrl-h",
+                    &registry_snapshot(),
+                    &availability,
+                    &keymap,
+                    &contexts,
+                    cx,
+                )
+            })
             .unwrap();
         assert_eq!(
             hidden.primary_command().map(|command| command.state()),
             Some(&CommandKeymapCommandState::Hidden)
         );
 
-        let missing = action_map()
-            .resolve_keymap_sequence(
-                "ctrl-m",
-                &registry_snapshot(),
-                &availability,
-                &keymap,
-                &contexts,
-            )
+        let missing = cx
+            .read(|cx| {
+                action_map().resolve_keymap_sequence(
+                    "ctrl-m",
+                    &registry_snapshot(),
+                    &availability,
+                    &keymap,
+                    &contexts,
+                    cx,
+                )
+            })
             .unwrap();
         assert_eq!(
             missing.primary_command().map(|command| command.state()),

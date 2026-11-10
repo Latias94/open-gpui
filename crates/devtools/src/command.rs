@@ -75,6 +75,8 @@ where
 }
 
 /// Converts command keybinding projection facts into a DevTools tree.
+///
+/// Binding counts describe this projection and do not establish keymap installation.
 pub fn command_keybinding_projection_probe_snapshot(
     projection: &CommandKeyBindingProjection,
 ) -> SnapshotProbeSnapshot {
@@ -107,7 +109,7 @@ pub fn command_keybinding_projection_capture(
         "Command keybindings",
         serde_json::json!({
             "projected_binding_count": projection.projected_entries().len(),
-            "installed_key_binding_count": projection.key_bindings().len(),
+            "key_binding_count": projection.key_bindings().len(),
             "diagnostic_count": projection.diagnostics().len(),
             "conflict_count": projection.conflicts().len(),
             "clean": projection.is_clean(),
@@ -118,20 +120,19 @@ pub fn command_keybinding_projection_capture(
     )
 }
 
-/// Builds a closure-backed command keybinding projection snapshot probe.
+/// Builds a probe that reads the latest app-published keybinding projection snapshot.
+///
+/// Project bindings and convert them with [`command_keybinding_projection_probe_snapshot`] on
+/// the owning App thread before publication. The callback runs on every collection and should
+/// return the latest published DTO; it must not retain the App or concrete GPUI key bindings.
 pub fn command_keybinding_projection_snapshot_probe<F>(
     id: impl Into<String>,
-    projection: F,
-) -> Result<
-    SnapshotProbe<impl Fn() -> Result<SnapshotProbeSnapshot, ProbeSnapshotError> + Send + Sync>,
-    ProbeSnapshotError,
->
+    snapshot: F,
+) -> Result<SnapshotProbe<F>, ProbeSnapshotError>
 where
-    F: Fn() -> CommandKeyBindingProjection + Send + Sync + 'static,
+    F: Fn() -> Result<SnapshotProbeSnapshot, ProbeSnapshotError> + Send + Sync + 'static,
 {
-    SnapshotProbe::new(id, SnapshotKind::Command, move || {
-        Ok(command_keybinding_projection_probe_snapshot(&projection()))
-    })
+    SnapshotProbe::new(id, SnapshotKind::Command, snapshot)
 }
 
 /// Converts one command keymap resolution into a DevTools tree.
@@ -296,7 +297,7 @@ fn command_keybinding_projection_tree(projection: &CommandKeyBindingProjection) 
         "Command keybindings",
         serde_json::json!({
             "projected_binding_count": projection.projected_entries().len(),
-            "installed_key_binding_count": projection.key_bindings().len(),
+            "key_binding_count": projection.key_bindings().len(),
             "diagnostic_count": projection.diagnostics().len(),
             "conflict_count": projection.conflicts().len(),
             "clean": projection.is_clean(),

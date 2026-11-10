@@ -2,8 +2,8 @@ mod support;
 
 use open_gpui::{
     Context, InteractiveElement, IntoElement, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
-    MouseButton, ParentElement, Render, ScrollDelta, ScrollWheelEvent, StatefulInteractiveElement,
-    Styled, VisualContext, Window, accesskit, actions, div, point, px,
+    MouseButton, OperatingSystem, ParentElement, Render, ScrollDelta, ScrollWheelEvent,
+    StatefulInteractiveElement, Styled, VisualContext, Window, accesskit, actions, div, point, px,
 };
 use open_gpui_ui_components::{
     Combobox, ComboboxGroup, ComboboxOpenMode, ComboboxOption, ComboboxSelection, Command,
@@ -35,11 +35,11 @@ actions!(
     [OpenPaletteCommand, RevealPaletteCommand]
 );
 
-fn display_shortcut(keystrokes: &str) -> String {
+fn display_shortcut(keystrokes: &'static str) -> String {
     open_gpui::KeyBinding::new(keystrokes, OpenPaletteCommand, None)
         .keystrokes()
         .iter()
-        .map(ToString::to_string)
+        .map(|keystroke| keystroke.display(OperatingSystem::Windows).to_string())
         .collect::<Vec<_>>()
         .join(" ")
 }
@@ -3371,7 +3371,12 @@ fn command_palette_projection_adapts_center_query_shortcuts_providers_and_diagno
         open_gpui::KeyBinding::new("ctrl-alt-o", RevealPaletteCommand, None),
     ]);
 
-    let projection = CommandPaletteProjection::from_center_for_keymap(&center, "alpha", &keymap);
+    let projection = CommandPaletteProjection::from_center_for_keymap(
+        &center,
+        "alpha",
+        &keymap,
+        OperatingSystem::Windows,
+    );
 
     assert_eq!(projection.query(), "alpha");
     assert!(projection.shortcut_diagnostics().is_empty());
@@ -3444,6 +3449,7 @@ fn command_palette_projection_builds_status_items_from_provider_failures_and_dia
         &center,
         "alpha",
         &open_gpui::Keymap::default(),
+        OperatingSystem::Windows,
     );
 
     assert_eq!(projection.status_error_count(), 1);
@@ -3578,7 +3584,7 @@ fn command_palette_controller_refreshes_registered_provider_into_command_project
         .provider_with_loading("recent-provider", "Searching provider commands");
 
     let update = controller
-        .set_query_for_keymap(&mut center, "alpha", &keymap)
+        .set_query_for_keymap(&mut center, "alpha", &keymap, OperatingSystem::Windows)
         .unwrap();
 
     assert!(update.query_changed());
@@ -3627,8 +3633,10 @@ fn command_palette_controller_refreshes_registered_provider_into_command_project
     );
 }
 
-#[test]
-fn command_palette_controller_preflights_keymap_dispatch_with_query() {
+#[open_gpui::test]
+fn command_palette_controller_preflights_keymap_dispatch_with_query(
+    cx: &mut open_gpui::TestAppContext,
+) {
     let mut center = open_gpui_command::CommandCenter::new("controller-preflight-v1");
     center
         .register_source(
@@ -3659,12 +3667,12 @@ fn command_palette_controller_preflights_keymap_dispatch_with_query() {
             ],
         );
     let mut keymap = open_gpui::Keymap::default();
-    let report = center.install_key_bindings(&mut keymap);
+    let report = cx.read(|cx| center.install_key_bindings(&mut keymap, cx));
     assert!(report.is_clean());
     let controller = CommandPaletteController::new().with_query("open workspace");
 
-    let pending: CommandPaletteKeymapPreflight = controller
-        .preflight_key_sequence_for_keymap(&center, "ctrl-k", &keymap)
+    let pending: CommandPaletteKeymapPreflight = cx
+        .read(|cx| controller.preflight_key_sequence_for_keymap(&center, "ctrl-k", &keymap, cx))
         .unwrap();
     assert_eq!(pending.query(), "open workspace");
     assert_eq!(pending.input_label(), "ctrl-k");
@@ -3677,8 +3685,10 @@ fn command_palette_controller_preflights_keymap_dispatch_with_query() {
             .any(|command| command.command_id() == "workspace.open" && command.is_dispatchable())
     );
 
-    let matched = controller
-        .preflight_key_sequence_for_keymap(&center, "ctrl-k ctrl-o", &keymap)
+    let matched = cx
+        .read(|cx| {
+            controller.preflight_key_sequence_for_keymap(&center, "ctrl-k ctrl-o", &keymap, cx)
+        })
         .unwrap();
     let inspector = CommandShortcutInspectorState::from_preflight(&matched);
     assert_eq!(matched.query(), "open workspace");
@@ -3701,8 +3711,8 @@ fn command_palette_controller_preflights_keymap_dispatch_with_query() {
     assert_eq!(inspector.matched_commands().len(), 1);
     assert!(inspector.pending_commands().is_empty());
 
-    let disabled = controller
-        .preflight_key_sequence_for_keymap(&center, "ctrl-s", &keymap)
+    let disabled = cx
+        .read(|cx| controller.preflight_key_sequence_for_keymap(&center, "ctrl-s", &keymap, cx))
         .unwrap();
     assert_eq!(disabled.query(), "open workspace");
     assert_eq!(disabled.primary_dispatchable_command_id(), None);
@@ -3717,8 +3727,14 @@ fn command_palette_controller_preflights_keymap_dispatch_with_query() {
     assert_eq!(disabled.resolution(), &resolution);
 }
 
-#[test]
-fn command_keybinding_editor_state_filters_conflicts_and_keeps_diagnostics() {
+#[open_gpui::test]
+fn command_keybinding_editor_state_filters_conflicts_and_keeps_diagnostics(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    cx.set_platform_info(open_gpui::PlatformInfo {
+        os: OperatingSystem::Windows,
+        target: open_gpui::PlatformTarget::Native,
+    });
     let mut center = open_gpui_command::CommandCenter::new("keybinding-editor-v1");
     center
         .register_action("workspace.open", OpenPaletteCommand)
@@ -3742,7 +3758,7 @@ fn command_keybinding_editor_state_filters_conflicts_and_keeps_diagnostics() {
         ],
     );
 
-    let projection = center.key_binding_projection();
+    let projection = cx.read(|cx| center.key_binding_projection(cx));
     let editor = CommandKeyBindingEditorState::from_projection(
         &projection,
         CommandKeyBindingEditorFilter::new()
@@ -3809,19 +3825,23 @@ fn command_keybinding_editor_state_filters_conflicts_and_keeps_diagnostics() {
     );
 }
 
-#[test]
-fn command_keybinding_capture_and_preview_state_model_edit_patch() {
-    let capture = CommandKeyBindingCaptureState::from_sequence("ctrl-k ctrl-s");
+#[open_gpui::test]
+fn command_keybinding_capture_and_preview_state_model_edit_patch(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let capture =
+        CommandKeyBindingCaptureState::from_sequence("ctrl-k ctrl-s", OperatingSystem::Windows);
     assert_eq!(capture.raw_sequence(), "ctrl-k ctrl-s");
     assert_eq!(capture.input_label(), Some("ctrl-k ctrl-s"));
     assert!(capture.is_valid());
     assert!(!capture.is_empty());
 
-    let empty = CommandKeyBindingCaptureState::from_sequence("   ");
+    let empty = CommandKeyBindingCaptureState::from_sequence("   ", OperatingSystem::Windows);
     assert!(empty.is_empty());
     assert!(!empty.is_valid());
 
-    let invalid = CommandKeyBindingCaptureState::from_sequence("ctrl-x-y");
+    let invalid =
+        CommandKeyBindingCaptureState::from_sequence("ctrl-x-y", OperatingSystem::Windows);
     assert!(invalid.error().is_some());
     assert!(!invalid.is_valid());
 
@@ -3840,7 +3860,7 @@ fn command_keybinding_capture_and_preview_state_model_edit_patch() {
     );
 
     let editor = CommandKeyBindingEditorState::from_projection(
-        &center.key_binding_projection(),
+        &cx.read(|cx| center.key_binding_projection(cx)),
         CommandKeyBindingEditorFilter::new().query("workspace"),
     );
     let target = editor
@@ -3852,15 +3872,19 @@ fn command_keybinding_capture_and_preview_state_model_edit_patch() {
         .clone();
     assert_eq!(target.keystrokes(), "ctrl-s");
 
-    let preview =
-        center.preview_key_binding_patch(open_gpui_command::CommandKeyBindingPatch::replace(
-            target,
-            open_gpui_command::CommandKeyBinding::new(
-                "workspace.save",
-                capture.input_label().expect("valid capture label"),
-            )
-            .context("Workspace"),
-        ));
+    let preview = cx.read(|cx| {
+        center.preview_key_binding_patch(
+            open_gpui_command::CommandKeyBindingPatch::replace(
+                target,
+                open_gpui_command::CommandKeyBinding::new(
+                    "workspace.save",
+                    capture.input_label().expect("valid capture label"),
+                )
+                .context("Workspace"),
+            ),
+            cx,
+        )
+    });
     let preview_state = CommandKeyBindingEditorPreviewState::from_patch_preview(
         &preview,
         CommandKeyBindingEditorFilter::new().query("workspace"),
@@ -3902,7 +3926,7 @@ fn command_palette_controller_navigates_query_history_with_prefix() {
     let mut controller = CommandPaletteController::new().with_query("open");
 
     let latest = controller
-        .previous_query_for_keymap(&mut center, &keymap)
+        .previous_query_for_keymap(&mut center, &keymap, OperatingSystem::Windows)
         .expect("history entry")
         .unwrap();
 
@@ -3912,21 +3936,21 @@ fn command_palette_controller_navigates_query_history_with_prefix() {
     assert_eq!(latest.palette_projection().query(), "open settings");
 
     let older = controller
-        .previous_query_for_keymap(&mut center, &keymap)
+        .previous_query_for_keymap(&mut center, &keymap, OperatingSystem::Windows)
         .expect("older history entry")
         .unwrap();
     assert_eq!(older.query(), "open file");
     assert_eq!(controller.query(), "open file");
 
     let newer = controller
-        .next_query_for_keymap(&mut center, &keymap)
+        .next_query_for_keymap(&mut center, &keymap, OperatingSystem::Windows)
         .expect("newer history entry")
         .unwrap();
     assert_eq!(newer.query(), "open settings");
     assert_eq!(controller.query(), "open settings");
 
     let restored = controller
-        .next_query_for_keymap(&mut center, &keymap)
+        .next_query_for_keymap(&mut center, &keymap, OperatingSystem::Windows)
         .expect("restored draft query")
         .unwrap();
     assert_eq!(restored.query(), "open");
@@ -3935,7 +3959,7 @@ fn command_palette_controller_navigates_query_history_with_prefix() {
 
     assert!(
         controller
-            .next_query_for_keymap(&mut center, &keymap)
+            .next_query_for_keymap(&mut center, &keymap, OperatingSystem::Windows)
             .is_none()
     );
 }
@@ -3953,7 +3977,7 @@ fn command_palette_controller_tracks_async_provider_requests_and_stale_responses
         CommandPaletteController::new().provider_with_loading("async-provider", "Searching async");
 
     let alpha = controller
-        .set_query_for_keymap(&mut center, "alpha", &keymap)
+        .set_query_for_keymap(&mut center, "alpha", &keymap, OperatingSystem::Windows)
         .unwrap();
     let alpha_request = alpha
         .provider_projection("async-provider")
@@ -3985,7 +4009,7 @@ fn command_palette_controller_tracks_async_provider_requests_and_stale_responses
     );
 
     let beta = controller
-        .set_query_for_keymap(&mut center, "beta", &keymap)
+        .set_query_for_keymap(&mut center, "beta", &keymap, OperatingSystem::Windows)
         .unwrap();
     let beta_request = beta
         .provider_projection("async-provider")
@@ -4018,6 +4042,7 @@ fn command_palette_controller_tracks_async_provider_requests_and_stale_responses
                 ),
             ),
             &keymap,
+            OperatingSystem::Windows,
         )
         .expect("async provider is controlled")
         .unwrap();
@@ -4058,6 +4083,7 @@ fn command_palette_controller_tracks_async_provider_requests_and_stale_responses
                 ),
             ),
             &keymap,
+            OperatingSystem::Windows,
         )
         .expect("async provider is controlled")
         .unwrap();

@@ -392,9 +392,10 @@ fn native_pending_input_routes_modifiers_chords_and_focus_between_real_text_hand
             ..Default::default()
         }))
     };
+    let os = app.update_for_test(|cx| cx.platform_info().os);
     let key_down = |source| {
         native_window.dispatch_input(PlatformInput::KeyDown(KeyDownEvent {
-            keystroke: Keystroke::parse(source)
+            keystroke: Keystroke::parse_with_os(source, os)
                 .expect("valid synthetic native consumer keystroke")
                 .with_simulated_ime(),
             is_held: false,

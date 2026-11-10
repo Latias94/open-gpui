@@ -394,6 +394,7 @@ impl GalleryShell {
             snapshot.density.as_str(),
             snapshot.control_size.as_str(),
             theme,
+            pages::devtools::GalleryDevtoolsCommandSamples::from_app(cx),
         )
         .with_window_runtime(focus, overlay)
     }

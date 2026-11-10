@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use open_gpui::{Action, App, KeyBinding, KeyContext, Keymap, Window};
+use open_gpui::{Action, App, KeyBinding, KeyContext, Keymap, OperatingSystem, Window};
 
 use crate::{
     CommandAvailability, CommandAvailabilityResolver, CommandRegistrySnapshot, CommandUsageHistory,
@@ -249,9 +249,10 @@ impl GpuiCommandActionMap {
         &self,
         registry: &CommandRegistrySnapshot,
         keymap: &Keymap,
+        os: OperatingSystem,
     ) -> Vec<CommandShortcutDiagnostic> {
         self.shortcut_diagnostics_with(registry, |action| {
-            command_shortcut_label_from_keymap(keymap, action)
+            command_shortcut_label_from_keymap(keymap, action, os)
         })
     }
 
@@ -261,9 +262,10 @@ impl GpuiCommandActionMap {
         registry: &CommandRegistrySnapshot,
         keymap: &Keymap,
         context_stack: &[KeyContext],
+        os: OperatingSystem,
     ) -> Vec<CommandShortcutDiagnostic> {
         self.shortcut_diagnostics_with(registry, |action| {
-            command_shortcut_label_from_keymap_in_context(keymap, action, context_stack)
+            command_shortcut_label_from_keymap_in_context(keymap, action, context_stack, os)
         })
     }
 
@@ -272,11 +274,12 @@ impl GpuiCommandActionMap {
         &self,
         registry: &CommandRegistrySnapshot,
         window: &Window,
+        cx: &App,
     ) -> Vec<CommandShortcutDiagnostic> {
         self.shortcut_diagnostics_with(registry, |action| {
             window
                 .highest_precedence_binding_for_action(action)
-                .map(|binding| command_shortcut_label(&binding))
+                .map(|binding| command_shortcut_label(&binding, cx.platform_info().os))
         })
     }
 
@@ -288,12 +291,13 @@ impl GpuiCommandActionMap {
         &self,
         registry: &CommandRegistrySnapshot,
         keymap: &Keymap,
+        os: OperatingSystem,
     ) -> CommandRegistrySnapshot {
         let shortcuts = self
             .actions
             .iter()
             .filter_map(|command_action| {
-                command_shortcut_label_from_keymap(keymap, command_action.action())
+                command_shortcut_label_from_keymap(keymap, command_action.action(), os)
                     .map(|label| (command_action.command_id().to_owned(), label))
             })
             .collect::<BTreeMap<_, _>>();
@@ -307,6 +311,7 @@ impl GpuiCommandActionMap {
         registry: &CommandRegistrySnapshot,
         keymap: &Keymap,
         context_stack: &[KeyContext],
+        os: OperatingSystem,
     ) -> CommandRegistrySnapshot {
         let shortcuts = self
             .actions
@@ -316,6 +321,7 @@ impl GpuiCommandActionMap {
                     keymap,
                     command_action.action(),
                     context_stack,
+                    os,
                 )
                 .map(|label| (command_action.command_id().to_owned(), label))
             })
@@ -329,6 +335,7 @@ impl GpuiCommandActionMap {
         &self,
         registry: &CommandRegistrySnapshot,
         window: &Window,
+        cx: &App,
     ) -> CommandRegistrySnapshot {
         let shortcuts = self
             .actions
@@ -339,7 +346,7 @@ impl GpuiCommandActionMap {
                     .map(|binding| {
                         (
                             command_action.command_id().to_owned(),
-                            command_shortcut_label(&binding),
+                            command_shortcut_label(&binding, cx.platform_info().os),
                         )
                     })
             })
@@ -491,22 +498,26 @@ impl GpuiCommandActionMap {
     }
 }
 
-/// Returns the display shortcut label for a key binding.
-pub fn command_shortcut_label(binding: &KeyBinding) -> String {
+/// Returns the shortcut label for a key binding using the supplied host operating system.
+pub fn command_shortcut_label(binding: &KeyBinding, os: OperatingSystem) -> String {
     binding
         .keystrokes()
         .iter()
-        .map(ToString::to_string)
+        .map(|keystroke| keystroke.display(os).to_string())
         .collect::<Vec<_>>()
         .join(" ")
 }
 
 /// Returns the display shortcut label for an action in an app-level keymap.
-pub fn command_shortcut_label_from_keymap(keymap: &Keymap, action: &dyn Action) -> Option<String> {
+pub fn command_shortcut_label_from_keymap(
+    keymap: &Keymap,
+    action: &dyn Action,
+    os: OperatingSystem,
+) -> Option<String> {
     keymap
         .bindings_for_action(action)
         .next_back()
-        .map(command_shortcut_label)
+        .map(|binding| command_shortcut_label(binding, os))
 }
 
 /// Returns the display shortcut label for an action in a GPUI key context stack.
@@ -514,9 +525,10 @@ pub fn command_shortcut_label_from_keymap_in_context(
     keymap: &Keymap,
     action: &dyn Action,
     context_stack: &[KeyContext],
+    os: OperatingSystem,
 ) -> Option<String> {
     highest_precedence_binding_for_action_in_key_contexts(keymap, action, context_stack)
-        .map(|binding| command_shortcut_label(&binding))
+        .map(|binding| command_shortcut_label(&binding, os))
 }
 
 fn highest_precedence_binding_for_action_in_key_contexts(
@@ -582,11 +594,14 @@ mod tests {
     #[action(no_json)]
     struct DispatchProbe;
 
-    fn display_shortcut(keystrokes: &str) -> String {
-        command_shortcut_label(&KeyBinding::new(keystrokes, OpenWorkspace, None))
+    fn display_shortcut(keystrokes: &'static str) -> String {
+        command_shortcut_label(
+            &KeyBinding::new(keystrokes, OpenWorkspace, None),
+            OperatingSystem::Windows,
+        )
     }
 
-    fn display_shortcut_opt(keystrokes: &str) -> Option<String> {
+    fn display_shortcut_opt(keystrokes: &'static str) -> Option<String> {
         Some(display_shortcut(keystrokes))
     }
 
@@ -596,11 +611,14 @@ mod tests {
         let expected = binding
             .keystrokes()
             .iter()
-            .map(ToString::to_string)
+            .map(|keystroke| keystroke.display(OperatingSystem::Windows).to_string())
             .collect::<Vec<_>>()
             .join(" ");
 
-        assert_eq!(command_shortcut_label(&binding), expected);
+        assert_eq!(
+            command_shortcut_label(&binding, OperatingSystem::Windows),
+            expected
+        );
     }
 
     #[test]
@@ -615,7 +633,11 @@ mod tests {
             .action("workspace.open", OpenWorkspace)
             .action("workspace.save", SaveWorkspace);
 
-        let projected = action_map.registry_snapshot_with_keymap_shortcuts(&registry, &keymap);
+        let projected = action_map.registry_snapshot_with_keymap_shortcuts(
+            &registry,
+            &keymap,
+            OperatingSystem::Windows,
+        );
 
         let shortcuts = projected
             .descriptors()
@@ -660,11 +682,13 @@ mod tests {
             &registry,
             &keymap,
             &workspace_context,
+            OperatingSystem::Windows,
         );
         let editor_projected = action_map.registry_snapshot_with_keymap_shortcuts_in_context(
             &registry,
             &keymap,
             &editor_context,
+            OperatingSystem::Windows,
         );
 
         assert_eq!(
@@ -690,7 +714,12 @@ mod tests {
         );
         assert!(
             action_map
-                .shortcut_diagnostics_for_keymap_in_context(&registry, &keymap, &editor_context)
+                .shortcut_diagnostics_for_keymap_in_context(
+                    &registry,
+                    &keymap,
+                    &editor_context,
+                    OperatingSystem::Windows,
+                )
                 .is_empty()
         );
     }
@@ -721,7 +750,11 @@ mod tests {
             .action("workspace.save", SaveWorkspace)
             .action("workspace.orphan", SaveWorkspace);
 
-        let diagnostics = action_map.shortcut_diagnostics_for_keymap(&registry, &keymap);
+        let diagnostics = action_map.shortcut_diagnostics_for_keymap(
+            &registry,
+            &keymap,
+            OperatingSystem::Windows,
+        );
 
         assert_eq!(diagnostics.len(), 3);
         assert_eq!(
@@ -761,7 +794,11 @@ mod tests {
             .action("workspace.open", OpenWorkspace)
             .action("workspace.save", SaveWorkspace);
 
-        let diagnostics = action_map.shortcut_diagnostics_for_keymap(&registry, &keymap);
+        let diagnostics = action_map.shortcut_diagnostics_for_keymap(
+            &registry,
+            &keymap,
+            OperatingSystem::Windows,
+        );
 
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(

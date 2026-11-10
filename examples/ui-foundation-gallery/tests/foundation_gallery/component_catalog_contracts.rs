@@ -33,7 +33,9 @@ fn components_page_samples_expose_component_metadata() {
     let listboxes = pages::components::listbox_samples(tokens);
     let selects = pages::components::select_samples(tokens);
     let comboboxes = pages::components::combobox_samples(tokens);
-    let commands = pages::components::command_samples(tokens);
+    let test = open_gpui::TestAppContext::single();
+    let commands = test.read(|cx| pages::components::command_samples(tokens, cx));
+    let os = test.read(|cx| cx.platform_info().os);
     let labels = pages::components::label_samples(tokens);
     let text_inputs = pages::components::text_input_samples(tokens);
     let textareas = pages::components::textarea_samples(tokens);
@@ -518,7 +520,7 @@ fn components_page_samples_expose_component_metadata() {
             .group_items(0)
             .next()
             .and_then(|item| item.shortcut()),
-        Some(display_shortcut("ctrl-shift-p").as_str())
+        Some(display_shortcut("ctrl-shift-p", os).as_str())
     );
     assert_eq!(commands[5].id, "provider-search");
     assert_eq!(
@@ -563,7 +565,7 @@ fn components_page_samples_expose_component_metadata() {
             .group_items(0)
             .next()
             .and_then(|item| item.shortcut()),
-        Some(display_shortcut("ctrl-alt-o").as_str())
+        Some(display_shortcut("ctrl-alt-o", os).as_str())
     );
     assert_eq!(commands[6].id, "diagnostics-empty");
     assert_eq!(
@@ -614,7 +616,7 @@ fn components_page_samples_expose_component_metadata() {
             .iter()
             .find(|item| item.value() == "workspace.open")
             .and_then(|item| item.shortcut()),
-        Some(display_shortcut("ctrl-e").as_str())
+        Some(display_shortcut("ctrl-e", os).as_str())
     );
     assert_eq!(
         commands[7]
@@ -623,7 +625,7 @@ fn components_page_samples_expose_component_metadata() {
             .iter()
             .find(|item| item.value() == "editor.format")
             .and_then(|item| item.shortcut()),
-        Some(display_shortcut("ctrl-shift-f").as_str())
+        Some(display_shortcut("ctrl-shift-f", os).as_str())
     );
     assert_eq!(commands[8].id, "keymap-resolution");
     assert_eq!(
@@ -750,14 +752,14 @@ fn components_page_samples_expose_component_metadata() {
             (
                 "gallery-defaults".to_string(),
                 "workspace.open".to_string(),
-                display_shortcut("ctrl-p"),
+                display_shortcut("ctrl-p", os),
                 Some("Workspace".to_string()),
                 1,
             ),
             (
                 "gallery-plugin".to_string(),
                 "workspace.save".to_string(),
-                display_shortcut("ctrl-p"),
+                display_shortcut("ctrl-p", os),
                 Some("Workspace".to_string()),
                 1,
             ),
