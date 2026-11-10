@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-10T19:31:58+08:00
+timestamp: 2026-11-10T20:20:48+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -17,6 +17,21 @@ verified_by:
 ---
 
 # Current State
+
+- Support primitives are implemented at `5b1810abbcc867486c21cba530f2bfec63de6414`.
+  The complete official Darwin shared reaper, DedicatedExecutor/nonblocking rendezvous,
+  native/wasm execution gates and SharedString helpers retain existing fork admission,
+  scoped cancellation and shutdown owners. The
+  [qualification](../../verification.md#process-reaping-dedicated-execution-and-shared-strings)
+  records focused 35/35, overlapping dedicated follow-up 12/12 and independent public 3/3
+  passes, one exact process source across six roots, Darwin source compilation, stable and
+  optional shared-memory wasm production compilation, affected correctness Clippy and
+  format/static gates. One reproduced official queued-task sender cycle has a bounded weak
+  dispatch correction; fixture/API/foreign-build failures remain explicit. Five lanes close
+  without reviewed P1/P2. Trust unchanged official coverage. Actual Darwin process/browser
+  worker execution and numeric costs remain unqualified. Continue HTTP/download/archive,
+  remaining supporting utilities and backend/render owners, then the real Nara GPU/Host/View
+  consumer before separate maintenance. Full target and foundation closure remain open.
 
 - Cursor and native file drag are implemented at `fc6c9dc4403a8839b84528236075ca4ae70ab8ec`.
   Complete official cursor/exit/lazy payload and Mac/Wayland source mechanisms preserve current
@@ -1026,9 +1041,10 @@ historical scope and is not current branch or CI qualification.
 
 - Continue the [residual source inventory](../../imports/zed-gpui-upstream-sync-candidates.md#november-10-residual-source-reconciliation)
   after qualified identity/diagnostics/list precision, element layout/drawing, gestures/
-  scroll/padding/hover and cursor/native file drag, rather than treating the earlier public-
-  Platform audit as exhaustive. Continue supporting utility/dependency and remaining backend/
-  render groups, including native popup, in their recorded prerequisite order. Build on qualified
+  scroll/padding/hover, cursor/native file drag and process/dedicated/string support, rather
+  than treating the earlier public-Platform audit as exhaustive. Continue HTTP/download/archive,
+  remaining supporting utility/dependency and backend/render groups, including native popup,
+  in their recorded prerequisite order. Build on qualified
   [shared Apple topology](../../verification.md#shared-apple-framework-topology) and
   [native quit/session shutdown](../../verification.md#native-quit-completion-and-restart-manager).
   Trust unchanged official coverage and concentrate compilation/regressions on affected fork

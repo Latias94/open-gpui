@@ -2987,7 +2987,56 @@ terminal ordering and admitted listener geometry. Preserve official scenarios. N
 Wayland execution and numeric costs require their own actual evidence; do not repeat unrelated
 framework, component, renderer or compiler matrices.
 
+### Process Reaping, Dedicated Execution And Shared String Successor
+
+Continue from `e314339a3adbc3d4f52b3596990ebf1fbf27eeaa` against the unchanged fixed target.
+Adopt the complete Darwin process owner from `e1bfcf85db`, `60ed56b372` and `d4cc8d2409`, the
+DedicatedExecutor/native blocking/wasm successor from `2040e0de59`, `98c6c1403b` and its target
+prerequisites, and SharedString `47825fe00a`/`9dd6993e2e`. These are independent public support
+owners, not a new application scheduler or an engine-default selection.
+
+Darwin stdio uses owned File cleanup and Async<File>; spawned PIDs enter the actual async-process
+reaper shared with smol. Select official async-process revision
+`0b6d6713570af61806e1e5cb40e0f757cb93fd9d` through root patches and every independent framework
+consumer root, and verify the resolved target graph. A direct but unused Git dependency or two
+independent reapers is not equivalent. Remove the old custom child/wait implementation while
+retaining current Windows process-tree ownership and established restart/argument contracts.
+
+Dedicated execution retains complete official task/session lifetime, queue/cancellation and
+nonblocking rendezvous behavior. Preserve existing fork dispatcher admission, foreground work
+accounting, deterministic scheduling and scoped-future destruction. Native-only blocking APIs
+must be absent on wasm; optional wasm threads use their declared feature and configured runtime,
+not RUSTC_BOOTSTRAP. Web quit-observer futures follow the official asynchronous best-effort
+path while native shutdown keeps the existing bounded wait, panic and release-fence behavior.
+SharedString adopts its exact official character/SmolStr serde path without an allocation or
+performance claim.
+
+The first focused run reproduces a real pre-poll DedicatedExecutor queued-task retention
+cycle in the official source. Its narrowly scoped correction uses WeakSender for each task's
+dispatch closure, leaving the executor as the strong sender owner. Queued cancellation and
+late wakes must release task captures and the scheduler, while detached pending work must
+still complete after an external wake with the executor alive. Keep this evidenced divergence
+separate from imported official code and from the corrected test-fixture delivery/drop races.
+
+Trust unchanged official implementations and coverage. Qualify affected package/public consumers,
+fork cancellation/admission/shutdown seams and actual dependency identity. Darwin runtime process
+execution, browser lifecycle, numeric budgets and the remaining fixed-target groups retain
+separate evidence; do not repeat unrelated Editor/component/native renderer/compiler matrices.
+
 ## Maintained Baseline Before Engine Adaptation
+
+The [support-primitives record](../verification.md#process-reaping-dedicated-execution-and-shared-strings)
+qualifies `5b1810abbcc867486c21cba530f2bfec63de6414`: complete official Darwin shared reaping,
+dedicated execution/nonblocking delivery, native/wasm API gates and SharedString helpers retain
+current fork admission, scoped destruction and shutdown behavior. Focused 35/35, dedicated
+follow-up 12/12 with eleven overlapping cases, and independent public 3/3 pass. One exact
+process implementation resolves across six roots; affected Darwin/wasm production compilation,
+correctness Clippy, formatting and static gates pass. One concretely reproduced official sender
+cycle receives a bounded weak-dispatch fix, independently reviewed without remaining P1/P2.
+Fixture API/race and missing-xcrun corrections remain recorded. Five lanes close; no unrelated
+runtime/component/compiler matrix repeats. Actual Darwin/browser execution, numeric costs,
+remaining framework owners and the real Nara GPU/Host/View consumer stay open before separate
+maintenance. Continue HTTP/download/archive and the remaining utility/backend/render groups.
 
 The [cursor/native-file-drag record](../verification.md#cursor-and-complete-native-file-drag)
 qualifies `fc6c9dc4403a8839b84528236075ca4ae70ab8ec`: complete official cursor, exit/lazy payload,

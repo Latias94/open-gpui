@@ -7921,6 +7921,94 @@ and the residual framework owners remain queued. Full fixed-target closure and t
 GPU/Host/View consumer still precede separate maintenance; no engine dependency, UI default or
 whole foundation gate changes here.
 
+## Process Reaping, Dedicated Execution And Shared Strings
+
+Implementation: `5b1810abbcc867486c21cba530f2bfec63de6414`.
+
+The November 10 support-primitives unit follows fixed Zed target
+`635026fabc38440fce5e1767d125026a17b12012`: Darwin process `e1bfcf85db`, `60ed56b372`,
+`d4cc8d2409`; dedicated execution/native blocking/wasm `2040e0de59`, `98c6c1403b` and target
+follow-ups; SharedString `47825fe00a`, `9dd6993e2e`. Scheduler runtime and SharedString source
+initially match the complete target after newline normalization. Official mechanisms and
+unchanged coverage are trusted; qualification targets the extraction's dependencies, target
+gates, public consumers and fork admission/cancellation/shutdown seams.
+
+Darwin adopts owned File cleanup, SIGPIPE/fd setup, Async<File> pipes and the actual
+`async_process::Child::adopt_raw_pid`. The prior custom wait/status owner is removed. The
+workspace and five independent application roots select official async-process
+`0b6d6713570af61806e1e5cb40e0f757cb93fd9d`. All six resolved locks contain one matching package
+and smol's dependency edge; the root Darwin target tree confirms the shared graph. Cargo does
+not inherit dependency root patches: downstream roots need the documented patch too.
+Independent locks also prune unreachable legacy Media/build packages and refresh previously
+stale Apple/UTI edges; retained external package versions are not upgraded. The hello_web lock
+is a local ignored artifact, while the other maintained locks remain tracked.
+Root Core/util/SharedString production checks and Darwin utility all-target cross compilation
+pass. The latter compiles the imported process tests without executing them on macOS. Windows
+retains its existing Job-object process-tree owner.
+
+DedicatedExecutor and nonblocking task rendezvous retain the official session/disposition
+mechanism. Core uses LocalExecutor::spawn_with_dispatch while preserving dispatcher admission
+and foreground accounting. Native blocking/scoped APIs are absent on wasm; Web quit observers
+run asynchronously while native shutdown keeps its bounded panic/release-fence path. Optional
+wasm workers use the declared wasm-threads feature and existing shared-memory configuration.
+SharedString retains official From<char> and direct SmolStr serde with its explicit serde feature.
+
+Review corrects two new test-fixture errors without changing official production semantics:
+BackgroundExecutor's type-erased factory runs on first poll, so the delivery-before-poll test
+uses the direct scheduler spawn_dedicated_thread factory; cancellation waits for channel
+disconnection rather than racing another captured value's destructor.
+
+The first focused run executes 35 cases: 34 pass and one fails
+(`d6970974-afae-49f4-b8e4-ae1415ac98d0`). The failure is a concrete queued-task retention cycle
+in the official DedicatedExecutor: shared queue -> runnable -> captured strong sender -> shared
+queue. Dropping the last receiver disconnects flume but does not drain its queued values. When
+the session is cancelled before first poll, fallible task completion remains pending and its
+captures remain retained. The bounded fork correction captures a WeakSender in each task's
+scheduling closure and upgrades it only while dispatching; the executor remains the channel's
+sender owner. The existing queued-drop and late-wake controls check cancellation and final
+capture/scheduler release. No general scheduler replacement follows.
+
+After that correction the affected Core/scheduler/SharedString/process cohort passes 35/35
+(`988f6cf6-9e4a-43c7-af27-9fe00ca84e97`), including real dedicated-thread identity/teardown,
+pre-delivery drop/detach, fork admission/accounting, borrowed-future destruction, native quit
+panic/release ordering and both retained Windows grandchild-cleanup cases. The 1,914 unrelated
+cases are outside the selection. Bounded lifetime review finds no remaining P1/P2; its one
+coverage gap adds a detached Pending/external-wake control with the executor alive. The affected
+dedicated follow-up passes 12/12 (`68835769-702e-4658-9572-ce431182ebe6`), including that new
+control; eleven cases overlap the earlier cohort and are not additional unique cases.
+
+The ordinary independently locked consumer passes 2/2
+(`d565b5f4-cba1-4463-b89e-1f3878023d93`): SharedString conversion/serde executes, while dedicated
+construction/spawn and command spawning are uninvoked type-check closures. Direct smol/process
+identity is a compiled function signature. The deterministic public test-support consumer
+initially fails compilation because its new fixture called a nonexistent Task::cancel API.
+Changing the fixture to the public drop-to-cancel contract and awaiting a subsequent session
+marker observes actual destruction, passing 1/1 (`63ef2e9b-3428-4d5a-a8a1-7185d7234f86`). No
+production compatibility method is added. These consumers do not claim native worker/process
+or browser execution.
+
+The initial ordinary Darwin cross check stops in the Apple shader build because this Windows
+host has no xcrun. Its existing runtime_shaders feature is the appropriate foreign source-check
+configuration. The locked public support-primitives target then passes on aarch64-apple-darwin,
+including the actual Async<File> interface and direct/smol process type identity; no build-script
+fallback, Apple execution or SDK claim is introduced.
+
+Stable Rust 1.95 production Core/Web wasm compilation passes without multithreaded support.
+The installed nightly with the existing hello_web shared-memory/build-std configuration also
+compiles production Core/Web with multithreaded, forwarding the new scheduler wasm-threads
+feature. Neither command executes a browser worker or claims wasm test-support. Affected
+Core/scheduler/util/SharedString library/test correctness Clippy passes on Windows/Rust 1.95;
+pre-existing non-correctness warnings remain. Root and both changed public-consumer formatting,
+whitespace, affected manifest/workflow syntax and existing import-boundary/public-API/document/
+release gates pass. CI registers the two new public targets, with no remote run or publication.
+The five implementation/review lanes are closed with no remaining reviewed P1/P2.
+
+No unrelated Editor/component/native-renderer/compiler matrix is repeated. Actual Darwin process
+execution, browser shutdown/worker lifecycle, numerical costs and full fixed-target/engine
+adoption remain separate unqualified scope. Continue HTTP/download/archive and remaining
+supporting utility/backend/render owners before the real Nara GPU/Host/View consumer and
+separate framework-maintenance handoff.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:
