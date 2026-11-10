@@ -7664,6 +7664,91 @@ while retaining the currently selected ordinary tracing graph pending owner reco
 All six source-review/implementation/review lanes close. Full fixed-target closure, the real
 Nara GPU/Host/View consumer and maintenance handoff remain open. No remote publication occurs.
 
+## Element Layout, SVG And Provisional List Measurement
+
+Implementation `ae10ff73c3e6cb5d12ab1d607c17df8934746278`, following
+`e169708da0f882f25f7ca266d6a6963688a1b4f3`, adopts complete official image
+geometry (`59b2ebf103`, `58df5a14ce`), SVG byte input/parse reuse/exact sizing/raster bounds
+(`ff9f114cd3`, `00cba838ad`, `03c9c4e707`, `fbd911ed3e`), ContainerQuery (`49ad06c1b4`), attached
+Anchored placement (`ce6c5413f1`) and provisional List measurement/anchors (`f41ac64812`,
+`d9e35975c2`, `00cba838ad`). The fixed target remains
+`635026fabc38440fce5e1767d125026a17b12012`.
+
+Image painting receives both the element box and the image layout box, crops atlas coordinates
+to the visible intersection and limits corner radii there. The fork retains its own primitive
+transform/raster snap, exact clip envelope, original tile identity/texture generation, leases and
+admitted output. ImagePaintDiagnostic describes the visible sprite/sub-tile while its atlas_access
+still describes the complete original allocation. Existing low-level consumers pass equal boxes
+to preserve their uncropped behavior. No duplicate image, atlas, renderer or geometry owner is
+introduced.
+
+SVG production rasterization and ContainerQuery match the fixed official source after import/
+format normalization. SVG preserves bundled-font and emoji selection, data-source precedence,
+parsed reuse, ExactSize and the 8192px cap. Existing exact subtree clip/transform and interactive
+geometry remain in effect; ADR 0021 still excludes an SVG-only arbitrary rotation interface.
+ContainerQuery builds from the current allocation before child layout/prepaint; child intrinsic
+size cannot resize the container. Attached Anchored preserves complete official corner/offset
+flipping and client-inset behavior, consuming existing portal geometry.
+
+List replaces the separate pending-scroll state with the complete official ScrollAnchor.
+Readiness, provisional/pending-end state, uniform-height hints/reset and pause-following-tail
+share that owner. The fork retains delayed admitted autoscroll instead of official same-frame
+prepaint mutation/retry, exact source/candidate refusal and the independent direct-scroll revision
+cell. Under ADR 0025 the official indexed algorithm is exposed as scroll_to_item; final tracked
+nested reveal remains Window-owned. The bring-into-view internal path does not record a new
+direct-scroll intent. Scoped independent reviews of image and List adaptations find no outstanding
+P1/P2; unchanged official algorithms and coverage are trusted.
+
+On Windows 11/Rust 1.95.0 with one build job, the initial Core/public selection passes 89/90
+(`25f91d3a-1d2a-40cb-b94e-881ec0198c34`). A new ContainerQuery fixture used geometric containment
+as an interaction-eligibility query. Preserve containment for inert geometry, use
+is_window_point_target for active admission and confirm no committed inert hitbox. The second
+89/90 (`37601b4f-b69b-420e-9ad8-2ef7d4f923ac`) reaches a later fixture error: notify already
+draws at effect flush, so the subsequent explicit draw is a second accepted frame. Assert one
+recovery commit after notify and a second after explicit draw. Production source is unchanged
+by both corrections.
+
+Final Core/public passes 90/90 (`1505d54e-f304-4599-8f29-757558f3d18b`), with 1,381 outside the
+selection. It includes all affected image/SVG/List/anchored/query owner cases, same-frame flex/
+resize and deferred clip/transform/presentation/failure/recovery, actual transformed portal
+placement, admitted/refused provisional autoscroll and public frame-scheduling/reveal consumers.
+The SVG font tests use existing embedded fixtures, eliminating prior missing-assets early exits.
+No broad component, docking, browser, foreign-backend or compiler matrix is required for these
+unchanged official mechanisms.
+
+The first WGPU attempt stops at a new fixture's conversion of AtlasTextureLeaseInvalidation
+through `?`; that diagnostic enum is not std::error::Error. Use the same explicit lease-validity
+assertion as the existing lifetime tests. Production source is unchanged. Corrected WGPU passes
+3/3 (`e21248cb-6de6-4a35-8b2a-ba8e05884f1d`), with 105 outside the selection. Actual readback
+verifies cropped UVs, visible rounded corners, exact clip, fractional translation and nonuniform
+scale. The cropped sub-tile keeps its full allocation's texture instance/tile/padding, and an
+explicit original-instance lease preserves green cropped pixels after key removal and another
+allocation. Existing stale-generation refusal and prepared reset/receipt recovery also pass.
+
+The affected existing Windows native Scene consumer passes 1/1
+(`026297cf-8326-420b-a701-b6e04b2819a2`), with 290 outside the selection. It executes real
+DirectX submission/readback, notification and native retirement after migrating uncropped
+low-level calls to equal element/image boxes. This does not add a distinct native DirectX Cover
+pixel scenario or foreign-platform execution claim.
+
+The independently locked ordinary layout_drawing consumer passes 1/1
+(`62cad1e3-f6c8-438b-b87b-bd03844bfeab`). It actually parses/rasterizes an ExactSize SVG and
+constructs public ContainerQuery, attached Anchored, SVG data and List readiness/height/follow/
+indexed-scroll consumers. Its low-level paint closure is type-checked, not executed; actual
+layout and GPU evidence comes from the owner/renderer runs above. It needs no engine-private
+types or test-support feature. The existing workflow now registers this target; YAML validation
+passes without remote CI execution.
+
+Affected Core/WGPU/Windows all-target correctness Clippy passes with test-support and
+bench-support, including the migrated benchmark image consumer. Existing non-correctness warnings
+remain. Independently locked ordinary all-target compilation passes through components, docking
+and native platform composition. Dependency versions, lockfiles, compiler floor and engine
+selection remain unchanged. Root/independent formatting and whitespace pass. Existing import-
+boundary, public-API-tier, document-link and release-inventory checks pass. All five implementation/
+bounded-review lanes close; no outstanding reviewed P1/P2 remains in the selected fork seams.
+No remote CI execution or publication occurs. Full fixed-target synchronization, numeric budgets
+and the actual Nara GPU/Host/View consumer still precede maintenance handoff.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:

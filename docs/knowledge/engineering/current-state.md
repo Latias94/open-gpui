@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-10T17:08:20+08:00
+timestamp: 2026-11-10T17:43:56+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -17,6 +17,19 @@ verified_by:
 ---
 
 # Current State
+
+- Element layout/drawing and provisional List measurement are implemented at
+  `ae10ff73c3e6cb5d12ab1d607c17df8934746278`. Complete official image crop/aspect, SVG bytes/
+  parsed/exact raster, ContainerQuery, attached Anchored and List readiness/anchors share current
+  owners. Fork clip/transform/atlas leases, admitted autoscroll/direct revisions and Window reveal
+  remain authoritative. The [qualification](../../verification.md#element-layout-svg-and-provisional-list-measurement)
+  records final Core/public 90, actual WGPU 3, existing native Windows 1 and ordinary independent
+  1 passes, plus affected all-target compilation/correctness Clippy, formatting and static gates.
+  Two query fixture semantics and one GPU fixture compile error/corrections remain recorded;
+  no official production change follows from them. Image/List bounded review leaves no P1/P2
+  and all five lanes close. Continue padding/hover, complete gestures, supporting dependencies
+  and backend/render groups, then the real Nara GPU/Host/View consumer. No full refresh, numeric
+  speedup, foreign execution or engine/default completion follows.
 
 - Cached element identity, borrow/log diagnostics and uniform-list precision are implemented at
   `1a14b2076edce2dbbf097cbc8ed84a961c0f9826`. Official prefix hashes retain full paths through
@@ -985,8 +998,8 @@ historical scope and is not current branch or CI qualification.
 # Next Action
 
 - Continue the [residual source inventory](../../imports/zed-gpui-upstream-sync-candidates.md#november-10-residual-source-reconciliation)
-  after qualified cached identity/diagnostics/list precision, rather than treating the earlier
-  public-Platform audit as exhaustive. Complete image/SVG/layout/List/gesture owners and the
+  after qualified identity/diagnostics/list precision and element layout/drawing, rather than
+  treating the earlier public-Platform audit as exhaustive. Continue padding/hover, gestures and the
   supporting dependency/backend groups in their recorded prerequisite order. Build on qualified
   [shared Apple topology](../../verification.md#shared-apple-framework-topology) and
   [native quit/session shutdown](../../verification.md#native-quit-completion-and-restart-manager).

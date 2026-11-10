@@ -2879,7 +2879,53 @@ without outstanding P1/P2; all six lanes close. Continue the recorded complete r
 with targeted verification, then the real engine consumer. No whole-refresh, native/performance
 or engine/default completion follows.
 
+### Element Layout And Drawing Successor
+
+Continue from `e169708da0f882f25f7ca266d6a6963688a1b4f3` against the same fixed target. Adopt
+complete official image geometry (`59b2ebf103`, `58df5a14ce`), SVG data/parse/raster
+(`ff9f114cd3`, `00cba838ad`, `03c9c4e707`, `fbd911ed3e`), ContainerQuery (`49ad06c1b4`), attached
+Anchored placement (`ce6c5413f1`) and provisional List measurements/anchors (`f41ac64812`,
+`d9e35975c2`, `00cba838ad`) through their current owners.
+
+Image painting takes the element box and image layout box separately. Preserve the official
+visible intersection, cropped atlas coordinates and visible-box corner limits. The fork keeps
+its existing primitive transform, exact clip envelope, texture-instance generation/lease and
+admitted frame diagnostics; cropping does not allocate a second image or establish a new atlas
+owner. Migrate ordinary low-level paint consumers to the full official signature without an alias.
+SVG bytes reuse the existing paint/cache path. Parsed reuse, ExactSize and the dimension cap
+retain bundled-font/emoji selection; Accepted ADR 0021 still excludes SVG-only arbitrary rotation.
+
+ContainerQuery constructs its child from the actual same-frame allocation, with the child's
+intrinsic size unable to resize that container. Attached placement preserves target and element
+corners, flipped offsets and client-inset overflow comparison. List readiness/provisional and
+pending-end anchors must not consume placeholder measurements; indexed reveal, uniform height
+hints/reset and pause-following-tail share the existing state owner. Retain fork admitted
+autoscroll, direct-mutation revisions, candidate refusal and current event types until the separate
+complete gesture/source successor is integrated.
+
+Implementation uses disjoint element owners with main-owned public wiring/Window consumers.
+Trust unchanged official cases, compile the affected public closure and run focused owner/fork
+seam regressions. The cropped-image adaptation additionally exercises actual WGPU pixels with
+rounded clips, transforms and removed-region leases. Native/backend claims remain limited to
+their executed scope; no unrelated component/compiler/platform matrix or speedup claim is needed.
+
+The [layout/drawing qualification](../verification.md#element-layout-svg-and-provisional-list-measurement)
+records implementation `ae10ff73c3e6cb5d12ab1d607c17df8934746278`. Final Core/public 90, actual
+WGPU 3, existing native Windows 1 and ordinary independent 1 pass. Affected all-target correctness
+Clippy with test/benchmark consumers, independently locked all-target compilation, formatting,
+YAML and existing static/document gates pass. Two ContainerQuery fixture-semantic failures and
+one WGPU fixture error-conversion compile failure are retained with corrections; official
+production code does not change in response. Scoped image/List review finds no outstanding
+P1/P2 and all five lanes close. Numeric costs, foreign execution, remaining fixed-target owners
+and the real engine consumer remain open; no engine/default selection follows.
+
 ## Maintained Baseline Before Engine Adaptation
+
+The [element layout/drawing record](../verification.md#element-layout-svg-and-provisional-list-measurement)
+qualifies `ae10ff73c3e6cb5d12ab1d607c17df8934746278` through affected official/fork consumers.
+Continue remaining padding/hover, gestures, supporting dependencies/utilities and backend/render
+groups from the residual inventory. The actual Nara GPU/Host/View consumer still precedes the
+separate maintenance handoff; this unit does not close the fixed-target cycle.
 
 The [cached-ID/diagnostic/list record](../verification.md#cached-element-identity-diagnostics-and-list-precision)
 qualifies `1a14b2076edce2dbbf097cbc8ed84a961c0f9826` through affected owner/public tests and
