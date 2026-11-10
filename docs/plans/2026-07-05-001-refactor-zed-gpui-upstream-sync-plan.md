@@ -2709,7 +2709,73 @@ This is source preparation for a complete lifecycle unit. Linux/FreeBSD/Mac nati
 calloop equivalence, native harness initialization and terminal request settlement are not
 qualified by this source packet or by appearance tests.
 
+Execution starts after `07851e88984e8091ce9a79357d44ea5aafe5020d`. Main owns the official Core
+values/APIs, existing AppCell custody checks, dependencies and serial qualification. One Linux
+lane owns its complete persistent runtime and connections together; Windows, Mac and public
+facade/consumer lanes have disjoint ownership. The fork's concrete delayed-application seam is
+Platform::request_windowing_with_validation: ordinary synchronous backends validate and delegate
+to the official request; Linux retains that callback and checks it again immediately before
+apply. It reads existing reserved/committed window authority, capture/retirement barriers and
+shutdown generation without borrowing App. A completed nonterminating shutdown also invalidates
+the old request through that existing generation. This is a narrow custody adaptation consumed
+by the actual deferred backend, not another windowing/lifecycle manager. Direct Platform callers
+retain the official request interface and each backend's own native-window checks.
+
+Qualification now includes the reviewed retirement-preparation unwind path: the existing queue
+must retain an unprepared native owner, retry preparation, publish its actual ticket and wait
+for dependencies/terminal completion before admitting mode changes or finishing shutdown.
+Core owners/public controls pass 126, strengthened Windows native controls pass 8, and the final
+Windows owner passes 283 with ten explicit skips. The original full 2,221-case aggregate retains
+its clipboard-restoration failure; bounded fixture correction and the final owner pass do not
+prove its original trigger. Linux runtime/protocol passes 62 after fixed-target stale URI-read
+invalidation (`87a1ea30e8`), run-boundary foreground cleanup, headless socket selection and
+explicit timer shutdown around the official calloop pin. Configured Lavapipe native controls pass
+4 with actual X11/Wayland Submitted, keyboard and owned-socket/clipboard lifecycle evidence.
+The default WSLg path still crashes in native thread-specific-data destruction after test-body
+completion; its responsible library is unproved and it remains unqualified. Do not weaken
+connection leases, native exit checks or substitute empty window maps for resource completion. The
+[qualification record](../verification.md#startup-and-live-windowing-lifecycle) retains exact
+runs, failures and remaining native/compiler gates.
+
+## Native Quit And Forced Session Successor
+
+After live-windowing qualification, reconcile complete official
+`7f2a2c3c3ee2f23f28772dee7661fb98d3910990` against the same fixed target. Platform::on_quit
+returns whether shutdown actually completed synchronously; a busy App cannot report success
+merely because its Quit event was queued. Missing App is settled, while live App readiness must
+use the existing shutdown fence, prepared presentation authorities, native-window retirement
+and observer/task completion. Retain the current ordinary Windows loop's queued-Quit progress;
+do not replace it with the official implementation's simpler empty-borrow assumption.
+
+Windows carries WM_QUERYENDSESSION/WM_ENDSESSION from actual application windows to the
+validated platform owner. Preserve the official canceled-session no-op, synchronous completed
+shutdown/flush path and best-effort queued fallback when Windows may terminate the process.
+Distinguish forced OS termination from graceful native retirement: an uncompleted asynchronous
+fence must never become a successful lifecycle receipt. Any process-exit control runs only in
+an isolated child with exact expected exit/cleanup markers. Exercise App free/busy/reentrant,
+retrying HWND destruction, canceled and repeated session messages, missing callbacks and wrong
+native generations. Do not send session broadcasts or terminate unrelated processes.
+
+Migrate the callback signature through Linux, Mac, Web, TestPlatform, VisualTest and ordinary
+public consumers. Linux post-loop and Mac applicationWillTerminate callbacks need explicit
+readiness/dispatch scope; merely ignoring the new bool cannot prove useful shutdown completed.
+Keep actual Apple execution separate from source preparation. Add the existing independently
+locked consumer and feature-off checks, preserving current native restart, shutdown/panic and
+terminal-request tests. This successor does not add a second quit queue or lifecycle manager.
+
 ## Maintained Baseline Before Engine Adaptation
+
+The [startup/live-windowing record](../verification.md#startup-and-live-windowing-lifecycle)
+qualifies implementation `c1d8204f2da7069f40ea8e0420a37a5c0f210474`, following separate fixture
+correction `1c33677716c`. Core/public enabled/disabled 126 each, final Windows 283, Linux library
+162, configured Lavapipe native 4, components/Canvas/docking 2,990 and independent all/off
+115/83 pass. Locked checks, host/Linux correctness Clippy, actual Windows Rust 1.93 affected
+framework/three-consumer checks, production wasm, fmt/static gates pass. Preserve the failed
+2,221-case aggregate and default WSLg native thread-exit SIGSEGV; neither cause is proved by
+subsequent scoped passes. Apple native remains open after the foreign attempt stops at the
+host C toolchain's unsupported Apple flags. Sixteen lanes close. Continue the prepared native
+quit/Restart Manager successor, shared Apple topology and remaining fixed-target audit, then
+the actual Nara consumer. This lifecycle unit selects no engine renderer, loop or UI default.
 
 The [appearance record](../verification.md#native-window-appearance-and-platform-no-op)
 qualifies Core/default behavior at `0b0ea5416656c2c43c242c01e2a665e21d3814ba`. Official
@@ -3013,6 +3079,19 @@ core/component/native regression results. Source parity is distinct from platfor
 unexecuted Linux/macOS, OS input and touchpad cases remain visible limits. Only after this record
 should the engine rendering adapter and complete Editor workflow comparison expand. The consuming
 engine still decides Editor/game execution from its own lifecycle and cost evidence.
+
+The maintenance handoff follows three dependency-ordered gates. First finish this fixed-target
+framework reconciliation and its exit record. Then qualify an ordinary Nara GPU/Host/View
+consumer: source-aligned GPU types, external target/encoder recording, retained clipped texture
+sampling, one submission/event-loop authority and exact input/retirement custody. An independently
+maintained Open GPUI must remain usable without Nara document, ECS, history or build dependencies.
+Only after those gates does a separate Codex session take over framework maintenance. Its starting
+record is this existing plan, the candidate queue, import provenance, current-state entry and
+executed consumer/native gates; no new snapshot registry is needed. Later engine feedback should
+become a bounded framework contract change with a public regression and an affected Nara consumer
+check. Keep engine policy in Nara, general UI behavior in Open GPUI, and inspect the complete
+official mechanism before retaining or replacing a fork adaptation. A standalone native window,
+run_embedded launch, proposed adapter or source map alone does not satisfy the handoff.
 
 ## Goal Capsule
 

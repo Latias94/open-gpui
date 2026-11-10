@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-10T12:34:00+08:00
+timestamp: 2026-11-10T15:30:00+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -17,6 +17,26 @@ verified_by:
 ---
 
 # Current State
+
+- Startup/live windowing is implemented at `c1d8204f2da7069f40ea8e0420a37a5c0f210474`, after
+  separate clipboard-fixture correction `1c33677716c`. Complete official modes, persistent Linux
+  runtime/replaceable connection, Windows delayed GPU/session attach and Mac activation policy
+  retain existing AppCell/native retirement owners. Preparation panic retains the native box;
+  stale URI reads, run-boundary captures/timers and owned socket custody have actual regressions.
+  A reproduced temporary-platform timer cancellation is corrected without breaking the public
+  standalone background executor. Core/public enabled/disabled 126 each, final Windows 283,
+  Linux complete library 162, final Lavapipe native 4, components/docking/Canvas 2,990 and ordinary
+  independent all/off 115/83 pass. The original 2,221-case aggregate remains failed on clipboard
+  restoration; its corrected fixture/owner pass does not prove the original trigger. Linux native
+  uses llvmpipe software rendering, while the default WSLg path still SIGSEGVs in pthread-specific
+  data destruction after test-body completion; its responsible library is unknown. Mac foreign
+  compilation stops before the new owner at the host cc's unsupported Apple flags. No Apple native,
+  Linux hardware or engine seam qualification follows. Linux feature/example checks, host/Linux
+  correctness Clippy, actual Windows Rust 1.93 framework/three-consumer checks, production wasm
+  off/on/smoke, fmt/YAML and static gates pass. All sixteen lanes close. The
+  [record](../../verification.md#startup-and-live-windowing-lifecycle) retains failures, exact runs
+  and scope. Continue native quit/Restart Manager, shared Apple topology and final fixed-target
+  closure, then the actual Nara GPU/Host/View consumer before separate framework maintenance.
 
 - Native appearance is implemented at `0b0ea5416656c2c43c242c01e2a665e21d3814ba` after
   `633b3fced1f442d021eec7591df6f20dca403ece`, using the fixed-target official setter and
@@ -922,12 +942,12 @@ historical scope and is not current branch or CI qualification.
 
 # Next Action
 
-- Continue the [startup/live-windowing successor](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#startup-and-live-windowing-successor)
-  after scoped appearance qualification. Preserve official persistent-runtime/connection replacement,
-  environment and mode semantics, adapting retained native retirement and ordered ingress. Keep restart's original
-  clipboard/keyboard aggregate failures and foreign lifecycle gates visible; focused passes do
-  not resolve those causes. The bounded public audit also queues windowing-mode switching,
-  Restart Manager/on_quit completion and shared Apple topology reconciliation.
+- Continue the [native-quit/forced-session successor](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#native-quit-and-forced-session-successor)
+  after scoped live-windowing qualification. Preserve official bool completion and forced-session
+  semantics through the existing terminal retirement fence and ordered native ingress. Keep the
+  original aggregate failures, default WSLg thread-exit crash and foreign lifecycle gates visible;
+  configured/focused passes do not resolve their causes. Shared Apple topology and the final
+  fixed-target difference audit remain separate prerequisites.
   Actual Mac Keychain and Linux Secret Service gates remain open; a source port is not native proof.
   Keep the [Mac pasteboard native gates](../../verification.md#desktop-clipboard-normalization-and-owned-pasteboard)
   open until actual Apple compilation and all twelve tests execute. Full fixed-target closure

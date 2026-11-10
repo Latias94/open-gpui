@@ -7241,6 +7241,263 @@ execution, actual titlebar pixels and a system-theme change after clearing remai
 gates. Continue the prepared complete startup/live-windowing lifecycle and remaining fixed
 target reconciliation before the real Nara consumer and maintenance handoff.
 
+## Startup And Live Windowing Lifecycle
+
+Implementation is committed at `c1d8204f2da7069f40ea8e0420a37a5c0f210474`, following the
+separate clipboard-fixture correction `1c33677716c`. The results below qualify named platform
+profiles; Apple native execution and the default WSLg thread-exit failure remain open.
+
+Execution starts after `07851e88984e8091ce9a79357d44ea5aafe5020d`, adopting the complete
+official `f37989fbdf840b308892af66516c2b9c3ef3853a` and fixed-target display/activation
+follow-ups under unchanged target `635026fabc38440fce5e1767d125026a17b12012`. The owning
+plan specifies persistent Linux runtime/connection replacement, Windows GPU/session switching,
+Mac application policy and public consumers; implementing only the Core values does not
+qualify those native mechanisms or the real Nara shared-renderer seam.
+
+Core ports the official types, startup builder, request, graphical environment and activation
+policy APIs. The fork's narrow request_windowing_with_validation adaptation retains existing
+AppCell window/capture/retirement/input custody and the current shutdown generation. Linux's
+deferred apply must invoke that same check immediately before replacing the connection;
+synchronous backends validate before delegation. The closure retains a Weak AppCell, not a new
+application or lifecycle owner. Default unsupported behavior and direct Platform requests
+retain their official interface and native-backend checks.
+
+The first Core compilation catches a missing AppContext trait import in the new retained-entity
+fixture. After fixing that test import, focused Core passes 9/9
+(`a7822245-c026-4127-b560-93786d78f5f8`), with 1,662 outside the selection. Actual TestWindow
+terminal holds prove logical close does not admit a switch before native retirement; queued
+validation also rejects a later window, close-with-retirement, shutdown or released App.
+Dropping the result task leaves admitted backend custody intact. These controlled backend
+tests do not execute a display-server or native GPU switch.
+
+Local WSLg inventory finds real X11/Wayland sockets and /dev/dxg. This provides a possible
+native gate on Ubuntu 26.04, not evidence that the new lifecycle has already executed. Declared
+test features avoid the separately unqualified PipeWire screen-capture closure. Production
+backend checkpoints, independent review, native execution and final qualification follow.
+
+The broader initial Core owner selection passes 113/113
+(`8b87ba27-8509-4910-8f78-dba1c8f0d5ee`). Independent review then finds a concrete close-observer
+handoff gap: interaction authority was removed before retirement was enqueued, so an observer
+could pass the new custody check while the local native window still existed. The added real
+TestWindow/terminal-hold regression fails 0/1 (`efe85559-4043-4e6e-9aa2-7e160b544c7f`). Correct
+the existing registry handoff by enqueuing native retirement before unregister/notification.
+Catch preparation panic so logical cleanup/fanout still runs and retain the existing observer
+panic precedence. The unchanged owner selection plus that regression passes 114/114 afterward;
+the exact run and bounded rereview are recorded with final qualification. No separate custody
+counter or windowing manager hides the ownership gap.
+
+The calloop prerequisite comparison confirms registry 0.14.4 and 0.14.5 lack upstream
+`eb6b4fd17b9af5ecc226546bdd04185391b3e265` and
+`3759371fee14c40066d64777e2a36b6ffcc22590`: bounded idle batches, reentrant idle insertion and
+zero-poll continuation give pending mode apply an opportunity between batches. Wake persistence
+and dynamic source removal already exist in registry and are not credited as new fork behavior.
+Select the exact official Git source in root patches and independently maintained consumer/
+browser roots, preserving a single type source for calloop-wayland-source. Cargo's library-root
+patches are not inherited by ordinary downstream workspaces; the fixture documents its required
+explicit patch. This source is not a superset of later registry channel/timer corrections.
+
+Precise resolution updates only calloop's source/version and the displaced X11 clipboard
+closure. Remove incidental windows-sys edge reselection rather than broadening the dependency
+update. Copy the verified exact Git object cache into WSL under its package-cache lock, using
+a local mirror without hardlinks; subsequent Linux gates can stay offline/locked. Dependency
+source inspection and cache availability are not runtime scheduling or switching evidence.
+
+The first Windows all-target compilation reaches a test-only migration omission: a retained
+topology snapshot is now optional before first publication, but an unchanged test calls display
+directly on the Option. Require its expected initial snapshot explicitly and retain the old
+identity/refresh assertions. Corrected compilation and native results follow separately.
+
+Corrected Windows all-target compilation passes. The first focused native/text/topology gate
+runs 8 cases, with 7 passing and the same-App round-trip fixture failing
+(`eda1b325-bdef-45a5-aaf6-8625fa8ad91c`). Its failed assertion expects the platform fallback
+coordinator to be nonempty while the Core retirement queue still owns the retrying window.
+Replace that mistaken owner oracle with the actual live HWND, exact RegisteredWindow,
+DestroyEntered-without-NativeTerminal and direct request's native-window refusal. Keep final
+physical completion and Core refusal assertions. Independent review additionally requires
+actual recovery on an already Submitted window and independent color-emoji ROI evidence;
+those stronger native results follow after implementation and execution.
+
+Mac source review finds a probe-only queue deadlock: the foreground GCD callback enqueues a
+main-queue drain marker and synchronously waits for it. Refactor the five-mode probe into
+yielding async stages, race the oneshot drain against its existing timeout and keep autorelease
+pools within synchronous stages. Only the direct process-main-thread entry pumps NSRunLoop.
+This correction preserves all original policy/refusal/resource assertions; Apple compilation
+and native execution remain separate gates. The dependency package's own unit test selection
+also stops before execution because Cargo does not test non-workspace dependency dev-dependencies;
+the owning Linux runtime contains the idle/source regressions, without a new test framework.
+
+The next Core review exposes a preparation-unwind ownership hole in that first handoff fix:
+the consumed Box<Window> could drop before its retirement barrier existed. The existing
+NativeWindowRetirement now retains the box before preparation and carries an optional real
+shutdown ticket. A failed preparation stays queued and blocks mode changes; preparation can
+retry before dependent windows finish, while physical retirement still waits for them. Publish
+the actual ticket to the barrier and diagnostics before quiesce. Unprepared work blocks both
+shutdown modes, and observer/callback panic precedence remains intact. Fresh independent review
+finds no confirmed P1/P2. Final Core owners plus public windowing pass 126/126
+(`796c8d3c-cfad-4e80-a692-ac29330c5cdc`), with 1,555 outside the selection. Five added cases
+exercise actual retained-visual cleanup panic, owner retention, retry, dependency waiting and
+both shutdown modes. Early terminal before preparation and repeated preparation failure remain
+statically reviewed combinations rather than separately executed controls.
+
+The stronger Windows native selection passes 8/8
+(`1f9bd906-fb8d-4257-9240-a27efaa25392`), with 285 outside the selection. The same App retains
+entity, executors and text system over three attachments and real VSync recoveries [1, 2, 1]
+on already Submitted HWNDs. Each recovery changes the actual device, advances the renderer atlas,
+and repaints before another model notification; subsequent native mouse input changes the model
+and captured pixels. Independently shaped Segoe UI Emoji has a nonzero color glyph and at least
+eight colored pixels in an isolated readback ROI. Old attachment/native generations cannot
+invalidate the current device or reset its atlas. Retryable HWND destruction still refuses
+detach until exact physical completion. These are standalone DX11 lifecycle controls, not shared
+Nara device/target or external-loop evidence.
+
+The first actual Linux X11+Wayland/test-support all-target check passes. Its focused runtime,
+display-mode, portal, settings and power selection passes 33/33
+(`e33a2a90-ee5d-4be0-9701-6fddfafd8965`), with 111 outside the selection. Independent review
+then identifies four cross-owner regressions requiring correction: a stale Wayland URI read can
+retain a closed window's connection lease; a queued foreground capture can retain the platform
+after run exits; inherited WAYLAND_SOCKET is incorrectly rejected by fixed headless startup;
+and the selected calloop channel's ping-before-final-sender-drop ordering can strand the timer
+thread. Preserve the exact native lease and official idle pin. Adopt fixed-target
+`87a1ea30e8` drag-read invalidation, close foreground work at its owning run boundary, limit socket
+custody refusal to actual Wayland selection, and explicitly terminate the owned timer loop.
+Their final execution, independent rereview and additional native controls follow separately;
+the first 33 passing cases do not qualify these corrections.
+
+The first complete Core/WGPU/Windows/Platform library/public selection runs 2,221 cases:
+2,220 pass, one fails, and ten are skipped (`4293d5d5-82e2-4565-b9d4-fb311c94de20`). Its sole
+failure is the native clipboard fixture's prior-content restoration assertion, not a windowing
+or retirement assertion. The boolean does not distinguish external sequence change, refused
+native acquisition or value mismatch, so the original trigger remains unproved. Inspection finds
+capture/restoration/verification still bypass the fixture's existing actual-OpenClipboard refusal
+retry. Reuse that bounded test-only helper, observe sequence/count under its real lock, and check
+the original sequence before every restoration attempt. Never retry a successful acquisition's
+value mismatch or overwrite a detected external update. Cleanup catches its own fixture panic
+without masking the direct full-value assertion. No production clipboard retry is added. The
+unchanged paste/render/retirement trajectory, native contention/metadata/normalization and all
+six windowing controls pass 10/10 afterward (`44fb01d9-9764-4bac-b39f-c911d7e53e82`). The original
+complete aggregate remains failed; final affected-owner results follow separately.
+The independent fixture correction is committed separately at `1c33677716c`; windowing-specific
+initialization migration remains with the native lifecycle implementation.
+
+Fresh independent Linux shutdown review finds no confirmed P1/P2 in explicit receiver/idle/timer
+cleanup or backend selection. Actual source handles are closed outside their dispatch; captures
+drop after common/source borrows end, and native leases still prevent connection replacement.
+The timer uses a weak loop handle and explicit Shutdown instead of depending on the older
+calloop channel's final-sender notification. This is asynchronous run-boundary cleanup, not a
+promise that quit synchronously stops every callback. The existing dependency aborts on a future
+capture's destructor panic; nonpanicking destructor reentry tests do not establish recovery from
+that abort. Suspended local futures waking after cross-thread refusal retain the pre-existing
+admission/forget limitation and are not covered by queued/ready-idle reclamation claims.
+
+The final Windows library selection passes 283/283, with ten explicit skips
+(`004a4b01-8e74-46ac-a266-56ffdfa0dc22`). This affected-owner result does not rewrite the failed
+2,221-case aggregate or identify its original restoration trigger. The first Linux compilation
+of the stronger harness catches a missing ParentElement import; correct that test import and
+remove its redundant fd trait import. The expanded actual Linux runtime/protocol selection then
+passes 62/62 (`9aa09cc9-c874-463a-ab21-440ed3728408`), with 103 outside the selection, including
+the new shutdown/lease/socket and all ten stale-drag cases.
+
+The first actual Linux native selection runs four cases, with one passing and three failing
+(`bf367bc4-e695-479a-9f28-9a8c53ec070a`). Two private Xvfb displays and real selection managers
+prove CLIPBOARD/PRIMARY/SECONDARY partition, SAVE_TARGETS transfer, replacement ownership and
+final handover/window/thread cleanup. This uses small UTF-8 payloads, not INCR or every desktop
+manager format. The GUI fixtures incorrectly request nonactivating first appearance on a backend
+that reports it unsupported; retain that capability refusal and use supported ordinary windows
+for lifecycle qualification. The presented X11 input path separately triggers a current-view
+draw-phase assertion and needs an owning diagnosis. No GUI native acceptance follows from this
+first result. Independent review also strengthens owned-socket startup with a valid socket and
+an explicitly unreachable initial address, so an implementation cannot pass by connecting to
+the supplied address while merely retaining the socket. Subsequent bad-address refusal and
+good-address reconnect remain required after the startup resource is consumed.
+
+The focused backtrace control fails 0/1 (`86c29c8e-7b8e-4e2e-a314-657bee9acbf8`) and identifies
+the off-frame animation request in the fixture's wait loop. Remove all polling
+request_animation_frame calls; initial-map work and the actual input listener's notify must
+schedule their own Submitted frames. After this and supported ordinary window creation, all
+three GUI children reach their exact completion markers, but the native aggregate still fails
+1/4 (`e946a570-38e1-492d-bd97-0f8cce6648aa`). Their exit status remains mandatory evidence.
+Direct same-binary isolation observes default exit -11 after the complete X11 keyboard/Submitted
+trajectory, versus exit 0 with the installed Lavapipe ICD. GDB localizes the default SIGSEGV to
+pthread thread-specific-data destruction through an unresolved function address after test-body
+completion. DZN's nonconformant-implementation warning and Zink/EGL errors accompany that path;
+the responsible library and underlying defect are not established. No production workaround,
+forced process exit or default-driver qualification follows.
+
+With VK_DRIVER_FILES and VK_ICD_FILENAMES both selecting
+/usr/share/vulkan/icd.d/lvp_icd.json, all four actual native controls pass 4/4
+(`84edd33f-625d-44fe-a2eb-4d74b2e654ac`), with 161 outside the selection. Renderer GpuSpecs
+reports is_software_emulated=true, llvmpipe LLVM 21.1.8 and Mesa 26.1.5 on both X11 and
+Wayland. The shown trajectory aligns real X11 F8 press/release, exact model version, palette
+paint stamp, debug selector and nonempty Submitted generation. Hidden rendering retains its
+accepted-frame-only scope. Owned startup uses the real compositor socket despite an unreachable
+explicit initial address, checks close-on-exec by actual child exec and device/inode identity,
+retires it, refuses bad-address reuse and reconnects successfully by the good address. Both
+initial-windowed and initial-headless cases keep App/entity/executor/text ownership. These are
+software-rendered native protocol/lifecycle controls, not Linux hardware, pixel-readback,
+compositor scanout, numeric-performance or shared-engine evidence. The default WSLg native
+thread-exit crash stays open independently of this passing configured profile. Fresh bounded
+review confirms the strengthened socket proof. The subsequent independent-executor correction
+has its own review below.
+
+On the qualified WSLg software profile, repeat the native selection with the existing target
+directory and one build/test job. The compositor socket override is specific to that host:
+
+```text
+env CARGO_BUILD_JOBS=1 GPUI_LINUX_TEST_WAYLAND_DISPLAY=/mnt/wslg/runtime-dir/wayland-0 VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.json VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json cargo +1.95.0 nextest run --locked -p open-gpui-linux --no-default-features --features x11,wayland,test-support --lib -E 'test(/^linux::platform::native_windowing_tests::/) | test(/^linux::x11::clipboard::native_windowing_tests::/)' --run-ignored only --test-threads=1 --no-fail-fast --no-tests fail --success-output immediate
+```
+
+Actual locked/offline Linux checks pass for headless-only production, X11-only, Wayland-only
+and combined backend all-targets, plus the ordinary facade toggle_headless example. The latter
+builds its existing aws-lc-sys/TLS closure serially; it introduces no dependency upgrade. Complete
+UI core/components/docking/Canvas passes 2,990/2,990 without skips
+(`9b11d2f3-e23c-4ab7-b3a1-59c2d985f508`). Independently locked ordinary consumers pass 115/115
+with all features and three skips (`d18d74f9-8c44-4552-ba75-b7e1c954b00e`), and 83/83 without
+optional features or skips (`6e66bd45-37ca-4627-be3a-f5b4206ae275`). Profiler-disabled Core owners
+and public windowing pass 126/126 (`f4a07eb2-d8ab-44c0-94ef-566e2ad9f14a`), with 1,310 outside
+the selection. These Windows downstream controls preserve independent resolution and feature
+selection; they do not execute successful Linux/native connection switching.
+
+The final public-consumer audit finds one additional fork cleanup regression. The ordinary
+gpui_platform::background_executor factory drops a never-launched temporary platform while
+returning its independently retained executor. Unconditional finish_runtime timer shutdown
+cancels that executor's real timer immediately. The added 80ms-deadline regression fails 0/1
+(`cc0426d8-84b8-4d22-8d93-317f33dc2d8f`). Capture the existing started/stopped facts before
+stop_runtime and shut down timers for a launched or explicitly quit runtime only. A temporary
+platform still releases its foreground/power/sources/connection, while its external executor
+keeps ordinary timer behavior; final dispatcher Drop retains explicit termination. No new
+owner or lifecycle flag is introduced. The complete actual Linux library then passes 162/162
+(`a0305dfc-e474-4e16-9378-a2969086594a`), with four native cases skipped for their separate
+configured run. This includes the deadline control and actual run/quit/unwind/retained-timer
+cleanup controls. The prior focused 62 result predates this final correction.
+Bounded independent review confirms the public helper matches the official lifecycle and finds
+no P1/P2 in the correction. All sixteen implementation/research/review lanes are closed.
+
+After the final executor correction, the same configured native selection passes 4/4 again
+(`702acd5e-fc0c-43c0-a8ea-9bb6a087262e`), with 162 outside the selection. Actual Linux
+X11+Wayland/test-support all-target Clippy passes with `-D clippy::correctness`.
+
+Final locked Windows workspace all-target and independently locked all-feature/all-target
+consumer checks pass, as does Core/WGPU/Windows/Platform correctness Clippy. Actual Windows
+Rust 1.93.0 checks pass for all targets/features in the affected framework/platform selection,
+ordinary independent consumer, independent test-support consumer and hot-reload workspace.
+The existing compiler floor is unchanged. Production wasm Core/WGPU/Web checks pass with
+profiler disabled and enabled; the independently locked smoke_web application also compiles.
+These are production compilation gates, not new browser interaction execution.
+
+The actual aarch64-apple-darwin all-feature native_windowing example attempt fails before the
+new Mac owner compiles: alloca's C build invokes the host cc, which does not recognize -arch
+or -mmacosx-version-min=11.0. This attempt establishes neither Apple source compilation nor
+native policy/lifetime execution. The reviewed real-main-thread probe retains its five modes,
+async queue-drain bound and ordinary native-resource assertions for an actual Mac GUI/Metal
+host. In particular, host workspace checks cannot qualify cfg-excluded AppKit code.
+
+Final root/independent formatting, whitespace, workflow YAML syntax and existing import-boundary,
+public-API-tier, document-link and release-inventory checks pass. Remote CI and publication are
+not performed. Continue the prepared native-quit/forced-session successor, shared Apple topology
+and final fixed-target difference audit, then the actual Nara GPU/Host/View consumer before the
+separate maintenance-session handoff. Live windowing retains one standalone platform loop and
+its own backend renderer; it does not supply external pumping, shared targets or engine adoption.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:
