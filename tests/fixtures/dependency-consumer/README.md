@@ -1603,3 +1603,34 @@ Windows dev-dependency edge to its independently maintained lockfile:
 ```text
 cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --test mapped_keybindings --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
 ```
+
+## Native restart arguments consumer
+
+The Windows `restart` target runs the ordinary public Application/App restart path from official
+Zed `715076597926d566d560b30b806749e1a2166080`, with fixed-target PowerShell discovery
+corrections. It needs no `test-support` or optional fixture feature. The `restart_probe` binary
+has explicit worker and recorder roles; it never restarts the test runner or a user's application.
+The parent starts the build-output worker, assigns it to a kill-on-close Job before releasing
+stdin, and selects a distinct copied recorder in a path containing Unicode and shell characters.
+
+The actual backend launches PowerShell, waits for the worker to exit and starts that selected
+recorder. The recorder writes native UTF-16 arguments, its PID and transport-environment absence.
+The parent requires successful worker exit, exact native payload values, selected-executable
+identity, restart-before-quit callbacks and zero active Job processes. PowerShell may normalize
+the executable's verbatim path prefix; its file identity is checked separately from the exact
+argument payload. The complex-argument case independently observes the retired worker PID before
+recording. The no-argument case checks the other launcher branch. A third control explicitly
+terminates a blocked Job-owned worker and observes completed cleanup.
+
+```text
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --test restart --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --all-features --test restart --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+These commands are instructions, not results. The fixture uses an explicit existing target,
+checks configured arguments rather than automatically retaining the original process argv,
+and opens no native Window. It does not qualify an updater, a default-target restart, native
+renderer retirement, physical input or foreign OS launchers. Linux and Mac tests retain their
+separate backend gates. The fixture promotes its existing target-specific windows dependency
+for the recorder binary and enables only its native process/Job feature closure; no framework
+production dependency or compiler-floor change follows.

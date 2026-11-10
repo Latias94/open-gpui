@@ -5516,7 +5516,7 @@ mod tests {
             platform_window.command_dispatcher(),
             true,
         );
-        app.shutdown_from_native_quit();
+        app.shutdown_for_native_exit_test();
         drop(app);
         cx.run_until_parked();
 
@@ -5562,7 +5562,7 @@ mod tests {
             true,
         );
         if terminate_ingress {
-            app.shutdown_from_native_quit();
+            app.shutdown_for_native_exit_test();
         } else {
             app.shutdown();
         }

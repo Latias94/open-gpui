@@ -21,6 +21,7 @@ use open_gpui_collections::VecDeque;
 use parking_lot::Mutex;
 use std::{
     cell::{Cell, RefCell},
+    ffi::OsString,
     path::{Path, PathBuf},
     rc::{Rc, Weak},
     sync::Arc,
@@ -70,7 +71,7 @@ pub(crate) struct TestPlatform {
     screen_capture_sources: RefCell<Vec<TestScreenCaptureSource>>,
     pub opened_url: RefCell<Option<String>>,
     pub text_system: Arc<dyn PlatformTextSystem>,
-    pub expect_restart: RefCell<Option<oneshot::Sender<Option<PathBuf>>>>,
+    pub expect_restart: RefCell<Option<oneshot::Sender<(Option<PathBuf>, Vec<OsString>)>>>,
     quit_requested: RefCell<bool>,
     open_urls_callback: RefCell<Option<Box<dyn FnMut(Vec<String>)>>>,
     reopen_callback: RefCell<Option<Box<dyn FnMut()>>>,
@@ -956,9 +957,9 @@ impl Platform for TestPlatform {
         self.quit_requested.replace(true);
     }
 
-    fn restart(&self, path: Option<PathBuf>) {
+    fn restart(&self, path: Option<PathBuf>, arguments: Vec<OsString>) {
         if let Some(tx) = self.expect_restart.take() {
-            tx.send(path).unwrap();
+            tx.send((path, arguments)).unwrap();
         }
     }
 

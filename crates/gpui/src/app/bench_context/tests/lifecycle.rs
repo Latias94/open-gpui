@@ -395,7 +395,7 @@ fn completed_terminal_shutdown_remains_idempotent_during_teardown() {
         assert!(cx.read(|app| app.quitting));
         cx.update(|app| {
             app.shutdown();
-            app.shutdown_from_native_quit();
+            app.shutdown_for_native_exit_test();
             app.quit_after_terminal_shutdown();
         });
         cx.teardown();
@@ -421,7 +421,7 @@ fn terminal_shutdown_accepts_a_late_platform_quit_without_another_fence() {
             .detach();
         });
         cx.bench_iter(|_| ());
-        cx.update(|app| app.shutdown_from_native_quit());
+        cx.update(|app| app.shutdown_for_native_exit_test());
         cx.run_until_idle();
         assert!(cx.read(|app| app.quitting));
         assert!(!platform.did_quit());
@@ -440,7 +440,7 @@ fn late_platform_quit_survives_update_unwind_without_another_app_borrow() {
         let mut cx = BenchAppContext::new(platform.clone(), None, bencher);
         let dispatcher = cx.background_executor().dispatcher().clone();
         cx.bench_iter(|_| ());
-        cx.update(|app| app.shutdown_from_native_quit());
+        cx.update(|app| app.shutdown_for_native_exit_test());
         cx.run_until_idle();
         assert!(!platform.did_quit());
         let panic = catch_unwind(AssertUnwindSafe(|| {

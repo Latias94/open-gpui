@@ -717,6 +717,42 @@ fn macos_window_capabilities(kind: &WindowKind) -> PlatformWindowCapabilities {
     }
 }
 
+fn restart_command(
+    app_pid: &str,
+    app_path: &Path,
+    arguments: Vec<std::ffi::OsString>,
+) -> std::process::Command {
+    use std::os::unix::process::CommandExt as _;
+
+    // Wait until this process has exited and then re-open this path.
+    let script = r#"
+            while kill -0 $0 2> /dev/null; do
+                sleep 0.1
+            done
+            app_path="$1"
+            shift
+            if (($# > 0)); then
+                open "$app_path" --args "$@"
+            else
+                open "$app_path"
+            fi
+        "#;
+
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "We are restarting ourselves, using std command thus is fine"
+    )]
+    let mut command = new_std_command("/bin/bash");
+    command
+        .arg("-c")
+        .arg(script)
+        .arg(app_pid)
+        .arg(app_path)
+        .args(arguments)
+        .process_group(0);
+    command
+}
+
 impl Platform for MacPlatform {
     fn platform_info(&self) -> open_gpui::PlatformInfo {
         open_gpui::PlatformInfo {
@@ -803,9 +839,7 @@ impl Platform for MacPlatform {
         }
     }
 
-    fn restart(&self, binary_path: Option<PathBuf>) {
-        use std::os::unix::process::CommandExt as _;
-
+    fn restart(&self, binary_path: Option<PathBuf>, arguments: Vec<std::ffi::OsString>) {
         let app_pid = std::process::id().to_string();
         let app_path = binary_path
             .or_else(|| {
@@ -818,25 +852,7 @@ impl Platform for MacPlatform {
             })
             .unwrap_or_else(|| std::env::current_exe().unwrap());
 
-        // Wait until this process has exited and then re-open this path.
-        let script = r#"
-            while kill -0 $0 2> /dev/null; do
-                sleep 0.1
-            done
-            open "$1"
-        "#;
-
-        #[allow(
-            clippy::disallowed_methods,
-            reason = "We are restarting ourselves, using std command thus is fine"
-        )]
-        let restart_process = new_std_command("/bin/bash")
-            .arg("-c")
-            .arg(script)
-            .arg(app_pid)
-            .arg(app_path)
-            .process_group(0)
-            .spawn();
+        let restart_process = restart_command(&app_pid, &app_path, arguments).spawn();
 
         match restart_process {
             Ok(_) => self.quit(),
@@ -1770,6 +1786,10 @@ unsafe extern "C" {
     pub(super) static kTISPropertyInputSourceType: CFStringRef;
     pub(super) static kTISTypeKeyboardInputMode: CFStringRef;
 }
+
+#[cfg(test)]
+#[path = "restart_arguments_tests.rs"]
+mod restart_arguments_tests;
 
 #[cfg(test)]
 mod window_capability_tests {

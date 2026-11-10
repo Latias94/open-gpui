@@ -7524,7 +7524,11 @@ fn returning_test_platform_exits_message_loop_after_retiring_native_resources() 
     let quit_callbacks = Rc::new(Cell::new(0));
     platform.on_quit(Box::new({
         let quit_callbacks = Rc::clone(&quit_callbacks);
-        move || quit_callbacks.set(quit_callbacks.get() + 1)
+        let platform = Rc::downgrade(&platform);
+        move || {
+            quit_callbacks.set(quit_callbacks.get() + 1);
+            platform.upgrade().unwrap().quit_after_terminal_shutdown();
+        }
     }));
 
     let platform_for_launch = Rc::clone(&platform);
@@ -7584,6 +7588,111 @@ fn returning_application_last_window_policy_settles_before_platform_quit() {
     let hwnd = opened_hwnd.get();
     assert_ne!(hwnd, HWND::default());
     assert!(unsafe { !IsWindow(Some(hwnd)).as_bool() });
+    app.update_for_test(|cx| {
+        assert!(cx.windows().is_empty());
+        assert!(cx.native_exit_authority_is_settled_for_test());
+    });
+    assert!(platform.inner.native_retirement_is_settled());
+}
+
+#[test]
+fn returning_platform_quit_does_not_wait_for_a_dropped_application() {
+    discard_stale_quit_messages();
+    let platform = Rc::new(WindowsPlatform::new_returning_for_test(true).unwrap());
+    drop(Application::with_platform(platform.clone()));
+    let platform_for_launch = platform.clone();
+    platform.run(Box::new(move || platform_for_launch.quit()));
+    assert!(platform.inner.native_retirement_is_settled());
+}
+
+#[test]
+fn returning_application_native_quit_settles_before_synchronous_or_future_observer_panic() {
+    for future_panics in [false, true] {
+        discard_stale_quit_messages();
+        let platform = Rc::new(WindowsPlatform::new_returning_for_test(true).unwrap());
+        let mut app =
+            Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
+        let calls = Rc::new(Cell::new(0));
+        let calls_for_launch = calls.clone();
+        app.run_returning_for_test(move |cx| {
+            cx.on_app_quit(move |_| {
+                calls_for_launch.set(calls_for_launch.get() + 1);
+                assert!(future_panics, "injected native quit observer panic");
+                async { panic!("injected native quit observer future panic") }
+            })
+            .detach();
+            cx.quit();
+        });
+        assert_eq!(calls.get(), 1);
+        app.update_for_test(|cx| assert!(cx.native_exit_authority_is_settled_for_test()));
+        assert!(platform.inner.native_retirement_is_settled());
+    }
+}
+
+#[test]
+fn returning_application_quit_waits_for_observers_and_retryable_window_retirement() {
+    discard_stale_quit_messages();
+
+    let platform = Rc::new(
+        WindowsPlatform::new_returning_for_test(false)
+            .expect("returning Windows test platform should initialize"),
+    );
+    let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
+    let opened_hwnd = Rc::new(Cell::new(HWND::default()));
+    let opened_hwnd_for_launch = opened_hwnd.clone();
+    let platform_for_launch = platform.clone();
+    let observer_calls = Rc::new(Cell::new(0));
+    let observer_calls_for_launch = observer_calls.clone();
+    let observer_completed = Rc::new(Cell::new(false));
+    let observer_completed_for_launch = observer_completed.clone();
+    let lifecycle_probe = platform.lifecycle_test_probe.clone();
+    lifecycle_probe.fail_next_destroy();
+
+    app.run_returning_for_test(move |cx| {
+        cx.open_window(
+            WindowOptions {
+                show: false,
+                focus_on_appearing: false,
+                ..WindowOptions::default()
+            },
+            |_, cx| cx.new(|_| Empty),
+        )
+        .expect("explicit quit test should open a native window");
+        opened_hwnd_for_launch.set(
+            platform_for_launch
+                .raw_window_handles
+                .read()
+                .last()
+                .unwrap()
+                .as_raw(),
+        );
+        cx.on_app_quit(move |cx| {
+            observer_calls_for_launch.set(observer_calls_for_launch.get() + 1);
+            let completed = observer_completed_for_launch.clone();
+            let timer = cx.background_executor().timer(Duration::from_millis(20));
+            async move {
+                timer.await;
+                completed.set(true);
+            }
+        })
+        .detach();
+        cx.quit();
+        cx.quit();
+    });
+
+    assert_eq!(observer_calls.get(), 1);
+    assert!(observer_completed.get());
+    let hwnd = opened_hwnd.get();
+    assert_ne!(hwnd, HWND::default());
+    assert!(unsafe { !IsWindow(Some(hwnd)).as_bool() });
+    assert_eq!(
+        lifecycle_probe
+            .events()
+            .iter()
+            .filter(|event| matches!(event, NativeWindowLifecycleTestEvent::DestroyEntered { .. }))
+            .count(),
+        2,
+    );
     app.update_for_test(|cx| {
         assert!(cx.windows().is_empty());
         assert!(cx.native_exit_authority_is_settled_for_test());

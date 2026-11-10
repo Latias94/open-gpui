@@ -18,6 +18,7 @@ use futures::{Stream, StreamExt, channel::oneshot};
 
 use std::{
     cell::RefCell,
+    ffi::OsString,
     future::Future,
     ops::{Deref, Range},
     path::PathBuf,
@@ -826,8 +827,8 @@ impl TestAppContext {
         dispatched
     }
 
-    /// Returns true if there's an alert dialog open.
-    pub fn expect_restart(&self) -> oneshot::Receiver<Option<PathBuf>> {
+    /// Receives the executable and native arguments passed to the next platform restart.
+    pub fn expect_restart(&self) -> oneshot::Receiver<(Option<PathBuf>, Vec<OsString>)> {
         let (tx, rx) = futures::channel::oneshot::channel();
         self.test_platform.expect_restart.borrow_mut().replace(tx);
         rx

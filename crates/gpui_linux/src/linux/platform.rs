@@ -335,6 +335,41 @@ pub(crate) struct LinuxPlatform<P> {
     pub(crate) inner: P,
 }
 
+fn restart_command(
+    app_pid: &str,
+    app_path: &Path,
+    arguments: Vec<std::ffi::OsString>,
+) -> std::process::Command {
+    use std::os::unix::process::CommandExt as _;
+
+    // Script to wait for the current process to exit and then restart the app.
+    // Pass dynamic values as positional parameters to avoid shell interpolation issues.
+    let script = r#"
+            while kill -0 "$0" 2>/dev/null; do
+                sleep 0.1
+            done
+
+            app_path="$1"
+            shift
+            "$app_path" "$@"
+            "#;
+
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "We are restarting ourselves, using std command thus is fine"
+    )]
+    let mut command = new_std_command("/usr/bin/env");
+    command
+        .arg("bash")
+        .arg("-c")
+        .arg(script)
+        .arg(app_pid)
+        .arg(app_path)
+        .args(arguments)
+        .process_group(0);
+    command
+}
+
 impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
     fn platform_info(&self) -> open_gpui::PlatformInfo {
         open_gpui::PlatformInfo {
@@ -432,9 +467,7 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
         self.inner.compositor_name()
     }
 
-    fn restart(&self, binary_path: Option<PathBuf>) {
-        use std::os::unix::process::CommandExt as _;
-
+    fn restart(&self, binary_path: Option<PathBuf>, arguments: Vec<std::ffi::OsString>) {
         // get the process id of the current process
         let app_pid = std::process::id().to_string();
         // get the path to the executable
@@ -452,28 +485,7 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
 
         log::info!("Restarting process, using app path: {:?}", app_path);
 
-        // Script to wait for the current process to exit and then restart the app.
-        // Pass dynamic values as positional parameters to avoid shell interpolation issues.
-        let script = r#"
-            while kill -0 "$0" 2>/dev/null; do
-                sleep 0.1
-            done
-
-            "$1"
-            "#;
-
-        #[allow(
-            clippy::disallowed_methods,
-            reason = "We are restarting ourselves, using std command thus is fine"
-        )]
-        let restart_process = new_std_command("/usr/bin/env")
-            .arg("bash")
-            .arg("-c")
-            .arg(script)
-            .arg(&app_pid)
-            .arg(&app_path)
-            .process_group(0)
-            .spawn();
+        let restart_process = restart_command(&app_pid, &app_path, arguments).spawn();
 
         match restart_process {
             Ok(_) => self.quit(),
@@ -1427,6 +1439,10 @@ pub(super) fn compositor_gpu_hint_from_dev_t(
         device_id,
     })
 }
+
+#[cfg(test)]
+#[path = "restart_arguments_tests.rs"]
+mod restart_arguments_tests;
 
 #[cfg(test)]
 mod tests {

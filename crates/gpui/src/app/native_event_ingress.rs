@@ -2024,7 +2024,7 @@ impl NativeAppEvent {
                 NativeEventDrainControl::Continue
             }
             Self::Quit => {
-                app.shutdown_from_native_quit();
+                app.quit_after_terminal_shutdown();
                 NativeEventDrainControl::Continue
             }
         }

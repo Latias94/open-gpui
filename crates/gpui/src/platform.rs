@@ -71,6 +71,7 @@ use std::io::Cursor;
 use std::ops;
 use std::time::Duration;
 use std::{
+    ffi::OsString,
     fmt::{self, Debug},
     ops::Range,
     path::{Path, PathBuf},
@@ -3576,11 +3577,13 @@ pub trait Platform: 'static {
     /// The default delegates to [`Platform::quit`]. Backends whose ordinary quit request is
     /// asynchronous must override this so terminal shutdown can publish the platform exit before
     /// resuming a retained callback panic.
+    /// Windows keeps dispatching after its native quit notification until this acknowledgement.
     #[doc(hidden)]
     fn quit_after_terminal_shutdown(&self) {
         self.quit();
     }
-    fn restart(&self, binary_path: Option<PathBuf>);
+    /// Requests a restart with the selected executable and ordered native arguments.
+    fn restart(&self, binary_path: Option<PathBuf>, arguments: Vec<OsString>);
     fn activate(&self, ignoring_other_apps: bool);
     fn hide(&self);
     fn hide_other_apps(&self);

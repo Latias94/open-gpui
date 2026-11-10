@@ -2,6 +2,7 @@ use open_gpui_scheduler::Instant;
 use std::{
     any::{TypeId, type_name},
     cell::{Cell, RefCell},
+    ffi::OsString,
     marker::PhantomData,
     mem,
     ops::{Deref, DerefMut},
@@ -87,6 +88,8 @@ mod native_window_activation;
 mod power_mode_tests;
 #[cfg(test)]
 mod power_tests;
+#[cfg(test)]
+mod restart_tests;
 #[cfg(test)]
 mod system_notification_tests;
 #[cfg(any(test, feature = "test-support"))]
@@ -295,6 +298,16 @@ impl Application {
         context_lock.asset_source = asset_source.clone();
         context_lock.svg_renderer = SvgRenderer::new(asset_source);
         drop(context_lock);
+        self
+    }
+
+    /// Configures arguments to pass when restarting the application.
+    ///
+    /// Arguments default to an empty list and replace any previous configuration. The
+    /// application chooses which launch arguments to retain. Native argument values are
+    /// preserved, and the next [`App::restart`] consumes them after notifying restart observers.
+    pub fn with_restart_arguments(self, arguments: Vec<OsString>) -> Self {
+        self.0.borrow_mut().restart_arguments = arguments;
         self
     }
 
@@ -850,6 +863,7 @@ pub struct App {
     pub(crate) pending_notifications: FxHashSet<EntityId>,
     pub(crate) pending_global_notifications: TypeIdHashSet,
     pub(crate) restart_path: Option<PathBuf>,
+    pub(crate) restart_arguments: Vec<OsString>,
     pub(crate) layout_id_buffer: Vec<LayoutId>, // We recycle this memory across layout requests.
     pub(crate) propagate_event: bool,
     pub(crate) prompt_builder: Option<PromptBuilder>,
@@ -1020,6 +1034,7 @@ impl App {
                 quit_observers: SubscriberSet::new(),
                 restart_observers: SubscriberSet::new(),
                 restart_path: None,
+                restart_arguments: Vec::new(),
                 window_closed_observers: SubscriberSet::new(),
                 pending_window_closed_notifications: VecDeque::new(),
                 notifying_window_closed: false,
@@ -1116,9 +1131,12 @@ impl App {
 
         platform.on_quit(Box::new({
             let app = Rc::downgrade(&app);
+            let platform = Rc::downgrade(&platform);
             move || {
                 if let Some(app) = app.upgrade() {
                     app.enqueue_native_app_event(native_event_ingress::NativeAppEvent::Quit);
+                } else if let Some(platform) = platform.upgrade() {
+                    platform.quit_after_terminal_shutdown();
                 }
             }
         }));
@@ -1209,10 +1227,6 @@ impl App {
         self.this
             .upgrade()
             .is_none_or(|app| app.native_exit_authority_is_settled_for_test())
-    }
-
-    pub(super) fn shutdown_from_native_quit(&mut self) {
-        self.begin_shutdown_with_window_open_barrier(true);
     }
 
     pub(super) fn quit_after_terminal_shutdown(&mut self) {
@@ -2259,11 +2273,17 @@ impl App {
     }
 
     /// Restarts the application.
+    ///
+    /// Restart observers run before the configured path and arguments are passed to the
+    /// platform. Both are consumed even if the platform cannot launch the replacement.
     pub fn restart(&mut self) {
         self.restart_observers
             .clone()
             .retain(&(), |observer| observer(self));
-        self.platform.restart(self.restart_path.take())
+        self.platform.restart(
+            self.restart_path.take(),
+            mem::take(&mut self.restart_arguments),
+        )
     }
 
     /// Sets the path to use when restarting the application.
@@ -4980,7 +5000,7 @@ mod test {
         });
 
         let mut app = cx.app.borrow_mut();
-        app.shutdown_from_native_quit();
+        app.shutdown_for_native_exit_test();
         cx.app
             .enqueue_native_window_event(stale_window, NativeWindowEvent::Closed);
         drop(app);

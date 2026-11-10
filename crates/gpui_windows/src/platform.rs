@@ -1,7 +1,7 @@
 use std::{
     cell::{Cell, RefCell},
     collections::HashSet,
-    ffi::OsStr,
+    ffi::{OsStr, OsString},
     panic::{AssertUnwindSafe, catch_unwind},
     path::{Path, PathBuf},
     rc::{Rc, Weak},
@@ -38,6 +38,9 @@ use windows::{
 
 use crate::*;
 use open_gpui::*;
+
+#[path = "restart.rs"]
+mod restart;
 
 #[derive(Default)]
 pub(crate) struct RegisteredWindows {
@@ -256,6 +259,7 @@ pub struct WindowsPlatform {
     suspend_resume_notification: RefCell<Option<HPOWERNOTIFY>>,
     power_saving_notification: RefCell<Option<HPOWERNOTIFY>>,
     run_exit: WindowsPlatformRunExit,
+    terminal_shutdown_complete: Cell<bool>,
     disable_direct_composition: bool,
     has_package_identity: bool,
     app_identity: RefCell<Option<(String, String)>>,
@@ -975,6 +979,7 @@ impl WindowsPlatform {
             suspend_resume_notification: RefCell::new(None),
             power_saving_notification: RefCell::new(None),
             run_exit,
+            terminal_shutdown_complete: Cell::new(false),
             disable_direct_composition,
             has_package_identity: has_package_identity(),
             app_identity: RefCell::new(None),
@@ -2304,18 +2309,38 @@ impl Platform for WindowsPlatform {
             self.begin_vsync_thread();
         }
 
+        let mut quit_notified = false;
         let mut msg = MSG::default();
-        unsafe {
-            while GetMessageW(&mut msg, None, 0, 0).as_bool() {
-                if translate_accelerator(&msg).is_none() {
-                    _ = TranslateMessage(&msg);
-                    DispatchMessageW(&msg);
+        loop {
+            let result = unsafe { GetMessageW(&mut msg, None, 0, 0) };
+            if result.0 == -1 {
+                log::error!(
+                    "Windows message retrieval failed: {}",
+                    windows::core::Error::from_thread()
+                );
+                break;
+            }
+            if !result.as_bool() {
+                if self.terminal_shutdown_complete.get() {
+                    break;
                 }
+                if !quit_notified {
+                    quit_notified = true;
+                    if with_windows_callback(&self.inner.state.callbacks.quit, |callback| {
+                        callback()
+                    })
+                    .is_none()
+                    {
+                        break;
+                    }
+                }
+                continue;
+            }
+            if translate_accelerator(&msg).is_none() {
+                _ = unsafe { TranslateMessage(&msg) };
+                unsafe { DispatchMessageW(&msg) };
             }
         }
-
-        self.inner
-            .with_callback(|callbacks| &callbacks.quit, |callback| callback());
 
         match self.run_exit {
             #[cfg(any(test, feature = "test-support"))]
@@ -2349,31 +2374,16 @@ impl Platform for WindowsPlatform {
     }
 
     fn quit_after_terminal_shutdown(&self) {
+        self.terminal_shutdown_complete.set(true);
         unsafe { PostQuitMessage(0) };
     }
 
-    fn restart(&self, binary_path: Option<PathBuf>) {
+    fn restart(&self, binary_path: Option<PathBuf>, arguments: Vec<OsString>) {
         let pid = std::process::id();
         let Some(app_path) = binary_path.or(self.app_path().log_err()) else {
             return;
         };
-        let script = format!(
-            r#"
-            $pidToWaitFor = {}
-            $exePath = "{}"
-
-            while ($true) {{
-                $process = Get-Process -Id $pidToWaitFor -ErrorAction SilentlyContinue
-                if (-not $process) {{
-                    Start-Process -FilePath $exePath
-                    break
-                }}
-                Start-Sleep -Seconds 0.1
-            }}
-            "#,
-            pid,
-            app_path.display(),
-        );
+        let powershell = ::open_gpui_util::shell::get_powershell();
 
         // Defer spawning to the foreground executor so it runs after the
         // current `AppCell` borrow is released. On Windows, `Command::spawn()`
@@ -2382,21 +2392,10 @@ impl Platform for WindowsPlatform {
         // borrow of the `AppCell` ending up with a double borrow panic
         self.foreground_executor
             .spawn(async move {
-                #[allow(
-                    clippy::disallowed_methods,
-                    reason = "We are restarting ourselves, using std command thus is fine"
-                )]
-                let restart_process = ::open_gpui_util::command::new_std_command(
-                    ::open_gpui_util::shell::get_windows_system_shell(),
-                )
-                .arg("-command")
-                .arg(script)
-                .spawn();
-
-                match restart_process {
-                    Ok(_) => unsafe { PostQuitMessage(0) },
-                    Err(e) => log::error!("failed to spawn restart script: {:?}", e),
-                }
+                restart::spawn_restart(powershell, pid, &app_path, &arguments, || unsafe {
+                    PostQuitMessage(0)
+                })
+                .log_err();
             })
             .detach();
     }

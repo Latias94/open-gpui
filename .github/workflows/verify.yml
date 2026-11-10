@@ -173,6 +173,25 @@ jobs:
           cargo nextest run --locked -p open-gpui-command -p open-gpui-ui-components --all-features --test runtime_keybindings --test-threads=1 --no-fail-fast --no-tests fail
           cargo nextest run --locked -p open-gpui-web --lib -E 'test(platform_info::)' --test-threads=1 --no-fail-fast --no-tests fail
 
+      - name: Test restart argument ownership and public configuration
+        run: cargo nextest run --locked -p open-gpui --all-features --lib --test restart -E 'test(app::restart_tests::) | binary(restart)' --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Test Windows restart encoding and PowerShell discovery
+        if: matrix.name == 'windows'
+        run: cargo nextest run --locked -p open-gpui-windows -p open-gpui-util --all-features --lib -E 'test(restart::tests::) | test(powershell_tests::) | test(returning_)' --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Test ordinary native Windows relaunch and descendant retirement
+        if: matrix.name == 'windows'
+        run: cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test restart --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Test Linux restart command native argument forwarding
+        if: matrix.name == 'linux'
+        run: cargo nextest run --locked -p open-gpui-linux --all-features --lib -E 'test(restart_arguments_tests::)' --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Test macOS restart command native argument forwarding
+        if: matrix.name == 'macos'
+        run: cargo nextest run --locked -p open-gpui-macos --all-features --lib -E 'test(restart_arguments_tests::)' --test-threads=1 --no-fail-fast --no-tests fail
+
       - name: Test independent runtime platform conventions without test support
         run: cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features bench-support --test platform_info --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
 

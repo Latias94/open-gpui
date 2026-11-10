@@ -305,7 +305,7 @@ fn notification_response_shutdown_retires_later_and_new_responses(cx: &mut TestA
             let seen = seen.clone();
             move |response, app| {
                 seen.borrow_mut().push(response.tag);
-                app.shutdown_from_native_quit();
+                app.shutdown_for_native_exit_test();
             }
         })
     });
