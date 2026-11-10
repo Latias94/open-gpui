@@ -1,0 +1,9 @@
+{
+  "editor": {
+    "tab_size": 4,
+    "format_on_save": true,
+    "rulers": [80, 100]
+  },
+  "languages": ["Rust", "Markdown"],
+  "theme": "Default"
+}

@@ -146,6 +146,41 @@ equivalent stable `as_os_str().is_empty()` to preserve the declared compiler flo
 home-directory tests retain Open-GPUI names while ordinary consumers still see the real home.
 Qualification and any remaining platform scope belong to the existing plan/verification guide.
 
+## November 10 Utility Composition And Native Commands
+
+The complete utility successor follows fixed Zed target
+`635026fabc38440fce5e1767d125026a17b12012`: shell construction/capture from `ce48461eaa`,
+`c578f4d12b`, `7ca96c2a58`, `18f9d7e731`, `b41a8b60a4`, `4c6c4750d3` and complete target
+follow-ups; helper-owner moves `a873cf402c`, `c9d1d0ddfe`, `bcf6582ce3`, `d544470d1d`;
+JSON replacement/union `d61edb0825`/`b47d8ac455`; development assets `ee6badf4b0`,
+`d3e54c97f4`, `2551721adb`; fragment positions `54f2b5df1d`/`1102219f81`; environment names
+`1057c2cf3d`; and explicit Unix file-limit setup `d12e456be7`.
+
+Low-level command construction, Windows shell discovery and UTF-8/bounded-sort helpers move
+to open-gpui-core-util. Higher utilities forward those canonical implementations; duplicate
+definitions are removed. The existing injected shell-discovery test entry point retains the
+official strategy, priority, cache and return type. Qualified restart arguments, process
+reaping, RAII/hash/log behavior and product-neutral executable helper names remain with their
+current consumers. Markdown/redaction and the complete shell builder match the target source;
+other differences are extracted dependency names, retained consumer vocabulary and test seams.
+
+The complete official native/wasm module boundaries and canonical path reexports are adopted.
+JSON replacement and deduplicating union are separate policies. Development assets retain
+official executable-first runtime repository discovery, matching filters and get/iter/trait
+composition. Release and debug-embed use the dependency's derive. Macro crate paths name the
+extracted open_gpui_util owner; no build-time checkout is baked into development lookup.
+
+Compression is carried by the actual rust-embed owner. An ordinary consumer resolves 8.13 and
+exposes a required trait method absent in the root's original 8.11 family. The supported
+dependency floor becomes 8.13; the macro reexports its compressed-file/include-flate symbols
+and implements the same dynamic compressed(None) behavior as that version's own derive.
+This is one bounded dependency adaptation, without version-specific compatibility branches
+or direct pins of proc-macro implementation internals. Required compression dependencies keep
+their permissive licenses. The actual dependency-health gate finds four advisories in the
+initial compression selection. The root and independent locks select patched zstd 0.14.3,
+zstd-safe 8.2.0 and zstd-sys 2.1.2 without new advisory ignores; no source fork or replacement
+asset mechanism follows. Actual results and execution limits belong in the verification guide.
+
 ## November 10 Shared Apple Package
 
 The shared Apple successor adopts the Apache-2.0 `gpui_apple` framework closure as

@@ -20,29 +20,25 @@ path = "src/util.rs"
 doctest = true
 
 [features]
-test-support = ["rand", "open_gpui_util_macros"]
+test-support = ["rand", "open_gpui_util_macros", "open_gpui_path/test-support", "dep:tempfile"]
+debug-embed = ["rust-embed/debug-embed"]
 
 [dependencies]
 anyhow.workspace = true
-async_zip.workspace = true
 open_gpui_collections.workspace = true
 open_gpui_path = { workspace = true, features = ["serde"] }
 dunce.workspace = true
-futures-lite.workspace = true
-futures.workspace = true
 globset.workspace = true
 itertools.workspace = true
 log.workspace = true
 rand = { workspace = true, optional = true }
 regex.workspace = true
-rust-embed.workspace = true
+rust-embed = { workspace = true, features = ["compression"] }
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_json_lenient.workspace = true
-shlex.workspace = true
-take-until.workspace = true
-tempfile.workspace = true
+tempfile = { workspace = true, optional = true }
 unicase.workspace = true
 url.workspace = true
 percent-encoding.workspace = true
@@ -50,8 +46,11 @@ open_gpui_util_macros = { workspace = true, optional = true }
 open_gpui_core_util.workspace = true
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
+async_zip.workspace = true
+futures-lite.workspace = true
+futures.workspace = true
+shlex.workspace = true
 smol.workspace = true
-which.workspace = true
 async-fs.workspace = true
 walkdir.workspace = true
 dirs.workspace = true
@@ -59,16 +58,23 @@ dirs.workspace = true
 [target.'cfg(unix)'.dependencies]
 command-fds = "0.3.1"
 libc.workspace = true
-nix = { workspace = true, features = ["user"] }
+nix = { workspace = true, features = ["resource", "user"] }
+tempfile.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 async-process.workspace = true
 mach2.workspace = true
+which.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
+which.workspace = true
 
 [dev-dependencies]
 rand.workspace = true
 open_gpui_util_macros.workspace = true
 pretty_assertions.workspace = true
+tempfile.workspace = true
+
+[target.'cfg(unix)'.dev-dependencies]
+which.workspace = true

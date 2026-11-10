@@ -1859,6 +1859,34 @@ This command is a verification instruction. Results belong in the main qualifica
 constructing listeners alone does not qualify input dispatch, scrolling, tooltip behavior or
 native presentation.
 
+## Ordinary utility composition and assets
+
+The `utility_support` target executes settings replacement separately from deduplicating
+extension union, Markdown source fragments through canonical path navigation, and native
+environment-name acceptance with diagnostic redaction. It uses ordinary public dependencies
+without test-support. Canonical path reexports retain the same open-gpui-path type identity.
+
+Its asset workflow calls the public `fs_embed!` macro, inherent get/iter and the RustEmbed trait
+through `asset_str`, without a direct rust-embed dependency. A process-scoped temporary checkout
+contains the relocated test executable; a second checkout is its working directory. This proves
+executable-first repository selection with a `.git` file and avoids assuming that the shared
+build target belongs to the framework repository. Dev mode reads actual added/edited/deleted
+files with include/exclude parity. `debug-embed` reads the compiled bundle even when the runtime
+asset directory is absent or changes. The subprocess owns its environment and files. Unix also
+calls the explicit file-limit helper there; Windows execution does not qualify that branch.
+
+Run the two modes serially with the existing consumer lock and shared target:
+
+```text
+cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --test utility_support --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --features debug-embed --test utility_support --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --locked -p open-gpui-util --release --test embedded_assets --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+The focused library release integration separately compiles and reads the release bundle with
+an intentionally unusable runtime path. These are verification instructions; actual results
+and remaining foreign-runtime scope belong in the main qualification record.
+
 ## Ordinary public external drag consumer
 
 The `external_drag` target consumes ordinary public reexports without `test-support`,

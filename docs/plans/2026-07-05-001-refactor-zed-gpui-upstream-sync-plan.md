@@ -3067,7 +3067,8 @@ and external callsites. Account for Posix -> Unix, checked from_unix_str constru
 join/prefix return types, serde validation and changed error representation. Existing
 SanitizedPath, home-directory/compaction and application-facing path matching remain with their
 real utility/native-dialog consumers unless the official target provides a complete successor.
-Do not expose compatibility aliases or leave parallel normalization authorities. Qualified
+Do not restore the old path behavior or leave parallel normalization authorities. Official
+ergonomic reexports may forward the canonical package without introducing another type owner. Qualified
 restart/command and platform custody remain in their owning modules.
 
 The target's verbatim-join `&Path::is_empty` spelling uses the exact stable OsStr empty
@@ -3085,6 +3086,50 @@ local normalization and strict lexical validation distinct from PathStyle's port
 operation; the target deliberately exposes those different contracts. Reuse canonical types
 and byte decoding, not parallel type or parser implementations. Product-specific existence
 fallback remains outside this framework closure.
+
+### Utility Composition And Native Command Successor
+
+Continue after qualified portable paths at `a4e6fd03642` against the same fixed target. Adopt
+complete official shell construction and environment capture (`ce48461eaa`, `c578f4d12b`,
+`7ca96c2a58`, `18f9d7e731`, `b41a8b60a4`, `4c6c4750d3`), JSON replacement/separate array union
+(`d61edb0825`, `b47d8ac455`), runtime development assets/embedded mode (`ee6badf4b0`,
+`d3e54c97f4`, `2551721adb`), Markdown fragment positions (`54f2b5df1d`, `1102219f81`),
+environment-name validation (`1057c2cf3d`) and explicit Unix soft-file-limit setup
+(`d12e456be7`). Preserve complete official algorithms and regressions. Import shared helpers
+into their actual low-level owner and remove superseded utility definitions.
+
+Core utilities own native command construction, Windows shell discovery and portable UTF-8/
+bounded-sort helpers. Higher utility shell builders/capture consume that owner. Retain current
+qualified shell discovery/restart behavior only where it supplies an actual consumer contract;
+record each difference from the official source. Keep Darwin's shared process reaper and
+Windows Job/callback custody in their existing owners. The framework does not apply process
+file-limit policy implicitly; applications call the official Unix setup function explicitly.
+
+Use the complete official native/wasm module boundaries. JSON merge replaces colliding arrays;
+deduplicating union remains a distinct API. Canonical path reexports retain the official
+ergonomic surface without restoring the removed duplicate types or old unchecked behavior.
+Development assets use the official runtime repository lookup and include/exclude matcher,
+with compile-time embedding under release or debug-embed. Do not bake the framework checkout
+into downstream artifacts or create another asset/virtual-filesystem owner. Update the derive
+crate path to the extracted crate's name and carry the required compression feature at its
+actual dependency owner.
+
+The actual independently locked consumer exposes rust-embed 8.13's new required compressed
+method. Require that interface family at the resource macro owner, reexport its compressed
+symbols and preserve its own dynamic compressed(None) policy. Keep one implementation rather
+than pins of proc-macro internals or version-specific macro branches. The original root asset
+assertions qualify embedding/release; the isolated ordinary consumer owns actual development
+reads under the shared external target arrangement.
+
+Qualify affected utility/platform and ordinary public compilation plus relevant official
+regressions and actual extraction seams. Exercise settings composition, Markdown/path
+navigation, environment-name validation and external macro get/iter/trait composition. Since
+the build target is shared outside this framework checkout, asset qualification must establish
+the actual executable/repository root instead of changing production lookup to fit a fixture.
+Distinguish runtime development reads, debug embedding and release embedding. Cargo remains
+serial; unrelated UI/component/native-renderer matrices do not repeat. Actual foreign shell/
+file-limit execution, numerical costs, remaining backend/render owners and the real Nara
+GPU/Host/View consumer retain their own scope.
 
 ## Maintained Baseline Before Engine Adaptation
 

@@ -2604,7 +2604,7 @@ impl Platform for WindowsPlatform {
         let Some(app_path) = binary_path.or(self.app_path().log_err()) else {
             return;
         };
-        let powershell = ::open_gpui_util::shell::get_powershell();
+        let powershell = ::open_gpui_util::get_powershell().map(PathBuf::from);
 
         // Defer spawning to the foreground executor so it runs after the
         // current `AppCell` borrow is released. On Windows, `Command::spawn()`

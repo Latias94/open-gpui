@@ -188,7 +188,7 @@ rand = "0.9"
 rayon = "1.8"
 regex = "1.5"
 reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "33bc764aa15ff7b200bf7c93bd96e24878d53e14", package = "zed-reqwest", version = "0.12.15-zed", default-features = false, features = ["http2", "macos-system-configuration", "rustls-tls-native-roots", "socks", "stream"] }
-rust-embed = { version = "8.11", features = ["include-exclude"] }
+rust-embed = { version = "8.13", features = ["include-exclude"] }
 rustc-hash = "2.1.0"
 rustls = "0.23.26"
 rustls-platform-verifier = "0.7"
@@ -207,7 +207,6 @@ smol = "2.0"
 stacksafe = "1.0.2"
 strum = { version = "0.27.2", features = ["derive"] }
 syn = { version = "2.0.101", features = ["full", "extra-traits", "visit-mut"] }
-take-until = "0.2.0"
 tempfile = "3.20.0"
 tendril = "0.5"
 thiserror = "2.0.12"

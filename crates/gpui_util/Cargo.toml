@@ -15,5 +15,11 @@ description = "Utility helpers used by Open GPUI crates."
 log.workspace = true
 anyhow.workspace = true
 
+[target.'cfg(target_os = "windows")'.dependencies]
+which.workspace = true
+
+[target.'cfg(target_os = "windows")'.dev-dependencies]
+tempfile.workspace = true
+
 [lints]
 workspace = true

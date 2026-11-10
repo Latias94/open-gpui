@@ -2,7 +2,9 @@
 // pub use open_gpui_core_util::{FutureExt, Timeout, arc_cow::ArcCow};
 
 use std::{
-    env, fmt,
+    env,
+    ffi::OsStr,
+    fmt,
     ops::AddAssign,
     panic::Location,
     pin::Pin,
@@ -10,8 +12,156 @@ use std::{
     task::{Context, Poll},
     time::Instant,
 };
+#[cfg(target_os = "windows")]
+use std::{ffi::OsString, path::PathBuf, sync::LazyLock};
 
 pub mod arc_cow;
+
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000_u32;
+
+#[cfg(target_os = "windows")]
+pub fn new_std_command(program: impl AsRef<OsStr>) -> std::process::Command {
+    use std::os::windows::process::CommandExt;
+
+    let mut command = std::process::Command::new(program);
+    command.creation_flags(CREATE_NO_WINDOW);
+    command
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn new_std_command(program: impl AsRef<OsStr>) -> std::process::Command {
+    std::process::Command::new(program)
+}
+
+#[cfg(target_os = "windows")]
+pub fn get_powershell() -> Option<String> {
+    static POWERSHELL: LazyLock<Option<String>> = LazyLock::new(|| {
+        find_powershell(
+            |key| std::env::var_os(key),
+            |program| which::which_global(program).ok(),
+        )
+        .map(|path| path.to_string_lossy().trim().to_owned())
+        .inspect(|shell| log::info!("Found powershell in: {}", shell))
+    });
+
+    (*POWERSHELL).clone()
+}
+
+#[cfg(target_os = "windows")]
+fn find_powershell(
+    var_os: impl Fn(&str) -> Option<OsString>,
+    which_global: impl Fn(&str) -> Option<PathBuf>,
+) -> Option<PathBuf> {
+    fn find_pwsh_in_programfiles(
+        program_files: Option<OsString>,
+        find_preview: bool,
+    ) -> Option<PathBuf> {
+        let install_base_dir = PathBuf::from(program_files?).join("PowerShell");
+        install_base_dir
+            .read_dir()
+            .ok()?
+            .filter_map(Result::ok)
+            .filter(|entry| matches!(entry.file_type(), Ok(ft) if ft.is_dir()))
+            .filter_map(|entry| {
+                let dir_name = entry.file_name();
+                let dir_name = dir_name.to_string_lossy();
+
+                let version = if find_preview {
+                    let dash_index = dir_name.find('-')?;
+                    if &dir_name[dash_index + 1..] != "preview" {
+                        return None;
+                    };
+                    dir_name[..dash_index].parse::<u32>().ok()?
+                } else {
+                    dir_name.parse::<u32>().ok()?
+                };
+
+                let exe_path = entry.path().join("pwsh.exe");
+                if exe_path.is_file() {
+                    Some((version, exe_path))
+                } else {
+                    None
+                }
+            })
+            .max_by_key(|(version, _)| *version)
+            .map(|(_, path)| path)
+    }
+
+    fn find_pwsh_in_msix(local_app_data: Option<OsString>, find_preview: bool) -> Option<PathBuf> {
+        let msix_app_dir = PathBuf::from(local_app_data?).join("Microsoft\\WindowsApps");
+        let package_family_name = if find_preview {
+            "Microsoft.PowerShellPreview_8wekyb3d8bbwe"
+        } else {
+            "Microsoft.PowerShell_8wekyb3d8bbwe"
+        };
+        let pwsh_exe = msix_app_dir.join(package_family_name).join("pwsh.exe");
+        pwsh_exe.exists().then_some(pwsh_exe)
+    }
+
+    fn find_pwsh_in_scoop(
+        scoop: Option<OsString>,
+        user_profile: Option<OsString>,
+    ) -> Option<PathBuf> {
+        // Scoop can be installed to a custom location; $SCOOP points at the
+        // scoop root in that case and defaults to %USERPROFILE%\scoop otherwise.
+        let scoop_dir = scoop
+            .map(PathBuf::from)
+            .or_else(|| user_profile.map(|home| PathBuf::from(home).join("scoop")))?;
+        let pwsh_exe = scoop_dir.join("shims").join("pwsh.exe");
+        pwsh_exe.is_file().then_some(pwsh_exe)
+    }
+
+    fn find_pwsh_in_dotnet_tools(user_profile: Option<OsString>) -> Option<PathBuf> {
+        let pwsh_exe = PathBuf::from(user_profile?).join(".dotnet\\tools\\pwsh.exe");
+        pwsh_exe.is_file().then_some(pwsh_exe)
+    }
+
+    fn find_windows_powershell(system_root: Option<OsString>) -> Option<PathBuf> {
+        let powershell =
+            PathBuf::from(system_root?).join("System32\\WindowsPowerShell\\v1.0\\powershell.exe");
+        powershell.is_file().then_some(powershell)
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    let alternate_program_files = "ProgramFiles(x86)";
+    #[cfg(target_pointer_width = "32")]
+    let alternate_program_files = "ProgramW6432";
+
+    find_pwsh_in_programfiles(var_os("ProgramFiles"), false)
+        .or_else(|| find_pwsh_in_programfiles(var_os(alternate_program_files), false))
+        .or_else(|| find_pwsh_in_msix(var_os("LOCALAPPDATA"), false))
+        .or_else(|| find_pwsh_in_programfiles(var_os("ProgramFiles"), true))
+        .or_else(|| find_pwsh_in_msix(var_os("LOCALAPPDATA"), true))
+        .or_else(|| find_pwsh_in_programfiles(var_os(alternate_program_files), true))
+        .or_else(|| find_pwsh_in_scoop(var_os("SCOOP"), var_os("USERPROFILE")))
+        .or_else(|| find_pwsh_in_dotnet_tools(var_os("USERPROFILE")))
+        .or_else(|| which_global("pwsh.exe"))
+        .or_else(|| which_global("powershell.exe"))
+        .or_else(|| find_windows_powershell(var_os("SystemRoot")))
+}
+
+#[cfg(target_os = "windows")]
+pub fn get_windows_system_shell() -> String {
+    static CMD: LazyLock<String> = LazyLock::new(|| {
+        log::warn!("Powershell not found, falling back to `cmd`");
+        let system_root = std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into());
+        PathBuf::from(system_root)
+            .join("System32\\cmd.exe")
+            .to_string_lossy()
+            .into_owned()
+    });
+    get_powershell().unwrap_or_else(|| (*CMD).clone())
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod powershell_tests;
+
+#[inline]
+pub const fn is_utf8_char_boundary(u8: u8) -> bool {
+    // This is bit magic equivalent to: b < 128 || b >= 192
+    (u8 as i8) >= -0x40
+}
 
 pub fn post_inc<T: From<u8> + AddAssign<T> + Copy>(value: &mut T) -> T {
     let prev = *value;
@@ -469,6 +619,28 @@ fn type_id_hasher() {
     verify_hashing_with(TypeId::of::<str>());
     verify_hashing_with(TypeId::of::<&str>());
     verify_hashing_with(TypeId::of::<Vec<u8>>());
+}
+
+pub fn truncate_to_bottom_n_sorted_by<T, F>(items: &mut Vec<T>, limit: usize, compare: &F)
+where
+    F: Fn(&T, &T) -> std::cmp::Ordering,
+{
+    if limit == 0 {
+        items.clear();
+    }
+    if items.len() <= limit {
+        items.sort_by(compare);
+        return;
+    }
+    // When limit is near to items.len() it may be more efficient to sort the whole list and
+    // truncate, rather than always doing selection first as is done below. It's hard to analyze
+    // where the threshold for this should be since the quickselect style algorithm used by
+    // `select_nth_unstable_by` makes the prefix partially sorted, and so its work is not wasted -
+    // the expected number of comparisons needed by `sort_by` is less than it is for some arbitrary
+    // unsorted input.
+    items.select_nth_unstable_by(limit, compare);
+    items.truncate(limit);
+    items.sort_by(compare);
 }
 
 #[cfg(test)]

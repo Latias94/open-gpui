@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- `fs_embed!` reads development assets from the runtime checkout and embeds them in release builds or with `debug-embed`. It exposes the same get/iter and asset trait interface with matching include/exclude filters.
+
+- JSON array union, Markdown source-position fragments, environment-name validation and explicit Unix open-file-limit setup follow the complete official utility APIs. Native command and Windows shell helpers share the low-level core utility owner.
+
 - `open-gpui-path` provides portable Unix/Windows path operations, checked normalized relative paths, local absolute paths, native byte conversion and optional serde. Utility matchers, ordering and file-position parsing consume these canonical path types.
 
 - Path matchers can skip invalid glob patterns with an error callback. Extension sorting and host-independent file-position parsing follow the complete official utility owner.
@@ -59,7 +63,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Breaking Changes and Migration Notes
 
-- Import relative path types and their conversion trait from `open_gpui_path::{rel_path, PathExt}`; `open_gpui_util::rel_path` is removed. `PathStyle::Posix` becomes `Unix`, and its join/prefix APIs follow the portable package's checked component semantics. Use `RelPath::from_unix_str` for already-normalized input. The utility `normalize_path` function moves from the root to `open_gpui_util::paths`; no old root alias remains. Handle `SortOrder::Extension` in exhaustive matches.
+- `merge_json_value_into` replaces colliding arrays instead of appending them. Use `union_json_value_into` for deduplicating array composition. Native shell/process modules are unavailable on wasm; the unused `take_until` utility reexport is removed.
+
+- On Windows, use the canonical `open_gpui_util::get_powershell()` or `open_gpui_core_util::get_powershell()` returning `Option<String>` instead of the old shell-module `Option<PathBuf>` API. Convert to `PathBuf` where a native consumer requires it. `get_windows_bash` is Windows-only.
+
+- Import canonical relative path types and their conversion trait from `open_gpui_path::{rel_path, PathExt}`; `open_gpui_util` also provides the official ergonomic reexports of those same types. `PathStyle::Posix` becomes `Unix`, and its join/prefix APIs follow the portable package's checked component semantics. Use `RelPath::from_unix_str` for already-normalized input. The utility `normalize_path` function moves from the root to `open_gpui_util::paths`; no old root alias remains. Handle `SortOrder::Extension` in exhaustive matches.
 
 - GitHub APIs move out of `open_gpui_http_client::{github, github_download}` into `open_gpui_github_releases`. Pass a `BackgroundExecutor` to `download_server_binary` / `download_server_raw_binary` and await their returned `Task`. The lower HTTP package no longer reexports `anyhow` helpers or owns native archive/download dependencies.
 

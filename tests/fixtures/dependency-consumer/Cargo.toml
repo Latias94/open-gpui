@@ -13,6 +13,7 @@ rust-version = "1.93"
 publish = false
 
 [features]
+debug-embed = ["open_gpui_util/debug-embed"]
 avif-encoding = ["dep:image"]
 profiler = ["open_gpui/profiler"]
 vulkan-surface = ["wgpu/vulkan", "wgpu/wgsl"]
@@ -39,6 +40,7 @@ wgpu = { git = "https://github.com/gfx-rs/wgpu", rev = "cddb2f5d80dc0009b2ef6767
 [dev-dependencies]
 anyhow = "1.0"
 serde_json = "1.0"
+tempfile = "3.20.0"
 
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
 async-process = "2.5.0"

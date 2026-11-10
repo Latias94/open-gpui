@@ -1,0 +1,1 @@
+Authoring notes are outside the shipped settings and documentation bundle.
