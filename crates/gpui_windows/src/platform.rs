@@ -1206,6 +1206,7 @@ impl WindowsPlatform {
         options: WindowParams,
         expected_generation: Option<u64>,
     ) -> Result<Box<dyn PlatformWindow>> {
+        self.validate_window_kind(&options.kind)?;
         anyhow::ensure!(
             !self.inner.native_finalization_started.get() && !self.terminal_shutdown_complete.get(),
             "cannot open windows after terminal shutdown has started"
@@ -2748,6 +2749,13 @@ impl Platform for WindowsPlatform {
         options: WindowParams,
     ) -> Result<Box<dyn PlatformWindow>> {
         self.open_window_against_display_generation(handle, options, None)
+    }
+
+    fn validate_window_kind(&self, kind: &WindowKind) -> Result<()> {
+        if matches!(kind, WindowKind::AnchoredPopup(_)) {
+            return Err(open_gpui::popup::PopupNotSupportedError.into());
+        }
+        Ok(())
     }
 
     fn open_window_with_display_snapshot(

@@ -153,6 +153,17 @@ impl DisplayConnection {
         )
     }
 
+    pub(crate) fn validate_window_kind(&self, kind: &WindowKind) -> anyhow::Result<()> {
+        match self {
+            #[cfg(feature = "wayland")]
+            Self::Wayland(_) => Ok(()),
+            _ if matches!(kind, WindowKind::AnchoredPopup(_)) => {
+                Err(open_gpui::popup::PopupNotSupportedError.into())
+            }
+            _ => Ok(()),
+        }
+    }
+
     pub(crate) fn active_window(&self) -> Option<AnyWindowHandle> {
         dispatch!(self, connection => connection.active_window(), headless => None)
     }

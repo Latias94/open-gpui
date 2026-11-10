@@ -1805,13 +1805,19 @@ impl App {
     /// Opens a new window with the given option and the root view returned by the given function.
     /// The function is invoked with a `Window`, which can be used to interact with window-specific
     /// functionality.
+    ///
+    /// Backend error types remain downcastable. Use [`App::open_window_detailed`] to inspect the
+    /// synchronous creation stage through [`WindowOpenError`].
     pub fn open_window<V: 'static + Render>(
         &mut self,
         options: crate::WindowOptions,
         build_root_view: impl FnOnce(&mut Window, &mut App) -> Entity<V>,
     ) -> anyhow::Result<WindowHandle<V>> {
         self.open_window_detailed(options, build_root_view)
-            .map_err(Into::into)
+            .map_err(|error| {
+                let context = error.to_string();
+                error.source.context(context)
+            })
     }
 
     /// Opens a window and preserves the synchronous creation stage on failure.

@@ -61,7 +61,9 @@ use wayland_protocols::xdg::activation::v1::client::{xdg_activation_token_v1, xd
 use wayland_protocols::xdg::decoration::zv1::client::{
     zxdg_decoration_manager_v1, zxdg_toplevel_decoration_v1,
 };
-use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
+use wayland_protocols::xdg::shell::client::{
+    xdg_popup, xdg_positioner, xdg_surface, xdg_toplevel, xdg_wm_base,
+};
 use wayland_protocols::xdg::system_bell::v1::client::xdg_system_bell_v1;
 use wayland_protocols::{
     wp::cursor_shape::v1::client::{wp_cursor_shape_device_v1, wp_cursor_shape_manager_v1},
@@ -78,7 +80,7 @@ use xkbcommon::xkb::{self, KEYMAP_COMPILE_NO_FLAGS, Keycode};
 
 use super::{
     display::{WaylandDisplay, refresh_interval_from_millihertz},
-    window::{ImeInput, WaylandTransientOwner, WaylandWindowStatePtr},
+    window::{ImeInput, WaylandWindowStatePtr},
 };
 
 use crate::linux::{
@@ -925,7 +927,7 @@ impl WaylandClientState {
     fn activation_context(&self) -> Option<ActivationContext> {
         let context = self.serial_tracker.activation_context()?;
         let window = self.windows.get(&context.requesting_surface.id())?;
-        (!window.interaction_is_quiesced()).then_some(context)
+        (window.is_live() && !window.is_blocked()).then_some(context)
     }
 
     fn hide_cursor_until_mouse_moves(&mut self) {
@@ -1350,6 +1352,16 @@ impl WaylandConnection {
         !state.windows.is_empty() || Rc::strong_count(&state.window_lease) > 1
     }
 
+    #[cfg(test)]
+    pub(crate) fn window_for_test(&self, handle: AnyWindowHandle) -> Option<WaylandWindowStatePtr> {
+        self.0
+            .borrow()
+            .windows
+            .values()
+            .find(|window| window.handle() == handle)
+            .cloned()
+    }
+
     pub(crate) fn did_attach(&self) {
         self.0.borrow_mut().attached = true;
     }
@@ -1364,6 +1376,7 @@ fn wayland_window_capabilities(
     activation_protocol_available: bool,
 ) -> PlatformWindowCapabilities {
     let layer_shell = matches!(kind, WindowKind::LayerShell(_));
+    let popup = matches!(kind, WindowKind::AnchoredPopup(_));
     let mut mutations = PlatformWindowMutationCapabilities {
         size: WindowMutationSupport::CreationOnly,
         windowed: WindowMutationSupport::CreationOnly,
@@ -1375,16 +1388,25 @@ fn wayland_window_capabilities(
         coordinate_space: WindowCoordinateSpace::WindowLocal,
         ..Default::default()
     };
-    if layer_shell {
+    if layer_shell || popup {
         mutations.windowed = WindowMutationSupport::Unsupported;
         mutations.maximized = WindowMutationSupport::Unsupported;
         mutations.fullscreen = WindowMutationSupport::Unsupported;
         mutations.restore_bounds = WindowMutationSupport::Unsupported;
     }
+    if popup {
+        mutations.size = WindowMutationSupport::Live;
+        mutations.windowed = WindowMutationSupport::CreationOnly;
+    }
     PlatformWindowCapabilities {
         creation: PlatformWindowCreationCapabilities {
-            focus_on_appearing: WindowCreationSupport::Unsupported,
-            transient_for: if layer_shell {
+            focus_on_appearing: if matches!(kind, WindowKind::AnchoredPopup(options) if !options.grab)
+            {
+                WindowCreationSupport::Supported
+            } else {
+                WindowCreationSupport::Unsupported
+            },
+            transient_for: if layer_shell || popup {
                 WindowCreationSupport::Unsupported
             } else {
                 WindowCreationSupport::Supported
@@ -1394,11 +1416,28 @@ fn wayland_window_capabilities(
                 WindowInitialPresentationOrder::PresentationEstablishesVisibility,
         },
         mutations,
-        activation: if !layer_shell && activation_protocol_available {
+        activation: if !layer_shell && !popup && activation_protocol_available {
             PlatformWindowActivationSupport::Observed
         } else {
             PlatformWindowActivationSupport::Unsupported
         },
+    }
+}
+
+fn wayland_parent_handle(
+    kind: &WindowKind,
+    transient_for: Option<AnyWindowHandle>,
+) -> anyhow::Result<Option<AnyWindowHandle>> {
+    match kind {
+        WindowKind::AnchoredPopup(options) => {
+            anyhow::ensure!(
+                transient_for.is_none(),
+                "popup parent cannot be combined with a transient owner"
+            );
+            Ok(Some(options.parent))
+        }
+        WindowKind::LayerShell(_) => Ok(None),
+        _ => Ok(transient_for),
     }
 }
 
@@ -1458,29 +1497,39 @@ impl WaylandConnection {
     ) -> anyhow::Result<Box<dyn PlatformWindow>> {
         let mut state = self.0.borrow_mut();
 
-        let transient_owner = if matches!(&params.kind, WindowKind::LayerShell(_)) {
-            None
-        } else {
-            params
-                .transient_for
-                .map(|owner| {
-                    let owner_window = state
-                        .windows
-                        .values()
-                        .find(|window| window.handle() == owner)
-                        .ok_or_else(|| {
-                            anyhow::anyhow!("Wayland transient owner is no longer open")
-                        })?;
-                    let toplevel = owner_window.toplevel().ok_or_else(|| {
-                        anyhow::anyhow!("Wayland transient owner has no XDG toplevel role")
-                    })?;
-                    Ok::<_, anyhow::Error>(WaylandTransientOwner {
-                        handle: owner,
-                        toplevel,
-                    })
-                })
-                .transpose()?
+        let parent = wayland_parent_handle(&params.kind, params.transient_for)?
+            .map(|owner| {
+                let parent = state
+                    .windows
+                    .values()
+                    .find(|window| window.handle() == owner && window.is_live())
+                    .cloned()
+                    .context("Wayland parent is no longer open or its generation is stale")?;
+                if matches!(&params.kind, WindowKind::AnchoredPopup(_)) {
+                    parent.ensure_popup_parent_mapped()?;
+                } else {
+                    anyhow::ensure!(
+                        parent.toplevel().is_some(),
+                        "Wayland transient owner has no XDG toplevel role"
+                    );
+                }
+                Ok::<_, anyhow::Error>(parent)
+            })
+            .transpose()?;
+        let popup_grab = match &params.kind {
+            WindowKind::AnchoredPopup(options) if options.grab => state
+                .activation_context()
+                .map(|context| (context.serial.as_raw(), state.wl_seat.clone())),
+            _ => None,
         };
+        if popup_grab.is_some() {
+            anyhow::ensure!(
+                parent
+                    .as_ref()
+                    .is_some_and(WaylandWindowStatePtr::accepts_popup_grab),
+                "popup grab requires a toplevel, layer surface, or the topmost grabbing popup"
+            );
+        }
 
         let target_output = params.display_id.and_then(|display_id| {
             let target_protocol_id: u64 = display_id.into();
@@ -1501,7 +1550,8 @@ impl WaylandConnection {
             WaylandClientStatePtr(Rc::downgrade(&self.0)),
             params,
             appearance,
-            transient_owner,
+            parent,
+            popup_grab,
             target_output,
             state.window_lease.clone(),
         )?;
@@ -1642,7 +1692,15 @@ impl WaylandConnection {
         kind: &WindowKind,
         _display_id: Option<DisplayId>,
     ) -> PlatformWindowCapabilities {
-        wayland_window_capabilities(kind, self.0.borrow().globals.activation.is_some())
+        let state = self.0.borrow();
+        let mut capabilities =
+            wayland_window_capabilities(kind, state.globals.activation.is_some());
+        if matches!(kind, WindowKind::AnchoredPopup(_))
+            && state.globals.wm_base.version() < xdg_popup::REQ_REPOSITION_SINCE
+        {
+            capabilities.mutations.size = WindowMutationSupport::CreationOnly;
+        }
+        capabilities
     }
 
     pub(crate) fn mouse_button_is_pressed(&self, button: MouseButton) -> Option<bool> {
@@ -1827,6 +1885,7 @@ delegate_noop!(WaylandClientStatePtr: ignore wl_region::WlRegion);
 delegate_noop!(WaylandClientStatePtr: ignore wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1);
 delegate_noop!(WaylandClientStatePtr: ignore zxdg_decoration_manager_v1::ZxdgDecorationManagerV1);
 delegate_noop!(WaylandClientStatePtr: ignore zwlr_layer_shell_v1::ZwlrLayerShellV1);
+delegate_noop!(WaylandClientStatePtr: ignore xdg_positioner::XdgPositioner);
 delegate_noop!(WaylandClientStatePtr: ignore org_kde_kwin_blur_manager::OrgKdeKwinBlurManager);
 delegate_noop!(WaylandClientStatePtr: ignore zwp_text_input_manager_v3::ZwpTextInputManagerV3);
 delegate_noop!(WaylandClientStatePtr: ignore org_kde_kwin_blur::OrgKdeKwinBlur);
@@ -2017,8 +2076,7 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ObjectId> for WaylandClientStatePtr {
         let should_close = window.handle_toplevel_event(event);
 
         if should_close {
-            // The close logic will be handled in drop_window()
-            window.close();
+            window.require_close();
         }
     }
 }
@@ -2042,8 +2100,26 @@ impl Dispatch<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, ObjectId> for WaylandCl
         let should_close = window.handle_layersurface_event(event);
 
         if should_close {
-            // The close logic will be handled in drop_window()
-            window.close();
+            window.require_close();
+        }
+    }
+}
+
+impl Dispatch<xdg_popup::XdgPopup, ObjectId> for WaylandClientStatePtr {
+    fn event(
+        this: &mut Self,
+        _: &xdg_popup::XdgPopup,
+        event: xdg_popup::Event,
+        surface_id: &ObjectId,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let client = this.get_client();
+        let window = get_window(&mut client.borrow_mut(), surface_id);
+        if let Some(window) = window
+            && window.handle_popup_event(event)
+        {
+            window.require_close();
         }
     }
 }
@@ -3597,6 +3673,66 @@ mod activation_routing_tests {
 mod window_capability_tests {
     use super::*;
     use open_gpui::layer_shell::LayerShellOptions;
+
+    #[test]
+    fn popup_uses_its_original_parent_and_dialog_keeps_explicit_transient_routing() {
+        let options = super::super::popup::test_options();
+        let owner = options.parent;
+        let popup = WindowKind::AnchoredPopup(options);
+        assert_eq!(wayland_parent_handle(&popup, None).unwrap(), Some(owner));
+        assert!(wayland_parent_handle(&popup, Some(owner)).is_err());
+        assert_eq!(
+            wayland_parent_handle(&WindowKind::Dialog, Some(owner)).unwrap(),
+            Some(owner)
+        );
+        assert_eq!(
+            wayland_parent_handle(&WindowKind::Dialog, None).unwrap(),
+            None
+        );
+        assert_eq!(
+            wayland_parent_handle(&WindowKind::Floating, None).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn popup_capabilities_admit_size_without_toplevel_state_or_activation() {
+        let kind = WindowKind::AnchoredPopup(super::super::popup::test_options());
+        let capabilities = wayland_window_capabilities(&kind, true);
+        assert_eq!(
+            capabilities.creation.focus_on_appearing,
+            WindowCreationSupport::Supported
+        );
+        let mut grabbing = super::super::popup::test_options();
+        grabbing.grab = true;
+        assert_eq!(
+            wayland_window_capabilities(&WindowKind::AnchoredPopup(grabbing), true)
+                .creation
+                .focus_on_appearing,
+            WindowCreationSupport::Unsupported,
+        );
+        assert_eq!(capabilities.mutations.size, WindowMutationSupport::Live);
+        assert_eq!(
+            capabilities.mutations.fullscreen,
+            WindowMutationSupport::Unsupported
+        );
+        assert_eq!(
+            capabilities.mutations.maximized,
+            WindowMutationSupport::Unsupported
+        );
+        assert_eq!(
+            capabilities.mutations.restore_bounds,
+            WindowMutationSupport::Unsupported
+        );
+        assert_eq!(
+            capabilities.creation.transient_for,
+            WindowCreationSupport::Unsupported
+        );
+        assert_eq!(
+            capabilities.activation,
+            PlatformWindowActivationSupport::Unsupported
+        );
+    }
 
     fn expected_wayland_capabilities(layer_shell: bool) -> PlatformWindowMutationCapabilities {
         let toplevel_state = if layer_shell {

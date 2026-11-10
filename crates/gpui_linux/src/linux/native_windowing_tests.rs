@@ -13,6 +13,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[path = "native_popup_tests.rs"]
+mod native_popup_tests;
+
 const CHILD: &str = "GPUI_LINUX_NATIVE_WINDOWING_SCENARIO";
 const EXEC_SOCKET: &str = "GPUI_LINUX_NATIVE_WINDOWING_SOCKET_IDENTITY";
 const MISSING_STARTUP_DISPLAY: &str = "/gpui-test/missing-owned-startup-socket";

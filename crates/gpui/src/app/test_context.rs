@@ -933,6 +933,16 @@ impl TestAppContext {
             .terminal_transition_started()
     }
 
+    /// Fires an irreversible close request for a live test window, bypassing its user veto.
+    ///
+    /// This invokes the backend's request callback without reporting a native terminal event.
+    /// Presentation shutdown and native retirement continue through the existing window owner;
+    /// the terminal callback is delivered only when that owner actually closes.
+    /// Call this outside an active App update. Returns whether the request callback was consumed.
+    pub fn simulate_window_close_required(&self, window: AnyWindowHandle) -> bool {
+        self.test_window(window).fire_close_required()
+    }
+
     /// Simulates a user close request and exposes both App and native outcomes.
     ///
     /// Use this when a test must distinguish a native terminal veto from a rejected

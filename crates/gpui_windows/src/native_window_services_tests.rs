@@ -45,6 +45,15 @@ fn native_window_services_keep_unsupported_restore_and_queued_attention_lifetime
                 window.restore_native_window_state(&state);
                 drop(state);
                 assert_eq!(window.native_window_state(), None);
+                assert!(!window.is_simple_fullscreen());
+                window.toggle_simple_fullscreen();
+                window.set_input_region(Some(&[Bounds::new(
+                    point(px(2.0), px(3.0)),
+                    size(px(24.0), px(18.0)),
+                )]));
+                window.set_input_region(Some(&[]));
+                window.set_input_region(None);
+                window.set_exclusive_zone(px(12.0));
                 window.bounds()
             })
             .expect("unsupported native restore should accept its public request")
@@ -67,11 +76,54 @@ fn native_window_services_keep_unsupported_restore_and_queued_attention_lifetime
         NativeBoundaryDisposition::Rejected
     );
     assert_eq!(restoration[0].domain_generation, None);
+    let fullscreen = diagnostics
+        .terminal
+        .iter()
+        .filter(|diagnostic| {
+            diagnostic.target == NativeBoundaryTarget::Window(handle.window_id())
+                && diagnostic.kind
+                    == NativeBoundaryKind::Command(
+                        NativePlatformCommandKind::ToggleSimpleFullscreen,
+                    )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(fullscreen.len(), 1);
+    assert_eq!(
+        fullscreen[0].disposition,
+        NativeBoundaryDisposition::Rejected
+    );
+    assert_eq!(fullscreen[0].domain_generation, None);
     assert!(is_registered(&platform, hwnd));
+    let registrations = platform.raw_window_handles.read().len();
+    let popup = app
+        .update_for_test(|app| {
+            app.open_window(
+                WindowOptions {
+                    kind: WindowKind::AnchoredPopup(open_gpui::popup::PopupOptions {
+                        parent: handle.into(),
+                        anchor_rect: Bounds::new(point(px(2.0), px(3.0)), size(px(24.0), px(18.0))),
+                        anchor: open_gpui::popup::PopupAnchor::BottomLeft,
+                        gravity: open_gpui::popup::PopupGravity::BottomRight,
+                        constraint_adjustment: open_gpui::popup::PopupConstraintAdjustment::SLIDE_X,
+                        offset: point(px(0.0), px(4.0)),
+                        grab: false,
+                    }),
+                    show: false,
+                    focus_on_appearing: false,
+                    ..WindowOptions::default()
+                },
+                |_, app| app.new(|_| Empty),
+            )
+        })
+        .expect_err("unsupported native popup must fail before construction");
+    assert!(popup.is::<open_gpui::popup::PopupNotSupportedError>());
+    assert_eq!(platform.raw_window_handles.read().len(), registrations);
+    assert_eq!(app.update_for_test(|app| app.windows().len()), 1);
     app.update_for_test(|app| {
         handle
             .update(app, |_, window, app| {
                 assert_eq!(window.bounds(), bounds);
+                assert!(!window.is_simple_fullscreen());
                 window.request_attention();
                 window.remove_window(app);
             })

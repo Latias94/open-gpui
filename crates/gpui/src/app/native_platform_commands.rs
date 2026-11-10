@@ -501,6 +501,9 @@ impl NativePlatformCommand {
             PlatformWindowCommand::RestoreNativeWindowState(_) => {
                 (NativePlatformCommandKind::RestoreNativeWindowState, None)
             }
+            PlatformWindowCommand::ToggleSimpleFullscreen => {
+                (NativePlatformCommandKind::ToggleSimpleFullscreen, None)
+            }
         };
         NativeBoundaryDiagnostic::pending(
             sequence,

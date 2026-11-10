@@ -2,7 +2,10 @@ mod window;
 
 use std::rc::Rc;
 
-use open_gpui::{AnyWindowHandle, PlatformDisplay, PlatformWindow, WindowParams};
+use open_gpui::{
+    AnyWindowHandle, PlatformDisplay, PlatformWindow, WindowKind, WindowParams,
+    popup::PopupNotSupportedError,
+};
 
 pub(crate) use window::HeadlessWindow;
 
@@ -39,6 +42,9 @@ impl HeadlessConnection {
         _handle: AnyWindowHandle,
         params: WindowParams,
     ) -> anyhow::Result<Box<dyn PlatformWindow>> {
+        if matches!(&params.kind, WindowKind::AnchoredPopup(_)) {
+            return Err(PopupNotSupportedError.into());
+        }
         Ok(Box::new(HeadlessWindow::new(
             params,
             self.window_lease.clone(),

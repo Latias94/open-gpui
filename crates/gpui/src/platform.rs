@@ -4,6 +4,9 @@ mod keyboard;
 mod keystroke;
 mod platform_info;
 
+/// Types for configuring parent-anchored popup windows such as menus, dropdowns and tooltips.
+pub mod popup;
+
 #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
 mod threaded_dispatcher;
 
@@ -3799,6 +3802,13 @@ pub trait Platform: 'static {
     ) -> PlatformWindowCapabilities {
         PlatformWindowCapabilities::default()
     }
+    /// Validates a window kind before option capability checks or native resource creation.
+    ///
+    /// Backends without anchored popup support return [`popup::PopupNotSupportedError`] here,
+    /// so callers can identify that error even when other creation options are unsupported.
+    fn validate_window_kind(&self, _kind: &WindowKind) -> anyhow::Result<()> {
+        Ok(())
+    }
     fn mouse_button_is_pressed(&self, _button: MouseButton) -> Option<bool> {
         None
     }
@@ -4361,6 +4371,7 @@ pub enum PlatformWindowCommand {
     StartWindowMove,
     StartWindowResize(ResizeEdge),
     RestoreNativeWindowState(Arc<[u8]>),
+    ToggleSimpleFullscreen,
 }
 
 impl PlatformWindowCommand {
@@ -4374,6 +4385,7 @@ impl PlatformWindowCommand {
                 | Self::ShowWindowMenu(_)
                 | Self::StartWindowMove
                 | Self::StartWindowResize(_)
+                | Self::ToggleSimpleFullscreen
         )
     }
 }
@@ -6019,6 +6031,13 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     ) {
     }
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>);
+    /// Registers an irreversible request to retire this window through GPUI's normal shutdown.
+    ///
+    /// Backends use this when a parent is retiring or the compositor dismisses a popup or layer
+    /// surface. Unlike [`Self::on_should_close`], this request cannot be vetoed. The native
+    /// surface must remain owned until presentation shutdown and native retirement complete;
+    /// [`Self::on_close`] reports that later terminal, not this request.
+    fn on_close_required(&self, _callback: Box<dyn FnOnce()>) {}
     fn on_hit_test_window_control(&self, callback: Box<dyn FnMut() -> Option<WindowControlArea>>);
     /// Registers the single-shot terminal callback for this platform-window authority.
     ///
@@ -6055,6 +6074,10 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     }
     fn set_edited(&mut self, _edited: bool) {}
     fn set_document_path(&self, _path: Option<&std::path::Path>) {}
+    fn toggle_simple_fullscreen(&self) {}
+    fn is_simple_fullscreen(&self) -> bool {
+        false
+    }
     #[cfg(target_os = "macos")]
     fn set_traffic_light_position(&self, _position: Point<Pixels>) {}
     fn show_character_palette(&self) {}
@@ -6082,6 +6105,10 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         self.window_bounds()
     }
     fn request_decorations(&self, _decorations: WindowDecorations) {}
+    fn set_exclusive_zone(&self, _zone: Pixels) {}
+    #[cfg(all(target_os = "linux", feature = "wayland"))]
+    fn set_exclusive_edge(&self, _edge: layer_shell::Anchor) {}
+    fn set_input_region(&self, _region: Option<&[Bounds<Pixels>]>) {}
 
     /// Returns whether this window can promote an internal file drag to its native platform.
     fn can_start_external_drag(&self) -> bool {
@@ -7771,6 +7798,8 @@ pub struct WindowOptions {
     /// Whether the window should request focus when it first appears.
     ///
     /// This is a one-shot creation policy and does not affect later activation.
+    /// Passive anchored popups (`grab: false`) always use a non-activating first appearance,
+    /// including when this field keeps its default. Grabbing popups use their native grab policy.
     pub focus_on_appearing: bool,
 
     /// Lifetime activation and click-focus policy.
@@ -8008,6 +8037,14 @@ pub enum WindowKind {
     /// use sparingly!
     PopUp,
 
+    /// A parent-anchored, platform-native popup window for menus, comboboxes, context menus and
+    /// tooltips. Unlike [`WindowKind::PopUp`], it is positioned relative to a parent window.
+    ///
+    /// The popup's size comes from [`WindowOptions::window_bounds`], whose origin is ignored.
+    /// See [`popup::PopupOptions`] for the placement options. Platforms without a native
+    /// implementation reject it with [`popup::PopupNotSupportedError`].
+    AnchoredPopup(popup::PopupOptions),
+
     /// A floating window that appears on top of its parent window
     Floating,
 
@@ -8027,6 +8064,7 @@ impl WindowKind {
         match self {
             Self::Normal => "normal",
             Self::PopUp => "pop-up",
+            Self::AnchoredPopup(_) => "anchored-popup",
             Self::Floating => "floating",
             #[cfg(all(target_os = "linux", feature = "wayland"))]
             Self::LayerShell(_) => "layer-shell",

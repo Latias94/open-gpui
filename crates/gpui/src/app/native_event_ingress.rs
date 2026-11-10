@@ -1826,6 +1826,9 @@ impl NativeEventEnvelope {
                     NativeEventDisposition::StaleWindow
                 }
             }
+            NativeWindowEvent::CloseRequired => {
+                deliver_window_event(app, window_id, ingress_sequence, Window::remove_window)
+            }
             NativeWindowEvent::Closed => {
                 let logical_close = catch_unwind(AssertUnwindSafe(|| {
                     app.update_window_id_from_native(
@@ -1925,6 +1928,7 @@ impl NativeEventEnvelope {
                         event: crate::FileDropEvent::Ended,
                         ..
                     }
+                    | NativeWindowEvent::CloseRequired
                     | NativeWindowEvent::Closed,
                 ..
             } => true,
@@ -2204,6 +2208,7 @@ pub(super) enum NativeWindowEvent {
     DisplayChanged,
     ButtonLayoutChanged,
     CloseRequested,
+    CloseRequired,
     Closed,
     HoverChanged(bool),
     RequestFrame(RequestFrameOptions),
@@ -2218,6 +2223,7 @@ impl NativeWindowEvent {
             Self::ActiveChanged(_)
                 | Self::PointerCanceled(_)
                 | Self::CloseRequested
+                | Self::CloseRequired
                 | Self::Closed
                 | Self::HoverChanged(_)
         )
@@ -2243,6 +2249,7 @@ impl NativeWindowEvent {
             | Self::InitialPresentationCompleted
             | Self::InitialPresentationFailed
             | Self::CloseRequested
+            | Self::CloseRequired
             | Self::Closed
             | Self::HoverChanged(_)
             | Self::SystemTabCommand(_)
@@ -2304,6 +2311,7 @@ impl NativeWindowEvent {
             Self::DisplayChanged => (NativeCallbackKind::DisplayChanged, None),
             Self::ButtonLayoutChanged => (NativeCallbackKind::ButtonLayoutChanged, None),
             Self::CloseRequested => (NativeCallbackKind::ShouldClose, None),
+            Self::CloseRequired => (NativeCallbackKind::CloseRequired, None),
             Self::Closed => (NativeCallbackKind::Closed, None),
             Self::HoverChanged(_) => (NativeCallbackKind::HoverChanged, None),
             Self::RequestFrame(_) => (NativeCallbackKind::RequestFrame, None),

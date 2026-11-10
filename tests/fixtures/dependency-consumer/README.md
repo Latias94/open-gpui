@@ -1958,3 +1958,68 @@ cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Ca
 
 These commands are instructions, not results. The headless run does not qualify AppKit archive
 round trips, Space changes, native attention indicators or an engine Host/View integration.
+
+## Ordinary native window controls and anchored popups
+
+The `native_window_controls` target consumes the official public window controls and complete
+`popup` module from fixed Zed target
+[`635026fabc38440fce5e1767d125026a17b12012`](https://github.com/zed-industries/zed/tree/635026fabc38440fce5e1767d125026a17b12012).
+Their introduction points are input regions
+[`a29c0d41f47`](https://github.com/zed-industries/zed/commit/a29c0d41f47), exclusive zone/edge
+[`166f044fd04`](https://github.com/zed-industries/zed/commit/166f044fd04), simple fullscreen
+[`2893b86b048`](https://github.com/zed-industries/zed/commit/2893b86b048), and native popups
+[`546a16d64fa`](https://github.com/zed-industries/zed/commit/546a16d64fa).
+
+| Public surface | Consumer contract |
+| --- | --- |
+| Input region | `Window::set_input_region(&self, Option<&[Bounds<Pixels>]>)` and the matching `PlatformWindow` method. `None` restores the default region, `Some(&[])` selects an empty region, and nonempty slices describe a union in window coordinates. |
+| Layer-shell reservation | `Window::set_exclusive_zone(&self, Pixels)` and its PlatformWindow method. `set_exclusive_edge(&self, layer_shell::Anchor)` is available only with Linux and GPUI's `wayland` feature. Enable this fixture's `wayland` feature to consume that conditional API explicitly. |
+| Simple fullscreen | `Window::toggle_simple_fullscreen(&self)` and `Window::is_simple_fullscreen(&self) -> bool`, with matching backend defaults of no-op and `false`. The toggle enters the fork's existing post-borrow native command queue and requires generic interaction authority. |
+| Anchored popup | `WindowKind::AnchoredPopup(popup::PopupOptions)` with `parent: AnyWindowHandle`, `anchor_rect`, `anchor`, `gravity`, `constraint_adjustment`, `offset` and `grab`. The public module includes `PopupAnchor`, `PopupGravity`, all six `PopupConstraintAdjustment` flags, and `PopupNotSupportedError`. |
+
+The baseline test uses function references and explicitly uninvoked closures. It constructs no
+App, Window or native popup and requires neither `test-support` nor `bench-support`. Its popup
+closure consumes every options field and all constraint flags without interpreting compositor
+placement. A popup uses `popup.parent` as its sole parent contract; combining it with
+`WindowOptions::transient_for` is rejected. Closed or stale parent generations fail validation
+before reaching an unsupported backend.
+
+Passive popups (`grab: false`) normalize their effective first appearance to nonactivating,
+including when the generic focus field keeps its default. Grabbing popups retain their own
+protocol focus policy. `Platform::validate_window_kind` is an optional preflight for native kind
+refusal before generic option checks. Ordinary `App::open_window` preserves direct backend
+error downcasts; `open_window_detailed` instead preserves its synchronous stage and source.
+
+With the existing optional `bench-support` feature, an ordinary `Application::run_embedded` uses
+the returning benchmark platform with `NoopTextSystem` and no renderer. The runtime test checks
+that the App and executor are not test instances. It executes region reset/empty/rectangle calls,
+exclusive-zone requests and repeated simple-fullscreen toggles, then observes unchanged bounds,
+ordinary fullscreen and the unsupported simple-fullscreen query. Both grabbing and passive popup
+requests use an actual live parent, reach typed `PopupNotSupportedError`, never run their root
+builder and publish no child window. The parent closes normally, another ordinary window opens
+and closes, and the App shuts down. This is unsupported headless behavior without `test-support`.
+
+The companion crate-external `native_window_controls` target adds public TestAppContext controls
+for mixed parent contracts, closed parent handles and replacement generations. Core's private
+TestWindow unit tests separately cover owned region payloads, command/query order after the outer
+borrow, synchronous native-input reentry, backend refusal, close and irreversible quiescence.
+Their optional true-fullscreen simulation and forwarding observations are confined to `cfg(test)`;
+ordinary TestWindow feature paths retain no-op services. Live disabled pointer input is reversible
+and distinct from retirement, which cannot re-admit interaction through a region reset, pending
+input request or stale mutation facts. Existing `native_window_services` consumers remain separate.
+
+Run the independent configurations serially with `CARGO_BUILD_JOBS=1`, the existing lockfile and
+shared target directory:
+
+```text
+cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test native_window_controls --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features bench-support --test native_window_controls --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --locked -p open-gpui --features test-support --test native_window_controls --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --locked -p open-gpui --lib native_window_control_tests --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+These commands are verification instructions, not execution results. The headless consumers and
+private observations do not qualify Wayland input pass-through, layer-shell reservation/edge
+validation, native popup positioning/grab/dismissal, or Mac screen/notch coverage and shared
+presentation-option restoration. Those behaviors retain their native backend gates; no renderer,
+fake compositor, successful popup implementation or engine-specific UI owner is introduced here.

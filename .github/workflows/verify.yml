@@ -184,7 +184,7 @@ jobs:
           cargo nextest run --locked -p open-gpui --no-default-features --features test-support --lib --test window_appearance -E 'test(app::window_appearance_tests::) | binary(window_appearance)' --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Test native state ownership and public services
-        run: cargo nextest run --locked -p open-gpui --all-features --lib --test native_window_services -E 'test(platform_command_tests::) | binary(native_window_services)' --test-threads=1 --no-fail-fast --no-tests fail
+        run: cargo nextest run --locked -p open-gpui --all-features --lib --test native_window_services --test native_window_controls --test native_close_requests -E 'test(platform_command_tests::) | test(native_window_control_tests::) | test(native_close_request_tests::) | binary(native_window_services) | binary(native_window_controls) | binary(native_close_requests)' --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Test windowing custody and public consumers
         run: |
@@ -200,7 +200,7 @@ jobs:
       - name: Test Linux connection replacement and idle progress
         if: matrix.name == 'linux'
         run: |
-          cargo nextest run --locked -p open-gpui-linux --no-default-features --features x11,wayland,test-support --lib -E 'test(/^linux::platform::windowing_tests::/) | test(/^linux::dispatcher::tests::/) | test(/^linux::platform::display_mode_tests::/) | test(/^linux::wayland::client::file_drag_tests::/) | test(/^linux::wayland::client::activation_routing_tests::/) | test(/^linux::wayland::serial::tests::/) | test(settings_source_cancels) | test(settings_channel_closure)' --test-threads=1 --no-fail-fast --no-tests fail
+          cargo nextest run --locked -p open-gpui-linux --no-default-features --features x11,wayland,test-support --lib -E 'test(/^linux::platform::windowing_tests::/) | test(/^linux::dispatcher::tests::/) | test(/^linux::platform::display_mode_tests::/) | test(/^linux::wayland::client::file_drag_tests::/) | test(/^linux::wayland::client::activation_routing_tests::/) | test(/^linux::wayland::serial::tests::/) | test(wayland::popup::tests::) | test(wayland::window::creation_projection_tests::) | test(wayland::client::window_capability_tests::) | test(settings_source_cancels) | test(settings_channel_closure)' --test-threads=1 --no-fail-fast --no-tests fail
           cargo nextest run --locked -p open-gpui-linux --no-default-features --features x11,wayland,test-support --lib -E 'test(/^linux::x11::clipboard::native_windowing_tests::/)' --run-ignored only --test-threads=1 --no-fail-fast --no-tests fail
           cargo check --locked -p open-gpui-platform --no-default-features --features x11,wayland --example toggle_headless
 
@@ -215,8 +215,8 @@ jobs:
 
       - name: Test independent native state services
         run: |
-          cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test native_window_services --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
-          cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features bench-support --test native_window_services --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+          cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test native_window_services --test native_window_controls --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+          cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features bench-support --test native_window_services --test native_window_controls --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Check macOS appearance native consumers
         if: matrix.name == 'macos'

@@ -2,7 +2,7 @@
 
 **Status**: Accepted
 **Date**: 2026-07-25
-**Amended**: 2026-07-28 (U25 appearance, activation, ownership, and presentation authority); 2026-08-18 (synchronous mutation terminal pairing); 2026-11-05 (post-borrow Windows frame maintenance and retained forced refresh); 2026-11-11 (opaque native restoration)
+**Amended**: 2026-07-28 (U25 appearance, activation, ownership, and presentation authority); 2026-08-18 (synchronous mutation terminal pairing); 2026-11-05 (post-borrow Windows frame maintenance and retained forced refresh); 2026-11-11 (opaque native restoration and native presentation controls)
 
 ## Context
 
@@ -248,6 +248,7 @@ window or domain event.
 | Accessibility action | FIFO and non-droppable | Accessibility deactivation/generation change and close | Reject a stale activation generation or retired ID | Delivered at most once |
 | System tab command | FIFO and non-droppable | Close and cross-window tab-session barriers | Drop when source, target, or tab-session generation is stale | Delivered at most once |
 | Close request | FIFO and non-droppable | Blocks newer input until the decision is applied; rejection releases the barrier | A retired ID is already closed | One decision per queued request |
+| Required close | FIFO and non-droppable, including shutdown | Irreversibly quiesces native interaction; removes the logical window without a user veto | Drop for a retired full ID | Starts existing presentation/native retirement; does not acknowledge native destruction |
 | Closed lifecycle | FIFO and non-droppable | Final barrier: no newer event may mutate the retired incarnation | Duplicate or retired close is diagnostic-only | Settles retained mutations, removes the window, and retires the ID once |
 | Mutation observation | FIFO and non-droppable | Ordered with placement facts and close | Reject a stale full ID, domain, or mutation generation before committing facts | Exactly one accepted terminal per current ticket |
 | Immediate input | Native callback order; never mailbox-coalesced | Must first settle older ingress barriers; pointer cancellation and close end their sessions | A missing or retired ID is an invariant failure at callback entry | Returns one exact disposition before native handling continues |
@@ -287,7 +288,8 @@ synchronous authorities. There is no asynchronous open-window outbox.
 Framework and component code may request only this closed command set across the outer application
 borrow: `CompleteInitialPresentation { activate }`, `RevealDeferredInitialPresentation`,
 `Activate`, `ShowWindowMenu(Point<Pixels>)`, `StartWindowMove`,
-`StartWindowResize(ResizeEdge)`, and `RestoreNativeWindowState(Arc<[u8]>)`, plus Windows/Linux
+`StartWindowResize(ResizeEdge)`, `ToggleSimpleFullscreen`, and
+`RestoreNativeWindowState(Arc<[u8]>)`, plus Windows/Linux
 `CompleteNativeFrame`. The envelope carries its own FIFO sequence, full `WindowId`, and a
 dispatcher that weakly references native state. `PlatformWindow` has no direct activation operation
 that can bypass this boundary.
@@ -320,6 +322,41 @@ implementation preserves the official native workspace/fullscreen restoration ru
 persistence and archive compatibility remain with the caller and OS. Future backends that support
 both opaque restoration and live placement must reconcile any overlapping geometry through their
 existing placement owner rather than create another mutation authority.
+
+`ToggleSimpleFullscreen` is an OS-native presentation action, like interactive native move/resize,
+serialized through the same post-borrow owner. It requires interaction admission and exact native
+liveness. The Mac implementation retains the official borderless frame/style transition, saved
+normal bounds and shared application presentation-option custody. Its current backend offers no
+typed live placement writes, so there is no competing live placement authority. This service adds
+no portable placement capability and cannot settle a placement or activation ticket. Any future
+typed live placement implementation must reconcile that presentation mode through the existing
+placement conflict domain. Native callbacks refresh current geometry; saved `WindowBounds`
+continues describing the official normal restore bounds.
+
+Wayland input regions and layer-shell exclusive-zone/edge requests configure their existing
+native surface roles. Region configuration is not interaction permission: its effective region
+must remain gated by the same irreversible native quiescence authority. No region setter can
+re-enable a retiring window. Layer-shell changes remain compositor requests rather than typed
+portable placement terminals. Parent-anchored popups use one explicit live popup parent within
+the opening App, without also setting a transient owner. Their native child/parent and callback
+lifetimes follow the existing lifecycle owner; unsupported backends return the typed popup error
+before publishing a window. Transient dialog ownership and portable mutation generations retain
+their existing contracts.
+
+The backend validates its window kind before generic creation capability checks; this preserves
+typed unsupported-popup fallback for passive options without inferring support from a host OS.
+The ordinary open-window error retains its backend type, and the detailed API keeps its stage.
+A passive anchored popup's role fixes first appearance to nonactivating, normalizing the generic
+focus default to false while retaining honest native facts. Only that passive Wayland role
+advertises this creation policy; grabbing popups retain explicit native-grab semantics.
+
+Parent retirement and compositor popup/layer dismissal require logical removal before native
+destruction. Backends deliver `on_close_required` through the existing sequenced event queue,
+without a user close veto or a native-terminal acknowledgement. Child windows retain their own
+presentation shutdown and native retirement owners; a parent cannot destroy its surface while a
+child surface remains alive. `on_close` runs only after the actual native surface/drop-only
+authority is destroyed. The official close-request behavior therefore does not fabricate a
+terminal that bypasses the fork's GPU shutdown contract.
 
 On Windows, the paint entry validates its update region before retaining the frame request.
 After that request is evaluated, `Window::complete_frame` obtains the backend's optional

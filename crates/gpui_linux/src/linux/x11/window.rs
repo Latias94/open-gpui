@@ -17,7 +17,7 @@ use open_gpui::{
     PromptLevel, RequestFrameOptions, ResizeEdge, ScaledPixels, Scene, Size, Task, Tiling,
     WindowActivationPolicy, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
     WindowControlArea, WindowCreationFacts, WindowDecorations, WindowKind, WindowParams,
-    WindowPresentationShutdownTicket, WindowVisibility, px,
+    WindowPresentationShutdownTicket, WindowVisibility, popup::PopupNotSupportedError, px,
 };
 use open_gpui_wgpu::{
     CompositorGpuHint, WgpuRenderer, WgpuSurfaceConfig, WgpuSurfaceShutdownProgress,
@@ -572,7 +572,8 @@ impl X11WindowCommandTarget {
             PlatformWindowCommand::RevealDeferredInitialPresentation { .. } => {
                 PlatformWindowCommandOutcome::Rejected
             }
-            PlatformWindowCommand::RestoreNativeWindowState(_) => {
+            PlatformWindowCommand::RestoreNativeWindowState(_)
+            | PlatformWindowCommand::ToggleSimpleFullscreen => {
                 PlatformWindowCommandOutcome::Unsupported
             }
             PlatformWindowCommand::Activate { .. }
@@ -1120,6 +1121,9 @@ impl X11WindowState {
         is_bgr: bool,
         connection_lease: Rc<()>,
     ) -> anyhow::Result<Self> {
+        if matches!(&params.kind, WindowKind::AnchoredPopup(_)) {
+            return Err(PopupNotSupportedError.into());
+        }
         let x_screen_index = resolve_x11_screen_index(
             params.display_id,
             x_main_screen_index,

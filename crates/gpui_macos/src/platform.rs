@@ -5,7 +5,10 @@ use crate::{
     ns_string,
     pasteboard::Pasteboard,
     renderer,
-    window::{macos_supports_focus_on_appearing, macos_supports_toplevel_creation_state},
+    window::{
+        macos_supports_focus_on_appearing, macos_supports_toplevel_creation_state,
+        validate_macos_window_kind,
+    },
 };
 use anyhow::{Context as _, anyhow};
 use block2::RcBlock;
@@ -345,6 +348,7 @@ impl MacPlatform {
         options: WindowParams,
         expected_generation: Option<u64>,
     ) -> Result<Box<dyn PlatformWindow>> {
+        validate_macos_window_kind(&options.kind)?;
         let (
             cursor_visible,
             foreground_executor,
@@ -695,6 +699,9 @@ fn schedule_mac_display_topology_retry(
 }
 
 fn macos_window_capabilities(kind: &WindowKind) -> PlatformWindowCapabilities {
+    if matches!(kind, WindowKind::AnchoredPopup(_)) {
+        return PlatformWindowCapabilities::default();
+    }
     let supports_toplevel_state = macos_supports_toplevel_creation_state(kind);
     let supports_transient_owner = !matches!(kind, WindowKind::PopUp);
     PlatformWindowCapabilities {
@@ -1048,6 +1055,10 @@ impl Platform for MacPlatform {
         macos_window_capabilities(kind)
     }
 
+    fn validate_window_kind(&self, kind: &WindowKind) -> anyhow::Result<()> {
+        validate_macos_window_kind(kind)
+    }
+
     fn mouse_button_is_pressed(&self, button: MouseButton) -> Option<bool> {
         let button_number = match button {
             MouseButton::Left => 0,
@@ -1075,6 +1086,7 @@ impl Platform for MacPlatform {
         options: WindowParams,
         display_snapshot: PlatformDisplaySnapshot,
     ) -> Result<Box<dyn PlatformWindow>> {
+        validate_macos_window_kind(&options.kind)?;
         let expected_generation = display_snapshot.generation().ok_or_else(|| {
             anyhow!("macOS window creation requires an atomic display publication")
         })?;
@@ -1989,5 +2001,35 @@ mod window_capability_tests {
             super::macos_window_capabilities(&open_gpui::WindowKind::Dialog),
             expected_macos_capabilities(false, true)
         );
+    }
+
+    #[open_gpui::test]
+    fn anchored_popup_validation_preserves_the_typed_unsupported_error(
+        cx: &mut open_gpui::TestAppContext,
+    ) {
+        let parent = cx.add_window(|_, _| open_gpui::Empty).into();
+        let kind = open_gpui::WindowKind::AnchoredPopup(open_gpui::popup::PopupOptions {
+            parent,
+            anchor_rect: open_gpui::Bounds::default(),
+            anchor: open_gpui::popup::PopupAnchor::BottomLeft,
+            gravity: open_gpui::popup::PopupGravity::BottomRight,
+            constraint_adjustment: open_gpui::popup::PopupConstraintAdjustment::empty(),
+            offset: open_gpui::Point::default(),
+            grab: true,
+        });
+        let error = crate::window::validate_macos_window_kind(&kind).unwrap_err();
+        assert!(error.is::<open_gpui::popup::PopupNotSupportedError>());
+        assert_eq!(
+            super::macos_window_capabilities(&kind),
+            PlatformWindowCapabilities::default(),
+        );
+        for kind in [
+            open_gpui::WindowKind::Normal,
+            open_gpui::WindowKind::Floating,
+            open_gpui::WindowKind::PopUp,
+            open_gpui::WindowKind::Dialog,
+        ] {
+            assert!(crate::window::validate_macos_window_kind(&kind).is_ok());
+        }
     }
 }

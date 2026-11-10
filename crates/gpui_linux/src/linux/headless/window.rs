@@ -113,7 +113,8 @@ impl PlatformWindow for HeadlessWindow {
                     PlatformWindowCommandOutcome::Accepted
                 }
                 PlatformWindowCommand::Activate { .. } => PlatformWindowCommandOutcome::Unsupported,
-                PlatformWindowCommand::RestoreNativeWindowState(_) => {
+                PlatformWindowCommand::RestoreNativeWindowState(_)
+                | PlatformWindowCommand::ToggleSimpleFullscreen => {
                     PlatformWindowCommandOutcome::Unsupported
                 }
                 PlatformWindowCommand::RevealDeferredInitialPresentation { .. }

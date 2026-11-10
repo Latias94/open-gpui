@@ -1170,6 +1170,10 @@ impl Platform for LinuxPlatform {
             .window_capabilities(kind, display_id)
     }
 
+    fn validate_window_kind(&self, kind: &WindowKind) -> anyhow::Result<()> {
+        self.connection.borrow().validate_window_kind(kind)
+    }
+
     fn mouse_button_is_pressed(&self, button: MouseButton) -> Option<bool> {
         self.connection.borrow().mouse_button_is_pressed(button)
     }

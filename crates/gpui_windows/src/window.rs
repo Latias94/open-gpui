@@ -8112,7 +8112,8 @@ impl PlatformWindow for WindowsWindow {
                         presentation_generation,
                     ),
                     PlatformWindowCommand::Activate { .. } => window.activate_now(),
-                    PlatformWindowCommand::RestoreNativeWindowState(_) => {
+                    PlatformWindowCommand::RestoreNativeWindowState(_)
+                    | PlatformWindowCommand::ToggleSimpleFullscreen => {
                         PlatformWindowCommandOutcome::Unsupported
                     }
                     // Preserve the existing Windows behavior for currently unsupported commands.

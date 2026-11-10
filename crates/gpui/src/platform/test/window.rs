@@ -161,6 +161,7 @@ pub(crate) struct TestWindowState {
     sprite_atlas: Arc<dyn PlatformAtlas>,
     renderer: Option<Box<dyn PlatformHeadlessRenderer>>,
     should_close_handler: Option<Box<dyn FnMut() -> bool>>,
+    close_required_callback: Option<Box<dyn FnOnce()>>,
     close_callback: Option<Box<dyn FnOnce()>>,
     native_drop_callback: Option<Box<dyn FnMut()>>,
     hit_test_window_control_callback: Option<Box<dyn FnMut() -> Option<WindowControlArea>>>,
@@ -185,6 +186,14 @@ pub(crate) struct TestWindowState {
     is_minimized: bool,
     is_maximized: bool,
     is_fullscreen: bool,
+    #[cfg(test)]
+    simple_fullscreen: Option<bool>,
+    #[cfg(test)]
+    input_region: Option<Vec<Bounds<Pixels>>>,
+    #[cfg(test)]
+    exclusive_zone: Option<Pixels>,
+    #[cfg(all(test, target_os = "linux", feature = "wayland"))]
+    exclusive_edge: Option<crate::layer_shell::Anchor>,
     is_active: bool,
     interaction_quiesced: bool,
     accepts_pointer_input: bool,
@@ -436,6 +445,7 @@ impl TestWindow {
                 native_window_state_restore_history: Vec::new(),
                 attention_request_count: 0,
                 should_close_handler: None,
+                close_required_callback: None,
                 close_callback: None,
                 native_drop_callback: None,
                 hit_test_window_control_callback: None,
@@ -458,6 +468,14 @@ impl TestWindow {
                 is_minimized: false,
                 is_maximized: matches!(params.window_bounds, WindowBounds::Maximized(_)),
                 is_fullscreen: matches!(params.window_bounds, WindowBounds::Fullscreen(_)),
+                #[cfg(test)]
+                simple_fullscreen: None,
+                #[cfg(test)]
+                input_region: None,
+                #[cfg(test)]
+                exclusive_zone: None,
+                #[cfg(all(test, target_os = "linux", feature = "wayland"))]
+                exclusive_edge: None,
                 is_active: false,
                 interaction_quiesced: false,
                 accepts_pointer_input: params.accepts_pointer_input,
@@ -685,7 +703,11 @@ impl TestWindow {
                 return PlatformWindowCommandOutcome::WindowClosed;
             }
             if state.interaction_quiesced
-                && matches!(command, PlatformWindowCommand::RestoreNativeWindowState(_))
+                && matches!(
+                    command,
+                    PlatformWindowCommand::RestoreNativeWindowState(_)
+                        | PlatformWindowCommand::ToggleSimpleFullscreen
+                )
             {
                 return PlatformWindowCommandOutcome::Rejected;
             }
@@ -805,6 +827,18 @@ impl TestWindow {
                     }
                 }
                 self.restore_native_window_state(&state);
+            }
+            PlatformWindowCommand::ToggleSimpleFullscreen => {
+                {
+                    let state = self.0.lock();
+                    if state.closed {
+                        return PlatformWindowCommandOutcome::WindowClosed;
+                    }
+                    if state.interaction_quiesced {
+                        return PlatformWindowCommandOutcome::Rejected;
+                    }
+                }
+                self.toggle_simple_fullscreen();
             }
             #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
             PlatformWindowCommand::CompleteNativeFrame => {}
@@ -1329,6 +1363,10 @@ impl TestWindow {
             state.frame_callback_pending = false;
             state.mapped = false;
             state.is_active = false;
+            state.interaction_quiesced = true;
+            state.accepts_pointer_input = false;
+            state.accepts_activation = false;
+            state.focus_on_click = false;
             state.visibility = WindowVisibility::Hidden;
             state.pending_mutations.clear();
             state.mutation_generations.clear();
@@ -1371,6 +1409,7 @@ impl TestWindow {
                 callback,
                 (
                     state.should_close_handler.take(),
+                    state.close_required_callback.take(),
                     state.hit_test_window_control_callback.take(),
                     state.active_status_change_callback.take(),
                     state.hover_status_change_callback.take(),
@@ -1449,6 +1488,19 @@ impl TestWindow {
 
     pub(crate) fn simulate_close(&self) -> bool {
         self.close()
+    }
+
+    /// Fires an irreversible close request without reporting a native terminal event.
+    ///
+    /// Returns whether a registered request callback was consumed. Repeated requests and
+    /// requests after native terminal return false.
+    pub fn fire_close_required(&self) -> bool {
+        let callback = self.0.lock().close_required_callback.take();
+        let Some(callback) = callback else {
+            return false;
+        };
+        callback();
+        true
     }
 
     pub(crate) fn is_native_terminal(&self) -> bool {
@@ -1801,6 +1853,14 @@ impl PlatformWindow for TestWindow {
         if lock.closed || lock.mutation_generations.get(&domain).copied() != Some(generation) {
             return PlatformWindowDispatch::Rejected;
         }
+        if lock.interaction_quiesced
+            && matches!(
+                domain,
+                WindowMutationDomain::PointerInput | WindowMutationDomain::ActivationPolicy
+            )
+        {
+            return PlatformWindowDispatch::Rejected;
+        }
         let dispatch = lock
             .next_mutation_dispatches
             .remove(&domain)
@@ -2030,6 +2090,61 @@ impl PlatformWindow for TestWindow {
         self.0.lock().is_fullscreen
     }
 
+    fn toggle_simple_fullscreen(&self) {
+        #[cfg(test)]
+        {
+            let mut state = self.0.lock();
+            if !state.closed
+                && !state.interaction_quiesced
+                && let Some(fullscreen) = state.simple_fullscreen.as_mut()
+            {
+                *fullscreen = !*fullscreen;
+            }
+        }
+    }
+
+    fn is_simple_fullscreen(&self) -> bool {
+        #[cfg(test)]
+        {
+            self.0.lock().simple_fullscreen.unwrap_or(false)
+        }
+        #[cfg(not(test))]
+        {
+            false
+        }
+    }
+
+    fn set_input_region(&self, _region: Option<&[Bounds<Pixels>]>) {
+        #[cfg(test)]
+        {
+            let mut state = self.0.lock();
+            if !state.closed && !state.interaction_quiesced {
+                state.input_region = _region.map(|region| region.to_vec());
+            }
+        }
+    }
+
+    fn set_exclusive_zone(&self, _zone: Pixels) {
+        #[cfg(test)]
+        {
+            let mut state = self.0.lock();
+            if !state.closed && !state.interaction_quiesced {
+                state.exclusive_zone = Some(_zone);
+            }
+        }
+    }
+
+    #[cfg(all(target_os = "linux", feature = "wayland"))]
+    fn set_exclusive_edge(&self, _edge: crate::layer_shell::Anchor) {
+        #[cfg(test)]
+        {
+            let mut state = self.0.lock();
+            if !state.closed && !state.interaction_quiesced {
+                state.exclusive_edge = Some(_edge);
+            }
+        }
+    }
+
     fn request_frame(&self, options: RequestFrameOptions) {
         let deferred = {
             let mut state = self.0.lock();
@@ -2166,6 +2281,13 @@ impl PlatformWindow for TestWindow {
         let mut state = self.0.lock();
         if !state.closed {
             state.should_close_handler = Some(callback);
+        }
+    }
+
+    fn on_close_required(&self, callback: Box<dyn FnOnce()>) {
+        let mut state = self.0.lock();
+        if !state.closed {
+            state.close_required_callback = Some(callback);
         }
     }
 
@@ -2365,11 +2487,13 @@ fn apply_test_window_mutation(state: &mut TestWindowState, request: WindowMutati
             state.window_bounds = WindowBounds::Windowed(bounds);
         }
         WindowMutationRequest::PointerInput(accepts_pointer_input) => {
-            state.accepts_pointer_input = accepts_pointer_input;
+            state.accepts_pointer_input =
+                accepts_pointer_input && !state.closed && !state.interaction_quiesced;
         }
         WindowMutationRequest::ActivationPolicy(policy) => {
-            state.accepts_activation = policy.accepts_activation;
-            state.focus_on_click = policy.focus_on_click;
+            let admitted = !state.closed && !state.interaction_quiesced;
+            state.accepts_activation = policy.accepts_activation && admitted;
+            state.focus_on_click = policy.focus_on_click && admitted;
         }
         WindowMutationRequest::Alpha(background) => {
             state.background_appearance = background;
@@ -2396,10 +2520,11 @@ fn apply_window_platform_facts(state: &mut TestWindowState, facts: &WindowPlatfo
     state.is_minimized = facts.is_minimized;
     state.is_maximized = facts.is_maximized;
     state.is_fullscreen = facts.is_fullscreen;
-    state.is_active = facts.is_active;
-    state.accepts_pointer_input = facts.accepts_pointer_input;
-    state.accepts_activation = facts.accepts_activation;
-    state.focus_on_click = facts.focus_on_click;
+    let admitted = !state.closed && !state.interaction_quiesced;
+    state.is_active = facts.is_active && admitted;
+    state.accepts_pointer_input = facts.accepts_pointer_input && admitted;
+    state.accepts_activation = facts.accepts_activation && admitted;
+    state.focus_on_click = facts.focus_on_click && admitted;
     state.background_appearance = facts.background_appearance;
     state.topmost = facts.topmost;
     state.taskbar_visible = facts.taskbar_visible;
@@ -8367,6 +8492,1016 @@ mod native_app_event_tests {
             .collect::<Vec<_>>();
         assert_eq!(after_quit.len(), 1);
         assert_eq!(after_quit[0].disposition, NativeBoundaryDisposition::Closed);
+    }
+}
+
+#[cfg(test)]
+mod native_close_request_tests {
+    use super::*;
+    use crate::{
+        AppContext, Empty, NativeBoundaryDiagnosticCursor, NativeBoundaryDisposition,
+        NativeBoundaryKind, NativeBoundaryTarget, NativeCallbackKind, QuitMode, TestAppContext,
+        WindowOpenFailureStage, WindowOptions, px, size,
+    };
+    use std::time::Duration;
+
+    fn open_test_window(cx: &mut TestAppContext) -> (AnyWindowHandle, TestWindow) {
+        cx.update(|app| app.set_quit_mode(QuitMode::Explicit));
+        let handle = cx.open_window(size(px(320.0), px(240.0)), |_, _| Empty);
+        let handle = handle.into();
+        let platform_window = cx.test_window(handle);
+        cx.run_until_parked();
+        (handle, platform_window)
+    }
+
+    #[crate::test]
+    fn required_close_queues_while_app_is_borrowed_and_waits_for_presentation_shutdown(
+        cx: &mut TestAppContext,
+    ) {
+        let (handle, platform_window) = open_test_window(cx);
+        let should_close_calls = Rc::new(Cell::new(0));
+        cx.update_window(handle, |_, window, app| {
+            let should_close_calls = should_close_calls.clone();
+            window.on_window_should_close(app, move |_, _| {
+                should_close_calls.set(should_close_calls.get() + 1);
+                false
+            });
+        })
+        .expect("the forced-close target must accept a vetoing user policy");
+        let observations = Rc::new(RefCell::new(Vec::new()));
+        let _logical = cx.update(|app| {
+            let observations = observations.clone();
+            app.on_window_closed(move |_, window_id| {
+                assert_eq!(window_id, handle.window_id());
+                observations.borrow_mut().push("logical");
+            })
+        });
+        let _terminal = cx.update(|app| {
+            let observations = observations.clone();
+            app.on_window_native_terminal(move |_, window_id| {
+                assert_eq!(window_id, handle.window_id());
+                observations.borrow_mut().push("terminal");
+            })
+        });
+        platform_window.set_native_drop_callback({
+            let state = Rc::downgrade(&platform_window.0);
+            let observations = observations.clone();
+            move || {
+                let state = state.upgrade().expect("native drop must retain its state");
+                let state = state.lock();
+                let shutdown = state
+                    .presentation_shutdown_ticket
+                    .as_ref()
+                    .expect("native drop must retain the prepared shutdown authority")
+                    .snapshot();
+                assert!(shutdown.quiesced());
+                assert!(shutdown.native_terminal());
+                assert!(!shutdown.protocol_violation());
+                assert_eq!(state.presentation_shutdown_prepare_count, 1);
+                assert_eq!(state.presentation_shutdown_retire_count, 1);
+                observations.borrow_mut().push("native-drop");
+            }
+        });
+        let terminal_hold = cx.hold_window_native_terminal(handle);
+        platform_window.block_presentation_shutdown(true);
+        let cursor = cx
+            .app
+            .native_boundary_diagnostics(NativeBoundaryDiagnosticCursor::default())
+            .cursor;
+
+        cx.update(|app| {
+            assert!(platform_window.fire_close_required());
+            assert!(!platform_window.fire_close_required());
+            assert!(app.windows().contains(&handle));
+            assert!(observations.borrow().is_empty());
+            assert_eq!(should_close_calls.get(), 0);
+            assert_eq!(platform_window.presentation_shutdown_counts(), (0, 0, 0));
+            assert!(
+                platform_window
+                    .0
+                    .lock()
+                    .presentation_shutdown_ticket
+                    .is_none()
+            );
+            assert!(!platform_window.is_native_terminal());
+        });
+        cx.run_until_parked();
+
+        assert!(!cx.windows().contains(&handle));
+        assert_eq!(observations.borrow().as_slice(), &["logical"]);
+        assert_eq!(should_close_calls.get(), 0);
+        let pending = platform_window.presentation_shutdown_counts();
+        assert_eq!(pending.0, 1);
+        assert!(pending.1 >= 1);
+        assert_eq!(pending.2, 0);
+        let shutdown = platform_window
+            .0
+            .lock()
+            .presentation_shutdown_ticket
+            .clone()
+            .expect("logical removal must bind the existing presentation shutdown ticket");
+        assert_eq!(shutdown.snapshot().window_id(), handle.window_id());
+        assert!(!shutdown.snapshot().quiesced());
+        assert!(!shutdown.snapshot().native_terminal());
+        assert!(!shutdown.snapshot().protocol_violation());
+        assert!(!platform_window.is_native_terminal());
+
+        platform_window.block_presentation_shutdown(false);
+        cx.background_executor
+            .advance_clock(Duration::from_millis(512));
+        cx.run_until_parked();
+
+        assert!(shutdown.snapshot().quiesced());
+        assert!(shutdown.snapshot().native_terminal());
+        assert!(!shutdown.snapshot().protocol_violation());
+        assert!(platform_window.is_native_terminal());
+        let settled = platform_window.presentation_shutdown_counts();
+        assert_eq!(settled.0, 1);
+        assert!(settled.1 >= 2);
+        assert_eq!(settled.2, 1);
+        assert_eq!(
+            observations.borrow().as_slice(),
+            &["logical", "native-drop"]
+        );
+        assert!(
+            !cx.app
+                .native_boundary_diagnostics(cursor)
+                .terminal
+                .iter()
+                .any(|diagnostic| {
+                    diagnostic.target == NativeBoundaryTarget::Window(handle.window_id())
+                        && diagnostic.kind
+                            == NativeBoundaryKind::Callback(NativeCallbackKind::Closed)
+                })
+        );
+
+        cx.update(|_| {
+            assert!(terminal_hold.release());
+            assert_eq!(
+                observations.borrow().as_slice(),
+                &["logical", "native-drop"]
+            );
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            observations.borrow().as_slice(),
+            &["logical", "native-drop", "terminal"]
+        );
+        assert!(!platform_window.simulate_close());
+        assert!(!platform_window.fire_close_required());
+        assert!(!platform_window.release_deferred_native_terminal());
+        assert_eq!(platform_window.simulate_should_close(), None);
+        assert_eq!(should_close_calls.get(), 0);
+        let callbacks = cx
+            .app
+            .native_boundary_diagnostics(cursor)
+            .terminal
+            .into_iter()
+            .filter(|diagnostic| {
+                diagnostic.target == NativeBoundaryTarget::Window(handle.window_id())
+                    && matches!(
+                        diagnostic.kind,
+                        NativeBoundaryKind::Callback(
+                            NativeCallbackKind::CloseRequired | NativeCallbackKind::Closed
+                        )
+                    )
+            })
+            .map(|diagnostic| (diagnostic.kind, diagnostic.disposition))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            callbacks,
+            [
+                (
+                    NativeBoundaryKind::Callback(NativeCallbackKind::CloseRequired),
+                    NativeBoundaryDisposition::Delivered { input_result: None },
+                ),
+                (
+                    NativeBoundaryKind::Callback(NativeCallbackKind::Closed),
+                    NativeBoundaryDisposition::Closed,
+                ),
+            ]
+        );
+    }
+
+    #[crate::test]
+    fn required_close_retains_the_native_owner_through_retirement_rejection(
+        cx: &mut TestAppContext,
+    ) {
+        let (handle, platform_window) = open_test_window(cx);
+        platform_window.reject_native_retirement_attempts(2);
+        let terminals = Rc::new(RefCell::new(Vec::new()));
+        let _terminal = cx.update(|app| {
+            let terminals = terminals.clone();
+            app.on_window_native_terminal(move |_, window_id| {
+                terminals.borrow_mut().push(window_id);
+            })
+        });
+
+        assert!(platform_window.fire_close_required());
+        cx.run_until_parked();
+
+        assert!(!cx.windows().contains(&handle));
+        assert_eq!(platform_window.presentation_shutdown_counts(), (1, 1, 0));
+        let shutdown = platform_window
+            .0
+            .lock()
+            .presentation_shutdown_ticket
+            .clone()
+            .expect("a rejected native retirement must retain its exact shutdown ticket");
+        assert!(shutdown.snapshot().quiesced());
+        assert!(!shutdown.snapshot().native_terminal());
+        assert!(!shutdown.snapshot().protocol_violation());
+        assert!(!platform_window.is_native_terminal());
+        assert!(terminals.borrow().is_empty());
+
+        cx.background_executor
+            .advance_clock(Duration::from_millis(8));
+        cx.run_until_parked();
+
+        assert_eq!(platform_window.presentation_shutdown_counts(), (1, 1, 1));
+        assert!(shutdown.snapshot().native_terminal());
+        assert!(!shutdown.snapshot().protocol_violation());
+        assert_eq!(terminals.borrow().as_slice(), &[handle.window_id()]);
+        assert!(!platform_window.simulate_close());
+    }
+
+    #[crate::test]
+    fn duplicate_and_stale_required_close_cannot_retire_a_reopened_window(cx: &mut TestAppContext) {
+        let (original, original_platform) = open_test_window(cx);
+        let terminal_hold = cx.hold_window_native_terminal(original);
+        let terminals = Rc::new(RefCell::new(Vec::new()));
+        let _terminal = cx.update(|app| {
+            let terminals = terminals.clone();
+            app.on_window_native_terminal(move |_, window_id| {
+                terminals.borrow_mut().push(window_id);
+            })
+        });
+        let cursor = cx
+            .app
+            .native_boundary_diagnostics(NativeBoundaryDiagnosticCursor::default())
+            .cursor;
+        let async_app = cx.to_async();
+
+        cx.update(|app| {
+            assert!(original_platform.fire_close_required());
+            async_app.enqueue_window_close_required(original.window_id());
+            assert!(app.windows().contains(&original));
+        });
+        cx.run_until_parked();
+        assert!(cx.windows().is_empty());
+        assert!(terminals.borrow().is_empty());
+        assert_eq!(original_platform.presentation_shutdown_counts(), (1, 1, 1));
+
+        let (replacement, replacement_platform) = open_test_window(cx);
+        assert_ne!(replacement.window_id(), original.window_id());
+        let late_callback_calls = Rc::new(Cell::new(0));
+        original_platform.on_close_required(Box::new({
+            let late_callback_calls = late_callback_calls.clone();
+            move || late_callback_calls.set(late_callback_calls.get() + 1)
+        }));
+        cx.update(|app| {
+            assert!(!original_platform.fire_close_required());
+            async_app.enqueue_window_close_required(original.window_id());
+            assert!(app.windows().contains(&replacement));
+        });
+        cx.run_until_parked();
+        assert_eq!(cx.windows(), [replacement]);
+        assert_eq!(
+            replacement_platform.presentation_shutdown_counts(),
+            (0, 0, 0)
+        );
+        assert!(!replacement_platform.is_native_terminal());
+        assert_eq!(late_callback_calls.get(), 0);
+        assert!(terminals.borrow().is_empty());
+
+        assert!(terminal_hold.release());
+        cx.run_until_parked();
+        async_app.enqueue_window_close_required(original.window_id());
+        cx.run_until_parked();
+        assert!(!original_platform.simulate_close());
+        assert!(!original_platform.release_deferred_native_terminal());
+        assert_eq!(terminals.borrow().as_slice(), &[original.window_id()]);
+        assert_eq!(cx.windows(), [replacement]);
+        assert_eq!(
+            replacement_platform.presentation_shutdown_counts(),
+            (0, 0, 0)
+        );
+        let requests = cx
+            .app
+            .native_boundary_diagnostics(cursor)
+            .terminal
+            .into_iter()
+            .filter(|diagnostic| {
+                diagnostic.target == NativeBoundaryTarget::Window(original.window_id())
+                    && diagnostic.kind
+                        == NativeBoundaryKind::Callback(NativeCallbackKind::CloseRequired)
+            })
+            .map(|diagnostic| diagnostic.disposition)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            requests,
+            [
+                NativeBoundaryDisposition::Delivered { input_result: None },
+                NativeBoundaryDisposition::Closed,
+                NativeBoundaryDisposition::Closed,
+                NativeBoundaryDisposition::Closed,
+            ]
+        );
+
+        assert!(replacement_platform.fire_close_required());
+        cx.run_until_parked();
+        assert!(cx.windows().is_empty());
+        assert_eq!(
+            replacement_platform.presentation_shutdown_counts(),
+            (1, 1, 1)
+        );
+        assert_eq!(
+            terminals.borrow().as_slice(),
+            &[original.window_id(), replacement.window_id()]
+        );
+    }
+
+    #[crate::test]
+    fn required_close_during_root_build_rejects_publication_and_retires_the_reservation(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|app| app.set_quit_mode(QuitMode::Explicit));
+        let logical_closes = Rc::new(RefCell::new(Vec::new()));
+        let native_terminals = Rc::new(RefCell::new(Vec::new()));
+        let _logical = cx.update(|app| {
+            let logical_closes = logical_closes.clone();
+            app.on_window_closed(move |_, window_id| {
+                logical_closes.borrow_mut().push(window_id);
+            })
+        });
+        let _terminal = cx.update(|app| {
+            let native_terminals = native_terminals.clone();
+            app.on_window_native_terminal(move |_, window_id| {
+                native_terminals.borrow_mut().push(window_id);
+            })
+        });
+        let root_built = Cell::new(false);
+        let error = cx
+            .update(|app| {
+                app.open_window_detailed(WindowOptions::default(), |window, app| {
+                    root_built.set(true);
+                    let platform_window = cx
+                        .last_created_test_window()
+                        .expect("the root builder must retain its actual TestWindow");
+                    assert_eq!(
+                        platform_window.0.lock().handle,
+                        crate::Window::window_handle(window)
+                    );
+                    assert!(app.windows().is_empty());
+                    assert!(window.creation_can_commit());
+                    platform_window.block_presentation_shutdown(true);
+                    assert!(platform_window.defer_native_terminal());
+
+                    assert!(platform_window.fire_close_required());
+                    assert!(!platform_window.fire_close_required());
+                    assert!(
+                        !window.creation_can_commit(),
+                        "required close must revoke creation admission before its queued delivery"
+                    );
+                    assert!(!platform_window.is_native_terminal());
+                    assert!(
+                        platform_window
+                            .0
+                            .lock()
+                            .presentation_shutdown_ticket
+                            .is_none()
+                    );
+                    assert_eq!(platform_window.presentation_shutdown_counts(), (0, 0, 0));
+                    assert!(logical_closes.borrow().is_empty());
+                    assert!(native_terminals.borrow().is_empty());
+                    app.new(|_| Empty)
+                })
+            })
+            .expect_err("a required close during root construction must reject the reservation");
+        cx.run_until_parked();
+
+        assert!(root_built.get());
+        assert_eq!(error.stage(), WindowOpenFailureStage::ClosedDuringBuild);
+        assert!(cx.windows().is_empty());
+        assert!(logical_closes.borrow().is_empty());
+        assert!(native_terminals.borrow().is_empty());
+        let platform_window = cx
+            .last_created_test_window()
+            .expect("creation rollback must retain the failed native owner for shutdown");
+        let handle = platform_window.0.lock().handle;
+        let pending = platform_window.presentation_shutdown_counts();
+        assert_eq!(pending.0, 1);
+        assert!(pending.1 >= 1);
+        assert_eq!(pending.2, 0);
+        assert_eq!(platform_window.draw_count(), 0);
+        assert!(!platform_window.is_native_terminal());
+        let shutdown = platform_window
+            .0
+            .lock()
+            .presentation_shutdown_ticket
+            .clone()
+            .expect("creation rollback must use the existing presentation shutdown authority");
+        assert_eq!(shutdown.snapshot().window_id(), handle.window_id());
+        assert!(!shutdown.snapshot().quiesced());
+        assert!(!shutdown.snapshot().native_terminal());
+        assert!(!shutdown.snapshot().protocol_violation());
+
+        platform_window.block_presentation_shutdown(false);
+        cx.background_executor
+            .advance_clock(Duration::from_millis(512));
+        cx.run_until_parked();
+
+        assert!(shutdown.snapshot().quiesced());
+        assert!(shutdown.snapshot().native_terminal());
+        assert!(!shutdown.snapshot().protocol_violation());
+        assert_eq!(platform_window.presentation_shutdown_counts().2, 1);
+        assert!(platform_window.is_native_terminal());
+        assert!(logical_closes.borrow().is_empty());
+        assert!(native_terminals.borrow().is_empty());
+        assert!(platform_window.release_deferred_native_terminal());
+        assert!(!platform_window.release_deferred_native_terminal());
+        cx.run_until_parked();
+
+        assert!(cx.windows().is_empty());
+        assert!(logical_closes.borrow().is_empty());
+        assert_eq!(native_terminals.borrow().as_slice(), &[handle.window_id()]);
+        assert!(!platform_window.simulate_close());
+    }
+}
+
+#[cfg(test)]
+mod native_window_control_tests {
+    use super::*;
+    use crate::{
+        AppContext, Empty, Modifiers, MouseMoveEvent, NativeBoundaryDiagnosticCursor,
+        NativeBoundaryDisposition, NativeBoundaryKind, NativeBoundaryTarget,
+        NativePlatformCommandKind, QuitMode, TestAppContext, WindowActivationPolicy, WindowKind,
+        WindowMutationDispatch, WindowMutationOutcome, WindowOptions, point, px, size,
+    };
+
+    fn open_test_window(cx: &mut TestAppContext) -> (AnyWindowHandle, TestWindow) {
+        cx.update(|app| app.set_quit_mode(QuitMode::Explicit));
+        let handle = cx.open_window(size(px(320.0), px(240.0)), |_, _| Empty);
+        let handle = handle.into();
+        let platform_window = cx.test_window(handle);
+        platform_window.clear_platform_command_history();
+        (handle, platform_window)
+    }
+
+    fn toggle_dispositions(
+        cx: &TestAppContext,
+        cursor: NativeBoundaryDiagnosticCursor,
+        handle: AnyWindowHandle,
+    ) -> Vec<NativeBoundaryDisposition> {
+        cx.app
+            .native_boundary_diagnostics(cursor)
+            .terminal
+            .into_iter()
+            .filter(|diagnostic| {
+                diagnostic.target == NativeBoundaryTarget::Window(handle.window_id())
+                    && diagnostic.kind
+                        == NativeBoundaryKind::Command(
+                            NativePlatformCommandKind::ToggleSimpleFullscreen,
+                        )
+            })
+            .map(|diagnostic| diagnostic.disposition)
+            .collect()
+    }
+
+    #[crate::test]
+    fn input_region_owns_exact_rectangles_and_distinguishes_reset_from_empty(
+        cx: &mut TestAppContext,
+    ) {
+        let (handle, platform_window) = open_test_window(cx);
+        let original_facts = platform_window.platform_facts();
+        let rectangles = vec![
+            Bounds::new(point(px(-4.5), px(2.25)), size(px(17.5), px(18.75))),
+            Bounds::new(point(px(8.0), px(-1.0)), size(px(64.0), px(32.0))),
+        ];
+
+        cx.update_window(handle, |_, window, _| {
+            window.set_input_region(Some(&[]));
+            assert_eq!(platform_window.0.lock().input_region, Some(Vec::new()));
+            window.set_input_region(None);
+            assert_eq!(platform_window.0.lock().input_region, None);
+
+            let mut caller_buffer = rectangles.clone();
+            window.set_input_region(Some(&caller_buffer));
+            caller_buffer[0].origin = point(px(99.0), px(100.0));
+            caller_buffer.clear();
+            drop(caller_buffer);
+            assert_eq!(platform_window.0.lock().input_region, Some(rectangles));
+
+            let full_window = Bounds::new(Point::default(), window.bounds().size);
+            window.set_input_region(Some(&[full_window]));
+            assert_eq!(
+                platform_window.0.lock().input_region,
+                Some(vec![full_window])
+            );
+            window.set_input_region(None);
+            assert_eq!(platform_window.0.lock().input_region, None);
+
+            for zone in [px(-1.0), px(0.0), px(36.25)] {
+                window.set_exclusive_zone(zone);
+                assert_eq!(platform_window.0.lock().exclusive_zone, Some(zone));
+            }
+            #[cfg(all(target_os = "linux", feature = "wayland"))]
+            {
+                window.set_exclusive_edge(crate::layer_shell::Anchor::TOP);
+                assert_eq!(
+                    platform_window.0.lock().exclusive_edge,
+                    Some(crate::layer_shell::Anchor::TOP)
+                );
+            }
+        })
+        .expect("native control forwarding must preserve the live window");
+
+        assert_eq!(platform_window.platform_facts(), original_facts);
+        assert!(platform_window.platform_command_history().is_empty());
+    }
+
+    #[crate::test]
+    fn default_simple_fullscreen_is_unsupported_without_changing_ordinary_fullscreen(
+        cx: &mut TestAppContext,
+    ) {
+        let (handle, platform_window) = open_test_window(cx);
+        let original_facts = platform_window.platform_facts();
+        platform_window.toggle_simple_fullscreen();
+        assert!(!platform_window.is_simple_fullscreen());
+
+        cx.update_window(handle, |_, window, _| {
+            window.toggle_simple_fullscreen();
+            window.toggle_simple_fullscreen();
+            assert!(!window.is_simple_fullscreen());
+            assert_eq!(window.is_fullscreen(), original_facts.is_fullscreen);
+            assert!(platform_window.platform_command_history().is_empty());
+        })
+        .expect("unsupported toggles must remain callable through Window");
+
+        assert!(!platform_window.is_simple_fullscreen());
+        assert_eq!(platform_window.platform_facts(), original_facts);
+        assert_eq!(
+            platform_window.platform_command_history(),
+            [
+                PlatformWindowCommand::ToggleSimpleFullscreen,
+                PlatformWindowCommand::ToggleSimpleFullscreen,
+            ]
+        );
+    }
+
+    #[crate::test]
+    fn simple_fullscreen_toggles_and_queries_follow_post_borrow_fifo(cx: &mut TestAppContext) {
+        let (handle, platform_window) = open_test_window(cx);
+        platform_window.0.lock().simple_fullscreen = Some(false);
+        let original_facts = platform_window.platform_facts();
+        let observations = Rc::new(RefCell::new(Vec::new()));
+        let app = cx.app.clone();
+        platform_window.set_platform_command_callback({
+            let observations = observations.clone();
+            move |command, platform_window| {
+                let borrow = app
+                    .try_borrow_mut()
+                    .expect("fullscreen commands must enter with an idle App");
+                drop(borrow);
+                observations
+                    .borrow_mut()
+                    .push((command, platform_window.is_simple_fullscreen()));
+                PlatformWindowCommandOutcome::Accepted
+            }
+        });
+        let menu_position = point(px(24.0), px(36.0));
+
+        cx.update(|app| {
+            app.update_window(handle, |_, window, _| {
+                window.toggle_simple_fullscreen();
+                window.start_window_move();
+                window.toggle_simple_fullscreen();
+                window.show_window_menu(menu_position);
+                assert!(!window.is_simple_fullscreen());
+            })
+            .expect("the window must accept ordered public control calls");
+            assert!(platform_window.platform_command_history().is_empty());
+            assert!(observations.borrow().is_empty());
+        });
+
+        assert_eq!(
+            &*observations.borrow(),
+            &[
+                (PlatformWindowCommand::ToggleSimpleFullscreen, false),
+                (PlatformWindowCommand::StartWindowMove, true),
+                (PlatformWindowCommand::ToggleSimpleFullscreen, true),
+                (PlatformWindowCommand::ShowWindowMenu(menu_position), false),
+            ]
+        );
+        assert!(!platform_window.is_simple_fullscreen());
+        assert_eq!(platform_window.platform_facts(), original_facts);
+        assert!(
+            !cx.update_window(handle, |_, window, _| window.is_simple_fullscreen())
+                .expect("the public query must observe both completed toggles")
+        );
+    }
+
+    #[crate::test]
+    fn simple_fullscreen_input_reentry_queues_a_toggle_after_existing_commands(
+        cx: &mut TestAppContext,
+    ) {
+        let (handle, platform_window) = open_test_window(cx);
+        platform_window.0.lock().simple_fullscreen = Some(false);
+        let callback_active = Rc::new(Cell::new(false));
+        let input_count = Rc::new(Cell::new(0));
+        let observations = Rc::new(RefCell::new(Vec::new()));
+        let _interceptor = cx
+            .update_window(handle, |_, window, _| {
+                window.intercept_window_mouse_events({
+                    let callback_active = callback_active.clone();
+                    let input_count = input_count.clone();
+                    move |_, window, app| {
+                        assert!(callback_active.get());
+                        assert!(!window.is_simple_fullscreen());
+                        input_count.set(input_count.get() + 1);
+                        window.toggle_simple_fullscreen();
+                        app.stop_propagation();
+                        window.prevent_default();
+                    }
+                })
+            })
+            .expect("the native input interceptor must attach before dispatch");
+        platform_window.set_platform_command_callback({
+            let callback_active = callback_active.clone();
+            let input_count = input_count.clone();
+            let observations = observations.clone();
+            move |command, mut platform_window| {
+                assert!(!callback_active.replace(true));
+                observations
+                    .borrow_mut()
+                    .push((command, platform_window.is_simple_fullscreen()));
+                if observations.borrow().len() == 1 {
+                    assert_eq!(
+                        platform_window.simulate_input_result(PlatformInput::MouseMove(
+                            MouseMoveEvent {
+                                position: point(px(24.0), px(10.0)),
+                                pressed_button: None,
+                                modifiers: Modifiers::default(),
+                            },
+                        )),
+                        DispatchEventResult {
+                            propagate: false,
+                            default_prevented: true,
+                        }
+                    );
+                    assert_eq!(input_count.get(), 1);
+                    assert_eq!(observations.borrow().len(), 1);
+                }
+                callback_active.set(false);
+                PlatformWindowCommandOutcome::Accepted
+            }
+        });
+        let menu_position = point(px(24.0), px(36.0));
+
+        cx.update_window(handle, |_, window, _| {
+            window.toggle_simple_fullscreen();
+            window.show_window_menu(menu_position);
+            assert_eq!(input_count.get(), 0);
+        })
+        .expect("fullscreen dispatch must allow synchronous native input reentry");
+        cx.run_until_parked();
+
+        assert!(!callback_active.get());
+        assert_eq!(input_count.get(), 1);
+        assert_eq!(
+            &*observations.borrow(),
+            &[
+                (PlatformWindowCommand::ToggleSimpleFullscreen, false),
+                (PlatformWindowCommand::ShowWindowMenu(menu_position), true),
+                (PlatformWindowCommand::ToggleSimpleFullscreen, true),
+            ]
+        );
+        assert!(!platform_window.is_simple_fullscreen());
+    }
+
+    #[crate::test]
+    fn live_disabled_input_can_recover_but_retirement_refuses_toggles_and_reenable(
+        cx: &mut TestAppContext,
+    ) {
+        let (handle, mut platform_window) = open_test_window(cx);
+        platform_window.0.lock().simple_fullscreen = Some(false);
+        cx.update_window(handle, |_, window, _| {
+            assert!(matches!(
+                window.request_pointer_input(false),
+                WindowMutationDispatch::Queued(_)
+            ));
+        })
+        .expect("the live window must accept disabled pointer input");
+        assert!(platform_window.flush_window_mutation(WindowMutationDomain::PointerInput));
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, _| {
+            assert!(!window.platform_facts().accepts_pointer_input);
+            window.set_input_region(Some(&[]));
+            window.set_input_region(None);
+            window.toggle_simple_fullscreen();
+            assert!(!platform_window.accepts_pointer_input());
+            assert!(matches!(
+                window.request_pointer_input(true),
+                WindowMutationDispatch::Queued(_)
+            ));
+        })
+        .expect("live input policy must not revoke generic interaction authority");
+        assert!(platform_window.is_simple_fullscreen());
+        assert!(platform_window.flush_window_mutation(WindowMutationDomain::PointerInput));
+        cx.run_until_parked();
+        assert!(platform_window.accepts_pointer_input());
+
+        cx.update_window(handle, |_, window, _| {
+            assert!(matches!(
+                window.request_pointer_input(false),
+                WindowMutationDispatch::Queued(_)
+            ));
+        })
+        .expect("live pointer input must be independently reversible");
+        assert!(platform_window.flush_window_mutation(WindowMutationDomain::PointerInput));
+        cx.run_until_parked();
+        let before_retirement = platform_window.platform_facts();
+        let cursor = cx
+            .app
+            .native_boundary_diagnostics(NativeBoundaryDiagnosticCursor::default())
+            .cursor;
+        platform_window.clear_platform_command_history();
+        let pointer_ticket = cx
+            .update_window(handle, |_, window, app| {
+                let pointer_ticket = match window.request_pointer_input(true) {
+                    WindowMutationDispatch::Queued(ticket) => ticket,
+                    dispatch => panic!("expected queued input recovery, got {dispatch:?}"),
+                };
+                window.toggle_simple_fullscreen();
+                assert!(window.quiesce_interaction(app));
+                window.toggle_simple_fullscreen();
+                window.set_input_region(Some(&[]));
+                window.set_input_region(None);
+                window.set_exclusive_zone(px(80.0));
+                assert!(!window.quiesce_interaction(app));
+                assert!(matches!(
+                    window.request_pointer_input(true),
+                    WindowMutationDispatch::Rejected
+                ));
+                assert!(matches!(
+                    window.request_activation_policy(WindowActivationPolicy::default()),
+                    WindowMutationDispatch::Rejected
+                ));
+                pointer_ticket
+            })
+            .expect("a retired window must remain registered while shutdown converges");
+
+        assert_eq!(
+            pointer_ticket
+                .observation()
+                .expect("retirement must settle the pending input recovery")
+                .outcome,
+            WindowMutationOutcome::Rejected
+        );
+        assert_eq!(
+            toggle_dispositions(cx, cursor, handle),
+            [
+                NativeBoundaryDisposition::Rejected,
+                NativeBoundaryDisposition::Rejected,
+            ]
+        );
+        assert!(platform_window.platform_command_history().is_empty());
+        assert!(!platform_window.flush_window_mutation(WindowMutationDomain::PointerInput));
+        assert!(platform_window.is_simple_fullscreen());
+        platform_window.toggle_simple_fullscreen();
+        platform_window.set_input_region(Some(&[before_retirement.bounds]));
+        platform_window.set_input_region(None);
+        assert!(platform_window.is_simple_fullscreen());
+        assert_eq!(platform_window.0.lock().input_region, None);
+        assert_eq!(platform_window.0.lock().exclusive_zone, None);
+
+        platform_window.prepare_window_mutation(WindowMutationDomain::PointerInput, 900);
+        assert_eq!(
+            platform_window.request_window_mutation(900, WindowMutationRequest::PointerInput(true)),
+            PlatformWindowDispatch::Rejected
+        );
+        let mut stale_facts = before_retirement;
+        stale_facts.accepts_pointer_input = true;
+        stale_facts.accepts_activation = true;
+        stale_facts.focus_on_click = true;
+        stale_facts.is_active = true;
+        assert!(
+            platform_window.simulate_window_mutation_terminal_for_generation(
+                WindowMutationDomain::PointerInput,
+                899,
+                PlatformWindowMutationTerminal::Observed,
+                stale_facts,
+            )
+        );
+        let facts = platform_window.platform_facts();
+        assert!(!facts.accepts_pointer_input);
+        assert!(!facts.accepts_activation);
+        assert!(!facts.focus_on_click);
+        assert!(!facts.is_active);
+    }
+
+    #[crate::test]
+    fn fullscreen_for_a_closed_target_never_reaches_its_replacement(cx: &mut TestAppContext) {
+        let (handle, platform_window) = open_test_window(cx);
+        platform_window.0.lock().simple_fullscreen = Some(false);
+        let cursor = cx
+            .app
+            .native_boundary_diagnostics(NativeBoundaryDiagnosticCursor::default())
+            .cursor;
+        cx.update_window(handle, |_, window, app| {
+            window.toggle_simple_fullscreen();
+            window.remove_window(app);
+            assert!(platform_window.platform_command_history().is_empty());
+        })
+        .expect("close must revoke the exact queued fullscreen target");
+        let (replacement, replacement_window) = open_test_window(cx);
+        replacement_window.0.lock().simple_fullscreen = Some(false);
+        cx.run_until_parked();
+
+        assert_ne!(handle.window_id(), replacement.window_id());
+        assert!(!cx.windows().contains(&handle));
+        assert!(!platform_window.is_simple_fullscreen());
+        assert!(!replacement_window.is_simple_fullscreen());
+        assert!(platform_window.platform_command_history().is_empty());
+        assert!(replacement_window.platform_command_history().is_empty());
+        assert_eq!(
+            toggle_dispositions(cx, cursor, handle),
+            [NativeBoundaryDisposition::Rejected]
+        );
+        assert_eq!(
+            platform_window
+                .command_dispatcher()
+                .dispatch(PlatformWindowCommand::ToggleSimpleFullscreen),
+            PlatformWindowCommandOutcome::WindowClosed
+        );
+    }
+
+    #[crate::test]
+    fn fullscreen_callback_retirement_returns_the_exact_refusal_before_toggling(
+        cx: &mut TestAppContext,
+    ) {
+        for close in [false, true] {
+            let (_, platform_window) = open_test_window(cx);
+            platform_window.0.lock().simple_fullscreen = Some(false);
+            platform_window.set_platform_command_callback(move |_, platform_window| {
+                if close {
+                    assert!(platform_window.simulate_close());
+                } else {
+                    assert!(platform_window.interaction_quiescence().revoke());
+                }
+                PlatformWindowCommandOutcome::Accepted
+            });
+
+            assert_eq!(
+                platform_window
+                    .command_dispatcher()
+                    .dispatch(PlatformWindowCommand::ToggleSimpleFullscreen),
+                if close {
+                    PlatformWindowCommandOutcome::WindowClosed
+                } else {
+                    PlatformWindowCommandOutcome::Rejected
+                }
+            );
+            platform_window.toggle_simple_fullscreen();
+            assert!(!platform_window.is_simple_fullscreen());
+            assert!(!platform_window.accepts_pointer_input());
+            assert_eq!(
+                platform_window.platform_command_history(),
+                [PlatformWindowCommand::ToggleSimpleFullscreen]
+            );
+        }
+    }
+
+    #[crate::test]
+    fn core_refuses_retired_fullscreen_before_an_independent_native_dispatcher(
+        cx: &mut TestAppContext,
+    ) {
+        let (handle, _) = open_test_window(cx);
+        let calls = Rc::new(Cell::new(0));
+        let dispatcher = PlatformWindowCommandDispatcher::new({
+            let calls = calls.clone();
+            move |command| {
+                assert_eq!(command, PlatformWindowCommand::ToggleSimpleFullscreen);
+                calls.set(calls.get() + 1);
+                PlatformWindowCommandOutcome::Accepted
+            }
+        });
+        let app = cx.app.clone();
+        let cursor = app
+            .native_boundary_diagnostics(NativeBoundaryDiagnosticCursor::default())
+            .cursor;
+        app.enqueue_platform_window_command(
+            handle.window_id(),
+            dispatcher.clone(),
+            PlatformWindowCommand::ToggleSimpleFullscreen,
+        );
+        cx.run_until_parked();
+        assert_eq!(calls.get(), 1);
+        cx.update_window(handle, |_, window, app_cx| {
+            assert!(window.quiesce_interaction(app_cx));
+            app.enqueue_platform_window_command(
+                handle.window_id(),
+                dispatcher,
+                PlatformWindowCommand::ToggleSimpleFullscreen,
+            );
+        })
+        .expect("the retiring target must retain its exact registry identity");
+        cx.run_until_parked();
+        assert_eq!(
+            calls.get(),
+            1,
+            "Core must refuse before invoking the native dispatcher"
+        );
+        assert_eq!(
+            toggle_dispositions(cx, cursor, handle),
+            [
+                NativeBoundaryDisposition::Delivered { input_result: None },
+                NativeBoundaryDisposition::Rejected,
+            ]
+        );
+    }
+
+    #[crate::test]
+    fn rejected_fullscreen_dispatch_does_not_toggle_and_later_commands_still_run(
+        cx: &mut TestAppContext,
+    ) {
+        let (handle, platform_window) = open_test_window(cx);
+        platform_window.0.lock().simple_fullscreen = Some(false);
+        let calls = Rc::new(Cell::new(0));
+        platform_window.set_platform_command_callback({
+            let calls = calls.clone();
+            move |_, platform_window| {
+                assert!(!platform_window.is_simple_fullscreen());
+                calls.set(calls.get() + 1);
+                if calls.get() == 1 {
+                    PlatformWindowCommandOutcome::Rejected
+                } else {
+                    PlatformWindowCommandOutcome::Accepted
+                }
+            }
+        });
+        let cursor = cx
+            .app
+            .native_boundary_diagnostics(NativeBoundaryDiagnosticCursor::default())
+            .cursor;
+        cx.update_window(handle, |_, window, _| {
+            window.toggle_simple_fullscreen();
+            window.toggle_simple_fullscreen();
+        })
+        .expect("a refused native command must not prevent a later toggle");
+
+        assert_eq!(calls.get(), 2);
+        assert!(platform_window.is_simple_fullscreen());
+        assert_eq!(
+            toggle_dispositions(cx, cursor, handle),
+            [
+                NativeBoundaryDisposition::Rejected,
+                NativeBoundaryDisposition::Delivered { input_result: None },
+            ]
+        );
+    }
+
+    #[crate::test]
+    fn unsupported_popup_does_not_construct_or_publish_a_test_window(cx: &mut TestAppContext) {
+        let (parent, platform_window) = open_test_window(cx);
+        let root_built = Cell::new(false);
+        let result = cx.update(|app| {
+            app.open_window(
+                WindowOptions {
+                    kind: WindowKind::AnchoredPopup(crate::popup::PopupOptions {
+                        parent,
+                        anchor_rect: Bounds::new(
+                            point(px(12.0), px(16.0)),
+                            size(px(80.0), px(24.0)),
+                        ),
+                        anchor: crate::popup::PopupAnchor::BottomLeft,
+                        gravity: crate::popup::PopupGravity::BottomRight,
+                        constraint_adjustment: crate::popup::PopupConstraintAdjustment::SLIDE_X
+                            | crate::popup::PopupConstraintAdjustment::FLIP_Y,
+                        offset: point(px(2.0), px(4.0)),
+                        grab: false,
+                    }),
+                    ..Default::default()
+                },
+                |_, app| {
+                    root_built.set(true);
+                    app.new(|_| Empty)
+                },
+            )
+        });
+        assert!(
+            result
+                .expect_err("TestPlatform must refuse an actual native popup")
+                .is::<crate::popup::PopupNotSupportedError>()
+        );
+        assert!(!root_built.get());
+        assert_eq!(cx.windows(), [parent]);
+        assert!(Rc::ptr_eq(
+            &cx.last_created_test_window()
+                .expect("refusal must retain the actual parent as the last native window")
+                .0,
+            &platform_window.0,
+        ));
     }
 }
 

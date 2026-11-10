@@ -2548,6 +2548,28 @@ impl Window {
             })
             .transpose()?;
 
+        if let WindowKind::AnchoredPopup(popup) = &kind {
+            anyhow::ensure!(
+                transient_for.is_none(),
+                "an anchored popup uses its popup parent rather than a transient owner"
+            );
+            anyhow::ensure!(
+                popup.parent != handle,
+                "an anchored popup cannot parent itself"
+            );
+            anyhow::ensure!(
+                cx.window_handles.get(&popup.parent.window_id()) == Some(&popup.parent),
+                "popup parent is closed or its generation is stale"
+            );
+        }
+        cx.platform.validate_window_kind(&kind)?;
+        let focus_on_appearing = if matches!(&kind, WindowKind::AnchoredPopup(popup) if !popup.grab)
+        {
+            false
+        } else {
+            focus_on_appearing
+        };
+
         if provisional_session.is_some() {
             anyhow::ensure!(
                 show,
@@ -2712,6 +2734,15 @@ impl Window {
         }
 
         let should_close_handler = WindowShouldCloseHandlerSlot::default();
+        platform_window.on_close_required(Box::new({
+            let window_id = handle.window_id();
+            let cx = cx.to_async();
+            let interaction_authority = interaction_authority.clone();
+            move || {
+                interaction_authority.revoke_admission();
+                cx.enqueue_window_close_required(window_id);
+            }
+        }));
         platform_window.on_close(Box::new({
             let window_id = handle.window_id();
             let cx = cx.to_async();
@@ -2880,43 +2911,45 @@ impl Window {
         // post-map facts seed the root builder and first frame; presentation and activation still
         // wait for the exact registry commit.
         let creation_facts = platform_window.creation_facts();
-        anyhow::ensure!(
-            creation_facts.show == show,
-            "platform did not preserve the requested initial visibility"
-        );
-        if window_capabilities
-            .creation
-            .focus_on_appearing
-            .is_supported()
-        {
-            anyhow::ensure!(
-                creation_facts.focus_on_appearing == focus_on_appearing,
-                "platform did not establish the requested first-appearance policy"
-            );
-        }
-        if window_capabilities.creation.transient_for.is_supported() {
-            anyhow::ensure!(
-                creation_facts.transient_for == transient_for,
-                "platform did not establish the requested transient owner"
-            );
-        } else {
-            anyhow::ensure!(
-                creation_facts.transient_for.is_none(),
-                "platform reported a transient owner despite unsupported capability"
-            );
-        }
         let mut platform_facts = platform_window.platform_facts();
         platform_facts.background_appearance = platform_window.background_appearance();
-        if window_capabilities
-            .mutations
-            .activation_policy
-            .is_available_at_creation()
-        {
+        if !native_closed.load(SeqCst) {
             anyhow::ensure!(
-                platform_facts.accepts_activation == activation_policy.accepts_activation
-                    && platform_facts.focus_on_click == activation_policy.focus_on_click,
-                "platform did not establish the requested lifetime activation policy"
+                creation_facts.show == show,
+                "platform did not preserve the requested initial visibility"
             );
+            if window_capabilities
+                .creation
+                .focus_on_appearing
+                .is_supported()
+            {
+                anyhow::ensure!(
+                    creation_facts.focus_on_appearing == focus_on_appearing,
+                    "platform did not establish the requested first-appearance policy"
+                );
+            }
+            if window_capabilities.creation.transient_for.is_supported() {
+                anyhow::ensure!(
+                    creation_facts.transient_for == transient_for,
+                    "platform did not establish the requested transient owner"
+                );
+            } else {
+                anyhow::ensure!(
+                    creation_facts.transient_for.is_none(),
+                    "platform reported a transient owner despite unsupported capability"
+                );
+            }
+            if window_capabilities
+                .mutations
+                .activation_policy
+                .is_available_at_creation()
+            {
+                anyhow::ensure!(
+                    platform_facts.accepts_activation == activation_policy.accepts_activation
+                        && platform_facts.focus_on_click == activation_policy.focus_on_click,
+                    "platform did not establish the requested lifetime activation policy"
+                );
+            }
         }
         let display_id = platform_facts.display_id;
         let sprite_atlas = platform_window.sprite_atlas();
@@ -5826,6 +5859,34 @@ impl Window {
             .enqueue(PlatformWindowCommand::StartWindowResize(edge));
     }
 
+    /// Set the exclusive zone for a layer-shell surface: how much screen space it
+    /// reserves so other surfaces avoid occluding it (e.g. a panel reserving space).
+    /// Positive values reserve that distance from the anchored edge, 0 lets the
+    /// surface be moved out of others' exclusive zones, and -1 ignores reserved
+    /// space and may extend under other surfaces. (Wayland layer-shell windows only)
+    pub fn set_exclusive_zone(&self, zone: Pixels) {
+        self.platform_window.set_exclusive_zone(zone);
+    }
+
+    /// Set which anchored edge a layer-shell surface's exclusive zone applies to.
+    /// This is only needed to disambiguate a corner-anchored surface; otherwise the
+    /// edge is deduced from the anchor. The edge must be a single edge the surface
+    /// is anchored to, or it is ignored. (Wayland layer-shell windows only)
+    #[cfg(all(target_os = "linux", feature = "wayland"))]
+    pub fn set_exclusive_edge(&self, edge: crate::layer_shell::Anchor) {
+        self.platform_window.set_exclusive_edge(edge);
+    }
+
+    /// Linux (Wayland) only: set the window's input region, the area that receives pointer
+    /// and touch input. Events outside it pass through to whatever is below the window.
+    ///
+    /// - `Some(rects)` restricts input to the union of `rects`, in window coordinates.
+    /// - `Some(&[])` is an empty region, so the window receives no pointer or touch input.
+    /// - `None` resets the region to the default, so the whole window receives input again.
+    pub fn set_input_region(&self, region: Option<&[Bounds<Pixels>]>) {
+        self.platform_window.set_input_region(region);
+    }
+
     /// Return the `WindowBounds` to indicate that how a window should be opened
     /// after it has been closed
     pub fn window_bounds(&self) -> WindowBounds {
@@ -6869,6 +6930,13 @@ impl Window {
     /// Returns whether or not the window is currently fullscreen
     pub fn is_fullscreen(&self) -> bool {
         self.platform_facts.is_fullscreen
+    }
+
+    /// Returns whether the window is currently in simple (borderless) fullscreen,
+    /// where it covers the entire screen including the menu bar and notch area.
+    /// Always `false` on platforms other than macOS.
+    pub fn is_simple_fullscreen(&self) -> bool {
+        self.platform_window.is_simple_fullscreen()
     }
 
     /// Returns whether or not the window is currently minimized.
@@ -13850,6 +13918,17 @@ impl Window {
             state: Some(state),
             ..WindowPlacementRequest::new()
         })
+    }
+
+    /// Toggle simple (borderless) fullscreen, where the window covers the entire
+    /// screen including the menu bar and, on notched displays, the area around the
+    /// notch. Unlike [`Window::toggle_fullscreen`], this does not move the window
+    /// into its own Mission Control space. Only has an effect on macOS.
+    ///
+    /// The native presentation action executes after the outer application borrow ends.
+    pub fn toggle_simple_fullscreen(&self) {
+        self.platform_command_sink
+            .enqueue(PlatformWindowCommand::ToggleSimpleFullscreen);
     }
 
     /// Updates the IME panel position suggestions for languages like japanese, chinese.

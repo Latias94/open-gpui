@@ -408,13 +408,24 @@ impl Platform for WebPlatform {
         }
     }
 
+    fn validate_window_kind(&self, kind: &WindowKind) -> anyhow::Result<()> {
+        if matches!(kind, WindowKind::AnchoredPopup(_)) {
+            return Err(open_gpui::popup::PopupNotSupportedError.into());
+        }
+        Ok(())
+    }
+
     fn open_window(
         &self,
         handle: AnyWindowHandle,
         params: WindowParams,
     ) -> anyhow::Result<Box<dyn PlatformWindow>> {
+        self.validate_window_kind(&params.kind)?;
         match &params.kind {
             WindowKind::Normal => {}
+            WindowKind::AnchoredPopup(_) => {
+                return Err(open_gpui::popup::PopupNotSupportedError.into());
+            }
             WindowKind::PopUp => return Err(WebWindowError::UnsupportedWindowKind("popup").into()),
             WindowKind::Floating => {
                 return Err(WebWindowError::UnsupportedWindowKind("floating").into());

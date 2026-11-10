@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- Native window controls include Wayland input regions and layer-shell exclusive-zone/edge updates, macOS simple fullscreen, and the official parent-anchored popup description. Wayland owns native popup positioning, grabs, configure/reposition and dismissal; unsupported backends return `PopupNotSupportedError` for callers choosing in-window fallback.
+
 - Native windows expose opaque state query/restore and user-attention requests. macOS preserves the official workspace/fullscreen restoration policy; Windows requests one flash, X11 preserves and clears urgency hints, and unsupported backends retain no-op behavior. Restoration owns its archive bytes through the existing post-borrow command queue.
 
 - `fs_embed!` reads development assets from the runtime checkout and embeds them in release builds or with `debug-embed`. It exposes the same get/iter and asset trait interface with matching include/exclude filters.
@@ -64,6 +66,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Optional native debug hot reload follows the official GPUI/Subsecond 0.7.10 mechanism: build/process-matched patches, foreground application, window refresh, and typed, stateless and stored erased View render boundaries. Run with `dx serve --hot-patch`; compatible render-body edits preserve existing model state. Release/WebAssembly transport exclusion, failed loads, required restarts and disconnects remain explicit. The independently locked native consumer provides an actual edit/build/apply and Submitted-scene pixel acceptance procedure, including the required upstream dx x64 jump-stub backport for the qualified Windows tool.
 
 ### Breaking Changes and Migration Notes
+
+- Handle `WindowKind::AnchoredPopup(PopupOptions)` and the hidden `PlatformWindowCommand::ToggleSimpleFullscreen` / `NativePlatformCommandKind::ToggleSimpleFullscreen` in exhaustive matches. An anchored popup names one live parent in the opening App through `PopupOptions::parent`; do not also set `WindowOptions::transient_for`. Its window-bounds origin is ignored. Non-grabbing popups always use a nonactivating first appearance, including when the generic focus field keeps its default; explicit grabs retain their native focus policy. Simple fullscreen is a native presentation action through the post-borrow command queue and preserves normal restore bounds; it does not create a typed placement ticket.
+
+- Custom backends use the optional `PlatformWindow::on_close_required` callback for irreversible dismissal before native destruction. It bypasses a user close veto while preserving presentation shutdown and native retirement. Keep `on_close` for the true native terminal. Hidden callback diagnostics add `NativeCallbackKind::CloseRequired`.
 
 - The hidden backend integration enum `PlatformWindowCommand` is `Clone` rather than `Copy` and adds `RestoreNativeWindowState(Arc<[u8]>)`; `requires_interaction_authority` now borrows it. Clone when retaining a command across dispatch and update exhaustive matches, including `NativePlatformCommandKind::RestoreNativeWindowState`. Unsupported dispatchers should return `Unsupported`; ordinary `PlatformWindow` implementors inherit the default no-op services.
 
@@ -241,6 +247,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - `open-gpui-devtools` now projects Table behavior through a pre-capture allowlist with session-scoped opaque table, column, and row ordinals plus derived cell ids; raw ids, values, diagnostic source identities, selectors, and deterministic hashes are excluded from live, history, diff, Inspector, export, artifact, report, and Gallery fixture output, while sanitized diagnostic kinds and counts remain observable.
 
 ### Fixed
+
+- Ordinary `App::open_window` preserves downcasts to backend errors such as `PopupNotSupportedError`, allowing callers to choose a fallback. `open_window_detailed` retains its typed synchronous failure stage.
 
 - Windows file and message dialogs run on dedicated STA threads, serialize per native owner and cancel when their caller or owner closes. Native retirement waits for active dialog work without blocking the foreground executor. File-picker failures are reported separately from user cancellation.
 - Windows keyboard accelerators route directly to registered GPUI windows without sending private messages to foreign hosts. Stationary no-button mouse moves avoid duplicate input while retaining hover reentry, held-button and physical-geometry changes; private messages retain validation and native-generation checks.

@@ -40,13 +40,15 @@ use open_gpui::{
     PromptLevel, RequestFrameOptions, SharedString, Size, SystemWindowTab, WindowActivationPolicy,
     WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
     WindowCreationFacts, WindowId, WindowKind, WindowParams, WindowPresentationShutdownTicket,
-    WindowVisibility, point, px, size,
+    WindowVisibility, point, popup::PopupNotSupportedError, px, size,
 };
 
 mod file_drag;
+mod simple_fullscreen;
 mod visibility;
 
 use file_drag::MacExternalDrag;
+use simple_fullscreen::{SimpleFullscreenState, release_simple_fullscreen_presentation_options};
 use visibility::MacWindowVisibilityObserver;
 
 use core_foundation::base::{CFRelease, CFTypeRef};
@@ -1079,12 +1081,12 @@ impl MacWindowCreationProjection {
             accepts_pointer_input,
             focus_on_appearing: match kind {
                 WindowKind::Normal | WindowKind::Floating => focus_on_appearing,
-                WindowKind::PopUp => false,
+                WindowKind::PopUp | WindowKind::AnchoredPopup(_) => false,
                 WindowKind::Dialog => true,
             },
             activation_policy: match kind {
                 WindowKind::Normal | WindowKind::Floating => activation_policy,
-                WindowKind::PopUp => WindowActivationPolicy {
+                WindowKind::PopUp | WindowKind::AnchoredPopup(_) => WindowActivationPolicy {
                     accepts_activation: false,
                     focus_on_click: false,
                 },
@@ -1143,6 +1145,13 @@ pub(crate) fn macos_supports_toplevel_creation_state(kind: &WindowKind) -> bool 
 
 pub(crate) fn macos_supports_focus_on_appearing(kind: &WindowKind) -> bool {
     matches!(kind, WindowKind::Normal | WindowKind::Floating)
+}
+
+pub(crate) fn validate_macos_window_kind(kind: &WindowKind) -> Result<()> {
+    if matches!(kind, WindowKind::AnchoredPopup(_)) {
+        return Err(PopupNotSupportedError.into());
+    }
+    Ok(())
 }
 
 struct MacPresentationShutdownAuthority {
@@ -1580,6 +1589,7 @@ struct MacWindowNativeObservation {
     is_minimized: bool,
     is_maximized: bool,
     is_fullscreen: bool,
+    simple_fullscreen_restore_bounds: Option<Bounds<Pixels>>,
     is_active: bool,
     style_mask: NSUInteger,
     titlebar_appears_transparent: bool,
@@ -1688,6 +1698,8 @@ impl MacWindowNativeObservationChanges {
             minimized_or_maximized_changed,
             state_changed: minimized_or_maximized_changed
                 || previous.is_fullscreen != current.is_fullscreen
+                || previous.simple_fullscreen_restore_bounds
+                    != current.simple_fullscreen_restore_bounds
                 || previous.style_mask != current.style_mask
                 || previous.titlebar_appears_transparent != current.titlebar_appears_transparent,
         }
@@ -1773,6 +1785,8 @@ struct MacWindowState {
     transparent_titlebar: bool,
     accepts_pointer_input: bool,
     activation_policy: WindowActivationPolicy,
+    is_resizable: bool,
+    is_minimizable: bool,
     topmost: bool,
     taskbar_visible: bool,
     previous_modifiers_changed_event: Option<PlatformInput>,
@@ -1792,6 +1806,7 @@ struct MacWindowState {
     fullscreen_restore_bounds: Bounds<Pixels>,
     pending_fullscreen_restore_bounds: Option<Bounds<Pixels>>,
     fullscreen_transition: Option<MacFullscreenTransition>,
+    simple_fullscreen_state: Option<SimpleFullscreenState>,
     move_tab_to_new_window_callback: Option<Rc<dyn Fn()>>,
     merge_all_windows_callback: Option<Rc<dyn Fn()>>,
     select_next_tab_callback: Option<Rc<dyn Fn()>>,
@@ -1831,6 +1846,7 @@ impl MacWindowState {
         PlatformShouldCloseCallbackSlot,
         MacWindowVisibilityObserver,
         Option<Rc<MacExternalDrag>>,
+        Option<SimpleFullscreenState>,
     ) {
         self.closed.store(true, Ordering::Release);
         self.interaction_quiesced.store(true, Ordering::Release);
@@ -1858,6 +1874,7 @@ impl MacWindowState {
             self.should_close_callback.clone(),
             mem::take(&mut self.visibility_observer),
             self.external_drag.take(),
+            self.simple_fullscreen_state.take(),
         )
     }
 
@@ -2130,6 +2147,9 @@ impl MacWindowState {
                 is_minimized: is_minimized == YES,
                 is_maximized: !is_fullscreen && is_maximized == YES,
                 is_fullscreen,
+                simple_fullscreen_restore_bounds: self
+                    .simple_fullscreen_state
+                    .map(|saved| saved.bounds),
                 is_active,
                 style_mask: style_mask.bits(),
                 titlebar_appears_transparent: titlebar_appears_transparent == YES,
@@ -2182,7 +2202,12 @@ impl MacWindowState {
 
     fn store_native_observation(&mut self, observation: MacWindowNativeObservation) {
         self.native_observation = Some(observation);
-        if !observation.is_fullscreen && !observation.is_maximized && !observation.is_minimized {
+        if self.simple_fullscreen_state.is_none()
+            && observation.simple_fullscreen_restore_bounds.is_none()
+            && !observation.is_fullscreen
+            && !observation.is_maximized
+            && !observation.is_minimized
+        {
             self.windowed_restore_bounds = observation.bounds;
         }
     }
@@ -2250,6 +2275,7 @@ impl MacWindowState {
             observation.bounds,
             observation.is_fullscreen,
             observation.is_maximized,
+            observation.simple_fullscreen_restore_bounds,
         )
     }
 
@@ -2258,14 +2284,18 @@ impl MacWindowState {
         bounds: Bounds<Pixels>,
         is_fullscreen: bool,
         is_maximized: bool,
+        observed_simple_fullscreen_restore_bounds: Option<Bounds<Pixels>>,
     ) -> WindowBounds {
-        if is_fullscreen {
-            WindowBounds::Fullscreen(self.fullscreen_restore_bounds)
-        } else if is_maximized {
-            WindowBounds::Maximized(self.windowed_restore_bounds)
-        } else {
-            WindowBounds::Windowed(bounds)
-        }
+        simple_fullscreen::window_bounds_from_client_bounds(
+            bounds,
+            is_fullscreen,
+            is_maximized,
+            self.fullscreen_restore_bounds,
+            self.windowed_restore_bounds,
+            self.simple_fullscreen_state
+                .map(|saved| saved.bounds)
+                .or(observed_simple_fullscreen_restore_bounds),
+        )
     }
 }
 
@@ -2972,6 +3002,7 @@ impl MacWindow {
             should_close_callback,
             visibility_observer,
             external_drag,
+            simple_fullscreen_state,
             window,
             foreground_executor,
         ) = {
@@ -2982,6 +3013,7 @@ impl MacWindow {
                 should_close_callback,
                 visibility_observer,
                 external_drag,
+                simple_fullscreen_state,
             ) = state.mark_closed();
             state.renderer.destroy();
             let window = state.native_window;
@@ -2994,6 +3026,7 @@ impl MacWindow {
                 should_close_callback,
                 visibility_observer,
                 external_drag,
+                simple_fullscreen_state,
                 window,
                 state.foreground_executor.clone(),
             )
@@ -3003,6 +3036,7 @@ impl MacWindow {
         should_close_callback.terminate();
         drop(external_drag);
         drop(visibility_observer);
+        release_simple_fullscreen_presentation_options(simple_fullscreen_state);
         unsafe {
             detach_native_transient_relationships(window);
         }
@@ -3056,6 +3090,7 @@ impl MacWindow {
         background_executor: BackgroundExecutor,
         renderer_context: renderer::Context,
     ) -> Result<Self> {
+        validate_macos_window_kind(&kind)?;
         match (transient_for, transient_owner.as_ref()) {
             (Some(requested), Some(owner)) if requested == owner.handle() => {}
             (None, None) => {}
@@ -3154,6 +3189,7 @@ impl MacWindow {
                 WindowKind::Floating | WindowKind::Dialog => {
                     msg_send![PANEL_CLASS, alloc]
                 }
+                WindowKind::AnchoredPopup(_) => return Err(PopupNotSupportedError.into()),
             };
 
             let target_screen = target_display.screen();
@@ -3268,6 +3304,7 @@ impl MacWindow {
                     )
                     .then_some(creation.restore_bounds),
                     fullscreen_transition: None,
+                    simple_fullscreen_state: None,
                     move_tab_to_new_window_callback: None,
                     merge_all_windows_callback: None,
                     select_next_tab_callback: None,
@@ -3279,6 +3316,8 @@ impl MacWindow {
                     creation_facts,
                     accepts_pointer_input: creation.accepts_pointer_input,
                     activation_policy: creation.activation_policy,
+                    is_resizable,
+                    is_minimizable,
                     topmost: creation.topmost,
                     taskbar_visible: creation.taskbar_visible,
                     initial_presentation,
@@ -3403,6 +3442,7 @@ impl MacWindow {
                     );
                 }
                 WindowKind::Dialog => {}
+                WindowKind::AnchoredPopup(_) => return Err(PopupNotSupportedError.into()),
             }
 
             let observation_committed = {
@@ -4192,17 +4232,31 @@ fn reorder_mac_transient_after_native_activation(
 }
 
 fn start_mac_window_move(window_state: &Arc<Mutex<MacWindowState>>) -> bool {
-    let window = {
+    let (native_window, handle) = {
         let state = window_state.lock();
-        if state.is_closed() || state.interaction_is_quiesced() {
+        if state.is_closed()
+            || state.interaction_is_quiesced()
+            || state.simple_fullscreen_state.is_some()
+        {
             return false;
         }
-        state.native_window
+        let Some(native_window) =
+            (unsafe { Retained::retain(state.native_window.cast::<NativeWindow>()) })
+        else {
+            return false;
+        };
+        (native_window, state.handle)
     };
 
+    let window = Retained::as_ptr(&native_window).cast_mut().cast();
     unsafe {
         let app = NSApplication::sharedApplication(nil);
         let event: id = msg_send![app, currentEvent];
+        if !native_window_matches_handle(window, handle)
+            || window_state.lock().simple_fullscreen_state.is_some()
+        {
+            return false;
+        }
         let _: () = msg_send![window, performWindowDragWithEvent: event];
     }
     true
@@ -4254,6 +4308,15 @@ fn dispatch_mac_window_command(
                 PlatformWindowCommandOutcome::WindowClosed
             } else {
                 PlatformWindowCommandOutcome::Accepted
+            }
+        }
+        PlatformWindowCommand::ToggleSimpleFullscreen => {
+            if MacWindow::borrowed_command_target(window_state.clone())
+                .toggle_simple_fullscreen_native()
+            {
+                PlatformWindowCommandOutcome::Accepted
+            } else {
+                rejected_or_closed_mac_window_command(&window_state)
             }
         }
         PlatformWindowCommand::ShowWindowMenu(_) | PlatformWindowCommand::StartWindowResize(_) => {
@@ -4420,6 +4483,7 @@ impl PlatformWindow for MacWindow {
             observation.bounds,
             observation.is_fullscreen,
             observation.is_maximized,
+            observation.simple_fullscreen_restore_bounds,
         );
         let activation_policy = if state.interaction_is_quiesced() {
             WindowActivationPolicy {
@@ -4563,6 +4627,7 @@ impl PlatformWindow for MacWindow {
                 || state.is_fullscreen()
                 || state.fullscreen_transition.is_some()
                 || state.pending_fullscreen_restore_bounds.is_some()
+                || state.simple_fullscreen_state.is_some()
             {
                 return None;
             }
@@ -5052,6 +5117,14 @@ impl PlatformWindow for MacWindow {
         self.0.lock().is_fullscreen()
     }
 
+    fn toggle_simple_fullscreen(&self) {
+        self.toggle_simple_fullscreen_native();
+    }
+
+    fn is_simple_fullscreen(&self) -> bool {
+        self.0.lock().simple_fullscreen_state.is_some()
+    }
+
     fn request_frame(&self, mut options: RequestFrameOptions) {
         if options.signal_at.is_none() {
             options.signal_at = PlatformFrameSignal::capture(Instant::now);
@@ -5307,50 +5380,103 @@ impl PlatformWindow for MacWindow {
     }
 
     fn titlebar_double_click(&self) {
-        let this = self.0.lock();
-        let window = this.native_window;
-        let closed = this.closed.clone();
-        this.foreground_executor
+        let executor = {
+            let state = self.0.lock();
+            if state.is_closed()
+                || state.interaction_is_quiesced()
+                || state.simple_fullscreen_state.is_some()
+            {
+                return;
+            }
+            state.foreground_executor.clone()
+        };
+        let window_state = Arc::downgrade(&self.0);
+        executor
             .spawn(async move {
-                if_window_not_closed(closed, || {
-                    unsafe {
-                        let defaults: id = NSUserDefaults::standardUserDefaults();
-                        let domain = ns_string("NSGlobalDomain");
-                        let key = ns_string("AppleActionOnDoubleClick");
+                let Some(window_state) = window_state.upgrade() else {
+                    return;
+                };
+                let (native_window, handle, is_resizable, is_minimizable) = {
+                    let state = window_state.lock();
+                    if state.is_closed()
+                        || state.interaction_is_quiesced()
+                        || state.simple_fullscreen_state.is_some()
+                    {
+                        return;
+                    }
+                    let Some(native_window) =
+                        (unsafe { Retained::retain(state.native_window.cast::<NativeWindow>()) })
+                    else {
+                        return;
+                    };
+                    (
+                        native_window,
+                        state.handle,
+                        state.is_resizable,
+                        state.is_minimizable,
+                    )
+                };
+                let window = Retained::as_ptr(&native_window).cast_mut().cast();
+                unsafe {
+                    if !native_window_matches_handle(window, handle) {
+                        return;
+                    }
+                    let defaults: id = NSUserDefaults::standardUserDefaults();
+                    let domain = ns_string("NSGlobalDomain");
+                    let key = ns_string("AppleActionOnDoubleClick");
 
-                        let dict: id = msg_send![defaults, persistentDomainForName: domain];
-                        let action: id = if !dict.is_null() {
-                            msg_send![dict, objectForKey: key]
-                        } else {
-                            nil
-                        };
+                    let dict: id = msg_send![defaults, persistentDomainForName: domain];
+                    let action: id = if !dict.is_null() {
+                        msg_send![dict, objectForKey: key]
+                    } else {
+                        nil
+                    };
 
-                        let action_str = if !action.is_null() {
-                            CStr::from_ptr(NSString::UTF8String(action)).to_string_lossy()
-                        } else {
-                            "".into()
-                        };
+                    let action_str = if !action.is_null() {
+                        CStr::from_ptr(NSString::UTF8String(action)).to_string_lossy()
+                    } else {
+                        "".into()
+                    };
 
-                        match action_str.as_ref() {
-                            "None" => {
-                                // "Do Nothing" selected, so do no action
-                            }
-                            "Minimize" => {
+                    if !native_window_matches_handle(window, handle)
+                        || window_state.lock().simple_fullscreen_state.is_some()
+                    {
+                        return;
+                    }
+                    match action_str.as_ref() {
+                        "None" => {
+                            // "Do Nothing" selected, so do no action
+                        }
+                        "Minimize" => {
+                            if is_minimizable {
                                 window.miniaturize_(nil);
                             }
-                            "Maximize" => {
+                        }
+                        "Maximize" => {
+                            if is_resizable {
                                 window.zoom_(nil);
                             }
-                            "Fill" => {
-                                // There is no documented API for "Fill" action, so we'll just zoom the window
-                                window.zoom_(nil);
+                        }
+                        "Fill" => {
+                            if is_resizable {
+                                // Unlike `zoom:`, AppKit's private Fill action honors the system's
+                                // "Tiled windows have margins" setting.
+                                let responds_to_zoom_fill: BOOL =
+                                    msg_send![window, respondsToSelector: sel!(_zoomFill:)];
+                                if responds_to_zoom_fill == YES {
+                                    let _: () = msg_send![window, _zoomFill: nil];
+                                } else {
+                                    window.zoom_(nil);
+                                }
                             }
-                            _ => {
+                        }
+                        _ => {
+                            if is_resizable {
                                 window.zoom_(nil);
                             }
                         }
                     }
-                })
+                }
             })
             .detach();
     }
@@ -6396,6 +6522,7 @@ extern "C" fn close_window(this: &Object, _: Sel) {
             should_close_callback,
             visibility_observer,
             external_drag,
+            simple_fullscreen_state,
             close_callback,
         ) = {
             let window_state = get_window_state(this);
@@ -6415,6 +6542,7 @@ extern "C" fn close_window(this: &Object, _: Sel) {
                 should_close_callback,
                 visibility_observer,
                 external_drag,
+                simple_fullscreen_state,
             ) = lock.mark_closed();
             (
                 event_callback,
@@ -6422,6 +6550,7 @@ extern "C" fn close_window(this: &Object, _: Sel) {
                 should_close_callback,
                 visibility_observer,
                 external_drag,
+                simple_fullscreen_state,
                 lock.close_callback.take(),
             )
         };
@@ -6431,6 +6560,7 @@ extern "C" fn close_window(this: &Object, _: Sel) {
         should_close_callback.terminate();
         drop(external_drag);
         drop(visibility_observer);
+        release_simple_fullscreen_presentation_options(simple_fullscreen_state);
         detach_native_transient_relationships(this as *const Object as id);
         if let Some(callback) = close_callback {
             callback();

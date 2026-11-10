@@ -1239,11 +1239,19 @@ impl Platform for TestPlatform {
             .map(|buttons| buttons.contains(&button))
     }
 
+    fn validate_window_kind(&self, kind: &crate::WindowKind) -> anyhow::Result<()> {
+        if matches!(kind, crate::WindowKind::AnchoredPopup(_)) {
+            return Err(crate::popup::PopupNotSupportedError.into());
+        }
+        Ok(())
+    }
+
     fn open_window(
         &self,
         handle: AnyWindowHandle,
         params: WindowParams,
     ) -> anyhow::Result<Box<dyn crate::PlatformWindow>> {
+        self.validate_window_kind(&params.kind)?;
         let renderer = match self.headless_renderer_factory.as_ref() {
             Some(factory) => factory()?,
             None => None,

@@ -893,7 +893,7 @@ pub(crate) mod appkit {
         }
 
         unsafe fn styleMask(self) -> NSWindowStyleMask {
-            NSWindowStyleMask::from_bits_truncate(unsafe { msg_send![self, styleMask] })
+            NSWindowStyleMask::from_bits_retain(unsafe { msg_send![self, styleMask] })
         }
 
         unsafe fn isVisible(self) -> BOOL {

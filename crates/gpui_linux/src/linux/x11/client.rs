@@ -1875,6 +1875,9 @@ impl X11Client {
         handle: AnyWindowHandle,
         params: WindowParams,
     ) -> anyhow::Result<Box<dyn PlatformWindow>> {
+        if matches!(&params.kind, WindowKind::AnchoredPopup(_)) {
+            return Err(open_gpui::popup::PopupNotSupportedError.into());
+        }
         let mut state = self.0.borrow_mut();
         let transient_owner = if x11_supports_transient_owner(&params.kind) {
             params

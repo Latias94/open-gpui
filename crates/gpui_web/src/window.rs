@@ -974,7 +974,8 @@ impl PlatformWindow for WebWindow {
                         PlatformWindowCommandOutcome::Rejected
                     }
                 }
-                PlatformWindowCommand::RestoreNativeWindowState(_) => {
+                PlatformWindowCommand::RestoreNativeWindowState(_)
+                | PlatformWindowCommand::ToggleSimpleFullscreen => {
                     PlatformWindowCommandOutcome::Unsupported
                 }
                 PlatformWindowCommand::ShowWindowMenu(_)

@@ -16,6 +16,7 @@ publish = false
 debug-embed = ["open_gpui_util/debug-embed"]
 avif-encoding = ["dep:image"]
 profiler = ["open_gpui/profiler"]
+wayland = ["open_gpui/wayland"]
 vulkan-surface = ["wgpu/vulkan", "wgpu/wgsl"]
 wgpu-renderer = ["dep:open_gpui_wgpu"]
 bench-support = ["open_gpui/bench-support", "open_gpui_platform/bench-support", "dep:criterion", "dep:rand"]

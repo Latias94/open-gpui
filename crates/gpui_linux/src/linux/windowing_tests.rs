@@ -46,6 +46,43 @@ fn handle() -> AnyWindowHandle {
     WindowHandle::<Blank>::new(WindowId::from(1)).into()
 }
 
+#[test]
+fn headless_rejects_anchored_popup_before_publication() {
+    let platform = platform();
+    let mut params = params();
+    params.kind = WindowKind::AnchoredPopup(open_gpui::popup::PopupOptions {
+        parent: handle(),
+        anchor_rect: params.bounds,
+        anchor: Default::default(),
+        gravity: Default::default(),
+        constraint_adjustment: Default::default(),
+        offset: Default::default(),
+        grab: false,
+    });
+    let error = platform.validate_window_kind(&params.kind).unwrap_err();
+    assert!(error.is::<open_gpui::popup::PopupNotSupportedError>());
+    assert!(!platform.connection.borrow().has_windows());
+    let Err(error) = platform.open_window(handle(), params) else {
+        panic!("headless must reject native popups");
+    };
+    assert!(error.is::<open_gpui::popup::PopupNotSupportedError>());
+    assert!(!platform.connection.borrow().has_windows());
+}
+
+#[test]
+fn headless_window_kind_validation_preserves_ordinary_window_creation() {
+    let platform = platform();
+    for kind in [
+        WindowKind::Normal,
+        WindowKind::Floating,
+        WindowKind::Dialog,
+        WindowKind::PopUp,
+    ] {
+        assert!(platform.validate_window_kind(&kind).is_ok());
+    }
+    assert!(!platform.connection.borrow().has_windows());
+}
+
 #[cfg(any(feature = "wayland", feature = "x11"))]
 fn missing_display() -> WindowingRequest {
     WindowingRequest::Windowed(GraphicalEnvironment {

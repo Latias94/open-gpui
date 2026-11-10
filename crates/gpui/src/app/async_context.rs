@@ -275,6 +275,16 @@ impl AsyncApp {
         );
     }
 
+    pub(crate) fn enqueue_window_close_required(&self, window_id: WindowId) {
+        let Some(app) = self.app.upgrade() else {
+            return;
+        };
+        app.enqueue_native_window_event(
+            window_id,
+            super::native_event_ingress::NativeWindowEvent::CloseRequired,
+        );
+    }
+
     pub(crate) fn enqueue_window_closed(&self, window_id: WindowId) {
         let Some(app) = self.app.upgrade() else {
             return;
