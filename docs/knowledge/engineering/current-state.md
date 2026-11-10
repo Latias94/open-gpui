@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-10T09:40:00+08:00
+timestamp: 2026-11-10T11:48:00+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -17,6 +17,32 @@ verified_by:
 ---
 
 # Current State
+
+- Scoped activity is implemented at `2459aebecc90fb2bd2d5fefd04b7b4548f3652bc`, after
+  `0b7024f86af0beed8fde92887eb1c1387997085c`. Official ActivityGuard, App/Platform sleep acquisition and
+  executor/dispatcher App Nap semantics retain existing task/native owners. Windows uses real
+  request handles and same-allocation reason storage, preserving storage on an actual refused
+  close; the invalid duplicated-handle test observer was removed before execution. Focused
+  Core/public/Windows 31, ordinary activity 3 and full ordinary all/off consumers 108/78 pass.
+  Complete Core/public 1,789 passes within the failed 2,064/2,065 aggregate; the unchanged
+  generic-view window open refuses a changed display topology. Its unchanged follow-up plus
+  native activity passes 8; do not treat the aggregate as green or its trigger as explained.
+  Linux includes full portal/timeout/release and isolated protocol regressions, with one
+  existing zbus 5.16.0 dev edge. WSL Ubuntu 26.04 has required development packages and
+  user-directory Rust 1.95; its default PATH originally hid the toolchain. Actual Linux X11
+  activity/portal passes 11/11 after correcting inherited X11/Wayland input-handler uses.
+  That fork prerequisite at `467dc18a169` removes the obsolete outcome wrapper and retains Core lease/invariant
+  ownership. Isolated test completion, real Request.Close and private bus cleanup execute;
+  desktop sleep policy remains unqualified. Final headless 1, Core activity/input 22 and public
+  9 pass; X11+Wayland/test-support all-target compilation passes. The initial all-feature Core
+  attempt lacks the existing screen-capture PipeWire prerequisite and stays separately failed.
+  Windows disabled-profiler Core/public 24, locked workspace/consumer checks, correctness
+  Clippy, actual Windows Rust 1.93, production wasm profiler off/on and both fmt checks pass.
+  Mac typed activity source is prepared; the shared Apple topology remains a separate queued
+  unit. The [record](../../verification.md#scoped-activity-and-idle-sleep-prevention) owns
+  failures, platform scopes and actual results. Static checks pass; all eight implementation/
+  review lanes and the additional bounded handoff review close. Continue native appearance,
+  windowing/lifecycle and the real Nara consumer before maintenance handoff.
 
 - Restart arguments are implemented at `175a82b47f10b0bc2bb4b5920d54e1be5d70f977`, after
   `7ead5105e56b29255ece592e62fd5f2250542131`,
@@ -881,9 +907,9 @@ historical scope and is not current branch or CI qualification.
 
 # Next Action
 
-- Continue the [scoped idle-sleep successor](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#scoped-idle-sleep-prevention-successor)
-  after scoped restart qualification. Preserve complete official RAII, asynchronous cancellation,
-  Windows reason-buffer lifetime and unsupported-platform behavior. Keep restart's original
+- Continue the [native appearance successor](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#native-appearance-successor)
+  after scoped activity qualification. Preserve official optional override/system following and
+  non-Mac no-op behavior, keeping Apple native notification/pixel execution separate. Keep restart's original
   clipboard/keyboard aggregate failures and foreign lifecycle gates visible; focused passes do
   not resolve those causes. The bounded public audit also queues windowing-mode switching,
   native appearance and Restart Manager/on_quit completion reconciliation.

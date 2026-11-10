@@ -77,6 +77,15 @@ After the fixed refresh and first qualified engine-seam consumer, ongoing framew
 moves to that session while Nara continues complete Editor migration and game-runtime acceptance
 under its own plan.
 
+That first consumer must establish one device, recording/submission and native-loop arrangement,
+with an ordinary standalone GPUI control. Exercise real engine content beneath overlapping UI,
+ordered texture sampling, clip/DPI/resize/color, exact View input and independent producer
+retirement. Include refused/panicking frames, close and device-loss controls, plus observed
+copies, submissions, synchronization and retained-resource costs without steady-state CPU
+readback. Record the consumed revision, dependency graph and rerunnable engine commands. These
+are the engine-seam handoff gates; the remaining complete Editor migration and game-runtime
+selection stay with Nara's own acceptance.
+
 Keep upstream provenance, fork adaptations, reproducible ordinary-consumer gates and unresolved
 platform limits in this repository's existing candidate queue, plan and verification record.
 The handoff must identify the actual qualified framework revision and fixed upstream target,
@@ -1898,16 +1907,17 @@ Follow the animation-clock prerequisite with official
 `8b1497dbd22fb06f5838a7c0b84a1e54fafa71bc` and its executor-clock correction. Fixed-target
 `spring.rs` blob `efc878061be7c6996993a629c9917034842fc420` supplies typed targets and playback;
 `elements/animation.rs` supplies `with_spring` and Element-ID position/velocity state.
-The fork already provides `MotionSpringPhysics` and `MotionScalarRun` in its separate motion
-crate. The missing mechanism is the complete official public/state/playback integration,
-not all spring physics.
+At preparation time the fork provided `MotionSpringPhysics` and `MotionScalarRun` in its
+separate motion crate. The missing mechanism was the complete official public/state/playback
+integration. The completed reconciliation below supersedes that implementation snapshot.
 
 Reconcile fork implementation and policy against the official baseline before selecting a
 shared owner or retiring duplication. Preserve ordinary typed targets and child composition,
 velocity-continuous retargeting, pause/stop/resume, cancellation/completion endpoints and
 reduced-motion scenarios. Qualify retained Element state and candidate refusal through existing
 owners. No public compatibility layer or second animation owner follows merely from keeping
-both old implementations. Implementation and execution remain open.
+both old implementations. This records the preparation requirements; the implementation and
+executed qualification below own the current state.
 
 The November 9 bounded successor analysis selects the following implementation direction.
 Reconcile [ADR 0018](../adr/0018-open-gpui-motion-crate-boundary.md), including the applicable
@@ -2555,9 +2565,18 @@ App/Platform::prevent_idle_sleep mechanism. Provenance starts at
 introduction's superseded thread-execution-state counter. Keep the official Send release
 closure and one-shot RAII behavior; application AI/play/build policy remains outside GPUI.
 
+The same official unit also adds BackgroundExecutor/PlatformDispatcher::prevent_app_nap.
+Preserve its separate contract: Apple UserInitiatedAllowingIdleSystemSleep avoids App Nap
+throttling without inhibiting idle system sleep; non-Apple dispatchers inherit a no-op guard.
+Port this complete companion path and public consumers alongside explicit sleep inhibition.
+
 Windows owns the native power-request handle and UTF-16 reason for the same lifetime, releases
-the request before its reason storage and closes partial acquisitions on error. Mac reuses the
-extracted Apple activity owner and official options. Linux needs the complete asynchronous
+the request before its reason storage and closes partial acquisitions on error. Mac uses one
+activity owner with the official typed options. The fork currently keeps MacDispatcher locally;
+adapt the final AppleActivity semantics there without replacing its fork dispatch/retirement
+contracts. The complete shared gpui_apple dispatcher/Metal extraction remains a separately
+queued topology successor, including its remaining native dependencies and regressions, rather
+than being declared implemented by an activity helper. Linux needs the complete asynchronous
 portal acquisition/cancellation/release path, including a dropped response receiver and retained
 background release custody; adding only an Inhibit call is incomplete. Headless Linux and Web
 retain explicit unsupported results. TestPlatform observes guard lifetimes through its existing
@@ -2567,11 +2586,56 @@ Qualify nested acquisition, independent App requests, cancellation before/after 
 drop/unwind and cross-thread release, native Windows handle retirement and the reason's actual
 storage lifetime. Use a dedicated ordinary consumer and observe native request resources without
 changing user power settings or forcing sleep. Keep missing portal/foreign native execution
-explicit. Reconcile dependency/features in the existing locks without broad upgrades. This is
-source preparation only; no idle-prevention implementation, power-policy claim or engine
-integration follows from this successor.
+explicit. Reconcile dependency/features in the existing locks without broad upgrades. These are
+preparation requirements; the execution and qualification below own the current implementation
+state. Guard/resource evidence does not establish power-policy enforcement or engine integration.
+
+Execution starts after `0b7024f86af0beed8fde92887eb1c1387997085c`. Core owns guard and
+App/executor/dispatcher/TestPlatform/public contracts; Linux owns portal acquisition and
+release; Mac/Web own typed activity and unsupported behavior. Main owns Windows power requests,
+actual ordinary consumers, dependency reconciliation and serial qualification. The current
+generic Linux backend needs a typed headless predicate for guard and power-listener policy;
+compositor display strings do not supply that capability. Native request observations must
+stay separate from model-counting and foreign source-only tests.
+
+## Native Appearance Successor
+
+After activity qualification, port official App/Platform::set_window_appearance from
+`8e4e5a39eed932d943cb7a3e7078885b75d1ea54` and its final AppKit binding form at
+`d86aa6e6b9f52046fb299ab57ec884b300190813`, retaining fixed target
+`635026fabc38440fce5e1767d125026a17b12012`. Some selects Aqua, DarkAqua, VibrantLight or
+VibrantDark through NSApplication appearance; None clears the override and restores system
+following. Other platforms keep the official no-op. Do not synthesize cross-platform state
+or turn a framework setter into an application theme policy.
+
+Use the current Mac native owner and typed NSAppearance bindings while preserving ordered
+native ingress and existing AppKit lifecycle. The larger typed AppKit/shared Apple topology
+remains explicitly queued; implementing this setter does not qualify it. Native setter calls
+can synchronously produce appearance notifications, so retain busy-App/post-borrow behavior
+and avoid locking the same platform state across a callback. Respect existing per-window
+appearance observers and the actual getter instead of creating a second appearance service.
+
+Qualify public App forwarding, all four variants, repeated override/clear and non-Mac no-op
+through ordinary consumers. On Mac, observe actual NSApplication/native-window inheritance,
+clear-to-system behavior and notification/lifetime correctness; restore the original global
+appearance after each isolated test. Source mapping, a fake enum round trip or Windows no-op
+execution cannot qualify titlebar pixels or OS appearance following. Keep that platform gate
+separate from UI token/color policy and the real Nara consumer. This is source preparation,
+with no new runtime/default or completed framework-refresh claim.
 
 ## Maintained Baseline Before Engine Adaptation
+
+The [activity record](../verification.md#scoped-activity-and-idle-sleep-prevention) qualifies
+`2459aebecc90fb2bd2d5fefd04b7b4548f3652bc`, following separate Linux input migration
+`467dc18a169`. Official idle-sleep and distinct App Nap use existing platform/task owners;
+Windows native request/reason custody and Linux portal cancellation/actual Close have their
+own controls. Focused 31, ordinary all/off 108/78, native follow-up 8, disabled Core/public 24,
+actual Linux protocol 11, final headless 1, Core/input 22 and public 9 pass. Both Linux windowing
+features compile. Preserve the 2,064/2,065 Windows aggregate topology refusal and Linux
+all-feature screen-capture prerequisite failure. Windows compiler-floor/Clippy, production wasm,
+fmt/static gates pass; Mac native, shared Apple topology and power-policy effects remain open.
+Continue native appearance/windowing/lifecycle and the remaining fixed-target closure, then
+the real Nara consumer before maintenance handoff. No engine runtime/default changes follow.
 
 The [restart record](../verification.md#restart-arguments-and-native-relaunch) qualifies the
 scoped mechanism at `175a82b47f10b0bc2bb4b5920d54e1be5d70f977`. Native parameters and official

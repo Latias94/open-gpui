@@ -6963,6 +6963,192 @@ idle-sleep successor and remaining native lifecycle/appearance/windowing disposi
 the actual Nara GPU/Host/View seam before maintenance handoff. No numerical cost, whole-framework
 green aggregate, canonical-docking or engine UI default claim follows.
 
+## Scoped Activity And Idle-Sleep Prevention
+
+Implementation commits as `2459aebecc90fb2bd2d5fefd04b7b4548f3652bc`, with the independent
+Linux input migration prerequisite at `467dc18a169`. These are local commits; the following
+record separates executed gates from foreign-source preparation and retained aggregate failures.
+
+The successor starts after `0b7024f86af0beed8fde92887eb1c1387997085c`, using official
+`450775244fade36db70af2447be24e74edb43368`, Windows reason-lifetime correction
+`d2074f4e15d289345a9583ef973470b8bdfad74a` and final target
+`635026fabc38440fce5e1767d125026a17b12012`. ActivityGuard's Send release closure, App/Platform
+acquisition, fake delay/error/count controls and the companion executor/dispatcher App Nap
+interface retain official semantics. App Nap throttling prevention is distinct from idle
+system-sleep inhibition; non-Apple dispatchers inherit a no-op and unsupported sleep backends
+return errors. There is no application AI/build/play policy, second scheduler or guard manager.
+
+Windows uses the final target's real power-request handle with same-lifetime UTF-16 reason.
+Linux carries complete portal acquisition, response validation, ten-second timeout and async
+Request::close. A typed private Linux headless predicate replaces compositor-string capability
+tests in the new acquisition and existing listener setup. The current Mac package owns one
+typed AppleActivity module, preserving local dispatcher admission and native custody; official
+shared gpui_apple/Metal topology remains a separately queued successor. Mac requests use
+UserInitiated, while App Nap uses UserInitiatedAllowingIdleSystemSleep. Web and VisualTest
+return explicit unsupported errors. The only platform feature addition is existing ashpd's
+inhibit support; no broad package resolution is intended.
+
+Core/Windows all-feature production libraries pass locked Rust 1.95 checking. Initial focused
+test compilation catches a public type-only fixture lifetime mismatch: PlatformDispatcher's
+method item requires an explicit static trait-object bound in the function-pointer assertion.
+Both root and independent fixtures now name that bound; no production API is changed to fit
+the fixture. Behavioral execution follows below.
+
+Pre-execution native review catches an invalid test observer: duplicating a power-request
+handle extends its native object lifetime beyond the product reason allocation. Remove that
+observer before any native test run. Test observations now share only an independent release
+flag and record actual CloseHandle results, without aliasing the buffer or querying a retired
+numeric handle. A private PowerReason keeps the exact allocation through closing; normal Drop
+and partial activation failure use one close function. If Windows refuses close, retain the
+allocation before logging rather than free borrowed storage. Two controlled real-handle tests
+set HANDLE_FLAG_PROTECT_FROM_CLOSE, require a genuine close refusal and a still-unreleased
+reason, then unprotect and close their owned handle. That failure retains one corresponding
+allocation until the isolated test process exits; no retry owner or public API is added.
+Independent rereview finds no remaining scoped P1/P2, with actual native execution still pending.
+
+Prepared Core/public tests cover unpolled-ready ownership, delayed cancellation, unclaimed
+results, independent Apps, error/recovery, Send/drop/unwind and component-held guard lifetime.
+The ordinary Windows child uses a real headless Application and process-handle observations
+through eight acquisitions, independent group release and worker-thread release, then requires
+actual App quit and normal worker exit. It does not qualify OS sleep enforcement or energy
+use. Linux's original four hand-built guard controls qualify channel/timeout behavior rather
+than real portal Close; a separate isolated D-Bus protocol regression is required for that path.
+Mac and Linux source/tests remain uncompiled/unexecuted on their native platforms in this
+Windows-hosted qualification. Results and further corrections follow below.
+
+The corrected focused Core/public/Windows cohort passes 31/31
+(`c120f15f-bec1-4159-92df-f7732b9d74a7`), with 1,923 cases outside its filter. This includes
+all fifteen Core controls, nine root public consumers and seven actual native Windows request
+tests. Both protected-handle cases observe real CloseHandle refusal and retained storage before
+test-owned unprotection/close. Normal, independent, caller-buffer, platform-release, worker and
+unwind observations use the exact production resource owner. No duplicated native handle or
+retired-handle inference supplies those results. The ordinary independent child follows below.
+
+The first ordinary optional-feature-free activity run passes 3/3
+(`7cf8db92-9914-43df-9992-8d599e393b1b`). Its real Windows App worker observes eight extra
+native handles, four after independent group release and the original count after worker-thread
+release. The App Nap default adds none. The parent requires the completed native quit report
+and normal worker exit; no deterministic test platform supplies this result.
+
+The complete Core/public/Windows run executes 2,065 cases: 2,064 pass, one unchanged native
+generic-view case fails and ten interactive cases remain skipped
+(`54951627-e19b-48eb-9038-7979a16016cb`). Complete Core/public passes 1,789/1,789; all activity
+controls pass. The generic-view case's second native window creation reports display-topology
+change after placement resolution. The existing generation guard refuses that stale placement.
+Keep the original failure and its unknown trigger; the current record does not prove a WSL,
+activity or other process caused the change. Do not weaken placement validation or turn this
+aggregate green by excluding the case. The unchanged generic-view case and all seven native
+activity controls subsequently pass together 8/8
+(`5da9f8e6-719e-42a0-8506-f1a989900caa`). The follow-up does not prove topology variability
+resolved.
+
+Ordinary independently locked consumers pass 108/108 with all features
+(`6f4d84cc-96a4-4d9b-8d5d-b58e7b097795`), retaining three existing interactive Vulkan skips,
+and 78/78 with optional features disabled (`4131496b-7a42-40be-a161-160b6e97f076`), with no
+skips. Both execute all activity and restart workers, native keyboard mapping and their existing
+public resource controls. Core/public and native process evidence remain separate from typed
+unexecuted signatures and skipped renderer trajectories.
+
+The Linux protocol successor uses a private dbus-run-session per exact child test. It invokes
+the actual acquisition/timeout/release helpers and serves a minimal Inhibit/Request protocol.
+Normal release, cancellation followed by late success, virtual-time timeout followed by late
+success and guard-after-platform-release require an actual Close plus a 200ms no-duplicate
+observation. This finite observation does not prove arbitrary-delay uniqueness. Each child
+writes its exact completion marker, so a zero-test --exact invocation cannot pass. A separate
+blocked-session control checks bounded runner/bus cleanup. Linux-only tests add the already
+locked zbus 5.16.0 dev edge; the ordinary lock retains its independent 5.19.0 library closure.
+
+Local WSL inventory confirms Ubuntu 26.04/x86_64 on kernel
+6.18.33.2-microsoft-standard-WSL2. Its default PATH does not expose Rust tools; a later exact
+path check finds the existing user-directory Rustup and Rust 1.95. Confirm that toolchain and
+rustfmt without modifying shell profiles, and install the missing native development packages.
+Rust/bootstrap preparation runs independently of Windows
+tests; no Linux Cargo starts until the owned Windows sequence is terminal. These preparation
+steps are not Linux compilation or execution evidence. Linux qualification follows below.
+
+The first Linux metadata phase progresses through a transient TLS retry and the four fixed
+Git revisions. After verifying the live process and its owner, stop only that metadata child
+to reuse 134 already-downloaded Windows crate archives (64,821,983 bytes), validating every
+archive against Cargo.lock's SHA-256 before writing the Linux cache under its exclusive lock.
+The subsequent offline/locked build reaches the Linux backend and fails at three inherited
+X11 IME compilation errors: the removed NativeInputHandlerOutcome import and old wrapped
+selection semantics. The current Core owner returns Option/ordinary values while retaining
+native callback invariant diagnostics. Migrate both X11 and corresponding Wayland uses to
+that existing contract: valid no-handler/no-marked-text absence stays empty, and stale/reentrant
+ownership remains the Core slot's invariant. Keep every interaction-quiescence check and
+release the native state borrow before callback checkout. This is a distinct fork prerequisite,
+not an official activity change or evidence of native IME correctness. Corrected Linux results
+and matching Core regressions follow below.
+
+The corrected actual Linux X11 gate passes 11/11
+(`057c9b1b-da13-4a96-8c6b-a70b32047bf3`), with 74 cases outside its filter. All four
+private-session production-helper scenarios execute their exact child and observe actual
+Request.Close; the blocked-session cleanup control confirms the private runner, sleep child
+and bus disappear. The headless runtime check, four official channel/error/timeout cases and
+additional receiver cancellation also pass. This qualifies the portal protocol against the
+isolated service on Ubuntu 26.04 WSL2, including the real async release method. It does not
+qualify a desktop portal's policy, physical suspend behavior, full App/window IME or another
+Linux environment. The obsolete-input migration receives separate source review with no
+remaining P1/P2; both backend feature compilation and existing Core lease/IME regressions
+follow below.
+
+The no-windowing gate first fails while compiling an inherited click-distance test: its
+function is limited to X11/Wayland but the test was unconditional. Give the test and its
+imports the same feature condition; preserve all original assertions when either backend
+is enabled. The corrected actual no-default-features run passes 1/1
+(`6fceee1a-7c17-4ad5-aa16-895a4e3d0fc1`), with twelve cases outside the filter. This executes
+the explicit unsupported result without linking a graphical backend. The failed compilation
+is retained in `open-gpui-activity-linux-headless.log`; both-feature compilation and the Core
+input regressions remain separate gates.
+
+The actual Linux all-target check with test-support, X11 and Wayland passes under locked/offline
+Rust 1.95. The next Core selection initially uses all features and stops before tests because
+the existing screen-capture dependency's libspa-sys cannot find libpipewire-0.3 through
+pkg-config in this WSL image. Preserve that failure in `open-gpui-activity-linux-core-input.log`.
+Activity and input ownership do not require screen capture; the scoped Core retry uses default
+features plus test-support/profiler. This is a distinct declared feature selection, not an
+all-feature Linux qualification. Final post-format backend and Core results follow below.
+
+The final no-windowing run passes 1/1 (`5178d056-dbda-4cca-ae34-0583a5d82097`), and the
+post-format X11+Wayland/test-support all-target check passes. Core's scoped Linux selection
+passes 22/22 (`4fe6273f-a186-422c-b7e1-81460b068bc0`): all fifteen activity cases and the seven
+existing native-input/IME lease regressions. Its test-name filter does not select the public
+integration's differently named cases; that binary is compiled but is not counted as executed
+by this run. The separate public result follows below. The two Linux input files commit
+independently as `467dc18a169`, preserving their owning Core contract and both native state
+borrow/quiescence boundaries. This prerequisite fixes inherited fork migration debt; it does
+not establish live Linux IME execution.
+
+The separate actual Linux public integration passes 9/9
+(`349dbac4-4898-403b-8b78-478a508a76ab`) with the same default/test-support/profiler selection.
+It executes downstream guard/thread/unwind, App task cancellation, independent lifetime,
+failure recovery and dispatcher-forwarding behavior. The final headless cfg refinement keeps
+the private capability method out of a build that cannot use it; it does not change either
+windowing backend's policy. Windows disabled-profiler/compiler/static qualification follows.
+
+Windows profiler-disabled Core/public activity passes 24/24
+(`f0170c55-527e-4aa2-ac56-ce1143f09080`), with 1,399 outside the selection. This executes all
+fifteen owner cases and all nine public integration cases without the profiler feature. The
+earlier ordinary native process and both complete ordinary-consumer feature selections retain
+their independent locks and actual resource-lifetime evidence above.
+
+Final locked Windows Rust 1.95 workspace all-target and independently locked consumer
+all-target/all-feature checks pass. Affected Core/Windows/Linux/Web host correctness Clippy
+passes; host cfg does not compile the foreign implementations. Actual Windows Rust 1.93
+affected-owner and independently locked consumer all-target/all-feature checks pass. Both
+production wasm profiler selections, root/consumer formatting, workflow YAML and the existing
+import-boundary/public-API/document/release checks pass. No compiler-floor change or package
+version upgrade is introduced; the Linux test edge reuses the existing root zbus package.
+CI gates are configured locally, without a hosted-run claim.
+
+All eight implementation/review lanes and the additional bounded handoff review close. The
+Windows failed aggregate remains failed; its focused follow-up does not explain its trigger.
+Linux qualifies the declared feature combinations and isolated protocol, retaining the
+screen-capture prerequisite failure separately. Mac compilation/native activity, desktop
+sleep-policy effects, energy/performance budgets, shared Apple topology and the real Nara
+GPU/Host/View consumer remain open. Continue native appearance/windowing/lifecycle and the
+remaining fixed-target dispositions before maintenance handoff.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:
