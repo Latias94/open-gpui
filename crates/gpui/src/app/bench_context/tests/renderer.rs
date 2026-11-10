@@ -99,7 +99,7 @@ impl Render for ImageProbe {
                         "the image probe must have paintable bounds"
                     );
                     window
-                        .paint_image(bounds, Corners::default(), image, 0, false)
+                        .paint_image(bounds, bounds, Corners::default(), image, 0, false)
                         .expect("the image probe must reach candidate-frame lease validation");
                 }
             },

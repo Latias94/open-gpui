@@ -40,7 +40,14 @@ impl Render for SchedulingView {
                 move |bounds, (), window, _| {
                     if observed.paint_image.get() {
                         window
-                            .paint_image(bounds, Default::default(), Arc::clone(&image), 0, false)
+                            .paint_image(
+                                bounds,
+                                bounds,
+                                Default::default(),
+                                Arc::clone(&image),
+                                0,
+                                false,
+                            )
                             .unwrap();
                     }
                 },
@@ -414,6 +421,7 @@ fn public_list_overshoot_waits_for_admitted_candidate_before_committing_scroll(
                             if index == 2 && request {
                                 window
                                     .paint_image(
+                                        bounds,
                                         bounds,
                                         Default::default(),
                                         image.clone(),

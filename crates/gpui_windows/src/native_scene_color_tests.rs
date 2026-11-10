@@ -116,11 +116,13 @@ fn paint_scene_image_row(
     counters: &NativeSceneConsumerCounters,
 ) {
     for (index, grayscale) in [false, true, false, true].into_iter().enumerate() {
+        let bounds = Bounds::new(
+            origin + point(px(336. + 72. * index as f32), px(y)),
+            size(px(56.), px(24.)),
+        );
         if let Err(error) = window.paint_image(
-            Bounds::new(
-                origin + point(px(336. + 72. * index as f32), px(y)),
-                size(px(56.), px(24.)),
-            ),
+            bounds,
+            bounds,
             Corners::default(),
             image.clone(),
             0,
@@ -209,7 +211,8 @@ impl Render for NativeSceneConsumers {
         let clipped = canvas(
             |_, _, _| {},
             move |bounds, _, window, _| {
-                if let Err(error) = window.paint_image(bounds, Corners::default(), image, 0, false)
+                if let Err(error) =
+                    window.paint_image(bounds, bounds, Corners::default(), image, 0, false)
                 {
                     counters
                         .image_errors

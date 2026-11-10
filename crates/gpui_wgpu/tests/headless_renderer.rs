@@ -119,7 +119,14 @@ impl Render for PaintedRoot {
                             "the decoded image must have paintable bounds"
                         );
                         window
-                            .paint_image(bounds, Default::default(), image.clone(), 0, false)
+                            .paint_image(
+                                bounds,
+                                bounds,
+                                Default::default(),
+                                image.clone(),
+                                0,
+                                false,
+                            )
                             .expect("headless image paint must succeed");
                     }
                 },

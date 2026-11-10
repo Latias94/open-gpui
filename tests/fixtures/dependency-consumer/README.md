@@ -4,6 +4,13 @@ This application is its own Cargo workspace. It consumes Open GPUI through path 
 without inheriting the repository workspace's dependency resolution or lockfile. Its own
 `Cargo.lock` records the consumer resolution.
 
+The `layout_drawing` target consumes public ContainerQuery, attached Anchored, List readiness/
+uniform-height/follow controls, SVG byte data, parsed reuse/ExactSize and the complete low-level
+image-paint signature. It executes SVG parsing and rasterization and constructs ordinary element
+trees without engine-private types. Those trees
+are not laid out or painted by this target; actual layout and cropped GPU output are covered by
+the affected framework/renderer gates in the verification guide.
+
 The application pins Taffy 0.15.0 and, on macOS, Core Foundation 0.10.1 to exercise
 application-owned compatible dependency choices independently of the library workspace.
 Its direct WGPU dependency selects upstream gfx-rs revision

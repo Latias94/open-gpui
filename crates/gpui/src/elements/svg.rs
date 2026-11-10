@@ -1,4 +1,9 @@
-use std::{fs, path::Path, sync::Arc};
+use std::{
+    fs,
+    hash::{Hash, Hasher},
+    path::Path,
+    sync::Arc,
+};
 
 use crate::{
     App, Asset, Bounds, Element, GlobalElementId, Hitbox, InspectorElementId, InteractiveElement,
@@ -12,6 +17,8 @@ pub struct Svg {
     interactivity: Interactivity,
     path: Option<SharedString>,
     external_path: Option<SharedString>,
+    data: Option<Arc<[u8]>>,
+    data_path: Option<SharedString>,
 }
 
 /// Create a new SVG element.
@@ -21,6 +28,8 @@ pub fn svg() -> Svg {
         interactivity: Interactivity::new(),
         path: None,
         external_path: None,
+        data: None,
+        data_path: None,
     }
 }
 
@@ -34,6 +43,19 @@ impl Svg {
     /// Set the path to the SVG file for this element.
     pub fn external_path(mut self, path: impl Into<SharedString>) -> Self {
         self.external_path = Some(path.into());
+        self
+    }
+
+    /// Set the raw SVG data for this element.
+    /// The SVG will be rendered directly from the provided bytes.
+    pub fn data(mut self, data: &[u8]) -> Self {
+        // Generate a unique deterministic path based on the data hash for caching
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        data.hash(&mut hasher);
+        let hash = hasher.finish();
+        let path = SharedString::from(format!("__binary_svg__{}", hash));
+        self.data = Some(Arc::from(data));
+        self.data_path = Some(path);
         self
     }
 }
@@ -108,10 +130,12 @@ impl Element for Svg {
             window,
             cx,
             |style, window, cx| {
-                if let Some((path, color)) = self.path.as_ref().zip(style.text.color) {
-                    window
-                        .paint_svg(bounds, path.clone(), None, color, cx)
-                        .log_err();
+                if let Some((data, path)) = self.data.as_ref().zip(self.data_path.as_ref()) {
+                    if let Some(color) = style.text.color {
+                        window
+                            .paint_svg(bounds, path.clone(), Some(&**data), color, cx)
+                            .log_err();
+                    }
                 } else if let Some((path, color)) =
                     self.external_path.as_ref().zip(style.text.color)
                 {
@@ -124,6 +148,10 @@ impl Element for Svg {
 
                     window
                         .paint_svg(bounds, path.clone(), Some(&bytes), color, cx)
+                        .log_err();
+                } else if let Some((path, color)) = self.path.as_ref().zip(style.text.color) {
+                    window
+                        .paint_svg(bounds, path.clone(), None, color, cx)
                         .log_err();
                 }
             },
@@ -168,3 +196,6 @@ impl Asset for SvgAsset {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -1487,6 +1487,7 @@ mod tests {
                                 window
                                     .paint_image(
                                         bounds,
+                                        bounds,
                                         Corners::default(),
                                         image.clone(),
                                         0,
@@ -1545,6 +1546,7 @@ mod tests {
                                 window
                                     .paint_image(
                                         bounds,
+                                        bounds,
                                         Corners::default(),
                                         image.clone(),
                                         0,
@@ -1581,7 +1583,14 @@ mod tests {
                         |_, _, _| {},
                         move |bounds, _, window, _| {
                             window
-                                .paint_image(bounds, Corners::default(), image.clone(), 0, false)
+                                .paint_image(
+                                    bounds,
+                                    bounds,
+                                    Corners::default(),
+                                    image.clone(),
+                                    0,
+                                    false,
+                                )
                                 .expect("test image should paint");
                         },
                     )

@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- `container_query` builds its contents from its allocated size in the same frame. `Anchored::attach` places content against a target corner and flips to the side with more room. SVG elements accept byte data; parsed SVGs can be reused and rasterized at exact dimensions.
+
+- Variable-height lists support measurement readiness, provisional and pending-end anchors, uniform item-height hints/reset, `scroll_to_item` for direct indexed scrolling and explicit pause-following-tail through their existing state owner.
+
 - `GlobalElementId::new` constructs a complete root-first path with its cached hash. Window element stacks retain prefix hashes through deferred drawing and candidate rollback. App borrow conflicts now report attempted and original borrow locations through panics and fallible window updates.
 
 - `open-gpui-apple` owns the shared Apple dispatcher, Metal renderer/atlas, CoreText/OpenType, Keychain and process services. CoreVideo surfaces are available on macOS/iOS; this shared substrate does not add an iOS application backend. macOS window options expose the official opt-in Display P3 color space.
@@ -36,6 +40,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Optional native debug hot reload follows the official GPUI/Subsecond 0.7.10 mechanism: build/process-matched patches, foreground application, window refresh, and typed, stateless and stored erased View render boundaries. Run with `dx serve --hot-patch`; compatible render-body edits preserve existing model state. Release/WebAssembly transport exclusion, failed loads, required restarts and disconnects remain explicit. The independently locked native consumer provides an actual edit/build/apply and Submitted-scene pixel acceptance procedure, including the required upstream dx x64 jump-stub backport for the qualified Windows tool.
 
 ### Breaking Changes and Migration Notes
+
+- `Window::paint_image` now takes both the element bounds and the image layout bounds. Pass the same bounds twice for an uncropped low-level image. Handle `SvgSize::ExactSize` in exhaustive matches.
 
 - `GlobalElementId` dereferences to an immutable `[ElementId]`; mutable path dereferencing is removed so cached hashes remain valid. Use `GlobalElementId::new` to construct paths and `accesskit_node_id` for semantic node identity. The hidden `AppCell::try_borrow_mut` returns the framework Result with borrow-origin diagnostics rather than `std::cell::BorrowMutError`. `AssetLogger` now requires Debug errors and logs their complete diagnostic representation.
 
@@ -191,6 +197,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - `open-gpui-devtools` now projects Table behavior through a pre-capture allowlist with session-scoped opaque table, column, and row ordinals plus derived cell ids; raw ids, values, diagnostic source identities, selectors, and deterministic hashes are excluded from live, history, diff, Inspector, export, artifact, report, and Gallery fixture output, while sanitized diagnostic kinds and counts remain observable.
 
 ### Fixed
+
+- Image object-fit preserves explicit aspect ratios and crops Cover content before applying visible-box rounded corners. SVG rasterization caps both dimensions at the official 8192px limit.
 
 - Uniform lists retain accurate visible rows and local item spacing at large scroll offsets by applying the official f64 range and local-position calculation. Error logging preserves chained diagnostics, backtraces and caller locations through a shared non-generic sink.
 

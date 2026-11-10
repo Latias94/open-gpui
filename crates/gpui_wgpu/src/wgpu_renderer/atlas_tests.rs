@@ -4,7 +4,8 @@ use open_gpui::{
     GlyphId, HeadlessAppContext, IntoElement, NoopTextSystem, Pixels, PlatformAtlas,
     PlatformHeadlessRenderer, PlatformTextSystem, Primitive, Render, RenderImage,
     RenderImageParams, Styled as _, SubtreeClip, SubtreeClipExt as _, SubtreeTransform,
-    SubtreeTransformExt as _, UnderlineStyle, Window, canvas, fill, font, point, px, rgb, size,
+    SubtreeTransformExt as _, SubtreeTransformOrigin, UnderlineStyle, Window, canvas, fill, font,
+    point, px, rgb, size,
 };
 use std::{borrow::Cow, cell::Cell};
 
@@ -49,6 +50,7 @@ impl PlatformHeadlessRenderer for WindowSceneRenderer {
 #[derive(Clone)]
 enum FixturePaint {
     Images(Vec<Arc<RenderImage>>),
+    CroppedImage(Arc<RenderImage>),
     Primitives,
     Mixed {
         image: Arc<RenderImage>,
@@ -77,6 +79,14 @@ impl WindowFixture {
             paint: FixturePaint::Primitives,
             text_system: Arc::new(NoopTextSystem),
             content_size: size(px(32.0), px(32.0)),
+        }
+    }
+
+    fn cropped_image(image: Arc<RenderImage>) -> Self {
+        Self {
+            paint: FixturePaint::CroppedImage(image),
+            text_system: Arc::new(NoopTextSystem),
+            content_size: size(px(16.0), px(16.0)),
         }
     }
 
@@ -116,17 +126,46 @@ impl Render for WindowFixture {
             },
         )
         .expect("the fixture clip must be valid");
-        let transform = SubtreeTransform::try_translation(point(px(4.0), px(4.0)))
-            .expect("the fixture transform must be valid");
+        let transform = if matches!(&paint, FixturePaint::CroppedImage(_)) {
+            SubtreeTransform::try_new(
+                size(1.5, 0.75),
+                point(px(4.25), px(4.5)),
+                SubtreeTransformOrigin::TOP_LEFT,
+            )
+        } else {
+            SubtreeTransform::try_translation(point(px(4.0), px(4.0)))
+        }
+        .expect("the fixture transform must be valid");
         canvas(
             |_, _, _| {},
             move |bounds, (), window, _| match paint {
                 FixturePaint::Images(images) => {
                     for image in images {
                         window
-                            .paint_image(bounds, Default::default(), image, 0, false)
+                            .paint_image(bounds, bounds, Default::default(), image, 0, false)
                             .expect("the public image consumer must produce a sprite");
                     }
+                }
+                FixturePaint::CroppedImage(image) => {
+                    let image_bounds = Bounds::new(
+                        point(bounds.left() - bounds.size.width / 2.0, bounds.top()),
+                        size(bounds.size.width * 2.0, bounds.size.height),
+                    );
+                    window
+                        .paint_image(
+                            bounds,
+                            image_bounds,
+                            Corners {
+                                top_left: px(4.0),
+                                top_right: px(4.0),
+                                bottom_left: px(4.0),
+                                bottom_right: px(4.0),
+                            },
+                            image,
+                            0,
+                            false,
+                        )
+                        .expect("the cropped image must produce its visible sprite");
                 }
                 FixturePaint::Primitives => paint_primitives(window),
                 FixturePaint::Mixed {
@@ -166,6 +205,7 @@ impl Render for WindowFixture {
                         .expect("the public glyph consumer must produce a sprite");
                     window
                         .paint_image(
+                            Bounds::new(point(px(64.0), px(0.0)), size(px(16.0), px(16.0))),
                             Bounds::new(point(px(64.0), px(0.0)), size(px(16.0), px(16.0))),
                             Default::default(),
                             image,
@@ -334,6 +374,71 @@ fn narrow_packed_texture(
             height,
         },
         capacity,
+    )
+}
+
+#[test]
+fn cropped_image_preserves_uv_corners_clip_transform_and_removed_tile_lease() -> anyhow::Result<()>
+{
+    let mut renderer = WgpuHeadlessRenderer::new()?;
+    let pixels = image::RgbaImage::from_fn(64, 16, |x, _| {
+        image::Rgba(match x {
+            0..16 => [0, 0, 255, 255],
+            16..48 => [0, 255, 0, 255],
+            _ => [255, 0, 0, 255],
+        })
+    });
+    let image = Arc::new(RenderImage::new(smallvec::smallvec![image::Frame::new(
+        pixels
+    )]));
+    let key = image_key(&image);
+    let full_tile = insert_image(&renderer.core.atlas, &image)?;
+    with_unleased_window_scene(
+        &mut renderer,
+        WindowFixture::cropped_image(image),
+        move |scene, scale_factor, renderer| {
+            let sprite = &scene.polychrome_sprites[0];
+            assert_eq!(sprite.tile.texture_instance(), full_tile.texture_instance());
+            assert_eq!(sprite.tile.tile_id, full_tile.tile_id);
+            assert_eq!(sprite.tile.padding, full_tile.padding);
+            assert_eq!(
+                sprite.tile.bounds,
+                Bounds::new(
+                    point(
+                        full_tile.bounds.origin.x + DevicePixels(16),
+                        full_tile.bounds.origin.y
+                    ),
+                    size(DevicePixels(32), DevicePixels(16)),
+                )
+            );
+            assert_eq!(sprite.corner_radii.top_left, px(4.0).scale(scale_factor));
+            assert!(sprite.clip.clip_count >= 2);
+            let first = sprite.clip.first_clip as usize;
+            let end = first + sprite.clip.clip_count as usize;
+            assert!(scene.clip_shapes()[first..end].iter().any(|shape| {
+                shape.radii_x.top_left == px(6.0).scale(scale_factor)
+                    && shape.radii_y.top_left == px(3.0).scale(scale_factor)
+            }));
+            let atlas: Arc<dyn PlatformAtlas> = renderer.core.atlas.clone();
+            let lease = atlas.retain_texture_instances(&[sprite.tile.texture_instance()])?;
+            assert_eq!(
+                renderer.core.atlas.remove_with_diagnostics(&key).outcome,
+                AtlasRemoveOutcome::TextureRetained,
+            );
+            insert_image(&renderer.core.atlas, &color_image(64, 16, [255, 0, 0, 255]))?;
+            let pixels =
+                renderer.render_scene_to_image(scene, render_size(scale_factor, 32.0, 32.0))?;
+            assert_eq!(
+                pixel_at(&pixels, scale_factor, 16.0, 10.5),
+                [0, 255, 0, 255]
+            );
+            assert_eq!(pixel_at(&pixels, scale_factor, 4.5, 4.5), [0, 0, 0, 255]);
+            assert_eq!(pixel_at(&pixels, scale_factor, 2.0, 10.5), [0, 0, 0, 255]);
+            lease
+                .validate()
+                .expect("the removed cropped region must remain leased");
+            Ok(())
+        },
     )
 }
 

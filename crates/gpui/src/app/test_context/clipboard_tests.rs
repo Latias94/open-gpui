@@ -195,6 +195,7 @@ impl Render for PasteProbe {
                             window
                                 .paint_image(
                                     Bounds::new(bounds.origin, size(px(8.), px(8.))),
+                                    Bounds::new(bounds.origin, size(px(8.), px(8.))),
                                     Default::default(),
                                     image.clone(),
                                     0,

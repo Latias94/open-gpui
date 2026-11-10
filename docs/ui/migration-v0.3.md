@@ -2138,7 +2138,11 @@ scrolling, scroll-axis capability, or committed ancestry has changed. Do not rec
 after user input to make an old focus operation eligible again.
 
 `ListState::scroll_to_reveal_item` is removed without an alias; bind the rendered item to a
-`RevealTargetHandle` when final nested reveal is intended. `UniformListScrollHandle` keeps
+`RevealTargetHandle` when final nested reveal is intended. The maintained upstream successor
+provides `ListState::scroll_to_item` for explicit index-based direct scrolling; it uses the
+same provisional anchor owner and interrupts an older physical reveal through the direct-scroll
+revision. Measurement readiness, uniform-height hints/reset and pause-following-tail do not
+introduce a second nested-reveal policy. `UniformListScrollHandle` keeps
 `scroll_to_item*` as explicit index-based direct scrolling and adds `base_handle()` for low-level
 viewport access. Its tuple field, `UniformListScrollState`, and `DeferredScrollToItem` are now
 private implementation state; use the named methods instead of mutating pending scroll records.
