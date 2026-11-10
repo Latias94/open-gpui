@@ -219,6 +219,7 @@ fn release_send_work(release: oneshot::Sender<()>) {
 
 fn wait_for_send_polls(platform: &WindowsPlatform, probe: &NativeSendProbe, polls: usize) {
     let trace = pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "send future reaches its next poll through the actual Windows foreground wake",
         Duration::from_millis(5),
         || probe.poll_count() >= polls,
@@ -230,9 +231,10 @@ fn wait_for_send_polls(platform: &WindowsPlatform, probe: &NativeSendProbe, poll
     ));
 }
 
-fn shutdown_send_app(app: &mut Application) {
+fn shutdown_send_app(platform: &WindowsPlatform, app: &mut Application) {
     app.update_for_test(|cx| cx.shutdown_for_native_exit_test());
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "send consumer terminal App shutdown authority",
         Duration::from_millis(5),
         || app.update_for_test(|cx| cx.native_exit_authority_is_settled_for_test()),
@@ -416,6 +418,7 @@ impl NativeSendWindow {
             (root.downgrade(), [observer, release])
         });
         pump_messages_until_with_delay(
+            &Rc::downgrade(&platform.inner),
             "the existing App-local receiver registers its pending channel await",
             Duration::from_millis(5),
             || started.get(),
@@ -436,6 +439,7 @@ impl NativeSendWindow {
 
     fn submitted(
         &self,
+        platform: &WindowsPlatform,
         app: &mut Application,
         payload: NativeSendPayload,
         previous: u64,
@@ -444,92 +448,100 @@ impl NativeSendWindow {
         let mut last_state = None;
         let description =
             format!("send payload {payload:?} reaches exact Submitted pixels after {previous}");
-        pump_messages_until_with_delay(&description, Duration::from_millis(5), || {
-            submitted = app
-                .update_for_test(|cx| {
-                    self.handle.update(cx, |root, window, _| {
-                        let facts = window.presentation_facts();
-                        let paint = self.paint.get();
-                        last_state = Some((facts, window.rendered_frame_revision(), paint));
-                        let paint = paint?;
-                        let attempt = facts.latest_present_attempt?;
-                        if !(attempt.generation > previous
-                            && attempt.outcome == PlatformWindowPresentOutcome::Submitted
-                            && attempt.contained_valid_primitives
-                            && facts.initial_presentation
-                                == WindowInitialPresentationStatus::Completed
-                            && facts.native_visible
-                            && facts.frame_accepted_generation == Some(attempt.generation)
-                            && facts.present_submitted_generation == Some(attempt.generation)
-                            && facts.non_empty_presented_generation == Some(attempt.generation)
-                            && window.rendered_frame_revision() == attempt.generation
-                            && window.submitted_frame_diagnostics_for_test()?.generation()
-                                == attempt.generation
-                            && paint.window_id == self.handle.window_id()
-                            && paint.payload == payload
-                            && paint.previous_revision.checked_add(1) == Some(attempt.generation)
-                            && paint.bounds.origin == point(px(16.), px(16.))
-                            && paint.bounds.size == size(px(96.), px(64.)))
-                        {
-                            return None;
-                        }
-                        assert_eq!(root.payload, payload);
-                        let capture = window.capture_frame();
-                        assert!(capture.unsupported_reason.is_none(), "{capture:?}");
-                        assert_eq!(capture.metadata.window_id, self.handle.window_id());
-                        assert_eq!(
-                            capture.metadata.framework_frame_generation,
-                            attempt.generation
-                        );
-                        assert_eq!(capture.metadata.scale_factor, window.scale_factor());
-                        assert!(capture.metadata.scale_factor.is_finite());
-                        assert!(capture.metadata.scale_factor > 0.);
-                        assert_eq!(
-                            capture.metadata.logical_viewport_size,
-                            window.viewport_size()
-                        );
-                        assert_eq!(
-                            capture.metadata.physical_viewport_size,
-                            window
-                                .viewport_size()
-                                .to_device_pixels(window.scale_factor())
-                        );
-                        let image = capture
-                            .image
-                            .as_ref()
-                            .expect("submitted send-consumer RGBA");
-                        assert_eq!(
-                            image.dimensions(),
-                            (
-                                capture.metadata.physical_viewport_size.width.0 as u32,
-                                capture.metadata.physical_viewport_size.height.0 as u32,
-                            )
-                        );
-                        assert_eq!(
-                            window
-                                .render_to_image()
-                                .expect("native send-consumer Scene GPU readback"),
-                            *image
-                        );
-                        let (color, marker_color) = payload.source.colors();
-                        for (position, color) in [
-                            (paint.bounds.center(), color),
-                            (point(px(64.), px(108.)), marker_color),
-                            (point(px(144.), px(64.)), 0),
-                        ] {
-                            assert_send_pixel(&capture, position, color);
-                        }
-                        assert_eq!(window.rendered_frame_revision(), attempt.generation);
-                        assert_eq!(
-                            window.presentation_facts().latest_present_attempt,
-                            facts.latest_present_attempt
-                        );
-                        Some(capture)
+        pump_messages_until_with_delay(
+            &Rc::downgrade(&platform.inner),
+            &description,
+            Duration::from_millis(5),
+            || {
+                submitted = app
+                    .update_for_test(|cx| {
+                        self.handle.update(cx, |root, window, _| {
+                            let facts = window.presentation_facts();
+                            let paint = self.paint.get();
+                            last_state = Some((facts, window.rendered_frame_revision(), paint));
+                            let paint = paint?;
+                            let attempt = facts.latest_present_attempt?;
+                            if !(attempt.generation > previous
+                                && attempt.outcome == PlatformWindowPresentOutcome::Submitted
+                                && attempt.contained_valid_primitives
+                                && facts.initial_presentation
+                                    == WindowInitialPresentationStatus::Completed
+                                && facts.native_visible
+                                && facts.frame_accepted_generation == Some(attempt.generation)
+                                && facts.present_submitted_generation == Some(attempt.generation)
+                                && facts.non_empty_presented_generation == Some(attempt.generation)
+                                && window.rendered_frame_revision() == attempt.generation
+                                && window.submitted_frame_diagnostics_for_test()?.generation()
+                                    == attempt.generation
+                                && paint.window_id == self.handle.window_id()
+                                && paint.payload == payload
+                                && paint.previous_revision.checked_add(1)
+                                    == Some(attempt.generation)
+                                && paint.bounds.origin == point(px(16.), px(16.))
+                                && paint.bounds.size == size(px(96.), px(64.)))
+                            {
+                                return None;
+                            }
+                            assert_eq!(root.payload, payload);
+                            let capture = window.capture_frame();
+                            assert!(capture.unsupported_reason.is_none(), "{capture:?}");
+                            assert_eq!(capture.metadata.window_id, self.handle.window_id());
+                            assert_eq!(
+                                capture.metadata.framework_frame_generation,
+                                attempt.generation
+                            );
+                            assert_eq!(capture.metadata.scale_factor, window.scale_factor());
+                            assert!(capture.metadata.scale_factor.is_finite());
+                            assert!(capture.metadata.scale_factor > 0.);
+                            assert_eq!(
+                                capture.metadata.logical_viewport_size,
+                                window.viewport_size()
+                            );
+                            assert_eq!(
+                                capture.metadata.physical_viewport_size,
+                                window
+                                    .viewport_size()
+                                    .to_device_pixels(window.scale_factor())
+                            );
+                            let image = capture
+                                .image
+                                .as_ref()
+                                .expect("submitted send-consumer RGBA");
+                            assert_eq!(
+                                image.dimensions(),
+                                (
+                                    capture.metadata.physical_viewport_size.width.0 as u32,
+                                    capture.metadata.physical_viewport_size.height.0 as u32,
+                                )
+                            );
+                            assert_eq!(
+                                window
+                                    .render_to_image()
+                                    .expect("native send-consumer Scene GPU readback"),
+                                *image
+                            );
+                            let (color, marker_color) = payload.source.colors();
+                            for (position, color) in [
+                                (paint.bounds.center(), color),
+                                (point(px(64.), px(108.)), marker_color),
+                                (point(px(144.), px(64.)), 0),
+                            ] {
+                                assert_send_pixel(&capture, position, color);
+                            }
+                            assert_eq!(window.rendered_frame_revision(), attempt.generation);
+                            assert_eq!(
+                                window.presentation_facts().latest_present_attempt,
+                                facts.latest_present_attempt
+                            );
+                            Some(capture)
+                        })
                     })
-                })
-                .expect("the actual send consumer must remain live through exact-frame capture");
-            submitted.is_some()
-        });
+                    .expect(
+                        "the actual send consumer must remain live through exact-frame capture",
+                    );
+                submitted.is_some()
+            },
+        );
         submitted.unwrap_or_else(|| {
             panic!("send payload did not reach Submitted pixels: {last_state:?}")
         })
@@ -549,6 +561,7 @@ impl NativeSendWindow {
         })
         .expect("the send consumer must retire through its existing public window owner");
         pump_messages_until_with_delay(
+            &Rc::downgrade(&platform.inner),
             "send consumer exact HWND, registration, entity and local callback retirement",
             Duration::from_millis(5),
             || {
@@ -647,6 +660,7 @@ fn native_send_foreground_app_view_repolls_cancels_submits_and_releases() {
     let effects = consumer.effects.clone();
     let main_thread = thread::current().id();
     let mut previous = consumer.submitted(
+        &platform,
         &mut app,
         NativeSendPayload {
             source: NativeSendSource::Initial,
@@ -673,6 +687,7 @@ fn native_send_foreground_app_view_repolls_cancels_submits_and_releases() {
         release_send_work(release);
         wait_for_send_polls(&platform, &probe, 3);
         let submitted = consumer.submitted(
+            &platform,
             &mut app,
             payload,
             previous.metadata.framework_frame_generation,
@@ -709,6 +724,7 @@ fn native_send_foreground_app_view_repolls_cancels_submits_and_releases() {
         .join()
         .expect("worker task cancellation");
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "cancelled pending send work releases its future on the foreground thread",
         Duration::from_millis(5),
         || probe.drop_count() == 1,
@@ -717,7 +733,10 @@ fn native_send_foreground_app_view_repolls_cancels_submits_and_releases() {
     assert!(release.is_canceled());
     assert!(release.send(()).is_err());
     wake_send_work(stale_waker);
-    pump_messages_until_idle("cancelled send future stale wake");
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "cancelled send future stale wake",
+    );
     probe.assert_state(1, 1, &[], 1);
     assert_eq!(*effects.borrow(), expected_effects);
 
@@ -756,7 +775,7 @@ fn native_send_foreground_app_view_repolls_cancels_submits_and_releases() {
     assert!(root_lifetime.upgrade().is_none());
     assert!(platform.raw_window_handles.read().is_empty());
 
-    shutdown_send_app(&mut app);
+    shutdown_send_app(&platform, &mut app);
     drop(app);
     let released = weak_app
         .update_window(AnyWindowHandle::from(handle), |_, _, _| ())
@@ -765,10 +784,14 @@ fn native_send_foreground_app_view_repolls_cancels_submits_and_releases() {
     drop(weak_app);
     drop(executor);
     drop(sender);
-    pump_messages_until_idle("send consumer final foreground drain");
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "send consumer final foreground drain",
+    );
     assert!(platform.inner.main_receiver.is_empty());
     drop(platform);
     pump_messages_until_with_delay(
+        &inner_lifetime,
         "send consumer platform HWND, App, dispatcher and OLE release",
         Duration::from_millis(5),
         || {
@@ -798,17 +821,24 @@ fn native_send_foreground_closed_dispatcher_refuses_without_resolving_task() {
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
     let executor = app.update_for_test(|cx| cx.foreground_executor().to_send());
     let (sender, receiver) = mpsc::unbounded();
-    pump_messages_until_idle("send refusal initial foreground drain");
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "send refusal initial foreground drain",
+    );
     assert!(platform.inner.main_receiver.is_empty());
     let held = submit_send_work(&executor, &sender, NativeSendSource::Retired);
     wait_for_send_polls(&platform, &held.probe, 1);
     held.probe.assert_state(1, 1, &[], 0);
     assert!(platform.inner.main_receiver.is_empty());
-    shutdown_send_app(&mut app);
-    pump_messages_until_idle("send refusal final foreground drain");
+    shutdown_send_app(&platform, &mut app);
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "send refusal final foreground drain",
+    );
     drop(app);
     drop(platform);
     pump_messages_until_with_delay(
+        &inner_lifetime,
         "send refusal releases every real Windows foreground queue receiver",
         Duration::from_millis(5),
         || {
@@ -821,7 +851,10 @@ fn native_send_foreground_closed_dispatcher_refuses_without_resolving_task() {
     held.probe.assert_state(1, 1, &[], 0);
     assert!(!held.task.is_ready());
     let late = submit_send_work(&executor, &sender, NativeSendSource::Retired);
-    pump_messages_until_idle("closed Windows dispatcher cannot poll late send submissions");
+    pump_messages_until_idle(
+        &inner_lifetime,
+        "closed Windows dispatcher cannot poll late send submissions",
+    );
     late.probe.assert_state(0, 0, &[], 0);
     assert!(!late.task.is_ready());
     assert!(
@@ -867,6 +900,7 @@ fn native_send_foreground_closed_dispatcher_refuses_without_resolving_task() {
             })
         });
         let trace = pump_messages_until_with_delay(
+            &replacement_lifetime,
             "reconstructed Windows foreground task completes after rejected send work",
             Duration::from_millis(5),
             || completed.is_ready(),
@@ -876,7 +910,10 @@ fn native_send_foreground_closed_dispatcher_refuses_without_resolving_task() {
             crate::WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD
         ));
         assert_eq!(completed.now_or_never(), Some(42));
-        pump_messages_until_idle("reconstructed send-executor idle accounting barrier");
+        pump_messages_until_idle(
+            &replacement_lifetime,
+            "reconstructed send-executor idle accounting barrier",
+        );
         assert!(replacement_platform.inner.main_receiver.is_empty());
         let drained = collector.collect_unseen();
         assert_eq!(drained.lost, 0);
@@ -891,12 +928,16 @@ fn native_send_foreground_closed_dispatcher_refuses_without_resolving_task() {
             )),
             "refused send work must settle its original foreground queue counter"
         );
-        shutdown_send_app(&mut replacement);
+        shutdown_send_app(&replacement_platform, &mut replacement);
         drop(replacement);
-        pump_messages_until_idle("reconstructed send-executor final foreground drain");
+        pump_messages_until_idle(
+            &replacement_lifetime,
+            "reconstructed send-executor final foreground drain",
+        );
         assert!(replacement_platform.inner.main_receiver.is_empty());
         drop(replacement_platform);
         pump_messages_until_with_delay(
+            &replacement_lifetime,
             "reconstructed send-executor platform and dispatcher release",
             Duration::from_millis(5),
             || {

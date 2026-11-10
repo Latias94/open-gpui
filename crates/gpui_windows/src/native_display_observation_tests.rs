@@ -63,10 +63,12 @@ fn reread_native_displays(platform: &WindowsPlatform, recipient: HWND) -> u64 {
 }
 
 fn wait_for_display_window_submission(
+    platform: &WindowsPlatform,
     app: &mut Application,
     handle: WindowHandle<NativeDisplayRoot>,
 ) {
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "display-observation consumer's nonempty native Submitted frame",
         Duration::from_millis(5),
         || {
@@ -138,7 +140,10 @@ fn native_display_observation_rereads_without_windows_and_retires_exact_window_c
             .cursor
     });
     let first_request = reread_native_displays(&platform, platform_hwnd);
-    pump_messages_until_idle("zero-window display ingress delivery");
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "zero-window display ingress delivery",
+    );
     assert!(first_request > 0);
     assert_eq!(
         platform.display_snapshot().generation(),
@@ -201,8 +206,11 @@ fn native_display_observation_rereads_without_windows_and_retires_exact_window_c
     platform
         .begin_vsync_thread()
         .expect("native vsync provider should start");
-    wait_for_display_window_submission(&mut app, handle);
-    pump_messages_until_idle("display consumer initial native follow-up");
+    wait_for_display_window_submission(&platform, &mut app, handle);
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "display consumer initial native follow-up",
+    );
     let original_binding = native_window.state.display.get();
     let original_refresh = original_binding.refresh_interval();
     let original_generation = native_window.state.display_topology_generation.get();
@@ -239,7 +247,10 @@ fn native_display_observation_rereads_without_windows_and_retires_exact_window_c
         })
         .is_some()
     );
-    pump_messages_until_idle("spurious display ingress delivery");
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "spurious display ingress delivery",
+    );
     assert!(app_events.borrow().is_empty());
     assert!(window_observations.borrow().is_empty());
 
@@ -291,6 +302,7 @@ fn native_display_observation_rereads_without_windows_and_retires_exact_window_c
         (app_pending.sequence, window_pending.sequence, request)
     });
     pump_messages_until(
+        &Rc::downgrade(&platform.inner),
         "busy-App display ingress and detached association fixture",
         || {
             app.update_for_test(|cx| {
@@ -320,9 +332,11 @@ fn native_display_observation_rereads_without_windows_and_retires_exact_window_c
     )));
     assert_eq!(window_observations.borrow().as_slice(), &[(None, None)]);
     native_window.set_display_binding(original_binding, original_generation);
-    pump_messages_until("restored detached display binding", || {
-        window_observations.borrow().len() == 2
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "restored detached display binding",
+        || window_observations.borrow().len() == 2,
+    );
     assert_eq!(
         window_observations.borrow().as_slice(),
         &[
@@ -354,6 +368,7 @@ fn native_display_observation_rereads_without_windows_and_retires_exact_window_c
         sequence
     });
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "display consumer exact HWND retirement and stale ingress settlement",
         Duration::from_millis(5),
         || {
@@ -429,7 +444,10 @@ fn native_display_observation_rereads_without_windows_and_retires_exact_window_c
     assert!(native_lifetime.upgrade().is_none());
 
     assert!(reread_native_displays(&platform, platform_hwnd) > busy_request);
-    pump_messages_until_idle("post-retirement display ingress delivery");
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "post-retirement display ingress delivery",
+    );
     assert_eq!(
         platform.display_snapshot().generation(),
         Some(initial_generation)
@@ -441,8 +459,10 @@ fn native_display_observation_rereads_without_windows_and_retires_exact_window_c
     drop(window_subscription);
     drop(app_subscription);
     drop(app);
+    let pump_platform = Rc::downgrade(&platform.inner);
     drop(platform);
     pump_messages_until_with_delay(
+        &pump_platform,
         "display consumer platform HWND, native backend, text and OLE release",
         Duration::from_millis(5),
         || {

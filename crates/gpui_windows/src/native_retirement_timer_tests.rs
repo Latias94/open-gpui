@@ -38,6 +38,7 @@ fn native_retirement_timer_admission_failure_posts_cleanup_without_retaining_a_t
         Some(NativeRetirementRetryWake::MainThreadMessage),
     );
     pump_messages_until_with_delay(
+        &lifetime,
         "posted retirement fallback releases exact platform and callback ownership",
         Duration::from_millis(2),
         || {
@@ -113,6 +114,7 @@ fn native_retirement_timer_rejects_cancelled_and_previous_platform_tokens() {
         previous_platform_timer = Some(current);
         drop(platform);
         pump_messages_until_with_delay(
+            &lifetime,
             "current native retirement timer releases its exact platform",
             Duration::from_millis(2),
             || {

@@ -166,6 +166,7 @@ fn labelled<'a>(snapshot: &'a Value, label: &str) -> (&'a str, &'a Value) {
 }
 
 fn checkpoint(
+    platform: &WindowsPlatform,
     app: &mut Application,
     handle: WindowHandle<NativeComposite>,
     expected: CompositeSource,
@@ -174,6 +175,7 @@ fn checkpoint(
 ) -> Value {
     let mut accepted = None;
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         &format!("composite Submitted after {generation}: {expected:?}, focus {focus}"),
         Duration::from_millis(5),
         || {
@@ -337,6 +339,7 @@ fn key(
 }
 
 fn passive(
+    platform: &WindowsPlatform,
     app: &mut Application,
     handle: WindowHandle<NativeComposite>,
     snapshot: &Value,
@@ -373,6 +376,7 @@ fn passive(
         assert_eq!(read(app), before);
     }
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "passive composite frame opportunities",
         Duration::from_millis(5),
         || requests.get() >= counts.1 + 2,
@@ -475,8 +479,8 @@ fn native_composite_focus_keyboard_continuity_and_release() {
     assert_eq!(initial.nodes[0].1.role(), Role::Window);
     assert_eq!(initial.focus, accesskit::NodeId(0));
     let mut generation = 0;
-    let mut snapshot = checkpoint(&mut app, handle, expected, 0, &mut generation);
-    passive(&mut app, handle, &snapshot, &renders, &requests);
+    let mut snapshot = checkpoint(&platform, &mut app, handle, expected, 0, &mut generation);
+    passive(&platform, &mut app, handle, &snapshot, &renders, &requests);
 
     for role in [Role::Menu, Role::ListBox] {
         if expected.role != role {
@@ -488,7 +492,7 @@ fn native_composite_focus_keyboard_continuity_and_release() {
                 })
             })
             .unwrap();
-            checkpoint(&mut app, handle, expected, 0, &mut generation);
+            checkpoint(&platform, &mut app, handle, expected, 0, &mut generation);
         }
         for opening_key in ["space", "enter"] {
             key(&mut app, handle, &native, opening_key, true);
@@ -507,12 +511,12 @@ fn native_composite_focus_keyboard_continuity_and_release() {
             key(&mut app, handle, &native, opening_key, false);
             expected.open = true;
             expected.openings += 1;
-            checkpoint(&mut app, handle, expected, 1, &mut generation);
+            checkpoint(&platform, &mut app, handle, expected, 1, &mut generation);
             if opening_key == "space" {
                 key(&mut app, handle, &native, "down", true);
                 key(&mut app, handle, &native, "down", false);
                 expected.selected = 1;
-                checkpoint(&mut app, handle, expected, 1, &mut generation);
+                checkpoint(&platform, &mut app, handle, expected, 1, &mut generation);
                 expected.selected = 0;
                 expected.version += 1;
                 app.update_for_test(|cx| {
@@ -523,8 +527,9 @@ fn native_composite_focus_keyboard_continuity_and_release() {
                     })
                 })
                 .unwrap();
-                let snapshot = checkpoint(&mut app, handle, expected, 1, &mut generation);
-                passive(&mut app, handle, &snapshot, &renders, &requests);
+                let snapshot =
+                    checkpoint(&platform, &mut app, handle, expected, 1, &mut generation);
+                passive(&platform, &mut app, handle, &snapshot, &renders, &requests);
                 for focus in [2, 1] {
                     app.update_for_test(|cx| {
                         handle.update(cx, |root, window, cx| {
@@ -532,30 +537,37 @@ fn native_composite_focus_keyboard_continuity_and_release() {
                         })
                     })
                     .unwrap();
-                    checkpoint(&mut app, handle, expected, focus, &mut generation);
+                    checkpoint(
+                        &platform,
+                        &mut app,
+                        handle,
+                        expected,
+                        focus,
+                        &mut generation,
+                    );
                 }
                 key(&mut app, handle, &native, "tab", true);
                 key(&mut app, handle, &native, "tab", false);
-                checkpoint(&mut app, handle, expected, 3, &mut generation);
+                checkpoint(&platform, &mut app, handle, expected, 3, &mut generation);
                 key(&mut app, handle, &native, "shift-tab", true);
                 key(&mut app, handle, &native, "shift-tab", false);
-                checkpoint(&mut app, handle, expected, 2, &mut generation);
+                checkpoint(&platform, &mut app, handle, expected, 2, &mut generation);
                 app.update_for_test(|cx| {
                     handle.update(cx, |root, window, cx| {
                         window.focus(&root.focus[1], cx);
                     })
                 })
                 .unwrap();
-                checkpoint(&mut app, handle, expected, 1, &mut generation);
+                checkpoint(&platform, &mut app, handle, expected, 1, &mut generation);
             }
             key(&mut app, handle, &native, "enter", true);
             expected.open = false;
             expected.confirmations += 1;
-            snapshot = checkpoint(&mut app, handle, expected, 0, &mut generation);
+            snapshot = checkpoint(&platform, &mut app, handle, expected, 0, &mut generation);
             for _ in 0..2 {
                 key(&mut app, handle, &native, "enter", false);
             }
-            passive(&mut app, handle, &snapshot, &renders, &requests);
+            passive(&platform, &mut app, handle, &snapshot, &renders, &requests);
         }
     }
     for activation_key in ["space", "enter"] {
@@ -569,9 +581,9 @@ fn native_composite_focus_keyboard_continuity_and_release() {
             })
         })
         .unwrap();
-        snapshot = checkpoint(&mut app, handle, expected, 0, &mut generation);
+        snapshot = checkpoint(&platform, &mut app, handle, expected, 0, &mut generation);
         key(&mut app, handle, &native, activation_key, false);
-        passive(&mut app, handle, &snapshot, &renders, &requests);
+        passive(&platform, &mut app, handle, &snapshot, &renders, &requests);
         key(&mut app, handle, &native, activation_key, true);
         let stopped = key(&mut app, handle, &native, "x", true);
         assert!(
@@ -580,7 +592,7 @@ fn native_composite_focus_keyboard_continuity_and_release() {
         );
         key(&mut app, handle, &native, activation_key, false);
         key(&mut app, handle, &native, "x", false);
-        passive(&mut app, handle, &snapshot, &renders, &requests);
+        passive(&platform, &mut app, handle, &snapshot, &renders, &requests);
     }
 
     assert!(platform.raw_window_handles.read().contains(&registration));
@@ -592,6 +604,7 @@ fn native_composite_focus_keyboard_continuity_and_release() {
     })
     .expect("close the exact composite owner");
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "exact composite HWND retirement",
         Duration::from_millis(5),
         || {
@@ -643,8 +656,10 @@ fn native_composite_focus_keyboard_continuity_and_release() {
     app.update_for_test(|cx| cx.shutdown());
     drop(app);
     assert!(app_lifetime.upgrade().is_none());
+    let pump_platform = Rc::downgrade(&platform.inner);
     drop(platform);
     pump_messages_until_with_delay(
+        &pump_platform,
         "composite App and platform release",
         Duration::from_millis(5),
         || {

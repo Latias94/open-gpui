@@ -260,6 +260,7 @@ impl Render for NativeClipboardTextRoot {
 }
 
 fn wait_for_native_clipboard_submission(
+    platform: &WindowsPlatform,
     app: &mut Application,
     handle: WindowHandle<NativeClipboardTextRoot>,
     expected_text: &str,
@@ -267,6 +268,7 @@ fn wait_for_native_clipboard_submission(
 ) -> u64 {
     let mut submitted = None;
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "native clipboard text accepted nonempty submission",
         Duration::from_millis(5),
         || {
@@ -401,6 +403,7 @@ fn native_async_clipboard_snapshot_pastes_into_submitted_text_and_reconstructs_c
         let initial_paint_cursor = observation.cursor();
         assert!(unsafe { RedrawWindow(Some(hwnd), None, None, RDW_INVALIDATE).as_bool() });
         pump_messages_until_with_delay(
+            &Rc::downgrade(&platform.inner),
             "native clipboard initialization WM_PAINT",
             Duration::from_millis(5),
             || {
@@ -419,7 +422,7 @@ fn native_async_clipboard_snapshot_pastes_into_submitted_text_and_reconstructs_c
             },
         );
         let initial_generation =
-            wait_for_native_clipboard_submission(&mut app, handle, initial_text, 0);
+            wait_for_native_clipboard_submission(&platform, &mut app, handle, initial_text, 0);
         let diagnostic_cursor = app.update_for_test(|cx| {
             cx.native_boundary_diagnostics(NativeBoundaryDiagnosticCursor::default())
                 .cursor
@@ -469,6 +472,7 @@ fn native_async_clipboard_snapshot_pastes_into_submitted_text_and_reconstructs_c
         );
         let expected_text = format!("{initial_text}{COPIED_TEXT}");
         let pasted_generation = wait_for_native_clipboard_submission(
+            &platform,
             &mut app,
             handle,
             &expected_text,
@@ -503,6 +507,7 @@ fn native_async_clipboard_snapshot_pastes_into_submitted_text_and_reconstructs_c
         app.update_for_test(|cx| handle.update(cx, |_, window, cx| window.remove_window(cx)))
             .expect("the exact native clipboard text window must close");
         pump_messages_until_with_delay(
+            &Rc::downgrade(&platform.inner),
             "exact native clipboard registration retirement",
             Duration::from_millis(5),
             || {
@@ -587,8 +592,10 @@ fn native_async_clipboard_snapshot_pastes_into_submitted_text_and_reconstructs_c
     drop(retired_slot);
     app.update_for_test(|cx| cx.shutdown());
     drop(app);
+    let pump_platform = Rc::downgrade(&platform.inner);
     drop(platform);
     pump_messages_until_with_delay(
+        &pump_platform,
         "native clipboard platform message window retirement",
         Duration::from_millis(5),
         || unsafe { !IsWindow(Some(platform_hwnd)).as_bool() },

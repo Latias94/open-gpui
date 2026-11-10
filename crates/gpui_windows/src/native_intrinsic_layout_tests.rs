@@ -241,6 +241,7 @@ fn open_intrinsic_window(
 }
 
 fn wait_for_intrinsic_submission(
+    platform: &WindowsPlatform,
     app: &mut Application,
     handle: WindowHandle<NativeIntrinsicRoot>,
     paints: &RefCell<Vec<NativeIntrinsicPaint>>,
@@ -249,6 +250,7 @@ fn wait_for_intrinsic_submission(
 ) -> (u64, NativeIntrinsicPaint) {
     let mut submitted = None;
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "native intrinsic layout accepted nonempty submission",
         Duration::from_millis(5),
         || {
@@ -362,6 +364,7 @@ fn close_intrinsic_window(
     app.update_for_test(|cx| handle.update(cx, |_, window, cx| window.remove_window(cx)))
         .expect("the exact intrinsic layout window must close");
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "exact intrinsic layout native retirement",
         Duration::from_millis(5),
         || {
@@ -452,7 +455,7 @@ fn native_intrinsic_layout_submits_notified_geometry_and_releases_exact_owners()
         })
     });
     let (initial_generation, initial) =
-        wait_for_intrinsic_submission(&mut app, handle, &paints, 0, 0);
+        wait_for_intrinsic_submission(&platform, &mut app, handle, &paints, 0, 0);
     assert_intrinsic_geometry(&initial, false);
     let before = paints.borrow().len();
     let requests_before = frame_requests.get();
@@ -465,7 +468,7 @@ fn native_intrinsic_layout_submits_notified_geometry_and_releases_exact_owners()
     })
     .expect("notify the existing intrinsic layout root");
     let (_, narrow) =
-        wait_for_intrinsic_submission(&mut app, handle, &paints, 1, initial_generation);
+        wait_for_intrinsic_submission(&platform, &mut app, handle, &paints, 1, initial_generation);
     assert_eq!(notifications.get(), 1);
     assert!(paints.borrow().len() > before);
     assert!(frame_requests.get() > requests_before);
@@ -493,7 +496,8 @@ fn native_intrinsic_layout_submits_notified_geometry_and_releases_exact_owners()
             rebuilt.update(cx, |_, window, _| Rc::downgrade(window.text_system()))
         })
         .expect("rebuilt text cache");
-    let (_, reconstructed) = wait_for_intrinsic_submission(&mut app, rebuilt, &paints, 1, 0);
+    let (_, reconstructed) =
+        wait_for_intrinsic_submission(&platform, &mut app, rebuilt, &paints, 1, 0);
     assert!(paints.borrow().len() > before);
     assert_intrinsic_geometry(&reconstructed, true);
     assert_eq!(reconstructed.text, narrow.text);
@@ -509,8 +513,10 @@ fn native_intrinsic_layout_submits_notified_geometry_and_releases_exact_owners()
 
     app.update_for_test(|cx| cx.shutdown());
     drop(app);
+    let pump_platform = Rc::downgrade(&platform.inner);
     drop(platform);
     pump_messages_until_with_delay(
+        &pump_platform,
         "intrinsic layout platform message HWND retirement",
         Duration::from_millis(5),
         || unsafe { !IsWindow(Some(platform_hwnd)).as_bool() },

@@ -448,6 +448,7 @@ impl NativeViewWindow {
 
     fn wait_for_submission(
         &self,
+        platform: &WindowsPlatform,
         app: &mut Application,
         composition: NativeViewComposition,
         sources: [NativeViewSource; 3],
@@ -457,10 +458,14 @@ impl NativeViewWindow {
         let description = format!(
             "generic views' exact nonempty Submitted frame after {after}: {composition:?}, {sources:?}"
         );
-        pump_messages_until_with_delay(&description, Duration::from_millis(5), || {
-            submitted = app
-                .update_for_test(|cx| {
-                    self.handle.update(cx, |_, window, cx| {
+        pump_messages_until_with_delay(
+            &Rc::downgrade(&platform.inner),
+            &description,
+            Duration::from_millis(5),
+            || {
+                submitted = app
+                    .update_for_test(|cx| {
+                        self.handle.update(cx, |_, window, cx| {
                         let facts = window.presentation_facts();
                         let attempt = facts.latest_present_attempt?;
                         let column = (*self.column_paint.borrow())?;
@@ -587,10 +592,11 @@ impl NativeViewWindow {
                         );
                         Some((attempt.generation, paints))
                     })
-                })
-                .expect("the composition must remain live through native submission");
-            submitted.is_some()
-        });
+                    })
+                    .expect("the composition must remain live through native submission");
+                submitted.is_some()
+            },
+        );
         submitted.expect("the actual composed source must belong to the exact Submitted generation")
     }
 
@@ -662,6 +668,7 @@ impl NativeViewWindow {
         })
         .expect("the exact generic-view window must close through its public owner");
         pump_messages_until_with_delay(
+            &Rc::downgrade(&platform.inner),
             "generic-view HWND, root, local state and native retirement",
             Duration::from_millis(5),
             || {
@@ -741,7 +748,12 @@ impl NativeViewWindow {
         };
         assert_eq!(quiesced, destroyed);
         assert_eq!(destroyed, terminal);
-        assert_closed_view_callback(app, self.handle.window_id(), stale_callback.as_ref());
+        assert_closed_view_callback(
+            platform,
+            app,
+            self.handle.window_id(),
+            stale_callback.as_ref(),
+        );
         assert_eq!(pending_calls.get(), 0);
         drop(self);
         assert!(native_lifetime.upgrade().is_none());
@@ -778,13 +790,19 @@ fn assert_native_view_runtime(cx: &App, phase: &str) {
     );
 }
 
-fn assert_closed_view_callback(app: &mut Application, window_id: WindowId, callback: &dyn Fn()) {
+fn assert_closed_view_callback(
+    platform: &WindowsPlatform,
+    app: &mut Application,
+    window_id: WindowId,
+    callback: &dyn Fn(),
+) {
     let cursor = app.update_for_test(|cx| {
         cx.native_boundary_diagnostics(NativeBoundaryDiagnosticCursor::default())
             .cursor
     });
     callback();
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "closed generic-view native callback rejection",
         Duration::from_millis(5),
         || {
@@ -864,7 +882,7 @@ fn native_generic_views_compose_rebuild_cache_notify_and_release_exact_owners() 
     let mut sources = [NativeViewSource::default(); 3];
     sources[2].props = composition.props;
     let (mut generation, mut paints) =
-        consumer.wait_for_submission(&mut app, composition, sources, 0);
+        consumer.wait_for_submission(&platform, &mut app, composition, sources, 0);
     let identities = paints.map(|paint| (paint.owner, paint.local));
     for left in 0..3 {
         for right in left + 1..3 {
@@ -886,7 +904,7 @@ fn native_generic_views_compose_rebuild_cache_notify_and_release_exact_owners() 
             })
             .expect("the parent must replace props without replacing any backing entity");
             (generation, paints) =
-                consumer.wait_for_submission(&mut app, composition, sources, generation);
+                consumer.wait_for_submission(&platform, &mut app, composition, sources, generation);
             assert_eq!(paints.map(|paint| (paint.owner, paint.local)), identities);
         }
         for index in 0..3 {
@@ -916,7 +934,7 @@ fn native_generic_views_compose_rebuild_cache_notify_and_release_exact_owners() 
             sources[index].pointer_inputs += 1;
             sources[index].local_inputs += 1;
             generation = consumer
-                .wait_for_submission(&mut app, composition, sources, generation)
+                .wait_for_submission(&platform, &mut app, composition, sources, generation)
                 .0;
             assert!(
                 !consumer
@@ -935,7 +953,7 @@ fn native_generic_views_compose_rebuild_cache_notify_and_release_exact_owners() 
             sources[index].key_inputs += 1;
             sources[index].local_inputs += 1;
             (generation, paints) =
-                consumer.wait_for_submission(&mut app, composition, sources, generation);
+                consumer.wait_for_submission(&platform, &mut app, composition, sources, generation);
             assert_eq!(paints.map(|paint| (paint.owner, paint.local)), identities);
         }
     }
@@ -949,7 +967,8 @@ fn native_generic_views_compose_rebuild_cache_notify_and_release_exact_owners() 
         })
     })
     .expect("the native consumer must initialize both public entity cache routes");
-    (generation, paints) = consumer.wait_for_submission(&mut app, composition, sources, generation);
+    (generation, paints) =
+        consumer.wait_for_submission(&platform, &mut app, composition, sources, generation);
     assert!(
         paints
             .iter()
@@ -969,7 +988,7 @@ fn native_generic_views_compose_rebuild_cache_notify_and_release_exact_owners() 
         })
         .expect("parent notification must rebuild props while preserving cached siblings");
         (generation, paints) =
-            consumer.wait_for_submission(&mut app, composition, sources, generation);
+            consumer.wait_for_submission(&platform, &mut app, composition, sources, generation);
         assert!(consumer.root_renders.get() > renders_before);
         assert_eq!(&paints[..2], &cached_paints[..2]);
         assert_eq!(
@@ -989,7 +1008,7 @@ fn native_generic_views_compose_rebuild_cache_notify_and_release_exact_owners() 
         .expect("the same cached entity must remain publicly updateable after two reuses");
         sources[index].updates += 1;
         (generation, paints) =
-            consumer.wait_for_submission(&mut app, composition, sources, generation);
+            consumer.wait_for_submission(&platform, &mut app, composition, sources, generation);
         assert_eq!(
             paints[index].previous_revision.checked_add(1),
             Some(generation)
@@ -1024,7 +1043,8 @@ fn native_generic_views_compose_rebuild_cache_notify_and_release_exact_owners() 
     );
     sources[0].pointer_inputs += 1;
     sources[0].local_inputs += 1;
-    (generation, paints) = consumer.wait_for_submission(&mut app, composition, sources, generation);
+    (generation, paints) =
+        consumer.wait_for_submission(&platform, &mut app, composition, sources, generation);
     assert_eq!(paints[0].previous_revision.checked_add(1), Some(generation));
     assert_eq!(paints.map(|paint| (paint.owner, paint.local)), identities);
     assert!(
@@ -1043,7 +1063,8 @@ fn native_generic_views_compose_rebuild_cache_notify_and_release_exact_owners() 
     );
     sources[0].key_inputs += 1;
     sources[0].local_inputs += 1;
-    (generation, paints) = consumer.wait_for_submission(&mut app, composition, sources, generation);
+    (generation, paints) =
+        consumer.wait_for_submission(&platform, &mut app, composition, sources, generation);
     assert_eq!(paints[0].previous_revision.checked_add(1), Some(generation));
     assert_eq!(paints.map(|paint| (paint.owner, paint.local)), identities);
 
@@ -1064,7 +1085,8 @@ fn native_generic_views_compose_rebuild_cache_notify_and_release_exact_owners() 
     };
     sources = [NativeViewSource::default(); 3];
     sources[2].props = 1;
-    (generation, paints) = rebuilt.wait_for_submission(&mut app, composition, sources, 0);
+    (generation, paints) =
+        rebuilt.wait_for_submission(&platform, &mut app, composition, sources, 0);
     let rebuilt_identities = paints.map(|paint| (paint.owner, paint.local));
     for index in 0..3 {
         assert_ne!(rebuilt_identities[index].0, identities[index].0);
@@ -1072,6 +1094,7 @@ fn native_generic_views_compose_rebuild_cache_notify_and_release_exact_owners() 
     }
     let renders_before_stale = rebuilt.root_renders.get();
     assert_closed_view_callback(
+        &platform,
         &mut app,
         retired_registration.window_id(),
         stale_callback.as_ref(),
@@ -1122,7 +1145,7 @@ fn native_generic_views_compose_rebuild_cache_notify_and_release_exact_owners() 
     sources[2].key_inputs = 1;
     sources[2].local_inputs = 2;
     let (_, rebuilt_paints) =
-        rebuilt.wait_for_submission(&mut app, composition, sources, generation);
+        rebuilt.wait_for_submission(&platform, &mut app, composition, sources, generation);
     assert_eq!(
         rebuilt_paints.map(|paint| (paint.owner, paint.local)),
         rebuilt_identities
@@ -1138,8 +1161,10 @@ fn native_generic_views_compose_rebuild_cache_notify_and_release_exact_owners() 
     });
     app.update_for_test(|cx| cx.shutdown());
     drop(app);
+    let pump_platform = Rc::downgrade(&platform.inner);
     drop(platform);
     pump_messages_until_with_delay(
+        &pump_platform,
         "generic-view global, platform HWND and OLE release",
         Duration::from_millis(5),
         || {

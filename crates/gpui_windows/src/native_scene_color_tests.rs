@@ -334,6 +334,7 @@ impl Render for NativeSceneColorRoot {
 }
 
 fn capture_native_scene_submission<V: Render + 'static>(
+    platform: &WindowsPlatform,
     app: &mut Application,
     handle: WindowHandle<V>,
     previous_generation: u64,
@@ -342,6 +343,7 @@ fn capture_native_scene_submission<V: Render + 'static>(
 ) -> (WindowFrameCapture, bool) {
     let mut submitted = None;
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "native scene accepted nonempty Submitted frame and RGBA capture",
         Duration::from_millis(5),
         || {
@@ -725,6 +727,7 @@ fn native_scene_oklab_pixels_match_independent_gamma_oracle_and_notified_frame()
     let initial_paint_cursor = observation.cursor();
     assert!(unsafe { RedrawWindow(Some(hwnd), None, None, RDW_INVALIDATE).as_bool() });
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "native scene initialization WM_PAINT",
         Duration::from_millis(5),
         || {
@@ -742,7 +745,10 @@ fn native_scene_oklab_pixels_match_independent_gamma_oracle_and_notified_frame()
             })
         },
     );
-    pump_messages_until_idle("native scene initialization follow-up");
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "native scene initialization follow-up",
+    );
     let previous_generation = app
         .update_for_test(|cx| {
             handle.update(cx, |_, window, _| {
@@ -753,6 +759,7 @@ fn native_scene_oklab_pixels_match_independent_gamma_oracle_and_notified_frame()
         })
         .expect("the fully initialized native scene must refresh");
     let (initial, initial_cache_allowed) = capture_native_scene_submission(
+        &platform,
         &mut app,
         handle,
         previous_generation,
@@ -771,6 +778,7 @@ fn native_scene_oklab_pixels_match_independent_gamma_oracle_and_notified_frame()
     app.update_for_test(|cx| handle.update(cx, |_, _, cx| cx.notify()))
         .expect("notifying the root must replay its cached deferred consumers");
     let (replay, replay_cache_allowed) = capture_native_scene_submission(
+        &platform,
         &mut app,
         handle,
         initial.metadata.framework_frame_generation,
@@ -792,6 +800,7 @@ fn native_scene_oklab_pixels_match_independent_gamma_oracle_and_notified_frame()
     })
     .expect("the existing native scene must notify its changed color");
     let (changed, changed_cache_allowed) = capture_native_scene_submission(
+        &platform,
         &mut app,
         handle,
         replay.metadata.framework_frame_generation,
@@ -816,6 +825,7 @@ fn native_scene_oklab_pixels_match_independent_gamma_oracle_and_notified_frame()
     app.update_for_test(|cx| handle.update(cx, |_, window, cx| window.remove_window(cx)))
         .expect("the exact native scene window must close");
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "exact native scene HWND retirement",
         Duration::from_millis(5),
         || {
@@ -875,8 +885,10 @@ fn native_scene_oklab_pixels_match_independent_gamma_oracle_and_notified_frame()
     drop(native_window);
     app.update_for_test(|cx| cx.shutdown());
     drop(app);
+    let pump_platform = Rc::downgrade(&platform.inner);
     drop(platform);
     pump_messages_until_with_delay(
+        &pump_platform,
         "native scene platform message HWND retirement",
         Duration::from_millis(5),
         || unsafe { !IsWindow(Some(platform_hwnd)).as_bool() },

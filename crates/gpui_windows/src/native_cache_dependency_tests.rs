@@ -78,46 +78,52 @@ impl Render for NativeCacheRoot {
 }
 
 fn wait_for_native_cache_submission(
+    platform: &WindowsPlatform,
     app: &mut Application,
     window: WindowHandle<NativeCacheRoot>,
     previous_generation: u64,
     description: &str,
 ) -> u64 {
     let mut submitted_generation = None;
-    pump_messages_until_with_delay(description, Duration::from_millis(5), || {
-        let (facts, rendered_generation, diagnostics_generation) = app
-            .update_for_test(|cx| {
-                window.update(cx, |_, window, _| {
-                    (
-                        window.presentation_facts(),
-                        window.rendered_frame_revision(),
-                        window
-                            .submitted_frame_diagnostics_for_test()
-                            .map(|diagnostics| diagnostics.generation()),
-                    )
+    pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
+        description,
+        Duration::from_millis(5),
+        || {
+            let (facts, rendered_generation, diagnostics_generation) = app
+                .update_for_test(|cx| {
+                    window.update(cx, |_, window, _| {
+                        (
+                            window.presentation_facts(),
+                            window.rendered_frame_revision(),
+                            window
+                                .submitted_frame_diagnostics_for_test()
+                                .map(|diagnostics| diagnostics.generation()),
+                        )
+                    })
                 })
-            })
-            .expect("the native cache window must remain open while awaiting submission");
-        let Some(attempt) = facts.latest_present_attempt else {
-            return false;
-        };
-        if facts.initial_presentation == WindowInitialPresentationStatus::Completed
-            && facts.native_visible
-            && attempt.generation > previous_generation
-            && attempt.outcome == PlatformWindowPresentOutcome::Submitted
-            && attempt.contained_valid_primitives
-            && facts.frame_accepted_generation == Some(attempt.generation)
-            && facts.present_submitted_generation == Some(attempt.generation)
-            && facts.non_empty_presented_generation == Some(attempt.generation)
-            && rendered_generation == attempt.generation
-            && diagnostics_generation == Some(attempt.generation)
-        {
-            submitted_generation = Some(attempt.generation);
-            true
-        } else {
-            false
-        }
-    });
+                .expect("the native cache window must remain open while awaiting submission");
+            let Some(attempt) = facts.latest_present_attempt else {
+                return false;
+            };
+            if facts.initial_presentation == WindowInitialPresentationStatus::Completed
+                && facts.native_visible
+                && attempt.generation > previous_generation
+                && attempt.outcome == PlatformWindowPresentOutcome::Submitted
+                && attempt.contained_valid_primitives
+                && facts.frame_accepted_generation == Some(attempt.generation)
+                && facts.present_submitted_generation == Some(attempt.generation)
+                && facts.non_empty_presented_generation == Some(attempt.generation)
+                && rendered_generation == attempt.generation
+                && diagnostics_generation == Some(attempt.generation)
+            {
+                submitted_generation = Some(attempt.generation);
+                true
+            } else {
+                false
+            }
+        },
+    );
     submitted_generation.expect("the native cache frame must be accepted and genuinely submitted")
 }
 
@@ -201,6 +207,7 @@ fn native_cached_deferred_canvas_keeps_model_subscription_after_replay() {
                 "{case}: the native surface must accept its initialization paint"
             );
             pump_messages_until_with_delay(
+                &Rc::downgrade(&platform.inner),
                 &format!("{case}: native initialization WM_PAINT"),
                 Duration::from_millis(5),
                 || {
@@ -218,14 +225,21 @@ fn native_cached_deferred_canvas_keeps_model_subscription_after_replay() {
                     })
                 },
             );
-            pump_messages_until_idle(&format!("{case}: native initialization paint follow-up"));
+            pump_messages_until_idle(
+                &Rc::downgrade(&platform.inner),
+                &format!("{case}: native initialization paint follow-up"),
+            );
             let mut generation = wait_for_native_cache_submission(
+                &platform,
                 &mut app,
                 window,
                 0,
                 &format!("{case}: initial native cache submission"),
             );
-            pump_messages_until_idle(&format!("{case}: shown native cache follow-up"));
+            pump_messages_until_idle(
+                &Rc::downgrade(&platform.inner),
+                &format!("{case}: shown native cache follow-up"),
+            );
             let before_initialization = app
                 .update_for_test(|cx| {
                     window.update(cx, |_, window, _| {
@@ -236,6 +250,7 @@ fn native_cached_deferred_canvas_keeps_model_subscription_after_replay() {
                 })
                 .expect("the native cache initialization must own its explicit refresh");
             generation = wait_for_native_cache_submission(
+                &platform,
                 &mut app,
                 window,
                 generation.max(before_initialization),
@@ -253,6 +268,7 @@ fn native_cached_deferred_canvas_keeps_model_subscription_after_replay() {
                 app.update_for_test(|cx| window.update(cx, |_, _, cx| cx.notify()))
                     .expect("notifying the native root should replay its cached child");
                 generation = wait_for_native_cache_submission(
+                    &platform,
                     &mut app,
                     window,
                     generation,
@@ -276,6 +292,7 @@ fn native_cached_deferred_canvas_keeps_model_subscription_after_replay() {
                 });
             });
             generation = wait_for_native_cache_submission(
+                &platform,
                 &mut app,
                 window,
                 generation,
@@ -296,6 +313,7 @@ fn native_cached_deferred_canvas_keeps_model_subscription_after_replay() {
             let frame_requests_before = frame_requests.get();
             app.update_for_test(|cx| child.update(cx, |_, cx| cx.notify()));
             wait_for_native_cache_submission(
+                &platform,
                 &mut app,
                 window,
                 generation,
@@ -320,6 +338,7 @@ fn native_cached_deferred_canvas_keeps_model_subscription_after_replay() {
             app.update_for_test(|cx| window.update(cx, |_, window, cx| window.remove_window(cx)))
                 .expect("the exact native cached canvas window should close");
             pump_messages_until_with_delay(
+                &Rc::downgrade(&platform.inner),
                 &format!("{case}: exact native cache window retirement"),
                 Duration::from_millis(5),
                 || {
@@ -373,8 +392,10 @@ fn native_cached_deferred_canvas_keeps_model_subscription_after_replay() {
 
     app.update_for_test(|cx| cx.shutdown());
     drop(app);
+    let pump_platform = Rc::downgrade(&platform.inner);
     drop(platform);
     pump_messages_until_with_delay(
+        &pump_platform,
         "native cache platform message window retirement",
         Duration::from_millis(5),
         || unsafe { !IsWindow(Some(platform_hwnd)).as_bool() },

@@ -155,8 +155,10 @@ fn native_power_mode_recovers_after_initial_status_query_failure() {
     dispatch_power_setting(hwnd, Some(&NativePowerSetting::battery_saver(0)));
     assert_eq!(platform.power_mode(), PowerMode::HighPower);
     let lifecycle = platform.lifecycle_test_probe.clone();
+    let pump_platform = Rc::downgrade(&platform.inner);
     drop(platform);
     pump_messages_until_with_delay(
+        &pump_platform,
         "failed-query power-mode platform retirement",
         Duration::from_millis(5),
         || !unsafe { IsWindow(Some(hwnd)).as_bool() } && lifecycle.ole_uninitialize_count() == 1,
@@ -195,14 +197,17 @@ fn native_power_mode_initializes_and_delivers_busy_app_notifications_in_order() 
         .borrow()
         .expect("App must register the actual platform HWND for battery-saver changes");
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "initial native battery-saver notification",
         Duration::from_millis(2),
         || platform.lifecycle_test_probe.power_saving_notifications() > 0,
     );
     dispatch_power_setting(hwnd, Some(&NativePowerSetting::battery_saver(0)));
-    pump_messages_until("public initial HighPower query", || {
-        app.update_for_test(|cx| cx.power_mode()) == PowerMode::HighPower
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "public initial HighPower query",
+        || app.update_for_test(|cx| cx.power_mode()) == PowerMode::HighPower,
+    );
     let events = Rc::new(RefCell::new(Vec::new()));
     let mut subscriptions = app.update_for_test(|cx| {
         let mut subscriptions = observe_power_mode(cx, &events);
@@ -265,9 +270,11 @@ fn native_power_mode_initializes_and_delivers_busy_app_notifications_in_order() 
         assert!(pending.windows(2).all(|pair| pair[0].0 < pair[1].0));
         pending.into_iter().map(|entry| entry.0).collect::<Vec<_>>()
     });
-    pump_messages_until("ordered busy-App battery-saver observers", || {
-        events.borrow().len() == 8
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "ordered busy-App battery-saver observers",
+        || events.borrow().len() == 8,
+    );
     assert_eq!(
         events.borrow().as_slice(),
         &[
@@ -318,9 +325,11 @@ fn native_power_mode_initializes_and_delivers_busy_app_notifications_in_order() 
         assert!(events.borrow().is_empty());
         sequences
     });
-    pump_messages_until("coalesced public HighPower query", || {
-        events.borrow().len() == 2
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "coalesced public HighPower query",
+        || events.borrow().len() == 2,
+    );
     assert_eq!(
         events.borrow().as_slice(),
         &[
@@ -353,9 +362,11 @@ fn native_power_mode_initializes_and_delivers_busy_app_notifications_in_order() 
     );
     drop(subscriptions.remove(1));
     dispatch_power_setting(hwnd, Some(&NativePowerSetting::battery_saver(1)));
-    pump_messages_until("remaining power-mode subscription", || {
-        events.borrow().len() == 3
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "remaining power-mode subscription",
+        || events.borrow().len() == 3,
+    );
     assert_eq!(
         events.borrow()[2],
         PowerModeEvent::Mode(0, PowerMode::LowPower)
@@ -363,7 +374,10 @@ fn native_power_mode_initializes_and_delivers_busy_app_notifications_in_order() 
     drop(app);
     dispatch_power_setting(hwnd, Some(&NativePowerSetting::battery_saver(0)));
     dispatch_power_setting(hwnd, Some(&NativePowerSetting::battery_saver(1)));
-    pump_messages_until_idle("late battery-saver notifications after App retirement");
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "late battery-saver notifications after App retirement",
+    );
     assert_eq!(events.borrow().len(), 3);
     drop(subscriptions);
     let mut rebuilt =
@@ -374,9 +388,11 @@ fn native_power_mode_initializes_and_delivers_busy_app_notifications_in_order() 
         observe_power_mode(cx, &rebuilt_events)
     });
     dispatch_power_setting(hwnd, Some(&NativePowerSetting::battery_saver(0)));
-    pump_messages_until("reconstructed App power-mode observers", || {
-        rebuilt_events.borrow().len() == 2
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "reconstructed App power-mode observers",
+        || rebuilt_events.borrow().len() == 2,
+    );
     assert_eq!(
         rebuilt_events.borrow().as_slice(),
         &[
@@ -392,8 +408,10 @@ fn native_power_mode_initializes_and_delivers_busy_app_notifications_in_order() 
     let lifecycle = platform.lifecycle_test_probe.clone();
     drop(rebuilt_subscriptions);
     drop(rebuilt);
+    let pump_platform = Rc::downgrade(&platform.inner);
     drop(platform);
     pump_messages_until_with_delay(
+        &pump_platform,
         "native power-mode platform retirement",
         Duration::from_millis(5),
         || !unsafe { IsWindow(Some(hwnd)).as_bool() } && lifecycle.ole_uninitialize_count() == 1,
@@ -426,6 +444,7 @@ fn native_power_mode_reentrant_replacement_and_retry_release_exact_registration(
     platform.on_system_wake(Arc::new(|| {}));
     platform.on_power_mode_change(Arc::new(|| {}));
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "initial reentrant battery-saver notification",
         Duration::from_millis(2),
         || platform.lifecycle_test_probe.power_saving_notifications() > before_registration,
@@ -531,6 +550,7 @@ fn native_power_mode_reentrant_replacement_and_retry_release_exact_registration(
     assert_eq!(replacement_calls.load(Ordering::Relaxed), 2);
     assert_eq!(rejected_calls.load(Ordering::Relaxed), 0);
     pump_messages_until_with_delay(
+        &platform_inner,
         "retryable exact power-setting retirement",
         Duration::from_millis(5),
         || {
@@ -657,9 +677,16 @@ impl NativePowerModeWindow {
         }
     }
 
-    fn wait_for_submission(&self, app: &mut Application, source: u32, after: u64) -> u64 {
+    fn wait_for_submission(
+        &self,
+        platform: &WindowsPlatform,
+        app: &mut Application,
+        source: u32,
+        after: u64,
+    ) -> u64 {
         let mut submitted = None;
         pump_messages_until_with_delay(
+            &Rc::downgrade(&platform.inner),
             "power-mode consumer's exact source and nonempty Submitted frame",
             Duration::from_millis(5),
             || {
@@ -749,24 +776,28 @@ impl NativePowerModeWindow {
                         && !options.force_render
                 })
         );
-        pump_messages_until("power-mode consumer's actual native frame delivery", || {
-            app.update_for_test(|cx| {
-                let diagnostics = cx.native_boundary_diagnostics(cursor);
-                assert!(diagnostics.terminal.iter().all(|entry| !matches!(
-                    entry.disposition,
-                    NativeBoundaryDisposition::InvariantFailure(_)
-                )));
-                diagnostics.terminal.iter().any(|entry| {
-                    entry.target == NativeBoundaryTarget::Window(self.handle.window_id())
-                        && entry.kind
-                            == NativeBoundaryKind::Callback(NativeCallbackKind::RequestFrame)
-                        && matches!(
-                            entry.disposition,
-                            NativeBoundaryDisposition::Delivered { input_result: None }
-                        )
+        pump_messages_until(
+            &Rc::downgrade(&platform.inner),
+            "power-mode consumer's actual native frame delivery",
+            || {
+                app.update_for_test(|cx| {
+                    let diagnostics = cx.native_boundary_diagnostics(cursor);
+                    assert!(diagnostics.terminal.iter().all(|entry| !matches!(
+                        entry.disposition,
+                        NativeBoundaryDisposition::InvariantFailure(_)
+                    )));
+                    diagnostics.terminal.iter().any(|entry| {
+                        entry.target == NativeBoundaryTarget::Window(self.handle.window_id())
+                            && entry.kind
+                                == NativeBoundaryKind::Callback(NativeCallbackKind::RequestFrame)
+                            && matches!(
+                                entry.disposition,
+                                NativeBoundaryDisposition::Delivered { input_result: None }
+                            )
+                    })
                 })
-            })
-        });
+            },
+        );
     }
 
     fn assert_deferred(&self, app: &mut Application, generation: u64, source: u32) {
@@ -806,6 +837,7 @@ impl NativePowerModeWindow {
         .expect("power-mode consumer must retire its exact WindowId");
         drop(self);
         pump_messages_until_with_delay(
+            &Rc::downgrade(&platform.inner),
             "power-mode consumer's exact HWND retirement",
             Duration::from_millis(5),
             || {
@@ -830,22 +862,28 @@ fn native_low_power_configuration_defers_callbacks_and_recovers_submitted_source
     let hwnd = platform.handle;
     let mut app = Application::with_platform(platform.clone()).with_quit_mode(QuitMode::Explicit);
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "initial low-power frame registration",
         Duration::from_millis(2),
         || platform.lifecycle_test_probe.power_saving_notifications() > 0,
     );
     dispatch_power_setting(hwnd, Some(&NativePowerSetting::battery_saver(1)));
-    pump_messages_until("public LowPower mode before window construction", || {
-        app.update_for_test(|cx| cx.power_mode()) == PowerMode::LowPower
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "public LowPower mode before window construction",
+        || app.update_for_test(|cx| cx.power_mode()) == PowerMode::LowPower,
+    );
     let limited =
         NativePowerModeWindow::open(&mut app, &platform, Some(Duration::from_secs(3600)), -130.);
     let unlimited = NativePowerModeWindow::open(&mut app, &platform, None, 130.);
-    limited.wait_for_submission(&mut app, 0, 0);
-    unlimited.wait_for_submission(&mut app, 0, 0);
-    pump_messages_until_idle("initial low-power window submissions");
-    let initial_limited = limited.wait_for_submission(&mut app, 0, 0);
-    let initial_unlimited = unlimited.wait_for_submission(&mut app, 0, 0);
+    limited.wait_for_submission(&platform, &mut app, 0, 0);
+    unlimited.wait_for_submission(&platform, &mut app, 0, 0);
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "initial low-power window submissions",
+    );
+    let initial_limited = limited.wait_for_submission(&platform, &mut app, 0, 0);
+    let initial_unlimited = unlimited.wait_for_submission(&platform, &mut app, 0, 0);
     #[cfg(feature = "profiler")]
     let mut journal = app.update_for_test(|cx| cx.foreground_journal().collector());
 
@@ -869,7 +907,7 @@ fn native_low_power_configuration_defers_callbacks_and_recovers_submitted_source
         )));
     }
     unlimited.dispatch_paint(&mut app, &platform);
-    unlimited.wait_for_submission(&mut app, 1, initial_unlimited);
+    unlimited.wait_for_submission(&platform, &mut app, 1, initial_unlimited);
     assert_eq!(unlimited.callback_runs.borrow().as_slice(), &[1]);
     assert!(unlimited_capture.upgrade().is_none());
     limited.assert_deferred(&mut app, initial_limited, 1);
@@ -880,7 +918,7 @@ fn native_low_power_configuration_defers_callbacks_and_recovers_submitted_source
         signal_at: Some(Instant::now()),
         signal_source: FrameRequestSource::LocalSchedule,
     });
-    let mandatory_generation = limited.wait_for_submission(&mut app, 1, initial_limited);
+    let mandatory_generation = limited.wait_for_submission(&platform, &mut app, 1, initial_limited);
     assert!(limited_capture.upgrade().is_none());
     assert_eq!(limited.callback_runs.borrow().as_slice(), &[1]);
     assert_eq!(
@@ -896,17 +934,21 @@ fn native_low_power_configuration_defers_callbacks_and_recovers_submitted_source
     limited.assert_deferred(&mut app, mandatory_generation, 2);
     assert!(recovered_capture.upgrade().is_some());
     dispatch_power_setting(hwnd, Some(&NativePowerSetting::battery_saver(0)));
-    pump_messages_until("public HighPower recovery releases deferred demand", || {
-        app.update_for_test(|cx| cx.power_mode()) == PowerMode::HighPower
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "public HighPower recovery releases deferred demand",
+        || app.update_for_test(|cx| cx.power_mode()) == PowerMode::HighPower,
+    );
     limited.dispatch_paint(&mut app, &platform);
-    let recovered_generation = limited.wait_for_submission(&mut app, 2, mandatory_generation);
+    let recovered_generation =
+        limited.wait_for_submission(&platform, &mut app, 2, mandatory_generation);
     assert!(recovered_generation > mandatory_generation);
     assert_eq!(limited.callback_runs.borrow().as_slice(), &[1, 2]);
     assert!(recovered_capture.upgrade().is_none());
 
     dispatch_power_setting(hwnd, Some(&NativePowerSetting::battery_saver(1)));
     pump_messages_until(
+        &Rc::downgrade(&platform.inner),
         "public LowPower mode before pending-demand retirement",
         || app.update_for_test(|cx| cx.power_mode()) == PowerMode::LowPower,
     );
@@ -921,8 +963,10 @@ fn native_low_power_configuration_defers_callbacks_and_recovers_submitted_source
     unlimited.retire(&mut app, &platform);
     let lifecycle = platform.lifecycle_test_probe.clone();
     drop(app);
+    let pump_platform = Rc::downgrade(&platform.inner);
     drop(platform);
     pump_messages_until_with_delay(
+        &pump_platform,
         "low-power frame platform retirement",
         Duration::from_millis(5),
         || !unsafe { IsWindow(Some(hwnd)).as_bool() } && lifecycle.ole_uninitialize_count() == 1,

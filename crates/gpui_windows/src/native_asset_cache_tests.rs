@@ -178,31 +178,43 @@ impl Render for NativeAssetRoot {
 }
 
 fn pump_native_assets_until(
+    platform: &WindowsPlatform,
     visual: &VisualTestPlatform,
     description: &str,
     mut converged: impl FnMut() -> bool,
 ) -> MessageTrace {
-    pump_messages_until_with_delay(description, Duration::from_millis(5), || {
-        for _ in 0..32 {
-            if !visual.dispatcher().tick(false) {
-                break;
+    pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
+        description,
+        Duration::from_millis(5),
+        || {
+            for _ in 0..32 {
+                if !visual.dispatcher().tick(false) {
+                    break;
+                }
             }
-        }
-        converged()
-    })
+            converged()
+        },
+    )
 }
 
 fn pump_native_asset_frame_opportunities(
+    platform: &WindowsPlatform,
     visual: &VisualTestPlatform,
     requests: &[Rc<Cell<usize>>; 2],
 ) {
     let before = requests.each_ref().map(|request| request.get());
-    pump_native_assets_until(visual, "idle native asset frame opportunities", || {
-        requests
-            .iter()
-            .zip(before)
-            .all(|(request, before)| request.get() >= before + 2)
-    });
+    pump_native_assets_until(
+        platform,
+        visual,
+        "idle native asset frame opportunities",
+        || {
+            requests
+                .iter()
+                .zip(before)
+                .all(|(request, before)| request.get() >= before + 2)
+        },
+    );
 }
 
 struct NativeAssetSubmission {
@@ -212,6 +224,7 @@ struct NativeAssetSubmission {
 }
 
 fn wait_for_native_asset_submission(
+    platform: &WindowsPlatform,
     app: &ApplicationHandle,
     visual: &VisualTestPlatform,
     handle: WindowHandle<NativeAssetRoot>,
@@ -220,6 +233,7 @@ fn wait_for_native_asset_submission(
 ) -> NativeAssetSubmission {
     let mut submitted = None;
     pump_native_assets_until(
+        platform,
         visual,
         "owning asset consumer exact accepted nonempty Submitted frame and result pixels",
         || {
@@ -468,12 +482,13 @@ fn native_owning_asset_consumers_share_notify_submit_evict_and_retire() {
     platform
         .begin_vsync_thread()
         .expect("native vsync provider should start");
-    let mut pending =
-        handles.map(|handle| wait_for_native_asset_submission(&app, &visual, handle, None, 0));
+    let mut pending = handles
+        .map(|handle| wait_for_native_asset_submission(&platform, &app, &visual, handle, None, 0));
     for index in 0..handles.len() {
         app.update(|cx| handles[index].update(cx, |_, window, _| window.refresh()))
             .expect("settle the native initialization before passive completion measurements");
         pending[index] = wait_for_native_asset_submission(
+            &platform,
             &app,
             &visual,
             handles[index],
@@ -485,7 +500,7 @@ fn native_owning_asset_consumers_share_notify_submit_evict_and_retire() {
     assert_eq!(passive.load_count(), 1);
     assert_eq!(interested.completions.load(Ordering::SeqCst), 0);
     assert_eq!(passive.completions.load(Ordering::SeqCst), 0);
-    pump_native_asset_frame_opportunities(&visual, &frame_requests);
+    pump_native_asset_frame_opportunities(&platform, &visual, &frame_requests);
     let notifications_before = notifications.each_ref().map(|count| count.get());
     let passive_renders = counters.each_ref().map(|count| count.renders.get());
     let passive_paints = counters.each_ref().map(|count| count.paints.get());
@@ -494,15 +509,20 @@ fn native_owning_asset_consumers_share_notify_submit_evict_and_retire() {
     let passive_image_lifetime = Arc::downgrade(&passive_image);
     let passive_image_id = passive_image.id;
     assert!(passive_sender.send(Ok(passive_image)).is_ok());
-    pump_native_assets_until(&visual, "non-subscribing asset result publication", || {
-        app.update(|cx| {
-            cx.fetch_asset::<NativeAsset>(&passive)
-                .is_some_and(|result| {
-                    result.expect("passive load must succeed").id == passive_image_id
-                })
-        })
-    });
-    pump_native_asset_frame_opportunities(&visual, &frame_requests);
+    pump_native_assets_until(
+        &platform,
+        &visual,
+        "non-subscribing asset result publication",
+        || {
+            app.update(|cx| {
+                cx.fetch_asset::<NativeAsset>(&passive)
+                    .is_some_and(|result| {
+                        result.expect("passive load must succeed").id == passive_image_id
+                    })
+            })
+        },
+    );
+    pump_native_asset_frame_opportunities(&platform, &visual, &frame_requests);
     for (index, handle) in handles.iter().enumerate() {
         app.update(|cx| {
             handle.update(cx, |_, window, cx| {
@@ -528,6 +548,7 @@ fn native_owning_asset_consumers_share_notify_submit_evict_and_retire() {
     assert!(passive_image_lifetime.upgrade().is_none());
     assert_eq!(passive.load_count(), 2);
     pump_native_assets_until(
+        &platform,
         &visual,
         "second passive load is held before eviction",
         || {
@@ -541,6 +562,7 @@ fn native_owning_asset_consumers_share_notify_submit_evict_and_retire() {
         assert!(cx.fetch_asset::<NativeAsset>(&passive).is_none());
     });
     pump_native_assets_until(
+        &platform,
         &visual,
         "evicted native asset work cancels its actual receiver",
         || stale_sender.is_canceled(),
@@ -554,6 +576,7 @@ fn native_owning_asset_consumers_share_notify_submit_evict_and_retire() {
             .is_ok()
     );
     pump_native_assets_until(
+        &platform,
         &visual,
         "replacement caches its own result identity",
         || {
@@ -562,7 +585,7 @@ fn native_owning_asset_consumers_share_notify_submit_evict_and_retire() {
             })
         },
     );
-    pump_native_asset_frame_opportunities(&visual, &frame_requests);
+    pump_native_asset_frame_opportunities(&platform, &visual, &frame_requests);
     for (index, handle) in handles.iter().enumerate() {
         app.update(|cx| {
             handle.update(cx, |_, window, cx| {
@@ -588,6 +611,7 @@ fn native_owning_asset_consumers_share_notify_submit_evict_and_retire() {
     assert!(interested_sender.send(Ok(interested_image)).is_ok());
     let ready: [_; 2] = std::array::from_fn(|index| {
         wait_for_native_asset_submission(
+            &platform,
             &app,
             &visual,
             handles[index],
@@ -760,6 +784,7 @@ fn native_owning_asset_consumers_share_notify_submit_evict_and_retire() {
     });
     drop(subscriptions);
     pump_native_assets_until(
+        &platform,
         &visual,
         "both exact owning asset consumer windows retire",
         || {
@@ -830,8 +855,10 @@ fn native_owning_asset_consumers_share_notify_submit_evict_and_retire() {
     app.update(|cx| cx.shutdown());
     drop(app);
     drop(visual);
+    let pump_platform = Rc::downgrade(&platform.inner);
     drop(platform);
     pump_messages_until_with_delay(
+        &pump_platform,
         "owning asset platform HWND, renderer, assets and backend ownership release",
         Duration::from_millis(5),
         || {

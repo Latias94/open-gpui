@@ -658,9 +658,11 @@ async fn exercise_live_windowing(platform: Rc<WindowsPlatform>, cx: &mut AsyncAp
                                 && matches!(event.kind(), NativeWindowTestEventKind::WindowMessage {
                                 message: NativeWindowTestMessage::Other(WM_GPUI_GPU_DEVICE_LOST),
                                 wparam,
+                                lparam,
                                 disposition: NativeWindowTestMessageDisposition::Returned(0),
                                 ..
-                            } if wparam == registration.generation())
+                            } if wparam == platform.inner.validation_number
+                                && lparam == registration.generation() as isize)
                         })
                 },
             )
@@ -701,14 +703,14 @@ async fn exercise_live_windowing(platform: Rc<WindowsPlatform>, cx: &mut AsyncAp
                     let _ = SendMessageW(
                         registration.as_raw(),
                         WM_GPUI_GPU_DEVICE_LOST,
-                        Some(WPARAM(previous.generation())),
-                        Some(LPARAM(0)),
+                        Some(WPARAM(platform.inner.validation_number)),
+                        Some(LPARAM(previous.generation() as isize)),
                     );
                     let _ = SendMessageW(
                         registration.as_raw(),
                         WM_GPUI_FORCE_UPDATE_WINDOW,
-                        Some(WPARAM(previous.generation())),
-                        Some(LPARAM(0)),
+                        Some(WPARAM(platform.inner.validation_number)),
+                        Some(LPARAM(previous.generation() as isize)),
                     );
                     let _ = SendMessageW(
                         platform.handle,

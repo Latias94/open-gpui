@@ -156,12 +156,14 @@ fn open_image_window(
 }
 
 fn activate_image_window(
+    platform: &WindowsPlatform,
     app: &mut Application,
     handle: WindowHandle<NativeImageRoot>,
     registration: RegisteredWindow,
 ) {
     assert_eq!(registration.window_id(), handle.window_id());
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "native image consumer initial visibility",
         Duration::from_millis(5),
         || {
@@ -178,6 +180,7 @@ fn activate_image_window(
     crate::native_test_foreground::acquire_foreground_window(registration.as_raw())
         .expect("the real image consumer HWND must acquire foreground activation");
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "native image consumer actual active status",
         Duration::from_millis(5),
         || {
@@ -238,6 +241,7 @@ struct NativeImageSubmission {
 
 #[track_caller]
 fn wait_for_image_submission(
+    platform: &WindowsPlatform,
     app: &mut Application,
     handle: WindowHandle<NativeImageRoot>,
     registration: RegisteredWindow,
@@ -251,6 +255,7 @@ fn wait_for_image_submission(
     let mut last_state = None;
     let wait = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         pump_messages_until_with_delay(
+            &Rc::downgrade(&platform.inner),
             "native image consumer accepted nonempty Submitted frame and RGBA capture",
             Duration::from_millis(5),
             || {
@@ -501,6 +506,7 @@ fn close_image_window(
     app.update_for_test(|cx| handle.update(cx, |_, window, cx| window.remove_window(cx)))
         .expect("the exact image consumer window must close");
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "exact image consumer native HWND retirement",
         Duration::from_millis(5),
         || {
@@ -590,18 +596,25 @@ fn native_encoded_and_embedded_images_animate_replace_and_release_exact_owners()
         .update_for_test(|cx| handle.root(cx))
         .expect("initial image consumer root");
     let root_lifetime = root.downgrade();
-    activate_image_window(&mut app, handle, registration);
+    activate_image_window(&platform, &mut app, handle, registration);
     let requests_before_animation = frame_requests.get();
     let mut cycles: [Vec<ImagePaintDiagnostic>; 2] = std::array::from_fn(|_| Vec::new());
     let mut generation = 0;
     let mut animated_lifetimes = None;
     while cycles.iter().any(|cycle| cycle.len() < 3) {
-        let submitted =
-            wait_for_image_submission(&mut app, handle, registration, 0, generation, |images| {
+        let submitted = wait_for_image_submission(
+            &platform,
+            &mut app,
+            handle,
+            registration,
+            0,
+            generation,
+            |images| {
                 images.iter().zip(&cycles).any(|(image, cycle)| {
                     cycle.len() < 3 && image.image.frame_index == [0, 1, 0][cycle.len()]
                 })
-            });
+            },
+        );
         assert_native_image_pixels(&submitted, true);
         for (diagnostic, cycle) in submitted.images.iter().zip(&mut cycles) {
             if cycle.len() < 3 && diagnostic.image.frame_index == [0, 1, 0][cycle.len()] {
@@ -660,8 +673,15 @@ fn native_encoded_and_embedded_images_animate_replace_and_release_exact_owners()
         1,
         "replacement notification must be observed before pumping"
     );
-    let replaced =
-        wait_for_image_submission(&mut app, handle, registration, 1, generation, |_| true);
+    let replaced = wait_for_image_submission(
+        &platform,
+        &mut app,
+        handle,
+        registration,
+        1,
+        generation,
+        |_| true,
+    );
     assert_native_image_pixels(&replaced, false);
     assert!(counters.paints.get() > paints_before_replacement);
     assert!(frame_requests.get() > requests_before_replacement);
@@ -678,6 +698,7 @@ fn native_encoded_and_embedded_images_animate_replace_and_release_exact_owners()
         .expect("an unchanged image consumer notification must repaint through native vsync");
     assert_eq!(notifications.get(), notifications_before_repaint + 1);
     let repainted = wait_for_image_submission(
+        &platform,
         &mut app,
         handle,
         registration,
@@ -730,9 +751,16 @@ fn native_encoded_and_embedded_images_animate_replace_and_release_exact_owners()
         .update_for_test(|cx| rebuilt.root(cx))
         .expect("reconstructed image root");
     let rebuilt_root_lifetime = rebuilt_root.downgrade();
-    activate_image_window(&mut app, rebuilt, rebuilt_registration);
-    let reconstructed =
-        wait_for_image_submission(&mut app, rebuilt, rebuilt_registration, 1, 0, |_| true);
+    activate_image_window(&platform, &mut app, rebuilt, rebuilt_registration);
+    let reconstructed = wait_for_image_submission(
+        &platform,
+        &mut app,
+        rebuilt,
+        rebuilt_registration,
+        1,
+        0,
+        |_| true,
+    );
     assert_native_image_pixels(&reconstructed, false);
     assert!(rebuilt_counters.renders.get() > 0);
     assert!(rebuilt_counters.paints.get() > 0);
@@ -762,8 +790,10 @@ fn native_encoded_and_embedded_images_animate_replace_and_release_exact_owners()
 
     app.update_for_test(|cx| cx.shutdown());
     drop(app);
+    let pump_platform = Rc::downgrade(&platform.inner);
     drop(platform);
     pump_messages_until_with_delay(
+        &pump_platform,
         "image consumer platform message HWND retirement and owner release",
         Duration::from_millis(5),
         || {

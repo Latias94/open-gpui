@@ -122,17 +122,24 @@ fn poll_embedded_tasks(visual: &VisualTestPlatform) {
 }
 
 fn pump_embedded_until(
+    platform: &WindowsPlatform,
     visual: &VisualTestPlatform,
     description: &str,
     mut converged: impl FnMut() -> bool,
 ) -> MessageTrace {
-    pump_messages_until_with_delay(description, Duration::from_millis(5), || {
-        poll_embedded_tasks(visual);
-        converged()
-    })
+    pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
+        description,
+        Duration::from_millis(5),
+        || {
+            poll_embedded_tasks(visual);
+            converged()
+        },
+    )
 }
 
 fn wait_for_embedded_submission(
+    platform: &WindowsPlatform,
     app: &ApplicationHandle,
     visual: &VisualTestPlatform,
     handle: WindowHandle<NativeEmbeddedRoot>,
@@ -141,6 +148,7 @@ fn wait_for_embedded_submission(
 ) -> WindowFrameCapture {
     let mut submitted = None;
     pump_embedded_until(
+        platform,
         visual,
         "embedded host accepted nonempty text/quad submission and exact-generation capture",
         || {
@@ -339,7 +347,7 @@ fn native_embedded_visual_host_updates_awaits_submits_and_releases_exact_owners(
     platform
         .begin_vsync_thread()
         .expect("native vsync provider should start");
-    let initial = wait_for_embedded_submission(&app, &visual, handle, 0, 0);
+    let initial = wait_for_embedded_submission(&platform, &app, &visual, handle, 0, 0);
     let requests_before = frame_requests.get();
     let deferred = Rc::new(Cell::new(0));
     let returned = app.update(|cx| {
@@ -367,6 +375,7 @@ fn native_embedded_visual_host_updates_awaits_submits_and_releases_exact_owners(
         "handle.update must flush its deferred effect"
     );
     let notified = wait_for_embedded_submission(
+        &platform,
         &app,
         &visual,
         handle,
@@ -534,6 +543,7 @@ fn native_embedded_visual_host_updates_awaits_submits_and_releases_exact_owners(
     });
     assert_eq!(stage.get(), 0, "the external host owns visual task polling");
     pump_embedded_until(
+        &platform,
         &visual,
         "embedded async background await and armed timer",
         || stage.get() == 2,
@@ -552,6 +562,7 @@ fn native_embedded_visual_host_updates_awaits_submits_and_releases_exact_owners(
     );
     visual.dispatcher().advance_clock(Duration::from_millis(1));
     pump_embedded_until(
+        &platform,
         &visual,
         "embedded async context resumes after visual timer",
         || stage.get() == 3,
@@ -559,6 +570,7 @@ fn native_embedded_visual_host_updates_awaits_submits_and_releases_exact_owners(
     assert_eq!(notifications.get(), 2);
     assert_eq!(async_deferred.get(), 1);
     let timed = wait_for_embedded_submission(
+        &platform,
         &app,
         &visual,
         handle,
@@ -575,6 +587,7 @@ fn native_embedded_visual_host_updates_awaits_submits_and_releases_exact_owners(
     });
     assert_eq!(notifications.get(), 3);
     let resumed = wait_for_embedded_submission(
+        &platform,
         &app,
         &visual,
         handle,
@@ -601,6 +614,7 @@ fn native_embedded_visual_host_updates_awaits_submits_and_releases_exact_owners(
     });
     app.update(|cx| cx.shutdown());
     pump_embedded_until(
+        &platform,
         &visual,
         "embedded shutdown and exact native window retirement",
         || {
@@ -651,8 +665,10 @@ fn native_embedded_visual_host_updates_awaits_submits_and_releases_exact_owners(
     drop(shutdown_observer);
     drop(app);
     drop(visual);
+    let pump_platform = Rc::downgrade(&platform.inner);
     drop(platform);
     pump_messages_until_with_delay(
+        &pump_platform,
         "embedded platform HWND, assets, global text, backend and OLE release",
         Duration::from_millis(5),
         || {

@@ -1,4 +1,4 @@
-use super::{RegisteredWindow, WindowsPlatform, translate_accelerator};
+use super::{RegisteredWindow, WindowsPlatform, WindowsPlatformInner};
 use crate::{
     NativeWindowLifecycleTestEvent, WindowsWindowInner, get_window_long,
     native_test_harness::{
@@ -31,7 +31,7 @@ use open_gpui::{
 use std::{
     cell::{Cell, RefCell},
     panic::{AssertUnwindSafe, catch_unwind},
-    rc::Rc,
+    rc::{Rc, Weak},
     sync::{Arc, Once},
     time::{Duration, Instant},
 };
@@ -86,6 +86,8 @@ mod native_clipboard_tests;
 mod native_composite_focus_tests;
 #[path = "native_credentials_tests.rs"]
 pub(super) mod native_credentials_tests;
+#[path = "native_dialog_tests.rs"]
+mod native_dialog_tests;
 #[path = "native_display_observation_tests.rs"]
 mod native_display_observation_tests;
 #[path = "native_embedded_app_tests.rs"]
@@ -200,7 +202,7 @@ fn discard_stale_quit_messages() {
     panic!("native test thread retained too many stale WM_QUIT messages");
 }
 
-fn dispatch_one_message(trace: &mut MessageTrace) -> bool {
+fn dispatch_one_message(platform: &Weak<WindowsPlatformInner>, trace: &mut MessageTrace) -> bool {
     let mut message = MSG::default();
     if !unsafe { PeekMessageW(&mut message, None, 0, 0, PM_REMOVE).as_bool() } {
         return false;
@@ -211,7 +213,10 @@ fn dispatch_one_message(trace: &mut MessageTrace) -> bool {
         "explicit-quit native test unexpectedly received WM_QUIT"
     );
 
-    if translate_accelerator(&message).is_none() {
+    let translated = platform
+        .upgrade()
+        .is_some_and(|platform| platform.translate_accelerator(&message));
+    if !translated {
         _ = unsafe { TranslateMessage(&message) };
         let result = unsafe { DispatchMessageW(&message) };
         trace.dispatched.push(DispatchedMessage {
@@ -224,13 +229,17 @@ fn dispatch_one_message(trace: &mut MessageTrace) -> bool {
     true
 }
 
-fn pump_messages_until(description: &str, mut converged: impl FnMut() -> bool) -> MessageTrace {
+fn pump_messages_until(
+    platform: &Weak<WindowsPlatformInner>,
+    description: &str,
+    mut converged: impl FnMut() -> bool,
+) -> MessageTrace {
     let mut trace = MessageTrace::default();
     for _ in 0..MAX_MESSAGE_PUMP_ATTEMPTS {
         if converged() {
             return trace;
         }
-        dispatch_one_message(&mut trace);
+        dispatch_one_message(platform, &mut trace);
     }
 
     if converged() {
@@ -244,6 +253,7 @@ fn pump_messages_until(description: &str, mut converged: impl FnMut() -> bool) -
 }
 
 fn pump_messages_until_with_delay(
+    platform: &Weak<WindowsPlatformInner>,
     description: &str,
     delay: Duration,
     mut converged: impl FnMut() -> bool,
@@ -253,7 +263,7 @@ fn pump_messages_until_with_delay(
         if converged() {
             return trace;
         }
-        dispatch_one_message(&mut trace);
+        dispatch_one_message(platform, &mut trace);
         std::thread::sleep(delay);
     }
 
@@ -268,6 +278,7 @@ fn pump_messages_until_with_delay(
 }
 
 fn pump_system_input_until(
+    platform: &Weak<WindowsPlatformInner>,
     description: &str,
     mut converged: impl FnMut(&MessageTrace) -> bool,
 ) -> MessageTrace {
@@ -283,16 +294,19 @@ fn pump_system_input_until(
                 trace.message_ids()
             );
         }
-        if !dispatch_one_message(&mut trace) {
+        if !dispatch_one_message(platform, &mut trace) {
             std::thread::sleep(Duration::from_millis(1));
         }
     }
 }
 
-pub(super) fn pump_messages_until_idle(description: &str) -> MessageTrace {
+pub(super) fn pump_messages_until_idle(
+    platform: &Weak<WindowsPlatformInner>,
+    description: &str,
+) -> MessageTrace {
     let mut trace = MessageTrace::default();
     for _ in 0..MAX_MESSAGE_PUMP_ATTEMPTS {
-        if !dispatch_one_message(&mut trace) {
+        if !dispatch_one_message(platform, &mut trace) {
             return trace;
         }
     }
@@ -810,14 +824,15 @@ fn real_hwnd_lifecycle_and_input_dispatch_converge_with_bounded_message_pump() {
         unsafe { RedrawWindow(Some(hwnd), None, None, RDW_INVALIDATE).as_bool() },
         "native test window should accept paint invalidation"
     );
-    let paint_trace = pump_messages_until("native WM_PAINT", || {
-        frame_requests.get() > frame_request_baseline
-    });
+    let paint_trace =
+        pump_messages_until(&Rc::downgrade(&platform.inner), "native WM_PAINT", || {
+            frame_requests.get() > frame_request_baseline
+        });
     assert!(
         paint_trace.contains(hwnd, WM_PAINT),
         "frame callback must originate from a dispatched WM_PAINT"
     );
-    pump_messages_until_idle("native paint follow-up");
+    pump_messages_until_idle(&Rc::downgrade(&platform.inner), "native paint follow-up");
 
     let propagated_before = app.update_for_test(|cx| native_input_delivery_count(cx, true));
     post_message(
@@ -826,15 +841,20 @@ fn real_hwnd_lifecycle_and_input_dispatch_converge_with_bounded_message_pump() {
         WPARAM::default(),
         mouse_position_lparam(12, 18),
     );
-    let propagated_trace = pump_messages_until("propagated native mouse input", || {
-        app.update_for_test(|cx| native_input_delivery_count(cx, true)) > propagated_before
-    });
+    let propagated_trace = pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "propagated native mouse input",
+        || app.update_for_test(|cx| native_input_delivery_count(cx, true)) > propagated_before,
+    );
     assert_eq!(
         propagated_trace.last_result(hwnd, WM_MOUSEMOVE),
         Some(1),
         "Win32 must receive the propagated input disposition"
     );
-    pump_messages_until_idle("propagated input follow-up");
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "propagated input follow-up",
+    );
 
     consume_mouse_move.set(true);
     let consumed_before = app.update_for_test(|cx| native_input_delivery_count(cx, false));
@@ -844,28 +864,31 @@ fn real_hwnd_lifecycle_and_input_dispatch_converge_with_bounded_message_pump() {
         WPARAM::default(),
         mouse_position_lparam(24, 30),
     );
-    let consumed_trace = pump_messages_until("consumed native mouse input", || {
-        app.update_for_test(|cx| native_input_delivery_count(cx, false)) > consumed_before
-    });
+    let consumed_trace = pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "consumed native mouse input",
+        || app.update_for_test(|cx| native_input_delivery_count(cx, false)) > consumed_before,
+    );
     assert_eq!(
         consumed_trace.last_result(hwnd, WM_MOUSEMOVE),
         Some(0),
         "Win32 must receive the consumed input disposition"
     );
-    pump_messages_until_idle("consumed input follow-up");
+    pump_messages_until_idle(&Rc::downgrade(&platform.inner), "consumed input follow-up");
 
     let any_window = AnyWindowHandle::from(window);
     post_message(hwnd, WM_CLOSE, WPARAM::default(), LPARAM::default());
-    let close_trace = pump_messages_until("native WM_CLOSE", || {
-        let app_window_closed =
-            app.update_for_test(|cx| any_window.update(cx, |_, _, _| ()).is_err());
-        !unsafe { IsWindow(Some(hwnd)).as_bool() }
-            && !is_registered(&platform, hwnd)
-            && app_window_closed
-    });
+    let close_trace =
+        pump_messages_until(&Rc::downgrade(&platform.inner), "native WM_CLOSE", || {
+            let app_window_closed =
+                app.update_for_test(|cx| any_window.update(cx, |_, _, _| ()).is_err());
+            !unsafe { IsWindow(Some(hwnd)).as_bool() }
+                && !is_registered(&platform, hwnd)
+                && app_window_closed
+        });
     assert!(close_trace.contains(hwnd, WM_CLOSE));
     platform.raw_window_handles.write().push(registered_window);
-    pump_messages_until_idle("native close follow-up");
+    pump_messages_until_idle(&Rc::downgrade(&platform.inner), "native close follow-up");
     assert!(
         is_registered(&platform, hwnd),
         "no delayed raw-HWND cleanup may delete a later registry entry that reused the value"
@@ -1049,21 +1072,30 @@ fn owned_nonactivating_first_show_preserves_z_order_and_later_activation() {
     crate::native_test_foreground::acquire_foreground_window(foreground_hwnd)
         .expect("ordinary activation sentinel should acquire foreground authority");
     let _ = unsafe { SetFocus(Some(foreground_hwnd)) };
-    pump_messages_until("ordinary activation sentinel focus", || unsafe {
-        GetForegroundWindow() == foreground_hwnd
-            && GetActiveWindow() == foreground_hwnd
-            && GetFocus() == foreground_hwnd
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "ordinary activation sentinel focus",
+        || unsafe {
+            GetForegroundWindow() == foreground_hwnd
+                && GetActiveWindow() == foreground_hwnd
+                && GetFocus() == foreground_hwnd
+        },
+    );
     let _ = app.update_for_test(|cx| {
         child
             .update(cx, |_, window, _| window.activate_window())
             .expect("ordinary owned child should remain live")
     });
     platform.inner.run_foreground_task();
-    pump_messages_until("ordinary owned programmatic activation", || unsafe {
-        GetForegroundWindow() == child_hwnd && GetActiveWindow() == child_hwnd
-    });
-    pump_messages_until_idle("ordinary owned activation follow-up");
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "ordinary owned programmatic activation",
+        || unsafe { GetForegroundWindow() == child_hwnd && GetActiveWindow() == child_hwnd },
+    );
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "ordinary owned activation follow-up",
+    );
 
     for handle in [
         AnyWindowHandle::from(child),
@@ -1075,7 +1107,10 @@ fn owned_nonactivating_first_show_preserves_z_order_and_later_activation() {
                 .update(cx, |_, window, cx| window.remove_window(cx))
                 .expect("ordinary owned activation test window should close");
         });
-        pump_messages_until_idle("ordinary owned activation test teardown");
+        pump_messages_until_idle(
+            &Rc::downgrade(&platform.inner),
+            "ordinary owned activation test teardown",
+        );
     }
 }
 
@@ -1142,7 +1177,10 @@ fn retiring_owner_detaches_live_transient_child_without_tearing_it_down() {
         .window_from_hwnd(child_hwnd)
         .expect("live transient child should expose native state");
 
-    pump_messages_until_idle("owner-first transient setup");
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "owner-first transient setup",
+    );
     assert_eq!(
         unsafe { GetWindow(child_hwnd, GW_OWNER) }
             .expect("the live transient child should retain its native owner"),
@@ -1155,15 +1193,22 @@ fn retiring_owner_detaches_live_transient_child_without_tearing_it_down() {
     platform.lifecycle_test_probe.clear_events();
 
     post_message(owner_hwnd, WM_CLOSE, WPARAM::default(), LPARAM::default());
-    let close_trace = pump_messages_until("owner-first transient owner retirement", || {
-        let owner_closed =
-            app.update_for_test(|cx| expected_owner.update(cx, |_, _, _| ()).is_err());
-        !unsafe { IsWindow(Some(owner_hwnd)).as_bool() }
-            && !is_registered(&platform, owner_hwnd)
-            && owner_closed
-    });
+    let close_trace = pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "owner-first transient owner retirement",
+        || {
+            let owner_closed =
+                app.update_for_test(|cx| expected_owner.update(cx, |_, _, _| ()).is_err());
+            !unsafe { IsWindow(Some(owner_hwnd)).as_bool() }
+                && !is_registered(&platform, owner_hwnd)
+                && owner_closed
+        },
+    );
     assert!(close_trace.contains(owner_hwnd, WM_CLOSE));
-    pump_messages_until_idle("owner-first transient owner retirement follow-up");
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "owner-first transient owner retirement follow-up",
+    );
 
     assert!(
         unsafe { IsWindow(Some(child_hwnd)).as_bool() },
@@ -1216,10 +1261,18 @@ fn retiring_owner_detaches_live_transient_child_without_tearing_it_down() {
 
     app.update_for_test(|cx| child.update(cx, |_, window, cx| window.remove_window(cx)))
         .expect("surviving transient child should close independently");
-    pump_messages_until("owner-first transient child teardown", || {
-        !unsafe { IsWindow(Some(child_hwnd)).as_bool() } && !is_registered(&platform, child_hwnd)
-    });
-    pump_messages_until_idle("owner-first transient child teardown follow-up");
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "owner-first transient child teardown",
+        || {
+            !unsafe { IsWindow(Some(child_hwnd)).as_bool() }
+                && !is_registered(&platform, child_hwnd)
+        },
+    );
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "owner-first transient child teardown follow-up",
+    );
 }
 
 #[test]
@@ -1312,7 +1365,7 @@ fn sibling_dialogs_hold_modal_parent_disabled_until_the_last_child_closes() {
         .expect("second sibling dialog should register an HWND")
         .as_raw();
 
-    pump_messages_until_idle("sibling dialog setup");
+    pump_messages_until_idle(&Rc::downgrade(&platform.inner), "sibling dialog setup");
     assert_eq!(
         unsafe { GetWindow(first_hwnd, GW_OWNER) }.expect("first dialog should retain its owner"),
         owner_hwnd
@@ -1328,9 +1381,14 @@ fn sibling_dialogs_hold_modal_parent_disabled_until_the_last_child_closes() {
 
     app.update_for_test(|cx| first.update(cx, |_, window, cx| window.remove_window(cx)))
         .expect("first sibling dialog should close");
-    pump_messages_until("first sibling dialog teardown", || {
-        !unsafe { IsWindow(Some(first_hwnd)).as_bool() } && !is_registered(&platform, first_hwnd)
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "first sibling dialog teardown",
+        || {
+            !unsafe { IsWindow(Some(first_hwnd)).as_bool() }
+                && !is_registered(&platform, first_hwnd)
+        },
+    );
     assert!(unsafe { IsWindow(Some(second_hwnd)).as_bool() });
     assert!(
         !unsafe { IsWindowEnabled(owner_hwnd).as_bool() },
@@ -1339,9 +1397,14 @@ fn sibling_dialogs_hold_modal_parent_disabled_until_the_last_child_closes() {
 
     app.update_for_test(|cx| second.update(cx, |_, window, cx| window.remove_window(cx)))
         .expect("second sibling dialog should close");
-    pump_messages_until("second sibling dialog teardown", || {
-        !unsafe { IsWindow(Some(second_hwnd)).as_bool() } && !is_registered(&platform, second_hwnd)
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "second sibling dialog teardown",
+        || {
+            !unsafe { IsWindow(Some(second_hwnd)).as_bool() }
+                && !is_registered(&platform, second_hwnd)
+        },
+    );
     assert!(
         unsafe { IsWindowEnabled(owner_hwnd).as_bool() },
         "the final sibling dialog release must restore the live modal owner"
@@ -1349,9 +1412,14 @@ fn sibling_dialogs_hold_modal_parent_disabled_until_the_last_child_closes() {
 
     app.update_for_test(|cx| owner.update(cx, |_, window, cx| window.remove_window(cx)))
         .expect("modal owner should close independently");
-    pump_messages_until("sibling dialog owner teardown", || {
-        !unsafe { IsWindow(Some(owner_hwnd)).as_bool() } && !is_registered(&platform, owner_hwnd)
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "sibling dialog owner teardown",
+        || {
+            !unsafe { IsWindow(Some(owner_hwnd)).as_bool() }
+                && !is_registered(&platform, owner_hwnd)
+        },
+    );
 }
 
 #[test]
@@ -1407,10 +1475,17 @@ fn owned_nonactivating_maximized_first_show_preserves_focus_and_restore_bounds()
         .last()
         .expect("maximized reference should register an HWND")
         .as_raw();
-    pump_messages_until("ordinary activating maximized reference", || unsafe {
-        IsWindowVisible(reference_hwnd).as_bool() && IsZoomed(reference_hwnd).as_bool()
-    });
-    pump_messages_until_idle("ordinary activating maximized reference follow-up");
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "ordinary activating maximized reference",
+        || unsafe {
+            IsWindowVisible(reference_hwnd).as_bool() && IsZoomed(reference_hwnd).as_bool()
+        },
+    );
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "ordinary activating maximized reference follow-up",
+    );
     let reference_outer_bounds = native_window_rect(reference_hwnd);
     let reference_facts = platform
         .window_from_hwnd(reference_hwnd)
@@ -1428,10 +1503,14 @@ fn owned_nonactivating_maximized_first_show_preserves_focus_and_restore_bounds()
             .update(cx, |_, window, cx| window.remove_window(cx))
             .expect("maximized reference should close");
     });
-    pump_messages_until("maximized reference teardown", || {
-        !unsafe { IsWindow(Some(reference_hwnd)).as_bool() }
-            && !is_registered(&platform, reference_hwnd)
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "maximized reference teardown",
+        || {
+            !unsafe { IsWindow(Some(reference_hwnd)).as_bool() }
+                && !is_registered(&platform, reference_hwnd)
+        },
+    );
 
     let foreground = app
         .update_for_test(|cx| {
@@ -1482,10 +1561,15 @@ fn owned_nonactivating_maximized_first_show_preserves_focus_and_restore_bounds()
         .expect("maximized owned child should register an HWND")
         .as_raw();
 
-    pump_messages_until("non-activating maximized initial presentation", || unsafe {
-        IsWindowVisible(child_hwnd).as_bool() && IsZoomed(child_hwnd).as_bool()
-    });
-    pump_messages_until_idle("non-activating maximized initial presentation follow-up");
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "non-activating maximized initial presentation",
+        || unsafe { IsWindowVisible(child_hwnd).as_bool() && IsZoomed(child_hwnd).as_bool() },
+    );
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "non-activating maximized initial presentation follow-up",
+    );
 
     assert_eq!(
         unsafe { GetWindow(child_hwnd, GW_OWNER) }
@@ -1535,7 +1619,10 @@ fn owned_nonactivating_maximized_first_show_preserves_focus_and_restore_bounds()
         );
     }
     platform.inner.run_foreground_task();
-    pump_messages_until_idle("maximized system-setting topology refresh");
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "maximized system-setting topology refresh",
+    );
     let post_setting_change_facts = native_window
         .observed_platform_facts_for_test()
         .expect("maximized child facts should survive a system-setting refresh");
@@ -1550,21 +1637,30 @@ fn owned_nonactivating_maximized_first_show_preserves_focus_and_restore_bounds()
     crate::native_test_foreground::acquire_foreground_window(foreground_hwnd)
         .expect("maximized activation sentinel should acquire foreground authority");
     let _ = unsafe { SetFocus(Some(foreground_hwnd)) };
-    pump_messages_until("maximized activation sentinel focus", || unsafe {
-        GetForegroundWindow() == foreground_hwnd
-            && GetActiveWindow() == foreground_hwnd
-            && GetFocus() == foreground_hwnd
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "maximized activation sentinel focus",
+        || unsafe {
+            GetForegroundWindow() == foreground_hwnd
+                && GetActiveWindow() == foreground_hwnd
+                && GetFocus() == foreground_hwnd
+        },
+    );
     let _ = app.update_for_test(|cx| {
         child
             .update(cx, |_, window, _| window.activate_window())
             .expect("maximized owned child should remain live")
     });
     platform.inner.run_foreground_task();
-    pump_messages_until("maximized owned programmatic activation", || unsafe {
-        GetForegroundWindow() == child_hwnd && GetActiveWindow() == child_hwnd
-    });
-    pump_messages_until_idle("maximized owned activation follow-up");
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "maximized owned programmatic activation",
+        || unsafe { GetForegroundWindow() == child_hwnd && GetActiveWindow() == child_hwnd },
+    );
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "maximized owned activation follow-up",
+    );
     let activated_ex_style = unsafe { get_window_long(child_hwnd, GWL_EXSTYLE) } as u32;
     assert_eq!(activated_ex_style & WS_EX_NOACTIVATE.0, 0);
 
@@ -1578,7 +1674,10 @@ fn owned_nonactivating_maximized_first_show_preserves_focus_and_restore_bounds()
                 .update(cx, |_, window, cx| window.remove_window(cx))
                 .expect("maximized owned activation test window should close");
         });
-        pump_messages_until_idle("maximized owned activation test teardown");
+        pump_messages_until_idle(
+            &Rc::downgrade(&platform.inner),
+            "maximized owned activation test teardown",
+        );
     }
 }
 
@@ -1691,6 +1790,7 @@ fn asymmetric_activation_policy_preserves_click_and_programmatic_independence() 
         platform.inner.run_foreground_task();
         if policy.accepts_activation {
             pump_messages_until_with_delay(
+                &Rc::downgrade(&platform.inner),
                 "asymmetric programmatic activation",
                 Duration::from_millis(1),
                 || {
@@ -1705,7 +1805,10 @@ fn asymmetric_activation_policy_preserves_click_and_programmatic_independence() 
                 WindowActivationStatus::Terminal(WindowActivationTerminal::Activated)
             );
         } else {
-            pump_messages_until_idle("rejected asymmetric programmatic activation");
+            pump_messages_until_idle(
+                &Rc::downgrade(&platform.inner),
+                "rejected asymmetric programmatic activation",
+            );
             assert_eq!(unsafe { GetActiveWindow() }, owner_hwnd);
             assert_eq!(unsafe { GetForegroundWindow() }, owner_hwnd);
             assert_eq!(
@@ -1719,7 +1822,10 @@ fn asymmetric_activation_policy_preserves_click_and_programmatic_independence() 
                 .update(cx, |_, window, cx| window.remove_window(cx))
                 .expect("asymmetric-policy child should close");
         });
-        pump_messages_until_idle("asymmetric-policy child teardown");
+        pump_messages_until_idle(
+            &Rc::downgrade(&platform.inner),
+            "asymmetric-policy child teardown",
+        );
     }
 
     app.update_for_test(|cx| {
@@ -1727,7 +1833,10 @@ fn asymmetric_activation_policy_preserves_click_and_programmatic_independence() 
             .update(cx, |_, window, cx| window.remove_window(cx))
             .expect("owner should close");
     });
-    pump_messages_until_idle("asymmetric activation test teardown");
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "asymmetric activation test teardown",
+    );
 }
 
 #[test]
@@ -1743,11 +1852,15 @@ fn rejected_activation_restores_a_non_click_activating_gpui_foreground_window() 
     crate::native_test_foreground::acquire_foreground_window(native_sentinel.hwnd)
         .expect("native activation sentinel should acquire foreground authority");
     let _ = unsafe { SetFocus(Some(native_sentinel.hwnd)) };
-    pump_messages_until("native activation sentinel focus", || unsafe {
-        GetForegroundWindow() == native_sentinel.hwnd
-            && GetActiveWindow() == native_sentinel.hwnd
-            && GetFocus() == native_sentinel.hwnd
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "native activation sentinel focus",
+        || unsafe {
+            GetForegroundWindow() == native_sentinel.hwnd
+                && GetActiveWindow() == native_sentinel.hwnd
+                && GetFocus() == native_sentinel.hwnd
+        },
+    );
 
     let restore_target = app
         .update_for_test(|cx| {
@@ -1774,6 +1887,7 @@ fn rejected_activation_restores_a_non_click_activating_gpui_foreground_window() 
         .as_raw();
     platform.inner.run_foreground_task();
     pump_messages_until(
+        &Rc::downgrade(&platform.inner),
         "non-click activation restore target presentation",
         || unsafe { IsWindowVisible(restore_hwnd).as_bool() },
     );
@@ -1785,6 +1899,7 @@ fn rejected_activation_restores_a_non_click_activating_gpui_foreground_window() 
     });
     platform.inner.run_foreground_task();
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "non-click activation restore target foreground",
         Duration::from_millis(1),
         || {
@@ -1824,9 +1939,11 @@ fn rejected_activation_restores_a_non_click_activating_gpui_foreground_window() 
         .window_from_hwnd(rejected_hwnd)
         .expect("activation rejection target should remain registered");
     platform.inner.run_foreground_task();
-    pump_messages_until("activation rejection target presentation", || unsafe {
-        IsWindowVisible(rejected_hwnd).as_bool()
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "activation rejection target presentation",
+        || unsafe { IsWindowVisible(rejected_hwnd).as_bool() },
+    );
     crate::native_test_foreground::acquire_foreground_window(restore_hwnd)
         .expect("the restoration source should reacquire foreground before rejected activation");
     let _ = unsafe { SetFocus(Some(restore_hwnd)) };
@@ -1854,6 +1971,7 @@ fn rejected_activation_restores_a_non_click_activating_gpui_foreground_window() 
     });
     platform.inner.run_foreground_task();
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "rejected activation restores non-click foreground target",
         Duration::from_millis(1),
         || rejected_ticket.snapshot().status().is_terminal(),
@@ -1863,6 +1981,7 @@ fn rejected_activation_restores_a_non_click_activating_gpui_foreground_window() 
         WindowActivationStatus::Terminal(WindowActivationTerminal::Rejected),
     );
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "exact non-click foreground restoration",
         Duration::from_millis(1),
         || unsafe {
@@ -1885,7 +2004,10 @@ fn rejected_activation_restores_a_non_click_activating_gpui_foreground_window() 
                 .update(cx, |_, window, cx| window.remove_window(cx))
                 .expect("activation restoration test window should close");
         });
-        pump_messages_until_idle("activation restoration test teardown");
+        pump_messages_until_idle(
+            &Rc::downgrade(&platform.inner),
+            "activation restoration test teardown",
+        );
     }
 }
 
@@ -1922,17 +2044,23 @@ fn minimized_rejected_activation_cannot_escape_the_native_command_scope() {
         .expect("foreground restore target should register an HWND")
         .as_raw();
     platform.inner.run_foreground_task();
-    pump_messages_until("foreground restore target presentation", || unsafe {
-        IsWindowVisible(foreground_hwnd).as_bool()
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "foreground restore target presentation",
+        || unsafe { IsWindowVisible(foreground_hwnd).as_bool() },
+    );
     crate::native_test_foreground::acquire_foreground_window(foreground_hwnd)
         .expect("foreground restore target should acquire foreground authority");
     let _ = unsafe { SetFocus(Some(foreground_hwnd)) };
-    pump_messages_until("foreground restore target focus", || unsafe {
-        GetForegroundWindow() == foreground_hwnd
-            && GetActiveWindow() == foreground_hwnd
-            && GetFocus() == foreground_hwnd
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "foreground restore target focus",
+        || unsafe {
+            GetForegroundWindow() == foreground_hwnd
+                && GetActiveWindow() == foreground_hwnd
+                && GetFocus() == foreground_hwnd
+        },
+    );
 
     let target = app
         .update_for_test(|cx| {
@@ -1957,9 +2085,11 @@ fn minimized_rejected_activation_cannot_escape_the_native_command_scope() {
         .window_from_hwnd(target_hwnd)
         .expect("minimized activation target should remain registered");
     platform.inner.run_foreground_task();
-    pump_messages_until("minimized activation target presentation", || unsafe {
-        IsWindowVisible(target_hwnd).as_bool()
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "minimized activation target presentation",
+        || unsafe { IsWindowVisible(target_hwnd).as_bool() },
+    );
     crate::native_test_foreground::acquire_foreground_window(foreground_hwnd)
         .expect("foreground restore target should reacquire foreground authority");
     let _ = unsafe { SetFocus(Some(foreground_hwnd)) };
@@ -1976,6 +2106,7 @@ fn minimized_rejected_activation_cannot_escape_the_native_command_scope() {
     });
     platform.inner.run_foreground_task();
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "minimized activation rejection terminal",
         Duration::from_millis(1),
         || rejected_ticket.snapshot().status().is_terminal(),
@@ -1984,7 +2115,10 @@ fn minimized_rejected_activation_cannot_escape_the_native_command_scope() {
         rejected_ticket.snapshot().status(),
         WindowActivationStatus::Terminal(WindowActivationTerminal::Rejected),
     );
-    pump_messages_until_idle("minimized activation rejection queued native follow-up");
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "minimized activation rejection queued native follow-up",
+    );
     assert_eq!(unsafe { GetForegroundWindow() }, foreground_hwnd);
     assert_eq!(unsafe { GetActiveWindow() }, foreground_hwnd);
     assert_eq!(unsafe { GetFocus() }, foreground_hwnd);
@@ -2002,7 +2136,10 @@ fn minimized_rejected_activation_cannot_escape_the_native_command_scope() {
                 .update(cx, |_, window, cx| window.remove_window(cx))
                 .expect("minimized activation scope test window should close");
         });
-        pump_messages_until_idle("minimized activation scope test teardown");
+        pump_messages_until_idle(
+            &Rc::downgrade(&platform.inner),
+            "minimized activation scope test teardown",
+        );
     }
 }
 
@@ -2109,7 +2246,10 @@ fn owned_permanently_nonactivating_window_preserves_owner_and_rejects_activation
             .expect("the owned child should remain live")
     });
     platform.inner.run_foreground_task();
-    pump_messages_until_idle("rejected owned-child activation follow-up");
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "rejected owned-child activation follow-up",
+    );
     assert_eq!(unsafe { GetActiveWindow() }, owner_hwnd);
 
     for handle in [AnyWindowHandle::from(child), AnyWindowHandle::from(owner)] {
@@ -2118,7 +2258,10 @@ fn owned_permanently_nonactivating_window_preserves_owner_and_rejects_activation
                 .update(cx, |_, window, cx| window.remove_window(cx))
                 .expect("owned activation test window should close");
         });
-        pump_messages_until_idle("owned activation test teardown");
+        pump_messages_until_idle(
+            &Rc::downgrade(&platform.inner),
+            "owned activation test teardown",
+        );
     }
 }
 
@@ -2329,9 +2472,11 @@ fn real_hwnd_initial_presentation_is_post_commit_idle_and_retries_rejection() {
     let any_window = AnyWindowHandle::from(window);
     app.update_for_test(|cx| any_window.update(cx, |_, window, cx| window.remove_window(cx)))
         .expect("presentation test window should close");
-    pump_messages_until("presentation test window teardown", || {
-        !unsafe { IsWindow(Some(hwnd)).as_bool() } && !is_registered(&platform, hwnd)
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "presentation test window teardown",
+        || !unsafe { IsWindow(Some(hwnd)).as_bool() } && !is_registered(&platform, hwnd),
+    );
 }
 
 #[test]
@@ -2468,9 +2613,11 @@ fn real_hwnd_initial_presentation_does_not_touch_a_same_hwnd_registration_replac
     let any_window = AnyWindowHandle::from(window);
     app.update_for_test(|cx| any_window.update(cx, |_, window, cx| window.remove_window(cx)))
         .expect("registration replacement test window should close");
-    pump_messages_until("registration replacement test teardown", || {
-        !unsafe { IsWindow(Some(hwnd)).as_bool() } && !is_registered(&platform, hwnd)
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "registration replacement test teardown",
+        || !unsafe { IsWindow(Some(hwnd)).as_bool() } && !is_registered(&platform, hwnd),
+    );
 }
 
 #[test]
@@ -2573,9 +2720,11 @@ fn real_hwnd_presenting_placement_is_generation_bound_before_reveal() {
         .clone()
         .expect("the synchronous Presenting callback should create one placement ticket");
 
-    pump_messages_until("generation-bound Presenting placement", || {
-        placement_ticket.observation().is_some() && unsafe { IsWindowVisible(hwnd).as_bool() }
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "generation-bound Presenting placement",
+        || placement_ticket.observation().is_some() && unsafe { IsWindowVisible(hwnd).as_bool() },
+    );
     assert!(presenting_observed.get());
     let observation = placement_ticket
         .observation()
@@ -2622,9 +2771,11 @@ fn real_hwnd_presenting_placement_is_generation_bound_before_reveal() {
     let any_window = AnyWindowHandle::from(window);
     app.update_for_test(|cx| any_window.update(cx, |_, window, cx| window.remove_window(cx)))
         .expect("Presenting placement test window should close");
-    pump_messages_until("Presenting placement test teardown", || {
-        !unsafe { IsWindow(Some(hwnd)).as_bool() } && !is_registered(&platform, hwnd)
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "Presenting placement test teardown",
+        || !unsafe { IsWindow(Some(hwnd)).as_bool() } && !is_registered(&platform, hwnd),
+    );
 }
 
 #[test]
@@ -2736,9 +2887,11 @@ fn real_hwnd_windowed_initial_presentation_rejects_client_drift_before_retry() {
     let any_window = AnyWindowHandle::from(window);
     app.update_for_test(|cx| any_window.update(cx, |_, window, cx| window.remove_window(cx)))
         .expect("drift test window should close");
-    pump_messages_until("drift test window teardown", || {
-        !unsafe { IsWindow(Some(hwnd)).as_bool() } && !is_registered(&platform, hwnd)
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "drift test window teardown",
+        || !unsafe { IsWindow(Some(hwnd)).as_bool() } && !is_registered(&platform, hwnd),
+    );
 }
 
 #[test]
@@ -2908,11 +3061,15 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
     let hidden_geometry_before_reveal = native_window
         .physical_geometry_from_native()
         .expect("armed hidden provisional HWND should retain observable physical geometry");
-    pump_messages_until("real provisional reveal", || {
-        app.update_for_test(|_| {
-            reveal_ticket.snapshot().outcome() != WindowProvisionalRevealOutcome::Pending
-        })
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "real provisional reveal",
+        || {
+            app.update_for_test(|_| {
+                reveal_ticket.snapshot().outcome() != WindowProvisionalRevealOutcome::Pending
+            })
+        },
+    );
 
     let reveal = reveal_ticket.snapshot();
     assert_eq!(
@@ -3199,6 +3356,7 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
         outcome => panic!("the active lane must queue its current successor: {outcome:?}"),
     };
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "provisional placement successor handoff",
         Duration::from_millis(1),
         || {
@@ -3298,6 +3456,7 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
         outcome => panic!("the promotion placement must queue: {outcome:?}"),
     };
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "point-scoped promotion placement",
         Duration::from_millis(1),
         || {
@@ -3352,9 +3511,11 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
         outcome => panic!("the changed physical placement must queue: {outcome:?}"),
     };
     platform.inner.run_foreground_task();
-    pump_messages_until("changed promoted physical placement", || {
-        changed_mutation_ticket.observation().is_some()
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "changed promoted physical placement",
+        || changed_mutation_ticket.observation().is_some(),
+    );
     assert!(matches!(
         changed_mutation_ticket
             .observation()
@@ -3397,6 +3558,7 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
         outcome => panic!("the replacement promotion placement must queue: {outcome:?}"),
     };
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "replacement point-scoped promotion placement",
         Duration::from_millis(1),
         || {
@@ -3435,11 +3597,16 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
         })
         .expect("native provisional marker root should remain live");
     });
-    pump_messages_until("real provisional destination-semantics submission", || {
-        app.borrow_mut().update_for_test(|_| {
-            semantics_ticket.snapshot().outcome() == WindowProvisionalSemanticsOutcome::Submitted
-        })
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "real provisional destination-semantics submission",
+        || {
+            app.borrow_mut().update_for_test(|_| {
+                semantics_ticket.snapshot().outcome()
+                    == WindowProvisionalSemanticsOutcome::Submitted
+            })
+        },
+    );
     let semantics = semantics_ticket.snapshot();
     assert_eq!(
         semantics.outcome(),
@@ -3470,11 +3637,15 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
     crate::native_test_foreground::acquire_foreground_window(foreground_sentinel.hwnd)
         .expect("the gated activation sentinel should acquire foreground authority");
     let _ = unsafe { SetFocus(Some(foreground_sentinel.hwnd)) };
-    pump_messages_until("gated activation sentinel focus", || unsafe {
-        GetForegroundWindow() == foreground_sentinel.hwnd
-            && GetActiveWindow() == foreground_sentinel.hwnd
-            && GetFocus() == foreground_sentinel.hwnd
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "gated activation sentinel focus",
+        || unsafe {
+            GetForegroundWindow() == foreground_sentinel.hwnd
+                && GetActiveWindow() == foreground_sentinel.hwnd
+                && GetFocus() == foreground_sentinel.hwnd
+        },
+    );
     assert!(
         native_window_is_above(promotion_barrier.hwnd, hwnd),
         "the ordinary opaque barrier must be above the gated provisional HWND before unsolicited activation",
@@ -3491,6 +3662,7 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
         }
     }
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "gated provisional native activation rejection",
         Duration::from_millis(1),
         || {
@@ -3545,11 +3717,15 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
     crate::native_test_foreground::acquire_foreground_window(foreground_sentinel.hwnd)
         .expect("the pre-dispatch repair sentinel should acquire foreground authority");
     let _ = unsafe { SetFocus(Some(foreground_sentinel.hwnd)) };
-    pump_messages_until("pre-dispatch repair sentinel focus", || unsafe {
-        GetForegroundWindow() == foreground_sentinel.hwnd
-            && GetActiveWindow() == foreground_sentinel.hwnd
-            && GetFocus() == foreground_sentinel.hwnd
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "pre-dispatch repair sentinel focus",
+        || unsafe {
+            GetForegroundWindow() == foreground_sentinel.hwnd
+                && GetActiveWindow() == foreground_sentinel.hwnd
+                && GetFocus() == foreground_sentinel.hwnd
+        },
+    );
     unsafe {
         SetWindowPos(
             hwnd,
@@ -3572,6 +3748,7 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
         .update_for_test(|cx| any_window.update(cx, |_, window, _| window.activate_window()))
         .expect("the promoted provisional window should remain live during pre-dispatch repair");
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "pre-dispatch z-order repair rejection",
         Duration::from_millis(1),
         || pre_dispatch_repair_ticket.snapshot().status().is_terminal(),
@@ -3586,6 +3763,7 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
         "the failed pre-dispatch repair must consume the exact native failure seam",
     );
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "non-consuming pre-dispatch z-order recovery",
         Duration::from_millis(1),
         || {
@@ -3598,12 +3776,19 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
     crate::native_test_foreground::acquire_foreground_window(foreground_sentinel.hwnd)
         .expect("the admission-revocation sentinel should acquire foreground authority");
     let _ = unsafe { SetFocus(Some(foreground_sentinel.hwnd)) };
-    pump_messages_until("admission-revocation sentinel focus", || unsafe {
-        GetForegroundWindow() == foreground_sentinel.hwnd
-            && GetActiveWindow() == foreground_sentinel.hwnd
-            && GetFocus() == foreground_sentinel.hwnd
-    });
-    pump_messages_until_idle("admission-revocation pre-dispatch idle");
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "admission-revocation sentinel focus",
+        || unsafe {
+            GetForegroundWindow() == foreground_sentinel.hwnd
+                && GetActiveWindow() == foreground_sentinel.hwnd
+                && GetFocus() == foreground_sentinel.hwnd
+        },
+    );
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "admission-revocation pre-dispatch idle",
+    );
     native_window.fail_next_provisional_activation_z_order_apply_for_test();
     native_window.revoke_activation_admission_after_next_active_status_for_test();
     let revoked_activation_ticket = app
@@ -3611,6 +3796,7 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
         .update_for_test(|cx| any_window.update(cx, |_, window, _| window.activate_window()))
         .expect("the promoted provisional window should remain live during admission revocation");
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "mid-command activation-admission revocation terminal",
         Duration::from_millis(1),
         || revoked_activation_ticket.snapshot().status().is_terminal(),
@@ -3621,6 +3807,7 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
         "an activation command that loses admission inside synchronous User32 callbacks must reject",
     );
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "mid-command native activation snapshot restoration",
         Duration::from_millis(1),
         || unsafe {
@@ -3630,6 +3817,7 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
         },
     );
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "mid-command retained z-order recovery",
         Duration::from_millis(1),
         || {
@@ -3649,15 +3837,20 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
     crate::native_test_foreground::acquire_foreground_window(foreground_sentinel.hwnd)
         .expect("the minimized activation sentinel should acquire foreground authority");
     let _ = unsafe { SetFocus(Some(foreground_sentinel.hwnd)) };
-    pump_messages_until("minimized activation sentinel focus", || unsafe {
-        GetForegroundWindow() == foreground_sentinel.hwnd
-            && GetActiveWindow() == foreground_sentinel.hwnd
-            && GetFocus() == foreground_sentinel.hwnd
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "minimized activation sentinel focus",
+        || unsafe {
+            GetForegroundWindow() == foreground_sentinel.hwnd
+                && GetActiveWindow() == foreground_sentinel.hwnd
+                && GetFocus() == foreground_sentinel.hwnd
+        },
+    );
     unsafe {
         let _ = ShowWindow(hwnd, SW_MINIMIZE);
     }
     pump_messages_until(
+        &Rc::downgrade(&platform.inner),
         "promoted provisional HWND minimized before activation",
         || unsafe { IsIconic(hwnd).as_bool() },
     );
@@ -3670,17 +3863,22 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
     crate::native_test_foreground::acquire_foreground_window(foreground_sentinel.hwnd)
         .expect("the minimized activation sentinel should reacquire foreground authority");
     let _ = unsafe { SetFocus(Some(foreground_sentinel.hwnd)) };
-    pump_messages_until("settled minimized activation sentinel focus", || unsafe {
-        GetForegroundWindow() == foreground_sentinel.hwnd
-            && GetActiveWindow() == foreground_sentinel.hwnd
-            && GetFocus() == foreground_sentinel.hwnd
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "settled minimized activation sentinel focus",
+        || unsafe {
+            GetForegroundWindow() == foreground_sentinel.hwnd
+                && GetActiveWindow() == foreground_sentinel.hwnd
+                && GetFocus() == foreground_sentinel.hwnd
+        },
+    );
     native_window.reject_next_activation_command_for_test();
     let minimized_activation_ticket = app
         .borrow_mut()
         .update_for_test(|cx| any_window.update(cx, |_, window, _| window.activate_window()))
         .expect("minimized promoted provisional window should remain registered");
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "minimized promoted provisional activation preflight",
         Duration::from_millis(1),
         || {
@@ -3754,11 +3952,15 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
     crate::native_test_foreground::acquire_foreground_window(foreground_sentinel.hwnd)
         .expect("the promotion activation sentinel should acquire foreground authority");
     let _ = unsafe { SetFocus(Some(foreground_sentinel.hwnd)) };
-    pump_messages_until("promotion activation sentinel focus", || unsafe {
-        GetForegroundWindow() == foreground_sentinel.hwnd
-            && GetActiveWindow() == foreground_sentinel.hwnd
-            && GetFocus() == foreground_sentinel.hwnd
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "promotion activation sentinel focus",
+        || unsafe {
+            GetForegroundWindow() == foreground_sentinel.hwnd
+                && GetActiveWindow() == foreground_sentinel.hwnd
+                && GetFocus() == foreground_sentinel.hwnd
+        },
+    );
 
     unsafe {
         SetWindowPos(
@@ -3778,6 +3980,7 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
     }
     .expect("the promoted HWND should accept a deterministic hidden-state transition");
     pump_messages_until(
+        &Rc::downgrade(&platform.inner),
         "promoted provisional HWND hidden before activation",
         || unsafe { !IsWindowVisible(hwnd).as_bool() },
     );
@@ -3807,9 +4010,11 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
         .borrow_mut()
         .update_for_test(|cx| any_window.update(cx, |_, window, _| window.activate_window()))
         .expect("hidden promoted native provisional window should remain registered");
-    pump_messages_until("hidden promoted provisional activation rejection", || {
-        hidden_activation_ticket.snapshot().status().is_terminal()
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "hidden promoted provisional activation rejection",
+        || hidden_activation_ticket.snapshot().status().is_terminal(),
+    );
     assert_eq!(
         hidden_activation_ticket.snapshot().status(),
         WindowActivationStatus::Terminal(WindowActivationTerminal::Rejected),
@@ -3838,6 +4043,7 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
     }
     .expect("the promoted HWND should restore visibility without activation");
     pump_messages_until(
+        &Rc::downgrade(&platform.inner),
         "promoted provisional HWND visible after rejected activation",
         || unsafe { IsWindowVisible(hwnd).as_bool() },
     );
@@ -3849,6 +4055,7 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
         .expect("the promotion activation sentinel should retain foreground authority");
     let _ = unsafe { SetFocus(Some(foreground_sentinel.hwnd)) };
     pump_messages_until(
+        &Rc::downgrade(&platform.inner),
         "promotion activation sentinel focus after hidden rejection",
         || unsafe {
             GetForegroundWindow() == foreground_sentinel.hwnd
@@ -3882,11 +4089,15 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
     crate::native_test_foreground::acquire_foreground_window(foreground_sentinel.hwnd)
         .expect("the promotion activation sentinel should reacquire foreground authority");
     let _ = unsafe { SetFocus(Some(foreground_sentinel.hwnd)) };
-    pump_messages_until("promotion activation sentinel refocus", || unsafe {
-        GetForegroundWindow() == foreground_sentinel.hwnd
-            && GetActiveWindow() == foreground_sentinel.hwnd
-            && GetFocus() == foreground_sentinel.hwnd
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "promotion activation sentinel refocus",
+        || unsafe {
+            GetForegroundWindow() == foreground_sentinel.hwnd
+                && GetActiveWindow() == foreground_sentinel.hwnd
+                && GetFocus() == foreground_sentinel.hwnd
+        },
+    );
 
     let activation_candidates = [
         POINT {
@@ -3933,10 +4144,14 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
     desktop_state_guard
         .inject(activation_point, NativeTestPointerAction::Move)
         .expect("the native activation pointer move should reach the promoted HWND");
-    pump_system_input_until("native activation pointer move", |_| {
-        let mut observed = POINT::default();
-        (unsafe { GetCursorPos(&mut observed) }).is_ok() && observed == activation_point
-    });
+    pump_system_input_until(
+        &Rc::downgrade(&platform.inner),
+        "native activation pointer move",
+        |_| {
+            let mut observed = POINT::default();
+            (unsafe { GetCursorPos(&mut observed) }).is_ok() && observed == activation_point
+        },
+    );
     desktop_state_guard
         .inject_sequence(&[
             (activation_point, NativeTestPointerAction::PrimaryDown),
@@ -3944,6 +4159,7 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
         ])
         .expect("the native activation click should enter the real User32 input route");
     let activation_trace = pump_system_input_until(
+        &Rc::downgrade(&platform.inner),
         "native click activation with a scheduled z-order retry",
         |trace| {
             (unsafe { GetForegroundWindow() }) == hwnd
@@ -3978,6 +4194,7 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
     }
     .expect("the activated promoted HWND should enter the hidden recovery boundary");
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "hidden promoted HWND parks exact z-order recovery",
         Duration::from_millis(1),
         || {
@@ -4009,6 +4226,7 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
         "an unchanged placement may rebind but must not discard pending z-order recovery",
     );
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "rebound hidden placement parks exact z-order recovery",
         Duration::from_millis(1),
         || native_window.provisional_activation_z_order_recovery_is_parked_for_test(),
@@ -4033,6 +4251,7 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
     .expect("the promoted HWND should resume without a second activation or placement request");
 
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "visibility-driven promoted provisional z-order recovery",
         Duration::from_millis(1),
         || {
@@ -4081,9 +4300,11 @@ fn real_hwnd_provisional_reveal_is_nonactivating_hit_transparent_and_promotes_in
             .update(cx, |_, window, cx| window.remove_window(cx))
             .expect("promoted native provisional window should close")
     });
-    pump_messages_until("native provisional test teardown", || {
-        !unsafe { IsWindow(Some(hwnd)).as_bool() } && !is_registered(&platform, hwnd)
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "native provisional test teardown",
+        || !unsafe { IsWindow(Some(hwnd)).as_bool() } && !is_registered(&platform, hwnd),
+    );
 }
 
 #[test]
@@ -4137,7 +4358,10 @@ fn hidden_initial_presentation_keeps_deferred_placement_unpublished_until_forced
         .expect("the root builder should retain the deferred placement ticket");
 
     platform.inner.run_foreground_task();
-    pump_messages_until_idle("hidden deferred initial presentation");
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "hidden deferred initial presentation",
+    );
 
     assert!(!unsafe { IsWindowVisible(hwnd).as_bool() });
     assert!(placement_ticket.observation().is_none());
@@ -4158,9 +4382,11 @@ fn hidden_initial_presentation_keeps_deferred_placement_unpublished_until_forced
             .expect("hidden deferred-placement target should remain live")
     });
     platform.inner.run_foreground_task();
-    pump_messages_until("forced deferred initial presentation", || {
-        placement_ticket.observation().is_some() && unsafe { IsWindowVisible(hwnd).as_bool() }
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "forced deferred initial presentation",
+        || placement_ticket.observation().is_some() && unsafe { IsWindowVisible(hwnd).as_bool() },
+    );
     let placement_observation = placement_ticket
         .observation()
         .expect("forced presentation should settle the deferred placement");
@@ -4198,7 +4424,10 @@ fn hidden_initial_presentation_keeps_deferred_placement_unpublished_until_forced
             .update(cx, |_, window, cx| window.remove_window(cx))
             .expect("hidden deferred-placement target should close")
     });
-    pump_messages_until_idle("hidden deferred initial presentation teardown");
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "hidden deferred initial presentation teardown",
+    );
 }
 
 #[test]
@@ -4266,7 +4495,10 @@ fn hidden_initial_presentation_commits_sampled_facts_for_physical_placement() {
         .expect("the root builder should retain the physical placement ticket");
 
     platform.inner.run_foreground_task();
-    pump_messages_until_idle("hidden physical initial presentation");
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "hidden physical initial presentation",
+    );
 
     assert!(!unsafe { IsWindowVisible(hwnd).as_bool() });
     assert!(placement_ticket.observation().is_none());
@@ -4287,9 +4519,11 @@ fn hidden_initial_presentation_commits_sampled_facts_for_physical_placement() {
             .expect("hidden physical-placement target should remain live")
     });
     platform.inner.run_foreground_task();
-    pump_messages_until("forced physical initial presentation", || {
-        placement_ticket.observation().is_some() && unsafe { IsWindowVisible(hwnd).as_bool() }
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "forced physical initial presentation",
+        || placement_ticket.observation().is_some() && unsafe { IsWindowVisible(hwnd).as_bool() },
+    );
     let placement_observation = placement_ticket
         .observation()
         .expect("forced presentation should settle the physical placement");
@@ -4310,7 +4544,10 @@ fn hidden_initial_presentation_commits_sampled_facts_for_physical_placement() {
             .update(cx, |_, window, cx| window.remove_window(cx))
             .expect("hidden physical-placement target should close")
     });
-    pump_messages_until_idle("hidden physical initial presentation teardown");
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "hidden physical initial presentation teardown",
+    );
 }
 
 #[test]
@@ -4343,6 +4580,7 @@ fn successful_pointer_input_mutation_rolls_back_when_terminal_facts_cannot_be_ob
         .as_raw();
     platform.inner.run_foreground_task();
     pump_messages_until(
+        &Rc::downgrade(&platform.inner),
         "pointer-input rollback target initial presentation",
         || unsafe { IsWindowVisible(hwnd).as_bool() },
     );
@@ -4368,9 +4606,11 @@ fn successful_pointer_input_mutation_rolls_back_when_terminal_facts_cannot_be_ob
             .expect("pointer-input rollback target should remain live")
     });
     platform.inner.run_foreground_task();
-    pump_messages_until("pointer-input terminal-facts rollback", || {
-        mutation_ticket.observation().is_some()
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "pointer-input terminal-facts rollback",
+        || mutation_ticket.observation().is_some(),
+    );
 
     let observation = mutation_ticket
         .observation()
@@ -4394,7 +4634,10 @@ fn successful_pointer_input_mutation_rolls_back_when_terminal_facts_cannot_be_ob
             .update(cx, |_, window, cx| window.remove_window(cx))
             .expect("pointer-input rollback target should close")
     });
-    pump_messages_until_idle("pointer-input terminal-facts rollback teardown");
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "pointer-input terminal-facts rollback teardown",
+    );
 }
 
 #[test]
@@ -4427,6 +4670,7 @@ fn successful_activation_policy_mutation_rolls_back_when_terminal_facts_cannot_b
         .as_raw();
     platform.inner.run_foreground_task();
     pump_messages_until(
+        &Rc::downgrade(&platform.inner),
         "activation-policy rollback target initial presentation",
         || unsafe { IsWindowVisible(hwnd).as_bool() },
     );
@@ -4457,9 +4701,11 @@ fn successful_activation_policy_mutation_rolls_back_when_terminal_facts_cannot_b
             .expect("activation-policy rollback target should remain live")
     });
     platform.inner.run_foreground_task();
-    pump_messages_until("activation-policy terminal-facts rollback", || {
-        mutation_ticket.observation().is_some()
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "activation-policy terminal-facts rollback",
+        || mutation_ticket.observation().is_some(),
+    );
 
     let observation = mutation_ticket
         .observation()
@@ -4483,7 +4729,10 @@ fn successful_activation_policy_mutation_rolls_back_when_terminal_facts_cannot_b
             .update(cx, |_, window, cx| window.remove_window(cx))
             .expect("activation-policy rollback target should close")
     });
-    pump_messages_until_idle("activation-policy terminal-facts rollback teardown");
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "activation-policy terminal-facts rollback teardown",
+    );
 }
 
 #[test]
@@ -4516,6 +4765,7 @@ fn successful_physical_placement_rolls_back_when_terminal_facts_cannot_be_observ
         .as_raw();
     platform.inner.run_foreground_task();
     pump_messages_until(
+        &Rc::downgrade(&platform.inner),
         "physical-placement rollback target initial presentation",
         || unsafe { IsWindowVisible(hwnd).as_bool() },
     );
@@ -4560,9 +4810,11 @@ fn successful_physical_placement_rolls_back_when_terminal_facts_cannot_be_observ
             .expect("physical-placement rollback target should remain live")
     });
     platform.inner.run_foreground_task();
-    pump_messages_until("physical-placement terminal-facts rollback", || {
-        mutation_ticket.observation().is_some()
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "physical-placement terminal-facts rollback",
+        || mutation_ticket.observation().is_some(),
+    );
 
     let observation = mutation_ticket
         .observation()
@@ -4589,7 +4841,10 @@ fn successful_physical_placement_rolls_back_when_terminal_facts_cannot_be_observ
             .update(cx, |_, window, cx| window.remove_window(cx))
             .expect("physical-placement rollback target should close")
     });
-    pump_messages_until_idle("physical-placement terminal-facts rollback teardown");
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "physical-placement terminal-facts rollback teardown",
+    );
 }
 
 #[test]
@@ -4711,11 +4966,15 @@ fn partial_deferred_merge_failure_rejects_activation_and_restores_native_placeme
     crate::native_test_foreground::acquire_foreground_window(foreground_hwnd)
         .expect("deferred-merge activation sentinel should acquire foreground authority");
     let _ = unsafe { SetFocus(Some(foreground_hwnd)) };
-    pump_messages_until("deferred-merge activation sentinel focus", || unsafe {
-        GetForegroundWindow() == foreground_hwnd
-            && GetActiveWindow() == foreground_hwnd
-            && GetFocus() == foreground_hwnd
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "deferred-merge activation sentinel focus",
+        || unsafe {
+            GetForegroundWindow() == foreground_hwnd
+                && GetActiveWindow() == foreground_hwnd
+                && GetFocus() == foreground_hwnd
+        },
+    );
 
     let _ = app.update_for_test(|cx| {
         window
@@ -4723,10 +4982,15 @@ fn partial_deferred_merge_failure_rejects_activation_and_restores_native_placeme
             .expect("hidden activation target should remain live")
     });
     platform.inner.run_foreground_task();
-    pump_messages_until("rejected partial deferred placement merge", || {
-        placement_ticket.observation().is_some()
-    });
-    pump_messages_until_idle("rejected partial deferred placement merge follow-up");
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "rejected partial deferred placement merge",
+        || placement_ticket.observation().is_some(),
+    );
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "rejected partial deferred placement merge follow-up",
+    );
 
     assert_eq!(unsafe { GetActiveWindow() }, foreground_hwnd);
     assert!(
@@ -4785,11 +5049,15 @@ fn partial_deferred_merge_failure_rejects_activation_and_restores_native_placeme
     crate::native_test_foreground::acquire_foreground_window(foreground_hwnd)
         .expect("deferred-merge activation sentinel should reacquire foreground authority");
     let _ = unsafe { SetFocus(Some(foreground_hwnd)) };
-    pump_messages_until("deferred-merge activation sentinel refocus", || unsafe {
-        GetForegroundWindow() == foreground_hwnd
-            && GetActiveWindow() == foreground_hwnd
-            && GetFocus() == foreground_hwnd
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "deferred-merge activation sentinel refocus",
+        || unsafe {
+            GetForegroundWindow() == foreground_hwnd
+                && GetActiveWindow() == foreground_hwnd
+                && GetFocus() == foreground_hwnd
+        },
+    );
 
     let _ = app.update_for_test(|cx| {
         window
@@ -4798,6 +5066,7 @@ fn partial_deferred_merge_failure_rejects_activation_and_restores_native_placeme
     });
     platform.inner.run_foreground_task();
     pump_messages_until(
+        &Rc::downgrade(&platform.inner),
         "retried activation after deferred merge failure",
         || unsafe {
             IsWindowVisible(hwnd).as_bool()
@@ -4805,7 +5074,10 @@ fn partial_deferred_merge_failure_rejects_activation_and_restores_native_placeme
                 && GetActiveWindow() == hwnd
         },
     );
-    pump_messages_until_idle("retried activation follow-up");
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "retried activation follow-up",
+    );
     let retry_facts = platform
         .window_from_hwnd(hwnd)
         .expect("retried activation target should remain registered")
@@ -4826,7 +5098,10 @@ fn partial_deferred_merge_failure_rejects_activation_and_restores_native_placeme
                 .update(cx, |_, window, cx| window.remove_window(cx))
                 .expect("forced-presentation activation test window should close");
         });
-        pump_messages_until_idle("forced-presentation activation test teardown");
+        pump_messages_until_idle(
+            &Rc::downgrade(&platform.inner),
+            "forced-presentation activation test teardown",
+        );
     }
 }
 
@@ -4994,10 +5269,14 @@ fn real_hwnd_reserved_callbacks_deliver_after_commit_and_retire_after_rollback()
         successful_window.update(cx, |_, window, cx| window.remove_window(cx))
     })
     .expect("the committed reservation test window should close");
-    pump_messages_until("reserved-window test teardown", || {
-        !unsafe { IsWindow(Some(successful_hwnd)).as_bool() }
-            && !is_registered(&platform, successful_hwnd)
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "reserved-window test teardown",
+        || {
+            !unsafe { IsWindow(Some(successful_hwnd)).as_bool() }
+                && !is_registered(&platform, successful_hwnd)
+        },
+    );
 }
 
 #[test]
@@ -5032,7 +5311,10 @@ fn repeated_native_minimize_preserves_frame_callback_through_restore() {
         .window_from_hwnd(hwnd)
         .expect("native test window should remain registered");
     let frame_requests = observe_frame_requests(&native_window);
-    pump_messages_until_idle("initial native window messages");
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "initial native window messages",
+    );
 
     post_message(
         hwnd,
@@ -5046,7 +5328,7 @@ fn repeated_native_minimize_preserves_frame_callback_through_restore() {
         WPARAM(SIZE_MINIMIZED as usize),
         LPARAM::default(),
     );
-    pump_messages_until_idle("repeated native minimize");
+    pump_messages_until_idle(&Rc::downgrade(&platform.inner), "repeated native minimize");
     assert!(
         native_window.state.callbacks.request_frame.take().is_none(),
         "the frame callback must remain suspended while minimized"
@@ -5058,7 +5340,7 @@ fn repeated_native_minimize_preserves_frame_callback_through_restore() {
         WPARAM(SIZE_RESTORED as usize),
         mouse_position_lparam(320, 220),
     );
-    pump_messages_until_idle("native restore");
+    pump_messages_until_idle(&Rc::downgrade(&platform.inner), "native restore");
     let diagnostic_cursor = app.update_for_test(|cx| {
         cx.native_boundary_diagnostics(NativeBoundaryDiagnosticCursor::default())
             .cursor
@@ -5068,20 +5350,24 @@ fn repeated_native_minimize_preserves_frame_callback_through_restore() {
         unsafe { RedrawWindow(Some(hwnd), None, None, RDW_INVALIDATE).as_bool() },
         "restored native test window should accept paint invalidation"
     );
-    let paint_trace = pump_messages_until("restored native WM_PAINT", || {
-        frame_requests.get() > frame_request_baseline
-            && app.update_for_test(|cx| {
-                cx.native_boundary_diagnostics(diagnostic_cursor)
-                    .terminal
-                    .iter()
-                    .any(|diagnostic| {
-                        diagnostic.kind
-                            == NativeBoundaryKind::Callback(NativeCallbackKind::RequestFrame)
-                            && diagnostic.disposition
-                                == NativeBoundaryDisposition::Delivered { input_result: None }
-                    })
-            })
-    });
+    let paint_trace = pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "restored native WM_PAINT",
+        || {
+            frame_requests.get() > frame_request_baseline
+                && app.update_for_test(|cx| {
+                    cx.native_boundary_diagnostics(diagnostic_cursor)
+                        .terminal
+                        .iter()
+                        .any(|diagnostic| {
+                            diagnostic.kind
+                                == NativeBoundaryKind::Callback(NativeCallbackKind::RequestFrame)
+                                && diagnostic.disposition
+                                    == NativeBoundaryDisposition::Delivered { input_result: None }
+                        })
+                })
+        },
+    );
     assert!(
         paint_trace.contains(hwnd, WM_PAINT),
         "the restored frame request must originate from WM_PAINT"
@@ -5089,9 +5375,11 @@ fn repeated_native_minimize_preserves_frame_callback_through_restore() {
 
     app.update_for_test(|cx| window.update(cx, |_, window, cx| window.remove_window(cx)))
         .expect("native test window should close");
-    pump_messages_until("repeated-minimize test window teardown", || {
-        !unsafe { IsWindow(Some(hwnd)).as_bool() } && !is_registered(&platform, hwnd)
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "repeated-minimize test window teardown",
+        || !unsafe { IsWindow(Some(hwnd)).as_bool() } && !is_registered(&platform, hwnd),
+    );
 }
 
 #[test]
@@ -5157,7 +5445,10 @@ fn native_mouse_leave_dispatches_exact_input_before_hover_fact() {
             })
         })
         .expect("native test window should accept a mouse interceptor");
-    pump_messages_until_idle("initial mouse-leave test messages");
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "initial mouse-leave test messages",
+    );
 
     let initial_move = unsafe {
         SendMessageW(
@@ -5254,7 +5545,10 @@ fn native_mouse_leave_dispatches_exact_input_before_hover_fact() {
         [false, false],
         "mouse leave must remain hover-only and expose no captured routing frame"
     );
-    let follow_up = pump_messages_until_idle("consumed mouse-leave follow-up");
+    let follow_up = pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "consumed mouse-leave follow-up",
+    );
     eprintln!(
         "mouse-leave exact synchronous transitions passed; subsequent queued messages={:x?}",
         follow_up.message_ids()
@@ -5274,9 +5568,11 @@ fn native_mouse_leave_dispatches_exact_input_before_hover_fact() {
 
     app.update_for_test(|cx| window.update(cx, |_, window, cx| window.remove_window(cx)))
         .expect("native test window should close");
-    pump_messages_until("mouse-leave test window teardown", || {
-        !unsafe { IsWindow(Some(hwnd)).as_bool() } && !is_registered(&platform, hwnd)
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "mouse-leave test window teardown",
+        || !unsafe { IsWindow(Some(hwnd)).as_bool() } && !is_registered(&platform, hwnd),
+    );
 }
 
 #[test]
@@ -5334,7 +5630,11 @@ fn nested_native_close_is_prevented_while_should_close_slot_is_checked_out() {
     });
 
     post_message(hwnd, WM_CLOSE, WPARAM::default(), LPARAM::default());
-    let close_trace = pump_messages_until("nested native WM_CLOSE", || handler_count.get() == 1);
+    let close_trace = pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "nested native WM_CLOSE",
+        || handler_count.get() == 1,
+    );
     assert_eq!(close_trace.last_result(hwnd, WM_CLOSE), Some(0));
     assert_eq!(nested_result.get(), Some(0));
     assert!(
@@ -5345,9 +5645,11 @@ fn nested_native_close_is_prevented_while_should_close_slot_is_checked_out() {
 
     app.update_for_test(|cx| window.update(cx, |_, window, cx| window.remove_window(cx)))
         .expect("native test window should close");
-    pump_messages_until("nested-close test window teardown", || {
-        !unsafe { IsWindow(Some(hwnd)).as_bool() } && !is_registered(&platform, hwnd)
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "nested-close test window teardown",
+        || !unsafe { IsWindow(Some(hwnd)).as_bool() } && !is_registered(&platform, hwnd),
+    );
 }
 
 #[test]
@@ -5404,17 +5706,21 @@ fn failed_native_destroy_keeps_window_registered_and_callbacks_live() {
     assert!(unsafe { IsWindow(Some(hwnd)).as_bool() });
     assert!(is_registered(&platform, hwnd));
     post_message(hwnd, WM_CLOSE, WPARAM::default(), LPARAM::default());
-    let close_trace = pump_messages_until("close after failed native destroy", || {
-        handler_count.get() == 1
-    });
+    let close_trace = pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "close after failed native destroy",
+        || handler_count.get() == 1,
+    );
     assert_eq!(close_trace.last_result(hwnd, WM_CLOSE), Some(0));
     assert!(unsafe { IsWindow(Some(hwnd)).as_bool() });
 
     app.update_for_test(|cx| window.update(cx, |_, window, cx| window.remove_window(cx)))
         .expect("native test window should close after retry");
-    pump_messages_until("failed-destroy test window teardown", || {
-        !unsafe { IsWindow(Some(hwnd)).as_bool() } && !is_registered(&platform, hwnd)
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "failed-destroy test window teardown",
+        || !unsafe { IsWindow(Some(hwnd)).as_bool() } && !is_registered(&platform, hwnd),
+    );
 }
 
 #[test]
@@ -5451,9 +5757,11 @@ fn failed_destroy_during_platform_window_retirement_retries_without_losing_owner
     app.update_for_test(|cx| window.update(cx, |_, window, cx| window.remove_window(cx)))
         .expect("GPUI window removal should finish despite the injected native teardown failure");
 
-    pump_messages_until("failed native retirement retry", || {
-        !unsafe { IsWindow(Some(hwnd)).as_bool() } && !is_registered(&platform, hwnd)
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "failed native retirement retry",
+        || !unsafe { IsWindow(Some(hwnd)).as_bool() } && !is_registered(&platform, hwnd),
+    );
     assert!(
         unsafe { !IsWindow(Some(hwnd)).as_bool() },
         "the App-owned retirement retry must destroy the retained child HWND"
@@ -5556,9 +5864,11 @@ fn borrowed_renderer_rejects_quiescence_without_destroying_the_real_hwnd() {
     assert_eq!((*quiesced_window, *quiesced_generation), expected);
     assert_eq!((*destroy_window, *destroy_generation), expected);
     assert_eq!((*terminal_window, *terminal_generation), expected);
-    pump_messages_until("borrowed-renderer test logical teardown", || {
-        !is_registered(&platform, hwnd)
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "borrowed-renderer test logical teardown",
+        || !is_registered(&platform, hwnd),
+    );
 }
 
 #[test]
@@ -5631,32 +5941,39 @@ fn native_interactive_runner_sentinel_proves_system_pointer_delivery_and_capture
             })
         })
         .expect("interactive native sentinel should install a mouse interceptor");
-    pump_messages_until("interactive native sentinel non-empty presentation", || {
-        if unsafe { !IsWindowVisible(hwnd).as_bool() } {
-            return false;
-        }
-        app.update_for_test(|cx| {
-            window
-                .update(cx, |_, window, _| {
-                    let facts = window.presentation_facts();
-                    facts.non_empty_presented_generation.is_some()
-                        && facts.latest_present_attempt.is_some_and(|attempt| {
-                            attempt.outcome == PlatformWindowPresentOutcome::Submitted
-                                && attempt.contained_valid_primitives
-                                && Some(attempt.generation) == facts.non_empty_presented_generation
-                        })
-                })
-                .unwrap_or(false)
-        })
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "interactive native sentinel non-empty presentation",
+        || {
+            if unsafe { !IsWindowVisible(hwnd).as_bool() } {
+                return false;
+            }
+            app.update_for_test(|cx| {
+                window
+                    .update(cx, |_, window, _| {
+                        let facts = window.presentation_facts();
+                        facts.non_empty_presented_generation.is_some()
+                            && facts.latest_present_attempt.is_some_and(|attempt| {
+                                attempt.outcome == PlatformWindowPresentOutcome::Submitted
+                                    && attempt.contained_valid_primitives
+                                    && Some(attempt.generation)
+                                        == facts.non_empty_presented_generation
+                            })
+                    })
+                    .unwrap_or(false)
+            })
+        },
+    );
 
     assert!(
         crate::native_test_foreground::acquire_foreground_window(hwnd).is_ok(),
         "interactive native runner could not foreground the sentinel HWND"
     );
-    pump_messages_until("interactive native sentinel foreground", || unsafe {
-        GetForegroundWindow() == hwnd
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "interactive native sentinel foreground",
+        || unsafe { GetForegroundWindow() == hwnd },
+    );
 
     let injection_point = client_center_in_screen_coordinates(hwnd);
     let move_before = observed
@@ -5669,17 +5986,21 @@ fn native_interactive_runner_sentinel_proves_system_pointer_delivery_and_capture
     cursor_guard
         .inject(injection_point, NativeTestPointerAction::Move)
         .expect("interactive native runner rejected system pointer movement");
-    pump_system_input_until("system-injected pointer move", |trace| {
-        trace.contains(hwnd, WM_MOUSEMOVE)
-            && observed
-                .borrow()
-                .iter()
-                .filter(|(label, extra_info)| {
-                    *label == "move" && *extra_info == NATIVE_INTERACTIVE_INPUT_CANARY as isize
-                })
-                .count()
-                > move_before
-    });
+    pump_system_input_until(
+        &Rc::downgrade(&platform.inner),
+        "system-injected pointer move",
+        |trace| {
+            trace.contains(hwnd, WM_MOUSEMOVE)
+                && observed
+                    .borrow()
+                    .iter()
+                    .filter(|(label, extra_info)| {
+                        *label == "move" && *extra_info == NATIVE_INTERACTIVE_INPUT_CANARY as isize
+                    })
+                    .count()
+                    > move_before
+        },
+    );
     let mut observed_cursor = POINT::default();
     unsafe { GetCursorPos(&mut observed_cursor) }
         .expect("interactive native runner must report the injected cursor position");
@@ -5699,18 +6020,22 @@ fn native_interactive_runner_sentinel_proves_system_pointer_delivery_and_capture
     cursor_guard
         .inject(injection_point, NativeTestPointerAction::PrimaryDown)
         .expect("interactive native runner rejected the primary-button press");
-    pump_system_input_until("system-injected pointer down and capture", |trace| {
-        trace.contains(hwnd, WM_LBUTTONDOWN)
-            && observed
-                .borrow()
-                .iter()
-                .filter(|(label, extra_info)| {
-                    *label == "down" && *extra_info == NATIVE_INTERACTIVE_INPUT_CANARY as isize
-                })
-                .count()
-                > down_before
-            && unsafe { GetCapture() == hwnd }
-    });
+    pump_system_input_until(
+        &Rc::downgrade(&platform.inner),
+        "system-injected pointer down and capture",
+        |trace| {
+            trace.contains(hwnd, WM_LBUTTONDOWN)
+                && observed
+                    .borrow()
+                    .iter()
+                    .filter(|(label, extra_info)| {
+                        *label == "down" && *extra_info == NATIVE_INTERACTIVE_INPUT_CANARY as isize
+                    })
+                    .count()
+                    > down_before
+                && unsafe { GetCapture() == hwnd }
+        },
+    );
     assert_eq!(
         unsafe { GetCapture() },
         hwnd,
@@ -5727,18 +6052,22 @@ fn native_interactive_runner_sentinel_proves_system_pointer_delivery_and_capture
     cursor_guard
         .inject(injection_point, NativeTestPointerAction::PrimaryUp)
         .expect("interactive native runner rejected the primary-button release");
-    pump_system_input_until("system-injected pointer up and capture release", |trace| {
-        trace.contains(hwnd, WM_LBUTTONUP)
-            && observed
-                .borrow()
-                .iter()
-                .filter(|(label, extra_info)| {
-                    *label == "up" && *extra_info == NATIVE_INTERACTIVE_INPUT_CANARY as isize
-                })
-                .count()
-                > up_before
-            && unsafe { GetCapture() != hwnd }
-    });
+    pump_system_input_until(
+        &Rc::downgrade(&platform.inner),
+        "system-injected pointer up and capture release",
+        |trace| {
+            trace.contains(hwnd, WM_LBUTTONUP)
+                && observed
+                    .borrow()
+                    .iter()
+                    .filter(|(label, extra_info)| {
+                        *label == "up" && *extra_info == NATIVE_INTERACTIVE_INPUT_CANARY as isize
+                    })
+                    .count()
+                    > up_before
+                && unsafe { GetCapture() != hwnd }
+        },
+    );
     assert_ne!(
         unsafe { GetCapture() },
         hwnd,
@@ -5748,9 +6077,11 @@ fn native_interactive_runner_sentinel_proves_system_pointer_delivery_and_capture
 
     app.update_for_test(|cx| window.update(cx, |_, window, cx| window.remove_window(cx)))
         .expect("interactive native sentinel window should close");
-    pump_messages_until("interactive native sentinel teardown", || {
-        !unsafe { IsWindow(Some(hwnd)).as_bool() } && !is_registered(&platform, hwnd)
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "interactive native sentinel teardown",
+        || !unsafe { IsWindow(Some(hwnd)).as_bool() } && !is_registered(&platform, hwnd),
+    );
 }
 
 #[test]
@@ -5844,30 +6175,39 @@ fn framework_pointer_capture_release_is_native_terminal_without_duplicate_cancel
             })
         })
         .expect("framework capture-release test should install a mouse interceptor");
-    pump_messages_until_idle("initial framework capture-release test messages");
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "initial framework capture-release test messages",
+    );
 
     unsafe {
         let _ = SetActiveWindow(hwnd);
     }
-    pump_messages_until("framework capture-release native activation", || unsafe {
-        GetActiveWindow() == hwnd
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "framework capture-release native activation",
+        || unsafe { GetActiveWindow() == hwnd },
+    );
     post_message(
         hwnd,
         WM_LBUTTONDOWN,
         WPARAM(MK_LBUTTON.0 as usize),
         mouse_position_lparam(24, 28),
     );
-    pump_messages_until("framework capture-release acquisition", || unsafe {
-        GetCapture() == hwnd
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "framework capture-release acquisition",
+        || unsafe { GetCapture() == hwnd },
+    );
 
     native_window.dispatch_input(PlatformInput::PointerCanceled(PointerCancelEvent {
         reason: PointerCancelReason::CaptureRevoked,
     }));
-    pump_messages_until("framework capture-release follow-up", || unsafe {
-        GetCapture() != hwnd
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "framework capture-release follow-up",
+        || unsafe { GetCapture() != hwnd },
+    );
 
     assert_ne!(unsafe { GetCapture() }, hwnd);
     assert_eq!(
@@ -5892,9 +6232,11 @@ fn framework_pointer_capture_release_is_native_terminal_without_duplicate_cancel
 
     app.update_for_test(|cx| window.update(cx, |_, window, cx| window.remove_window(cx)))
         .expect("framework capture-release native test window should close");
-    pump_messages_until("framework capture-release native test teardown", || {
-        !unsafe { IsWindow(Some(hwnd)).as_bool() } && !is_registered(&platform, hwnd)
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "framework capture-release native test teardown",
+        || !unsafe { IsWindow(Some(hwnd)).as_bool() } && !is_registered(&platform, hwnd),
+    );
 }
 
 #[test]
@@ -5968,11 +6310,15 @@ fn capture_acquisition_loss_reentrant_to_set_capture_cancels_after_mouse_down() 
         .state
         .replace_next_pointer_capture_acquisition_with
         .set(Some(target_hwnd));
-    pump_messages_until_idle("initial reentrant capture-acquisition test messages");
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "initial reentrant capture-acquisition test messages",
+    );
     unsafe {
         let _ = SetActiveWindow(source_hwnd);
     }
     pump_messages_until(
+        &Rc::downgrade(&platform.inner),
         "reentrant capture-acquisition source activation",
         || unsafe { GetActiveWindow() == source_hwnd },
     );
@@ -5986,7 +6332,10 @@ fn capture_acquisition_loss_reentrant_to_set_capture_cancels_after_mouse_down() 
         )
     };
     assert_eq!(result.0, 1);
-    pump_messages_until_idle("reentrant capture-acquisition follow-up");
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "reentrant capture-acquisition follow-up",
+    );
 
     assert_eq!(unsafe { GetCapture() }, target_hwnd);
     assert_eq!(
@@ -6010,18 +6359,22 @@ fn capture_acquisition_loss_reentrant_to_set_capture_cancels_after_mouse_down() 
         WPARAM(MK_LBUTTON.0 as usize),
         mouse_position_lparam(30, 34),
     );
-    pump_messages_until("post-recovery pointer capture acquisition", || unsafe {
-        GetCapture() == source_hwnd
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "post-recovery pointer capture acquisition",
+        || unsafe { GetCapture() == source_hwnd },
+    );
     post_message(
         source_hwnd,
         WM_LBUTTONUP,
         WPARAM::default(),
         mouse_position_lparam(30, 34),
     );
-    pump_messages_until("post-recovery pointer capture release", || unsafe {
-        GetCapture() != source_hwnd
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "post-recovery pointer capture release",
+        || unsafe { GetCapture() != source_hwnd },
+    );
     assert_eq!(
         source_native.state.pointer_capture.get(),
         Default::default()
@@ -6036,12 +6389,16 @@ fn capture_acquisition_loss_reentrant_to_set_capture_cancels_after_mouse_down() 
         .expect("source native test window should close");
     app.update_for_test(|cx| target.update(cx, |_, window, cx| window.remove_window(cx)))
         .expect("target native test window should close");
-    pump_messages_until("reentrant capture-acquisition native test teardown", || {
-        !unsafe { IsWindow(Some(source_hwnd)).as_bool() }
-            && !unsafe { IsWindow(Some(target_hwnd)).as_bool() }
-            && !is_registered(&platform, source_hwnd)
-            && !is_registered(&platform, target_hwnd)
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "reentrant capture-acquisition native test teardown",
+        || {
+            !unsafe { IsWindow(Some(source_hwnd)).as_bool() }
+                && !unsafe { IsWindow(Some(target_hwnd)).as_bool() }
+                && !is_registered(&platform, source_hwnd)
+                && !is_registered(&platform, target_hwnd)
+        },
+    );
 }
 
 #[test]
@@ -6132,15 +6489,23 @@ fn deactivation_releases_child_capture_and_cancels_pointer_once() {
             })
         })
         .expect("source native test window should accept a mouse interceptor");
-    pump_messages_until_idle("initial deactivation-capture test messages");
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "initial deactivation-capture test messages",
+    );
 
     unsafe {
         let _ = SetActiveWindow(source_hwnd);
     }
-    pump_messages_until("source native activation", || unsafe {
-        GetActiveWindow() == source_hwnd
-    });
-    pump_messages_until_idle("source activation follow-up");
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "source native activation",
+        || unsafe { GetActiveWindow() == source_hwnd },
+    );
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "source activation follow-up",
+    );
     let diagnostic_cursor = app.update_for_test(|cx| {
         cx.native_boundary_diagnostics(NativeBoundaryDiagnosticCursor::default())
             .cursor
@@ -6151,17 +6516,24 @@ fn deactivation_releases_child_capture_and_cancels_pointer_once() {
         WPARAM(MK_LBUTTON.0 as usize),
         mouse_position_lparam(24, 28),
     );
-    pump_messages_until("source native capture acquisition", || unsafe {
-        GetCapture() == source_hwnd
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "source native capture acquisition",
+        || unsafe { GetCapture() == source_hwnd },
+    );
 
     unsafe {
         let _ = SetActiveWindow(target_hwnd);
     }
-    pump_messages_until("source native capture release", || unsafe {
-        GetActiveWindow() == target_hwnd && GetCapture() != source_hwnd
-    });
-    pump_messages_until_idle("deactivation capture follow-up");
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "source native capture release",
+        || unsafe { GetActiveWindow() == target_hwnd && GetCapture() != source_hwnd },
+    );
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "deactivation capture follow-up",
+    );
 
     assert_eq!(
         &*cancellations.borrow(),
@@ -6187,6 +6559,7 @@ fn deactivation_releases_child_capture_and_cancels_pointer_once() {
         let _ = SetActiveWindow(source_hwnd);
     }
     pump_messages_until(
+        &Rc::downgrade(&platform.inner),
         "source reactivation after panicking deactivation callback",
         || unsafe { GetActiveWindow() == source_hwnd },
     );
@@ -6197,6 +6570,7 @@ fn deactivation_releases_child_capture_and_cancels_pointer_once() {
         mouse_position_lparam(30, 34),
     );
     pump_messages_until(
+        &Rc::downgrade(&platform.inner),
         "second native pointer session capture acquisition",
         || unsafe { GetCapture() == source_hwnd },
     );
@@ -6206,9 +6580,11 @@ fn deactivation_releases_child_capture_and_cancels_pointer_once() {
         WPARAM::default(),
         mouse_position_lparam(30, 34),
     );
-    pump_messages_until("second native pointer session capture release", || unsafe {
-        GetCapture() != source_hwnd
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "second native pointer session capture release",
+        || unsafe { GetCapture() != source_hwnd },
+    );
     assert_eq!(
         active_callback_calls.get(),
         3,
@@ -6223,12 +6599,16 @@ fn deactivation_releases_child_capture_and_cancels_pointer_once() {
         .expect("source native test window should close");
     app.update_for_test(|cx| target.update(cx, |_, window, cx| window.remove_window(cx)))
         .expect("target native test window should close");
-    pump_messages_until("deactivation-capture test teardown", || {
-        !unsafe { IsWindow(Some(source_hwnd)).as_bool() }
-            && !unsafe { IsWindow(Some(target_hwnd)).as_bool() }
-            && !is_registered(&platform, source_hwnd)
-            && !is_registered(&platform, target_hwnd)
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "deactivation-capture test teardown",
+        || {
+            !unsafe { IsWindow(Some(source_hwnd)).as_bool() }
+                && !unsafe { IsWindow(Some(target_hwnd)).as_bool() }
+                && !is_registered(&platform, source_hwnd)
+                && !is_registered(&platform, target_hwnd)
+        },
+    );
     if unsafe { GetCapture() } == source_hwnd {
         unsafe { ReleaseCapture() }.expect("test cleanup should release source capture");
     }
@@ -6282,23 +6662,30 @@ fn panicking_pointer_cancel_reservation_releases_native_capture_before_abi_recov
             Default::default()
         }
     }));
-    pump_messages_until_idle("initial reservation-panic test messages");
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "initial reservation-panic test messages",
+    );
 
     unsafe {
         let _ = SetActiveWindow(hwnd);
     }
-    pump_messages_until("reservation-panic source activation", || unsafe {
-        GetActiveWindow() == hwnd
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "reservation-panic source activation",
+        || unsafe { GetActiveWindow() == hwnd },
+    );
     post_message(
         hwnd,
         WM_LBUTTONDOWN,
         WPARAM(MK_LBUTTON.0 as usize),
         mouse_position_lparam(24, 28),
     );
-    pump_messages_until("reservation-panic native capture acquisition", || unsafe {
-        GetCapture() == hwnd
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "reservation-panic native capture acquisition",
+        || unsafe { GetCapture() == hwnd },
+    );
 
     native_window
         .state
@@ -6335,18 +6722,22 @@ fn panicking_pointer_cancel_reservation_releases_native_capture_before_abi_recov
         WPARAM(MK_LBUTTON.0 as usize),
         mouse_position_lparam(30, 34),
     );
-    pump_messages_until("reservation-panic G2 capture acquisition", || unsafe {
-        GetCapture() == hwnd
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "reservation-panic G2 capture acquisition",
+        || unsafe { GetCapture() == hwnd },
+    );
     post_message(
         hwnd,
         WM_LBUTTONUP,
         WPARAM::default(),
         mouse_position_lparam(30, 34),
     );
-    pump_messages_until("reservation-panic G2 capture release", || unsafe {
-        GetCapture() != hwnd
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "reservation-panic G2 capture release",
+        || unsafe { GetCapture() != hwnd },
+    );
     assert!(
         g2_callback_count.get() >= 2,
         "G2 input must receive its down and up callbacks after recovery"
@@ -6354,9 +6745,11 @@ fn panicking_pointer_cancel_reservation_releases_native_capture_before_abi_recov
 
     app.update_for_test(|cx| window.update(cx, |_, window, cx| window.remove_window(cx)))
         .expect("reservation-panic native test window should close");
-    pump_messages_until("reservation-panic native test teardown", || {
-        !unsafe { IsWindow(Some(hwnd)).as_bool() } && !is_registered(&platform, hwnd)
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "reservation-panic native test teardown",
+        || !unsafe { IsWindow(Some(hwnd)).as_bool() } && !is_registered(&platform, hwnd),
+    );
 }
 
 #[test]
@@ -6402,24 +6795,34 @@ fn programmatic_close_while_captured_is_terminal_and_invariant_free() {
             }
         })
     });
-    pump_messages_until_idle("initial captured-close test messages");
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "initial captured-close test messages",
+    );
 
     unsafe {
         let _ = SetActiveWindow(hwnd);
     }
-    pump_messages_until("captured-close native activation", || unsafe {
-        GetActiveWindow() == hwnd
-    });
-    pump_messages_until_idle("captured-close activation follow-up");
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "captured-close native activation",
+        || unsafe { GetActiveWindow() == hwnd },
+    );
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "captured-close activation follow-up",
+    );
     post_message(
         hwnd,
         WM_LBUTTONDOWN,
         WPARAM(MK_LBUTTON.0 as usize),
         mouse_position_lparam(24, 28),
     );
-    pump_messages_until("captured-close acquisition", || unsafe {
-        GetCapture() == hwnd
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "captured-close acquisition",
+        || unsafe { GetCapture() == hwnd },
+    );
     let diagnostic_cursor = app.update_for_test(|cx| {
         cx.native_boundary_diagnostics(NativeBoundaryDiagnosticCursor::default())
             .cursor
@@ -6427,11 +6830,15 @@ fn programmatic_close_while_captured_is_terminal_and_invariant_free() {
 
     app.update_for_test(|cx| window.update(cx, |_, window, cx| window.remove_window(cx)))
         .expect("captured native test window should close without panicking");
-    pump_messages_until("captured native window teardown", || {
-        !unsafe { IsWindow(Some(hwnd)).as_bool() }
-            && !is_registered(&platform, hwnd)
-            && close_count.get() == 1
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "captured native window teardown",
+        || {
+            !unsafe { IsWindow(Some(hwnd)).as_bool() }
+                && !is_registered(&platform, hwnd)
+                && close_count.get() == 1
+        },
+    );
 
     assert_ne!(unsafe { GetCapture() }, hwnd);
     assert_eq!(
@@ -6493,6 +6900,7 @@ fn real_hwnd_activation_terminal_is_exact_and_first_terminal_wins() {
     );
     platform.inner.run_foreground_task();
     pump_messages_until(
+        &Rc::downgrade(&platform.inner),
         "foreground activation sentinel initial presentation",
         || unsafe { IsWindowVisible(foreground_hwnd).as_bool() },
     );
@@ -6501,12 +6909,19 @@ fn real_hwnd_activation_terminal_is_exact_and_first_terminal_wins() {
         .expect("activation sentinel should acquire foreground authority");
     record_phase("sentinel focus preparation");
     let _ = unsafe { SetFocus(Some(foreground_hwnd)) };
-    pump_messages_until("foreground activation sentinel focus", || unsafe {
-        GetForegroundWindow() == foreground_hwnd
-            && GetActiveWindow() == foreground_hwnd
-            && GetFocus() == foreground_hwnd
-    });
-    pump_messages_until_idle("foreground activation sentinel follow-up");
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "foreground activation sentinel focus",
+        || unsafe {
+            GetForegroundWindow() == foreground_hwnd
+                && GetActiveWindow() == foreground_hwnd
+                && GetFocus() == foreground_hwnd
+        },
+    );
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "foreground activation sentinel follow-up",
+    );
 
     record_phase("nonactivating target creation");
     let creation_cursor = native_observation.cursor();
@@ -6540,10 +6955,14 @@ fn real_hwnd_activation_terminal_is_exact_and_first_terminal_wins() {
         .expect("native activation target should remain registered");
     platform.inner.run_foreground_task();
     pump_messages_until(
+        &Rc::downgrade(&platform.inner),
         "ordinary native activation target presentation",
         || unsafe { IsWindowVisible(hwnd).as_bool() },
     );
-    pump_messages_until_idle("ordinary native activation target follow-up");
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "ordinary native activation target follow-up",
+    );
     let creation_activation_events = native_observation
         .events_after(creation_cursor)
         .into_iter()
@@ -6608,10 +7027,15 @@ fn real_hwnd_activation_terminal_is_exact_and_first_terminal_wins() {
         second_snapshot.activation_policy_generation(),
         "both queued requests must bind the same committed activation policy"
     );
-    pump_messages_until("queued native activation", || {
-        activation_tickets[1].snapshot().status().is_terminal()
-    });
-    pump_messages_until_idle("queued activation follow-up");
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "queued native activation",
+        || activation_tickets[1].snapshot().status().is_terminal(),
+    );
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "queued activation follow-up",
+    );
 
     let diagnostic_delta =
         app.update_for_test(|cx| cx.native_boundary_diagnostics(diagnostic_cursor));
@@ -6715,12 +7139,19 @@ fn real_hwnd_activation_terminal_is_exact_and_first_terminal_wins() {
         .expect("activation sentinel should reacquire foreground authority");
     record_phase("sentinel focus before backend rejection");
     let _ = unsafe { SetFocus(Some(foreground_hwnd)) };
-    pump_messages_until("activation sentinel reactivation", || unsafe {
-        GetForegroundWindow() == foreground_hwnd
-            && GetActiveWindow() == foreground_hwnd
-            && GetFocus() == foreground_hwnd
-    });
-    pump_messages_until_idle("activation sentinel reactivation follow-up");
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "activation sentinel reactivation",
+        || unsafe {
+            GetForegroundWindow() == foreground_hwnd
+                && GetActiveWindow() == foreground_hwnd
+                && GetFocus() == foreground_hwnd
+        },
+    );
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "activation sentinel reactivation follow-up",
+    );
 
     let admitted_activation_facts = app.update_for_test(|cx| {
         window
@@ -6761,12 +7192,19 @@ fn real_hwnd_activation_terminal_is_exact_and_first_terminal_wins() {
         (ticket, subscription)
     });
     platform.inner.run_foreground_task();
-    pump_messages_until("injected backend activation rejection", || {
-        backend_rejected_ticket.snapshot().status()
-            == WindowActivationStatus::Terminal(WindowActivationTerminal::Rejected)
-            && backend_rejected_observations.borrow().len() == 1
-    });
-    pump_messages_until_idle("injected backend activation rejection follow-up");
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "injected backend activation rejection",
+        || {
+            backend_rejected_ticket.snapshot().status()
+                == WindowActivationStatus::Terminal(WindowActivationTerminal::Rejected)
+                && backend_rejected_observations.borrow().len() == 1
+        },
+    );
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "injected backend activation rejection follow-up",
+    );
     let backend_rejected_snapshot = backend_rejected_ticket.snapshot();
     assert_eq!(
         backend_rejected_snapshot.status(),
@@ -6810,12 +7248,16 @@ fn real_hwnd_activation_terminal_is_exact_and_first_terminal_wins() {
     record_phase("target focus after backend rejection");
     let _ = unsafe { SetFocus(Some(hwnd)) };
     pump_messages_until(
+        &Rc::downgrade(&platform.inner),
         "positive native activation after backend rejection",
         || unsafe {
             GetForegroundWindow() == hwnd && GetActiveWindow() == hwnd && GetFocus() == hwnd
         },
     );
-    pump_messages_until_idle("positive native activation after backend rejection follow-up");
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "positive native activation after backend rejection follow-up",
+    );
     let backend_positive_delta =
         app.update_for_test(|cx| cx.native_boundary_diagnostics(backend_positive_cursor));
     assert!(backend_positive_delta.terminal.iter().any(|diagnostic| {
@@ -6846,12 +7288,19 @@ fn real_hwnd_activation_terminal_is_exact_and_first_terminal_wins() {
         .expect("activation sentinel should own foreground before deterministic success");
     record_phase("sentinel focus before admitted activation");
     let _ = unsafe { SetFocus(Some(foreground_hwnd)) };
-    pump_messages_until("deterministic activation source focus", || unsafe {
-        GetForegroundWindow() == foreground_hwnd
-            && GetActiveWindow() == foreground_hwnd
-            && GetFocus() == foreground_hwnd
-    });
-    pump_messages_until_idle("deterministic activation source focus follow-up");
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "deterministic activation source focus",
+        || unsafe {
+            GetForegroundWindow() == foreground_hwnd
+                && GetActiveWindow() == foreground_hwnd
+                && GetFocus() == foreground_hwnd
+        },
+    );
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "deterministic activation source focus follow-up",
+    );
 
     record_phase("admitted activation");
     let deterministic_activation_cursor = app.update_for_test(|cx| {
@@ -6865,13 +7314,19 @@ fn real_hwnd_activation_terminal_is_exact_and_first_terminal_wins() {
     });
     platform.inner.run_foreground_task();
     let activation_wait = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        pump_messages_until("deterministic programmatic activation success", || {
-            deterministic_activation_ticket.snapshot().status()
-                == WindowActivationStatus::Terminal(WindowActivationTerminal::Activated)
-                && unsafe {
-                    GetForegroundWindow() == hwnd && GetActiveWindow() == hwnd && GetFocus() == hwnd
-                }
-        });
+        pump_messages_until(
+            &Rc::downgrade(&platform.inner),
+            "deterministic programmatic activation success",
+            || {
+                deterministic_activation_ticket.snapshot().status()
+                    == WindowActivationStatus::Terminal(WindowActivationTerminal::Activated)
+                    && unsafe {
+                        GetForegroundWindow() == hwnd
+                            && GetActiveWindow() == hwnd
+                            && GetFocus() == hwnd
+                    }
+            },
+        );
     }));
     if let Err(panic) = activation_wait {
         let ticket = deterministic_activation_ticket.snapshot();
@@ -6898,7 +7353,10 @@ fn real_hwnd_activation_terminal_is_exact_and_first_terminal_wins() {
         );
         std::panic::resume_unwind(panic);
     }
-    pump_messages_until_idle("deterministic programmatic activation success follow-up");
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "deterministic programmatic activation success follow-up",
+    );
     let deterministic_activation_snapshot = deterministic_activation_ticket.snapshot();
     let deterministic_activation_delta =
         app.update_for_test(|cx| cx.native_boundary_diagnostics(deterministic_activation_cursor));
@@ -6930,12 +7388,19 @@ fn real_hwnd_activation_terminal_is_exact_and_first_terminal_wins() {
         .expect("activation sentinel should own foreground before policy rejection");
     record_phase("sentinel focus before policy rejection");
     let _ = unsafe { SetFocus(Some(foreground_hwnd)) };
-    pump_messages_until("pre-policy activation sentinel focus", || unsafe {
-        GetForegroundWindow() == foreground_hwnd
-            && GetActiveWindow() == foreground_hwnd
-            && GetFocus() == foreground_hwnd
-    });
-    pump_messages_until_idle("pre-policy activation sentinel focus follow-up");
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "pre-policy activation sentinel focus",
+        || unsafe {
+            GetForegroundWindow() == foreground_hwnd
+                && GetActiveWindow() == foreground_hwnd
+                && GetFocus() == foreground_hwnd
+        },
+    );
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "pre-policy activation sentinel focus follow-up",
+    );
 
     record_phase("policy rejection");
     let nonprogrammatic_policy_ticket = app.update_for_test(|cx| {
@@ -6954,10 +7419,15 @@ fn real_hwnd_activation_terminal_is_exact_and_first_terminal_wins() {
             .expect("native activation target should remain live")
     });
     platform.inner.run_foreground_task();
-    pump_messages_until("nonprogrammatic activation policy", || {
-        nonprogrammatic_policy_ticket.observation().is_some()
-    });
-    pump_messages_until_idle("nonprogrammatic activation policy follow-up");
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "nonprogrammatic activation policy",
+        || nonprogrammatic_policy_ticket.observation().is_some(),
+    );
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "nonprogrammatic activation policy follow-up",
+    );
     let nonprogrammatic_policy = nonprogrammatic_policy_ticket
         .observation()
         .expect("nonprogrammatic activation policy should publish exact native facts");
@@ -7014,12 +7484,16 @@ fn real_hwnd_activation_terminal_is_exact_and_first_terminal_wins() {
     record_phase("target focus after policy rejection");
     let _ = unsafe { SetFocus(Some(hwnd)) };
     pump_messages_until(
+        &Rc::downgrade(&platform.inner),
         "real positive native activation after policy rejection",
         || unsafe {
             GetForegroundWindow() == hwnd && GetActiveWindow() == hwnd && GetFocus() == hwnd
         },
     );
-    pump_messages_until_idle("real positive native activation after policy rejection follow-up");
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "real positive native activation after policy rejection follow-up",
+    );
     let policy_positive_delta =
         app.update_for_test(|cx| cx.native_boundary_diagnostics(policy_positive_cursor));
     assert!(policy_positive_delta.terminal.iter().any(|diagnostic| {
@@ -7055,10 +7529,15 @@ fn real_hwnd_activation_terminal_is_exact_and_first_terminal_wins() {
             .expect("native activation target should remain live")
     });
     platform.inner.run_foreground_task();
-    pump_messages_until("restored activation policy", || {
-        restored_policy_ticket.observation().is_some()
-    });
-    pump_messages_until_idle("restored activation policy follow-up");
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "restored activation policy",
+        || restored_policy_ticket.observation().is_some(),
+    );
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "restored activation policy follow-up",
+    );
     let restored_policy = restored_policy_ticket
         .observation()
         .expect("restored activation policy should publish exact native facts");
@@ -7071,12 +7550,19 @@ fn real_hwnd_activation_terminal_is_exact_and_first_terminal_wins() {
         .expect("activation sentinel should own foreground before target loss");
     record_phase("sentinel focus before target loss");
     let _ = unsafe { SetFocus(Some(foreground_hwnd)) };
-    pump_messages_until("pre-close sentinel focus", || unsafe {
-        GetForegroundWindow() == foreground_hwnd
-            && GetActiveWindow() == foreground_hwnd
-            && GetFocus() == foreground_hwnd
-    });
-    pump_messages_until_idle("pre-close sentinel focus follow-up");
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "pre-close sentinel focus",
+        || unsafe {
+            GetForegroundWindow() == foreground_hwnd
+                && GetActiveWindow() == foreground_hwnd
+                && GetFocus() == foreground_hwnd
+        },
+    );
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "pre-close sentinel focus follow-up",
+    );
 
     record_phase("target loss");
     let target_loss_cursor = app.update_for_test(|cx| {
@@ -7113,15 +7599,22 @@ fn real_hwnd_activation_terminal_is_exact_and_first_terminal_wins() {
     });
     platform.inner.run_foreground_task();
     let any_target = AnyWindowHandle::from(window);
-    pump_messages_until("native activation target loss", || {
-        let logical_target_closed =
-            app.update_for_test(|cx| any_target.update(cx, |_, _, _| ()).is_err());
-        !unsafe { IsWindow(Some(hwnd)).as_bool() }
-            && !is_registered(&platform, hwnd)
-            && logical_target_closed
-            && closed_observations.borrow().len() == 1
-    });
-    pump_messages_until_idle("native activation target loss follow-up");
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "native activation target loss",
+        || {
+            let logical_target_closed =
+                app.update_for_test(|cx| any_target.update(cx, |_, _, _| ()).is_err());
+            !unsafe { IsWindow(Some(hwnd)).as_bool() }
+                && !is_registered(&platform, hwnd)
+                && logical_target_closed
+                && closed_observations.borrow().len() == 1
+        },
+    );
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "native activation target loss follow-up",
+    );
     let closed_snapshot = closed_ticket.snapshot();
     let target_loss_delta =
         app.update_for_test(|cx| cx.native_boundary_diagnostics(target_loss_cursor));
@@ -7158,11 +7651,18 @@ fn real_hwnd_activation_terminal_is_exact_and_first_terminal_wins() {
     record_phase("sentinel teardown");
     app.update_for_test(|cx| foreground.update(cx, |_, window, cx| window.remove_window(cx)))
         .expect("foreground activation sentinel should close");
-    pump_messages_until("activation terminal test teardown", || {
-        !unsafe { IsWindow(Some(foreground_hwnd)).as_bool() }
-            && !is_registered(&platform, foreground_hwnd)
-    });
-    pump_messages_until_idle("activation terminal test teardown follow-up");
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "activation terminal test teardown",
+        || {
+            !unsafe { IsWindow(Some(foreground_hwnd)).as_bool() }
+                && !is_registered(&platform, foreground_hwnd)
+        },
+    );
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "activation terminal test teardown follow-up",
+    );
 
     let native_events = native_observation.events();
     let keyboard_messages = [WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP];
@@ -7262,7 +7762,10 @@ fn quiesced_real_hwnd_retries_native_revocation_and_cannot_reactivate() {
     let native_window = platform
         .window_from_hwnd(hwnd)
         .expect("native quiescence test window should remain registered");
-    pump_messages_until_idle("initial native quiescence messages");
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "initial native quiescence messages",
+    );
 
     let active_observations = Rc::new(RefCell::new(Vec::new()));
     let active_callback = native_window
@@ -7368,16 +7871,21 @@ fn quiesced_real_hwnd_retries_native_revocation_and_cannot_reactivate() {
             .expect("quiesced native test window should remain live");
     });
     platform.inner.run_foreground_task();
-    pump_messages_until_idle("quiesced activation command follow-up");
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "quiesced activation command follow-up",
+    );
     assert_ne!(unsafe { GetFocus() }, hwnd);
     assert!(platform.active_window().is_none());
     assert!(active_observations.borrow().iter().all(|active| !active));
 
     app.update_for_test(|cx| window.update(cx, |_, window, cx| window.remove_window(cx)))
         .expect("quiesced native test window should close");
-    pump_messages_until("quiesced native test window teardown", || {
-        !unsafe { IsWindow(Some(hwnd)).as_bool() } && !is_registered(&platform, hwnd)
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "quiesced native test window teardown",
+        || !unsafe { IsWindow(Some(hwnd)).as_bool() } && !is_registered(&platform, hwnd),
+    );
 }
 
 #[test]
@@ -7446,9 +7954,11 @@ fn failed_dialog_construction_rolls_back_hwnd_drag_drop_and_modal_parent() {
         .last_created_hwnd()
         .expect("the construction probe should record the failed HWND");
     assert_ne!(failed_hwnd, parent_hwnd);
-    pump_messages_until("failed dialog construction rollback retry", || unsafe {
-        !IsWindow(Some(failed_hwnd)).as_bool()
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "failed dialog construction rollback retry",
+        || unsafe { !IsWindow(Some(failed_hwnd)).as_bool() },
+    );
     assert!(
         unsafe { !IsWindow(Some(failed_hwnd)).as_bool() },
         "construction rollback must eventually destroy the failed HWND after a managed retry"
@@ -7495,7 +8005,10 @@ fn failed_dialog_construction_rolls_back_hwnd_drag_drop_and_modal_parent() {
             .update(cx, |_, window, cx| window.remove_window(cx))
             .expect("modal parent should close");
     });
-    pump_messages_until_idle("failed construction cleanup");
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "failed construction cleanup",
+    );
 }
 
 #[test]
@@ -7918,6 +8431,7 @@ fn construction_retirement_pending_survives_immediate_platform_drop() {
     drop(app);
     drop(platform);
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform_inner),
         "construction retirement plus immediate platform finalization",
         Duration::from_millis(2),
         || unsafe {
@@ -7980,6 +8494,7 @@ fn registered_child_platform_finalization_retries_multiple_destroy_rejections() 
     drop(platform);
 
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform_inner),
         "registered child platform finalization retries",
         Duration::from_millis(2),
         || unsafe {
@@ -8079,9 +8594,11 @@ fn platform_finalization_waits_for_transient_child_terminal_before_parent_destro
     // The HWND owner and retirement coordinator retain the state until WM_NCDESTROY.
     drop(child_native);
     drop(parent_native);
+    let pump_platform = Rc::downgrade(&platform.inner);
     drop(platform);
 
     pump_messages_until_with_delay(
+        &pump_platform,
         "transient child-first platform finalization",
         Duration::from_millis(2),
         || unsafe {
@@ -8211,6 +8728,7 @@ fn mismatched_registered_generation_blocks_teardown_without_raw_destroy() {
         .expect("the test-owned HWND should accept an externally initiated native terminal");
     drop(native_window);
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform_inner),
         "ambiguous native owner terminal",
         Duration::from_millis(2),
         || unsafe { !IsWindow(Some(native_hwnd)).as_bool() },
@@ -8220,6 +8738,7 @@ fn mismatched_registered_generation_blocks_teardown_without_raw_destroy() {
         .retain(|registration| !registration.matches(mismatched_registration));
     platform_inner.notify_native_window_terminal(mismatched_registration);
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform_inner),
         "ambiguous registration cleanup and platform finalization",
         Duration::from_millis(2),
         || unsafe { !IsWindow(Some(platform_hwnd)).as_bool() },
@@ -8270,6 +8789,7 @@ fn unknown_registered_hwnd_blocks_raw_teardown_until_external_terminal() {
         .expect("test-owned sentinel HWND should accept explicit cleanup");
     platform_inner.run_foreground_task();
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform_inner),
         "unknown registration cleanup and platform finalization",
         Duration::from_millis(2),
         || unsafe { !IsWindow(Some(platform_hwnd)).as_bool() },
@@ -8301,6 +8821,7 @@ fn platform_message_destroy_failure_retains_ole_until_terminal_retry() {
     );
 
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform_inner),
         "platform message HWND destroy retry",
         Duration::from_millis(2),
         || unsafe { !IsWindow(Some(platform_hwnd)).as_bool() },

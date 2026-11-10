@@ -416,7 +416,13 @@ impl NativePlatformWindow {
             .propagate
     }
 
-    fn submitted(&self, app: &mut Application, previous: u64, expected_focus: usize) -> u64 {
+    fn submitted(
+        &self,
+        platform: &WindowsPlatform,
+        app: &mut Application,
+        previous: u64,
+        expected_focus: usize,
+    ) -> u64 {
         let expected = Source {
             labels: LABELS.map(str::to_owned).to_vec(),
             text: self
@@ -428,6 +434,7 @@ impl NativePlatformWindow {
         };
         let mut generation = None;
         pump_messages_until_with_delay(
+            &Rc::downgrade(&platform.inner),
             "runtime-OS labels and text Submitted/readback",
             Duration::from_millis(5),
             || {
@@ -614,7 +621,7 @@ fn native_runtime_os_loads_routes_labels_text_and_exact_window_retirement() {
             .cursor
     });
     assert!(unsafe { RedrawWindow(Some(hwnd), None, None, RDW_INVALIDATE).as_bool() });
-    let mut generation = consumer.submitted(&mut app, 0, 0);
+    let mut generation = consumer.submitted(&platform, &mut app, 0, 0);
     assert_eq!(
         input_slot.with_handler(|handler| handler.query_prefers_ime_for_printable_keys()),
         Some(true),
@@ -628,7 +635,7 @@ fn native_runtime_os_loads_routes_labels_text_and_exact_window_retirement() {
         *consumer.trace.calls.borrow(),
         [("save", 0), ("control", 0), ("platform", 0), ("context", 0)],
     );
-    generation = consumer.submitted(&mut app, generation, 0);
+    generation = consumer.submitted(&platform, &mut app, generation, 0);
     consumer.trace.pending.borrow_mut().clear();
     assert!(!consumer.key("ctrl-k"));
     app.update_for_test(|app| {
@@ -647,7 +654,7 @@ fn native_runtime_os_loads_routes_labels_text_and_exact_window_retirement() {
     assert!(!consumer.key("ctrl-c"));
     assert_eq!(consumer.trace.calls.borrow().last(), Some(&("chord", 0)));
     assert_eq!(*consumer.trace.pending.borrow(), [true, false]);
-    generation = consumer.submitted(&mut app, generation, 0);
+    generation = consumer.submitted(&platform, &mut app, generation, 0);
     assert!(!consumer.key("ctrl-k"));
     app.update_for_test(|app| {
         consumer.handle.update(app, |root, window, cx| {
@@ -657,7 +664,7 @@ fn native_runtime_os_loads_routes_labels_text_and_exact_window_retirement() {
     })
     .unwrap();
     assert_eq!(*consumer.trace.pending.borrow(), [true, false, true, false]);
-    generation = consumer.submitted(&mut app, generation, 1);
+    generation = consumer.submitted(&platform, &mut app, generation, 1);
     assert_eq!(
         consumer.inputs[0].created.get(),
         consumer.inputs[0].retired.get()
@@ -679,10 +686,10 @@ fn native_runtime_os_loads_routes_labels_text_and_exact_window_retirement() {
     );
     assert_eq!(consumer.inputs[1].text.borrow().as_str(), "z");
     assert!(consumer.inputs[0].text.borrow().is_empty());
-    generation = consumer.submitted(&mut app, generation, 1);
+    generation = consumer.submitted(&platform, &mut app, generation, 1);
     assert!(!consumer.key("ctrl-s"));
     assert_eq!(consumer.trace.calls.borrow().last(), Some(&("save", 1)));
-    generation = consumer.submitted(&mut app, generation, 1);
+    generation = consumer.submitted(&platform, &mut app, generation, 1);
 
     app.update_for_test(|app| {
         let fallback =
@@ -711,6 +718,7 @@ fn native_runtime_os_loads_routes_labels_text_and_exact_window_retirement() {
     .unwrap();
     assert_eq!(*consumer.trace.calls.borrow(), before_timeout);
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "runtime-OS pending prefix dispatches its actual timeout fallback",
         Duration::from_millis(5),
         || consumer.trace.calls.borrow().last() == Some(&("prefix", 1)),
@@ -721,7 +729,7 @@ fn native_runtime_os_loads_routes_labels_text_and_exact_window_retirement() {
         })
     })
     .unwrap();
-    consumer.submitted(&mut app, generation, 1);
+    consumer.submitted(&platform, &mut app, generation, 1);
 
     let before_retirement = consumer.trace.calls.borrow().clone();
     assert!(!consumer.key("ctrl-k"));
@@ -733,6 +741,7 @@ fn native_runtime_os_loads_routes_labels_text_and_exact_window_retirement() {
             .detach();
     });
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "runtime-OS pending timeout reaches its foreground poll before retirement",
         Duration::from_millis(1),
         || foreground_barrier.get(),
@@ -761,6 +770,7 @@ fn native_runtime_os_loads_routes_labels_text_and_exact_window_retirement() {
     })
     .unwrap();
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "runtime-OS exact registration and root retirement",
         Duration::from_millis(5),
         || {
@@ -796,14 +806,15 @@ fn native_runtime_os_loads_routes_labels_text_and_exact_window_retirement() {
         )
         .as_bool()
     });
-    let replacement_generation = replacement.submitted(&mut app, 0, 0);
+    let replacement_generation = replacement.submitted(&platform, &mut app, 0, 0);
     assert!(replacement.key("ctrl-c"));
     assert!(replacement.trace.calls.borrow().is_empty());
     assert!(!replacement.key("ctrl-s"));
     assert_eq!(*replacement.trace.calls.borrow(), [("save", 0)]);
-    replacement.submitted(&mut app, replacement_generation, 0);
+    replacement.submitted(&platform, &mut app, replacement_generation, 0);
     let retired_deadline = std::time::Instant::now();
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "runtime-OS retired prefix cannot reach its deadline or successor",
         Duration::from_millis(5),
         || retired_deadline.elapsed() >= Duration::from_millis(1100),
@@ -820,6 +831,7 @@ fn native_runtime_os_loads_routes_labels_text_and_exact_window_retirement() {
     })
     .unwrap();
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "runtime-OS successor exact retirement",
         Duration::from_millis(5),
         || {
@@ -943,8 +955,10 @@ fn native_runtime_os_loads_routes_labels_text_and_exact_window_retirement() {
         "app was released",
     );
     drop(async_app);
+    let pump_platform = Rc::downgrade(&platform.inner);
     drop(platform);
     pump_messages_until_with_delay(
+        &pump_platform,
         "runtime-OS platform HWND and OLE release",
         Duration::from_millis(5),
         || {

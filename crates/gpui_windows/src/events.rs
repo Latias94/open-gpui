@@ -30,13 +30,18 @@ pub(crate) const WM_GPUI_DOCK_MENU_ACTION: u32 = WM_USER + 4;
 pub(crate) const WM_GPUI_FORCE_UPDATE_WINDOW: u32 = WM_USER + 5;
 pub(crate) const WM_GPUI_KEYBOARD_LAYOUT_CHANGED: u32 = WM_USER + 6;
 pub(crate) const WM_GPUI_GPU_DEVICE_LOST: u32 = WM_USER + 7;
-pub(crate) const WM_GPUI_KEYDOWN: u32 = WM_USER + 8;
 pub(crate) const WM_GPUI_REFRESH_DISPLAY_TOPOLOGY: u32 = WM_USER + 9;
 pub(crate) const WM_GPUI_DISPLAY_TOPOLOGY_PUBLISHED: u32 = WM_USER + 10;
 pub(crate) const WM_GPUI_DISPLAYS_CHANGED: u32 = WM_USER + 11;
 pub(crate) const WM_GPUI_END_SESSION: u32 = WM_USER + 12;
 
 const SIZE_MOVE_LOOP_TIMER_ID: usize = 1;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct WindowsClientPointerPosition {
+    position: Point<Pixels>,
+    physical_frame: Option<PlatformNativePointerPhysicalFrame>,
+}
 
 fn restore_saved_callback_if_current_missing<T>(
     current: &Cell<Option<T>>,
@@ -1057,7 +1062,6 @@ impl WindowsWindowInner {
                 | WM_MOUSEHWHEEL
                 | WM_SYSKEYUP
                 | WM_KEYUP
-                | WM_GPUI_KEYDOWN
                 | WM_CHAR
                 | WM_IME_STARTCOMPOSITION
                 | WM_IME_COMPOSITION
@@ -1089,7 +1093,6 @@ impl WindowsWindowInner {
                 | WM_MOUSEHWHEEL
                 | WM_SYSKEYUP
                 | WM_KEYUP
-                | WM_GPUI_KEYDOWN
                 | WM_CHAR
                 | WM_IME_STARTCOMPOSITION
                 | WM_IME_COMPOSITION
@@ -1189,7 +1192,6 @@ impl WindowsWindowInner {
             WM_MOUSEHWHEEL => self.handle_mouse_horizontal_wheel_msg(handle, wparam, lparam),
             WM_SYSKEYUP => self.handle_syskeyup_msg(wparam, lparam),
             WM_KEYUP => self.handle_keyup_msg(wparam, lparam),
-            WM_GPUI_KEYDOWN => self.handle_keydown_msg(wparam, lparam),
             WM_CHAR => self.handle_char_msg(wparam),
             WM_IME_STARTCOMPOSITION => self.handle_ime_position(handle),
             WM_IME_COMPOSITION => self.handle_ime_composition(handle, lparam),
@@ -1197,20 +1199,11 @@ impl WindowsWindowInner {
             WM_SETTINGCHANGE => self.handle_system_settings_changed(handle, wparam, lparam),
             WM_INPUTLANGCHANGE => self.handle_input_language_changed(),
             WM_SHOWWINDOW => self.handle_window_visibility_changed(handle, wparam),
-            WM_GPUI_FORCE_UPDATE_WINDOW if self.accepts_generation_bound_message(wparam.0) => {
-                self.draw_window(handle, true, FrameRequestSource::LocalSchedule)
-            }
-            WM_GPUI_GPU_DEVICE_LOST if self.accepts_generation_bound_message(wparam.0) => {
-                self.handle_device_lost()
-            }
-            WM_GPUI_DISPLAY_TOPOLOGY_PUBLISHED
-                if self.accepts_generation_bound_message(wparam.0) =>
-            {
-                self.handle_display_topology_published(handle)
-            }
             WM_GPUI_FORCE_UPDATE_WINDOW
             | WM_GPUI_GPU_DEVICE_LOST
-            | WM_GPUI_DISPLAY_TOPOLOGY_PUBLISHED => Some(0),
+            | WM_GPUI_DISPLAY_TOPOLOGY_PUBLISHED => {
+                self.handle_gpui_events(handle, msg, wparam, lparam)
+            }
             DM_POINTERHITTEST => self.handle_dm_pointer_hit_test(wparam),
             WM_GETOBJECT => self.handle_wm_getobject(wparam, lparam),
             _ => None,
@@ -1443,7 +1436,24 @@ impl WindowsWindowInner {
             client_position.y.0 as f32,
             scale_factor,
         );
-        self.state.last_client_pointer_position.set(Some(position));
+        let pointer_position = WindowsClientPointerPosition {
+            position,
+            physical_frame: physical_frame.frame(),
+        };
+        // Suppress synthetic WM_MOUSEMOVE events that Windows fires when a window
+        // repaints under the cursor (e.g. command palette opening). These are not
+        // real mouse movements and should not move the editor cursor or clobber
+        // selections. A real move always has a different position OR a button held.
+        if !hover_started
+            && pressed_button.is_none()
+            && !self.state.pointer_capture.get().has_active_session()
+            && self.state.last_client_pointer_position.get() == Some(pointer_position)
+        {
+            return Some(1);
+        }
+        self.state
+            .last_client_pointer_position
+            .set(Some(pointer_position));
         let input = PlatformInput::MouseMove(MouseMoveEvent {
             position,
             pressed_button,
@@ -1473,7 +1483,7 @@ impl WindowsWindowInner {
         // Win32 leave messages carry no pointer coordinates. Reuse only the last callback-owned
         // local position so hover can retire without fabricating a captured routing point.
         let input_result = self.dispatch_input(PlatformInput::MouseExited(MouseExitEvent {
-            position,
+            position: position.position,
             pressed_button: self.state.pointer_capture.get().pressed_button(),
             modifiers: current_modifiers(),
         }));
@@ -1506,7 +1516,13 @@ impl WindowsWindowInner {
 
     // It's a known bug that you can't trigger `ctrl-shift-0`. See:
     // https://superuser.com/questions/1455762/ctrl-shift-number-key-combination-has-stopped-working-for-a-few-numbers
-    fn handle_keydown_msg(&self, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
+    pub(crate) fn handle_keydown_msg(&self, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
+        if self.state.interaction_is_quiesced()
+            || !self.provisional_accepts_interaction()
+            || !self.accepts_generation_bound_message(self.registration.generation())
+        {
+            return Some(0);
+        }
         let Some(input) = handle_key_event(
             wparam,
             lparam,
@@ -1575,7 +1591,12 @@ impl WindowsWindowInner {
             client_position.y.0 as f32,
             scale_factor,
         );
-        self.state.last_client_pointer_position.set(Some(position));
+        self.state
+            .last_client_pointer_position
+            .set(Some(WindowsClientPointerPosition {
+                position,
+                physical_frame: physical_frame.frame(),
+            }));
         let outcome = self.client_pointer_boundary().handle_button_message(
             message,
             position,
@@ -1638,7 +1659,12 @@ impl WindowsWindowInner {
         };
         unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
         let position = logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor);
-        self.state.last_client_pointer_position.set(Some(position));
+        self.state
+            .last_client_pointer_position
+            .set(Some(WindowsClientPointerPosition {
+                position,
+                physical_frame: None,
+            }));
         let input = PlatformInput::Scroll(ScrollEvent {
             position,
             delta: ScrollDelta::Lines(match modifiers.shift {
@@ -1682,7 +1708,12 @@ impl WindowsWindowInner {
         };
         unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
         let position = logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor);
-        self.state.last_client_pointer_position.set(Some(position));
+        self.state
+            .last_client_pointer_position
+            .set(Some(WindowsClientPointerPosition {
+                position,
+                physical_frame: None,
+            }));
         let event = PlatformInput::Scroll(ScrollEvent {
             position,
             delta: ScrollDelta::Lines(Point {
@@ -2152,7 +2183,12 @@ impl WindowsWindowInner {
         };
         unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
         let position = logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor);
-        self.state.last_client_pointer_position.set(Some(position));
+        self.state
+            .last_client_pointer_position
+            .set(Some(WindowsClientPointerPosition {
+                position,
+                physical_frame: None,
+            }));
         let input = PlatformInput::MouseMove(MouseMoveEvent {
             position,
             pressed_button: None,
@@ -2183,7 +2219,12 @@ impl WindowsWindowInner {
         let click_count = self.state.click_state.update(button, physical_point);
 
         let position = logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor);
-        self.state.last_client_pointer_position.set(Some(position));
+        self.state
+            .last_client_pointer_position
+            .set(Some(WindowsClientPointerPosition {
+                position,
+                physical_frame: None,
+            }));
         let outcome = self.non_client_pointer_boundary().handle_button_message(
             WindowsClientMouseButtonMessage::Down(button),
             wparam.0 as u32,
@@ -2213,7 +2254,12 @@ impl WindowsWindowInner {
         };
         unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
         let position = logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor);
-        self.state.last_client_pointer_position.set(Some(position));
+        self.state
+            .last_client_pointer_position
+            .set(Some(WindowsClientPointerPosition {
+                position,
+                physical_frame: None,
+            }));
         let outcome = self.non_client_pointer_boundary().handle_button_message(
             WindowsClientMouseButtonMessage::Up(button),
             wparam.0 as u32,
@@ -2352,6 +2398,29 @@ impl WindowsWindowInner {
             self.resume_provisional_activation_z_order_recovery_if_ready();
         }
         None
+    }
+
+    fn handle_gpui_events(
+        &self,
+        handle: HWND,
+        message: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> Option<isize> {
+        if wparam.0 != self.validation_number || lparam.0 == 0 {
+            return None;
+        }
+        if !self.accepts_generation_bound_message(lparam.0 as usize) {
+            return Some(0);
+        }
+        match message {
+            WM_GPUI_FORCE_UPDATE_WINDOW => {
+                self.draw_window(handle, true, FrameRequestSource::LocalSchedule)
+            }
+            WM_GPUI_GPU_DEVICE_LOST => self.handle_device_lost(),
+            WM_GPUI_DISPLAY_TOPOLOGY_PUBLISHED => self.handle_display_topology_published(handle),
+            _ => unreachable!(),
+        }
     }
 
     fn handle_device_lost(&self) -> Option<isize> {
@@ -2924,6 +2993,10 @@ pub(crate) fn system_setting_changes_display_topology(
 ) -> bool {
     matches!(action, SPI_SETWORKAREA | SPI_SETLOGICALDPIOVERRIDE)
 }
+
+#[cfg(test)]
+#[path = "events_input_tests.rs"]
+mod input_tests;
 
 #[cfg(test)]
 mod tests {

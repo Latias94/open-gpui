@@ -15,8 +15,13 @@ impl Render for WrappedNativeText {
     }
 }
 
-fn wait_for_native_text_submission(app: &mut Application, handle: WindowHandle<WrappedNativeText>) {
+fn wait_for_native_text_submission(
+    platform: &WindowsPlatform,
+    app: &mut Application,
+    handle: WindowHandle<WrappedNativeText>,
+) {
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "native wrapped text accepted submission",
         Duration::from_millis(5),
         || {
@@ -91,11 +96,14 @@ fn native_app_reconstruction_releases_wrapped_text_system_and_direct_write() {
             .lifecycle_test_probe
             .last_created_hwnd()
             .expect("the native wrapped text window must own an HWND");
-        pump_messages_until_idle("native wrapped text initial presentation");
+        pump_messages_until_idle(
+            &Rc::downgrade(&platform.inner),
+            "native wrapped text initial presentation",
+        );
         platform
             .begin_vsync_thread()
             .expect("native vsync provider should start");
-        wait_for_native_text_submission(&mut app, window);
+        wait_for_native_text_submission(&platform, &mut app, window);
         let (window_text, retained_line) = app.update_for_test(|cx| {
             window
                 .update(cx, |_, window, cx| {
@@ -139,10 +147,13 @@ fn native_app_reconstruction_releases_wrapped_text_system_and_direct_write() {
                 .update(cx, |_, window, cx| window.remove_window(cx))
                 .expect("the native wrapped text window should close");
         });
-        pump_messages_until("native wrapped text terminal cleanup", || {
-            !unsafe { IsWindow(Some(hwnd)).as_bool() } && !is_registered(&platform, hwnd)
-        });
+        pump_messages_until(
+            &Rc::downgrade(&platform.inner),
+            "native wrapped text terminal cleanup",
+            || !unsafe { IsWindow(Some(hwnd)).as_bool() } && !is_registered(&platform, hwnd),
+        );
         pump_messages_until_with_delay(
+            &Rc::downgrade(&platform.inner),
             "native wrapped text retirement settlement",
             Duration::from_millis(5),
             || platform.inner.native_retirement_is_settled(),
@@ -167,7 +178,7 @@ fn native_app_reconstruction_releases_wrapped_text_system_and_direct_write() {
             .lifecycle_test_probe
             .last_created_hwnd()
             .expect("the reconstructed native text window must own an HWND");
-        wait_for_native_text_submission(&mut app, reconstructed);
+        wait_for_native_text_submission(&platform, &mut app, reconstructed);
         let reconstructed_text = app.update_for_test(|cx| {
             reconstructed
                 .update(cx, |_, window, cx| {
@@ -198,6 +209,7 @@ fn native_app_reconstruction_releases_wrapped_text_system_and_direct_write() {
                 .expect("the reconstructed native wrapped text window should close");
         });
         pump_messages_until_with_delay(
+            &Rc::downgrade(&platform.inner),
             "reconstructed native wrapped text terminal cleanup",
             Duration::from_millis(5),
             || {
@@ -215,8 +227,10 @@ fn native_app_reconstruction_releases_wrapped_text_system_and_direct_write() {
         drop(text_system);
         drop(app);
         drop(platform_text_system);
+        let pump_platform = Rc::downgrade(&platform.inner);
         drop(platform);
         pump_messages_until_with_delay(
+            &pump_platform,
             "native wrapped text platform message window retirement",
             Duration::from_millis(5),
             || unsafe { !IsWindow(Some(platform_hwnd)).as_bool() },

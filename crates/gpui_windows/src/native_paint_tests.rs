@@ -242,7 +242,10 @@ fn two_hwnd_reentrant_paint_defers_ime_until_native_frame_command() {
         .last_created_hwnd()
         .expect("the enclosing paint window must have an HWND");
     assert_ne!(source_hwnd, target_hwnd);
-    pump_messages_until_idle("initial two-window paint messages");
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "initial two-window paint messages",
+    );
     assert!(
         input.queries.get() > 0,
         "the committed target must own a text handler"
@@ -267,11 +270,15 @@ fn two_hwnd_reentrant_paint_defers_ime_until_native_frame_command() {
             Some(LPARAM::default()),
         );
     }
-    pump_messages_until("deferred native IME maintenance", || {
-        fired.get()
-            && input.queries.get() > queries_before
-            && !target_native.state.ime_enabled.get()
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "deferred native IME maintenance",
+        || {
+            fired.get()
+                && input.queries.get() > queries_before
+                && !target_native.state.ime_enabled.get()
+        },
+    );
 
     let diagnostic_delta =
         app.update_for_test(|cx| cx.native_boundary_diagnostics(diagnostic_cursor));
@@ -329,9 +336,11 @@ fn two_hwnd_reentrant_paint_defers_ime_until_native_frame_command() {
             Some(LPARAM::default()),
         );
     }
-    pump_messages_until("restored native text-input admission", || {
-        target_native.state.ime_enabled.get()
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "restored native text-input admission",
+        || target_native.state.ime_enabled.get(),
+    );
     unsafe {
         SendMessageW(
             target_hwnd,
@@ -350,9 +359,14 @@ fn two_hwnd_reentrant_paint_defers_ime_until_native_frame_command() {
             .update(cx, |_, window, cx| window.remove_window(cx))
             .expect("the text-handler target should close");
     });
-    pump_messages_until("reentrant native paint teardown", || {
-        !unsafe { IsWindow(Some(source_hwnd)).as_bool() || IsWindow(Some(target_hwnd)).as_bool() }
-            && !is_registered(&platform, source_hwnd)
-            && !is_registered(&platform, target_hwnd)
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "reentrant native paint teardown",
+        || {
+            !unsafe {
+                IsWindow(Some(source_hwnd)).as_bool() || IsWindow(Some(target_hwnd)).as_bool()
+            } && !is_registered(&platform, source_hwnd)
+                && !is_registered(&platform, target_hwnd)
+        },
+    );
 }

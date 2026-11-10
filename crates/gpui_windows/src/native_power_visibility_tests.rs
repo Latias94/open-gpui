@@ -145,12 +145,14 @@ fn assert_native_visibility_source(
 }
 
 fn wait_for_native_visibility_submission(
+    platform: &WindowsPlatform,
     app: &mut Application,
     handle: WindowHandle<NativePowerVisibilityRoot>,
     after_generation: u64,
 ) -> u64 {
     let mut submitted_generation = None;
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "visibility consumer's nonempty native Submitted frame",
         Duration::from_millis(5),
         || {
@@ -268,9 +270,11 @@ fn native_system_sleep_wake_share_registration_and_preserve_busy_app_subscriptio
         );
         [pending[0].0, pending[1].0]
     });
-    pump_messages_until("busy-App native sleep/wake delivery", || {
-        events.borrow().len() == 4
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "busy-App native sleep/wake delivery",
+        || events.borrow().len() == 4,
+    );
     assert_eq!(
         events.borrow().as_slice(),
         &[
@@ -299,9 +303,11 @@ fn native_system_sleep_wake_share_registration_and_preserve_busy_app_subscriptio
     subscriptions.truncate(2);
     dispatch_native_power(platform_hwnd, PBT_APMSUSPEND);
     dispatch_native_power(platform_hwnd, PBT_APMRESUMEAUTOMATIC);
-    pump_messages_until("remaining native power subscriptions", || {
-        events.borrow().len() == 6
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "remaining native power subscriptions",
+        || events.borrow().len() == 6,
+    );
     assert_eq!(
         &events.borrow()[4..],
         &[
@@ -319,9 +325,11 @@ fn native_system_sleep_wake_share_registration_and_preserve_busy_app_subscriptio
         rebuilt.update_for_test(|cx| observe_native_power(cx, &rebuilt_events));
     dispatch_native_power(platform_hwnd, PBT_APMSUSPEND);
     dispatch_native_power(platform_hwnd, PBT_APMRESUMEAUTOMATIC);
-    pump_messages_until("reconstructed App native power subscriptions", || {
-        rebuilt_events.borrow().len() == 4
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "reconstructed App native power subscriptions",
+        || rebuilt_events.borrow().len() == 4,
+    );
     assert_eq!(events.borrow().len(), 6);
     assert_eq!(
         *platform.suspend_resume_notification.borrow(),
@@ -330,8 +338,10 @@ fn native_system_sleep_wake_share_registration_and_preserve_busy_app_subscriptio
     assert!(platform.raw_window_handles.read().is_empty());
     drop(rebuilt_subscriptions);
     drop(rebuilt);
+    let pump_platform = Rc::downgrade(&platform.inner);
     drop(platform);
     pump_messages_until_with_delay(
+        &pump_platform,
         "native power platform retirement",
         Duration::from_millis(5),
         || {
@@ -441,9 +451,16 @@ fn native_visibility_tracks_presentation_and_retires_exact_hwnd_callbacks() {
         .begin_vsync_thread()
         .expect("native vsync provider should start");
 
-    pump_messages_until("native initial visibility", || events.borrow().len() == 1);
-    let initial_submission = wait_for_native_visibility_submission(&mut app, handle, 0);
-    pump_messages_until_idle("initial native visibility reports");
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "native initial visibility",
+        || events.borrow().len() == 1,
+    );
+    let initial_submission = wait_for_native_visibility_submission(&platform, &mut app, handle, 0);
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "initial native visibility reports",
+    );
 
     let source = observation.cursor();
     unsafe {
@@ -465,8 +482,15 @@ fn native_visibility_tracks_presentation_and_retires_exact_hwnd_callbacks() {
     .expect("SetWindowPos must hide the real visibility consumer without changing its geometry");
     assert_native_visibility_source(&observation, source, registration, WM_WINDOWPOSCHANGED, 0);
     assert_eq!(native_window.visibility(), WindowVisibility::Hidden);
-    pump_messages_until("native hidden visibility", || events.borrow().len() == 2);
-    pump_messages_until_idle("hidden SetWindowPos visibility reports");
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "native hidden visibility",
+        || events.borrow().len() == 2,
+    );
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "hidden SetWindowPos visibility reports",
+    );
 
     let source = observation.cursor();
     unsafe {
@@ -488,7 +512,11 @@ fn native_visibility_tracks_presentation_and_retires_exact_hwnd_callbacks() {
     .expect("SetWindowPos must show the real visibility consumer without changing its geometry");
     assert_native_visibility_source(&observation, source, registration, WM_WINDOWPOSCHANGED, 0);
     assert_eq!(native_window.visibility(), WindowVisibility::Visible);
-    pump_messages_until("native shown visibility", || events.borrow().len() == 3);
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "native shown visibility",
+        || events.borrow().len() == 3,
+    );
 
     let source = observation.cursor();
     let _ = unsafe { ShowWindow(registration.as_raw(), SW_SHOWMINNOACTIVE) };
@@ -502,9 +530,11 @@ fn native_visibility_tracks_presentation_and_retires_exact_hwnd_callbacks() {
     assert!(unsafe { IsWindowVisible(registration.as_raw()).as_bool() });
     assert!(unsafe { IsIconic(registration.as_raw()).as_bool() });
     assert_eq!(native_window.visibility(), WindowVisibility::Hidden);
-    pump_messages_until("native minimized presentation visibility", || {
-        events.borrow().len() == 4
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "native minimized presentation visibility",
+        || events.borrow().len() == 4,
+    );
     app.update_for_test(|cx| {
         handle.update(cx, |_, window, _| {
             assert!(window.presentation_facts().native_visible);
@@ -523,9 +553,11 @@ fn native_visibility_tracks_presentation_and_retires_exact_hwnd_callbacks() {
         WM_SIZE,
         SIZE_RESTORED as usize,
     );
-    pump_messages_until("native restored presentation visibility", || {
-        events.borrow().len() == 5
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "native restored presentation visibility",
+        || events.borrow().len() == 5,
+    );
     let restored_revision = app
         .update_for_test(|cx| {
             handle.update(cx, |_, window, _| {
@@ -537,7 +569,7 @@ fn native_visibility_tracks_presentation_and_retires_exact_hwnd_callbacks() {
         })
         .expect("the restored window must accept a fresh render");
     assert!(restored_revision >= initial_submission);
-    wait_for_native_visibility_submission(&mut app, handle, restored_revision);
+    wait_for_native_visibility_submission(&platform, &mut app, handle, restored_revision);
     assert_eq!(
         events.borrow().as_slice(),
         &[
@@ -583,7 +615,10 @@ fn native_visibility_tracks_presentation_and_retires_exact_hwnd_callbacks() {
         WM_SIZE,
         SIZE_RESTORED as usize,
     );
-    pump_messages_until_idle("unchanged native visibility hints");
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "unchanged native visibility hints",
+    );
     assert_eq!(events.borrow().len(), 5);
     let unchanged = app.update_for_test(|cx| cx.native_boundary_diagnostics(unchanged_cursor));
     assert!(power_visibility_diagnostics(&unchanged).is_empty());
@@ -636,6 +671,7 @@ fn native_visibility_tracks_presentation_and_retires_exact_hwnd_callbacks() {
         [pending[0].0, pending[1].0, pending[2].0]
     });
     pump_messages_until(
+        &Rc::downgrade(&platform.inner),
         "ordered busy-App native power and visibility delivery",
         || events.borrow().len() == 10,
     );
@@ -662,9 +698,11 @@ fn native_visibility_tracks_presentation_and_retires_exact_hwnd_callbacks() {
     );
 
     let _ = unsafe { ShowWindow(registration.as_raw(), SW_SHOWNOACTIVATE) };
-    pump_messages_until("visibility before native teardown", || {
-        events.borrow().len() == 11
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "visibility before native teardown",
+        || events.borrow().len() == 11,
+    );
     let stale_cursor = app.update_for_test(|cx| {
         cx.native_boundary_diagnostics(NativeBoundaryDiagnosticCursor::default())
             .cursor
@@ -689,6 +727,7 @@ fn native_visibility_tracks_presentation_and_retires_exact_hwnd_callbacks() {
         sequence
     });
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "exact visibility HWND retirement and stale ingress",
         Duration::from_millis(5),
         || {
@@ -781,14 +820,16 @@ fn native_visibility_tracks_presentation_and_retires_exact_hwnd_callbacks() {
         WM_WINDOWPOSCHANGED,
         0,
     );
-    pump_messages_until("reconstructed native visibility", || {
-        events.borrow().len() == 12
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "reconstructed native visibility",
+        || events.borrow().len() == 12,
+    );
     assert_eq!(
         events.borrow()[11],
         PowerVisibilityEvent::Visibility(rebuilt.window_id(), WindowVisibility::Visible)
     );
-    wait_for_native_visibility_submission(&mut app, rebuilt, 0);
+    wait_for_native_visibility_submission(&platform, &mut app, rebuilt, 0);
     app.update_for_test(|cx| {
         let _ = unsafe { ShowWindow(rebuilt_registration.as_raw(), SW_HIDE) };
         rebuilt
@@ -798,6 +839,7 @@ fn native_visibility_tracks_presentation_and_retires_exact_hwnd_callbacks() {
     drop(rebuilt_native);
     drop(native_window);
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "pending visibility report must not retain retired owners",
         Duration::from_millis(5),
         || {
@@ -831,8 +873,10 @@ fn native_visibility_tracks_presentation_and_retires_exact_hwnd_callbacks() {
     drop(visibility_subscription);
     drop(power_subscriptions);
     drop(app);
+    let pump_platform = Rc::downgrade(&platform.inner);
     drop(platform);
     pump_messages_until_with_delay(
+        &pump_platform,
         "visibility backend and text authority release",
         Duration::from_millis(5),
         || {

@@ -14,7 +14,7 @@ use std::{
 
 use ::open_gpui_util::{ResultExt, paths::SanitizedPath};
 use anyhow::{Context as _, Result, anyhow};
-use futures::channel::oneshot::{self, Receiver};
+use futures::channel::oneshot::Receiver;
 use itertools::Itertools;
 use parking_lot::RwLock;
 use smallvec::SmallVec;
@@ -1123,7 +1123,7 @@ impl WindowsPlatform {
                 if message.message == WM_QUIT {
                     continue;
                 }
-                if translate_accelerator(&message).is_none() {
+                if !self.inner.translate_accelerator(&message) {
                     _ = unsafe { TranslateMessage(&message) };
                     unsafe { DispatchMessageW(&message) };
                 }
@@ -1147,14 +1147,7 @@ impl WindowsPlatform {
     }
 
     pub(crate) fn window_from_hwnd(&self, hwnd: HWND) -> Option<Rc<WindowsWindowInner>> {
-        let registered = self
-            .raw_window_handles
-            .read()
-            .iter()
-            .find(|entry| entry.as_raw() == hwnd)
-            .copied()?;
-        let window = window_from_hwnd(hwnd)?;
-        window.registration.matches(registered).then_some(window)
+        self.inner.window_from_hwnd(hwnd)
     }
 
     fn native_owner_for(&self, owner: AnyWindowHandle) -> Result<RegisteredWindow> {
@@ -1299,15 +1292,15 @@ impl WindowsPlatform {
         })
     }
 
-    fn find_current_foreground_window(&self) -> Option<HWND> {
-        let foreground_window_hwnd = unsafe { GetForegroundWindow() };
-        if foreground_window_hwnd.is_invalid() {
+    fn find_current_active_window(&self) -> Option<HWND> {
+        let active_window_hwnd = unsafe { GetActiveWindow() };
+        if active_window_hwnd.is_invalid() {
             return None;
         }
         self.raw_window_handles
             .read()
             .iter()
-            .find(|hwnd| hwnd.as_raw() == foreground_window_hwnd)
+            .find(|hwnd| hwnd.as_raw() == active_window_hwnd)
             .map(|hwnd| hwnd.as_raw())
     }
 
@@ -1516,22 +1509,6 @@ impl WindowsPlatform {
         *self.vsync_owner_live.borrow_mut() = Some(vsync_owner_live);
         Ok(())
     }
-}
-
-fn translate_accelerator(msg: &MSG) -> Option<()> {
-    if msg.message != WM_KEYDOWN && msg.message != WM_SYSKEYDOWN {
-        return None;
-    }
-
-    let result = unsafe {
-        SendMessageW(
-            msg.hwnd,
-            WM_GPUI_KEYDOWN,
-            Some(msg.wParam),
-            Some(msg.lParam),
-        )
-    };
-    (result.0 == 0).then_some(())
 }
 
 fn windows_window_capabilities() -> PlatformWindowCapabilities {
@@ -2545,7 +2522,7 @@ impl Platform for WindowsPlatform {
                 }
                 continue;
             }
-            if translate_accelerator(&msg).is_none() {
+            if !self.inner.translate_accelerator(&msg) {
                 _ = unsafe { TranslateMessage(&msg) };
                 unsafe { DispatchMessageW(&msg) };
             }
@@ -2665,9 +2642,7 @@ impl Platform for WindowsPlatform {
     }
 
     #[cfg(feature = "screen-capture")]
-    fn screen_capture_sources(
-        &self,
-    ) -> oneshot::Receiver<Result<Vec<Rc<dyn ScreenCaptureSource>>>> {
+    fn screen_capture_sources(&self) -> Receiver<Result<Vec<Rc<dyn ScreenCaptureSource>>>> {
         open_gpui::scap_screen_capture::scap_screen_sources(&self.foreground_executor)
     }
 
@@ -2813,15 +2788,13 @@ impl Platform for WindowsPlatform {
         &self,
         options: PathPromptOptions,
     ) -> Receiver<Result<Option<Vec<PathBuf>>>> {
-        let (tx, rx) = oneshot::channel();
-        let window = self.find_current_foreground_window();
-        self.foreground_executor()
-            .spawn(async move {
-                let _ = tx.send(file_open_dialog(options, window));
-            })
-            .detach();
-
-        rx
+        let owner = self
+            .find_current_active_window()
+            .and_then(|hwnd| self.window_from_hwnd(hwnd))
+            .map(|window| window.dialog_owner.clone());
+        crate::dialog::show_dialog(owner, &self.foreground_executor, move |window| {
+            file_open_dialog(options, Some(window))
+        })
     }
 
     fn prompt_for_new_path(
@@ -2831,15 +2804,13 @@ impl Platform for WindowsPlatform {
     ) -> Receiver<Result<Option<PathBuf>>> {
         let directory = directory.to_owned();
         let suggested_name = suggested_name.map(|s| s.to_owned());
-        let (tx, rx) = oneshot::channel();
-        let window = self.find_current_foreground_window();
-        self.foreground_executor()
-            .spawn(async move {
-                let _ = tx.send(file_save_dialog(directory, suggested_name, window));
-            })
-            .detach();
-
-        rx
+        let owner = self
+            .find_current_active_window()
+            .and_then(|hwnd| self.window_from_hwnd(hwnd))
+            .map(|window| window.dialog_owner.clone());
+        crate::dialog::show_dialog(owner, &self.foreground_executor, move |window| {
+            file_save_dialog(directory, suggested_name, Some(window))
+        })
     }
 
     fn can_select_mixed_files_and_dirs(&self) -> bool {
@@ -3169,6 +3140,43 @@ impl Platform for WindowsPlatform {
 }
 
 impl WindowsPlatformInner {
+    fn window_from_hwnd(&self, hwnd: HWND) -> Option<Rc<WindowsWindowInner>> {
+        let registered = self
+            .raw_window_handles
+            .read()
+            .iter()
+            .find(|entry| entry.as_raw() == hwnd)
+            .copied()?;
+        let window = window_from_hwnd(hwnd)?;
+        window.registration.matches(registered).then_some(window)
+    }
+
+    fn translate_accelerator(&self, message: &MSG) -> bool {
+        if !matches!(message.message, WM_KEYDOWN | WM_SYSKEYDOWN) {
+            return false;
+        }
+        let Some(window) = self.window_from_hwnd(message.hwnd) else {
+            return false;
+        };
+        match catch_unwind(AssertUnwindSafe(|| {
+            window.handle_keydown_msg(message.wParam, message.lParam)
+        })) {
+            Ok(result) => result == Some(0),
+            Err(payload) => {
+                log::error!("caught a panic while translating a native keyboard accelerator");
+                if let Err(recovery_payload) = catch_unwind(AssertUnwindSafe(|| {
+                    window
+                        .settle_pointer_input_after_callback_panic(message.message, message.wParam);
+                })) {
+                    log::error!("native keyboard accelerator panic recovery also panicked");
+                    std::mem::forget(recovery_payload);
+                }
+                std::mem::forget(payload);
+                true
+            }
+        }
+    }
+
     fn new(context: &mut PlatformWindowCreateContext, platform_handle: HWND) -> Result<Rc<Self>> {
         let state = WindowsPlatformState::new();
         let dispatcher = context
@@ -3370,8 +3378,8 @@ impl WindowsPlatformInner {
                 PostMessageW(
                     Some(window.as_raw()),
                     WM_GPUI_DISPLAY_TOPOLOGY_PUBLISHED,
-                    WPARAM(window.generation()),
-                    LPARAM(0),
+                    WPARAM(self.validation_number),
+                    LPARAM(window.generation() as isize),
                 )
             } {
                 log::error!(
@@ -3924,7 +3932,7 @@ impl WindowsPlatformInner {
                     // if we don't we might not for example process window quit events
                     let mut msg = MSG::default();
                     let process_message = |msg: &_| {
-                        if translate_accelerator(msg).is_none() {
+                        if !self.translate_accelerator(msg) {
                             _ = unsafe { TranslateMessage(msg) };
                             unsafe { DispatchMessageW(msg) };
                         }
@@ -4283,9 +4291,11 @@ fn file_open_dialog(
             folder_dialog.SetOkButtonLabel(&HSTRING::from(prompt))?;
         }
 
-        if folder_dialog.Show(window).is_err() {
-            // User cancelled
-            return Ok(None);
+        if let Err(error) = folder_dialog.Show(window) {
+            if error.code() == HRESULT::from_win32(ERROR_CANCELLED.0) {
+                return Ok(None);
+            }
+            return Err(error.into());
         }
     }
 
@@ -4343,9 +4353,11 @@ fn file_save_dialog(
             pszName: windows::core::w!("All files"),
             pszSpec: windows::core::w!("*.*"),
         }])?;
-        if dialog.Show(window).is_err() {
-            // User cancelled
-            return Ok(None);
+        if let Err(error) = dialog.Show(window) {
+            if error.code() == HRESULT::from_win32(ERROR_CANCELLED.0) {
+                return Ok(None);
+            }
+            return Err(error.into());
         }
     }
     let shell_item = unsafe { dialog.GetResult()? };
@@ -4485,8 +4497,8 @@ fn handle_gpu_device_lost(
                     PostMessageW(
                         Some(window.as_raw()),
                         WM_GPUI_GPU_DEVICE_LOST,
-                        WPARAM(window.generation()),
-                        LPARAM::default(),
+                        WPARAM(validation_number),
+                        LPARAM(window.generation() as isize),
                     )
                     .log_err();
                 });
@@ -4501,8 +4513,8 @@ fn handle_gpu_device_lost(
                 PostMessageW(
                     Some(window.as_raw()),
                     WM_GPUI_FORCE_UPDATE_WINDOW,
-                    WPARAM(window.generation()),
-                    LPARAM::default(),
+                    WPARAM(validation_number),
+                    LPARAM(window.generation() as isize),
                 )
                 .log_err();
             });
@@ -6504,6 +6516,7 @@ mod tests {
             .window_from_hwnd(native_window)
             .expect("native test window should retain its registered authority");
         super::native_test_support::pump_messages_until_idle(
+            &Rc::downgrade(&platform.inner),
             "event-driven geometry initial display and foreground delivery",
         );
         let initial = committed_window_facts(&mut app, window);

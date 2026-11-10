@@ -60,6 +60,14 @@ compile check does not select WGPU as the Windows platform backend. Passing publ
 between application and backend requires the same source identity; a registry version with
 the same package version is a distinct Rust type.
 
+On Windows, `gpu-allocator` 0.28 accepts Windows bindings from 0.53 through 0.62, while the
+fixed WGPU source requires 0.62. A refreshed lock can retain an older binding used elsewhere
+and fail at the DX12 allocator boundary. This consumer lock selects its already present
+Windows 0.62.2 package for that allocator, matching the framework and official target locks.
+Other dependencies retain their own binding versions. Review this edge when refreshing the
+lock and run the locked all-features gate below; no allocator source patch or compatibility
+conversion is introduced.
+
 The source composes a GPUI `Render` view, a semantic button activation handler, custom canvas
 painting, and a `DockSurface` panel factory. Taffy's size type supplies the preview dimensions;
 WGPU's texture format type supplies the preview label. It adds no document or history model.

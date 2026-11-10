@@ -150,6 +150,7 @@ impl Render for NativeFontInstallationRoot {
 }
 
 fn wait_for_native_font_installation_submission(
+    platform: &WindowsPlatform,
     app: &mut Application,
     window: WindowHandle<NativeFontInstallationRoot>,
     paints: &RefCell<Vec<NativeFontInstallationPaint>>,
@@ -159,6 +160,7 @@ fn wait_for_native_font_installation_submission(
 ) -> (u64, NativeFontInstallationPaint) {
     let mut submitted = None;
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "native font installation accepted nonempty submission",
         Duration::from_millis(5),
         || {
@@ -439,6 +441,7 @@ fn run_native_font_installation(scenario: NativeFontInstallationScenario) {
     let initial_paint_cursor = observation.cursor();
     assert!(unsafe { RedrawWindow(Some(hwnd), None, None, RDW_INVALIDATE).as_bool() });
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "native font installation initialization WM_PAINT",
         Duration::from_millis(5),
         || {
@@ -457,6 +460,7 @@ fn run_native_font_installation(scenario: NativeFontInstallationScenario) {
         },
     );
     let (initial_generation, initial_paint) = wait_for_native_font_installation_submission(
+        &platform,
         &mut app,
         window,
         &paints,
@@ -554,6 +558,7 @@ fn run_native_font_installation(scenario: NativeFontInstallationScenario) {
         });
     });
     let (changed_generation, changed_paint) = wait_for_native_font_installation_submission(
+        &platform,
         &mut app,
         window,
         &paints,
@@ -592,6 +597,7 @@ fn run_native_font_installation(scenario: NativeFontInstallationScenario) {
     app.update_for_test(|cx| window.update(cx, |_, window, cx| window.remove_window(cx)))
         .expect("the exact native font installation window must close");
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "exact native font installation registration retirement",
         Duration::from_millis(5),
         || {
@@ -643,8 +649,10 @@ fn run_native_font_installation(scenario: NativeFontInstallationScenario) {
     drop(text_system);
     drop(platform_text_system);
     drop(app);
+    let pump_platform = Rc::downgrade(&platform.inner);
     drop(platform);
     pump_messages_until_with_delay(
+        &pump_platform,
         "native font installation platform message window retirement",
         Duration::from_millis(5),
         || unsafe { !IsWindow(Some(platform_hwnd)).as_bool() },

@@ -259,32 +259,39 @@ impl NativeSpringWindow {
         .expect("the Spring source and accepted revision must remain observable")
     }
 
-    fn reset_paused(&self, app: &mut Application) {
+    fn reset_paused(&self, platform: &WindowsPlatform, app: &mut Application) {
         let (source, previous) = self.control(app, |source| {
             source.epoch += 1;
             source.target = SPRING_TARGET;
             source.playback = SpringPlayback::Paused;
             source.reduced_motion = false;
         });
-        let reset = self.submitted(app, source, previous, |_| true);
+        let reset = self.submitted(platform, app, source, previous, |_| true);
         assert_eq!(reset.value, 0.);
     }
 
-    fn start_outward(&self, app: &mut Application) -> Option<NativeSpringSubmission> {
+    fn start_outward(
+        &self,
+        platform: &WindowsPlatform,
+        app: &mut Application,
+    ) -> Option<NativeSpringSubmission> {
         let (source, previous) = self.control(app, |source| {
             source.playback = SpringPlayback::Running;
         });
-        let outward = self.submitted(app, source, previous, |value| value >= SPRING_TARGET * 0.06);
+        let outward = self.submitted(platform, app, source, previous, |value| {
+            value >= SPRING_TARGET * 0.06
+        });
         (outward.value < SPRING_TARGET / 2.).then_some(outward)
     }
 
     fn carried_then_reversed(
         &self,
+        platform: &WindowsPlatform,
         app: &mut Application,
         source: NativeSpringSource,
         start: NativeSpringSubmission,
     ) -> Option<NativeSpringSubmission> {
-        let carried = self.submitted(app, source, start.generation, |value| {
+        let carried = self.submitted(platform, app, source, start.generation, |value| {
             value > start.value + 0.5 || value < start.value - 0.5 || value == 0.
         });
         if carried.value <= start.value + 0.5 {
@@ -292,14 +299,14 @@ impl NativeSpringWindow {
         }
         assert!(carried.value > start.value);
         let mut peak = carried.value;
-        let turning = self.submitted(app, source, carried.generation, |value| {
+        let turning = self.submitted(platform, app, source, carried.generation, |value| {
             peak = peak.max(value);
             value < peak - 1. || value == 0.
         });
         if turning.value <= 0. {
             return None;
         }
-        let reversed = self.submitted(app, source, turning.generation, |value| {
+        let reversed = self.submitted(platform, app, source, turning.generation, |value| {
             value < start.value - 0.5 || value == 0.
         });
         assert!(reversed.value < carried.value);
@@ -309,6 +316,7 @@ impl NativeSpringWindow {
     #[track_caller]
     fn submitted(
         &self,
+        platform: &WindowsPlatform,
         app: &mut Application,
         source: NativeSpringSource,
         previous: u64,
@@ -317,97 +325,104 @@ impl NativeSpringWindow {
         let mut result = None;
         let mut last_state = None;
         let description = format!("native Spring Submitted pixels after {previous}: {source:?}");
-        pump_messages_until_with_delay(&description, Duration::from_millis(8), || {
-            result = app
-                .update_for_test(|cx| {
-                    self.handle.update(cx, |root, window, cx| {
-                        let facts = window.presentation_facts();
-                        let paint = self.paint.get();
-                        last_state = Some((facts, window.rendered_frame_revision(), paint));
-                        let paint = paint?;
-                        let attempt = facts.latest_present_attempt?;
-                        if !(attempt.generation > previous
-                            && attempt.outcome == PlatformWindowPresentOutcome::Submitted
-                            && attempt.contained_valid_primitives
-                            && facts.initial_presentation
-                                == WindowInitialPresentationStatus::Completed
-                            && facts.native_visible
-                            && facts.frame_accepted_generation == Some(attempt.generation)
-                            && facts.present_submitted_generation == Some(attempt.generation)
-                            && facts.non_empty_presented_generation == Some(attempt.generation)
-                            && window.rendered_frame_revision() == attempt.generation
-                            && window.submitted_frame_diagnostics_for_test()?.generation()
-                                == attempt.generation
-                            && paint.window_id == self.handle.window_id()
-                            && paint.source == source
-                            && paint.previous_revision.checked_add(1) == Some(attempt.generation)
-                            && paint.bounds.size == size(px(48.), px(64.))
-                            && wanted(paint.value))
-                        {
-                            return None;
-                        }
-                        assert_eq!(root.source, source);
-                        assert_eq!(cx.reduce_motion(), source.reduced_motion);
-                        assert!(root.focus.is_focused(window));
-                        assert_eq!(self.native.registration, self.registration);
-                        let capture = window.capture_frame();
-                        assert!(capture.unsupported_reason.is_none(), "{capture:?}");
-                        assert_eq!(capture.metadata.window_id, self.handle.window_id());
-                        assert_eq!(
-                            capture.metadata.framework_frame_generation,
-                            attempt.generation
-                        );
-                        assert_eq!(capture.metadata.scale_factor, window.scale_factor());
-                        assert!(capture.metadata.scale_factor.is_finite());
-                        assert!(capture.metadata.scale_factor > 0.);
-                        assert!(
-                            (f32::from(paint.bounds.origin.x) - (16. + paint.value)).abs()
-                                <= 1. / capture.metadata.scale_factor
-                        );
-                        assert_eq!(paint.bounds.origin.y, px(16.));
-                        assert_eq!(
-                            capture.metadata.logical_viewport_size,
-                            window.viewport_size()
-                        );
-                        assert_eq!(
-                            capture.metadata.physical_viewport_size,
-                            window
-                                .viewport_size()
-                                .to_device_pixels(window.scale_factor())
-                        );
-                        let image = capture.image.as_ref().expect("native Spring RGBA readback");
-                        assert_eq!(
-                            image.dimensions(),
-                            (
-                                capture.metadata.physical_viewport_size.width.0 as u32,
-                                capture.metadata.physical_viewport_size.height.0 as u32,
-                            )
-                        );
-                        assert_spring_pixel(
-                            &capture,
-                            paint.bounds.center(),
-                            spring_value_color(paint.value),
-                        );
-                        assert_spring_pixel(
-                            &capture,
-                            point(px(100.), px(128.)),
-                            spring_source_color(source),
-                        );
-                        assert_spring_pixel(&capture, point(px(280.), px(96.)), 0);
-                        assert_eq!(window.rendered_frame_revision(), attempt.generation);
-                        assert_eq!(
-                            window.presentation_facts().latest_present_attempt,
-                            facts.latest_present_attempt
-                        );
-                        Some(NativeSpringSubmission {
-                            generation: attempt.generation,
-                            value: paint.value,
+        pump_messages_until_with_delay(
+            &Rc::downgrade(&platform.inner),
+            &description,
+            Duration::from_millis(8),
+            || {
+                result = app
+                    .update_for_test(|cx| {
+                        self.handle.update(cx, |root, window, cx| {
+                            let facts = window.presentation_facts();
+                            let paint = self.paint.get();
+                            last_state = Some((facts, window.rendered_frame_revision(), paint));
+                            let paint = paint?;
+                            let attempt = facts.latest_present_attempt?;
+                            if !(attempt.generation > previous
+                                && attempt.outcome == PlatformWindowPresentOutcome::Submitted
+                                && attempt.contained_valid_primitives
+                                && facts.initial_presentation
+                                    == WindowInitialPresentationStatus::Completed
+                                && facts.native_visible
+                                && facts.frame_accepted_generation == Some(attempt.generation)
+                                && facts.present_submitted_generation == Some(attempt.generation)
+                                && facts.non_empty_presented_generation == Some(attempt.generation)
+                                && window.rendered_frame_revision() == attempt.generation
+                                && window.submitted_frame_diagnostics_for_test()?.generation()
+                                    == attempt.generation
+                                && paint.window_id == self.handle.window_id()
+                                && paint.source == source
+                                && paint.previous_revision.checked_add(1)
+                                    == Some(attempt.generation)
+                                && paint.bounds.size == size(px(48.), px(64.))
+                                && wanted(paint.value))
+                            {
+                                return None;
+                            }
+                            assert_eq!(root.source, source);
+                            assert_eq!(cx.reduce_motion(), source.reduced_motion);
+                            assert!(root.focus.is_focused(window));
+                            assert_eq!(self.native.registration, self.registration);
+                            let capture = window.capture_frame();
+                            assert!(capture.unsupported_reason.is_none(), "{capture:?}");
+                            assert_eq!(capture.metadata.window_id, self.handle.window_id());
+                            assert_eq!(
+                                capture.metadata.framework_frame_generation,
+                                attempt.generation
+                            );
+                            assert_eq!(capture.metadata.scale_factor, window.scale_factor());
+                            assert!(capture.metadata.scale_factor.is_finite());
+                            assert!(capture.metadata.scale_factor > 0.);
+                            assert!(
+                                (f32::from(paint.bounds.origin.x) - (16. + paint.value)).abs()
+                                    <= 1. / capture.metadata.scale_factor
+                            );
+                            assert_eq!(paint.bounds.origin.y, px(16.));
+                            assert_eq!(
+                                capture.metadata.logical_viewport_size,
+                                window.viewport_size()
+                            );
+                            assert_eq!(
+                                capture.metadata.physical_viewport_size,
+                                window
+                                    .viewport_size()
+                                    .to_device_pixels(window.scale_factor())
+                            );
+                            let image =
+                                capture.image.as_ref().expect("native Spring RGBA readback");
+                            assert_eq!(
+                                image.dimensions(),
+                                (
+                                    capture.metadata.physical_viewport_size.width.0 as u32,
+                                    capture.metadata.physical_viewport_size.height.0 as u32,
+                                )
+                            );
+                            assert_spring_pixel(
+                                &capture,
+                                paint.bounds.center(),
+                                spring_value_color(paint.value),
+                            );
+                            assert_spring_pixel(
+                                &capture,
+                                point(px(100.), px(128.)),
+                                spring_source_color(source),
+                            );
+                            assert_spring_pixel(&capture, point(px(280.), px(96.)), 0);
+                            assert_eq!(window.rendered_frame_revision(), attempt.generation);
+                            assert_eq!(
+                                window.presentation_facts().latest_present_attempt,
+                                facts.latest_present_attempt
+                            );
+                            Some(NativeSpringSubmission {
+                                generation: attempt.generation,
+                                value: paint.value,
+                            })
                         })
                     })
-                })
-                .expect("the exact Spring window must remain live until capture");
-            result.is_some()
-        });
+                    .expect("the exact Spring window must remain live until capture");
+                result.is_some()
+            },
+        );
         result.unwrap_or_else(|| {
             panic!("Spring source did not reach Submitted pixels: {last_state:?}")
         })
@@ -437,7 +452,7 @@ fn assert_spring_pixel(capture: &WindowFrameCapture, position: Point<Pixels>, co
     );
 }
 
-fn spring_executor_barrier(app: &mut Application) {
+fn spring_executor_barrier(platform: &WindowsPlatform, app: &mut Application) {
     let completed = Rc::new(Cell::new(false));
     app.update_for_test(|cx| {
         let background = cx.background_executor().clone();
@@ -450,6 +465,7 @@ fn spring_executor_barrier(app: &mut Application) {
             .detach();
     });
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "production executor elapsed Spring-control barrier",
         Duration::from_millis(5),
         || completed.get(),
@@ -471,12 +487,16 @@ fn spring_pause_key(consumer: &NativeSpringWindow) {
     );
 }
 
-fn spring_retarget_trajectory(consumer: &NativeSpringWindow, app: &mut Application) {
+fn spring_retarget_trajectory(
+    platform: &WindowsPlatform,
+    consumer: &NativeSpringWindow,
+    app: &mut Application,
+) {
     for attempt in 0..MAX_TRAJECTORY_ATTEMPTS {
         if attempt > 0 {
-            consumer.reset_paused(app);
+            consumer.reset_paused(platform, app);
         }
-        let Some(outward) = consumer.start_outward(app) else {
+        let Some(outward) = consumer.start_outward(platform, app) else {
             continue;
         };
         let (mut source, previous) = consumer.source(app);
@@ -502,12 +522,12 @@ fn spring_retarget_trajectory(consumer: &NativeSpringWindow, app: &mut Applicati
                 click_count: 1,
                 ..Default::default()
             }));
-        let retargeted = consumer.submitted(app, source, previous, |_| true);
+        let retargeted = consumer.submitted(platform, app, source, previous, |_| true);
         if retargeted.value <= outward.value || retargeted.value >= SPRING_TARGET / 2. {
             continue;
         }
         if consumer
-            .carried_then_reversed(app, source, retargeted)
+            .carried_then_reversed(platform, app, source, retargeted)
             .is_some()
         {
             return;
@@ -520,12 +540,13 @@ fn spring_retarget_trajectory(consumer: &NativeSpringWindow, app: &mut Applicati
 }
 
 fn spring_pause_and_stop_trajectory(
+    platform: &WindowsPlatform,
     consumer: &NativeSpringWindow,
     app: &mut Application,
 ) -> NativeSpringSubmission {
     for _ in 0..MAX_TRAJECTORY_ATTEMPTS {
-        consumer.reset_paused(app);
-        let Some(outward) = consumer.start_outward(app) else {
+        consumer.reset_paused(platform, app);
+        let Some(outward) = consumer.start_outward(platform, app) else {
             continue;
         };
         let (mut source, previous) = consumer.source(app);
@@ -533,18 +554,18 @@ fn spring_pause_and_stop_trajectory(
         source.key_inputs += 1;
         source.playback = SpringPlayback::Paused;
         spring_pause_key(consumer);
-        let paused = consumer.submitted(app, source, previous, |_| true);
+        let paused = consumer.submitted(platform, app, source, previous, |_| true);
         if paused.value <= outward.value || paused.value >= SPRING_TARGET / 2. {
             continue;
         }
         let (source, previous) = consumer.control(app, |source| {
             source.target = 0.;
         });
-        let opposite_target = consumer.submitted(app, source, previous, |_| true);
+        let opposite_target = consumer.submitted(platform, app, source, previous, |_| true);
         assert_eq!(opposite_target.value, paused.value);
-        spring_executor_barrier(app);
+        spring_executor_barrier(platform, app);
         let (source, previous) = consumer.control(app, |_| {});
-        let held = consumer.submitted(app, source, previous, |_| true);
+        let held = consumer.submitted(platform, app, source, previous, |_| true);
         assert_eq!(held.value, paused.value);
 
         let (mut source, previous) = consumer.source(app);
@@ -552,35 +573,35 @@ fn spring_pause_and_stop_trajectory(
         source.key_inputs += 1;
         source.playback = SpringPlayback::Running;
         spring_pause_key(consumer);
-        let resumed = consumer.submitted(app, source, previous, |_| true);
+        let resumed = consumer.submitted(platform, app, source, previous, |_| true);
         if resumed.value < held.value || resumed.value >= SPRING_TARGET / 2. {
             continue;
         }
-        let Some(reversed) = consumer.carried_then_reversed(app, source, resumed) else {
+        let Some(reversed) = consumer.carried_then_reversed(platform, app, source, resumed) else {
             continue;
         };
         let (source, previous) = consumer.control(app, |source| {
             source.playback = SpringPlayback::Stopped;
         });
-        let stopped = consumer.submitted(app, source, previous, |_| true);
+        let stopped = consumer.submitted(platform, app, source, previous, |_| true);
         assert!(stopped.value <= reversed.value);
         if stopped.value < 4. {
             continue;
         }
-        spring_executor_barrier(app);
+        spring_executor_barrier(platform, app);
         let (source, previous) = consumer.control(app, |source| {
             source.target = stopped.value;
         });
-        let held = consumer.submitted(app, source, previous, |_| true);
+        let held = consumer.submitted(platform, app, source, previous, |_| true);
         assert_eq!(held.value, stopped.value);
         let (source, previous) = consumer.control(app, |source| {
             source.playback = SpringPlayback::Running;
         });
-        let resumed = consumer.submitted(app, source, previous, |_| true);
+        let resumed = consumer.submitted(platform, app, source, previous, |_| true);
         assert_eq!(resumed.value, stopped.value);
-        spring_executor_barrier(app);
+        spring_executor_barrier(platform, app);
         let (source, previous) = consumer.control(app, |_| {});
-        let fixed = consumer.submitted(app, source, previous, |_| true);
+        let fixed = consumer.submitted(platform, app, source, previous, |_| true);
         assert_eq!(fixed.value, stopped.value);
         return fixed;
     }
@@ -591,6 +612,7 @@ fn spring_pause_and_stop_trajectory(
 }
 
 fn spring_restore_active_trajectory(
+    platform: &WindowsPlatform,
     consumer: &NativeSpringWindow,
     app: &mut Application,
 ) -> NativeSpringSource {
@@ -602,20 +624,20 @@ fn spring_restore_active_trajectory(
                 source.playback = SpringPlayback::Running;
                 source.reduced_motion = true;
             });
-            let reset = consumer.submitted(app, source, previous, |_| true);
+            let reset = consumer.submitted(platform, app, source, previous, |_| true);
             assert_eq!(reset.value, SPRING_TARGET / 2.);
         }
         let (source, previous) = consumer.control(app, |source| {
             source.target = 0.;
             source.reduced_motion = false;
         });
-        let restored = consumer.submitted(app, source, previous, |value| {
+        let restored = consumer.submitted(platform, app, source, previous, |value| {
             value < SPRING_TARGET / 2. - 1.
         });
         if restored.value < 4. {
             continue;
         }
-        let running = consumer.submitted(app, source, restored.generation, |value| {
+        let running = consumer.submitted(platform, app, source, restored.generation, |value| {
             value < restored.value - 1.
         });
         if running.value < 4. {
@@ -651,50 +673,54 @@ fn native_springs_retarget_playback_reduce_motion_and_retire_active_frames() {
     let paint_lifetime = Rc::downgrade(&consumer.paint);
     let frame_requests = observe_frame_requests(&consumer.native);
     let (source, previous) = consumer.control(&mut app, |_| {});
-    let initial = consumer.submitted(&mut app, source, previous, |_| true);
+    let initial = consumer.submitted(&platform, &mut app, source, previous, |_| true);
     assert_eq!(source.playback, SpringPlayback::Paused);
     assert_eq!(initial.value, 0.);
-    spring_retarget_trajectory(&consumer, &mut app);
-    let stopped = spring_pause_and_stop_trajectory(&consumer, &mut app);
+    spring_retarget_trajectory(&platform, &consumer, &mut app);
+    let stopped = spring_pause_and_stop_trajectory(&platform, &consumer, &mut app);
     let (source, previous) = consumer.control(&mut app, |source| {
         source.target = SPRING_TARGET;
     });
-    consumer.submitted(&mut app, source, previous, |value| {
+    consumer.submitted(&platform, &mut app, source, previous, |value| {
         value > stopped.value + 1. && value < SPRING_TARGET
     });
 
     let (source, previous) = consumer.control(&mut app, |source| {
         source.playback = SpringPlayback::Completed;
     });
-    consumer.submitted(&mut app, source, previous, |value| value == SPRING_TARGET);
+    consumer.submitted(&platform, &mut app, source, previous, |value| {
+        value == SPRING_TARGET
+    });
     let (source, previous) = consumer.control(&mut app, |source| {
         source.target = SPRING_TARGET / 2.;
     });
-    consumer.submitted(&mut app, source, previous, |value| {
+    consumer.submitted(&platform, &mut app, source, previous, |value| {
         value == SPRING_TARGET / 2.
     });
     let (source, previous) = consumer.control(&mut app, |source| {
         source.playback = SpringPlayback::Cancelled;
     });
-    consumer.submitted(&mut app, source, previous, |value| value == 0.);
+    consumer.submitted(&platform, &mut app, source, previous, |value| value == 0.);
     let (source, previous) = consumer.control(&mut app, |source| {
         source.target = SPRING_TARGET;
         source.playback = SpringPlayback::Running;
     });
-    consumer.submitted(&mut app, source, previous, |value| {
+    consumer.submitted(&platform, &mut app, source, previous, |value| {
         value > 1. && value < SPRING_TARGET
     });
     let (source, previous) = consumer.control(&mut app, |source| {
         source.reduced_motion = true;
     });
-    consumer.submitted(&mut app, source, previous, |value| value == SPRING_TARGET);
+    consumer.submitted(&platform, &mut app, source, previous, |value| {
+        value == SPRING_TARGET
+    });
     let (source, previous) = consumer.control(&mut app, |source| {
         source.target = SPRING_TARGET / 2.;
     });
-    consumer.submitted(&mut app, source, previous, |value| {
+    consumer.submitted(&platform, &mut app, source, previous, |value| {
         value == SPRING_TARGET / 2.
     });
-    let source = spring_restore_active_trajectory(&consumer, &mut app);
+    let source = spring_restore_active_trajectory(&platform, &consumer, &mut app);
 
     let registration = consumer.registration;
     let handle = consumer.handle;
@@ -725,6 +751,7 @@ fn native_springs_retarget_playback_reduce_motion_and_retire_active_frames() {
     })
     .expect("close must join the existing native frame demand");
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "active Spring exact HWND, registration and view retirement",
         Duration::from_millis(5),
         || {
@@ -776,7 +803,7 @@ fn native_springs_retarget_playback_reduce_motion_and_retire_active_frames() {
     assert!(root_lifetime.upgrade().is_none());
     assert!(paint_lifetime.upgrade().is_none());
     assert!(native_lifetime.upgrade().is_none());
-    spring_executor_barrier(&mut app);
+    spring_executor_barrier(&platform, &mut app);
     assert_eq!(frame_requests.get(), frames_after_retirement);
     assert!(platform.raw_window_handles.read().is_empty());
     assert!(app.update_for_test(|cx| {
@@ -790,8 +817,10 @@ fn native_springs_retarget_playback_reduce_motion_and_retire_active_frames() {
         .expect_err("Spring callbacks must not retain the App behind its weak context");
     assert_eq!(released.to_string(), "app was released");
     drop(weak_app);
+    let pump_platform = Rc::downgrade(&platform.inner);
     drop(platform);
     pump_messages_until_with_delay(
+        &pump_platform,
         "native Spring platform HWND, App and OLE release",
         Duration::from_millis(5),
         || {

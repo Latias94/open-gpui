@@ -199,12 +199,14 @@ struct NativePendingKeystroke {
 }
 
 fn wait_for_native_pending_input_submission(
+    platform: &WindowsPlatform,
     app: &mut Application,
     handle: WindowHandle<NativePendingInputRoot>,
     previous_generation: u64,
 ) -> u64 {
     let mut submitted = None;
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "native pending-input accepted nonempty submission",
         Duration::from_millis(5),
         || {
@@ -322,6 +324,7 @@ fn native_pending_input_routes_modifiers_chords_and_focus_between_real_text_hand
     let initial_paint_cursor = observation.cursor();
     assert!(unsafe { RedrawWindow(Some(hwnd), None, None, RDW_INVALIDATE).as_bool() });
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "native pending-input initialization WM_PAINT",
         Duration::from_millis(5),
         || {
@@ -339,7 +342,7 @@ fn native_pending_input_routes_modifiers_chords_and_focus_between_real_text_hand
             })
         },
     );
-    let mut generation = wait_for_native_pending_input_submission(&mut app, handle, 0);
+    let mut generation = wait_for_native_pending_input_submission(&platform, &mut app, handle, 0);
     assert_eq!(primary.live_handlers(), 1);
     assert_eq!(secondary.handlers_created.get(), 0);
     assert_eq!(
@@ -507,7 +510,7 @@ fn native_pending_input_routes_modifiers_chords_and_focus_between_real_text_hand
     .expect("switching to the rendered sibling input must settle the old chord");
     assert_eq!(pending_changes.borrow().len(), changes_before_switch + 1);
     assert_eq!(pending_changes.borrow().last(), Some(&false));
-    generation = wait_for_native_pending_input_submission(&mut app, handle, generation);
+    generation = wait_for_native_pending_input_submission(&platform, &mut app, handle, generation);
     assert_eq!(primary.live_handlers(), 0);
     assert!(secondary.handlers_created.get() > 0);
     assert_eq!(secondary.live_handlers(), 1);
@@ -543,7 +546,7 @@ fn native_pending_input_routes_modifiers_chords_and_focus_between_real_text_hand
     );
     assert_eq!(secondary.text.borrow().as_str(), "k");
     assert!(primary.text.borrow().is_empty());
-    generation = wait_for_native_pending_input_submission(&mut app, handle, generation);
+    generation = wait_for_native_pending_input_submission(&platform, &mut app, handle, generation);
 
     assert!(!key_down("ctrl-x").propagate);
     assert_eq!(
@@ -565,7 +568,7 @@ fn native_pending_input_routes_modifiers_chords_and_focus_between_real_text_hand
     .expect("blur must clear pending input before notifying the consumer");
     assert_eq!(pending_changes.borrow().len(), changes_before_blur + 1);
     assert_eq!(pending_changes.borrow().last(), Some(&false));
-    wait_for_native_pending_input_submission(&mut app, handle, generation);
+    wait_for_native_pending_input_submission(&platform, &mut app, handle, generation);
     assert_eq!(primary.live_handlers(), 0);
     assert_eq!(secondary.live_handlers(), 0);
     assert_eq!(
@@ -591,6 +594,7 @@ fn native_pending_input_routes_modifiers_chords_and_focus_between_real_text_hand
     app.update_for_test(|cx| handle.update(cx, |_, window, cx| window.remove_window(cx)))
         .expect("the exact native pending-input consumer must close");
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "exact native pending-input registration retirement",
         Duration::from_millis(5),
         || {
@@ -685,8 +689,10 @@ fn native_pending_input_routes_modifiers_chords_and_focus_between_real_text_hand
 
     app.update_for_test(|cx| cx.shutdown());
     drop(app);
+    let pump_platform = Rc::downgrade(&platform.inner);
     drop(platform);
     pump_messages_until_with_delay(
+        &pump_platform,
         "native pending-input platform message window retirement",
         Duration::from_millis(5),
         || unsafe { !IsWindow(Some(platform_hwnd)).as_bool() },

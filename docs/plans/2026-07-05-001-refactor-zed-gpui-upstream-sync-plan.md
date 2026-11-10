@@ -3154,6 +3154,37 @@ consumer regressions from unexecuted translucent-desktop, child-HWND/WebView and
 loss scenarios; native readback of a GPUI Scene alone does not observe desktop child composition.
 Record those limits without repeating unrelated whole-platform/component/compiler matrices.
 
+### Windows Dialog Threads And Native Host Safety Successor
+
+Continue after `37d211ea030388e2c413bcb7301cb8588d779919` against the same fixed target.
+Adopt complete official `a0f8fa7bdbbf0269aaf5d5ebfac3ad9adfb576dd`: one per-owner
+serialization mutex, dedicated STA dialog threads, caller/owner cancellation and native
+cancellation timers. Preserve the six official policy tests. File-open/save errors report
+actual failures separately from user cancellation; message prompts retain their button and
+internal-cancellation policy. Credential I/O already uses the background executor.
+
+Integrate the dialog completion barrier through the existing exact native retirement
+coordinator and presentation shutdown ticket. Close the dialog owner before retirement and
+defer `DestroyWindow` while its serialization lock is held; keep the same registered identity,
+child-first ordering and existing bounded retry wake. Do not add another destruction queue,
+pending counter or dialog-lifetime registry. The native HWND must outlive active dialog work.
+
+Adopt official `9cb5f90e3c493fb273230b14b95047fb41c5eab6`,
+`e462f873c622f6265736bf8468e7a017f4ba99de` and `23c0080d1dd` through their current owners:
+stationary no-button client mouse moves do not dispatch duplicate input, accelerator routing
+resolves an exact registered GPUI window without sending private messages to foreign HWNDs,
+private messages retain validation and generation custody, and optional composition lookup
+checks for a missing function before conversion. Preserve pointer physical-frame/hover
+reentry and held-button behavior, provisional/quiesced input gates and callback panic custody.
+
+Compile the affected Windows owner and ordinary public consumers. Trust unchanged official
+implementations and tests; exercise actual fork seams for active/queued dialog retirement,
+foreground progress and registered/foreign/quiesced accelerator routing, plus affected pointer
+controls. Native file-picker focus, Alt+Tab, ownerless dialogs and nested overwrite prompts
+remain separate manual scenarios unless actually executed. Reuse installed LLVM 22.1.6 only
+in the validation process to finish the earlier higher-util wasm compilation; record the
+original missing-clang result and the actual rerun without changing compression semantics.
+
 ## Maintained Baseline Before Engine Adaptation
 
 The [source-over/native child composition record](../verification.md#source-over-alpha-and-native-child-composition)
@@ -3175,8 +3206,9 @@ and existing Windows restart 11/11 pass. A concrete downstream rust-embed 8.13 t
 fixed at the actual dependency/macro seam; actual compression advisories receive targeted
 patched dependencies, with root health and five independent audits passing without ignores.
 Affected compilation/correctness Clippy, core-util wasm and format/static gates pass. Four
-lanes close without P1/P2; higher-utility wasm stops at missing clang and foreign shell/
-file-limit execution remains unqualified. Continue remaining backend/render owners and the
+lanes close without P1/P2; the initial higher-utility wasm missing-clang failure is resolved by
+process-local installed LLVM 22.1.6 and the complete locked compression build passes. Foreign
+shell/file-limit execution remains unqualified. Continue remaining backend/render owners and the
 logging disposition, then the real Nara GPU/Host/View consumer before separate maintenance.
 No full target, numerical budget or foundation gate closes here.
 

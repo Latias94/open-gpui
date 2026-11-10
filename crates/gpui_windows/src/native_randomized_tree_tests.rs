@@ -318,6 +318,7 @@ fn assert_tree_scene_pixels(
 }
 
 fn submitted_tree_frame(
+    platform: &WindowsPlatform,
     app: &mut Application,
     handle: WindowHandle<NativeRandomizedTreeRoot>,
     previous: u64,
@@ -326,6 +327,7 @@ fn submitted_tree_frame(
     let mut submitted = None;
     let mut last_state = None;
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "native tree exact Submitted pixels",
         Duration::from_millis(5),
         || {
@@ -413,6 +415,7 @@ fn submitted_tree_frame(
 }
 
 fn synthetic_tree_button(
+    platform: &WindowsPlatform,
     registration: RegisteredWindow,
     observation: &NativeWindowTestObservation,
     scale: f32,
@@ -448,6 +451,7 @@ fn synthetic_tree_button(
             .collect::<Vec<_>>()
     };
     let trace = pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "synthetic tree button WndProc delivery",
         Duration::from_millis(5),
         || !delivered().is_empty(),
@@ -559,6 +563,7 @@ fn native_randomized_tree_cached_color_hide_restore_click_and_retire() {
         RedrawWindow(Some(registration.as_raw()), None, None, RDW_INVALIDATE).as_bool()
     });
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "native tree initialization WM_PAINT",
         Duration::from_millis(5),
         || {
@@ -576,7 +581,10 @@ fn native_randomized_tree_cached_color_hide_restore_click_and_retire() {
             })
         },
     );
-    pump_messages_until_idle("native tree initialization follow-up");
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "native tree initialization follow-up",
+    );
     let previous = app
         .update_for_test(|cx| {
             handle.update(cx, |_, window, _| {
@@ -586,13 +594,14 @@ fn native_randomized_tree_cached_color_hide_restore_click_and_retire() {
             })
         })
         .expect("initialize the native tree cache before measuring reuse");
-    let (initial, initial_color) = submitted_tree_frame(&mut app, handle, previous, true);
+    let (initial, initial_color) =
+        submitted_tree_frame(&platform, &mut app, handle, previous, true);
     let initial_cached_state = counters.cached_state();
     assert!(initial_cached_state.0 > 0 && initial_cached_state.1 > 0);
     let root_renders_before_replay = counters.root_renders.get();
     app.update_for_test(|cx| handle.update(cx, |_, _, cx| cx.notify()))
         .expect("clean cached replay");
-    let (_, replay_color) = submitted_tree_frame(&mut app, handle, initial, true);
+    let (_, replay_color) = submitted_tree_frame(&platform, &mut app, handle, initial, true);
     assert_eq!(initial_color, replay_color);
     assert!(counters.root_renders.get() > root_renders_before_replay);
     assert_eq!(
@@ -602,7 +611,7 @@ fn native_randomized_tree_cached_color_hide_restore_click_and_retire() {
     );
     let (mutation, previous) = mutate_native_tree(&mut app, handle, MutationKind::RootColor);
     assert_eq!(mutation, Mutation::RootColor);
-    let (_, changed_color) = submitted_tree_frame(&mut app, handle, previous, true);
+    let (_, changed_color) = submitted_tree_frame(&platform, &mut app, handle, previous, true);
     assert_ne!(changed_color, initial_color);
     let changed_cached_state = counters.cached_state();
     assert!(
@@ -613,19 +622,19 @@ fn native_randomized_tree_cached_color_hide_restore_click_and_retire() {
     let colored_snapshot = app
         .update_for_test(|cx| handle.read_with(cx, |root, cx| root.tree.read(cx).snapshot()))
         .expect("ordinary mutated model snapshot");
-    synthetic_tree_button(registration, &observation, scale, WM_LBUTTONDOWN);
+    synthetic_tree_button(&platform, registration, &observation, scale, WM_LBUTTONDOWN);
     assert_eq!(presses.get(), 1);
     let (mutation, previous) = mutate_native_tree(&mut app, handle, MutationKind::RootVisibility);
     assert_eq!(mutation, Mutation::RootVisibility);
-    let (_, hidden_color) = submitted_tree_frame(&mut app, handle, previous, false);
+    let (_, hidden_color) = submitted_tree_frame(&platform, &mut app, handle, previous, false);
     assert!(hidden_color.is_none());
     for message in [WM_LBUTTONUP, WM_LBUTTONDOWN, WM_LBUTTONUP] {
-        synthetic_tree_button(registration, &observation, scale, message);
+        synthetic_tree_button(&platform, registration, &observation, scale, message);
     }
     assert_eq!((presses.get(), clicks.get()), (1, 0));
     let (mutation, previous) = mutate_native_tree(&mut app, handle, MutationKind::RootVisibility);
     assert_eq!(mutation, Mutation::RootVisibility);
-    let (_, restored_color) = submitted_tree_frame(&mut app, handle, previous, true);
+    let (_, restored_color) = submitted_tree_frame(&platform, &mut app, handle, previous, true);
     assert_eq!(restored_color, changed_color);
     app.update_for_test(|cx| {
         handle.read_with(cx, |root, cx| {
@@ -633,13 +642,14 @@ fn native_randomized_tree_cached_color_hide_restore_click_and_retire() {
         })
     })
     .expect("restore preserves the same public tree model");
-    synthetic_tree_button(registration, &observation, scale, WM_LBUTTONUP);
+    synthetic_tree_button(&platform, registration, &observation, scale, WM_LBUTTONUP);
     assert_eq!((presses.get(), clicks.get()), (1, 0));
-    synthetic_tree_button(registration, &observation, scale, WM_LBUTTONDOWN);
+    synthetic_tree_button(&platform, registration, &observation, scale, WM_LBUTTONDOWN);
     assert_eq!(presses.get(), 2);
-    synthetic_tree_button(registration, &observation, scale, WM_LBUTTONUP);
+    synthetic_tree_button(&platform, registration, &observation, scale, WM_LBUTTONUP);
     assert_eq!(clicks.get(), 1);
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "tree click exact native and entity retirement",
         Duration::from_millis(5),
         || {
@@ -699,8 +709,10 @@ fn native_randomized_tree_cached_color_hide_restore_click_and_retire() {
         .expect_err("tree input and frame callbacks must not retain the App");
     assert_eq!(released.to_string(), "app was released");
     drop(weak_app);
+    let pump_platform = Rc::downgrade(&platform.inner);
     drop(platform);
     pump_messages_until_with_delay(
+        &pump_platform,
         "tree platform HWND and OLE release",
         Duration::from_millis(5),
         || {

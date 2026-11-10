@@ -89,9 +89,11 @@ fn native_system_notification_callbacks_preserve_order_main_thread_and_replaceme
     assert!(first_lifetime.upgrade().is_some());
     assert!(delivered.borrow().is_empty());
 
-    pump_messages_until("ordered native notification responses", || {
-        delivered.borrow().len() == 3
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "ordered native notification responses",
+        || delivered.borrow().len() == 3,
+    );
     assert_eq!(
         delivered.borrow().as_slice(),
         &[
@@ -111,6 +113,7 @@ fn native_system_notification_callbacks_preserve_order_main_thread_and_replaceme
     assert!(sender.is_closed());
     assert!(replacement_lifetime.upgrade().is_none());
     pump_messages_until_with_delay(
+        &platform_lifetime,
         "notification callback and exact native platform retirement",
         Duration::from_millis(2),
         || {
@@ -183,6 +186,7 @@ fn native_system_notification_retirement_cancels_queued_delivery_before_native_r
     assert_eq!(delivered.get(), 0);
     drop(platform);
     pump_messages_until(
+        &platform_lifetime,
         "cancelled notification task releases native platform",
         || platform_lifetime.upgrade().is_none(),
     );
@@ -221,6 +225,7 @@ fn native_system_notification_reentrant_retirement_does_not_restore_running_call
     lifecycle.fail_next_retirement_timer.set(true);
 
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "reentrant notification retirement releases callback and native retry transport",
         Duration::from_millis(2),
         || {
@@ -340,6 +345,7 @@ fn assert_notification_pixel(capture: &WindowFrameCapture, position: Point<Pixel
 }
 
 fn notification_submitted_frame(
+    platform: &WindowsPlatform,
     app: &mut Application,
     handle: WindowHandle<NativeNotificationRoot>,
     paint: &Cell<Option<NativeNotificationPaint>>,
@@ -349,85 +355,91 @@ fn notification_submitted_frame(
     let mut submitted = None;
     let description =
         format!("notification {source:?} reaches exact nonempty Submitted pixels after {previous}");
-    pump_messages_until_with_delay(&description, Duration::from_millis(5), || {
-        submitted = app
-            .update_for_test(|cx| {
-                handle.update(cx, |root, window, _| {
-                    let facts = window.presentation_facts();
-                    let paint = paint.get()?;
-                    let attempt = facts.latest_present_attempt?;
-                    if !(attempt.generation > previous
-                        && attempt.outcome == PlatformWindowPresentOutcome::Submitted
-                        && attempt.contained_valid_primitives
-                        && facts.initial_presentation == WindowInitialPresentationStatus::Completed
-                        && facts.native_visible
-                        && facts.frame_accepted_generation == Some(attempt.generation)
-                        && facts.present_submitted_generation == Some(attempt.generation)
-                        && facts.non_empty_presented_generation == Some(attempt.generation)
-                        && window.rendered_frame_revision() == attempt.generation
-                        && window.submitted_frame_diagnostics_for_test()?.generation()
-                            == attempt.generation
-                        && paint.window_id == handle.window_id()
-                        && paint.source == source
-                        && paint.previous_revision.checked_add(1) == Some(attempt.generation)
-                        && paint.bounds.origin == point(px(16.), px(16.))
-                        && paint.bounds.size == size(px(96.), px(64.)))
-                    {
-                        return None;
-                    }
-                    assert_eq!(root.source, source);
-                    let capture = window.capture_frame();
-                    assert!(capture.unsupported_reason.is_none(), "{capture:?}");
-                    assert_eq!(capture.metadata.window_id, handle.window_id());
-                    assert_eq!(
-                        capture.metadata.framework_frame_generation,
-                        attempt.generation
-                    );
-                    assert_eq!(capture.metadata.scale_factor, window.scale_factor());
-                    assert!(capture.metadata.scale_factor.is_finite());
-                    assert!(capture.metadata.scale_factor > 0.);
-                    assert_eq!(
-                        capture.metadata.logical_viewport_size,
-                        window.viewport_size()
-                    );
-                    assert_eq!(
-                        capture.metadata.physical_viewport_size,
-                        window
-                            .viewport_size()
-                            .to_device_pixels(window.scale_factor())
-                    );
-                    let image = capture
-                        .image
-                        .as_ref()
-                        .expect("submitted notification pixels");
-                    assert_eq!(
-                        image.dimensions(),
-                        (
-                            capture.metadata.physical_viewport_size.width.0 as u32,
-                            capture.metadata.physical_viewport_size.height.0 as u32,
-                        )
-                    );
-                    assert_eq!(
-                        window
-                            .render_to_image()
-                            .expect("native notification Scene readback"),
-                        *image
-                    );
-                    let (color, marker_color) = source.colors();
-                    assert_notification_pixel(&capture, paint.bounds.center(), color);
-                    assert_notification_pixel(&capture, point(px(64.), px(108.)), marker_color);
-                    assert_notification_pixel(&capture, point(px(144.), px(64.)), 0);
-                    assert_eq!(window.rendered_frame_revision(), attempt.generation);
-                    assert_eq!(
-                        window.presentation_facts().latest_present_attempt,
-                        facts.latest_present_attempt
-                    );
-                    Some(capture)
+    pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
+        &description,
+        Duration::from_millis(5),
+        || {
+            submitted = app
+                .update_for_test(|cx| {
+                    handle.update(cx, |root, window, _| {
+                        let facts = window.presentation_facts();
+                        let paint = paint.get()?;
+                        let attempt = facts.latest_present_attempt?;
+                        if !(attempt.generation > previous
+                            && attempt.outcome == PlatformWindowPresentOutcome::Submitted
+                            && attempt.contained_valid_primitives
+                            && facts.initial_presentation
+                                == WindowInitialPresentationStatus::Completed
+                            && facts.native_visible
+                            && facts.frame_accepted_generation == Some(attempt.generation)
+                            && facts.present_submitted_generation == Some(attempt.generation)
+                            && facts.non_empty_presented_generation == Some(attempt.generation)
+                            && window.rendered_frame_revision() == attempt.generation
+                            && window.submitted_frame_diagnostics_for_test()?.generation()
+                                == attempt.generation
+                            && paint.window_id == handle.window_id()
+                            && paint.source == source
+                            && paint.previous_revision.checked_add(1) == Some(attempt.generation)
+                            && paint.bounds.origin == point(px(16.), px(16.))
+                            && paint.bounds.size == size(px(96.), px(64.)))
+                        {
+                            return None;
+                        }
+                        assert_eq!(root.source, source);
+                        let capture = window.capture_frame();
+                        assert!(capture.unsupported_reason.is_none(), "{capture:?}");
+                        assert_eq!(capture.metadata.window_id, handle.window_id());
+                        assert_eq!(
+                            capture.metadata.framework_frame_generation,
+                            attempt.generation
+                        );
+                        assert_eq!(capture.metadata.scale_factor, window.scale_factor());
+                        assert!(capture.metadata.scale_factor.is_finite());
+                        assert!(capture.metadata.scale_factor > 0.);
+                        assert_eq!(
+                            capture.metadata.logical_viewport_size,
+                            window.viewport_size()
+                        );
+                        assert_eq!(
+                            capture.metadata.physical_viewport_size,
+                            window
+                                .viewport_size()
+                                .to_device_pixels(window.scale_factor())
+                        );
+                        let image = capture
+                            .image
+                            .as_ref()
+                            .expect("submitted notification pixels");
+                        assert_eq!(
+                            image.dimensions(),
+                            (
+                                capture.metadata.physical_viewport_size.width.0 as u32,
+                                capture.metadata.physical_viewport_size.height.0 as u32,
+                            )
+                        );
+                        assert_eq!(
+                            window
+                                .render_to_image()
+                                .expect("native notification Scene readback"),
+                            *image
+                        );
+                        let (color, marker_color) = source.colors();
+                        assert_notification_pixel(&capture, paint.bounds.center(), color);
+                        assert_notification_pixel(&capture, point(px(64.), px(108.)), marker_color);
+                        assert_notification_pixel(&capture, point(px(144.), px(64.)), 0);
+                        assert_eq!(window.rendered_frame_revision(), attempt.generation);
+                        assert_eq!(
+                            window.presentation_facts().latest_present_attempt,
+                            facts.latest_present_attempt
+                        );
+                        Some(capture)
+                    })
                 })
-            })
-            .expect("the notification consumer must remain live through exact-frame capture");
-        submitted.is_some()
-    });
+                .expect("the notification consumer must remain live through exact-frame capture");
+            submitted.is_some()
+        },
+    );
     submitted.expect("the notification source must reach a newer Submitted generation")
 }
 
@@ -540,6 +552,7 @@ fn native_system_notification_app_view_submits_body_and_action_then_releases() {
         .borrow()
         .response_sender_for_test();
     let mut previous = notification_submitted_frame(
+        &platform,
         &mut app,
         handle,
         &paint,
@@ -580,6 +593,7 @@ fn native_system_notification_app_view_submits_body_and_action_then_releases() {
             assert_eq!(pending[0].target, NativeBoundaryTarget::Application);
         });
         let submitted = notification_submitted_frame(
+            &platform,
             &mut app,
             handle,
             &paint,
@@ -618,6 +632,7 @@ fn native_system_notification_app_view_submits_body_and_action_then_releases() {
     app.update_for_test(|cx| handle.update(cx, |_, window, cx| window.remove_window(cx)))
         .expect("the notification window must close through its public owner");
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "notification exact HWND, registration and entity retirement",
         Duration::from_millis(5),
         || {
@@ -665,6 +680,7 @@ fn native_system_notification_app_view_submits_body_and_action_then_releases() {
     assert!(paint_lifetime.upgrade().is_none());
     app.update_for_test(|cx| cx.shutdown_for_native_exit_test());
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "notification terminal App shutdown authority",
         Duration::from_millis(5),
         || app.update_for_test(|cx| cx.native_exit_authority_is_settled_for_test()),
@@ -703,6 +719,7 @@ fn native_system_notification_app_view_submits_body_and_action_then_releases() {
     drop(weak_app);
     drop(platform);
     pump_messages_until_with_delay(
+        &platform_inner_lifetime,
         "notification platform HWND, callback, App and OLE release",
         Duration::from_millis(5),
         || {

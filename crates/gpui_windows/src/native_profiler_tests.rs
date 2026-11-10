@@ -228,6 +228,7 @@ impl NativeProfilerWindow {
 
     fn wait_for_submission(
         &self,
+        platform: &WindowsPlatform,
         app: &mut Application,
         source: NativeProfilerSource,
         previous_generation: u64,
@@ -235,6 +236,7 @@ impl NativeProfilerWindow {
         let started_at = Instant::now();
         let mut submitted = None;
         pump_messages_until_with_delay(
+            &Rc::downgrade(&platform.inner),
             "native profiler accepted nonempty Submitted frame",
             Duration::from_millis(5),
             || {
@@ -334,11 +336,12 @@ impl NativeProfilerWindow {
         (started_at, finished_at)
     }
 
-    fn settle(&self, app: &mut Application) {
+    fn settle(&self, platform: &WindowsPlatform, app: &mut Application) {
         let started_at = Instant::now();
         let mut quiet_since = started_at;
         let mut previous = None;
         pump_messages_until_with_delay(
+            &Rc::downgrade(&platform.inner),
             "native profiler input and frame completion settle",
             Duration::from_millis(5),
             || {
@@ -411,13 +414,14 @@ impl NativeProfilerWindow {
             SendMessageW(
                 hwnd,
                 crate::WM_GPUI_FORCE_UPDATE_WINDOW,
-                Some(WPARAM(self.registration.generation())),
-                None,
+                Some(WPARAM(self.native.validation_number)),
+                Some(LPARAM(self.registration.generation() as isize)),
             );
         }
         assert_eq!(self.signals.borrow().len(), callbacks_before_retirement);
         drop(renderer_borrow);
         pump_messages_until_with_delay(
+            &Rc::downgrade(&platform.inner),
             "exact native profiler registration retirement",
             Duration::from_millis(5),
             || {
@@ -790,8 +794,11 @@ fn native_profiler_tracks_input_submission_redraw_and_reconstructed_window() {
         .expect("native vsync provider should start");
     let consumer = NativeProfilerWindow::open(&mut app, &platform, true);
     let (mut generation, _) =
-        consumer.wait_for_submission(&mut app, NativeProfilerSource::default(), 0);
-    pump_messages_until_idle("native profiler initial submission follow-up");
+        consumer.wait_for_submission(&platform, &mut app, NativeProfilerSource::default(), 0);
+    pump_messages_until_idle(
+        &Rc::downgrade(&platform.inner),
+        "native profiler initial submission follow-up",
+    );
     let (initial_input, initial_frame) = consumer.snapshot(&mut app);
     assert_native_profiler_outcomes(&initial_input);
     assert!(initial_input.latency_histogram.is_empty());
@@ -812,7 +819,7 @@ fn native_profiler_tracks_input_submission_redraw_and_reconstructed_window() {
         redraws: 0,
     };
     let (next_generation, untraced_paint) =
-        consumer.wait_for_submission(&mut app, source, generation);
+        consumer.wait_for_submission(&platform, &mut app, source, generation);
     generation = next_generation;
     let (untraced_input, untraced_frame) = consumer.snapshot(&mut app);
     assert_native_profiler_outcomes(&untraced_input);
@@ -871,7 +878,8 @@ fn native_profiler_tracks_input_submission_redraw_and_reconstructed_window() {
     let (input_start, input_end) = consumer.input(&mut app);
     source.pointer_inputs += 1;
     source.key_inputs += 1;
-    let (traced_generation, paint) = consumer.wait_for_submission(&mut app, source, generation);
+    let (traced_generation, paint) =
+        consumer.wait_for_submission(&platform, &mut app, source, generation);
     let (traced_input, traced_frame) = consumer.snapshot(&mut app);
     assert_native_profiler_outcomes(&traced_input);
     assert_eq!(traced_input.latency_histogram.len(), 1);
@@ -926,15 +934,17 @@ fn native_profiler_tracks_input_submission_redraw_and_reconstructed_window() {
             })
         })
         .expect("the measured native window must remain live for pointer isolation");
-    pump_messages_until("native profiler pure-redraw pointer isolation", || {
-        pointer_ticket.observation().is_some()
-    });
+    pump_messages_until(
+        &Rc::downgrade(&platform.inner),
+        "native profiler pure-redraw pointer isolation",
+        || pointer_ticket.observation().is_some(),
+    );
     let pointer_observation = pointer_ticket
         .observation()
         .expect("pointer isolation must settle");
     assert!(pointer_observation.is_exact());
     assert!(!pointer_observation.facts.accepts_pointer_input);
-    consumer.settle(&mut app);
+    consumer.settle(&platform, &mut app);
     let (settled_input, settled_frame) = consumer.snapshot(&mut app);
     let followup_events = collector.collect_unseen();
     assert!(followup_events.iter().all(|event| match event {
@@ -951,7 +961,7 @@ fn native_profiler_tracks_input_submission_redraw_and_reconstructed_window() {
     })
     .expect("the native profiler consumer must redraw without input");
     let (redraw_generation, paint) =
-        consumer.wait_for_submission(&mut app, source, traced_generation);
+        consumer.wait_for_submission(&platform, &mut app, source, traced_generation);
     let (redraw_input, redraw_frame) = consumer.snapshot(&mut app);
     assert_native_profiler_outcomes(&redraw_input);
     assert_eq!(
@@ -981,8 +991,8 @@ fn native_profiler_tracks_input_submission_redraw_and_reconstructed_window() {
     let rebuilt = NativeProfilerWindow::open(&mut app, &platform, false);
     assert_ne!(rebuilt.handle.window_id(), retired_id);
     let (initial_rebuilt_generation, _) =
-        rebuilt.wait_for_submission(&mut app, NativeProfilerSource::default(), 0);
-    rebuilt.settle(&mut app);
+        rebuilt.wait_for_submission(&platform, &mut app, NativeProfilerSource::default(), 0);
+    rebuilt.settle(&platform, &mut app);
     assert!(collector.collect_unseen().is_empty());
     let (initial_rebuilt_input, initial_rebuilt_frame) = rebuilt.snapshot(&mut app);
     assert_native_profiler_outcomes(&initial_rebuilt_input);
@@ -996,6 +1006,7 @@ fn native_profiler_tracks_input_submission_redraw_and_reconstructed_window() {
     })
     .expect("the rebuilt visible window must expose a complete dirty-to-present trace");
     let (rebuilt_generation, rebuilt_paint) = rebuilt.wait_for_submission(
+        &platform,
         &mut app,
         NativeProfilerSource {
             redraws: 1,
@@ -1027,6 +1038,7 @@ fn native_profiler_tracks_input_submission_redraw_and_reconstructed_window() {
     })
     .expect("the rebuilt native window must continue aggregating after trace disable");
     rebuilt.wait_for_submission(
+        &platform,
         &mut app,
         NativeProfilerSource {
             redraws: 2,
@@ -1056,8 +1068,10 @@ fn native_profiler_tracks_input_submission_redraw_and_reconstructed_window() {
     assert_ne!(monitor_thread, foreground_thread);
     assert!(first_present_at.is_some());
     drop(app);
+    let pump_platform = Rc::downgrade(&platform.inner);
     drop(platform);
     pump_messages_until_with_delay(
+        &pump_platform,
         "native profiler platform message HWND retirement",
         Duration::from_millis(5),
         || unsafe { !IsWindow(Some(platform_hwnd)).as_bool() } && callback_weak.upgrade().is_none(),
@@ -1284,6 +1298,7 @@ fn assert_native_foreground_journal(
 }
 
 fn wait_for_native_platform_signal(
+    platform: &WindowsPlatform,
     consumer: &NativeProfilerWindow,
     collector: &mut ForegroundJournalCollector,
     at: Option<Instant>,
@@ -1291,6 +1306,7 @@ fn wait_for_native_platform_signal(
 ) -> PlatformSignal {
     let mut observed = None;
     pump_messages_until(
+        &Rc::downgrade(&platform.inner),
         "native callback timestamp/source in the raw journal",
         || {
             let drained = collector.collect_unseen();
@@ -1341,14 +1357,15 @@ fn native_frame_signals_preserve_coalescing_visibility_retirement_and_vsync_orig
     let mut collector = app.update_for_test(|cx| cx.foreground_journal().collector());
     let consumer = NativeProfilerWindow::open(&mut app, &platform, true);
     let mut source = NativeProfilerSource::default();
-    let (mut generation, _) = consumer.wait_for_submission(&mut app, source, 0);
-    consumer.settle(&mut app);
+    let (mut generation, _) = consumer.wait_for_submission(&platform, &mut app, source, 0);
+    consumer.settle(&platform, &mut app);
     collector.collect_unseen();
     consumer.native.state.frame_signal.take();
     unsafe {
         SendMessageW(consumer.registration.as_raw(), WM_PAINT, None, None);
     }
     wait_for_native_platform_signal(
+        &platform,
         &consumer,
         &mut collector,
         None,
@@ -1392,8 +1409,8 @@ fn native_frame_signals_preserve_coalescing_visibility_retirement_and_vsync_orig
                 SendMessageW(
                     consumer.registration.as_raw(),
                     crate::WM_GPUI_FORCE_UPDATE_WINDOW,
-                    Some(WPARAM(consumer.registration.generation())),
-                    None,
+                    Some(WPARAM(consumer.native.validation_number)),
+                    Some(LPARAM(consumer.registration.generation() as isize)),
                 );
             }
             consumer.native.request_frame(RequestFrameOptions {
@@ -1403,7 +1420,13 @@ fn native_frame_signals_preserve_coalescing_visibility_retirement_and_vsync_orig
                 signal_source: FrameRequestSource::LocalSchedule,
             });
         });
-        wait_for_native_platform_signal(&consumer, &mut collector, Some(first_at), first_source);
+        wait_for_native_platform_signal(
+            &platform,
+            &consumer,
+            &mut collector,
+            Some(first_at),
+            first_source,
+        );
         let callbacks = consumer.signals.borrow();
         assert!(
             callbacks
@@ -1419,8 +1442,10 @@ fn native_frame_signals_preserve_coalescing_visibility_retirement_and_vsync_orig
                     .is_some_and(|at| first_at <= at && at <= callback.entered_at)
         }));
         drop(callbacks);
-        generation = consumer.wait_for_submission(&mut app, source, generation).0;
-        consumer.settle(&mut app);
+        generation = consumer
+            .wait_for_submission(&platform, &mut app, source, generation)
+            .0;
+        consumer.settle(&platform, &mut app);
         collector.collect_unseen();
     }
 
@@ -1455,8 +1480,10 @@ fn native_frame_signals_preserve_coalescing_visibility_retirement_and_vsync_orig
                 .expect("hidden and minimized consumers remain logically live");
         });
         let _ = unsafe { ShowWindow(consumer.registration.as_raw(), show) };
-        generation = consumer.wait_for_submission(&mut app, source, generation).0;
-        consumer.settle(&mut app);
+        generation = consumer
+            .wait_for_submission(&platform, &mut app, source, generation)
+            .0;
+        consumer.settle(&platform, &mut app);
         assert!(
             consumer
                 .signals
@@ -1501,8 +1528,8 @@ fn native_frame_signals_preserve_coalescing_visibility_retirement_and_vsync_orig
         &retired_signal,
         &rebuilt.native.state.frame_signal
     ));
-    rebuilt.wait_for_submission(&mut app, NativeProfilerSource::default(), 0);
-    rebuilt.settle(&mut app);
+    rebuilt.wait_for_submission(&platform, &mut app, NativeProfilerSource::default(), 0);
+    rebuilt.settle(&platform, &mut app);
     rebuilt.native.state.frame_signal.take();
     let reused_hwnd_snapshot = RegisteredWindow::new(
         rebuilt.registration.as_raw(),
@@ -1534,17 +1561,24 @@ fn native_frame_signals_preserve_coalescing_visibility_retirement_and_vsync_orig
     unsafe {
         SendMessageW(rebuilt.registration.as_raw(), WM_PAINT, None, None);
     }
-    wait_for_native_platform_signal(&rebuilt, &mut collector, Some(captured.0), captured.1);
+    wait_for_native_platform_signal(
+        &platform,
+        &rebuilt,
+        &mut collector,
+        Some(captured.0),
+        captured.1,
+    );
 
-    rebuilt.settle(&mut app);
+    rebuilt.settle(&platform, &mut app);
     let previous_generation = rebuilt
-        .wait_for_submission(&mut app, NativeProfilerSource::default(), 0)
+        .wait_for_submission(&platform, &mut app, NativeProfilerSource::default(), 0)
         .0;
     let async_app = app.update_for_test(|cx| cx.to_async());
     let paints_before_refresh = rebuilt.paints.borrow().len();
     let signals_before_refresh = rebuilt.signals.borrow().len();
     async_app.refresh();
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "public async refresh reaches the production native paint callback",
         Duration::from_millis(5),
         || rebuilt.paints.borrow().len() > paints_before_refresh,
@@ -1555,6 +1589,7 @@ fn native_frame_signals_preserve_coalescing_visibility_retirement_and_vsync_orig
     );
     let refreshed_generation = rebuilt
         .wait_for_submission(
+            &platform,
             &mut app,
             NativeProfilerSource::default(),
             previous_generation,
@@ -1584,6 +1619,7 @@ fn native_frame_signals_preserve_coalescing_visibility_retirement_and_vsync_orig
     .expect("the live native consumer must accept public next-frame callbacks");
     assert!(callback_runs.borrow().is_empty());
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "public next-frame callback runs through the native frame pump",
         Duration::from_millis(5),
         || !callback_runs.borrow().is_empty(),
@@ -1595,12 +1631,14 @@ fn native_frame_signals_preserve_coalescing_visibility_retirement_and_vsync_orig
     );
     let callback_generation = rebuilt
         .wait_for_submission(
+            &platform,
             &mut app,
             NativeProfilerSource::default(),
             refreshed_generation,
         )
         .0;
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "callback queued mid-frame runs through a successor native frame",
         Duration::from_millis(5),
         || callback_runs.borrow().len() == 2,
@@ -1610,12 +1648,14 @@ fn native_frame_signals_preserve_coalescing_visibility_retirement_and_vsync_orig
         &[(1, refreshed_generation), (2, callback_generation)]
     );
     rebuilt.wait_for_submission(
+        &platform,
         &mut app,
         NativeProfilerSource::default(),
         callback_generation,
     );
     let signals_after_callbacks = rebuilt.signals.borrow().len();
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "continuous native VSync after public frame demand completes",
         Duration::from_millis(5),
         || rebuilt.signals.borrow().len() >= signals_after_callbacks + 2,
@@ -1644,8 +1684,10 @@ fn native_frame_signals_preserve_coalescing_visibility_retirement_and_vsync_orig
     );
     assert_eq!(pending_callback_calls.get(), 0);
     drop(app);
+    let pump_platform = Rc::downgrade(&platform.inner);
     drop(platform);
     pump_messages_until_with_delay(
+        &pump_platform,
         "frame-signal platform retirement",
         Duration::from_millis(5),
         || unsafe { !IsWindow(Some(platform_hwnd)).as_bool() },
@@ -1747,13 +1789,14 @@ fn assert_native_frame_overlay_pixels(
 }
 
 fn capture_native_frame_overlay(
+    platform: &WindowsPlatform,
     consumer: &NativeProfilerWindow,
     app: &mut Application,
     source: NativeProfilerSource,
     generation: &mut u64,
     mode: DebugFrameOverlayMode,
 ) -> WindowFrameCapture {
-    let (submitted, _) = consumer.wait_for_submission(app, source, *generation);
+    let (submitted, _) = consumer.wait_for_submission(platform, app, source, *generation);
     let capture = app
         .update_for_test(|cx| {
             consumer.handle.update(cx, |root, window, cx| {
@@ -1897,12 +1940,18 @@ fn native_frame_overlay_modes_reset_resize_preserve_input_and_retirement() {
             })
         })
         .expect("public overlay controls must retain the same native window");
-        let capture =
-            capture_native_frame_overlay(&consumer, &mut app, source, &mut generation, mode);
+        let capture = capture_native_frame_overlay(
+            &platform,
+            &consumer,
+            &mut app,
+            source,
+            &mut generation,
+            mode,
+        );
         if previous_mode == Some(mode) {
             assert_native_frame_overlay_reset_pixels(&capture, source);
         }
-        consumer.settle(&mut app);
+        consumer.settle(&platform, &mut app);
         app.update_for_test(|cx| {
             consumer
                 .handle
@@ -1912,7 +1961,14 @@ fn native_frame_overlay_modes_reset_resize_preserve_input_and_retirement() {
         consumer.input(&mut app);
         source.pointer_inputs += 1;
         source.key_inputs += 1;
-        capture_native_frame_overlay(&consumer, &mut app, source, &mut generation, mode);
+        capture_native_frame_overlay(
+            &platform,
+            &consumer,
+            &mut app,
+            source,
+            &mut generation,
+            mode,
+        );
         let (input, _) = consumer.snapshot(&mut app);
         assert_native_profiler_outcomes(&input);
         assert_eq!(input.latency_histogram.len(), 1);
@@ -1953,6 +2009,7 @@ fn native_frame_overlay_modes_reset_resize_preserve_input_and_retirement() {
                 })
                 .expect("overlay resize must use the same native placement owner");
             pump_messages_until_with_delay(
+                &Rc::downgrade(&platform.inner),
                 "native overlay resize typed terminal observation",
                 Duration::from_millis(5),
                 || ticket.observation().is_some(),
@@ -1970,8 +2027,14 @@ fn native_frame_overlay_modes_reset_resize_preserve_input_and_retirement() {
                     .client_bounds(),
                 request.client_bounds()
             );
-            let resized_capture =
-                capture_native_frame_overlay(&consumer, &mut app, source, &mut generation, mode);
+            let resized_capture = capture_native_frame_overlay(
+                &platform,
+                &consumer,
+                &mut app,
+                source,
+                &mut generation,
+                mode,
+            );
             assert_eq!(
                 resized_capture.metadata.physical_viewport_size,
                 request.client_bounds().size
@@ -1985,15 +2048,17 @@ fn native_frame_overlay_modes_reset_resize_preserve_input_and_retirement() {
                     > capture.metadata.physical_viewport_size.height
             );
         }
-        consumer.settle(&mut app);
+        consumer.settle(&platform, &mut app);
         previous_mode = Some(mode);
     }
     consumer.retire(&mut app, &platform, &observation, |_| {});
     assert!(paints_lifetime.upgrade().is_none());
     assert!(signals_lifetime.upgrade().is_none());
     drop(app);
+    let pump_platform = Rc::downgrade(&platform.inner);
     drop(platform);
     pump_messages_until_with_delay(
+        &pump_platform,
         "native frame-overlay platform retirement",
         Duration::from_millis(5),
         || unsafe { !IsWindow(Some(platform_hwnd)).as_bool() },

@@ -238,6 +238,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Fixed
 
+- Windows file and message dialogs run on dedicated STA threads, serialize per native owner and cancel when their caller or owner closes. Native retirement waits for active dialog work without blocking the foreground executor. File-picker failures are reported separately from user cancellation.
+- Windows keyboard accelerators route directly to registered GPUI windows without sending private messages to foreign hosts. Stationary no-button mouse moves avoid duplicate input while retaining hover reentry, held-button and physical-geometry changes; private messages retain validation and native-generation checks.
+- Windows composition fallback checks that the optional system function exists before calling it.
+
 - DirectX ordinary/path-sprite and WGPU path-sprite alpha now use standard source-over composition. Windows DirectComposition content stays below native child windows, including renderer reconstruction; child HWNDs consequently remain above GPUI-drawn overlays.
 
 - Scroll clamping snaps recomputed padding to the same device-pixel grid as layout, avoiding phantom sub-pixel scroll ranges. Touch timer and lifecycle integration use the existing executor clock, input transactions and Window retirement boundaries.

@@ -815,8 +815,8 @@ pub struct WindowsWindowState {
     pub hovered: Cell<bool>,
     pub last_visibility: Cell<Option<WindowVisibility>>,
     visibility_report_pending: Cell<bool>,
-    /// Last logical client position carried by an exact native pointer callback.
-    pub(crate) last_client_pointer_position: Cell<Option<Point<Pixels>>>,
+    /// Last logical client position and optional physical frame from a native pointer callback.
+    pub(crate) last_client_pointer_position: Cell<Option<WindowsClientPointerPosition>>,
     pub direct_manipulation: DirectManipulationHandler,
 
     pub renderer: RefCell<DirectXRenderer>,
@@ -941,6 +941,7 @@ impl Drop for WindowsNativePointerPhysicalFrameScope<'_> {
 
 pub(crate) struct WindowsWindowInner {
     pub(crate) hwnd: HWND,
+    pub(crate) dialog_owner: Rc<crate::dialog::DialogOwner>,
     native_window_lifecycle: Cell<NativeWindowLifecycle>,
     drag_drop_registered: Cell<bool>,
     show_on_initial_presentation: Cell<bool>,
@@ -1431,6 +1432,7 @@ impl WindowsWindowInner {
 
         Ok(Rc::new(Self {
             hwnd,
+            dialog_owner: crate::dialog::DialogOwner::new(hwnd),
             native_window_lifecycle: Cell::new(NativeWindowLifecycle::Live),
             drag_drop_registered: Cell::new(false),
             show_on_initial_presentation: Cell::new(context.show_on_initial_presentation),
@@ -1557,6 +1559,7 @@ impl WindowsWindowInner {
         }
         self.native_window_lifecycle
             .set(NativeWindowLifecycle::Destroying);
+        self.dialog_owner.close();
         self.state.interaction_gate.quiesce();
         self.settle_pointer_capture_before_native_teardown();
         self.retire_native_callbacks();
@@ -1962,6 +1965,11 @@ impl WindowsWindowInner {
             }
             return false;
         }
+        self.dialog_owner.close();
+        let Some(_dialog_idle) = self.dialog_owner.try_lock_idle() else {
+            let _ = unsafe { ShowWindow(self.hwnd, SW_HIDE) };
+            return false;
+        };
         match self.prepare_native_owner_retirement() {
             Ok(NativeOwnerRetirementPreparation::Ready) => {}
             Ok(
@@ -8401,18 +8409,19 @@ impl PlatformWindow for WindowsWindow {
         detail: Option<&str>,
         answers: &[PromptButton],
     ) -> Option<Receiver<usize>> {
-        let (done_tx, done_rx) = oneshot::channel();
+        let (mut done_tx, done_rx) = oneshot::channel();
         let msg = msg.to_string();
         let detail_string = detail.map(|detail| detail.to_string());
-        let handle = self.0.hwnd;
         let answers = answers.to_vec();
-        self.0
-            .executor
-            .spawn(async move {
+        let dialog = crate::dialog::show_dialog(
+            Some(self.0.dialog_owner.clone()),
+            &self.0.executor,
+            move |handle| {
                 unsafe {
                     let mut config = TASKDIALOGCONFIG::default();
                     config.cbSize = std::mem::size_of::<TASKDIALOGCONFIG>() as _;
                     config.hwndParent = handle;
+                    config.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION;
                     let title;
                     let main_icon;
                     match level {
@@ -8425,7 +8434,7 @@ impl PlatformWindow for WindowsWindow {
                             main_icon = TD_WARNING_ICON;
                         }
                         PromptLevel::Critical => {
-                            title = windows::core::w!("Critical");
+                            title = windows::core::w!("Error");
                             main_icon = TD_ERROR_ICON;
                         }
                     };
@@ -8460,17 +8469,26 @@ impl PlatformWindow for WindowsWindow {
                     config.cButtons = buttons.len() as _;
                     config.pButtons = buttons.as_ptr();
 
-                    config.pfCallback = None;
+                    config.pfCallback = Some(crate::dialog::task_dialog_callback);
+                    config.lpCallbackData = button_id_map.contains(&IDCANCEL.0) as isize;
                     let mut res = std::mem::zeroed();
-                    let _ = TaskDialogIndirect(&config, Some(&mut res), None, None)
-                        .context("unable to create task dialog")
-                        .log_err();
-
-                    if let Some(clicked) =
-                        button_id_map.iter().position(|&button_id| button_id == res)
-                    {
-                        let _ = done_tx.send(clicked);
-                    }
+                    TaskDialogIndirect(&config, Some(&mut res), None, None)
+                        .context("unable to create task dialog")?;
+                    Ok(button_id_map.iter().position(|&button_id| button_id == res))
+                }
+            },
+        );
+        self.0
+            .executor
+            .spawn(async move {
+                if let futures::future::Either::Left((result, _)) =
+                    futures::future::select(dialog, done_tx.cancellation()).await
+                    && let Some(Some(clicked)) = result
+                        .context("native dialog thread stopped")
+                        .and_then(|result| result)
+                        .log_err()
+                {
+                    done_tx.send(clicked).ok();
                 }
             })
             .detach();
@@ -9677,8 +9695,11 @@ fn set_window_composition_attribute(hwnd: HWND, color: Option<Color>, state: u32
             .log_err()
         {
             let func_name = PCSTR::from_raw(c"SetWindowCompositionAttribute".as_ptr() as *const u8);
+            let Some(fn_ptr) = GetProcAddress(user32, func_name) else {
+                return;
+            };
             let set_window_composition_attribute: SetWindowCompositionAttributeType =
-                std::mem::transmute(GetProcAddress(user32, func_name));
+                std::mem::transmute(fn_ptr);
             let mut color = color.unwrap_or_default();
             let is_acrylic = state == 4;
             if is_acrylic && color.3 == 0 {

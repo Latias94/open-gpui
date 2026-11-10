@@ -137,6 +137,7 @@ impl Drop for NativeCredentialItem {
 
 fn wait_for_credential_task<T: 'static>(platform: &WindowsPlatform, task: Task<T>) -> T {
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "native credential task completion",
         Duration::from_millis(5),
         || {
@@ -166,9 +167,10 @@ fn assert_credential_matches(
     );
 }
 
-fn shutdown_credential_app(app: &mut Application) {
+fn shutdown_credential_app(platform: &WindowsPlatform, app: &mut Application) {
     app.update_for_test(|cx| cx.shutdown_for_native_exit_test());
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "native credential App shutdown authority",
         Duration::from_millis(5),
         || app.update_for_test(|cx| cx.native_exit_authority_is_settled_for_test()),
@@ -212,10 +214,11 @@ fn native_credential_io_runs_off_foreground() {
         "the owned native credential must be cleaned up"
     );
 
-    shutdown_credential_app(&mut app);
+    shutdown_credential_app(&platform, &mut app);
     drop(app);
     drop(platform);
     pump_messages_until_with_delay(
+        &inner_lifetime,
         "native credential platform retirement",
         Duration::from_millis(5),
         || {
@@ -331,10 +334,11 @@ fn native_credential_app_and_platform_storage_workflow_preserves_task_ownership(
     );
 
     let survivor = app.update_for_test(|cx| cx.read_credentials(&item.url));
-    shutdown_credential_app(&mut app);
+    shutdown_credential_app(&platform, &mut app);
     drop(app);
     drop(platform);
     pump_messages_until_with_delay(
+        &inner_lifetime,
         "credential Task ownership across native platform shutdown",
         Duration::from_millis(5),
         || {
@@ -500,6 +504,7 @@ fn wait_for_native_credential_submission(
     let foreground = thread::current().id();
     let mut submitted = None;
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "native credential status accepted nonempty Submitted frame",
         Duration::from_millis(5),
         || {
@@ -664,6 +669,7 @@ fn native_credential_background_io_submits_status_and_retires_owned_task_and_win
         "the native credential status window must accept an initial paint request",
     );
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "native credential status initialization WM_PAINT",
         Duration::from_millis(5),
         || {
@@ -868,6 +874,7 @@ fn native_credential_background_io_submits_status_and_retires_owned_task_and_win
         },
     );
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "owned credential consumer waits after actual native I/O",
         Duration::from_millis(5),
         || {
@@ -894,6 +901,7 @@ fn native_credential_background_io_submits_status_and_retires_owned_task_and_win
     app.update_for_test(|cx| handle.update(cx, |_, window, cx| window.remove_window(cx)))
         .expect("the exact native credential status window must close through its public owner");
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "exact credential HWND registration root Task and TextSystem retirement",
         Duration::from_millis(5),
         || {
@@ -975,10 +983,11 @@ fn native_credential_background_io_submits_status_and_retires_owned_task_and_win
         "retired credential render closures must release"
     );
 
-    shutdown_credential_app(&mut app);
+    shutdown_credential_app(&platform, &mut app);
     drop(app);
     drop(platform);
     pump_messages_until_with_delay(
+        &inner_lifetime,
         "native credential App platform and text resource retirement",
         Duration::from_millis(5),
         || {

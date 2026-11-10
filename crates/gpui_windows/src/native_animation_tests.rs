@@ -238,6 +238,7 @@ impl NativeAnimationWindow {
     #[track_caller]
     fn submitted(
         &self,
+        platform: &WindowsPlatform,
         app: &mut Application,
         source: NativeAnimationSource,
         previous: u64,
@@ -248,10 +249,14 @@ impl NativeAnimationWindow {
         let description = format!(
             "native animation exact source and nonempty Submitted generation after {previous}: {source:?}"
         );
-        pump_messages_until_with_delay(&description, Duration::from_millis(5), || {
-            submitted = app
-                .update_for_test(|cx| {
-                    self.handle.update(cx, |root, window, _| {
+        pump_messages_until_with_delay(
+            &Rc::downgrade(&platform.inner),
+            &description,
+            Duration::from_millis(5),
+            || {
+                submitted = app
+                    .update_for_test(|cx| {
+                        self.handle.update(cx, |root, window, _| {
                         let facts = window.presentation_facts();
                         let paints = self.paints.each_ref().map(|paint| paint.get());
                         last_state = Some((facts, window.rendered_frame_revision(), paints));
@@ -332,10 +337,11 @@ impl NativeAnimationWindow {
                             capture,
                         })
                     })
-                })
-                .expect("the native animation consumer must remain live through capture");
-            submitted.is_some()
-        });
+                    })
+                    .expect("the native animation consumer must remain live through capture");
+                submitted.is_some()
+            },
+        );
         let submitted = submitted.unwrap_or_else(|| {
             panic!("the animation source must reach real Submitted pixels: {last_state:?}")
         });
@@ -369,6 +375,7 @@ impl NativeAnimationWindow {
         })
         .expect("the animation window must close through its existing public owner");
         pump_messages_until_with_delay(
+            &Rc::downgrade(&platform.inner),
             "animation exact HWND, registration and view retirement",
             Duration::from_millis(5),
             || {
@@ -483,8 +490,8 @@ fn native_generic_animations_progress_reduce_restore_and_retire_pending_frames()
     let root_lifetime = consumer.root.clone();
     let paint_lifetimes = consumer.paints.each_ref().map(Rc::downgrade);
     let mut source = NativeAnimationSource::default();
-    let first = consumer.submitted(&mut app, source, 0, |_| true);
-    let progressed = consumer.submitted(&mut app, source, first.generation, |paints| {
+    let first = consumer.submitted(&platform, &mut app, source, 0, |_| true);
+    let progressed = consumer.submitted(&platform, &mut app, source, first.generation, |paints| {
         paints.iter().take(2).enumerate().all(|(index, paint)| {
             animation_phase_distance(first.paints[index].phase, paint.phase) >= 0.12
         })
@@ -496,11 +503,12 @@ fn native_generic_animations_progress_reduce_restore_and_retire_pending_frames()
 
     let previous = consumer.reduce_motion(&mut app, true);
     source.reduced_motion = true;
-    let reduced = consumer.submitted(&mut app, source, previous, |paints| {
+    let reduced = consumer.submitted(&platform, &mut app, source, previous, |paints| {
         paints.map(|paint| paint.phase) == [0., 0., 1.]
     });
     let static_since = Instant::now();
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "reduced-motion native endpoint stability through pending timers",
         Duration::from_millis(5),
         || {
@@ -540,7 +548,7 @@ fn native_generic_animations_progress_reduce_restore_and_retire_pending_frames()
             ..Default::default()
         }));
     source.pointer_inputs += 1;
-    let clicked = consumer.submitted(&mut app, source, previous, |_| true);
+    let clicked = consumer.submitted(&platform, &mut app, source, previous, |_| true);
     assert_eq!(clicked.paints.map(|paint| paint.phase), [0., 0., 1.]);
     assert_ne!(reduced.capture.image, clicked.capture.image);
     let previous = consumer.revision(&mut app);
@@ -557,19 +565,19 @@ fn native_generic_animations_progress_reduce_restore_and_retire_pending_frames()
             .propagate
     );
     source.key_inputs += 1;
-    let keyed = consumer.submitted(&mut app, source, previous, |_| true);
+    let keyed = consumer.submitted(&platform, &mut app, source, previous, |_| true);
     assert_eq!(keyed.paints.map(|paint| paint.phase), [0., 0., 1.]);
     assert_ne!(clicked.capture.image, keyed.capture.image);
 
     let previous = consumer.reduce_motion(&mut app, false);
     source.reduced_motion = false;
-    let restored = consumer.submitted(&mut app, source, previous, |paints| {
+    let restored = consumer.submitted(&platform, &mut app, source, previous, |paints| {
         paints
             .iter()
             .take(2)
             .all(|paint| paint.phase > 0.1 && paint.phase < 0.9)
     });
-    let resumed = consumer.submitted(&mut app, source, restored.generation, |paints| {
+    let resumed = consumer.submitted(&platform, &mut app, source, restored.generation, |paints| {
         paints.iter().take(2).enumerate().all(|(index, paint)| {
             animation_phase_distance(restored.paints[index].phase, paint.phase) >= 0.12
         })
@@ -591,7 +599,7 @@ fn native_generic_animations_progress_reduce_restore_and_retire_pending_frames()
         .expect("the long-delay animation must be mounted on the same native window");
     source.epoch += 1;
     source.long_delay = true;
-    let pending = consumer.submitted(&mut app, source, previous, |_| true);
+    let pending = consumer.submitted(&platform, &mut app, source, previous, |_| true);
     assert!(pending.generation > previous);
     let timer_barrier = Rc::new(Cell::new(None));
     app.update_for_test(|cx| {
@@ -603,6 +611,7 @@ fn native_generic_animations_progress_reduce_restore_and_retire_pending_frames()
             .detach();
     });
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "FIFO foreground barrier after native animation timers start",
         Duration::from_millis(5),
         || timer_barrier.get().is_some(),
@@ -624,6 +633,7 @@ fn native_generic_animations_progress_reduce_restore_and_retire_pending_frames()
             .all(|paint| paint.upgrade().is_none())
     );
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "retired animation delayed-frame deadline passes without resurrecting its window",
         Duration::from_millis(10),
         || {
@@ -643,8 +653,10 @@ fn native_generic_animations_progress_reduce_restore_and_retire_pending_frames()
         .expect_err("delayed animations must not retain the App behind its weak async context");
     assert_eq!(released.to_string(), "app was released");
     drop(weak_app);
+    let pump_platform = Rc::downgrade(&platform.inner);
     drop(platform);
     pump_messages_until_with_delay(
+        &pump_platform,
         "native animation platform HWND, App and OLE release",
         Duration::from_millis(5),
         || {

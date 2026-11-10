@@ -358,6 +358,7 @@ impl Render for NativeTextLayoutRoot {
 }
 
 fn wait_for_native_text_layout_submission(
+    platform: &WindowsPlatform,
     app: &mut Application,
     window: WindowHandle<NativeTextLayoutRoot>,
     paints: &RefCell<Vec<NativeTextLayoutPaint>>,
@@ -367,6 +368,7 @@ fn wait_for_native_text_layout_submission(
 ) -> (u64, NativeTextLayoutPaint) {
     let mut submitted = None;
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "native text layout accepted nonempty submission",
         Duration::from_millis(5),
         || {
@@ -944,6 +946,7 @@ fn native_text_layout_submits_complete_unicode_source_and_notified_redraw() {
     let initial_paint_cursor = observation.cursor();
     assert!(unsafe { RedrawWindow(Some(hwnd), None, None, RDW_INVALIDATE).as_bool() });
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "native text layout initialization WM_PAINT",
         Duration::from_millis(5),
         || {
@@ -962,6 +965,7 @@ fn native_text_layout_submits_complete_unicode_source_and_notified_redraw() {
         },
     );
     let (initial_generation, initial_paint) = wait_for_native_text_layout_submission(
+        &platform,
         &mut app,
         window,
         &paints,
@@ -984,6 +988,7 @@ fn native_text_layout_submits_complete_unicode_source_and_notified_redraw() {
     })
     .expect("changing the native text source must notify its existing view");
     let (changed_generation, changed_paint) = wait_for_native_text_layout_submission(
+        &platform,
         &mut app,
         window,
         &paints,
@@ -1007,6 +1012,7 @@ fn native_text_layout_submits_complete_unicode_source_and_notified_redraw() {
     app.update_for_test(|cx| window.update(cx, |_, window, cx| window.remove_window(cx)))
         .expect("the exact native text layout window must close");
     pump_messages_until_with_delay(
+        &Rc::downgrade(&platform.inner),
         "exact native text layout registration retirement",
         Duration::from_millis(5),
         || {
@@ -1056,8 +1062,10 @@ fn native_text_layout_submits_complete_unicode_source_and_notified_redraw() {
 
     app.update_for_test(|cx| cx.shutdown());
     drop(app);
+    let pump_platform = Rc::downgrade(&platform.inner);
     drop(platform);
     pump_messages_until_with_delay(
+        &pump_platform,
         "native text layout platform message window retirement",
         Duration::from_millis(5),
         || unsafe { !IsWindow(Some(platform_hwnd)).as_bool() },
