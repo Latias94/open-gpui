@@ -3313,6 +3313,19 @@ Trust unchanged official mirror/viewport algorithms and avoid unrelated full-fra
 
 ## Maintained Baseline Before Engine Adaptation
 
+The [Web text/viewport record](../verification.md#web-text-sessions-and-viewport) qualifies
+`7a79a113733e8f4aad1fb6ed2232e66ec171c26a`: complete official text mirroring/configuration,
+editable UTF-16 context, keyboard controls and viewport/inset snapshots use accepted sessions,
+leased handler capture and the existing post-borrow FIFO. Reproduced query/reentry/handler and
+candidate-effect ordering defects receive owning corrections; fixture failures remain explicit.
+Final focused Core 16/16, affected Core/public/Windows 53/53 and independent default/runtime
+1/1 and 2/2 pass. Complete actual text, clipboard, identity and touch browser workflows pass,
+as do affected correctness Clippy, Linux production/independent all-target compilation and
+format/static gates. All nine lanes close without remaining reviewed P1/P2. Actual OS IME,
+mobile keyboard/safe areas, Apple execution and numeric costs remain unqualified. Continue
+Canvas fallback/selected-face, remaining Wayland/X11/Mac, render/logging and final API/dispatch
+dispositions before the real Nara GPU/Host/View consumer and separate maintenance handoff.
+
 The [native control/popup record](../verification.md#native-regions-layer-shell-fullscreen-and-popups)
 qualifies `77b56a6af1b2a80ab05c11c42def3522077fd8da`: complete official input regions,
 layer-shell controls, simple fullscreen and native anchored-popup roles preserve the current

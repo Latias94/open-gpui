@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-11T03:38:58+08:00
+timestamp: 2026-11-11T04:55:40+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -17,6 +17,21 @@ verified_by:
 ---
 
 # Current State
+
+- Web text sessions and viewport/insets are implemented at
+  `7a79a113733e8f4aad1fb6ed2232e66ec171c26a`. Complete official textarea/configuration,
+  editable UTF-16 context, selection/composition and keyboard controls use existing input leases,
+  accepted-frame publication and post-borrow commands. The
+  [qualification](../../verification.md#web-text-sessions-and-viewport) records original
+  compile/runtime/fixture failures and corrected query/reentry/handler/effect ordering.
+  Final focused 16/16, affected Core/public/Windows 53/53 and independent default/runtime
+  1/1 and 2/2 pass. Actual text, clipboard, identity and touch browser workflows pass, as do
+  affected correctness Clippy, Linux production and independent all-target compilation,
+  format and existing static gates. All nine lanes close without remaining reviewed P1/P2.
+  Actual OS IME, mobile keyboard/nonzero safe areas, Apple execution and numeric costs remain
+  unqualified. Canvas fallback/selected-face and remaining platform/render/logging/API
+  dispositions still precede the real Nara GPU/Host/View consumer and separate maintenance.
+  Full fixed-target and foundation gates remain open.
 
 - Native regions, layer-shell controls, simple fullscreen and anchored popups are implemented at
   `77b56a6af1b2a80ab05c11c42def3522077fd8da`. Complete official native roles and control APIs use
@@ -1141,11 +1156,11 @@ historical scope and is not current branch or CI qualification.
   scroll/padding/hover, cursor/native file drag, process/dedicated/string and HTTP/download/
   archive support, canonical paths, complete utility composition/native helpers, source-over/
   native child composition, Windows dialog/host/input safety, native restoration/attention and
-  native regions/layer-shell/fullscreen/popups,
+  native regions/layer-shell/fullscreen/popups and complete Web text/viewport,
   rather than treating the earlier
   public-Platform audit as exhaustive. Continue the remaining
-  Web input/viewport, Wayland IME/effects/XKB, Mac native input/AppKit, renderer batching,
-  selected-face and logging groups, plus the final public-method/dispatch dispositions,
+  Canvas fallback/selected-face, Wayland IME/effects/XKB, X11 metadata, Mac native input/AppKit,
+  renderer batching and logging groups, plus the final public-method/dispatch dispositions,
   in their recorded prerequisite order. Build on qualified
   [shared Apple topology](../../verification.md#shared-apple-framework-topology) and
   [native quit/session shutdown](../../verification.md#native-quit-completion-and-restart-manager).

@@ -8702,6 +8702,117 @@ No remote CI, native Apple fullscreen/Space effects, explicit popup grab, actual
 dismissal, layer-shell/input-region input behavior, physical GPU cost or engine integration
 qualification follows. Continue the remaining fixed-target owners and real Nara consumer.
 
+## Web Text Sessions And Viewport
+
+This unit is implemented at `7a79a113733e8f4aad1fb6ed2232e66ec171c26a`, after
+`77b56a6af1b2a80ab05c11c42def3522077fd8da`, against fixed Zed
+`635026fabc38440fce5e1767d125026a17b12012`. Complete official `224373ab888`, `8fc1a8a0c6f`,
+`d84e5d4992b` and `6ad3c7f278e`, including `e773a56d6c` and `5a773a406e`, supply the
+textarea mirror, configuration, editable UTF-16 context, selection/composition, software-keyboard
+policy and visual viewport/safe-area snapshots. The mirror and viewport algorithms retain
+official provenance; Canvas font fallback and Cosmic selected-face reporting remain queued.
+
+Core adds the missing handler configuration/range/selection interfaces and public Window
+notifications, keyboard controls and inset/viewport queries. The existing leased input transaction
+owns native queries and diagnostic operations; returned selection fragments use the committed
+geometry transform. Viewport events use the existing ordered ingress and pre-frame snapshot.
+The mirror is browser context for the handler-owned document, not another text/history owner.
+
+Fork integration requires accepted-frame session publication. Refused or unwound candidates
+retain the last accepted configuration, focus and handler; ordinary redraw deduplicates
+configuration. Show/hide/state commands use the existing post-borrow FIFO because DOM blur may
+synchronously emit compositionend. Irreversible quiesced loss cleanup remains protected by the
+revoked input gate. No separate dispatcher or input model is added.
+
+Initial compilation catches two fixture comparisons against official UTF16Selection without
+PartialEq; the tests now compare its range and direction. The first runtime cohort passes 6/8
+(`21046e4a-af68-4bc2-889c-3f853a68a506`). The imported official focus regression requires the
+fork's native handler slot lease, and an unwind fixture must keep automatic retries refused while
+inspecting its original session. Both original official scenarios and assertions are preserved.
+
+The expanded cohort passes 11/12 (`e2442086-b181-47e7-9a7c-5790fa0020a5`), reproducing an
+existing fork ownership defect: an automatic refused redraw advances an empty slot's generation
+while a native query holds its handler, preventing restoration. Candidate capture now calls
+take_input_handler_for_frame; all seven built-in backends delegate to take_for_frame, which
+preserves the generation for an empty/checked-out slot. Explicit take/set/terminate still retire
+the old checkout. The corrected cohort passes 12/12
+(`bb6939f9-3a38-4e14-8a00-fa0da3c9bb7f`).
+
+Independent reviews identify stale focus/query results, nested accepted handler replacement,
+candidate-side notification leakage and synchronous DOM callback reentry. Queries revalidate
+focus, focus-claim revision, accepted generation and interaction admission. Handler restoration
+cannot overwrite a newer accepted session. Candidate notifications and keyboard requests move
+into an acceptance-local record before accepted callbacks run. A valid current query authorizes
+publication; panic/staleness discards the record. A committed keyboard revision makes a newer
+explicit request supersede an earlier candidate request, while a nested refused candidate cannot
+erase the outer accepted record. The final focused cohort passes 16/16
+(`f97ac82a-660f-41df-8802-18abacb4f80e`), including all four latest ordering/panic/nested-refusal
+regressions and both imported official tests.
+
+The affected all-feature Core/public/Windows cohort passes 53/53
+(`2126d1a1-6fac-4518-8f94-a11371901876`), including that 16-case cohort, existing command,
+native input lease/retirement controls and two real Windows consumers. The latter preserve
+two-HWND reentrant paint/IME behavior and modifier/chord/focus routing through real text
+handlers and native Submitted frames. Other framework/native cases are deliberately excluded;
+unchanged official coverage is not rerun as a full integration matrix.
+
+The independently locked consumer passes 1/1 without optional features
+(`fce5bd0f-0280-4ae1-9564-a1a1633eaa16`) and 2/2 with bench-support
+(`f7e0423f-61c5-4edb-9040-1b907133e2a7`). The first is an ordinary public type/value consumer;
+the latter also executes a real returning App, renders and installs its entity handler, mutates
+UTF-16 selection/text, consumes configuration/geometry APIs, then blurs/closes/shuts down.
+Neither enables test-support. Its NoopTextSystem and headless backend do not qualify native IME
+or browser layout; the separate native/browser consumers above own those execution scopes.
+
+Affected Core/Windows/xtask all-target/all-feature correctness Clippy passes on Rust 1.95.0.
+The actual WSL Linux x11+wayland production check also passes on that compiler. The browser
+workflow builds the complete locked wasm fixture; no dependency version/source or compiler-floor
+change is required. Mac's mechanical slot/command forwarding receives source review only in
+this unit; earlier foreign-build results retain their earlier checkpoint, without Apple native
+execution or a new current-source build claim.
+The independently locked all-target consumer check with bench-support, root/consumer/smoke
+format checks and existing import/public-API/document/release scans pass. CI gains the focused
+Core and ordinary consumer commands; no remote CI run is claimed. All nine scoped lanes are
+closed, including both bounded independent reviews, without remaining reviewed P1/P2.
+
+The first smoke fixture builds fail on event type inference and then on the required
+TargetedEvent<MouseDownEvent> listener type. A subsequent actual browser build catches private
+is_mapped access. A window-owned allows_virtual_keyboard_request helper fixes that boundary;
+it permits an active programmatic-only window while rejecting unmapped or retired windows.
+The mirror is removed from sequential Tab navigation and disabled/read-only on retirement.
+Bounded Core and Web reviews close without remaining P1/P2; runtime evidence follows separately.
+
+An earlier complete real Edge/WebGL trajectory passes trusted CDP editing and UTF-16 selection,
+bounded editable text, accepted Rust model/textarea agreement, two independent fields, public
+content/selection/configuration notifications, repaint identity/focus preservation, external DOM
+focus recovery and an actual 720x520 viewport resize. Synthetic composition covers commit,
+cancellation, duplicate end and synchronous blur callbacks. This earlier pass precedes the final
+acceptance-local fixes and programmatic-only/retirement controls; final qualification must use
+the latter source checkpoint.
+
+The final text trajectory first times out because the fixture added its F11 control without
+mapping the key. After that fixture correction, actual DOM retirement is observed, but the
+fixture synchronously invokes the hidden Host lifecycle boundary while its root entity and
+activation observer are leased. Its existing Window::defer now executes that lifecycle operation
+after the component callback releases the entity. No production quiescence semantics change.
+The complete final Edge/WebGL text trajectory passes, including an active programmatic-only
+window, synchronous blur/composition during hide/show, and a disabled/read-only/unfocused
+retired textarea that cannot regain focus explicitly or through trusted Tab. All earlier model,
+UTF-16, configuration, field and viewport assertions remain in that same workflow.
+The affected existing clipboard, platform-identity and touch-only Edge/WebGL workflows also
+pass after migrating their selectors to textarea. They retain real permission-granted text/image
+reads and denial, trusted paste, cached platform identity with dispatch, and trusted DOM
+pointer phases alongside recognized Core gesture/scroll output. Simulated host identities,
+delayed Blob/absent API controls and CDP touch remain labeled separately from actual hardware.
+
+The existing reproducible driver owns its browser/server lifetime and accepts
+OPEN_GPUI_WEB_SMOKE_CASE=text-input, clipboard or platform-info for bounded runs; the existing
+touch-only selection remains available. Browser preflight availability is separate
+from the selected rendering backend. Trusted CDP edits are distinct from synthetic composition;
+neither qualifies actual OS IME, mobile keyboard hardware, nonzero device safe areas, numerical
+costs or physical GPU performance. Foreign native execution and the actual Nara GPU/Host/View
+consumer remain separate. This unit does not close full fixed-target or foundation gates.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:
