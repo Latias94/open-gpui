@@ -1648,16 +1648,13 @@ impl AppCell {
             || self.shutdown_fence.borrow().is_some()
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    pub(super) fn native_exit_authority_is_settled_for_test(&self) -> bool {
+    pub(super) fn native_exit_authority_is_settled(&self) -> bool {
         self.native_events.is_terminated()
             && !self.shutdown_fence_owns_effect_flush()
             && self.shutdown_completion_queued.get().is_none()
             && self.pointer_capture_release_barriers_are_clear()
             && self.native_window_retirement_barriers_are_clear()
-            && self
-                .native_events
-                .owned_local_authorities_are_settled_for_test()
+            && self.native_events.owned_local_authorities_are_settled()
     }
 
     fn active_shutdown_generation(&self) -> Option<u64> {
@@ -2364,6 +2361,12 @@ impl AppCell {
 
     pub(super) fn enqueue_native_app_event(&self, event: NativeAppEvent) {
         self.native_events.enqueue_app(event);
+    }
+
+    pub(super) fn request_native_quit(&self) -> bool {
+        self.enqueue_native_app_event(NativeAppEvent::Quit);
+        self.request_post_borrow_convergence();
+        self.native_exit_authority_is_settled()
     }
 
     #[cfg(not(target_family = "wasm"))]

@@ -3875,7 +3875,11 @@ pub trait Platform: 'static {
     fn reveal_path(&self, path: &Path);
     fn open_with_system(&self, path: &Path);
 
-    fn on_quit(&self, callback: Box<dyn FnMut()>);
+    /// Registers a native quit callback that returns whether shutdown completed synchronously.
+    ///
+    /// A queued request or pending native retirement returns `false`. Platforms that can wait
+    /// continue their existing event loop; a forced OS shutdown may allow only best-effort work.
+    fn on_quit(&self, callback: Box<dyn FnMut() -> bool>);
     fn on_reopen(&self, callback: Box<dyn FnMut()>);
     /// Registers the native callback invoked when the system is about to sleep.
     fn on_system_sleep(&self, callback: NativeAppNotificationHandler);

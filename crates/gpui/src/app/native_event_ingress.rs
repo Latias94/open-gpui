@@ -538,8 +538,7 @@ impl NativeEventIngress {
         NativeOwnedLocalTaskAuthorityLease::acquire(Rc::clone(&self.owned_local_authority_count))
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    pub(super) fn owned_local_authorities_are_settled_for_test(&self) -> bool {
+    pub(super) fn owned_local_authorities_are_settled(&self) -> bool {
         let mut wakes = self.delayed_wake_tasks.borrow_mut();
         wakes.retain(|wake| !wake.is_ready());
         wakes.is_empty() && self.owned_local_authority_count.get() == 0

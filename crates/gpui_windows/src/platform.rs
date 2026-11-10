@@ -242,6 +242,28 @@ enum WindowsPlatformRunExit {
     ReturnToCaller,
 }
 
+impl WindowsPlatformRunExit {
+    fn terminate_process(self) {
+        match self {
+            Self::TerminateProcess => {
+                // Bypass the CRT exit logic, which runs atexit handlers before calling ExitProcess.
+                // aws-lc registers an atexit handler that intentionally acquires a lock without
+                // releasing it. aws-lc also has thread_local objects which acquire this lock in
+                // their destructor. Destructors for thread_locals run under the loader lock, so
+                // there is a race condition where, if a thread exits after atexit handlers have
+                // run, the TLS destructors will block indefinitely on this lock while holding the
+                // loader lock. Since ExitProcess also requires the loader lock, process teardown
+                // will deadlock.
+                unsafe {
+                    windows::Win32::System::Threading::ExitProcess(0);
+                }
+            }
+            #[cfg(any(test, feature = "test-support"))]
+            Self::ReturnToCaller => {}
+        }
+    }
+}
+
 pub struct WindowsPlatform {
     inner: Rc<WindowsPlatformInner>,
     raw_window_handles: Arc<RegisteredWindows>,
@@ -264,7 +286,6 @@ pub struct WindowsPlatform {
     handle: HWND,
     suspend_resume_notification: RefCell<Option<HPOWERNOTIFY>>,
     power_saving_notification: RefCell<Option<HPOWERNOTIFY>>,
-    run_exit: WindowsPlatformRunExit,
     terminal_shutdown_complete: Cell<bool>,
     disable_direct_composition: bool,
     has_package_identity: bool,
@@ -310,6 +331,7 @@ pub(crate) struct WindowsPlatformInner {
     displays_changed_scheduled: Cell<bool>,
     native_retirement: RefCell<WindowsNativeRetirementCoordinator>,
     native_finalization_started: Cell<bool>,
+    run_exit: WindowsPlatformRunExit,
     #[cfg(test)]
     lifecycle_test_probe: Rc<NativeWindowLifecycleTestProbe>,
 }
@@ -835,7 +857,7 @@ impl NativeWindowLifecycleTestProbe {
 #[derive(Default)]
 struct PlatformCallbacks {
     open_urls: Cell<Option<Box<dyn FnMut(Vec<String>)>>>,
-    quit: Cell<Option<Box<dyn FnMut()>>>,
+    quit: Cell<Option<Box<dyn FnMut() -> bool>>>,
     reopen: Cell<Option<Box<dyn FnMut()>>>,
     app_menu_action: Cell<Option<Box<dyn FnMut(&dyn Action)>>>,
     will_open_app_menu: Cell<Option<Box<dyn FnMut()>>>,
@@ -923,6 +945,7 @@ impl WindowsPlatform {
         let mut context = PlatformWindowCreateContext {
             inner: None,
             validation_number,
+            run_exit,
             main_sender: Some(main_sender),
             main_receiver: Some(main_receiver),
             recovered_directx_devices: recovered_directx_devices.clone(),
@@ -1015,7 +1038,6 @@ impl WindowsPlatform {
             direct_write_text_system,
             suspend_resume_notification: RefCell::new(None),
             power_saving_notification: RefCell::new(None),
-            run_exit,
             terminal_shutdown_complete: Cell::new(false),
             disable_direct_composition,
             has_package_identity: has_package_identity(),
@@ -2509,12 +2531,16 @@ impl Platform for WindowsPlatform {
                 }
                 if !quit_notified {
                     quit_notified = true;
-                    if with_windows_callback(&self.inner.state.callbacks.quit, |callback| {
-                        callback()
-                    })
-                    .is_none()
-                    {
-                        break;
+                    match catch_unwind(AssertUnwindSafe(|| {
+                        with_windows_callback(&self.inner.state.callbacks.quit, |callback| {
+                            callback()
+                        })
+                    })) {
+                        Ok(None) => break,
+                        Ok(Some(_)) => {}
+                        Err(_) => log::error!(
+                            "caught a panic while handling native quit; continuing terminal shutdown"
+                        ),
                     }
                 }
                 continue;
@@ -2525,7 +2551,7 @@ impl Platform for WindowsPlatform {
             }
         }
 
-        match self.run_exit {
+        match self.inner.run_exit {
             #[cfg(any(test, feature = "test-support"))]
             WindowsPlatformRunExit::ReturnToCaller => {
                 // A returning test host keeps the process alive after WM_QUIT. Finish the
@@ -2535,17 +2561,7 @@ impl Platform for WindowsPlatform {
                 self.finish_native_finalization_before_return();
             }
             WindowsPlatformRunExit::TerminateProcess => {
-                // Bypass the CRT exit logic, which runs atexit handlers before calling ExitProcess.
-                // aws-lc registers an atexit handler that intentionally acquires a lock without
-                // releasing it. aws-lc also has thread_local objects which acquire this lock in
-                // their destructor. Destructors for thread_locals run under the loader lock, so
-                // there is a race condition where, if a thread exits after atexit handlers have
-                // run, the TLS destructors will block indefinitely on this lock while holding the
-                // loader lock. Since ExitProcess also requires the loader lock, process teardown
-                // will deadlock.
-                unsafe {
-                    windows::Win32::System::Threading::ExitProcess(0);
-                }
+                self.inner.run_exit.terminate_process();
             }
         }
     }
@@ -2859,7 +2875,7 @@ impl Platform for WindowsPlatform {
             .detach();
     }
 
-    fn on_quit(&self, callback: Box<dyn FnMut()>) {
+    fn on_quit(&self, callback: Box<dyn FnMut() -> bool>) {
         self.inner.state.callbacks.quit.set(Some(callback));
     }
 
@@ -3179,6 +3195,7 @@ impl WindowsPlatformInner {
             displays_changed_scheduled: Cell::new(false),
             native_retirement: RefCell::new(WindowsNativeRetirementCoordinator::default()),
             native_finalization_started: Cell::new(false),
+            run_exit: context.run_exit,
             #[cfg(test)]
             lifecycle_test_probe: context.lifecycle_test_probe.clone(),
         }))
@@ -3820,7 +3837,8 @@ impl WindowsPlatformInner {
             | WM_GPUI_KEYBOARD_LAYOUT_CHANGED
             | WM_GPUI_GPU_DEVICE_LOST
             | WM_GPUI_REFRESH_DISPLAY_TOPOLOGY
-            | WM_GPUI_DISPLAYS_CHANGED => self.handle_gpui_events(msg, wparam, lparam),
+            | WM_GPUI_DISPLAYS_CHANGED
+            | WM_GPUI_END_SESSION => self.handle_gpui_events(msg, wparam, lparam),
             WM_TIMER if wparam.0 == DISPLAY_TOPOLOGY_RETRY_TIMER_ID => {
                 self.handle_display_topology_retry()
             }
@@ -3839,12 +3857,8 @@ impl WindowsPlatformInner {
                 Some(0)
             }
             WM_QUERYENDSESSION => Some(1),
-            WM_ENDSESSION => {
-                if wparam.0 != 0 {
-                    self.handle_end_session();
-                }
-                Some(0)
-            }
+            WM_ENDSESSION if wparam.0 != 0 => self.handle_end_session(),
+            WM_ENDSESSION => Some(0),
             _ => None,
         };
         if let Some(result) = handled {
@@ -3871,14 +3885,22 @@ impl WindowsPlatformInner {
             WM_GPUI_GPU_DEVICE_LOST => self.handle_device_lost(lparam),
             WM_GPUI_REFRESH_DISPLAY_TOPOLOGY => self.handle_display_topology_refresh(),
             WM_GPUI_DISPLAYS_CHANGED => self.handle_displays_changed(),
+            WM_GPUI_END_SESSION => self.handle_end_session(),
             _ => unreachable!(),
         }
     }
 
-    fn handle_end_session(&self) {
-        self.with_callback(|callbacks| &callbacks.quit, |callback| callback());
+    fn handle_end_session(&self) -> Option<isize> {
+        let shutdown_completed =
+            with_windows_callback(&self.state.callbacks.quit, |callback| callback())
+                .unwrap_or(false);
         log::logger().flush();
+        if shutdown_completed {
+            self.run_exit.terminate_process();
+        }
+
         unsafe { PostQuitMessage(0) };
+        Some(0)
     }
 
     #[inline]
@@ -4147,6 +4169,7 @@ pub(crate) struct WindowCreationInfo {
 struct PlatformWindowCreateContext {
     inner: Option<Result<Rc<WindowsPlatformInner>>>,
     validation_number: usize,
+    run_exit: WindowsPlatformRunExit,
     main_sender: Option<PriorityQueueSender<RunnableVariant>>,
     main_receiver: Option<PriorityQueueReceiver<RunnableVariant>>,
     recovered_directx_devices: Arc<RwLock<Option<DirectXDevices>>>,

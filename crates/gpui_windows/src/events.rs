@@ -34,6 +34,7 @@ pub(crate) const WM_GPUI_KEYDOWN: u32 = WM_USER + 8;
 pub(crate) const WM_GPUI_REFRESH_DISPLAY_TOPOLOGY: u32 = WM_USER + 9;
 pub(crate) const WM_GPUI_DISPLAY_TOPOLOGY_PUBLISHED: u32 = WM_USER + 10;
 pub(crate) const WM_GPUI_DISPLAYS_CHANGED: u32 = WM_USER + 11;
+pub(crate) const WM_GPUI_END_SESSION: u32 = WM_USER + 12;
 
 const SIZE_MOVE_LOOP_TIMER_ID: usize = 1;
 
@@ -1150,6 +1151,8 @@ impl WindowsWindowInner {
             WM_PAINT => self.handle_paint_msg(handle),
             WM_CLOSE => self.handle_close_msg(),
             WM_DESTROY => self.handle_destroy_msg(),
+            WM_QUERYENDSESSION => Some(1),
+            WM_ENDSESSION => self.handle_end_session_msg(wparam),
             WM_MOUSEMOVE => self.handle_mouse_move_msg(handle, lparam, wparam),
             WM_MOUSELEAVE | WM_NCMOUSELEAVE => self.handle_mouse_leave_msg(),
             WM_CAPTURECHANGED => self.handle_pointer_capture_lost_msg(),
@@ -1217,6 +1220,20 @@ impl WindowsWindowInner {
         } else {
             unsafe { DefWindowProcW(handle, msg, wparam, lparam) }
         }
+    }
+
+    fn handle_end_session_msg(self: &Rc<Self>, wparam: WPARAM) -> Option<isize> {
+        if wparam.0 != 0 && RegisteredWindowAuthority::capture(self).is_ok() {
+            unsafe {
+                SendMessageW(
+                    self.platform_window_handle,
+                    WM_GPUI_END_SESSION,
+                    Some(WPARAM(self.validation_number)),
+                    None,
+                );
+            }
+        }
+        Some(0)
     }
 
     fn handle_move_msg(&self, handle: HWND, lparam: LPARAM) -> Option<isize> {

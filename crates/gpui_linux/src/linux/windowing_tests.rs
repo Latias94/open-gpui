@@ -262,7 +262,10 @@ fn quit_during_launch_and_drop_settle_waiters_without_another_dispatch() {
     let quits = Rc::new(Cell::new(0));
     platform.on_quit(Box::new({
         let quits = quits.clone();
-        move || quits.set(quits.get() + 1)
+        move || {
+            quits.set(quits.get() + 1);
+            true
+        }
     }));
     platform.run(Box::new({
         let platform = platform.clone();

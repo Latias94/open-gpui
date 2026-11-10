@@ -109,6 +109,8 @@ mod native_power_visibility_tests;
 #[cfg(feature = "profiler")]
 #[path = "native_profiler_tests.rs"]
 mod native_profiler_tests;
+#[path = "native_quit_tests.rs"]
+mod native_quit_tests;
 #[cfg(feature = "bench-support")]
 #[path = "native_randomized_tree_tests.rs"]
 mod native_randomized_tree_tests;
@@ -7568,6 +7570,7 @@ fn returning_test_platform_exits_message_loop_after_retiring_native_resources() 
         move || {
             quit_callbacks.set(quit_callbacks.get() + 1);
             platform.upgrade().unwrap().quit_after_terminal_shutdown();
+            true
         }
     }));
 
@@ -7718,6 +7721,18 @@ fn returning_application_quit_waits_for_observers_and_retryable_window_retiremen
         .detach();
         cx.quit();
         cx.quit();
+        unsafe {
+            SendMessageW(
+                opened_hwnd_for_launch.get(),
+                windows::Win32::UI::WindowsAndMessaging::WM_ENDSESSION,
+                Some(WPARAM(1)),
+                None,
+            );
+        }
+        assert!(
+            !platform_for_launch.terminal_shutdown_complete.get(),
+            "a borrowed App must not acknowledge terminal shutdown after queuing session quit"
+        );
     });
 
     assert_eq!(observer_calls.get(), 1);

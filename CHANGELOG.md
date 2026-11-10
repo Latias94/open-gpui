@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- Windows forwards Restart Manager session shutdown from application windows to the platform quit callback. Completed shutdown flushes logs and exits; asynchronous shutdown retains the official best-effort quit fallback.
+
 - `Application::with_windowing`, `App::request_windowing` and `GraphicalEnvironment` retain an application while a capable native backend switches between headless and graphical operation. Linux exposes explicit allowed `WindowingModes`; application `ActivationPolicy` controls macOS Dock/menu participation separately from each window's activation policy.
 
 - `App::set_window_appearance` overrides macOS native window chrome with any `WindowAppearance`; passing `None` restores system following. Other platforms retain the default no-op through `Platform::set_window_appearance`.
@@ -35,7 +37,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 - Custom `Platform` implementations must provide `prevent_idle_sleep(&str) -> Task<Result<ActivityGuard>>`. Await the acquisition and retain its guard for the operation; dropping an unpolled ready acquisition also releases its activity. Unsupported implementations should return an explicit error. `PlatformDispatcher::prevent_app_nap` has a default no-op.
 
-- Windows keeps its message loop alive after a native quit request until App shutdown settles. Applications retain their App quit API; direct platform callback owners must acknowledge completed shutdown through `quit_after_terminal_shutdown` instead of merely returning.
+- `Platform::on_quit` now takes `Box<dyn FnMut() -> bool>`. Return `true` only when shutdown completed synchronously; queued work and pending native retirement return `false`. Windows keeps its ordinary quit loop alive until `quit_after_terminal_shutdown` acknowledges completion. Forced OS session shutdown may allow only best-effort progress before termination.
 
 - Custom `Platform` implementations must provide `platform_info`, reporting the host OS separately from Native/Web delivery. `Keystroke::parse` and `KeyBinding::new` take static strings with explicit modifiers. Load dynamic or `secondary-` bindings with `Keystroke::parse_with_os` or `KeyBinding::load(..., &App)`, which uses the application's actual keyboard mapper and host OS. Format or serialize strokes with `.display(os)` / `.unparse(os)`; direct stroke `Display` is removed. Secondary modifier helpers, default key contexts and window shortcut labels now receive App/OS facts. Command binding projection/loading, shortcut diagnostics and capture APIs propagate those same facts.
 - DevTools command keybinding probes take a fallible callback returning an App-prepared `SnapshotProbeSnapshot`. Publish owned facts after projecting on the App thread. The payload field `installed_key_binding_count` becomes `key_binding_count`, since a projection does not establish installation.

@@ -92,6 +92,8 @@ mod power_mode_tests;
 #[cfg(test)]
 mod power_tests;
 #[cfg(test)]
+mod quit_tests;
+#[cfg(test)]
 mod restart_tests;
 #[cfg(test)]
 mod system_notification_tests;
@@ -1150,9 +1152,12 @@ impl App {
             let platform = Rc::downgrade(&platform);
             move || {
                 if let Some(app) = app.upgrade() {
-                    app.enqueue_native_app_event(native_event_ingress::NativeAppEvent::Quit);
+                    app.request_native_quit()
                 } else if let Some(platform) = platform.upgrade() {
                     platform.quit_after_terminal_shutdown();
+                    true
+                } else {
+                    true
                 }
             }
         }));
@@ -1242,7 +1247,7 @@ impl App {
     pub fn native_exit_authority_is_settled_for_test(&self) -> bool {
         self.this
             .upgrade()
-            .is_none_or(|app| app.native_exit_authority_is_settled_for_test())
+            .is_none_or(|app| app.native_exit_authority_is_settled())
     }
 
     pub(super) fn quit_after_terminal_shutdown(&mut self) {
@@ -5097,7 +5102,7 @@ mod test {
             &[stale_window],
             "terminal shutdown must deliver exact native lifecycle work queued behind its completion"
         );
-        assert!(cx.app.native_exit_authority_is_settled_for_test());
+        assert!(cx.app.native_exit_authority_is_settled());
         assert_app_transaction_idle(cx);
     }
 

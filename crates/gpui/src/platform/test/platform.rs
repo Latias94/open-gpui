@@ -89,6 +89,7 @@ pub(crate) struct TestPlatform {
     idle_sleep_prevention_delay: Cell<Duration>,
     idle_sleep_prevention_fails: Cell<bool>,
     quit_requested: RefCell<bool>,
+    quit_callback: RefCell<Option<Box<dyn FnMut() -> bool>>>,
     open_urls_callback: RefCell<Option<Box<dyn FnMut(Vec<String>)>>>,
     reopen_callback: RefCell<Option<Box<dyn FnMut()>>>,
     system_notifications: RefCell<TestSystemNotifications>,
@@ -298,6 +299,7 @@ impl TestPlatform {
             idle_sleep_prevention_delay: Cell::new(Duration::ZERO),
             idle_sleep_prevention_fails: Cell::new(false),
             quit_requested: Default::default(),
+            quit_callback: RefCell::new(None),
             open_urls_callback: Default::default(),
             reopen_callback: Default::default(),
             system_notifications: Default::default(),
@@ -582,6 +584,11 @@ impl TestPlatform {
 
     pub(crate) fn did_quit(&self) -> bool {
         *self.quit_requested.borrow()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn take_quit_callback(&self) -> Option<Box<dyn FnMut() -> bool>> {
+        self.quit_callback.borrow_mut().take()
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -1342,7 +1349,9 @@ impl Platform for TestPlatform {
         unimplemented!()
     }
 
-    fn on_quit(&self, _callback: Box<dyn FnMut()>) {}
+    fn on_quit(&self, callback: Box<dyn FnMut() -> bool>) {
+        self.quit_callback.replace(Some(callback));
+    }
 
     fn on_reopen(&self, callback: Box<dyn FnMut()>) {
         assert!(
