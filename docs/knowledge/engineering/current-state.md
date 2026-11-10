@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-11T06:29:26+08:00
+timestamp: 2026-11-11T07:15:41+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -17,6 +17,16 @@ verified_by:
 ---
 
 # Current State
+
+- The official typed Mac AppKit and ScreenCaptureKit mechanisms are implemented at
+  `0c1118e2f1a63f0a91e5e7c2ebf33fb884707953`. The old Cocoa shim and generated Media package
+  are removed; native ownership, ordered input, display snapshots and retirement stay in their
+  existing owners. The [qualification](../../verification.md#macos-native-input-appkit-and-screen-capture)
+  records final Apple-target all-target correctness Clippy, ordinary no-capture and independent
+  capture-to-surface compilation, Windows selector build, and format/static gates. All six
+  lanes close after binding and nullable-window corrections. Native AppKit and screen-recording
+  behavior, weak-linked startup and numeric costs remain unqualified. Renderer batching, logging
+  and final API/dispatch dispositions still precede the real Nara GPU/Host/View consumer.
 
 - Official Wayland IME/background effects, XKB and X11 class metadata are implemented at
   `cf4bd2c6db1fb97ce5d77a201212f988052b17d2`. Existing protocol and window owners retain
@@ -1183,9 +1193,9 @@ historical scope and is not current branch or CI qualification.
   archive support, canonical paths, complete utility composition/native helpers, source-over/
   native child composition, Windows dialog/host/input safety, native restoration/attention and
   native regions/layer-shell/fullscreen/popups, complete Web text/viewport and official Canvas
-  font fallback/selected-face reporting and Linux IME/effects/XKB/X11 metadata. The earlier
-  public-Platform audit is not exhaustive. Continue the remaining Mac native input/AppKit,
-  renderer batching and logging groups, plus the final public-method/dispatch dispositions,
+  font fallback/selected-face reporting, Linux IME/effects/XKB/X11 metadata and typed Mac
+  input/AppKit/ScreenCaptureKit. The earlier public-Platform audit is not exhaustive. Continue
+  the renderer batching and logging groups, plus the final public-method/dispatch dispositions,
   in their recorded prerequisite order. Build on qualified
   [shared Apple topology](../../verification.md#shared-apple-framework-topology) and
   [native quit/session shutdown](../../verification.md#native-quit-completion-and-restart-manager).

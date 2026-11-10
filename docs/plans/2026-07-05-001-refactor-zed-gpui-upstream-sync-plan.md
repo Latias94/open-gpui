@@ -3405,7 +3405,46 @@ WindowStateChanged observation path and preserve CreationOnly command admission.
 window-shadow example is now an explicit platform target; migrate its stale targeted-event
 accessors alongside the actual corner forwarding.
 
+### macOS Native Input, AppKit And Capture Successor
+
+Continue after `cf4bd2c6db1fb97ce5d77a201212f988052b17d2` against the same fixed target.
+Adopt the complete typed keyboard/event (`0a9eb81e6c`), application/menu (`d86aa6e6b9`),
+window/appearance (`10cfb45944`) and ScreenCaptureKit (`4b47ceb9d3`) mechanisms and their
+fixed-target follow-ups. The predecessor `86b2cf9662` supplies typed capture enumeration.
+Include Delete/Backspace masks (`d01f1258376`), Spanish-ISO (`41126668013`), normal window
+tracking and inactive hover (`db7f9ceed7`, `f6838a7c4a`), physical-button drag stop
+(`382ff7a64b`), macOS 27 blur (`90d8514059`) and typed/null-safe panels (`9f305aaf88`).
+Reconcile native window Fill margins, fullscreen traffic lights, accessibility release and
+UTType drag icons through the same window owner. Keep the existing macOS 12 deployment
+floor and the separate 12.3 ScreenCaptureKit availability check.
+
+Follow the target's typed AppKit, explicit retain/release and cached main-thread marker.
+Keep fork launch/admission, App event ordering, exact window/callback identities, input leases,
+display publication, power/frame cadence, renderer completion and native retirement. Display
+collection retains `NSScreen` for the operation; immutable committed topology remains detached
+data. Remove the handwritten Cocoa compatibility surface and the generated Media package once
+their consumers use the typed bindings. Core's existing retained CoreVideo buffer is already the
+capture and surface type; the migration needs no second frame carrier. Optional ScreenCaptureKit
+and CoreMedia dependencies stay confined to the Mac capture feature.
+
+Qualify the actual Apple-target sources and test targets with the existing cross toolchain, and
+compile the independently locked ordinary capture-to-surface consumer. Keep ordinary Mac use
+without capture, non-Mac locks and shared APIs buildable. Trust unchanged official algorithms;
+review and verify adapted fork lifetimes and behavior. Native AppKit/menu/input, desktop blur,
+real screen permission/capture and macOS linking/execution require their own Apple evidence.
+
 ## Maintained Baseline Before Engine Adaptation
+
+The [Mac AppKit and capture record](../verification.md#macos-native-input-appkit-and-screen-capture)
+qualifies `0c1118e2f1a63f0a91e5e7c2ebf33fb884707953`. Complete official typed input, menu,
+window/display and ScreenCaptureKit paths remove the obsolete Cocoa shim and generated Media
+package. The existing fork retains admission, display and retirement authority; nullable child
+and content paths and retained blur attachment receive bounded fixes. Final Apple-target
+all-target correctness Clippy, capture-disabled compilation, the independently locked public
+capture-to-surface consumer, the Windows selector build and format/static gates pass. All six
+lanes close. Actual AppKit behavior, older-system weak-linked startup and screen recording
+still require an Apple host. Continue renderer batching, logging and final API/dispatch
+dispositions before the actual Nara GPU/Host/View consumer and separate maintenance.
 
 The [Linux IME and background-effects record](../verification.md#linux-ime-background-effects-and-keyboard-contexts)
 qualifies `cf4bd2c6db1fb97ce5d77a201212f988052b17d2`. Complete official Wayland cursor

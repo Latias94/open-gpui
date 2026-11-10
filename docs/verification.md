@@ -9013,6 +9013,63 @@ an advertised effect protocol cannot qualify that protocol. Existing configured 
 do not resolve the previously recorded default-renderer thread-exit crash. This scoped unit
 does not close the full fixed-target refresh, Nara integration or foundation gates.
 
+## macOS Native Input, AppKit And Screen Capture
+
+The November 11 successor starts at `4ca8269dd55d5152c7b040cad78637c8cb59421f`
+against fixed Zed `635026fabc38440fce5e1767d125026a17b12012` and lands at
+`0c1118e2f1a63f0a91e5e7c2ebf33fb884707953`. The official typed
+keyboard/event, application/menu, window/appearance and ScreenCaptureKit units replace the
+old Cocoa shim and generated Media package. The [owning plan](plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#macos-native-input-appkit-and-capture-successor)
+records exact provenance for input/menu fixes, tracking and drag, blur, Fill, traffic lights,
+accessibility and panel follow-ups. Existing fork launch/windowing, command and input leases,
+display generations, presentation receipts and native retirement remain the authorities.
+
+Display operations now hold typed `NSScreen` values while observing and validating their exact
+topology; published display facts remain detached values. Capture uses typed source and stream
+objects, one retained CoreVideo buffer per callback and a serial output queue. The capture
+feature requires ScreenCaptureKit 12.3 at runtime. The independently locked ordinary consumer
+shows the public capture-to-surface composition and the official application's weak-framework
+link argument for capture-enabled binaries deployed to macOS 12.0–12.2.
+
+The existing LLVM 22.1.6 and Zig 0.16.0 Darwin headers compile the C dependencies at the
+macOS 12 deployment floor; no compiler or project toolchain is added. Shared Apple production
+compilation passes for `aarch64-apple-darwin` with runtime shaders and font-kit. The first
+Mac all-target check reaches the new bindings and reports 53 integration errors, mostly
+dynamic selector receiver declarations. Align receiver inference with the official ClassBuilder
+pattern, connect typed main-thread markers, preserve the exact fullscreen requirement type,
+and share the existing native-resource lease with path prompts. The corrected Mac all-target
+check passes with runtime_shaders, font-kit, test-support and screen-capture. This type-checks
+existing native workflows and the new key/mapping controls without executing Apple code.
+
+The application/capture review confirms the path-prompt resource lease needs shared visibility.
+The window review finds nullable child arrays and content views that the old Objective-C binding
+allowed to receive messages but the new binding rejects in debug builds. Close now retains the
+typed child snapshot and revalidates its exact parent before removal; an absent child array is
+normal. Creation returns an error on an absent content view. Blur reuses the retained view only
+when that exact object belongs to the current content, reports transparent fallback when it
+cannot attach, and releases its retain in both native close paths. An initial typed allocation
+check fails because a dynamic raw class pointer cannot select objc2's Allocated return; using the
+typed class reference restores its native init ownership. The existing process-main-thread
+windowing example now contains the enabled/missing/restored content trajectory and retains
+childless close, focus, callback and native retirement checks. It is compiled, not executed here.
+
+The root and ordinary consumer locks select the same ScreenCaptureKit/CoreMedia 0.3.2 family
+with their existing objc2 revisions. The smoke Web lock drops the retired Mac direct objc edge;
+its locked browser-target graph still resolves. An ordinary Mac feature graph without capture
+contains neither capture package. No unrelated dependency versions are updated. The independently
+locked capture consumer passes its final Apple-target check with `mac-screen-capture` and the
+existing runtime shader option, without test-support. Final locked Mac correctness Clippy passes
+for all targets with `runtime_shaders,font-kit,test-support,screen-capture`, and the locked
+capture-disabled production check passes. The Windows platform selector also compiles. Root
+and independent formatting, import boundary, document links, public API tiers, release docs,
+workflow YAML and whitespace checks pass. All four implementation and two independent review
+lanes close without outstanding reviewed P1/P2. Workflow edits have no remote CI execution
+in this record.
+
+Native AppKit/menu/input delivery, blur pixels, older macOS weak-linked binary startup and
+permission, actual screen frame delivery/retirement and measured costs remain separate gates.
+This unit does not establish full fixed-target parity or Nara GPU/Host/View acceptance.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:
