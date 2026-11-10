@@ -64,11 +64,21 @@ open_gpui_media = { workspace = true, optional = true }
 open_gpui_scheduler.workspace = true
 objc.workspace = true
 objc2.workspace = true
-objc2-app-kit = { workspace = true, features = ["NSAppearance", "NSPasteboard", "NSRunningApplication"] }
+objc2-app-kit = { workspace = true, features = [
+    "NSAppearance",
+    "NSDraggingItem",
+    "NSImage",
+    "NSPasteboard",
+    "NSRunningApplication",
+    "NSWorkspace",
+    "block2",
+    "objc2-uniform-type-identifiers",
+] }
 objc2-core-foundation.workspace = true
 objc2-core-video.workspace = true
 objc2-foundation.workspace = true
 objc2-quartz-core.workspace = true
+objc2-uniform-type-identifiers = { version = "0.3", default-features = false, features = ["std", "UTCoreTypes", "UTType"] }
 objc2-user-notifications = { version = "0.3", default-features = false, features = [
     "std",
     "block2",

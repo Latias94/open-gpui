@@ -2961,6 +2961,32 @@ changed Web producer on its actual browser path where available; source/wasm com
 not establish trusted OS touch or native platform execution. No unrelated component/compiler/
 platform matrix or measured latency/performance claim follows from this unit.
 
+### Cursor And Complete External Drag Successor
+
+Continue from `d1de3e3800784b28bbab2ae8dcf0e1192ec2f3ff` against the unchanged fixed target.
+Adopt complete official `c7bea34383`, `693962917b`, `1a84d5d92b`, `f52fd9ac44b`,
+`a8491e63b54`, `72c53bf0aae` and `c7aea6cbbd4`: post-listener active-drag cursor resolution,
+mouse/file exit listeners, lazy outbound file payload, platform-owned suspension/source reentry,
+and complete Mac/Wayland native source completion/cancellation.
+
+Preserve the official public payload/listener behavior and use the current App/Window/native
+ingress owners. The fork adds one concrete PlatformExternalDragSession argument to the native
+start method. It captures the original WindowId and existing non-forgeable drag generation;
+backend source callbacks retain that session instead of delivering an unqualified Ended into
+whatever drag is current later. The session forwards into existing ingress, not a new queue.
+Suspend and restore the complete AnyDrag only for its exact source/generation, never replacing
+an unrelated active drag. Native completion, source quiescence and close must retire only that
+session. Promotion runs after leave listeners, resolves the payload once, revalidates authority
+after arbitrary resolver code, and releases local pointer bookkeeping only on accepted handoff.
+Per-window cursor output, committed geometry, candidate-owned listeners and native release
+contracts remain authoritative.
+
+Trust unchanged official platform/URI algorithms and regression coverage. Compile affected
+owners and ordinary consumers; exercise fork identity, resolver reentry/close, source reentry,
+terminal ordering and admitted listener geometry. Preserve official scenarios. Native Mac/
+Wayland execution and numeric costs require their own actual evidence; do not repeat unrelated
+framework, component, renderer or compiler matrices.
+
 ## Maintained Baseline Before Engine Adaptation
 
 The [gesture/scroll/hover record](../verification.md#gestures-scroll-sources-and-hover) qualifies

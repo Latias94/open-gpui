@@ -470,6 +470,14 @@ pub(super) struct ActiveNativeCapturedDragAuthority {
 }
 
 impl ActiveNativeCapturedDragAuthority {
+    pub(super) fn matches_generation(
+        &self,
+        source_window: WindowId,
+        generation: NativeCapturedDragGeneration,
+    ) -> bool {
+        self.source_window == source_window && self.generation == generation
+    }
+
     fn matches(&self, drag: &crate::AnyDrag) -> bool {
         self.source_window == drag.window_id
             && self.source == drag.source
@@ -1213,9 +1221,7 @@ impl App {
             }
         };
 
-        self.active_drag = None;
-        self.active_native_captured_drag = None;
-        app.retire_native_captured_drag_generation(generation);
+        self.clear_active_drag_for_window(source_window);
 
         let cleanup = self.update_window_id(source_window, |_, window, cx| {
             window.queue_native_captured_drag_pointer_cancellation(
@@ -1272,9 +1278,7 @@ impl App {
             return None;
         }
         let release = app.reserve_native_pointer_capture_release(source_window, Some(generation));
-        self.active_drag = None;
-        self.active_native_captured_drag = None;
-        app.retire_native_captured_drag_generation(generation);
+        self.clear_active_drag_for_window(source_window);
         Some(release)
     }
 
@@ -1363,6 +1367,9 @@ impl App {
         let Some(authority) = self.active_native_captured_drag.take() else {
             return;
         };
+        if self.platform_drag_matches(authority.source_window, authority.generation) {
+            self.end_platform_drag_exact(authority.source_window, authority.generation);
+        }
         if let Some(app) = self.this.upgrade() {
             app.retire_native_captured_drag_generation(authority.generation);
         }
@@ -1413,10 +1420,8 @@ impl App {
             .as_ref()
             .is_some_and(|authority| authority.generation == generation)
         {
-            self.active_drag = None;
-            self.active_native_captured_drag = None;
-            if let Some(app) = self.this.upgrade() {
-                app.retire_native_captured_drag_generation(generation);
+            if !self.clear_active_drag_for_window(source_window).0 {
+                self.retire_native_captured_drag_authority();
             }
         }
     }

@@ -601,8 +601,7 @@ impl Window {
                 && drag.button == button
                 && (drag.source == owner || (drag.source.is_none() && captured_owner_matches))
         }) {
-            cx.active_drag = None;
-            cx.retire_native_captured_drag_authority();
+            cx.clear_active_drag_for_window(self.handle.window_id());
             if refresh_after_drag_removal {
                 self.refresh();
             }
@@ -752,8 +751,7 @@ impl Window {
                 .as_ref()
                 .is_some_and(|drag| drag.window_id == window_id && drag.button == event.button)
             {
-                cx.active_drag = None;
-                cx.retire_native_captured_drag_authority();
+                cx.clear_active_drag_for_window(window_id);
                 self.refresh();
             }
 

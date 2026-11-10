@@ -1750,6 +1750,11 @@ impl NativeEventEnvelope {
                     true
                 })
             }
+            NativeWindowEvent::ExternalDrag { generation, event } => {
+                deliver_window_event_if(app, window_id, ingress_sequence, |window, cx| {
+                    window.dispatch_external_drag_event(generation, event, cx)
+                })
+            }
             NativeWindowEvent::ModifiersChanged(event) => {
                 deliver_window_event(app, window_id, ingress_sequence, |window, cx| {
                     let _ = window.dispatch_event(PlatformInput::ModifiersChanged(event), cx);
@@ -1916,6 +1921,10 @@ impl NativeEventEnvelope {
                 event:
                     NativeWindowEvent::PointerCanceled(_)
                     | NativeWindowEvent::TouchCancelled { .. }
+                    | NativeWindowEvent::ExternalDrag {
+                        event: crate::FileDropEvent::Ended,
+                        ..
+                    }
                     | NativeWindowEvent::Closed,
                 ..
             } => true,
@@ -2181,6 +2190,10 @@ pub(super) enum NativeWindowEvent {
         event: crate::TouchEvent,
         source: crate::platform::PlatformInputCallbackSource,
     },
+    ExternalDrag {
+        generation: NativeCapturedDragGeneration,
+        event: crate::FileDropEvent,
+    },
     ModifiersChanged(ModifiersChangedEvent),
     AppearanceChanged,
     InitialPresentationCompleted,
@@ -2225,6 +2238,7 @@ impl NativeWindowEvent {
             | Self::VisibilityChanged(_)
             | Self::PointerCanceled(_)
             | Self::TouchCancelled { .. }
+            | Self::ExternalDrag { .. }
             | Self::ModifiersChanged(_)
             | Self::InitialPresentationCompleted
             | Self::InitialPresentationFailed
@@ -2271,6 +2285,10 @@ impl NativeWindowEvent {
                     boundary: crate::NativeInputBoundary::PlatformInput,
                     generation: source.generation(),
                 }),
+            ),
+            Self::ExternalDrag { generation, .. } => (
+                NativeCallbackKind::PlatformInput,
+                Some(NativeBoundaryGeneration::CapturedDrag(*generation)),
             ),
             Self::ModifiersChanged(_) => (NativeCallbackKind::ModifiersChanged, None),
             Self::AppearanceChanged => (NativeCallbackKind::AppearanceChanged, None),

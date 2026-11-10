@@ -2776,6 +2776,7 @@ mod tests {
                         window_preview_offset: point(px(0.0), px(0.0)),
                         cursor_style: None,
                         button: MouseButton::Left,
+                        external_payload_source: None,
                     });
                     let pointer_capture = view.read(cx).pointer_capture;
                     window
@@ -3483,6 +3484,7 @@ mod tests {
                 window_preview_offset: point(px(0.0), px(0.0)),
                 cursor_style: Some(CursorStyle::ClosedHand),
                 button: MouseButton::Left,
+                external_payload_source: None,
             });
         });
 

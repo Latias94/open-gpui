@@ -712,6 +712,29 @@ impl Render for ExternalPaths {
     }
 }
 
+/// Data offered when an internal drag becomes a native platform drag.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum ExternalDragPayload {
+    /// Existing files and directories on disk.
+    Files(FileDragPaths),
+}
+
+/// Native file-drag paths with caller-provided directory metadata.
+#[derive(Debug, Clone, Default, Eq, PartialEq)]
+pub struct FileDragPaths(SmallVec<[(PathBuf, bool); 2]>);
+
+impl FileDragPaths {
+    /// Creates a payload without querying the filesystem during native drag startup.
+    pub fn new(entries: impl IntoIterator<Item = (PathBuf, bool)>) -> Self {
+        Self(entries.into_iter().collect())
+    }
+
+    /// Returns each path paired with whether it is a directory.
+    pub fn entries(&self) -> &[(PathBuf, bool)] {
+        &self.0
+    }
+}
+
 /// A file drop event from the platform, generated when files are dragged and dropped onto the window.
 #[derive(Debug, Clone)]
 pub enum FileDropEvent {
@@ -734,6 +757,8 @@ pub enum FileDropEvent {
     },
     /// The user has stopped dragging the files over the window.
     Exited,
+    /// The platform-owned drag session has ended.
+    Ended,
 }
 
 impl Sealed for FileDropEvent {}

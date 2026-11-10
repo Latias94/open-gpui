@@ -3178,6 +3178,7 @@ fn window_quiescence_revokes_committed_interaction_before_redraw_and_preserves_p
             window_preview_offset: point(px(0.0), px(0.0)),
             cursor_style: Some(CursorStyle::ClosedHand),
             button: MouseButton::Left,
+            external_payload_source: None,
         });
     })
     .unwrap();

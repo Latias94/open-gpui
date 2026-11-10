@@ -1,8 +1,33 @@
 # Open GPUI v0.3 UI Migration
 
-Open GPUI v0.3 is an intentionally breaking, pre-release architecture release. Replaced APIs are
-deleted rather than retained as aliases. This guide records each migration in the implementation
-unit that introduces it.
+Open GPUI v0.3 is an intentionally breaking, pre-release architecture release. Superseded fork
+APIs are removed; explicitly adopted official migration aliases retain their upstream contract.
+This guide records each migration in the implementation unit that introduces it.
+
+## Native File Drag And Window Exit
+
+Attach a lazy native payload with `on_drag(value, constructor).external_drag_payload(resolver)`
+or the combined `on_drag_with_external(value, constructor, resolver)`. The resolver receives the
+original typed value, Window and App and returns `Option<ExternalDragPayload>`. Build
+`ExternalDragPayload::Files(FileDragPaths::new(entries))` from `(PathBuf, is_directory)` entries;
+the caller supplies directory metadata so native startup need not query the filesystem.
+Resolution occurs at most once after leave listeners, when a supported native platform can
+take the drag. Source reentry restores the original typed value and preview, including after
+visiting another application window. Complete `AnyDrag` literals now supply
+`external_payload_source`, normally `None` for manually constructed internal-only drags.
+
+Use `on_mouse_exit` for pointer leave and `on_file_drop_exit` for a file drag leaving that
+element's window. Both receive TargetedEvent geometry. FileDropEvent::Exited is window-local;
+the new Ended variant describes the native source session's completion. It does not call an
+element's file-exit listener.
+
+Custom native backends implement `can_start_external_drag` and
+`start_external_drag(&ExternalDragPayload, PlatformExternalDragSession)`. Retain the opaque
+session with the actual native source object. Use its `dispatch` method for source updates and
+Ended; it preserves the original WindowId and drag generation through native ingress. Ordinary
+external drops continue through the normal input callback. The default platform methods report
+unsupported, and payload resolvers are not invoked on that path. macOS and Wayland provide the
+selected native implementations; other backends retain the default capability.
 
 ## Additive Test Support And Explicit Leak Tracking
 

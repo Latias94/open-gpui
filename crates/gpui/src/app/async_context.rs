@@ -217,6 +217,18 @@ impl AsyncApp {
         );
     }
 
+    pub(crate) fn enqueue_external_drag_event(
+        &self,
+        window_id: WindowId,
+        generation: crate::NativeCapturedDragGeneration,
+        event: crate::FileDropEvent,
+    ) {
+        self.enqueue_native_window_event(
+            window_id,
+            super::native_event_ingress::NativeWindowEvent::ExternalDrag { generation, event },
+        );
+    }
+
     fn enqueue_system_tab_command(
         &self,
         window_id: WindowId,

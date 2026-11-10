@@ -27,23 +27,26 @@ use cocoa::{
 #[cfg(any(test, feature = "test-support"))]
 use image::RgbaImage;
 use open_gpui::{
-    AnyWindowHandle, BackgroundExecutor, Bounds, Capslock, CursorStyle, ExternalPaths,
-    FileDropEvent, ForegroundExecutor, FrameRequestSource, KeyDownEvent, Keystroke, Modifiers,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    PlatformAtlas, PlatformDisplay, PlatformFrameSignal, PlatformInput, PlatformInputCallback,
-    PlatformInputCallbackSlot, PlatformInputHandler, PlatformInputHandlerSlot,
-    PlatformNativeWindowRetirementOutcome, PlatformPresentationShutdownOutcome,
-    PlatformShouldCloseCallbackSlot, PlatformWindow, PlatformWindowActiveStatusObservation,
-    PlatformWindowCommand, PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome,
-    PlatformWindowInteractionQuiescence, PlatformWindowPresentOutcome, Point,
-    PreparedPlatformPresentationShutdown, PromptButton, PromptLevel, RequestFrameOptions,
-    SharedString, Size, SystemWindowTab, WindowActivationPolicy, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowCreationFacts, WindowId,
-    WindowKind, WindowParams, WindowPresentationShutdownTicket, WindowVisibility, point, px, size,
+    AnyWindowHandle, BackgroundExecutor, Bounds, Capslock, CursorStyle, ExternalDragPayload,
+    ExternalPaths, FileDropEvent, ForegroundExecutor, FrameRequestSource, KeyDownEvent, Keystroke,
+    Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    Pixels, PlatformAtlas, PlatformDisplay, PlatformExternalDragSession, PlatformFrameSignal,
+    PlatformInput, PlatformInputCallback, PlatformInputCallbackSlot, PlatformInputHandler,
+    PlatformInputHandlerSlot, PlatformNativeWindowRetirementOutcome,
+    PlatformPresentationShutdownOutcome, PlatformShouldCloseCallbackSlot, PlatformWindow,
+    PlatformWindowActiveStatusObservation, PlatformWindowCommand, PlatformWindowCommandDispatcher,
+    PlatformWindowCommandOutcome, PlatformWindowInteractionQuiescence,
+    PlatformWindowPresentOutcome, Point, PreparedPlatformPresentationShutdown, PromptButton,
+    PromptLevel, RequestFrameOptions, SharedString, Size, SystemWindowTab, WindowActivationPolicy,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
+    WindowCreationFacts, WindowId, WindowKind, WindowParams, WindowPresentationShutdownTicket,
+    WindowVisibility, point, px, size,
 };
 
+mod file_drag;
 mod visibility;
 
+use file_drag::MacExternalDrag;
 use visibility::MacWindowVisibilityObserver;
 
 use core_foundation::base::{CFRelease, CFTypeRef};
@@ -61,6 +64,7 @@ use objc::{
     runtime::{BOOL, Class, NO, Object, Protocol, Sel, YES},
     sel, sel_impl,
 };
+use objc2::{rc::Retained, runtime::AnyObject as Objc2Object};
 use objc2_app_kit::NSBeep;
 use open_gpui_scheduler::Instant;
 use parking_lot::Mutex;
@@ -118,6 +122,8 @@ type NSDragOperation = NSUInteger;
 const NSDragOperationNone: NSDragOperation = 0;
 #[allow(non_upper_case_globals)]
 const NSDragOperationCopy: NSDragOperation = 1;
+#[allow(non_upper_case_globals)]
+const NSDragOperationMove: NSDragOperation = 16;
 #[derive(PartialEq)]
 pub enum UserTabbingPreference {
     Never,
@@ -770,6 +776,22 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
         decl.add_method(
             sel!(concludeDragOperation:),
             conclude_drag_operation as extern "C" fn(&Object, Sel, id),
+        );
+
+        decl.add_protocol(Protocol::get("NSDraggingSource").unwrap());
+        decl.add_method(
+            sel!(draggingSession:sourceOperationMaskForDraggingContext:),
+            file_drag::dragging_session_source_operation_mask
+                as extern "C" fn(&Object, Sel, id, NSInteger) -> NSDragOperation,
+        );
+        decl.add_method(
+            sel!(draggingSession:willBeginAtPoint:),
+            file_drag::dragging_session_will_begin as extern "C" fn(&Object, Sel, id, NSPoint),
+        );
+        decl.add_method(
+            sel!(draggingSession:endedAtPoint:operation:),
+            file_drag::dragging_session_ended
+                as extern "C" fn(&Object, Sel, id, NSPoint, NSDragOperation),
         );
 
         decl.add_method(
@@ -1650,6 +1672,8 @@ struct MacWindowState {
     appearance_changed_callback: Option<Rc<dyn Fn()>>,
     input_handler: PlatformInputHandlerSlot,
     last_key_equivalent: Option<KeyDownEvent>,
+    last_left_mouse_down_event: Option<Retained<Objc2Object>>,
+    external_drag: Option<Rc<MacExternalDrag>>,
     synthetic_drag_counter: usize,
     traffic_light_position: Option<Point<Pixels>>,
     transparent_titlebar: bool,
@@ -1660,7 +1684,7 @@ struct MacWindowState {
     previous_modifiers_changed_event: Option<PlatformInput>,
     keystroke_for_do_command: Option<Keystroke>,
     do_command_handled: Option<bool>,
-    external_files_dragged: bool,
+    file_drop_sequence: Option<NSInteger>,
     // Whether the next left-mouse click is also the focusing click.
     first_mouse: bool,
     display_topology: MacDisplayTopologyHandle,
@@ -1712,6 +1736,7 @@ impl MacWindowState {
         PlatformInputHandlerSlot,
         PlatformShouldCloseCallbackSlot,
         MacWindowVisibilityObserver,
+        Option<Rc<MacExternalDrag>>,
     ) {
         self.closed.store(true, Ordering::Release);
         self.interaction_quiesced.store(true, Ordering::Release);
@@ -1720,6 +1745,8 @@ impl MacWindowState {
             source.take();
         }
         self.synthetic_drag_counter += 1;
+        self.last_left_mouse_down_event = None;
+        self.file_drop_sequence = None;
         self.fullscreen_transition = None;
         self.observation_commit.cancel();
         self.observation_effects.cancel();
@@ -1736,6 +1763,7 @@ impl MacWindowState {
             self.input_handler.clone(),
             self.should_close_callback.clone(),
             mem::take(&mut self.visibility_observer),
+            self.external_drag.take(),
         )
     }
 
@@ -2798,6 +2826,15 @@ impl MacWindowInteractionQuiescenceTarget {
         // returns; the platform quiescence receipt is the completion proof.
         self.quiesced.store(true, Ordering::Release);
 
+        let external_drag = self.window_state.upgrade().and_then(|window_state| {
+            let mut state = window_state.lock();
+            state.synthetic_drag_counter += 1;
+            state.last_left_mouse_down_event = None;
+            state.file_drop_sequence = None;
+            state.external_drag.take()
+        });
+        drop(external_drag);
+
         unsafe {
             let native_window = *self.native_window;
             let _: () = msg_send![native_window, setIgnoresMouseEvents: YES];
@@ -2835,12 +2872,18 @@ impl MacWindow {
             input_handler,
             should_close_callback,
             visibility_observer,
+            external_drag,
             window,
             foreground_executor,
         ) = {
             let mut state = self.0.lock();
-            let (event_callback, input_handler, should_close_callback, visibility_observer) =
-                state.mark_closed();
+            let (
+                event_callback,
+                input_handler,
+                should_close_callback,
+                visibility_observer,
+                external_drag,
+            ) = state.mark_closed();
             state.renderer.destroy();
             let window = state.native_window;
             unsafe {
@@ -2851,6 +2894,7 @@ impl MacWindow {
                 input_handler,
                 should_close_callback,
                 visibility_observer,
+                external_drag,
                 window,
                 state.foreground_executor.clone(),
             )
@@ -2858,6 +2902,7 @@ impl MacWindow {
         event_callback.terminate();
         input_handler.terminate();
         should_close_callback.terminate();
+        drop(external_drag);
         drop(visibility_observer);
         unsafe {
             detach_native_transient_relationships(window);
@@ -3092,6 +3137,8 @@ impl MacWindow {
                     appearance_changed_callback: None,
                     input_handler: PlatformInputHandlerSlot::default(),
                     last_key_equivalent: None,
+                    last_left_mouse_down_event: None,
+                    external_drag: None,
                     synthetic_drag_counter: 0,
                     traffic_light_position: titlebar
                         .as_ref()
@@ -3102,7 +3149,7 @@ impl MacWindow {
                     previous_modifiers_changed_event: None,
                     keystroke_for_do_command: None,
                     do_command_handled: None,
-                    external_files_dragged: false,
+                    file_drop_sequence: None,
                     first_mouse: false,
                     display_topology,
                     display_topology_subscription: None,
@@ -5018,6 +5065,18 @@ impl PlatformWindow for MacWindow {
             .detach();
     }
 
+    fn can_start_external_drag(&self) -> bool {
+        true
+    }
+
+    fn start_external_drag(
+        &self,
+        payload: &ExternalDragPayload,
+        session: PlatformExternalDragSession,
+    ) -> bool {
+        file_drag::start_external_drag(&self.0, payload, session)
+    }
+
     fn play_system_bell(&self) {
         NSBeep()
     }
@@ -5478,6 +5537,7 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
     let event = unsafe { platform_input_from_native(native_event, Some(window_height)) };
 
     if let Some(mut event) = event {
+        file_drag::update_left_mouse_down_event(&mut lock, native_event, &event);
         // AppKit unhides the cursor on the next mouse movement; mirror that here.
         if matches!(
             event,
@@ -5571,7 +5631,7 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
                 // Synthetic drag is used for selecting long buffer contents while buffer is being scrolled.
                 // External file drag and drop is able to emit its own synthetic mouse events which will conflict
                 // with these ones.
-                if !lock.external_files_dragged {
+                if lock.file_drop_sequence.is_none() && lock.external_drag.is_none() {
                     lock.synthetic_drag_counter += 1;
                     let executor = lock.foreground_executor.clone();
                     executor
@@ -6045,6 +6105,7 @@ extern "C" fn close_window(this: &Object, _: Sel) {
             input_handler,
             should_close_callback,
             visibility_observer,
+            external_drag,
             close_callback,
         ) = {
             let window_state = get_window_state(this);
@@ -6058,13 +6119,19 @@ extern "C" fn close_window(this: &Object, _: Sel) {
                     snapshot.generation(),
                 );
             }
-            let (event_callback, input_handler, should_close_callback, visibility_observer) =
-                lock.mark_closed();
+            let (
+                event_callback,
+                input_handler,
+                should_close_callback,
+                visibility_observer,
+                external_drag,
+            ) = lock.mark_closed();
             (
                 event_callback,
                 input_handler,
                 should_close_callback,
                 visibility_observer,
+                external_drag,
                 lock.close_callback.take(),
             )
         };
@@ -6072,6 +6139,7 @@ extern "C" fn close_window(this: &Object, _: Sel) {
         event_callback.terminate();
         input_handler.terminate();
         should_close_callback.terminate();
+        drop(external_drag);
         drop(visibility_observer);
         detach_native_transient_relationships(this as *const Object as id);
         if let Some(callback) = close_callback {
@@ -6442,36 +6510,55 @@ fn screen_point_to_gpui_point(this: &Object, position: NSPoint) -> Point<Pixels>
 }
 
 extern "C" fn dragging_entered(this: &Object, _: Sel, dragging_info: id) -> NSDragOperation {
+    let is_source_window = file_drag::is_drag_from_this_window(this, dragging_info);
     let window_state = unsafe { get_window_state(this) };
     let position = drag_event_position(&window_state, dragging_info);
     let paths = external_paths_from_event(dragging_info);
     if let Some(event) = paths.map(|paths| FileDropEvent::Entered { position, paths })
-        && send_file_drop_event(window_state, event)
+        && file_drag::send_file_drop_event(window_state, dragging_info, event)
     {
-        return NSDragOperationCopy;
+        return if is_source_window {
+            NSDragOperationMove
+        } else {
+            NSDragOperationCopy
+        };
     }
     NSDragOperationNone
 }
 
 extern "C" fn dragging_updated(this: &Object, _: Sel, dragging_info: id) -> NSDragOperation {
+    let is_source_window = file_drag::is_drag_from_this_window(this, dragging_info);
     let window_state = unsafe { get_window_state(this) };
     let position = drag_event_position(&window_state, dragging_info);
-    if send_file_drop_event(window_state, FileDropEvent::Pending { position }) {
-        NSDragOperationCopy
+    if file_drag::send_file_drop_event(
+        window_state,
+        dragging_info,
+        FileDropEvent::Pending { position },
+    ) {
+        if is_source_window {
+            NSDragOperationMove
+        } else {
+            NSDragOperationCopy
+        }
     } else {
         NSDragOperationNone
     }
 }
 
-extern "C" fn dragging_exited(this: &Object, _: Sel, _: id) {
+extern "C" fn dragging_exited(this: &Object, _: Sel, dragging_info: id) {
     let window_state = unsafe { get_window_state(this) };
-    send_file_drop_event(window_state, FileDropEvent::Exited);
+    file_drag::send_file_drop_event(window_state, dragging_info, FileDropEvent::Exited);
 }
 
 extern "C" fn perform_drag_operation(this: &Object, _: Sel, dragging_info: id) -> BOOL {
     let window_state = unsafe { get_window_state(this) };
     let position = drag_event_position(&window_state, dragging_info);
-    send_file_drop_event(window_state, FileDropEvent::Submit { position }).to_objc()
+    file_drag::send_file_drop_event(
+        window_state,
+        dragging_info,
+        FileDropEvent::Submit { position },
+    )
+    .to_objc()
 }
 
 fn external_paths_from_event(dragging_info: *mut Object) -> Option<ExternalPaths> {
@@ -6491,9 +6578,9 @@ fn external_paths_from_event(dragging_info: *mut Object) -> Option<ExternalPaths
     Some(ExternalPaths(paths))
 }
 
-extern "C" fn conclude_drag_operation(this: &Object, _: Sel, _: id) {
+extern "C" fn conclude_drag_operation(this: &Object, _: Sel, dragging_info: id) {
     let window_state = unsafe { get_window_state(this) };
-    send_file_drop_event(window_state, FileDropEvent::Exited);
+    file_drag::send_file_drop_event(window_state, dragging_info, FileDropEvent::Exited);
 }
 
 async fn synthetic_drag(
@@ -6506,47 +6593,28 @@ async fn synthetic_drag(
         executor.timer(Duration::from_millis(16)).await;
         if let Some(window_state) = window_state.upgrade() {
             let event_callback = {
-                let lock = window_state.lock();
+                let mut lock = window_state.lock();
                 if lock.is_closed()
                     || lock.interaction_is_quiesced()
                     || lock.synthetic_drag_counter != drag_id
+                    || lock.external_drag.is_some()
+                    || lock.file_drop_sequence.is_some()
                 {
+                    break;
+                }
+                let pressed: NSUInteger =
+                    unsafe { msg_send![class!(NSEvent), pressedMouseButtons] };
+                if !file_drag::synthetic_drag_button_is_pressed(event.pressed_button, pressed) {
+                    lock.synthetic_drag_counter += 1;
                     break;
                 }
                 lock.event_callback.clone()
             };
             event_callback.dispatch(PlatformInput::MouseMove(event.clone()));
+        } else {
+            break;
         }
     }
-}
-
-/// Sends the specified FileDropEvent using `PlatformInput::FileDrop` to the window
-/// state and updates the window state according to the event passed.
-fn send_file_drop_event(
-    window_state: Arc<Mutex<MacWindowState>>,
-    file_drop_event: FileDropEvent,
-) -> bool {
-    let external_files_dragged = match file_drop_event {
-        FileDropEvent::Entered { .. } => Some(true),
-        FileDropEvent::Exited => Some(false),
-        _ => None,
-    };
-
-    let event_callback = {
-        let lock = window_state.lock();
-        if lock.is_closed() || lock.interaction_is_quiesced() {
-            return false;
-        }
-        lock.event_callback.clone()
-    };
-    event_callback.dispatch(PlatformInput::FileDrop(file_drop_event));
-    let mut lock = window_state.lock();
-    if !lock.is_closed() {
-        if let Some(external_files_dragged) = external_files_dragged {
-            lock.external_files_dragged = external_files_dragged;
-        }
-    }
-    true
 }
 
 fn drag_event_position(window_state: &Mutex<MacWindowState>, dragging_info: id) -> Point<Pixels> {

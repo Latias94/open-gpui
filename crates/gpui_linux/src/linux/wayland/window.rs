@@ -35,16 +35,16 @@ use crate::linux::{
     interaction_gate::{WindowInteractionGate, accesskit_adapter},
 };
 use open_gpui::{
-    AnyWindowHandle, Bounds, Capslock, CursorStyle, Decorations, DevicePixels, FrameRequestSource,
-    GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformFrameSignal,
-    PlatformInput, PlatformInputCallback, PlatformInputCallbackSlot, PlatformInputHandler,
-    PlatformInputHandlerSlot, PlatformPresentationShutdownOutcome, PlatformShouldCloseCallbackSlot,
-    PlatformWindow, PlatformWindowActiveStatusObservation, PlatformWindowCommand,
-    PlatformWindowCommandDispatcher, PlatformWindowCommandOutcome,
-    PlatformWindowInteractionQuiescence, PlatformWindowPresentOutcome, Point,
-    PreparedPlatformPresentationShutdown, PromptButton, PromptLevel, RequestFrameOptions,
-    ResizeEdge, Scene, Size, Tiling, WindowActivationPolicy, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls,
+    AnyWindowHandle, Bounds, Capslock, CursorStyle, Decorations, DevicePixels, ExternalDragPayload,
+    FrameRequestSource, GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay,
+    PlatformExternalDragSession, PlatformFrameSignal, PlatformInput, PlatformInputCallback,
+    PlatformInputCallbackSlot, PlatformInputHandler, PlatformInputHandlerSlot,
+    PlatformPresentationShutdownOutcome, PlatformShouldCloseCallbackSlot, PlatformWindow,
+    PlatformWindowActiveStatusObservation, PlatformWindowCommand, PlatformWindowCommandDispatcher,
+    PlatformWindowCommandOutcome, PlatformWindowInteractionQuiescence,
+    PlatformWindowPresentOutcome, Point, PreparedPlatformPresentationShutdown, PromptButton,
+    PromptLevel, RequestFrameOptions, ResizeEdge, Scene, Size, Tiling, WindowActivationPolicy,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls,
     WindowCreationFacts, WindowDecorations, WindowKind, WindowParams,
     WindowPresentationShutdownTicket, WindowVisibility, layer_shell::LayerShellNotSupportedError,
     px, size,
@@ -2408,6 +2408,26 @@ impl PlatformWindow for WaylandWindow {
             return;
         }
         state.client.update_ime_position(bounds);
+    }
+
+    fn can_start_external_drag(&self) -> bool {
+        let state = self.borrow();
+        !state.interaction_gate.is_quiesced() && state.client.can_start_external_drag()
+    }
+
+    fn start_external_drag(
+        &self,
+        payload: &ExternalDragPayload,
+        session: PlatformExternalDragSession,
+    ) -> bool {
+        let (client, surface) = {
+            let state = self.borrow();
+            if state.interaction_gate.is_quiesced() {
+                return false;
+            }
+            (state.client.clone(), state.surface.clone())
+        };
+        client.start_external_drag(&surface, payload, session)
     }
 
     fn gpu_specs(&self) -> Option<GpuSpecs> {

@@ -17,9 +17,10 @@
 
 use crate::{
     AcceptedFrameFence, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, BackGestureEvent,
-    Bounds, ClickEvent, DispatchPhase, Display, Element, ElementId, Entity, EntityId, FocusHandle,
-    Global, GlobalElementId, Hitbox, HitboxBehavior, HitboxId, InspectorElementId, IntoElement,
-    IsZero, KeyContext, KeyDownEvent, KeyUpEvent, KeyboardButton, KeyboardClickEvent, LayoutId,
+    Bounds, ClickEvent, DispatchPhase, Display, Element, ElementId, Entity, EntityId,
+    ExternalDragPayload, ExternalDragPayloadSource, FileDropEvent, FocusHandle, Global,
+    GlobalElementId, Hitbox, HitboxBehavior, HitboxId, InspectorElementId, IntoElement, IsZero,
+    KeyContext, KeyDownEvent, KeyUpEvent, KeyboardButton, KeyboardClickEvent, LayoutId,
     LongPressEvent, ModifiersChangedEvent, MouseButton, MouseClickEvent, MouseDownEvent,
     MouseExitEvent, MouseMoveEvent, MousePressureEvent, MouseUpEvent, OngoingScroll, Overflow,
     ParentElement, PinchEvent, Pixels, Point, PointerCancelEvent, PointerCaptureHandle,
@@ -52,6 +53,8 @@ type StackSafe<T> = stacksafe::StackSafe<T>;
 type StackSafe<T> = T;
 
 mod accessibility;
+#[cfg(test)]
+mod drag_exit_tests;
 #[cfg(test)]
 mod gesture_tests;
 #[cfg(test)]
@@ -503,6 +506,44 @@ impl Interactivity {
             }));
     }
 
+    /// Bind the given callback to the mouse exit event, during the bubble phase.
+    /// The imperative API equivalent to [`InteractiveElement::on_mouse_exit`].
+    ///
+    /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
+    pub fn on_mouse_exit(
+        &mut self,
+        listener: impl Fn(&TargetedEvent<MouseExitEvent>, &mut Window, &mut App) + 'static,
+    ) {
+        self.mouse_exit_listeners
+            .push(Box::new(move |event, phase, hitbox, window, cx| {
+                if phase == DispatchPhase::Bubble && hitbox.is_hovered(window) {
+                    (listener)(&TargetedEvent::new(event, hitbox), window, cx);
+                }
+            }));
+    }
+
+    /// Bind the given callback to [`FileDropEvent::Exited`] when a platform file drag
+    /// leaves this element's window while the element is hovered.
+    ///
+    /// This is a window-local exit event, not notification that the platform drag session ended.
+    /// The imperative API equivalent to [`InteractiveElement::on_file_drop_exit`].
+    ///
+    /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
+    pub fn on_file_drop_exit(
+        &mut self,
+        listener: impl Fn(&TargetedEvent<FileDropEvent>, &mut Window, &mut App) + 'static,
+    ) {
+        self.file_drop_exit_listeners
+            .push(Box::new(move |event, phase, hitbox, window, cx| {
+                if phase == DispatchPhase::Bubble
+                    && matches!(event, FileDropEvent::Exited)
+                    && hitbox.id.is_hovered_ignoring_last_input(window)
+                {
+                    (listener)(&TargetedEvent::new(event, hitbox), window, cx);
+                }
+            }));
+    }
+
     /// Bind the given callback to the window-local mouse drag event of the given type. Note that this
     /// will be called for all move events, inside or outside of this element, as long as the
     /// drag was started with this element under the mouse. Useful for implementing draggable
@@ -800,12 +841,58 @@ impl Interactivity {
             self.drag_listener.is_none(),
             "calling on_drag more than once on the same element is not supported"
         );
-        self.drag_listener = Some((
-            Arc::new(value),
-            Box::new(move |value, geometry, window, cx| {
+        self.drag_listener = Some(DragListener {
+            value: Arc::new(value),
+            render: Box::new(move |value, geometry, window, cx| {
                 constructor(value.downcast_ref().unwrap(), geometry, window, cx).into()
             }),
-        ));
+            external_payload: None,
+        });
+    }
+
+    /// Registers a drag view and a payload resolver for promotion to a native drag session.
+    /// The resolver is invoked at most once per drag gesture, when the pointer exits the viewport.
+    /// The imperative API equivalent to [`StatefulInteractiveElement::on_drag_with_external`].
+    pub fn on_drag_with_external<T, W>(
+        &mut self,
+        value: T,
+        constructor: impl Fn(&T, &DragStartGeometry, &mut Window, &mut App) -> Entity<W> + 'static,
+        resolver: impl Fn(&T, &mut Window, &mut App) -> Option<ExternalDragPayload> + 'static,
+    ) where
+        Self: Sized,
+        T: 'static,
+        W: 'static + Render,
+    {
+        self.on_drag(value, constructor);
+        self.external_drag_payload(resolver);
+    }
+
+    /// Registers a callback resolving a payload to offer the platform if a drag started by this
+    /// element leaves the window. It is invoked at most once per drag gesture, when the pointer
+    /// exits the viewport. Must be called after [`Self::on_drag`], with the same dragged value
+    /// type `T`.
+    pub fn external_drag_payload<T>(
+        &mut self,
+        resolver: impl Fn(&T, &mut Window, &mut App) -> Option<ExternalDragPayload> + 'static,
+    ) where
+        Self: Sized,
+        T: 'static,
+    {
+        let Some(drag_listener) = self.drag_listener.as_mut() else {
+            debug_assert!(false, "external_drag_payload must be called after on_drag");
+            return;
+        };
+        debug_assert!(
+            drag_listener.value.as_ref().type_id() == TypeId::of::<T>(),
+            "external_drag_payload must use the same dragged value type as on_drag"
+        );
+        debug_assert!(
+            drag_listener.external_payload.is_none(),
+            "calling external_drag_payload more than once on the same element is not supported"
+        );
+        drag_listener.external_payload = Some(Box::new(move |value, window, cx| {
+            resolver(value.downcast_ref::<T>()?, window, cx)
+        }));
     }
 
     /// Bind the given callback on the hover start and end events of this element. Note that the boolean
@@ -1160,6 +1247,33 @@ pub trait InteractiveElement: Sized {
         listener: impl Fn(&TargetedEvent<MouseMoveEvent>, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.interactivity().on_mouse_move(listener);
+        self
+    }
+
+    /// Bind the given callback to the mouse exit event, during the bubble phase.
+    /// The fluent API equivalent to [`Interactivity::on_mouse_exit`].
+    ///
+    /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
+    fn on_mouse_exit(
+        mut self,
+        listener: impl Fn(&TargetedEvent<MouseExitEvent>, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.interactivity().on_mouse_exit(listener);
+        self
+    }
+
+    /// Bind the given callback to [`FileDropEvent::Exited`] when a platform file drag
+    /// leaves this element's window while the element is hovered.
+    ///
+    /// This is a window-local exit event, not notification that the platform drag session ended.
+    /// The fluent API equivalent to [`Interactivity::on_file_drop_exit`].
+    ///
+    /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
+    fn on_file_drop_exit(
+        mut self,
+        listener: impl Fn(&TargetedEvent<FileDropEvent>, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.interactivity().on_file_drop_exit(listener);
         self
     }
 
@@ -2013,6 +2127,42 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self
     }
 
+    /// Registers a drag view and a payload resolver for promotion to a native drag session.
+    /// The resolver is invoked at most once per drag gesture, when the pointer exits the viewport.
+    /// The fluent API equivalent to [`Interactivity::on_drag_with_external`].
+    fn on_drag_with_external<T, W>(
+        mut self,
+        value: T,
+        constructor: impl Fn(&T, &DragStartGeometry, &mut Window, &mut App) -> Entity<W> + 'static,
+        resolver: impl Fn(&T, &mut Window, &mut App) -> Option<ExternalDragPayload> + 'static,
+    ) -> Self
+    where
+        Self: Sized,
+        T: 'static,
+        W: 'static + Render,
+    {
+        self.interactivity()
+            .on_drag_with_external(value, constructor, resolver);
+        self
+    }
+
+    /// Registers a callback resolving a payload to offer the platform if a drag started by this
+    /// element leaves the window. It is invoked at most once per drag gesture, when the pointer
+    /// exits the viewport. Must be called after [`Self::on_drag`], with the same dragged value
+    /// type `T`.
+    /// The fluent API equivalent to [`Interactivity::external_drag_payload`].
+    fn external_drag_payload<T>(
+        mut self,
+        resolver: impl Fn(&T, &mut Window, &mut App) -> Option<ExternalDragPayload> + 'static,
+    ) -> Self
+    where
+        Self: Sized,
+        T: 'static,
+    {
+        self.interactivity().external_drag_payload(resolver);
+        self
+    }
+
     /// Bind the given callback on the hover start and end events of this element. Note that the boolean
     /// passed to the callback is true when the hover starts and false when it ends.
     /// Transitions caused by layout changes under a stationary mouse also invoke the callback.
@@ -2083,6 +2233,11 @@ pub(crate) type MousePressureListener =
     Box<dyn Fn(&MousePressureEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
 pub(crate) type MouseMoveListener =
     Box<dyn Fn(&MouseMoveEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
+pub(crate) type MouseExitListener =
+    Box<dyn Fn(&MouseExitEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
+
+pub(crate) type FileDropExitListener =
+    Box<dyn Fn(&FileDropEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
 
 /// The default-action decision returned by a scroll-wheel intent handler.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2240,8 +2395,14 @@ type BackGestureListener =
 pub(crate) type ClickListener =
     Rc<dyn Fn(&TargetedEvent<ClickEvent>, &mut Window, &mut App) + 'static>;
 
-pub(crate) type DragListener =
-    Box<dyn Fn(&dyn Any, &DragStartGeometry, &mut Window, &mut App) -> AnyView + 'static>;
+pub(crate) struct DragListener {
+    value: Arc<dyn Any>,
+    render: Box<dyn Fn(&dyn Any, &DragStartGeometry, &mut Window, &mut App) -> AnyView + 'static>,
+    external_payload: Option<ExternalDragPayloadResolver>,
+}
+
+type ExternalDragPayloadResolver =
+    Box<dyn Fn(&dyn Any, &mut Window, &mut App) -> Option<ExternalDragPayload> + 'static>;
 
 type DropListener =
     Box<dyn Fn(Arc<dyn Any>, &TargetedEvent<MouseUpEvent>, &mut Window, &mut App) + 'static>;
@@ -2803,6 +2964,8 @@ pub struct Interactivity {
     pub(crate) mouse_up_listeners: Vec<MouseUpListener>,
     pub(crate) mouse_pressure_listeners: Vec<MousePressureListener>,
     pub(crate) mouse_move_listeners: Vec<MouseMoveListener>,
+    pub(crate) mouse_exit_listeners: Vec<MouseExitListener>,
+    pub(crate) file_drop_exit_listeners: Vec<FileDropExitListener>,
     pub(crate) scroll_wheel_listeners: Vec<ScrollWheelListener>,
     pub(crate) scroll_viewport_changed_listeners: Vec<ScrollViewportChangedListener>,
     pub(crate) pinch_listeners: Vec<PinchListener>,
@@ -2815,7 +2978,7 @@ pub struct Interactivity {
     pub(crate) can_drop_predicate: Option<CanDropPredicate>,
     pub(crate) click_listeners: Vec<ClickListener>,
     pub(crate) aux_click_listeners: Vec<ClickListener>,
-    pub(crate) drag_listener: Option<(Arc<dyn Any>, DragListener)>,
+    pub(crate) drag_listener: Option<DragListener>,
     pub(crate) hover_listener: Option<HoverListener>,
     pub(crate) hover_listener_mode: HoverListenerMode,
     pub(crate) tooltip_builder: Option<TooltipBuilder>,
@@ -2883,7 +3046,7 @@ impl Interactivity {
                 }
 
                 if let Some(element_state) = element_state.as_ref()
-                    && cx.has_active_drag()
+                    && (cx.has_active_drag() || cx.has_active_platform_drag())
                 {
                     if let Some(pending_mouse_down) = element_state.pending_mouse_down.as_ref() {
                         *pending_mouse_down.borrow_mut() = None;
@@ -3300,6 +3463,8 @@ impl Interactivity {
             || !self.mouse_pressure_listeners.is_empty()
             || !self.mouse_down_listeners.is_empty()
             || !self.mouse_move_listeners.is_empty()
+            || !self.mouse_exit_listeners.is_empty()
+            || !self.file_drop_exit_listeners.is_empty()
             || !self.click_listeners.is_empty()
             || !self.aux_click_listeners.is_empty()
             || !self.scroll_wheel_listeners.is_empty()
@@ -3726,6 +3891,20 @@ impl Interactivity {
             })
         }
 
+        for listener in self.mouse_exit_listeners.drain(..) {
+            let hitbox = hitbox.clone();
+            window.on_mouse_event(move |event: &MouseExitEvent, phase, window, cx| {
+                listener(event, phase, &hitbox, window, cx);
+            })
+        }
+
+        for listener in self.file_drop_exit_listeners.drain(..) {
+            let hitbox = hitbox.clone();
+            window.on_mouse_event(move |event: &FileDropEvent, phase, window, cx| {
+                listener(event, phase, &hitbox, window, cx);
+            })
+        }
+
         for listener in self.scroll_wheel_listeners.drain(..) {
             let hitbox = hitbox.clone();
             let focus_handle = self.tracked_focus_handle.clone();
@@ -3853,7 +4032,7 @@ impl Interactivity {
                                 .active_drag
                                 .take()
                                 .expect("checked for a matching active drag above");
-                            cx.retire_native_captured_drag_authority();
+                            cx.retire_drag_authority(&drag);
 
                             let mut can_drop = true;
                             if let Some(predicate) = &can_drop_predicate {
@@ -3923,8 +4102,9 @@ impl Interactivity {
                         let mut pending_mouse_down = pending_mouse_down.borrow_mut();
                         if let Some(mouse_down) = pending_mouse_down.clone()
                             && !cx.has_active_drag()
+                            && !cx.has_active_platform_drag()
                             && (event.position - mouse_down.position).magnitude() > DRAG_THRESHOLD
-                            && let Some((drag_value, drag_listener)) = drag_listener.take()
+                            && let Some(listener) = drag_listener.take()
                             && mouse_down.button == MouseButton::Left
                         {
                             let Some(drag_pointer_capture_handle) = drag_pointer_capture_handle
@@ -3961,7 +4141,7 @@ impl Interactivity {
                             );
                             let window_preview_offset = geometry.window_preview_offset();
                             let drag = match catch_unwind(AssertUnwindSafe(|| {
-                                (drag_listener)(drag_value.as_ref(), &geometry, window, cx)
+                                (listener.render)(listener.value.as_ref(), &geometry, window, cx)
                             })) {
                                 Ok(drag) => drag,
                                 Err(payload) => {
@@ -3976,6 +4156,14 @@ impl Interactivity {
                                     resume_unwind(payload);
                                 }
                             };
+                            let external_payload_source =
+                                listener.external_payload.map(|external_payload| {
+                                    let value = listener.value.clone();
+                                    Box::new(move |window: &mut Window, cx: &mut App| {
+                                        external_payload(value.as_ref(), window, cx)
+                                    })
+                                        as ExternalDragPayloadSource
+                                });
                             let start_is_current = window.can_commit_pointer_session_start()
                                 && window.owns_pointer_capture(
                                     drag_pointer_capture_handle,
@@ -3988,10 +4176,11 @@ impl Interactivity {
                                         window_id: window.window_handle().window_id(),
                                         source: Some(drag_pointer_capture_handle),
                                         view: drag,
-                                        value: drag_value,
+                                        value: listener.value,
                                         window_preview_offset,
                                         cursor_style: drag_cursor_style,
                                         button: mouse_down.button,
+                                        external_payload_source,
                                     },
                                 );
                             pending_mouse_down.take();
@@ -4157,6 +4346,7 @@ impl Interactivity {
                         if phase == DispatchPhase::Bubble {
                             let is_hovered = has_mouse_down.borrow().is_none()
                                 && !cx.has_active_drag()
+                                && !cx.has_active_platform_drag()
                                 && hover_listener_mode.is_hovered(&hitbox, window);
                             update_hover(is_hovered, window, cx);
                         }
@@ -4481,7 +4671,7 @@ impl Interactivity {
             }
         }
 
-        if interactive && !cx.has_active_drag() {
+        if interactive && !cx.has_active_drag() && !cx.has_active_platform_drag() {
             if let Some(group_hover) = self.group_hover_style.as_ref() {
                 let is_group_hovered =
                     if let Some(group_hitbox_id) = GroupHitboxes::get(&group_hover.group, cx) {
@@ -4599,7 +4789,7 @@ impl Interactivity {
                     };
                     cx.active_drag = Some(drag);
                 } else if cx.active_drag.is_none() {
-                    cx.retire_native_captured_drag_authority();
+                    cx.retire_drag_authority(&drag);
                     window.refresh();
                 }
             }
@@ -4727,8 +4917,9 @@ fn record_interaction_membership(
             if let Some(listener) = &hover_listener
                 && let Some(state) = &hover_listener_state
             {
-                let hovered =
-                    !cx.has_active_drag() && hover_listener_mode.is_hovered(&hitbox, window);
+                let hovered = !cx.has_active_drag()
+                    && !cx.has_active_platform_drag()
+                    && hover_listener_mode.is_hovered(&hitbox, window);
                 if state.replace(hovered) != hovered {
                     listener(&hovered, window, cx);
                 }

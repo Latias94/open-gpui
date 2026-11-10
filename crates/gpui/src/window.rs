@@ -101,6 +101,7 @@ mod displays;
 mod draw_unwind_tests;
 #[cfg(test)]
 mod element_arena_tests;
+mod external_drag;
 #[cfg(test)]
 mod focus_generation_tests;
 #[cfg(test)]
@@ -4557,6 +4558,7 @@ impl Window {
 
     fn finish_interaction_quiescence(&mut self, cleanup_pointer: bool, cx: &mut App) -> bool {
         let mut first_panic = None;
+        cx.end_platform_drag(self.handle.window_id());
         let revoked_now = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             self.interaction_authority.revoke()
         })) {
@@ -4731,6 +4733,7 @@ impl Window {
 
     fn finish_remove_window(&mut self, cx: &mut App) {
         self.removal_state = WindowRemovalState::Removing;
+        cx.end_platform_drag(self.handle.window_id());
         self.should_close_handler.terminate();
         let mut first_panic = None;
 
@@ -8775,7 +8778,7 @@ impl Window {
             if self.user_interaction_is_admitted() && cx.active_drag.is_none() {
                 cx.active_drag = Some(active_drag);
             } else if cx.active_drag.is_none() {
-                cx.retire_native_captured_drag_authority();
+                cx.retire_drag_authority(&active_drag);
             }
         } else if prompt_element.is_none() && !window_owns_active_drag {
             tooltip_element = self.prepaint_tooltip(cx);
@@ -12809,10 +12812,13 @@ impl Window {
         subscription
     }
 
-    fn reset_cursor_style(&self, _cx: &mut App) {
-        let style = self
-            .rendered_frame
-            .cursor_style(self)
+    fn reset_cursor_style(&self, cx: &mut App) {
+        let style = cx
+            .active_drag
+            .as_ref()
+            .filter(|drag| drag.window_id == self.handle.window_id())
+            .and_then(|drag| drag.cursor_style)
+            .or_else(|| self.rendered_frame.cursor_style(self))
             .unwrap_or(CursorStyle::Arrow);
         self.platform_window.set_cursor_style(style);
     }
@@ -12928,6 +12934,7 @@ impl Window {
             } else if let Some(touch_event) = event.touch_event() {
                 window.dispatch_touch_event(touch_event, cx);
             }
+            window.promote_external_drag_to_platform(&event, cx);
         };
 
         #[cfg(feature = "profiler")]
@@ -12983,15 +12990,18 @@ impl Window {
         let dispatch = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let is_pointer_cancel = event.is::<PointerCancelEvent>();
             let is_touch_cancel = touch_gestures::is_touch_cancellation(event);
-            let exited_window = event.is::<crate::MouseExitEvent>();
+            let exited_window = event.is::<crate::MouseExitEvent>()
+                || matches!(
+                    event.downcast_ref::<crate::FileDropEvent>(),
+                    Some(crate::FileDropEvent::Exited)
+                );
             let hit_test = if exited_window {
                 HitTest::default()
             } else {
                 self.rendered_frame.hit_test(self.mouse_position())
             };
-            if exited_window || hit_test != self.mouse_hit_test {
+            if !exited_window && hit_test != self.mouse_hit_test {
                 self.mouse_hit_test = hit_test;
-                self.reset_cursor_style(cx);
             }
 
             let routes_to_captured_target = !self.pointer_cancel_session_already_settled
@@ -13101,9 +13111,18 @@ impl Window {
             }
         }));
         let cleanup = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            if event.is::<crate::MouseExitEvent>()
+                || matches!(
+                    event.downcast_ref::<crate::FileDropEvent>(),
+                    Some(crate::FileDropEvent::Exited)
+                )
+            {
+                self.mouse_hit_test = HitTest::default();
+            }
             self.finish_mouse_session_event(event, cx);
             self.finish_touch_gesture_event(event);
             self.flush_touch_cancellations(cx);
+            self.reset_cursor_style(cx);
         }));
         match (dispatch, cleanup) {
             (Ok(()), Ok(())) => {}

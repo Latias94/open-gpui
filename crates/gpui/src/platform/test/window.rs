@@ -219,6 +219,12 @@ pub(crate) struct TestWindowState {
     close_on_next_present: bool,
     activation_count: usize,
     pub(crate) cursor_style: CursorStyle,
+    external_drag_supported: bool,
+    external_drag_accept: bool,
+    external_drags: Vec<(
+        crate::ExternalDragPayload,
+        crate::PlatformExternalDragSession,
+    )>,
     accessibility: TestAccessibilityState,
     map_error: Option<String>,
     close_during_map: bool,
@@ -478,6 +484,9 @@ impl TestWindow {
                 close_on_next_present,
                 activation_count: 0,
                 cursor_style: CursorStyle::Arrow,
+                external_drag_supported: false,
+                external_drag_accept: false,
+                external_drags: Vec::new(),
                 accessibility: TestAccessibilityState::default(),
                 map_error,
                 close_during_map,
@@ -565,6 +574,23 @@ impl TestWindow {
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn set_present_outcome(&self, outcome: PlatformWindowPresentOutcome) {
         self.0.lock().present_outcome = outcome;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn configure_external_drag(&self, supported: bool, accept: bool) {
+        let mut state = self.0.lock();
+        state.external_drag_supported = supported;
+        state.external_drag_accept = accept;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn external_drag_sessions(
+        &self,
+    ) -> Vec<(
+        crate::ExternalDragPayload,
+        crate::PlatformExternalDragSession,
+    )> {
+        self.0.lock().external_drags.clone()
     }
 
     #[cfg(test)]
@@ -1834,6 +1860,24 @@ impl PlatformWindow for TestWindow {
         };
         if let Some(platform) = platform {
             platform.set_window_cursor_style(self, style);
+        }
+    }
+
+    fn can_start_external_drag(&self) -> bool {
+        self.0.lock().external_drag_supported
+    }
+
+    fn start_external_drag(
+        &self,
+        payload: &crate::ExternalDragPayload,
+        session: crate::PlatformExternalDragSession,
+    ) -> bool {
+        let mut state = self.0.lock();
+        if state.external_drag_supported && state.external_drag_accept {
+            state.external_drags.push((payload.clone(), session));
+            true
+        } else {
+            false
         }
     }
 

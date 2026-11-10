@@ -96,17 +96,18 @@ use crate::linux::{
     xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
 };
 use open_gpui::{
-    AnyWindowHandle, Bounds, Capslock, CursorStyle, DevicePixels, DisplayId, FileDropEvent,
-    ForegroundExecutor, GraphicalEnvironment, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
-    MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay, PlatformFocusedWindow,
-    PlatformFrameSignal, PlatformHoveredWindow, PlatformInput, PlatformKeyboardLayout,
-    PlatformViewportCapabilities, PlatformWindow, PlatformWindowActivationSupport,
-    PlatformWindowActiveStatusObservation, PlatformWindowCapabilities,
-    PlatformWindowCreationCapabilities, PlatformWindowMutationCapabilities, Point, ScrollDelta,
-    ScrollEvent, ScrollSource, SharedString, Size, TouchPhase, WindowButtonLayout,
-    WindowCoordinateSpace, WindowCreationSupport, WindowInitialPresentationOrder, WindowKind,
-    WindowMutationSupport, WindowParams, point, px, size,
+    AnyWindowHandle, Bounds, Capslock, CursorStyle, DevicePixels, DisplayId, ExternalDragPayload,
+    FileDragPaths, FileDropEvent, ForegroundExecutor, GraphicalEnvironment, KeyDownEvent,
+    KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
+    MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay,
+    PlatformExternalDragSession, PlatformFocusedWindow, PlatformFrameSignal, PlatformHoveredWindow,
+    PlatformInput, PlatformKeyboardLayout, PlatformViewportCapabilities, PlatformWindow,
+    PlatformWindowActivationSupport, PlatformWindowActiveStatusObservation,
+    PlatformWindowCapabilities, PlatformWindowCreationCapabilities,
+    PlatformWindowMutationCapabilities, Point, ScrollDelta, ScrollEvent, ScrollSource,
+    SharedString, Size, TouchPhase, WindowButtonLayout, WindowCoordinateSpace,
+    WindowCreationSupport, WindowInitialPresentationOrder, WindowKind, WindowMutationSupport,
+    WindowParams, point, px, size,
 };
 use open_gpui_wgpu::{CompositorGpuHint, GpuContext};
 use wayland_protocols::wp::linux_dmabuf::zv1::client::{
@@ -279,6 +280,7 @@ pub(crate) struct WaylandClientState {
     keymap_state: Option<xkb::State>,
     compose_state: Option<xkb::compose::State>,
     drag: DragState,
+    external_drag: Option<ExternalDrag>,
     click: ClickState,
     repeat: KeyRepeat,
     pub modifiers: Modifiers,
@@ -321,6 +323,39 @@ struct DragState<DataOffer = wl_data_offer::WlDataOffer, Window = WaylandWindowS
     uri_read_generation: u64,
     /// Identifies the pending read's target without retaining its native window or connection lease.
     uri_read_window: Option<AnyWindowHandle>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DataSourceKind {
+    Clipboard,
+    Drag,
+}
+
+struct ExternalDrag {
+    source: wl_data_source::WlDataSource,
+    bytes: Vec<u8>,
+    window: AnyWindowHandle,
+    session: PlatformExternalDragSession,
+}
+
+impl Drop for ExternalDrag {
+    fn drop(&mut self) {
+        if self.source.is_alive() {
+            self.source.destroy();
+        }
+    }
+}
+
+fn file_uri_list(paths: &FileDragPaths) -> String {
+    paths
+        .entries()
+        .iter()
+        .filter_map(|(path, _)| Url::from_file_path(path).ok())
+        .fold(String::new(), |mut list, url| {
+            list.push_str(url.as_str());
+            list.push_str("\r\n");
+            list
+        })
 }
 
 impl<DataOffer, Window> DragState<DataOffer, Window> {
@@ -607,6 +642,60 @@ impl WaylandClientStatePtr {
         self.0.upgrade()?.borrow().activation_context()
     }
 
+    pub fn can_start_external_drag(&self) -> bool {
+        self.0.upgrade().is_some_and(|client| {
+            let state = client.borrow();
+            state.globals.data_device_manager.is_some() && state.data_device.is_some()
+        })
+    }
+
+    pub fn start_external_drag(
+        &self,
+        surface: &wl_surface::WlSurface,
+        payload: &ExternalDragPayload,
+        session: PlatformExternalDragSession,
+    ) -> bool {
+        let Some(client) = self.0.upgrade() else {
+            return false;
+        };
+        let mut state = client.borrow_mut();
+
+        let Some(window) = get_window(&mut state, &surface.id()) else {
+            return false;
+        };
+        if window.interaction_is_quiesced() {
+            return false;
+        }
+
+        let (Some(data_device_manager), Some(data_device)) = (
+            state.globals.data_device_manager.as_ref(),
+            state.data_device.as_ref(),
+        ) else {
+            return false;
+        };
+
+        let ExternalDragPayload::Files(paths) = payload;
+        let uri_list = file_uri_list(paths);
+        if uri_list.is_empty() {
+            return false;
+        }
+
+        let serial = state.serial_tracker.get(SerialKind::MousePress);
+        let source =
+            data_device_manager.create_data_source(&state.globals.qh, DataSourceKind::Drag);
+        source.offer(FILE_LIST_MIME_TYPE.to_string());
+        source.set_actions(DndAction::Copy | DndAction::Move);
+        data_device.start_drag(Some(&source), surface, None, serial.as_raw());
+
+        state.external_drag = Some(ExternalDrag {
+            source,
+            bytes: uri_list.into_bytes(),
+            window: window.handle(),
+            session,
+        });
+        true
+    }
+
     pub fn enable_ime(&self) {
         let client = self.get_client();
         let mut state = client.borrow_mut();
@@ -665,6 +754,7 @@ impl WaylandClientStatePtr {
         };
         let mut state = client.borrow_mut();
         state.drag.handle_window_closed(handle);
+        state.retire_external_drag_for_window(handle);
         let keyboard_focused = state
             .keyboard_focused_window
             .as_ref()
@@ -786,6 +876,7 @@ impl WaylandClientStatePtr {
         let mut state = client.borrow_mut();
         let closed_window = state.windows.remove(surface_id).unwrap();
         state.drag.handle_window_closed(closed_window.handle());
+        state.retire_external_drag_for_window(closed_window.handle());
         if let Some(token) = state.retry_sources.remove(surface_id) {
             state.loop_handle.remove(token);
         }
@@ -821,6 +912,16 @@ fn disable_ime_state(state: &mut WaylandClientState) {
 }
 
 impl WaylandClientState {
+    fn retire_external_drag_for_window(&mut self, handle: AnyWindowHandle) {
+        if self
+            .external_drag
+            .as_ref()
+            .is_some_and(|drag| drag.window == handle)
+        {
+            drop(self.external_drag.take());
+        }
+    }
+
     fn activation_context(&self) -> Option<ActivationContext> {
         let context = self.serial_tracker.activation_context()?;
         let window = self.windows.get(&context.requesting_surface.id())?;
@@ -901,6 +1002,7 @@ impl Drop for WaylandConnection {
         let mut state = self.0.borrow_mut();
         state.clipboard.stop_transfers();
         drop(state.drag.handle_leave());
+        drop(state.external_drag.take());
         if let Some((_, token)) = state.repeat_source.take() {
             state.loop_handle.remove(token);
         }
@@ -1106,6 +1208,7 @@ impl WaylandConnection {
                 uri_read_generation: 0,
                 uri_read_window: None,
             },
+            external_drag: None,
             click: ClickState {
                 last_click: Instant::now(),
                 last_mouse_button: None,
@@ -1488,7 +1591,8 @@ impl WaylandConnection {
             let Some(serial) = state.serial_tracker.selection_serial() else {
                 return;
             };
-            let data_source = data_device_manager.create_data_source(&state.globals.qh, ());
+            let data_source = data_device_manager
+                .create_data_source(&state.globals.qh, DataSourceKind::Clipboard);
             for mime_type in TEXT_MIME_TYPES {
                 data_source.offer(mime_type.to_string());
             }
@@ -3112,24 +3216,53 @@ impl Dispatch<wl_data_offer::WlDataOffer, ()> for WaylandClientStatePtr {
     }
 }
 
-impl Dispatch<wl_data_source::WlDataSource, ()> for WaylandClientStatePtr {
+impl Dispatch<wl_data_source::WlDataSource, DataSourceKind> for WaylandClientStatePtr {
     fn event(
         this: &mut Self,
         data_source: &wl_data_source::WlDataSource,
         event: wl_data_source::Event,
-        _: &(),
+        kind: &DataSourceKind,
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
         let client = this.get_client();
-        let state = client.borrow_mut();
+        let mut state = client.borrow_mut();
 
-        match event {
-            wl_data_source::Event::Send { mime_type, fd } => {
+        match (kind, event) {
+            (DataSourceKind::Clipboard, wl_data_source::Event::Send { mime_type, fd }) => {
                 state.clipboard.send(mime_type, fd);
             }
-            wl_data_source::Event::Cancelled => {
+            (DataSourceKind::Clipboard, wl_data_source::Event::Cancelled) => {
                 data_source.destroy();
+            }
+            (DataSourceKind::Drag, wl_data_source::Event::Send { mime_type, fd }) => {
+                let Some(external_drag) = state
+                    .external_drag
+                    .as_ref()
+                    .filter(|drag| drag.source == *data_source)
+                else {
+                    return;
+                };
+                if mime_type != FILE_LIST_MIME_TYPE {
+                    return;
+                }
+                let bytes = external_drag.bytes.clone();
+                state.clipboard.send_bytes(fd, bytes);
+            }
+            (
+                DataSourceKind::Drag,
+                wl_data_source::Event::DndFinished | wl_data_source::Event::Cancelled,
+            ) => {
+                let Some(external_drag) = state
+                    .external_drag
+                    .take_if(|drag| drag.source == *data_source)
+                else {
+                    return;
+                };
+                let session = external_drag.session.clone();
+                drop(external_drag);
+                drop(state);
+                session.dispatch(FileDropEvent::Ended);
             }
             _ => {}
         }
@@ -3249,6 +3382,10 @@ impl Dispatch<XdgDialogV1, ()> for WaylandClientStatePtr {
 #[cfg(test)]
 #[path = "file_drag_tests.rs"]
 mod file_drag_tests;
+
+#[cfg(test)]
+#[path = "outbound_file_drag_tests.rs"]
+mod outbound_file_drag_tests;
 
 #[cfg(test)]
 mod frame_signal_tests {

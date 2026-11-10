@@ -121,9 +121,11 @@ fn normalize_file_drop(window: &mut Window, cx: &mut App, event: FileDropEvent) 
         FileDropEvent::Entered { position, paths } => {
             window.mouse_position = position;
             window.mouse_in_window = true;
-            if cx.active_drag.is_none() {
+            if !cx.restore_current_platform_drag(window.window_handle().window_id())
+                && cx.active_drag.is_none()
+            {
                 let view = cx.new(|_| paths.clone()).into();
-                cx.start_active_drag(AnyDrag {
+                cx.start_external_drop(AnyDrag {
                     window_id: window.window_handle().window_id(),
                     source: None,
                     value: Arc::new(paths.clone()),
@@ -131,6 +133,7 @@ fn normalize_file_drop(window: &mut Window, cx: &mut App, event: FileDropEvent) 
                     window_preview_offset: position,
                     cursor_style: None,
                     button: MouseButton::Left,
+                    external_payload_source: None,
                 });
             }
             PlatformInput::MouseMove(MouseMoveEvent {
@@ -161,8 +164,15 @@ fn normalize_file_drop(window: &mut Window, cx: &mut App, event: FileDropEvent) 
         }
         FileDropEvent::Exited => {
             window.mouse_in_window = false;
-            let _ = cx.clear_active_drag_for_window(window.window_handle().window_id());
+            if !cx.hand_current_restored_drag_to_platform(window.window_handle().window_id()) {
+                let _ = cx.clear_active_drag_for_window(window.window_handle().window_id());
+            }
+            window.refresh();
             PlatformInput::FileDrop(FileDropEvent::Exited)
+        }
+        FileDropEvent::Ended => {
+            window.refresh();
+            PlatformInput::FileDrop(FileDropEvent::Ended)
         }
     }
 }

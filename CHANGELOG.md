@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- Internal drags can lazily offer file payloads to native macOS and Wayland drag sessions. Source-window reentry restores the original typed drag; native callbacks retain an exact session so stale completion cannot end a later drag. Mouse and file-exit listeners use committed element geometry, and drag cursors apply before the next paint.
+
 - Official portable touch gestures synthesize taps, source-aware pans with momentum, long presses and claimed touch drags. Platform gesture tuning, back-gesture vocabulary and Window long-press/prediction controls use the existing input owners. Stateful hover listeners can opt into input-modality-independent tracking without changing visual hover or tooltip policy.
 
 - Input handlers can report their editable element bounds through `element_bounds`, defaulting to `None`; `ElementInputHandler` projects its committed bounds into window coordinates. The Web touch producer preserves contact identity, capture cancellation and tap-only keyboard activation through the existing native input lifecycle.
@@ -137,6 +139,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - `open-gpui-devtools` resolved semantic payloads now pair `contract_id` with numeric `contract_revision` and canonical `family`; update strict JSON consumers and checked-in fixtures.
 
 ### Changed
+
+- Complete `AnyDrag` literals require `external_payload_source`. Native backends implementing `start_external_drag` receive a `PlatformExternalDragSession`; retain it for source callbacks and dispatch `FileDropEvent::Ended` when that exact native session finishes. Exhaustive file-drop matches must handle `Ended`.
 
 - Custom `Platform::restart` implementations now receive `Vec<OsString>` after the optional executable path. `TestAppContext::expect_restart` observes both values; the request is consumed once after restart observers run. Windows restart explicitly requires PowerShell and leaves the process alive if its launcher cannot start.
 - Generic element animations use the executor clock, support synchronized repeats and per-animation frame limits, and compose children through `ParentElement`. `App::set_reduce_motion` refreshes existing windows; non-essential element animations render their static final-segment endpoint and animated images retain their current frame. Invalid or unrepresentable FPS timer intervals fall back to ordinary frame scheduling.

@@ -137,6 +137,7 @@ fn reentrant_touch_cancel_preserves_ingress_order_contact_and_mouse_session(
             window_preview_offset: point(px(0.0), px(0.0)),
             cursor_style: None,
             button: MouseButton::Left,
+            external_payload_source: None,
         });
         assert!(window.has_active_pointer_session(cx));
     })

@@ -6074,6 +6074,20 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         self.window_bounds()
     }
     fn request_decorations(&self, _decorations: WindowDecorations) {}
+
+    /// Returns whether this window can promote an internal file drag to its native platform.
+    fn can_start_external_drag(&self) -> bool {
+        false
+    }
+
+    /// Starts a native file drag, retaining the exact source session for later callbacks.
+    fn start_external_drag(
+        &self,
+        _payload: &crate::ExternalDragPayload,
+        _session: crate::PlatformExternalDragSession,
+    ) -> bool {
+        false
+    }
     fn window_decorations(&self) -> Decorations {
         Decorations::Server
     }

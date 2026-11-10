@@ -1822,3 +1822,40 @@ cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml 
 This command is a verification instruction. Results belong in the main qualification record;
 constructing listeners alone does not qualify input dispatch, scrolling, tooltip behavior or
 native presentation.
+
+## Ordinary public external drag consumer
+
+The `external_drag` target consumes ordinary public reexports without `test-support`,
+`bench-support`, an App or a native Window. The payload, lazy resolver and exit vocabulary follow
+official Zed at fixed target
+[`635026fabc38440fce5e1767d125026a17b12012`](https://github.com/zed-industries/zed/tree/635026fabc38440fce5e1767d125026a17b12012).
+The fork retains its committed geometry interfaces and adds an opaque native source session.
+
+The exact consumer API and migration requirements are:
+
+| Public surface | Signature and migration |
+| --- | --- |
+| Outbound payload | `ExternalDragPayload::Files(FileDragPaths::new(entries))`, where `entries: impl IntoIterator<Item = (PathBuf, bool)>`. The bool is caller-supplied directory metadata; `FileDragPaths::entries(&self) -> &[(PathBuf, bool)]` exposes it without filesystem queries. `ExternalPaths` remains the inbound path collection. |
+| Combined registration | `StatefulInteractiveElement::on_drag_with_external(value, listener, resolver)` and `Interactivity::on_drag_with_external(value, listener, resolver)`. The listener is `Fn(&T, &DragStartGeometry, &mut Window, &mut App) -> Entity<W>` with `T: 'static` and `W: Render + 'static`; the resolver is `Fn(&T, &mut Window, &mut App) -> Option<ExternalDragPayload> + 'static`. Both callbacks are `'static`. |
+| Separate registration | The fixed upstream builder shape `on_drag(value, listener).external_drag_payload::<T>(resolver)` remains available. Register the resolver after `on_drag` with the same `T`; the combined method is the fork's convenience entry point. The resolver runs at most once per gesture when the pointer exits the viewport. |
+| Exit listeners | `InteractiveElement` and `Interactivity` expose `on_mouse_exit` and `on_file_drop_exit`. Their listeners are respectively `Fn(&TargetedEvent<MouseExitEvent>, &mut Window, &mut App) + 'static` and `Fn(&TargetedEvent<FileDropEvent>, &mut Window, &mut App) + 'static`; use `window_event()` for the underlying event. These retain the fork's targeted geometry rather than upstream raw event arguments. |
+| Drag state | Add `external_payload_source: None` to existing `AnyDrag` literals. The field is `Option<ExternalDragPayloadSource>`; the alias is `Box<dyn FnOnce(&mut Window, &mut App) -> Option<ExternalDragPayload> + 'static>`. |
+| Platform capability | `PlatformWindow::can_start_external_drag(&self) -> bool` and `PlatformWindow::start_external_drag(&self, &ExternalDragPayload, PlatformExternalDragSession) -> bool`. Both default to `false`. Backend implementations migrating from upstream must accept and retain the additional session argument for source callbacks. |
+| Native source session | `PlatformExternalDragSession: Clone` is opaque and has no public constructor. `dispatch(&self, FileDropEvent)` forwards callbacks through the original source session; backends retain the supplied session instead of addressing the current drag through an unqualified event. |
+| Session state and events | `App::has_active_platform_drag(&self) -> bool` exposes platform ownership. `FileDropEvent` has `Entered { position, paths }`, `Pending { position }`, `Submit { position }`, `Exited` and `Ended`. Update exhaustive matches for `Ended`; `Exited` means window leave, while `Ended` means native session completion. |
+
+Three tests cover caller-provided file/directory metadata, inbound path and exit-event conversion,
+and public API type compatibility. The listener registration, capability and source-state closures
+are deliberately never invoked. Session method references check `Clone` and `dispatch` without
+constructing a session. No runtime drag promotion, callback delivery, Core routing or native
+Mac/Wayland completion is qualified by this consumer.
+
+Run this feature-free target serially with `CARGO_BUILD_JOBS=1`, the existing consumer lockfile
+and the shared build directory:
+
+```text
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --test external_drag --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+This command is a verification instruction, not an execution result. Runtime and native backend
+qualification remain with their respective owners.

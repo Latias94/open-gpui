@@ -847,6 +847,7 @@ impl Render for ActionWindowRemovalProbe {
                     window_preview_offset: point(px(0.0), px(0.0)),
                     cursor_style: None,
                     button: MouseButton::Left,
+                    external_payload_source: None,
                 });
             })
             .on_action(move |_: &RemoveWindowWithPointer, window, cx| {
@@ -1315,6 +1316,7 @@ fn pointer_capture_requires_a_pressed_button_and_rejects_competing_owners(cx: &m
             window_preview_offset: point(px(0.0), px(0.0)),
             cursor_style: None,
             button: MouseButton::Left,
+            external_payload_source: None,
         });
         window.dispatch_event(
             PlatformInput::MouseDown(MouseDownEvent {
@@ -1379,6 +1381,7 @@ fn stopping_an_active_drag_releases_its_source_pointer_capture(cx: &mut TestAppC
             window_preview_offset: point(px(0.0), px(0.0)),
             cursor_style: None,
             button: MouseButton::Left,
+            external_payload_source: None,
         });
 
         assert!(cx.stop_active_drag(window));
@@ -1431,6 +1434,7 @@ fn stopping_a_cross_window_drag_releases_capture_in_its_source_window(cx: &mut T
             window_preview_offset: point(px(0.0), px(0.0)),
             cursor_style: None,
             button: MouseButton::Left,
+            external_payload_source: None,
         });
     })
     .expect("the source window should start the drag");
@@ -1575,6 +1579,7 @@ fn repeated_drop_listeners_receive_one_matching_drop_each(cx: &mut TestAppContex
             window_preview_offset: point(px(0.0), px(0.0)),
             cursor_style: None,
             button: MouseButton::Left,
+            external_payload_source: None,
         });
         window.dispatch_event(mouse_up(MouseButton::Left, 10.0, 10.0), cx);
     })
@@ -1696,6 +1701,7 @@ fn pointer_cancellation_is_unpreventable_and_clears_the_entire_session(cx: &mut 
             window_preview_offset: point(px(0.0), px(0.0)),
             cursor_style: None,
             button: MouseButton::Left,
+            external_payload_source: None,
         });
     });
 
@@ -1766,6 +1772,7 @@ fn pointer_capture_releases_when_owner_is_absent_from_the_next_frame(cx: &mut Te
             window_preview_offset: point(px(0.0), px(0.0)),
             cursor_style: None,
             button: MouseButton::Left,
+            external_payload_source: None,
         });
     });
     assert!(cx.update(|window, _| window.captured_pointer().is_some()));
@@ -2057,6 +2064,7 @@ fn remove_window_from_input_callback_cancels_after_dispatch_before_removal(
                     window_preview_offset: point(px(0.0), px(0.0)),
                     cursor_style: None,
                     button: MouseButton::Left,
+                    external_payload_source: None,
                 });
                 lifecycle.borrow_mut().push("input");
                 window.remove_window(cx);
@@ -2764,6 +2772,7 @@ fn removing_an_unrelated_window_preserves_the_drag_owned_by_another_window(
             window_preview_offset: point(px(0.0), px(0.0)),
             cursor_style: None,
             button: MouseButton::Left,
+            external_payload_source: None,
         });
     });
 
@@ -2927,6 +2936,7 @@ fn stale_drag_revocation_before_root_paint_preserves_cached_cancel_journal(
             window_preview_offset: point(px(0.0), px(0.0)),
             cursor_style: None,
             button: MouseButton::Left,
+            external_payload_source: None,
         });
     });
     cx.update_window_entity(&view, |view, _, cx| {
@@ -3102,6 +3112,7 @@ fn active_drag_preview_and_pointer_events_are_isolated_to_its_window(cx: &mut Te
                 window_preview_offset: point(px(0.0), px(0.0)),
                 cursor_style: None,
                 button: MouseButton::Left,
+                external_payload_source: None,
             });
         }
     });
@@ -3491,6 +3502,7 @@ fn exact_native_captured_drag_cancel_is_once_and_cannot_cancel_a_replacement_gen
             window_preview_offset: point(px(0.0), px(0.0)),
             cursor_style: None,
             button: MouseButton::Left,
+            external_payload_source: None,
         });
     })
     .expect("the captured source should start G1");
@@ -3593,6 +3605,7 @@ fn exact_native_captured_drag_cancel_is_once_and_cannot_cancel_a_replacement_gen
             window_preview_offset: point(px(0.0), px(0.0)),
             cursor_style: None,
             button: MouseButton::Left,
+            external_payload_source: None,
         });
     })
     .expect("the captured source should start G2");
@@ -3700,6 +3713,7 @@ fn exact_native_captured_drag_cancel_preserves_a_replacement_pointer_owner(
                     window_preview_offset: point(px(0.0), px(0.0)),
                     cursor_style: None,
                     button: MouseButton::Left,
+                    external_payload_source: None,
                 },
             ));
             assert_eq!(window.release_pointer(&first), Ok(true));
@@ -3791,6 +3805,7 @@ fn exact_native_captured_drag_cancel_refreshes_source_after_removing_preview(
                         window_preview_offset: point(px(0.0), px(0.0)),
                         cursor_style: None,
                         button: MouseButton::Left,
+                        external_payload_source: None,
                     },
                 ));
                 window.refresh();
@@ -3847,6 +3862,7 @@ fn app_shutdown_settles_the_active_native_drag_and_preserves_outbox_reuse(cx: &m
             window_preview_offset: point(px(0.0), px(0.0)),
             cursor_style: None,
             button: MouseButton::Left,
+            external_payload_source: None,
         });
     })
     .expect("G1 should start in the first window");
@@ -3911,6 +3927,7 @@ fn app_shutdown_settles_the_active_native_drag_and_preserves_outbox_reuse(cx: &m
             window_preview_offset: point(px(0.0), px(0.0)),
             cursor_style: None,
             button: MouseButton::Left,
+            external_payload_source: None,
         });
     })
     .expect("G2 should start after reopening the test App");
@@ -3982,6 +3999,7 @@ fn start_native_capture_release_rejected_once(
                     window_preview_offset: point(px(0.0), px(0.0)),
                     cursor_style: None,
                     button: MouseButton::Left,
+                    external_payload_source: None,
                 },
             ));
             generation
@@ -4118,6 +4136,7 @@ fn capture_release_rejection_waits_for_fresh_app_progress_before_retry(cx: &mut 
                     window_preview_offset: point(px(0.0), px(0.0)),
                     cursor_style: None,
                     button: MouseButton::Left,
+                    external_payload_source: None,
                 },
             ));
             generation
@@ -4203,6 +4222,7 @@ fn capture_release_is_prepared_before_a_budget_delayed_first_dispatch(cx: &mut T
                     window_preview_offset: point(px(0.0), px(0.0)),
                     cursor_style: None,
                     button: MouseButton::Left,
+                    external_payload_source: None,
                 },
             ));
             generation
@@ -4297,6 +4317,7 @@ fn repeated_capture_release_rejection_settles_failed_after_bounded_delayed_retri
                     window_preview_offset: point(px(0.0), px(0.0)),
                     cursor_style: None,
                     button: MouseButton::Left,
+                    external_payload_source: None,
                 },
             ));
             generation
@@ -4413,6 +4434,7 @@ fn shutdown_continues_after_capture_release_retries_settle_failed(cx: &mut TestA
                     window_preview_offset: point(px(0.0), px(0.0)),
                     cursor_style: None,
                     button: MouseButton::Left,
+                    external_payload_source: None,
                 },
             ));
             generation
@@ -4526,6 +4548,7 @@ fn dropping_app_with_pending_capture_release_retry_does_not_deadlock() {
                     window_preview_offset: point(px(0.0), px(0.0)),
                     cursor_style: None,
                     button: MouseButton::Left,
+                    external_payload_source: None,
                 },
             ));
             generation
@@ -4587,6 +4610,7 @@ fn stale_delayed_capture_release_wake_cannot_retry_a_newer_rejection_epoch(
                     window_preview_offset: point(px(0.0), px(0.0)),
                     cursor_style: None,
                     button: MouseButton::Left,
+                    external_payload_source: None,
                 },
             ));
             generation
@@ -4676,6 +4700,7 @@ fn captured_drag_release_barrier_attaches_to_the_exact_pending_cancellation(
                     window_preview_offset: point(px(0.0), px(0.0)),
                     cursor_style: None,
                     button: MouseButton::Left,
+                    external_payload_source: None,
                 },
             ));
             generation
@@ -4983,6 +5008,7 @@ fn captured_drag_release_delivery_accepts_reentrant_continuation(cx: &mut TestAp
                     window_preview_offset: point(px(0.0), px(0.0)),
                     cursor_style: None,
                     button: MouseButton::Left,
+                    external_payload_source: None,
                 },
             ));
             generation
@@ -5111,6 +5137,7 @@ fn source_close_preserves_the_exact_capture_barrier_until_native_terminal(cx: &m
                     window_preview_offset: point(px(0.0), px(0.0)),
                     cursor_style: None,
                     button: MouseButton::Left,
+                    external_payload_source: None,
                 },
             ));
             generation
@@ -5281,6 +5308,7 @@ fn native_quit_delivers_exact_cancel_before_registry_clear(cx: &mut TestAppConte
                     window_preview_offset: point(px(0.0), px(0.0)),
                     cursor_style: None,
                     button: MouseButton::Left,
+                    external_payload_source: None,
                 },
             ));
             generation
@@ -5390,6 +5418,7 @@ fn mouse_exit_is_hover_only_and_does_not_publish_captured_drag_movement(cx: &mut
             window_preview_offset: point(px(0.0), px(0.0)),
             cursor_style: None,
             button: MouseButton::Left,
+            external_payload_source: None,
         });
     })
     .expect("the captured-drag source should remain open");
@@ -5470,6 +5499,7 @@ fn reentrant_pointer_cancel_waits_for_earlier_native_ingress_before_outbox_deliv
             window_preview_offset: point(px(0.0), px(0.0)),
             cursor_style: None,
             button: MouseButton::Left,
+            external_payload_source: None,
         });
     })
     .expect("the source window should remain open");
@@ -5549,6 +5579,7 @@ fn captured_drag_outbox_waits_for_an_older_command_budget_before_deactivation(
             window_preview_offset: point(px(0.0), px(0.0)),
             cursor_style: None,
             button: MouseButton::Left,
+            external_payload_source: None,
         });
     })
     .expect("the source window should remain open");
@@ -5630,6 +5661,7 @@ fn native_captured_mouse_up_is_locked_before_user_cleanup_and_delivered_post_bor
             window_preview_offset: point(px(0.0), px(0.0)),
             cursor_style: None,
             button: MouseButton::Left,
+            external_payload_source: None,
         });
     })
     .expect("the source window should remain open");
@@ -5647,6 +5679,7 @@ fn native_captured_mouse_up_is_locked_before_user_cleanup_and_delivered_post_bor
             window_preview_offset: point(px(0.0), px(0.0)),
             cursor_style: None,
             button: MouseButton::Left,
+            external_payload_source: None,
         });
     })
     .expect("the source window should accept a replacement drag");
@@ -5732,6 +5765,7 @@ fn panicking_native_captured_drag_consumer_settles_g1_and_delivers_g2(cx: &mut T
             window_preview_offset: point(px(0.0), px(0.0)),
             cursor_style: None,
             button: MouseButton::Left,
+            external_payload_source: None,
         });
     })
     .expect("the captured source should start G1");
@@ -5771,6 +5805,7 @@ fn panicking_native_captured_drag_consumer_settles_g1_and_delivers_g2(cx: &mut T
             window_preview_offset: point(px(0.0), px(0.0)),
             cursor_style: None,
             button: MouseButton::Left,
+            external_payload_source: None,
         });
     })
     .expect("the source window should accept a second drag generation");
@@ -5841,6 +5876,7 @@ fn panicking_pointer_cancel_listener_still_settles_g1_and_allows_g2(cx: &mut Tes
             window_preview_offset: point(px(0.0), px(0.0)),
             cursor_style: None,
             button: MouseButton::Left,
+            external_payload_source: None,
         });
     })
     .expect("the captured source should start G1");
@@ -5881,6 +5917,7 @@ fn panicking_pointer_cancel_listener_still_settles_g1_and_allows_g2(cx: &mut Tes
             window_preview_offset: point(px(0.0), px(0.0)),
             cursor_style: None,
             button: MouseButton::Left,
+            external_payload_source: None,
         });
     })
     .expect("the restored pointer listeners should allow G2");
@@ -5918,6 +5955,7 @@ fn pointer_panic_recovery_reserves_cancel_while_outer_app_borrow_is_busy(cx: &mu
             window_preview_offset: point(px(0.0), px(0.0)),
             cursor_style: None,
             button: MouseButton::Left,
+            external_payload_source: None,
         });
     })
     .expect("the source window should remain open");
@@ -5979,6 +6017,7 @@ fn pointer_panic_recovery_reserves_cancel_while_outer_app_borrow_is_busy(cx: &mu
             window_preview_offset: point(px(0.0), px(0.0)),
             cursor_style: None,
             button: MouseButton::Left,
+            external_payload_source: None,
         });
     })
     .expect("the source window should accept G2");
@@ -6024,6 +6063,7 @@ fn pointer_panic_recovery_does_not_replace_a_locked_mouse_up_release(cx: &mut Te
             window_preview_offset: point(px(0.0), px(0.0)),
             cursor_style: None,
             button: MouseButton::Left,
+            external_payload_source: None,
         });
     })
     .expect("the source window should remain open");
@@ -6079,6 +6119,7 @@ fn pointer_panic_recovery_does_not_replace_a_locked_mouse_up_release(cx: &mut Te
             window_preview_offset: point(px(0.0), px(0.0)),
             cursor_style: None,
             button: MouseButton::Left,
+            external_payload_source: None,
         });
     })
     .expect("the source window should accept G2");

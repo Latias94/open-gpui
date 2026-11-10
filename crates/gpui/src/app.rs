@@ -27,6 +27,8 @@ pub use bench_context::{
 };
 pub use context::*;
 pub use entity_map::*;
+pub use external_drag::PlatformExternalDragSession;
+use external_drag::PlatformOwnedDrag;
 #[cfg(any(test, feature = "test-support"))]
 pub use headless_app_context::*;
 use open_gpui_collections::{
@@ -76,6 +78,7 @@ mod displays;
 #[cfg(test)]
 mod embedded_tests;
 mod entity_map;
+mod external_drag;
 #[cfg(any(test, feature = "test-support"))]
 mod headless_app_context;
 #[cfg(test)]
@@ -812,6 +815,7 @@ pub struct App {
 
     pub(crate) actions: Rc<ActionRegistry>,
     pub(crate) active_drag: Option<AnyDrag>,
+    platform_owned_drag: Option<PlatformOwnedDrag>,
     active_native_captured_drag: Option<ActiveNativeCapturedDragAuthority>,
     next_native_captured_drag_generation: u64,
     pub(crate) background_executor: BackgroundExecutor,
@@ -1000,6 +1004,7 @@ impl App {
                 pending_updates: 0,
                 current_update_generation: 0,
                 active_drag: None,
+                platform_owned_drag: None,
                 active_native_captured_drag: None,
                 // Zero is reserved so every exported generation can cross into non-zero identity
                 // domains without a lossy compatibility mapping.
@@ -3574,8 +3579,11 @@ impl App {
             .active_native_captured_drag
             .as_ref()
             .and_then(|authority| authority.generation_for(active_drag));
-        self.active_drag = None;
-        self.retire_native_captured_drag_authority();
+        let active_drag = self
+            .active_drag
+            .take()
+            .expect("the source drag was validated");
+        self.retire_drag_authority(&active_drag);
         (true, captured_generation)
     }
 
@@ -3596,7 +3604,7 @@ impl App {
         let Some(active_drag) = self.active_drag.take() else {
             return false;
         };
-        self.retire_native_captured_drag_authority();
+        self.retire_drag_authority(&active_drag);
         if let Some(source) = active_drag.source {
             if source.window_id() == window.window_handle().window_id() {
                 let _ = window.finish_drag_source(&source, active_drag.button);
@@ -4009,7 +4017,14 @@ pub struct AnyDrag {
 
     /// The mouse button whose release terminates this drag gesture.
     pub button: MouseButton,
+
+    /// Resolves the native payload at most once when this drag leaves its source window.
+    pub external_payload_source: Option<ExternalDragPayloadSource>,
 }
+
+/// Resolves a native payload lazily at promotion time.
+pub type ExternalDragPayloadSource =
+    Box<dyn FnOnce(&mut Window, &mut App) -> Option<crate::ExternalDragPayload> + 'static>;
 
 /// Contains state associated with a tooltip. You'll only need this struct if you're implementing
 /// tooltip behavior on a custom element. Otherwise, use [Div::tooltip](crate::Interactivity::tooltip).
@@ -5259,6 +5274,7 @@ mod test {
                         window_preview_offset: point(px(0.0), px(0.0)),
                         cursor_style: None,
                         button: MouseButton::Left,
+                        external_payload_source: None,
                     },
                 ));
                 generation
