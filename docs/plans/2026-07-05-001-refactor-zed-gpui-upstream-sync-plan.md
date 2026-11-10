@@ -2781,7 +2781,50 @@ bounded review finds no outstanding P1/P2 and all three lanes close. Foreign cal
 are migrated without claiming a new termination wait policy or native execution. Continue
 shared Apple topology and the final fixed-target audit before the actual Nara consumer.
 
+## Shared Apple Framework Successor
+
+After native quit qualification, adopt the fixed target's shared Apple package topology from
+`40180d9c40e2d20eb63d388bff920818f2910b53` and `95d35c6efddfa6dc34f99bb1873620bd74af806a`,
+including its typed bindings, main-thread marker, color-space, font-size, shader-path and
+offscreen-capture follow-ups. Open-GPUI owns one open-gpui-apple package for the dispatcher,
+Metal/atlas/shaders, CoreText/OpenType, Keychain and process information. Mac retains AppKit
+application/window/input ownership; iOS cfgs prepare the official shared substrate without
+claiming an implemented iOS backend.
+
+Move existing service consumers and tests to the owning package and remove displaced Mac
+implementations/build dependencies. Preserve complete source/fallback selection, dispatcher
+admission and RAII task timing, exact clip/transform preparation, atlas leases, accepted frame
+receipts and presentation shutdown. These are concrete fork seams around the official owner
+topology. Use the target's typed interfaces instead of keeping an obsolete compatibility layer
+solely to reduce the diff. CoreVideo surfaces and retained buffer types cover Mac/iOS through
+Core; shader SDK selection follows Cargo target OS/environment and keeps checkout paths out
+of compiled artifacts.
+
+Verification follows the upstream-trust rule: compile affected packages and an ordinary
+consumer, exercise relocated portable controls and review the actual fork adaptations. Native
+Metal/CoreText/AppKit execution needs an Apple host and stays distinct from host/cross-target
+compilation. Do not repeat unrelated Windows/component/docking acceptance or resurrect a known
+unavailable foreign toolchain matrix. Record any compiler/dependency prerequisite actually
+encountered; keep dependencies and package inventories consistent without a new scanner.
+
+Implementation `8bd39cef78dbb7c477df08f8fc2e1ee386f22851` completes this owner migration.
+The [record](../verification.md#shared-apple-framework-topology) qualifies affected host/public
+compilation, portable frame-state 2/2, actual Apple/Mac production compilation and all-target
+foreign correctness Clippy, plus the independently locked Apple Keychain consumer. The initial
+benchmark/alloca host-toolchain failure and subsequently reached fork type errors remain
+recorded; narrowed production/test-support selections establish actual native-owner type
+checking without claiming native execution. Typed renderer, moved service tests, main-thread
+probes and package/dependency checks preserve their distinct scope. All three lanes close with
+no outstanding reviewed P1/P2. Continue final fixed-target residual dispositions and then the
+real Nara GPU/Host/View consumer; Apple runtime, iOS and numeric-cost qualification remain open.
+
 ## Maintained Baseline Before Engine Adaptation
+
+The [shared Apple record](../verification.md#shared-apple-framework-topology) qualifies
+`8bd39cef78dbb7c477df08f8fc2e1ee386f22851` through the actual affected owner/consumer paths.
+Final fixed-target residual dispositions and the real engine consumer still precede maintenance
+handoff. Trust unchanged official coverage and keep later native product acceptance scoped to
+the consumer adopting the maintained revision.
 
 The [native-quit record](../verification.md#native-quit-completion-and-restart-manager) qualifies
 `10f14f08be8572eaa802e4fb1cfcaf2d05e268c3` through affected Core/Windows regressions and public

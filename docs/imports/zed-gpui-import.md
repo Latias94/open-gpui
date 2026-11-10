@@ -92,3 +92,17 @@ declare that source selection themselves, as the independent fixture documents. 
 upstream dependency prerequisite, not a second scheduler or an engine-specific loop owner.
 Actual runtime scheduling, native switching and remaining source differences retain the
 scope recorded in the existing plan and verification guide.
+
+## November 10 Shared Apple Package
+
+The shared Apple successor adopts the Apache-2.0 `gpui_apple` framework closure as
+`open-gpui-apple`, using fixed target `635026fabc38440fce5e1767d125026a17b12012` and extraction
+sources `40180d9c40e2d20eb63d388bff920818f2910b53` /
+`95d35c6efddfa6dc34f99bb1873620bd74af806a`. It retains the existing license and NOTICE,
+Open-GPUI aliases and concrete fork clip/atlas/presentation and font-selection adaptations.
+AppKit application/window/input and the CoreVideo display registry remain in macOS; shared
+Metal display links, dispatch, rendering, CoreText/OpenType, Keychain and process information
+have one Apple owner. Core no longer depends on unused Media/font/shader build packages.
+The new generated CoreText binding is registry `objc2-core-text` 0.3.2; existing dependencies
+keep their locked versions. Qualification and remaining Apple execution scope belong to the
+[shared Apple record](../verification.md#shared-apple-framework-topology).

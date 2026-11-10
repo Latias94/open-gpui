@@ -7550,6 +7550,73 @@ termination wait policy or execution claim. Web quit remains unsupported. Verifi
 the targeted upstream-trust policy above: unrelated component, docking, font/render, compiler
 floor and platform matrices retain their prior evidence rather than being rerun for this port.
 
+## Shared Apple Framework Topology
+
+Implementation `8bd39cef78dbb7c477df08f8fc2e1ee386f22851`, following `aa28dfab16b`, adopts
+official Apple topology from
+`40180d9c40e2d20eb63d388bff920818f2910b53` and `95d35c6efddfa6dc34f99bb1873620bd74af806a`
+at fixed target `635026fabc38440fce5e1767d125026a17b12012`. Relevant target follow-ups include
+cached main-thread markers (`f1ccf949d5`), exact initial font-size alternation (`44ec5691b5`),
+Display P3 (`2d4c483194`), staged shader paths (`bed9563afc`), macOS 12/SDK selection
+(`f14592c4a5`) and offscreen screenshots (`f816e1f926`). The existing scoped power/cadence,
+Keychain and alpha-composition ports retain their recorded contracts.
+
+One open-gpui-apple package owns typed Metal/atlas/shaders, dispatcher/activity, Metal display
+links, CoreText/OpenType, Keychain and process-info services. The old Mac Metal compatibility
+layer and duplicate owners are removed. Mac keeps AppKit lifecycle/window/input and the
+CoreVideo display registry. CoreVideo surfaces and retained pixel-buffer types cover Mac/iOS;
+this prepares the official shared substrate without adding an iOS application backend.
+WindowOptions forwards the official opt-in use_display_p3, false by default. Native Metal
+creation remains fallible and occurs before AppKit allocation, retaining construction rollback.
+
+Fork adaptations preserve exact clip/primitive-transform preparation, texture-instance leases,
+complete-frame refusal/submission, presentation-shutdown tickets, display-link generations and
+wake custody. Dispatcher admission and RAII task timing, complete font requests/fallbacks and
+font-cache identity remain intact. The shaders retain the fork's admitted clip/transform ABI.
+The build entry reads Cargo target facts for cross-compilation; target SDK selection, macOS 12
+floor, runtime shader stitching and staged precompiled inputs follow the official mechanism.
+Core sheds unused native font, Media and shader-build dependencies; the separately locked
+ordinary consumer likewise no longer needs Media/bindgen. Only the required objc2-core-text
+0.3.2 package and dependency edges are added, without unrelated version updates.
+
+Windows 11/Rust 1.95.0 affected Apple/Mac host compilation and ordinary independently locked
+all-target compilation pass. The relocated portable Metal frame-state controls pass 2/2
+(`9e8f69c9-8c51-43a3-810a-2f145e481e89`), including late/nested generation refusal and a wake
+during an update. This executes the production state owner on Windows, not native Metal.
+
+The first aarch64-apple-darwin all-target attempt with bench-support stops in inherited
+Criterion/alloca C compilation: host cc rejects -arch and the macOS deployment flag. A
+production-only check avoids that unneeded benchmark dependency and reaches the actual Apple
+owner. Shared Apple compiles; Mac exposes seven integration/latent fork type errors. Correct
+the typed layer setter, SmallVec result annotation, three missing old Cocoa wrapper calls,
+keyboard Option mapping and NSDictionary import. Corrected Apple/Mac production libraries pass
+the actual foreign check with runtime_shaders/font-kit and macOS 12.
+
+The test-support selection then reaches the relocated native tests/examples without Criterion.
+It exposes ambiguous NSString AsRef in the existing appearance probe and a process-info test
+capturing a non-Send NSString across threads. Explicit dereferences preserve the appearance
+assertions; constructing the notification name in the worker preserves all observer counts and
+the actual cross-thread post without adding unsafe Send. Final Apple/Mac all-target foreign
+correctness Clippy passes with runtime_shaders, font-kit and test-support. Native tests and
+both process-main-thread examples are type-checked, not executed. The invalid old MacPlatform
+activity libtest is removed: it required the process main thread. Three typed activity-token
+owner tests remain; the actual Platform acquire/drop/unpolled-task path is in native_windowing's
+activity mode, without an Apple-to-Mac dependency cycle or helper-only substitute.
+
+The separately locked Apple credentials consumer compiles its new public Keychain import,
+including Core Foundation 0.10.1 rather than the root's 0.10.0. Final production and independent
+checks pass after removing the Mac manifest's unused renderer/font/Keychain dependencies.
+Root/independent formatting, whitespace, YAML syntax and the rebuilt existing import-boundary,
+public-API-tier, document-link and release-inventory gates pass. Exact shader-body comparison
+and license/NOTICE equality checks pass. No remote publication or CI execution occurs.
+
+Independent bounded review finds no outstanding P1/P2 in the official extraction/fork seams.
+All three implementation/review lanes close. Actual Metal shaders, GPU pixels, CoreText/font
+fallback, Keychain and AppKit execution still require an Apple host; iOS compilation/execution
+and SDK/toolchain qualification remain separate. Runtime shader source generation on Windows
+does not compile MSL. The upstream-trust policy avoids repeating unrelated Windows, component,
+docking, browser, compiler-floor or performance matrices for this owner migration.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:
@@ -9312,8 +9379,8 @@ dispatches:
 - Linux runs `cargo check -p open-gpui-linux --all-features --locked` after installing the system
   headers needed for Wayland, X11, fontconfig, freetype, and pkg-config, then runs
   `cargo nextest run -p open-gpui-linux --all-features --locked --no-fail-fast`.
-- macOS runs `cargo check -p open-gpui-macos --features font-kit --locked` and
-  `cargo nextest run -p open-gpui-macos --features font-kit --locked --no-fail-fast`.
+- macOS runs `cargo check -p open-gpui-apple -p open-gpui-macos --features font-kit --locked` and
+  `cargo nextest run -p open-gpui-apple -p open-gpui-macos --features font-kit --locked --no-fail-fast`.
 - All three platforms run `cargo check -p open-gpui-wgpu --features font-kit --locked`.
 
 Run the complete native WGPU package test suite explicitly with:

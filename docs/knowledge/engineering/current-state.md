@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-10T15:52:20+08:00
+timestamp: 2026-11-10T16:37:00+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -18,6 +18,20 @@ verified_by:
 
 # Current State
 
+- Shared Apple topology is implemented at `8bd39cef78dbb7c477df08f8fc2e1ee386f22851`.
+  Official shared Metal/atlas/shaders, dispatcher/activity, CoreText/OpenType, Keychain,
+  process information and Metal display links have one open-gpui-apple owner. Mac retains
+  AppKit and the CoreVideo registry. The old Metal compatibility layer/duplicate owners and
+  unused dependencies are removed; exact fork clip/texture-lease/presentation/font and
+  dispatch contracts remain. Affected host/public compilation, portable 2/2, actual Apple/Mac
+  production checks, all-target foreign correctness Clippy and the independently locked Apple
+  Keychain consumer pass. The [record](../../verification.md#shared-apple-framework-topology)
+  preserves benchmark/alloca and reached fork type errors/corrections, migrated test/probe
+  scope, final formatting/static gates and unchanged shaders/attribution. All three lanes close
+  with no outstanding reviewed P1/P2. Actual Apple runtime, iOS and numeric costs remain
+  unqualified. Continue final fixed-target residual reconciliation and the real Nara GPU/Host/View
+  consumer before separate framework maintenance; no engine/default selection follows.
+
 - Native quit/Restart Manager is implemented at `10f14f08be8572eaa802e4fb1cfcaf2d05e268c3`
   from official `7f2a2c3c3ee2f23f28772dee7661fb98d3910990`. The bool callback reuses ordered
   AppCell shutdown and exact retirement; Windows retains generation-bound routing, terminal
@@ -27,8 +41,8 @@ verified_by:
   Windows 4/6 failure and corrections. All three implementation/review lanes close. Upstream
   maintenance now trusts unchanged official coverage and qualifies affected fork seams instead
   of repeating unrelated suites/matrices. Linux/Mac signature migration adds no foreign
-  termination execution or wait policy; Web quit remains unsupported. Continue shared Apple
-  topology and final fixed-target closure, then the real Nara GPU/Host/View consumer before
+  termination execution or wait policy; Web quit remains unsupported. Continue final fixed-target
+  closure, then the real Nara GPU/Host/View consumer before
   separate framework maintenance. No renderer/loop/default selection follows.
 
 - Startup/live windowing is implemented at `c1d8204f2da7069f40ea8e0420a37a5c0f210474`, after
@@ -955,7 +969,8 @@ historical scope and is not current branch or CI qualification.
 
 # Next Action
 
-- Continue shared Apple topology and the final fixed-target difference audit after qualified
+- Continue the final fixed-target difference audit after qualified
+  [shared Apple topology](../../verification.md#shared-apple-framework-topology) and
   [native quit/session shutdown](../../verification.md#native-quit-completion-and-restart-manager).
   Trust unchanged official coverage and concentrate compilation/regressions on affected fork
   seams. Keep the original aggregate failures, default WSLg thread-exit crash and foreign lifecycle
