@@ -3023,7 +3023,74 @@ fork cancellation/admission/shutdown seams and actual dependency identity. Darwi
 execution, browser lifecycle, numeric budgets and the remaining fixed-target groups retain
 separate evidence; do not repeat unrelated Editor/component/native renderer/compiler matrices.
 
+### HTTP Deadlines, Release Downloads And Archive Parser Successor
+
+Continue from `b04321bac869e50fc80f6c0e2b70f85901587fa2` against the unchanged fixed target.
+Adopt complete official request/read deadlines (`992c7d469c`, `865318723e`), fallible platform
+TLS verification with bundled-root fallback (`c595091b0a`), independent github_releases
+(`ead2d9eac0`, `02d47bf64f` and target follow-ups), and the actual async-tar PAX parser
+dependency (`87324045be`, revision `bd3ad6f89df9a9da7a8535958756d6bf465936a0`).
+
+Keep HTTP request/body abstractions independent of Core, native utilities and downloads. Move
+GitHub metadata, digest normalization, status checks, temporary staging and archive/raw Task
+workflows to the official separate package; remove superseded HTTP module exports. Preserve
+concrete fork writer/Windows handle-release behavior where the official path still needs it,
+with source provenance and focused regression evidence rather than a compatibility facade.
+Product-specific Zed Cloud/API endpoint routing remains outside the framework closure.
+
+Adopt the fixed target's actual MIT OR Apache-2.0 `zed-reqwest`
+`33bc764aa15ff7b200bf7c93bd96e24878d53e14`. Its request-local redirect override preserves the
+original client's proxy, headers, TLS and read timeout. Remove the fork's client reconstruction
+cache and refusal workaround: a registry-only constraint has no current consumer requirement
+and would lose imported-client behavior. Reconcile ADR 0001 and the historical import exclusion
+with this evidenced dependency choice. Platform-verifier initialization may fail; follow the
+official logged WebPKI-root fallback. Select the exact futures-based async-tar dependency,
+retiring the old Tokio compatibility path.
+
+Trust unchanged official algorithms and regression coverage. Compile affected owners and ordinary
+public consumers; execute actual registry adaptation, download replacement/cleanup and PAX
+dependency scenarios. Use local fixtures/loopback rather than external GitHub/certificate
+services. Cargo remains serial. Foreign TLS/process/browser execution, native performance,
+remaining framework groups and the real Nara GPU/Host/View consumer retain separate scope.
+
+### Portable Path Owner Successor
+
+Continue with the complete Apache-2.0 `crates/path` owner from the fixed target, including
+`f181a2f47b`, `2610332077`, `a84689073d`, `51a3a0e971`, `f929b3f7ce`, `a4a3a968d1` and
+`9521840152`. The prepared open-gpui-path sources remain unregistered and unqualified until
+their actual consumers migrate. This is the singular framework path crate, not the GPL product
+paths package. Keep complete PathStyle, normalized relative paths, local absolute paths, native
+byte/WTF-8 conversion and optional serde; do not reduce it to an unused exported type set.
+
+Replace util's duplicate RelPath/RelPathBuf and PathStyle mechanisms through actual utility
+and external callsites. Account for Posix -> Unix, checked from_unix_str construction,
+join/prefix return types, serde validation and changed error representation. Existing
+SanitizedPath, home-directory/compaction and application-facing path matching remain with their
+real utility/native-dialog consumers unless the official target provides a complete successor.
+Do not expose compatibility aliases or leave parallel normalization authorities. Qualified
+restart/command and platform custody remain in their owning modules.
+
+The target's Path::is_empty spelling must fit the declared compiler floor through its exact
+OsStr empty equivalent, or receive an explicit justified compiler decision; merely importing
+the target's toolchain does not qualify a floor change. Add the actual Windows tendril feature
+closure at the package owner. Trust unchanged official algorithms and coverage, compiling the
+affected utility/native consumers and independently locked public path composition. Test the
+actual changed normalization/serde/consumer seams and preserve platform execution limits.
+
 ## Maintained Baseline Before Engine Adaptation
+
+The [HTTP/download/archive record](../verification.md#http-deadlines-release-downloads-and-pax-archives)
+qualifies `8223d68d89bd2a012dee3f279297266dc97b2d0e`: official request-local reqwest redirects,
+read/request deadlines, platform verifier fallback and separate release Task downloads replace
+the registry cache/lower-HTTP download owner. Exact permissive sources and complete Windows
+archive features are selected. Release 10/10, final native transport 9/9 and independent public
+4/4 pass; affected correctness Clippy, stable wasm, format/static gates and repaired actual
+dependency-health pass. The record retains compile/fixture failures, security findings and
+targeted patched closure rather than advisory ignores. Five unit lanes close without P1/P2.
+The separate next-path preparation lane closes with an unregistered source draft; finish its
+real utility/public migration before qualification. Actual TLS fallback/foreign execution,
+download Task-drop cancellation, numeric costs, remaining target owners and the real Nara
+GPU/Host/View consumer remain open before separate maintenance.
 
 The [support-primitives record](../verification.md#process-reaping-dedicated-execution-and-shared-strings)
 qualifies `5b1810abbcc867486c21cba530f2bfec63de6414`: complete official Darwin shared reaping,
@@ -3592,6 +3659,11 @@ Finish with import-boundary scans, broad verification, and documentation updates
 - **Verification:** `cargo run -p xtask -- scan-import-boundary`; `git diff --check`.
 
 ### U2. Reqwest Client Streaming and Connection Correctness
+
+This July unit records the historical registry/cache implementation. The November
+[HTTP/download/archive successor](#http-deadlines-release-downloads-and-archive-parser-successor)
+supersedes that dependency disposition and removes the client reconstruction cache in favor of
+the official request-local redirect owner. Its original streaming regressions remain relevant.
 
 - **Goal:** Port upstream HTTP streaming fixes and client connection configuration without disturbing Open GPUI's public `reqwest` migration.
 - **Requirements:** R3, R4, R14.

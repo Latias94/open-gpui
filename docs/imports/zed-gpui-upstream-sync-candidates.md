@@ -18,7 +18,9 @@ HEAD.
   `font-kit` fork, and the original July crates.io `wgpu` migration. The November WGPU
   successor below explicitly replaces that dependency source with the official pinned
   upstream correction after its real registry failure control.
-- Do not import Zed editor/product crates or retired Zed dependency forks.
+- Do not import Zed editor/product crates. Retired dependency forks stay excluded unless a
+  source-specific November successor explicitly selects the required official mechanism under
+  ADR 0001, as for request-local reqwest redirects.
 - Every accepted candidate needs an owning unit and a verification path.
 
 The November continuation applies the
@@ -30,7 +32,7 @@ official mechanism remains queued until it receives an explicit disposition.
 
 | Upstream commit | Owning unit | Upstream intent | Open GPUI mapping | Test source |
 |---|---|---|---|---|
-| `552fc9f3c3` | U2 | Fix streamed reqwest request bodies being truncated after `Poll::Pending`. | `crates/reqwest_client/src/reqwest_client.rs`. Keep public `reqwest = 0.12.15` migration. | Upstream streamed-body regression adapted to local inline tests. |
+| `552fc9f3c3` | U2 | Fix streamed reqwest request bodies being truncated after `Poll::Pending`. | July used registry reqwest in `crates/reqwest_client/src/reqwest_client.rs`; the November HTTP successor supersedes that source/cache choice with the complete official owner. | Upstream streamed-body regression adapted to local inline tests. |
 | `485aeabff3` | U2 | Drop stale reqwest connections with keepalives. | `crates/reqwest_client/src/reqwest_client.rs`. Use only public reqwest builder APIs available in this workspace. | Focused client construction and existing request tests. |
 | `bda5ac3626` | U3 | Prevent Wayland clipboard reads from blocking indefinitely. | `crates/gpui_linux/src/linux/platform.rs` and Wayland clipboard call sites. | Timeout and chunked-read tests where host support allows. |
 | `c56646ffdf` | U3 | Keep IME candidate window following cursor in TUI/composition paths. | `crates/gpui_linux/src/linux/wayland/client.rs`. | Wayland IME candidate-position behavior, plus compile gate if runtime unavailable. |
@@ -344,9 +346,9 @@ orders implementation and applies targeted upstream-trust verification.
 | Supporting owner | Official source | Disposition and dependency boundary |
 | --- | --- | --- |
 | Darwin process and unified reaper | `e1bfcf85db`, `60ed56b372`, `d4cc8d2409` | Implemented complete owned File/stdio/SIGPIPE/Async<File>/adopt_raw_pid mechanism. The [qualification](../verification.md#process-reaping-dedicated-execution-and-shared-strings) records one actual async-process `0b6d6713` shared by smol across all six roots, utility/public-consumer Darwin source compilation and retained Windows Job cleanup. Darwin process execution remains unqualified. |
-| HTTP deadlines and TLS initialization | `992c7d469c`, `865318723e`, `c595091b0a` | Queued RequestTimeout/HttpRequestExt, send/read deadlines, redirect-cache configuration and fallible platform verifier with WebPKI fallback. |
-| Release-download helper | `ead2d9eac0`, `02d47bf64f`, `992c7d469c` | Queued Apache github_releases owner with deadlines, digest normalization, status checks and staging. Existing HTTP GitHub helpers are not equivalent. |
-| PAX archive parser | `87324045be`; async-tar `bd3ad6f89df9a9da7a8535958756d6bf465936a0` | Queued length-driven PAX parser. The registry newline parser is not equivalent; qualify the real dependency selection. |
+| HTTP deadlines and TLS initialization | `992c7d469c`, `865318723e`, `c595091b0a` | Implemented complete RequestTimeout/read deadlines and platform verifier/WebPKI fallback. Official reqwest `33bc764a` replaces the registry reconstruction cache with request-local redirects on the original client. The [qualification](../verification.md#http-deadlines-release-downloads-and-pax-archives) records native HTTP 9/9 and independent public 4/4; originating Tokio body polling is the bounded runtime adaptation. Actual TLS fallback and foreign execution retain separate scope. |
+| Release-download helper | `ead2d9eac0`, `02d47bf64f`, `992c7d469c` | Implemented separate Apache open-gpui-github-releases with release deadlines, digest normalization, status validation and staged archive/raw Task downloads. Superseded lower-HTTP modules and native dependencies are removed. The same qualification records release 10/10, Windows file-close/error cleanup and actual public consumers; active Task-drop cancellation remains unexecuted. |
+| PAX archive parser | `87324045be`; async-tar `bd3ad6f89df9a9da7a8535958756d6bf465936a0` | Implemented actual fixed Git dependency and retired the Tokio bridge. A real verified TarGz download extracts the correct following path after an embedded-newline PAX value. The download package carries Windows async-std/unstable support directly; browser/Core-only roots shed the old native archive closure. |
 | SharedString and executor helpers | `47825fe00a`, `9dd6993e2e`; `2040e0de59`, `98c6c1403b` | Implemented complete From<char>/SmolStr serde and DedicatedExecutor/nonblocking rendezvous/wasm-threads/native-only blocking successor. The same qualification records affected fork cancellation/admission/shutdown and public-consumer passes. One reproduced official queued-task sender cycle uses bounded weak dispatch ownership; other official runtime mechanisms remain intact. Browser worker/shutdown execution is not implied by production wasm compilation. |
 | Portable path owner | `f181a2f47b`, `2610332077`, `a84689073d`, `51a3a0e971`, `f929b3f7ce`, `a4a3a968d1`, `9521840152` | Queued Apache path crate with RelPath/AbsPath component semantics, normalization, root/join/prefix, empty length and nested set_extension. It is distinct from the GPL product paths crate. |
 | Path-position utilities | `a51d23c93d`, `72d073d642`, `347f171a3f`, `e21ff1b368` | Queued UNC/position parsing and public parse_path_with_position. Keep actual product file-existence fallback outside the closure without rejecting its shared parser. |

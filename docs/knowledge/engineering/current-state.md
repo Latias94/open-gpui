@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-10T20:20:48+08:00
+timestamp: 2026-11-10T21:29:00+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -17,6 +17,20 @@ verified_by:
 ---
 
 # Current State
+
+- HTTP/download/archive owners are implemented at `8223d68d89bd2a012dee3f279297266dc97b2d0e`.
+  The complete official request/read deadlines, platform verifier fallback and separate release
+  Task APIs use fixed reqwest/async-tar sources. The registry client-reconstruction cache and
+  lower-HTTP native download dependencies are removed. The
+  [qualification](../../verification.md#http-deadlines-release-downloads-and-pax-archives)
+  records release 10/10, final native transport 9/9 and independently locked public 4/4 passes,
+  affected correctness Clippy/wasm compilation, dependency-health and format/static gates.
+  The actual gate exposes retained advisory versions; targeted fixed selections pass without
+  new ignores. Five unit lanes close without reviewed P1/P2; the next portable-path preparation
+  lane also closes, leaving only its unregistered source draft uncommitted. Preserve that work.
+  Continue path/utility migration and remaining backend/render owners before the real Nara
+  GPU/Host/View consumer and separate maintenance. Active download Task-drop cancellation,
+  actual TLS fallback/foreign execution and numeric budgets remain unqualified.
 
 - Support primitives are implemented at `5b1810abbcc867486c21cba530f2bfec63de6414`.
   The complete official Darwin shared reaper, DedicatedExecutor/nonblocking rendezvous,
@@ -1041,9 +1055,10 @@ historical scope and is not current branch or CI qualification.
 
 - Continue the [residual source inventory](../../imports/zed-gpui-upstream-sync-candidates.md#november-10-residual-source-reconciliation)
   after qualified identity/diagnostics/list precision, element layout/drawing, gestures/
-  scroll/padding/hover, cursor/native file drag and process/dedicated/string support, rather
-  than treating the earlier public-Platform audit as exhaustive. Continue HTTP/download/archive,
-  remaining supporting utility/dependency and backend/render groups, including native popup,
+  scroll/padding/hover, cursor/native file drag, process/dedicated/string and HTTP/download/
+  archive support, rather than treating the earlier public-Platform audit as exhaustive.
+  Complete the prepared path owner's real util/public-consumer migration, then the remaining
+  supporting utility/dependency and backend/render groups, including native popup,
   in their recorded prerequisite order. Build on qualified
   [shared Apple topology](../../verification.md#shared-apple-framework-topology) and
   [native quit/session shutdown](../../verification.md#native-quit-completion-and-restart-manager).

@@ -8009,6 +8009,122 @@ adoption remain separate unqualified scope. Continue HTTP/download/archive and r
 supporting utility/backend/render owners before the real Nara GPU/Host/View consumer and
 separate framework-maintenance handoff.
 
+## HTTP Deadlines, Release Downloads And PAX Archives
+
+Implementation: `8223d68d89bd2a012dee3f279297266dc97b2d0e`.
+
+The November 10 unit follows fixed Zed `635026fabc38440fce5e1767d125026a17b12012`: request/read
+deadlines `992c7d469c`/`865318723e`, TLS verifier successor `c595091b0a`, separate release
+owner `ead2d9eac0`/`02d47bf64f` and complete target follow-ups, and archive selection
+`87324045be`. Trust unchanged official implementations and tests. Qualification targets the
+extraction's dependency direction, actual selected packages and the remaining fork seams.
+
+The exact official reqwest `33bc764aa15ff7b200bf7c93bd96e24878d53e14` declares MIT OR Apache-2.0
+and provides request-local redirect policy. The historical registry 0.13.4 reconstruction cache
+cannot preserve arbitrary imported clients. An initial adaptation considered refusing redirect
+overrides for those clients; that restriction and the entire parallel configuration/cache are
+removed before qualification, following the user's official-baseline direction and ADR 0001.
+The selected client now carries original proxy, headers, TLS and read timeout through request
+overrides. Its sole production fork delta enters the original Tokio handle while polling the
+response body: the selected client's ReadTimeoutBody creates Tokio timers on those polls,
+including when the consumer awaits the framework AsyncBody on another executor.
+
+TLS code matches the complete official platform-verifier initialization and logged WebPKI-root
+fallback. Lower HTTP owns RequestTimeout/HttpRequestExt::timeout and portable request/body APIs;
+it no longer depends on Core, utilities or downloads, or reexports the old GitHub modules and
+anyhow helpers. The Apache-2.0 github_releases owner becomes open-gpui-github-releases with
+executor-bound Task downloads, release deadlines, digest normalization, response validation and
+same-volume staging. Official download/release source is preserved apart from aliases and raw
+file close/drop before publishing or propagating an error. That concrete Windows adaptation
+ends buffered/background writes before temporary staging cleanup.
+
+The actual archive dependency is async-tar `bd3ad6f89df9a9da7a8535958756d6bf465936a0`, using
+futures-compatible async-std I/O and length-driven PAX records. The first release build fails
+because the extraction omitted official async-std/unstable for Windows symlink support. The
+download package now declares that target dependency itself, so downstream roots retain it.
+This corrects the imported feature closure rather than modifying the official archive source.
+The ensuing locked release cohort passes 10/10 (`4ea4ac5a-b831-4a98-b900-e0efaeff5eee`):
+selected official metadata/deadline/digest/status/staging scenarios and two extraction controls.
+One downloads, verifies and extracts a real TarGz with an embedded-newline PAX comment followed
+by a path record. The other interrupts a partially written raw download, preserving the old
+destination and removing temporary staging after handle release. It is not a Task-drop test.
+
+The selected reqwest source reintroduces rustls-pemfile 2.2. Its RUSTSEC-2025-0134 entry reports
+unmaintained status and describes the crate as a thin wrapper over rustls-pki-types. No
+vulnerability or advisory suppression is inferred. The dependency audit records this separately
+from the exact source's permissive licenses and required redirect behavior. New async-tar
+defaults select xattr 1.7, requiring rustix >=1.1.6; a precise attempt to retain 1.1.4 is rejected
+by that actual constraint. Keep the necessary closure instead of unrelated version upgrades.
+
+Bounded extraction and Reqwest/TLS reviews find no remaining P1/P2. They verify raw-file/error
+cleanup, aliases, Task custody, HTTP dependency direction and Tokio/deadline continuity. They do
+not supply actual platform TLS fallback, active Task-drop cancellation, browser or native
+cross-platform execution. The native HTTP cohort passes 9/9
+(`28d31e49-4602-4a18-8e13-8d32928a01da`): complete request/body deadlines, read-timeout reset
+outside Tokio, imported-client proxy/User-Agent/read-timeout retention across default and three
+redirect policies, bypass, streamed Pending uploads and retained proxy/no-replay cases. The
+302 imported-client control distinguishes actual redirect policy; the non-replayable 307
+upload alone would not. No private cache/refusal fixture remains after that owner is removed.
+
+Import-boundary tests first select the xtask binary, which contains no tests and fails the
+explicit no-tests gate (`050f2727-96cd-4f39-a163-b6c1dab5f205`). Selecting the actual library
+passes 12/12 (`7f3fa575-d8c3-4084-b3ad-0b604f2efea4`), including acceptance of the official
+reqwest source and retained exclusions. The existing duplicate allowlist adds only the actual
+async-std channel/listener generations and Windows registry generation selected by this closure;
+no new dependency scanner or license framework is introduced. Independent roots are refreshed
+serially: browser and Core-only roots shed the obsolete native download/Tokio closure, while
+the ordinary native consumer selects the official archive/reqwest packages directly.
+
+The ordinary independently locked native consumer passes 4/4
+(`4e638dbc-2385-48be-af2a-fb59b2a5a1b3`). It executes composed deadline/redirect extensions,
+in-memory public release discovery/digest normalization and a real loopback redirect/read using
+an imported client from the exact official reqwest source, retaining its custom User-Agent.
+Its background-download closure type-checks Task ownership without starting a worker or writing
+files. The fixture remains free of test-support; its broader existing dependencies compile
+through normal components/docking/platform composition. The first affected build takes
+12m35s, largely native TLS dependency compilation; the four tests take 0.455s. This is build
+and correctness evidence, not a runtime performance benchmark.
+
+Affected HTTP/TLS/Reqwest/releases all-feature/all-target correctness Clippy passes on
+Windows/Rust 1.95, with existing non-correctness warnings retained. Stable Core/Web production
+wasm compilation passes after removing the native HTTP dependency closure. The existing
+dependency-health helper tests pass 2/2 (`dfe04d0a-643d-4af5-9e0b-16ee37de74d6`); no new
+compiler-floor or unrelated runtime/component/native-renderer matrix is run.
+
+The existing full dependency-health gate then finds 13 advisories in six retained root-lock
+packages, plus actual duplicate/stale allowlist entries. The source/licensing decision is not
+reverted and no new advisory ignore is added. Targeted patched selections are h2 0.4.16,
+libz-sys 1.1.31, quinn-proto 0.11.18, rustls 0.23.46, rustls-webpki 0.103.16 and
+webpki-root-certs 1.0.10. Rustls requires aws-lc-rs >=1.18, bringing the selected 1.19/0.47
+provider/sys closure. This is a reproduced dependency-health repair, not a blanket refresh.
+The ordinary independent lock already has fixed Rustls/verifier packages and needs only the
+h2/libz-sys patches. All five independently maintained lock audits then pass with the existing
+advisory configuration. Core-only and browser roots retain their pruned native closure.
+
+The duplicate allowlist now reflects actual profiler base64, AVIF/WGPU pastey, async-std channel/
+listener and Windows registry/architecture versions; stale jni, platform-verifier and bundled-
+root-cert entries are removed. Provenance is read from actual trees/lock edges, including the
+optional av-scenechange owner absent from the selected build tree. Focused transport/public
+checks repeat against patched locks; unrelated runtime/component/platform/compiler matrices
+remain outside this unit. The native transport cohort again passes 9/9
+(`eadc22f0-cb21-4d48-bfeb-7b789374a1d6`) after the required new provider/sys build. The rebuild
+takes 9m56s and the tests 2.919s; this preserves the distinction between dependency build cost
+and runtime behavior. The independently locked public consumer then passes 4/4 again
+(`b2b3c7eb-f9b6-41d1-9b6e-439125dd3e0e`) against its patched graph. Root dependency-health
+passes after the targeted updates and allowlist reconciliation, using the existing advisory
+configuration. No new security exception or compiler-floor change is introduced.
+
+Root and ordinary-consumer formatting, whitespace, affected TOML/workflow syntax, complete
+Apache license/NOTICE and existing import-boundary/public-API/document/release gates pass.
+All five implementation/review lanes for this unit close without reviewed P1/P2; the sixth
+lane separately prepares the next portable-path owner without registering or qualifying it.
+No remote CI, push or publication occurs. Remaining active Task-drop download cancellation,
+actual TLS failure/fallback and foreign platform execution are not claimed. Continue the
+complete portable path/utility and backend/render owners, then the real Nara GPU/Host/View
+consumer before maintenance handoff. No whole fixed-target or foundation completion follows.
+Full fixed-target closure, remaining support/backend/render owners and the real Nara GPU/Host/
+View consumer remain open before separate framework maintenance.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:
