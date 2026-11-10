@@ -430,6 +430,17 @@ pub(crate) mod test_support {
         OPENED.set(Some(opened));
     }
 
+    pub(crate) fn clipboard_state() -> Option<(u32, i32)> {
+        let _clipboard = super::ClipboardGuard::open()?;
+        // SAFETY: The current thread holds the clipboard lock and retains no native handles.
+        Some(unsafe {
+            (
+                windows::Win32::System::DataExchange::GetClipboardSequenceNumber(),
+                super::CountClipboardFormats(),
+            )
+        })
+    }
+
     pub(crate) fn retry_clipboard_open<T>(mut operation: impl FnMut() -> T) -> T {
         let deadline = Instant::now() + Duration::from_secs(1);
         let mut refused = 0;

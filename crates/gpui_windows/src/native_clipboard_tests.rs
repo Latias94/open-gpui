@@ -12,7 +12,7 @@
 //! clipboard updates prevent restoration; sequence checks are best effort across native calls.
 
 use super::*;
-use crate::clipboard::test_support::retry_clipboard_open;
+use crate::clipboard::test_support::{clipboard_state, retry_clipboard_open};
 use crate::native_test_observation::NativeWindowTestMessageDisposition;
 use futures::FutureExt;
 use open_gpui::{
@@ -22,9 +22,7 @@ use open_gpui::{
     WindowInitialPresentationStatus, black, font,
 };
 use std::ops::Range;
-use windows::Win32::System::DataExchange::{
-    CloseClipboard, CountClipboardFormats, GetClipboardSequenceNumber, OpenClipboard,
-};
+use windows::Win32::System::DataExchange::GetClipboardSequenceNumber;
 
 struct NativeClipboardRestore {
     original: Option<ClipboardItem>,
@@ -34,14 +32,8 @@ struct NativeClipboardRestore {
 
 impl NativeClipboardRestore {
     fn capture(cx: &App) -> Self {
-        // SAFETY: The clipboard is opened and closed on this thread without retaining handles.
-        let (sequence, formats) = unsafe {
-            let sequence = GetClipboardSequenceNumber();
-            OpenClipboard(None).expect("the native clipboard must be available before mutation");
-            let formats = CountClipboardFormats();
-            CloseClipboard().expect("the native clipboard capture must release its lock");
-            (sequence, formats)
-        };
+        let (sequence, formats) = retry_clipboard_open(clipboard_state)
+            .expect("the native clipboard must be available before mutation");
         let original = retry_clipboard_open(|| cx.read_from_clipboard());
         assert_eq!(
             unsafe { GetClipboardSequenceNumber() },
@@ -100,26 +92,26 @@ impl NativeClipboardRestore {
         if unsafe { GetClipboardSequenceNumber() } != self.sequence {
             return false;
         }
-        crate::clipboard::write_to_clipboard(self.original.clone().unwrap_or(ClipboardItem {
-            entries: Vec::new(),
-        }));
+        retry_clipboard_open(|| {
+            assert_eq!(
+                unsafe { GetClipboardSequenceNumber() },
+                self.sequence,
+                "an external clipboard update must not be overwritten during restoration",
+            );
+            crate::clipboard::write_to_clipboard(self.original.clone().unwrap_or(ClipboardItem {
+                entries: Vec::new(),
+            }));
+        });
         if self.original.is_some() {
-            return crate::clipboard::read_from_clipboard() == self.original;
+            return retry_clipboard_open(crate::clipboard::read_from_clipboard) == self.original;
         }
-        // SAFETY: The clipboard is opened only for inspection and closed on the same thread.
-        unsafe {
-            if OpenClipboard(None).is_err() {
-                return false;
-            }
-            let empty = CountClipboardFormats() == 0;
-            CloseClipboard().is_ok() && empty
-        }
+        retry_clipboard_open(clipboard_state).is_some_and(|(_, formats)| formats == 0)
     }
 }
 
 impl Drop for NativeClipboardRestore {
     fn drop(&mut self) {
-        if !self.restore() {
+        if !matches!(catch_unwind(AssertUnwindSafe(|| self.restore())), Ok(true)) {
             eprintln!(
                 "native clipboard cleanup could not restore prior entries; clipboard changed or became unavailable",
             );
