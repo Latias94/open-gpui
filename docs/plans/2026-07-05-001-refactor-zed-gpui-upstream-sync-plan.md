@@ -3358,7 +3358,66 @@ calls and accepted model output from pixel proof, OS IME and numeric performance
 official algorithms; do not repeat unrelated framework/component/compiler matrices. Record
 dependency resolution and source-specific adaptations without unrelated lockfile churn.
 
+### Linux IME, Effects And XKB Successor
+
+Continue after `f2526df594ae975bf8e234cc2e8ed0e36a871dfd` against the same fixed target.
+Adopt complete official `5079b33d657` cursor-rectangle/serial deduplication, `14b7b0ef376`
+background effects, `c43e2d97348`/`a7c7219d5bf` XKB creation, `afc13dc8e05` feature separation,
+`5dd0666dfb6` X11 class termination and `dd68454633a` Wayland backend API minimum.
+
+IME cursor updates retain the native protocol's integer coordinates and submit only changed
+committed rectangles. Preserve initial enable and Done/serial behavior, the original tests,
+and fork input-handler leases, exact focused-window identity and irreversible quiescence.
+The state belongs to the existing protocol/seat owner and resets across its lifecycle; no
+second IME document, dispatch queue or keyboard registry is introduced.
+
+Prefer ext-background-effect when bound, retaining the official KDE fallback, complete rounded
+regions, independent corners, tiling/insets, resize/configure refresh and native destruction.
+Extend existing requested/observed appearance projection to actual ext-or-KDE support without
+widening capability facts. Core Pixels::to_i32 and client-corner forwarding follow the official
+metadata seam alongside set_client_inset; optional desktop backends retain their default no-op.
+Preserve fork renderer/surface retirement, popup roles and the separate native input region.
+
+One shared XKB context validates null and uses NO_DEFAULT_INCLUDES for resolved server maps.
+Named-layout test fixtures retain local includes. Preserve null/absent keyboard guards and
+the complete existing keyboard scenarios. Wayland-only must not activate XKB's X11 feature;
+X11-only must not activate its Wayland feature. Raise the manifest's wayland-backend floor to
+0.3.15 even though current locks already select it. The background-effect module exists in
+wayland-protocols 0.32.9, but its Blur flag is zero. Capability-aware integration requires the
+corrected flag in 0.32.10, with no change to the selected 0.32.13 lock.
+
+Use affected Linux compilation, original portable tests and focused fork lifecycle/projection
+controls. Extend ordinary public consumers for the metadata API and the existing actual native
+round trip for complete WM_CLASS bytes through the real X server, preserving keyboard-driven
+Submitted output and full retirement. Run meaningful single-backend feature checks and the
+existing native X11/Wayland trajectories where available. Do not build a compositor simulator
+or repeat unrelated component/browser/compiler matrices. Actual KWin/Fcitx feedback behavior,
+ext/KDE blur visual effects and numerical costs remain separately qualified claims.
+
+Independent review requires an additional fork fact adaptation: ext binding alone does not
+establish its advertised Blur capability. Keep that flag in the existing protocol owner,
+retain requested versus effective appearance in the existing window state and reproject
+live windows after capability changes. Switch and retire effect objects through the same
+surface owner, dropping the client borrow before existing state callbacks. Preserve the
+official geometry and priority when Blur is actually available. The backend can report an
+effective background change without gaining live alpha mutation support; use the existing
+WindowStateChanged observation path and preserve CreationOnly command admission. The stock
+window-shadow example is now an explicit platform target; migrate its stale targeted-event
+accessors alongside the actual corner forwarding.
+
 ## Maintained Baseline Before Engine Adaptation
+
+The [Linux IME and background-effects record](../verification.md#linux-ime-background-effects-and-keyboard-contexts)
+qualifies `cf4bd2c6db1fb97ce5d77a201212f988052b17d2`. Complete official Wayland cursor
+deduplication, ext/KDE effects, XKB and X11 metadata use the existing protocol, input and
+surface owners. Scoped review corrects the advertised Blur flag, Core fact observation and
+dependency floor without widening alpha mutation. Affected Linux passes 48/48 and final
+observation/native passes 4/4. Core/public 5/5, independent 1/1 and 2/2, the window-shadow
+example check, single-backend builds/feature graphs, correctness Clippy and format/static checks
+pass. Configured WSLg proves X11 readback/submission and Wayland fallback/retirement; real IME
+feedback and effect visuals remain unqualified. Continue Mac native input/AppKit, renderer
+batching, logging and final API/dispatch dispositions before the real Nara GPU/Host/View
+consumer and separate maintenance.
 
 The [Canvas fallback record](../verification.md#web-canvas-font-fallback) qualifies
 `f2526df594ae975bf8e234cc2e8ed0e36a871dfd`: complete official policy/eligibility/measurement/

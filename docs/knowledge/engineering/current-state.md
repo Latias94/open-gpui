@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-11T05:43:00+08:00
+timestamp: 2026-11-11T06:29:26+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -17,6 +17,17 @@ verified_by:
 ---
 
 # Current State
+
+- Official Wayland IME/background effects, XKB and X11 class metadata are implemented at
+  `cf4bd2c6db1fb97ce5d77a201212f988052b17d2`. Existing protocol and window owners retain
+  cursor leases, exact retirement, ext/KDE priority and truthful effective background facts.
+  The [qualification](../../verification.md#linux-ime-background-effects-and-keyboard-contexts)
+  records affected Linux 48/48, final observation/native 4/4, Core/public 5/5 and ordinary
+  independent 1/1 and 2/2. Single-backend builds/graphs, the maintained window-shadow example,
+  affected correctness Clippy, formatting and static gates pass. All five lanes close without
+  outstanding reviewed P1/P2. WSLg has no effect protocol; real compositor blur, KWin/Fcitx feedback and
+  numeric costs remain open. Continue Mac native input/AppKit, renderer batching, logging and
+  final API/dispatch dispositions before the real Nara GPU/Host/View consumer and maintenance.
 
 - Official Canvas font fallback and selected-face reporting are implemented at
   `f2526df594ae975bf8e234cc2e8ed0e36a871dfd`. The complete immutable policy, eligibility,
@@ -1172,10 +1183,8 @@ historical scope and is not current branch or CI qualification.
   archive support, canonical paths, complete utility composition/native helpers, source-over/
   native child composition, Windows dialog/host/input safety, native restoration/attention and
   native regions/layer-shell/fullscreen/popups, complete Web text/viewport and official Canvas
-  font fallback/selected-face reporting,
-  rather than treating the earlier
-  public-Platform audit as exhaustive. Continue the remaining
-  Wayland IME/effects/XKB, X11 metadata, Mac native input/AppKit,
+  font fallback/selected-face reporting and Linux IME/effects/XKB/X11 metadata. The earlier
+  public-Platform audit is not exhaustive. Continue the remaining Mac native input/AppKit,
   renderer batching and logging groups, plus the final public-method/dispatch dispositions,
   in their recorded prerequisite order. Build on qualified
   [shared Apple topology](../../verification.md#shared-apple-framework-topology) and

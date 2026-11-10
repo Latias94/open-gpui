@@ -8930,6 +8930,89 @@ Actual OS IME, mobile devices and browser font coverage elsewhere, general conte
 shaping, numerical costs, native foreign execution and the real Nara GPU/Host/View consumer
 remain unqualified. Full fixed-target and foundation gates remain open.
 
+## Linux IME, Background Effects And Keyboard Contexts
+
+The November 11 successor starts at `6ac5ffddb98a3a45a05b761bed271b49ebb26633`
+against fixed Zed `635026fabc38440fce5e1767d125026a17b12012` and lands at
+`cf4bd2c6db1fb97ce5d77a201212f988052b17d2`. Complete official
+`5079b33d657`, `14b7b0ef376`, `c43e2d97348`, `a7c7219d5bf`, `afc13dc8e05`,
+`5dd0666dfb6` and `dd68454633a` own cursor-rectangle deduplication, background effects,
+safe XKB construction, backend feature separation, X11 metadata and the backend minimum.
+The original three IME, four rounded-region, null-XKB and Pixels conversion regressions
+are retained. Unchanged official geometry and protocol algorithms retain their provenance.
+
+Fork integration keeps exact focused protocol/window identity, handler leases, serial and
+cache generations across reentry, observed appearance projection and native surface/GPU
+retirement. Ext background effects take priority over KDE; neither unavailable protocol is
+reported as supported. Input regions keep their separate owner. The optional public corner
+setter uses the existing metadata seam; the stock client-decorated window example forwards
+the same top-corner radii it draws. Existing public/native control consumers exercise the
+default no-op without claiming a compositor implementation.
+
+Independent review identifies one fork observation-contract defect: the official target ignores
+the ext manager's capabilities event, while this fork exposes projected background facts. Binding
+the manager alone must not report Blur. The existing protocol owner now retains its advertised
+Blur flag, including known bits alongside unknown future flags. Exact-manager delivery updates
+the shared capability, releases the client borrow and reprojects live windows through their
+existing state callback. The window retains the original request separately from its effective
+appearance, switches or destroys ext/KDE objects as needed and preserves quiescence. This is a
+fork fact/lifecycle adaptation, not a replacement for the official rounded-region algorithm.
+The follow-up review catches Core retaining the old alpha fact for CreationOnly mutations.
+Wayland now explicitly observes background changes through the existing state-change path.
+Other backends retain the default fact preservation, and the application still cannot issue a
+live Wayland alpha mutation. The native probe checks controlled backend reprojection, committed
+Core facts and the rejected public write through the same live window.
+
+The initial X11-only Linux run passes **17/17**, run
+`d48d6b05-c803-4d31-affd-ddfd327a344e`, including the official null case, the resolved-map
+context regression and all existing keyboard/layout controls in that selection. It uses WSL
+Ubuntu 26.04, Rust 1.95, one Cargo job and the shared target with an explicit Linux triple.
+The first combined selection passes **44/44**, run
+`ac5249b8-a585-46b5-aadc-d2b0e9ae37bf`. The initial actual native selection passes **3/3**,
+run `399277be-3787-4fbc-91f4-b36b8f81fb88`, preserving hidden/presented X11 and Wayland
+round trips, exact server WM_CLASS readback, keyboard-driven Submitted color and retirement.
+WSLg advertises neither effect protocol, so the effect probe establishes only the unavailable
+fallback/lifecycle branch. These two runs precede the reviewed capability correction.
+After capability handling, the combined affected selection passes **48/48**, run
+`deb152d6-8f03-4bcc-aa73-5de1e43dfb8b`, including the three native cases. The locked
+Wayland-only and X11-only production builds and affected Linux correctness Clippy pass.
+The narrower final selection covers the subsequent Core observation and manifest correction.
+It passes **4/4**, run `a46cc233-1bc8-4598-993d-224fdaa5ee15`: the advertised Blur flag
+control and all three actual X11/Wayland trajectories. The native effect probe records
+`NATIVE_WAYLAND_BACKGROUND_FACT_OBSERVED alpha=CreationOnly`; its controlled backend change
+reaches Core while the attempted live alpha write returns Unsupported. X11 again reads both
+terminated WM_CLASS fields and submits the keyboard-driven color before exact retirement.
+Final affected Linux correctness Clippy passes. The locked dependency graph for each single
+backend contains only its corresponding XKB backend feature, with no XKB default feature.
+Root and independently locked consumer formatting checks pass.
+
+Shared Core/public controls pass **5/5**, run `1c0487bb-23f9-4667-aefe-527f8d92a065`.
+The original window-shadow source is not a Core example target. Registering it under the
+existing platform example owner exposes three stale TargetedEvent usages; those now use the
+public window_event accessor. The corrected platform example passes its Windows compile check.
+Independent ordinary consumers pass **1/1** for default-disabled signatures, run
+`032d3c7f-d20f-4cb3-a544-1036b2b5377d`, and **2/2** for the bench-support runtime without
+test-support, run `086a84fd-64b7-49e4-a574-ae669d8b7e88`. These checks qualify the additive
+corner API; the subsequent Core background-observation correction has separate Linux coverage.
+
+The manifest requires wayland-backend 0.3.15 even though the existing locks already select
+it. The published wayland-protocols 0.32.9 has the background-effect module but defines the
+Blur flag as zero. Independent source review confirms that 0.32.10 fixes the flag; the
+manifest requires that version without changing the existing 0.32.13 lock. Wayland and X11
+request their respective XKB features.
+
+The IME review finds no P1/P2. The effect review closes after the capability, Core observation
+and protocol-floor corrections, with no outstanding P1/P2. All five scoped lanes close. The
+release-doc validator initially rejected wrapped new changelog bullets; the existing one-line
+convention restores its pass. Import boundary, public API tiers and workflow YAML parsing also
+pass.
+
+Actual KWin/Fcitx feedback-loop behavior, ext/KDE desktop blur visuals, other compositor/OS
+coverage and numerical performance remain separate platform claims. A compositor without
+an advertised effect protocol cannot qualify that protocol. Existing configured WSLg passes
+do not resolve the previously recorded default-renderer thread-exit crash. This scoped unit
+does not close the full fixed-target refresh, Nara integration or foundation gates.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:
