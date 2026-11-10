@@ -160,6 +160,97 @@ fn test_background_executor_spawn() {
 }
 
 #[test]
+fn test_dedicated_executor_spawn() {
+    TestScheduler::once(async |scheduler| {
+        let dedicated = DedicatedExecutor::new(&scheduler.background());
+        let task = dedicated.spawn(async move { 42 });
+        assert_eq!(task.await, 42);
+    });
+}
+
+#[test]
+fn test_dedicated_executor_drop_cancels_queued_tasks() {
+    let scheduler = Arc::new(TestScheduler::new(TestSchedulerConfig::default()));
+    let weak_scheduler = Arc::downgrade(&scheduler);
+    let dedicated = DedicatedExecutor::new(&scheduler.background());
+    let retained = Arc::new(());
+    let weak_retained = Arc::downgrade(&retained);
+    let task = dedicated.spawn(async move {
+        let _retained = retained;
+        42
+    });
+
+    drop(dedicated);
+    scheduler.run();
+
+    assert_eq!(task.fallible().now_or_never(), Some(None));
+    assert!(weak_retained.upgrade().is_none());
+    assert_eq!(scheduler.pending_task_counts(), (0, 0));
+    drop(scheduler);
+    assert!(weak_scheduler.upgrade().is_none());
+}
+
+#[test]
+fn test_dedicated_executor_drop_rejects_late_wake() {
+    let scheduler = Arc::new(TestScheduler::new(TestSchedulerConfig::default()));
+    let weak_scheduler = Arc::downgrade(&scheduler);
+    let dedicated = DedicatedExecutor::new(&scheduler.background());
+    let (sender, receiver) = oneshot::channel::<()>();
+    let retained = Arc::new(());
+    let weak_retained = Arc::downgrade(&retained);
+    let task = dedicated.spawn(async move {
+        let _retained = retained;
+        receiver.await.expect("late wake must be delivered");
+        42
+    });
+    scheduler.run();
+    assert!(!task.is_ready());
+
+    drop(dedicated);
+    scheduler.run();
+    sender
+        .send(())
+        .expect("the pending task must accept its wake");
+
+    assert_eq!(task.fallible().now_or_never(), Some(None));
+    assert!(weak_retained.upgrade().is_none());
+    assert_eq!(scheduler.pending_task_counts(), (0, 0));
+    drop(scheduler);
+    assert!(weak_scheduler.upgrade().is_none());
+}
+
+#[test]
+fn test_dedicated_executor_detached_pending_work_survives_while_handle_lives() {
+    let scheduler = Arc::new(TestScheduler::new(TestSchedulerConfig::default()));
+    let weak_scheduler = Arc::downgrade(&scheduler);
+    let dedicated = DedicatedExecutor::new(&scheduler.background());
+    let (wake, pending) = oneshot::channel();
+    let (complete, mut completed) = oneshot::channel();
+    let retained = Arc::new(());
+    let weak_retained = Arc::downgrade(&retained);
+    dedicated
+        .spawn(async move {
+            let _retained = retained;
+            complete.send(pending.await.unwrap()).unwrap();
+        })
+        .detach();
+    scheduler.run();
+    assert_eq!(completed.try_recv(), Ok(None));
+    assert!(weak_retained.upgrade().is_some());
+
+    wake.send(42).unwrap();
+    scheduler.run();
+
+    assert_eq!(completed.try_recv(), Ok(Some(42)));
+    assert!(weak_retained.upgrade().is_none());
+    drop(dedicated);
+    scheduler.run();
+    assert_eq!(scheduler.pending_task_counts(), (0, 0));
+    drop(scheduler);
+    assert!(weak_scheduler.upgrade().is_none());
+}
+
+#[test]
 fn test_scheduler_drops_with_stalled_detached_foreground_task() {
     let scheduler = Arc::new(TestScheduler::new(TestSchedulerConfig::default()));
     let weak_scheduler = Arc::downgrade(&scheduler);
@@ -197,6 +288,9 @@ fn test_scheduler_drops_with_stalled_detached_background_task() {
     drop(sender);
 }
 
+/// A dedicated task that is never polled must not keep the scheduler alive:
+/// its runnable sits in the scheduler's own queue, so any strong scheduler
+/// handle captured by the future would form a reference cycle and leak both.
 #[test]
 fn test_scheduler_drops_with_never_polled_dedicated_task() {
     let scheduler = Arc::new(TestScheduler::new(TestSchedulerConfig::default()));

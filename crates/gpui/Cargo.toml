@@ -32,6 +32,7 @@ bench-support = ["profiler", "dep:criterion", "dep:open_gpui_bench_metrics"]
 bench = ["bench-support"]
 inspector = ["open_gpui_macros/inspector"]
 leak-detection = []
+wasm-threads = ["open_gpui_scheduler/wasm-threads"]
 font-kit = []
 wayland = []
 x11 = [

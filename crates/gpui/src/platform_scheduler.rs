@@ -68,51 +68,42 @@ impl PlatformScheduler {
 }
 
 impl Scheduler for PlatformScheduler {
+    #[cfg(not(target_family = "wasm"))]
     fn block(
         &self,
         _session_id: Option<SessionId>,
-        #[cfg_attr(target_family = "wasm", allow(unused_mut))] mut future: Pin<
-            &mut dyn Future<Output = ()>,
-        >,
-        #[cfg_attr(target_family = "wasm", allow(unused_variables))] timeout: Option<Duration>,
+        mut future: Pin<&mut dyn Future<Output = ()>>,
+        timeout: Option<Duration>,
     ) -> bool {
-        #[cfg(target_family = "wasm")]
-        {
-            let _ = (&future, &timeout);
-            panic!("Cannot block on wasm")
+        use waker_fn::waker_fn;
+        let deadline = timeout.map(|t| Instant::now() + t);
+        let parker = parking::Parker::new();
+        let unparker = parker.unparker();
+        let waker = waker_fn(move || {
+            unparker.unpark();
+        });
+        let mut cx = Context::from_waker(&waker);
+        if let Poll::Ready(()) = future.as_mut().poll(&mut cx) {
+            return true;
         }
-        #[cfg(not(target_family = "wasm"))]
-        {
-            use waker_fn::waker_fn;
-            let deadline = timeout.map(|t| Instant::now() + t);
-            let parker = parking::Parker::new();
-            let unparker = parker.unparker();
-            let waker = waker_fn(move || {
-                unparker.unpark();
-            });
-            let mut cx = Context::from_waker(&waker);
-            if let Poll::Ready(()) = future.as_mut().poll(&mut cx) {
-                return true;
+
+        let park_deadline = |deadline: Instant| {
+            // Timer expirations are only delivered every ~15.6 milliseconds by default on Windows.
+            // We increase the resolution during this wait so that short timeouts stay reasonably short.
+            let _timer_guard = self.dispatcher.increase_timer_resolution();
+            parker.park_deadline(deadline)
+        };
+
+        loop {
+            match deadline {
+                Some(deadline) if !park_deadline(deadline) && deadline <= Instant::now() => {
+                    return false;
+                }
+                Some(_) => (),
+                None => parker.park(),
             }
-
-            let park_deadline = |deadline: Instant| {
-                // Timer expirations are only delivered every ~15.6 milliseconds by default on Windows.
-                // We increase the resolution during this wait so that short timeouts stay reasonably short.
-                let _timer_guard = self.dispatcher.increase_timer_resolution();
-                parker.park_deadline(deadline)
-            };
-
-            loop {
-                match deadline {
-                    Some(deadline) if !park_deadline(deadline) && deadline <= Instant::now() => {
-                        return false;
-                    }
-                    Some(_) => (),
-                    None => parker.park(),
-                }
-                if let Poll::Ready(()) = future.as_mut().poll(&mut cx) {
-                    break true;
-                }
+            if let Poll::Ready(()) = future.as_mut().poll(&mut cx) {
+                break true;
             }
         }
     }
@@ -714,6 +705,113 @@ mod tests {
             weak_scheduler.upgrade().is_none(),
             "completed local work must release the retained scheduler"
         );
+    }
+
+    #[test]
+    fn dedicated_executor_tasks_share_one_thread() {
+        let background =
+            BackgroundExecutor::new(Arc::new(PlatformScheduler::new(Arc::new(SmokeDispatcher))));
+        let dedicated = open_gpui_scheduler::DedicatedExecutor::new(&background);
+
+        let first = dedicated.spawn(async { std::thread::current().id() });
+        let second = dedicated.spawn(async { std::thread::current().id() });
+
+        let first = futures::executor::block_on(first);
+        let second = futures::executor::block_on(second);
+
+        assert_eq!(first, second, "tasks must share the dedicated thread");
+        assert_ne!(
+            first,
+            std::thread::current().id(),
+            "dedicated tasks must not run on the spawning thread"
+        );
+    }
+
+    #[test]
+    fn spawn_dedicated_applies_disposition_before_root_delivery() {
+        use std::sync::mpsc;
+
+        struct DropSignal(mpsc::Sender<std::thread::ThreadId>);
+
+        impl Drop for DropSignal {
+            fn drop(&mut self) {
+                let _ = self.0.send(std::thread::current().id());
+            }
+        }
+
+        for detach in [false, true] {
+            let scheduler = Arc::new(PlatformScheduler::new(Arc::new(SmokeDispatcher)));
+            let weak_scheduler = Arc::downgrade(&scheduler);
+            let session_id = scheduler.next_session_id();
+            let (task_tx, task_rx) = mpsc::channel();
+            let (entered_tx, entered_rx) = mpsc::channel();
+            let (release_tx, release_rx) = mpsc::channel();
+            let (dropped_tx, dropped_rx) = mpsc::channel();
+            let (completed_tx, completed_rx) = mpsc::channel();
+            let timeout = Duration::from_secs(5);
+
+            let caller = std::thread::spawn(move || {
+                let task = open_gpui_scheduler::spawn_dedicated_thread(
+                    session_id,
+                    scheduler,
+                    move |_executor| {
+                        let drop_signal = DropSignal(dropped_tx);
+                        entered_tx
+                            .send(std::thread::current().id())
+                            .expect("the test must observe the root factory");
+                        release_rx
+                            .recv_timeout(timeout)
+                            .expect("the caller must release the root factory");
+                        async move {
+                            let _drop_signal = drop_signal;
+                            completed_tx
+                                .send(())
+                                .expect("the test must observe completion");
+                        }
+                    },
+                );
+                task_tx.send(task).expect("the test must receive the task");
+            });
+
+            let dedicated_thread = entered_rx
+                .recv_timeout(timeout)
+                .expect("the dedicated root factory must start");
+            let task = task_rx
+                .recv_timeout(timeout)
+                .expect("spawning must return before the root factory is released");
+            assert!(!task.is_ready());
+            if detach {
+                task.detach();
+            } else {
+                drop(task);
+            }
+            release_tx
+                .send(())
+                .expect("the root factory must be waiting");
+            caller.join().expect("the spawning thread must finish");
+
+            assert_eq!(
+                dropped_rx
+                    .recv_timeout(timeout)
+                    .expect("the root future must be destroyed"),
+                dedicated_thread
+            );
+            if detach {
+                completed_rx
+                    .recv_timeout(timeout)
+                    .expect("detached work must complete");
+            } else {
+                assert!(matches!(
+                    completed_rx.recv_timeout(timeout),
+                    Err(mpsc::RecvTimeoutError::Disconnected)
+                ));
+            }
+            let deadline = StdInstant::now() + timeout;
+            while weak_scheduler.upgrade().is_some() && StdInstant::now() < deadline {
+                std::thread::yield_now();
+            }
+            assert!(weak_scheduler.upgrade().is_none());
+        }
     }
 
     #[test]

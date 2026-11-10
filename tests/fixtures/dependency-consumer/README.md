@@ -4,6 +4,23 @@ This application is its own Cargo workspace. It consumes Open GPUI through path 
 without inheriting the repository workspace's dependency resolution or lockfile. Its own
 `Cargo.lock` records the consumer resolution.
 
+The `support_primitives` target executes public character conversion and SharedString serde.
+Uninvoked native closures type-check DedicatedExecutor construction and command spawning; they
+do not execute a native task or process. Its direct `smol`/`async-process` type identity assertion
+requires the exact shared process implementation. On Darwin it also checks the public
+`smol::Async<File>` stdout type. Run it with
+`cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --test support_primitives --target-dir target --test-threads=1 --no-fail-fast --no-tests fail`.
+
+The application root selects the official process reaper explicitly:
+
+```toml
+[patch.crates-io]
+async-process = { git = "https://github.com/zed-industries/async-process.git", rev = "0b6d6713570af61806e1e5cb40e0f757cb93fd9d" }
+```
+
+Cargo root patches do not propagate from libraries. Darwin's adopted process and `smol` must use
+this same package; a separate direct Git dependency would leave `smol` on another reaper.
+
 The `layout_drawing` target consumes public ContainerQuery, attached Anchored, List readiness/
 uniform-height/follow controls, SVG byte data, parsed reuse/ExactSize and the complete low-level
 image-paint signature. It executes SVG parsing and rasterization and constructs ordinary element

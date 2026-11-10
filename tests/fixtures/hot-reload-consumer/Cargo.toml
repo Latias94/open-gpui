@@ -2,6 +2,9 @@
 resolver = "2"
 members = ["panel"]
 
+[patch.crates-io]
+async-process = { git = "https://github.com/zed-industries/async-process.git", rev = "0b6d6713570af61806e1e5cb40e0f757cb93fd9d" }
+
 [workspace.dependencies]
 open_gpui = { package = "open-gpui", path = "../../../crates/gpui", default-features = false }
 

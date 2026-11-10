@@ -61,6 +61,7 @@ libc.workspace = true
 nix = { workspace = true, features = ["user"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+async-process.workspace = true
 mach2.workspace = true
 
 [target.'cfg(windows)'.dependencies]

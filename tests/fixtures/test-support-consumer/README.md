@@ -1,5 +1,13 @@
 # Independent additive test-support consumer
 
+The `dedicated_execution` target runs a public DedicatedExecutor through the deterministic
+TestApp scheduler, checks two results from one session, then cancels pending work and observes
+its captured guard's destruction. Run
+`cargo nextest run --locked --manifest-path tests/fixtures/test-support-consumer/Cargo.toml --test dedicated_execution --target-dir target --test-threads=1 --no-fail-fast --no-tests fail`.
+This is deterministic task execution, not a real worker-thread or browser test. The independent
+root also selects the same official `async-process` revision as the ordinary consumer; Cargo
+does not inherit root patches from its library dependencies.
+
 The `property_path` target also executes two public `#[open_gpui::property_test]` workflows
 through the reexported proptest 1.12 path, without a direct proptest dependency. Each retains
 four generated cases, actual TestPlatform drawing, entity notifications/deferred effects and

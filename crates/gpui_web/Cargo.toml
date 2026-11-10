@@ -17,7 +17,7 @@ workspace = true
 
 [features]
 default = []
-multithreaded = ["dep:wasm_thread"]
+multithreaded = ["dep:wasm_thread", "open_gpui/wasm-threads"]
 
 [lib]
 path = "src/gpui_web.rs"

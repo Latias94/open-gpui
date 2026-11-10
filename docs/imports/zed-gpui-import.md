@@ -93,6 +93,20 @@ upstream dependency prerequisite, not a second scheduler or an engine-specific l
 Actual runtime scheduling, native switching and remaining source differences retain the
 scope recorded in the existing plan and verification guide.
 
+## November 10 Unified Darwin Process Reaper
+
+The Darwin command owner follows fixed-target `e1bfcf85db`, `60ed56b372` and `d4cc8d2409`,
+including owned stdio cleanup, Async<File> pipes and adopted PIDs. It requires official
+`zed-industries/async-process` revision `0b6d6713570af61806e1e5cb40e0f757cb93fd9d` with
+`Child::adopt_raw_pid`; the registry package is not an equivalent implementation. The workspace
+and five independent application roots select that revision through `[patch.crates-io]`, so
+the direct Darwin dependency and `smol` share one process/reaper type. Cargo does not inherit
+this root patch from a library dependency; downstream roots must declare it explicitly.
+
+The [support-primitives qualification](../verification.md#process-reaping-dedicated-execution-and-shared-strings)
+records the actual resolved graph, target compilation and retained Windows process-tree owner.
+It does not claim Darwin process execution or a second engine process service.
+
 ## November 10 Shared Apple Package
 
 The shared Apple successor adopts the Apache-2.0 `gpui_apple` framework closure as

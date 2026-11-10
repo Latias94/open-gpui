@@ -135,7 +135,7 @@ pub use native_window_activation::{
     WindowActivationTerminal, WindowActivationTicket,
 };
 
-/// The duration for which futures returned from [Context::on_app_quit] can run before the application fully quits.
+/// The duration for which native applications wait for [Context::on_app_quit] futures.
 pub const SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(200);
 
 fn retain_first_app_shutdown_panic(
@@ -1216,8 +1216,10 @@ impl App {
     #[cfg(all(feature = "test-support", not(any(test, gpui_leak_detection))))]
     pub fn assert_no_new_leaks(&self, _snapshot: &LeakDetectorSnapshot) {}
 
-    /// Quit the application gracefully. Handlers registered with [`Context::on_app_quit`]
-    /// will be given `SHUTDOWN_TIMEOUT` to complete before exiting.
+    /// Quits the application gracefully.
+    ///
+    /// Native applications wait up to [`SHUTDOWN_TIMEOUT`] for quit-observer futures.
+    /// WebAssembly runs them asynchronously as best-effort cleanup without blocking its event loop.
     pub fn shutdown(&mut self) {
         self.begin_shutdown_with_window_open_barrier(false);
     }
@@ -1317,6 +1319,7 @@ impl App {
         }
 
         let futures = futures::future::join_all(futures);
+        #[cfg(not(target_family = "wasm"))]
         match self
             .foreground_executor
             .block_with_timeout(SHUTDOWN_TIMEOUT, futures)
@@ -1328,6 +1331,16 @@ impl App {
             }
             Err(_) => log::error!("timed out waiting on app_will_quit"),
         }
+        #[cfg(target_family = "wasm")]
+        self.foreground_executor
+            .spawn(async move {
+                for result in futures.await {
+                    if let Err(payload) = result {
+                        resume_unwind(payload);
+                    }
+                }
+            })
+            .detach();
 
         // Quit observers own domain-specific shutdown effects. They must get the first chance to
         // attach a generation-fenced capture-release continuation before the generic fallback

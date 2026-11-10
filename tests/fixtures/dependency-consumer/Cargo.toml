@@ -2,6 +2,7 @@
 resolver = "2"
 
 [patch.crates-io]
+async-process = { git = "https://github.com/zed-industries/async-process.git", rev = "0b6d6713570af61806e1e5cb40e0f757cb93fd9d" }
 calloop = { git = "https://github.com/zed-industries/calloop", rev = "3759371fee14c40066d64777e2a36b6ffcc22590" }
 
 [package]
@@ -24,6 +25,7 @@ open_gpui = { package = "open-gpui", path = "../../../crates/gpui", default-feat
 open_gpui_platform = { package = "open-gpui-platform", path = "../../../crates/gpui_platform", default-features = false }
 open_gpui_ui_components = { package = "open-gpui-ui-components", path = "../../../crates/ui_components" }
 open_gpui_docking = { package = "open-gpui-docking", path = "../../../crates/gpui_docking" }
+open_gpui_util = { package = "open-gpui-util", path = "../../../crates/util" }
 open_gpui_wgpu = { package = "open-gpui-wgpu", path = "../../../crates/gpui_wgpu", default-features = false, optional = true }
 criterion = { version = "0.8.2", optional = true }
 rand = { version = "0.9", optional = true }
@@ -31,6 +33,13 @@ rand = { version = "0.9", optional = true }
 # Application-owned layout pin and renderer source exercise standalone dependency resolution.
 taffy = "=0.15.0"
 wgpu = { git = "https://github.com/gfx-rs/wgpu", rev = "cddb2f5d80dc0009b2ef6767635140cacf90a007", default-features = false, features = ["std"] }
+
+[dev-dependencies]
+serde_json = "1.0"
+
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
+async-process = "2.5.0"
+smol = "2.0"
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 open_gpui_platform = { package = "open-gpui-platform", path = "../../../crates/gpui_platform", default-features = false, features = ["x11", "wayland"] }

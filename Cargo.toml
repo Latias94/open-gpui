@@ -103,6 +103,7 @@ ashpd = { version = "0.13", default-features = false, features = ["async-io", "n
 async-channel = { version = "2.5.0", default-features = false }
 async-compression = { version = "0.4", features = ["bzip2", "gzip", "futures-io"] }
 async-fs = "2.1"
+async-process = "2.5.0"
 async-tar = { version = "0.6.1", default-features = false, features = ["runtime-tokio"] }
 async-task = { git = "https://github.com/zed-industries/async-task.git", rev = "015845a19fc31752c02367567d3b8900a406f9da" }
 async_zip = { version = "0.0.18", features = ["deflate", "deflate64"] }
@@ -297,4 +298,5 @@ todo = "deny"
 unwrap_used = "warn"
 
 [patch.crates-io]
+async-process = { git = "https://github.com/zed-industries/async-process.git", rev = "0b6d6713570af61806e1e5cb40e0f757cb93fd9d" }
 calloop = { git = "https://github.com/zed-industries/calloop", rev = "3759371fee14c40066d64777e2a36b6ffcc22590" }

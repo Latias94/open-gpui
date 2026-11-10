@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- `DedicatedExecutor` reuses a dedicated task session. Dedicated-thread task delivery is nonblocking and preserves cancellation or detachment before the root task arrives. `SharedString` accepts characters and deserializes directly through `SmolStr`.
+
+- Darwin command children share the official `async-process` reaper with `smol`, including adopted PIDs, asynchronous file pipes and owned cleanup on spawn failure.
+
 - Internal drags can lazily offer file payloads to native macOS and Wayland drag sessions. Source-window reentry restores the original typed drag; native callbacks retain an exact session so stale completion cannot end a later drag. Mouse and file-exit listeners use committed element geometry, and drag cursors apply before the next paint.
 
 - Official portable touch gestures synthesize taps, source-aware pans with momentum, long presses and claimed touch drags. Platform gesture tuning, back-gesture vocabulary and Window long-press/prediction controls use the existing input owners. Stateful hover listeners can opt into input-modality-independent tracking without changing visual hover or tooltip policy.
@@ -46,6 +50,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Optional native debug hot reload follows the official GPUI/Subsecond 0.7.10 mechanism: build/process-matched patches, foreground application, window refresh, and typed, stateless and stored erased View render boundaries. Run with `dx serve --hot-patch`; compatible render-body edits preserve existing model state. Release/WebAssembly transport exclusion, failed loads, required restarts and disconnects remain explicit. The independently locked native consumer provides an actual edit/build/apply and Submitted-scene pixel acceptance procedure, including the required upstream dx x64 jump-stub backport for the qualified Windows tool.
 
 ### Breaking Changes and Migration Notes
+
+- Native blocking executor APIs, scoped background futures and the `block_on` reexport are unavailable on WebAssembly. Web quit observers run asynchronously as best-effort cleanup; native shutdown retains its bounded wait. Enable `open-gpui/wasm-threads` for dedicated Web workers with a shared-memory build; the Web backend forwards it from `multithreaded`.
+
+- Darwin command `Child` pipes now use `smol::Async<File>` instead of `Unblock<File>`. Consumer workspace roots must select `async-process` revision `0b6d6713570af61806e1e5cb40e0f757cb93fd9d` through `[patch.crates-io]`, as shown in the independent consumer. Cargo does not inherit a dependency's root patches; the direct Darwin dependency and `smol` must resolve to that same package.
 
 - `PlatformInput::ScrollWheel` becomes `PlatformInput::Scroll`; use `ScrollEvent` and initialize its `source` field in complete literals. The official deprecated `ScrollWheelEvent` type alias remains available. Handle `TouchPhase::Cancelled` and the new touch/long-press/drag/back-gesture variants in exhaustive matches.
 
