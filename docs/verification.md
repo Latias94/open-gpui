@@ -7749,6 +7749,92 @@ bounded-review lanes close; no outstanding reviewed P1/P2 remains in the selecte
 No remote CI execution or publication occurs. Full fixed-target synchronization, numeric budgets
 and the actual Nara GPU/Host/View consumer still precede maintenance handoff.
 
+## Gestures, Scroll Sources And Hover
+
+Implementation `1b0aee8b4006acc23a13294646d809297cd3b2ab` starts at
+`a3155206fae6be0ae02ee30da39ddd5e58ea448c` against fixed Zed target
+`635026fabc38440fce5e1767d125026a17b12012`. It adopts the complete official portable gesture
+owner, scroll source vocabulary, selected backend producers, snapped padding and hover-listener
+policy. Source units include `9c3273201c`, `79cc17c216`, `956a49e4ca`, `76b1096cbd`,
+`5e28272c14`, `0855410ccd`, `a85cf449ec`, `b3326e13c1`, `7699cb8bb8`, `e39fb7c2e0`,
+`c4a82ab1ab`, `b1a7ef0cf6` and `f0d8b0b0cd`. Canonical ScrollEvent/ScrollSource coexist with
+the exact official deprecated ScrollWheelEvent alias; workspace consumers use canonical names.
+
+The fork adapts recognition to its executor clock and existing Window input transactions,
+persistent interceptors, candidate-owned listeners, committed transforms and terminal cleanup.
+An offered Started phase may retire its Window before claim resolution. Retain only that
+phase's cancellation until checked-out listeners return. Pending terminals settle through the
+existing Window update transaction, including keyboard-originated quiescence. Direct terminal
+delivery takes the existing input-dispatch guard; deactivation independently completes touch
+and pointer cleanup before rethrowing the first observer panic. No new scheduler, input queue,
+renderer, IME owner or engine dependency is introduced.
+
+The first focused compile exposes a moved TextLayout captured by both InteractiveText mouse
+callbacks. Clone its existing shared handle for the second callback. The initial focused run
+passes 50/59 (`eb9661cf-c7e6-4a17-b569-f5843d4bf52d`), including all 37 retained official
+recognizer cases and six fork clock/cancellation controls. Eight new Window cases stop on a
+fixture that paints the registered root a second time without starting a frame, duplicating its
+pointer-capture binding. Draw the actual registered root through Window::draw instead. The
+transformed-axis fixture places its pointer outside the center-scaled hitbox; move the pointer
+inside, preserving its local-delta and source assertions. Neither fixture correction changes
+official production behavior.
+
+The corrected nine-case run passes six and fails three
+(`f70170ad-6dd2-4228-a36b-91ff760e57b0`). It reproduces a stranded terminal after keyboard
+quiescence and reentrant ordinary input admitted during direct touch cancellation. The third
+control stops before its panic-cleanup assertion because synthetic active status is reset by
+the platform snapshot. Request actual TestPlatform activation before capturing the pointer.
+These failures concern fork lifecycle integration rather than unchanged gesture math.
+
+The next compile stops at four new test calls missing their existing VisualContext trait import;
+import the trait without changing production APIs. Corrected focused Core passes 33/33
+(`43cb7bba-a5bf-4bf7-8945-7a494ae457b6`), with 1,497 outside the selection. It includes the
+eight actual Window controls, six handler/ingress cases, executor-clock/cancellation controls,
+Div transform/source/padding/hover cases and affected existing mouse/InteractiveText retirement
+regressions. The pointer-panic control now reaches its cleanup assertions and passes, preserving
+the original panic while fully releasing the simultaneous mouse session. The already-passing
+37 unchanged official algorithm cases are not rerun. Bounded lifecycle and Core seam rereviews
+leave no outstanding P1/P2.
+
+Host-testable Web state/interaction controls pass 4/4
+(`6e23e4fc-ed78-4175-a32f-0315f5f71cf0`), with 18 outside the selection. They execute contact-ID
+reuse, unique capture-loss/window cancellation, pointer-up retirement and reentrant terminal
+delivery after callback return. The ordinary independently locked gestures consumer passes 6/6
+(`e7e826b4-9099-4573-8d41-9e9b5f3cec6b`). Pure event/source/filter/tuning conversions execute;
+listener/style builders and Window/Platform closures type-check without invoking their callbacks.
+No engine-private types, test-support feature or application runtime is required.
+
+The actual wasm production build and single-WebGL browser trajectory pass on Chromium 156.0.8078.4
+using the existing smoke executable and `OPEN_GPUI_WEB_SMOKE_TOUCH_BACKEND=webgl`. The smoke
+records DOM pointer phases, IDs, trust/default behavior separately from actual Core
+recognized scroll/click output and ScrollHandle movement. It adds no raw-input observer API
+or test-support dependency. TouchId identity and exact ingress order are exercised separately
+by portable and Core tests. A tap produces one click and enables the editable target; the
+explicitly blurred/inputmode-none control stays unfocused while panning. Two touch scroll
+sequences each receive one Cancelled, including explicit pointer-capture loss, without later
+movement. Dual-contact cancellation preserves DOM identity, pointerup capture loss does not
+duplicate the click, and wheel reaches Core with Pointer source. Actual scroll offset ends at
+-160px. Browser-created events are trusted DOM events from CDP injection, not physical OS touch.
+Only WebGL runs; existing mouse/clipboard/renderer/docking cases remain unchanged and are not
+repeated. Complete Web IME, real soft-keyboard appearance, device feel, standalone iOS, foreign
+execution, numeric costs, residual fixed-target mechanisms and the real Nara GPU/Host/View
+consumer retain separate scope.
+
+Affected all-target compilation/correctness Clippy passes for Core, Windows, Canvas, components,
+Gallery, platform consumers and xtask with test/bench support. Existing non-correctness warnings
+remain. The independently locked smoke wasm target also passes its locked check. Root, ordinary
+consumer and smoke formatting, manifest/workflow syntax, whitespace and existing import-boundary/
+public-API/document/release checks pass. The smoke's
+independent lock catches up with the already-adopted shared Apple topology and retired media/
+bindgen closure. It adds the existing local Apple package, removes unused packages and preserves
+all retained external package versions. The root and ordinary-consumer locks, compiler floor,
+engine dependency and default selection remain unchanged.
+
+All six implementation/review lanes close without outstanding reviewed P1/P2. No unrelated
+component/docking/runtime, renderer, foreign-platform or compiler matrix is repeated. Full
+fixed-target closure, numerical budgets and the actual Nara GPU/Host/View consumer remain open
+before separate framework maintenance. This unit is a local commit with no remote publication.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:

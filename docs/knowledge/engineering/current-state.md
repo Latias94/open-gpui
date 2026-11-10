@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-10T17:43:56+08:00
+timestamp: 2026-11-10T18:40:45+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -17,6 +17,20 @@ verified_by:
 ---
 
 # Current State
+
+- Gestures, scroll sources, snapped padding and hover-listener policy are implemented at
+  `1b0aee8b4006acc23a13294646d809297cd3b2ab`. Complete official portable mechanisms and selected
+  backend producers use existing Window/Div owners. Fork clock, terminal listener custody,
+  handler bounds/transform and exact callback generation/ingress are qualified. The
+  [record](../../verification.md#gestures-scroll-sources-and-hover) keeps fixture errors separate
+  from reproduced keyboard/deactivation defects. Final focused Core 33, portable Web 4,
+  independent API 6 and one actual WebGL touch trajectory pass, as do affected all-target
+  compilation/correctness Clippy, locked wasm, formatting and existing static gates. Browser
+  DOM phases/IDs and actual Core recognized output are distinct observations; real-device
+  touch/keyboard feel and complete Web IME remain unqualified. All six lanes close without
+  reviewed P1/P2. Trust unchanged official coverage. Continue remaining cursor/external drag,
+  supporting dependency/utility and backend/render owners, then the real Nara GPU/Host/View
+  consumer. Full fixed-target closure, numeric budgets and maintenance handoff remain open.
 
 - Element layout/drawing and provisional List measurement are implemented at
   `ae10ff73c3e6cb5d12ab1d607c17df8934746278`. Complete official image crop/aspect, SVG bytes/
@@ -998,9 +1012,10 @@ historical scope and is not current branch or CI qualification.
 # Next Action
 
 - Continue the [residual source inventory](../../imports/zed-gpui-upstream-sync-candidates.md#november-10-residual-source-reconciliation)
-  after qualified identity/diagnostics/list precision and element layout/drawing, rather than
-  treating the earlier public-Platform audit as exhaustive. Continue padding/hover, gestures and the
-  supporting dependency/backend groups in their recorded prerequisite order. Build on qualified
+  after qualified identity/diagnostics/list precision, element layout/drawing and gestures/
+  scroll/padding/hover, rather than treating the earlier public-Platform audit as exhaustive.
+  Continue cursor/external drag and the supporting dependency/backend groups in their recorded
+  prerequisite order. Build on qualified
   [shared Apple topology](../../verification.md#shared-apple-framework-topology) and
   [native quit/session shutdown](../../verification.md#native-quit-completion-and-restart-manager).
   Trust unchanged official coverage and concentrate compilation/regressions on affected fork

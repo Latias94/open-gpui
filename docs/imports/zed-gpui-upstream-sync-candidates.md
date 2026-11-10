@@ -217,9 +217,11 @@ randomized element-tree workloads and full-render equivalence, sendable foregrou
 asynchronous clipboard/error classification, and macOS add-only credential insertion with Apple error
 semantics. Their exact fixed-target owners, complete regression scope and platform limits are
 recorded in the plan. Sendable submission and randomized trees now have their complete
-qualifications below; asynchronous clipboard and credentials have their separate qualifications,
-while gesture remains queued. Previously qualified benchmark, scheduler and input units retain their own
-scope; similar names do not supply these missing mechanisms or establish exhaustive parity.
+qualifications below; asynchronous clipboard and credentials have their separate qualifications.
+The [gesture/scroll successor](../verification.md#gestures-scroll-sources-and-hover) now qualifies
+its complete portable owner and selected producers with focused fork controls. Previously
+qualified benchmark, scheduler and input units retain their own scope; these scoped results
+do not establish exhaustive fixed-target parity.
 
 The [sendable foreground/Web Fetch successor](../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#sendable-foreground-submission-and-web-fetch-successor)
 is implemented at local `ff4b3f4b95d48410c7c1d3820e2b2a98444aacab`. Its official
@@ -329,13 +331,13 @@ orders implementation and applies targeted upstream-trust verification.
 | --- | --- | --- |
 | Cached element identity and diagnostics | `1dd9bbfd71`, `d94887e08e`, `c408f8efc4`, `fc952d52da`, `20fa2fa809`, `dc682ef120` | Implemented at `1a14b2076ed`; the [qualification](../verification.md#cached-element-identity-diagnostics-and-list-precision) records final Core/public 32, official logging 1, affected compilation/Clippy and reviewed fork borrow/cache/deferred/unwind seams. Complete ID paths, current AppCell convergence and caller/error formats remain authoritative. |
 | Uniform-list large-offset precision | `679ad7c304` | Implemented at `1a14b2076ed` in the same focused qualification. The complete official visible-range and local f64 subtraction replace old f32 arithmetic; actual large-offset rows, existing clip and public admitted-scroll controls pass. |
-| Gesture recognition and scroll source | Complete fixed-target `gestures.rs`, touch/long-press/tooltip/axis-locking successor already identified in the bounded Core inventory | Queued. Integrate recognition, timers/momentum, Div/InteractiveText listeners, source-aware routing and backend consumers together. |
+| Gesture recognition and scroll source | Complete fixed-target `gestures.rs`, touch/long-press/tooltip/axis-locking successor already identified in the bounded Core inventory | Implemented at `1b0aee8b400`; the [qualification](../verification.md#gestures-scroll-sources-and-hover) records focused Core 33, portable Web 4, independent API 6 and one actual WebGL browser trajectory, plus affected compilation/Clippy and locked wasm. Official recognition, physics, prediction and canonical scroll source share current Window/Div/backend owners. Fork executor-clock, terminal listener custody, callback generation/ingress and committed handler bounds retain focused controls; unchanged official algorithms are trusted. Complete Web IME and standalone iOS remain separate. |
 | Image element geometry | `59b2ebf103`, `58df5a14ce` | Implemented at `ae10ff73c3e`; the [layout/drawing qualification](../verification.md#element-layout-svg-and-provisional-list-measurement) records final Core/public 90, WGPU 3, native Windows 1, independent 1 and affected compilation/static gates. Explicit aspect ratios and separate element/image boxes use the official crop/corner mechanism with fork clip/transform/texture-lease custody. |
 | Provisional List measurements and anchoring | `f41ac64812`, `d9e35975c2`, `00cba838ad` | Implemented at `ae10ff73c3e` in the same focused qualification. Readiness/provisional/pending-end, uniform height hints/reset and pause-following-tail share one anchor owner. Indexed direct scrolling is scroll_to_item under ADR 0025; final nested reveal remains Window-owned. Admitted autoscroll and direct revisions retain their reviewed fork scope. |
 | Container queries | `49ad06c1b4` | Complete official ContainerQuery is implemented at `ae10ff73c3e`. Actual same-frame flex/resize, deferred scopes and failure/recovery pass. The record retains both new fixture errors/corrections; children cannot resize the container. |
 | Attached anchoring | `ce6c5413f1` | Complete Placement::Attached, corners, offset flips and client-inset overflow are implemented at `ae10ff73c3e`. Official scenarios and an actual transformed-target/portal consumer pass through the existing geometry owner. |
 | SVG data, parse reuse and raster bounds | `ff9f114cd3`, `00cba838ad`, `03c9c4e707`, `fbd911ed3e` | Svg::data, ParsedSvg/render_parsed, ExactSize and the 8192px cap are implemented at `ae10ff73c3e`. The production renderer matches the fixed target. Actual byte-source/exact-clip/transform and ordinary raster consumers pass; rotation retains the ADR 0021 gap. |
-| Padding and hover policy | `b1a7ef0cf6`, `f0d8b0b0cd` | Queued device-snapped padding and modality-independent hover-listener choice through existing layout, presentation and admission owners. |
+| Padding and hover policy | `b1a7ef0cf6`, `f0d8b0b0cd` | Implemented at `1b0aee8b400` through existing layout, presentation and admission owners. Focused fractional-padding, stationary-pointer layout, keyboard modality and listener-only policy controls pass in the same qualification. No unrelated component/compiler matrix or numeric-performance claim follows. |
 | Cursor and external-drag listeners | `c7bea34383`, `693962917b`, `1a84d5d92b`, `f52fd9ac44` | Queued active-drag cursor timing, post-listener reset, mouse/file-exit callbacks and external-drag resolution. Retain the fork's per-window cursor and exact native drag generation. |
 | Cosmic selected face | `7960b2a7c9` | Queued selected-face weight/style reporting, also a prerequisite for complete Web Canvas fallback. The separately recorded explicit fallback-chain limitation remains open. |
 

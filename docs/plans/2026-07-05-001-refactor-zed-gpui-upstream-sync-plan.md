@@ -2963,6 +2963,18 @@ platform matrix or measured latency/performance claim follows from this unit.
 
 ## Maintained Baseline Before Engine Adaptation
 
+The [gesture/scroll/hover record](../verification.md#gestures-scroll-sources-and-hover) qualifies
+`1b0aee8b4006acc23a13294646d809297cd3b2ab`: complete official portable recognition and selected
+backend producers retain existing fork clock, input/terminal and committed geometry custody.
+Final focused Core 33, portable Web 4, independent API 6 and one actual WebGL browser trajectory
+pass. Affected all-target compilation/correctness Clippy, locked wasm, formatting and existing
+static gates pass. The record distinguishes fixture failures from reproduced fork defects and
+DOM observations from actual Core consumers. All six lanes close without reviewed P1/P2;
+unchanged official algorithms and coverage are trusted. Continue cursor/external drag, supporting
+dependencies/utilities and remaining backend/render units, then the real Nara GPU/Host/View
+consumer. Complete Web IME, device feel, foreign execution and numerical budgets retain their
+own scope; no full-refresh/default or maintenance-handoff gate closes here.
+
 The [element layout/drawing record](../verification.md#element-layout-svg-and-provisional-list-measurement)
 qualifies `ae10ff73c3e6cb5d12ab1d607c17df8934746278` through affected official/fork consumers.
 Continue remaining padding/hover, gestures, supporting dependencies/utilities and backend/render
