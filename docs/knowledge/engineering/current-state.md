@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-10T11:48:00+08:00
+timestamp: 2026-11-10T12:34:00+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -17,6 +17,21 @@ verified_by:
 ---
 
 # Current State
+
+- Native appearance is implemented at `0b0ea5416656c2c43c242c01e2a665e21d3814ba` after
+  `633b3fced1f442d021eec7591df6f20dca403ece`, using the fixed-target official setter and
+  typed AppKit semantics. Core/default forwarding, busy-App ingress and unchanged windows
+  pass Windows focused/disabled 4 each, affected callbacks 23, corrected App-owner 43 and
+  independent all/off 3/2. Actual Linux Core/public passes 4. Locked checks, host correctness
+  Clippy, actual Windows Rust 1.93, production wasm, formatting and static gates pass.
+  Mac production/native execution remains unqualified: the foreign all-target attempt stops
+  at the inherited media binding generator. The real-main-thread native probe preserves global
+  appearance and qualifies platform properties only when executed on a Mac GUI/Metal host;
+  it is not a Core App or titlebar-pixel control. Its non-Mac entry is actually observed failing
+  with exit 1. Four lanes close. The [record](../../verification.md#native-window-appearance-and-platform-no-op)
+  owns source provenance and limits. The complete startup/live-windowing successor is prepared,
+  including Windows GPU/session switching, Linux connection/environment custody and native
+  retirement/quit gates; it is not yet implemented or external-loop/shared-GPU support.
 
 - Scoped activity is implemented at `2459aebecc90fb2bd2d5fefd04b7b4548f3652bc`, after
   `0b7024f86af0beed8fde92887eb1c1387997085c`. Official ActivityGuard, App/Platform sleep acquisition and
@@ -907,12 +922,12 @@ historical scope and is not current branch or CI qualification.
 
 # Next Action
 
-- Continue the [native appearance successor](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#native-appearance-successor)
-  after scoped activity qualification. Preserve official optional override/system following and
-  non-Mac no-op behavior, keeping Apple native notification/pixel execution separate. Keep restart's original
+- Continue the [startup/live-windowing successor](../../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#startup-and-live-windowing-successor)
+  after scoped appearance qualification. Preserve official persistent-runtime/connection replacement,
+  environment and mode semantics, adapting retained native retirement and ordered ingress. Keep restart's original
   clipboard/keyboard aggregate failures and foreign lifecycle gates visible; focused passes do
   not resolve those causes. The bounded public audit also queues windowing-mode switching,
-  native appearance and Restart Manager/on_quit completion reconciliation.
+  Restart Manager/on_quit completion and shared Apple topology reconciliation.
   Actual Mac Keychain and Linux Secret Service gates remain open; a source port is not native proof.
   Keep the [Mac pasteboard native gates](../../verification.md#desktop-clipboard-normalization-and-owned-pasteboard)
   open until actual Apple compilation and all twelve tests execute. Full fixed-target closure

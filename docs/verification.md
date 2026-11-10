@@ -7149,6 +7149,98 @@ sleep-policy effects, energy/performance budgets, shared Apple topology and the 
 GPU/Host/View consumer remain open. Continue native appearance/windowing/lifecycle and the
 remaining fixed-target dispositions before maintenance handoff.
 
+## Native Window Appearance And Platform No-Op
+
+Implementation commits as `0b0ea5416656c2c43c242c01e2a665e21d3814ba`. This record qualifies
+the executed Core/default behavior separately from source-prepared Apple native behavior.
+
+The unit starts after `633b3fced1f442d021eec7591df6f20dca403ece`, using official
+`8e4e5a39eed932d943cb7a3e7078885b75d1ea54`, typed setter successor
+`d86aa6e6b9f52046fb299ab57ec884b300190813` and appearance conversion successor
+`10cfb45944`, under fixed target `635026fabc38440fce5e1767d125026a17b12012`.
+App forwards `Option<WindowAppearance>` to the existing Platform. Only Mac overrides native
+application appearance; None resumes system following. Other platforms retain the official
+no-op. This adds no cross-platform theme state or implicit UI token policy.
+
+Core's private cfg(test) request log observes exact forwarding without changing its appearance
+getter; it is absent from ordinary/test-support-only library builds. The busy-App regression
+enqueues actual appearance ingress while App is borrowed, observes coalescing after release and
+lets the window observer issue another setter request through the same owner. The public
+TestPlatform consumer checks unchanged App/Window getters, observers and rendered revision.
+The first Windows focused run passes 4/4 (`9c5d75a1-5af3-4993-9ea0-e8e9d5d1a8ce`), with
+1,659 cases outside the selection. This qualifies forwarding/default behavior and Core ingress,
+not a native Mac override or titlebar pixels.
+
+Mac source and an independently runnable native main-thread consumer are prepared separately.
+Ordinary libtest workers, including a single-worker run, do not establish AppKit's main-thread
+requirement. Keep global override restoration, actual native window inheritance and unlocked
+callback delivery in the native gate. Public-consumer/compiler and remaining results follow.
+
+The independently locked all-feature consumer passes 3/3
+(`06d483a9-4335-4b3b-a56e-0a2732215d5e`); its feature-free selection passes 2/2
+(`c2b4c17a-5914-4fa7-bb24-f3c7925c4bd0`). Both execute an actual Windows headless Platform
+without entering its loop; the all-feature run additionally exercises an ordinary benchmark
+App/Window with NoopTextSystem and no renderer. Profiler-disabled Core/public passes 4/4
+(`e88f4b6d-707f-492c-b812-b5baf1a8553c`). The affected diagnostic/ingress/query-snapshot and
+appearance cohort passes 23/23 (`7460d1e9-9a91-4f86-8ee7-bb269c02ef87`), with 1,640 outside
+the selection. Window-registry workflow tests live in App's test module, so their owning
+selection follows separately rather than being inferred from the registry module's name.
+
+Mac getters use typed retained appearance values and retain the same native window under its
+state lock before querying it unlocked. This bounded fork adaptation avoids holding native
+state across Objective-C callbacks while preserving object custody. Existing AppKit class,
+ordered ingress, native leases and teardown remain their owners. The final official nil/name/
+unknown fallback is preserved through the existing objc2 bindings, enabling NSAppearance
+without a package upgrade or a whole typed-AppKit/shared-Apple migration.
+
+The actual Windows-to-aarch64-Darwin locked all-target attempt with runtime_shaders/font-kit
+again stops at the inherited open-gpui-media missing generated OUT_DIR/bindings.rs, before the
+Mac owner compiles (`open-gpui-appearance-macos-check.log`). No fake bindings or target-cfg
+override is introduced. Mac source and native controls remain unqualified by this attempt.
+The independent main-thread probe requires a macOS GUI session and Metal device:
+
+```text
+cargo run --locked -p open-gpui-macos --example native_window_appearance
+```
+
+Its non-Mac entry reports unsupported and exits unsuccessfully, preventing a false successful
+native gate. The private conversion test
+and Mac probe compilation have explicit CI commands; native execution requires that stated
+environment. The probe observes native application/window properties, inheritance, callback
+reentry, closure and global override restoration, not Core admission or titlebar pixels.
+
+The first additional App-owner filter uses the wrong plural module name and selects only
+three test_app basics (`0149a1c4-992a-404a-a4bf-76684d2bce4c`). That result does not qualify
+window-registry workflows. Inspect the source's singular app::test module and use its anchored
+selection: 43/43 pass (`90af9e3e-fb87-431d-9c6d-31bb878e46c9`), including registry rollback,
+native callback generation replacement, close/shutdown barriers and unwind restoration.
+
+Independent adversarial source review and a bounded initialization-order follow-up find no
+confirmed P1/P2. The platform probe can obtain the base NSApplication singleton before
+constructing MacPlatform; it never enters Platform::run or relies on GPUIApplication's added
+ivar. This is not a normal GPUIApplication launch/delegate-installation control. Window-state
+callbacks and Drop remain their own paths; no unsupported startup proof follows from the
+probe. Apple compiler/native execution and the actual titlebar/system-theme-change gates
+remain open. All four implementation/research/review lanes close without source reservations.
+
+Final actual Linux Core/public passes 4/4 (`0beb40f3-ce03-4dd8-9845-92614fd08c82`) under
+locked/offline Rust 1.95, default features plus test-support/profiler. This executes the same
+forwarding/isolation/busy-ingress/default-no-op controls without importing screen capture.
+Windows locked Rust 1.95 workspace all-target, independently locked consumer all-target/
+all-feature and correctness Clippy pass. Actual Windows Rust 1.93 affected-owner/consumer
+checks pass; host cfg does not compile Mac production code. Production wasm profiler off/on,
+root/consumer formatting, workflow YAML and existing import/API/document/release scans pass.
+No package version, lock or compiler-floor change is needed; only the existing AppKit feature
+closure gains NSAppearance. CI commands are configured locally, without hosted-run evidence.
+
+After review, the non-Mac probe entry changes from an explanatory successful return to explicit
+failure, preventing accidental false-green native execution. A standalone Rust 1.93 Windows
+compile and actual process run observe exit 1 and the exact unsupported diagnostic; formatting
+passes afterward. This is negative entrypoint evidence only. Native Mac compilation, GUI
+execution, actual titlebar pixels and a system-theme change after clearing remain separate
+gates. Continue the prepared complete startup/live-windowing lifecycle and remaining fixed
+target reconciliation before the real Nara consumer and maintenance handoff.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:

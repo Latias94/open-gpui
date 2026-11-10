@@ -2620,10 +2620,107 @@ through ordinary consumers. On Mac, observe actual NSApplication/native-window i
 clear-to-system behavior and notification/lifetime correctness; restore the original global
 appearance after each isolated test. Source mapping, a fake enum round trip or Windows no-op
 execution cannot qualify titlebar pixels or OS appearance following. Keep that platform gate
-separate from UI token/color policy and the real Nara consumer. This is source preparation,
-with no new runtime/default or completed framework-refresh claim.
+separate from UI token/color policy and the real Nara consumer. These preparation requirements
+are followed by the implementation and qualification below, without an engine default or
+completed framework-refresh claim.
+
+Execution starts after `633b3fced1f442d021eec7591df6f20dca403ece`. Main owns Core forwarding,
+private cfg(test) request observation, serial qualification and the existing evidence owners.
+The Mac lane owns the official typed appearance bridge/setter, actual getter callers and
+source-prepared native controls; the public-consumer lane owns root and independently locked
+consumers. Preserve the TestPlatform/non-Mac no-op rather than invent a theme override service.
+Core request observation is test-only and records forwarding, not native appearance effects.
+The introduction's example is absent from the fixed target; public consumers and Mac native
+inheritance/notification controls own this unit's executable acceptance. The fork adds the
+small `native_window_appearance` example as a runnable platform probe with a real main-thread
+entry, rather than putting AppKit application/window work on a libtest worker. It retains the
+original global appearance, exercises existing/new window inheritance and callback reentry,
+then closes and drains its native windows. It is not a Core App or titlebar-pixel qualification.
+The typed conversion has a separate ordinary Mac unit gate. Foreign-host compiler limits and
+unexecuted native scope remain explicit in the qualification record.
+
+## Startup And Live Windowing Successor
+
+After appearance, adopt the complete `f37989fbdf840b308892af66516c2b9c3ef3853a` mechanism
+and fixed-target follow-ups, including `f495dd0f77b69e287ed72c1168dc02965f08be7d` display
+refresh, `d86aa6e6b9f52046fb299ab57ec884b300190813` Mac activation and
+`4d847859f5506471bd80ca78ee6ced161b19a4e8` Wayland activation context. The fixed target stays
+`635026fabc38440fce5e1767d125026a17b12012`. Port WindowingRequest, GraphicalEnvironment,
+application ActivationPolicy and Linux/FreeBSD WindowingModes, plus Application::with_windowing,
+App::request_windowing/graphical_environment/set_activation_policy and the public Linux factory.
+Application activation policy is distinct from the existing per-window WindowActivationPolicy.
+Keep official default unsupported/no-op behavior on backends without runtime switching.
+
+Linux replaces the generic per-client platform/loop with one persistent runtime and a replaceable
+DisplayConnection. Preserve App, executors, text system and common callbacks. Validate allowed,
+compiled and current modes, reject a duplicate pending transition, and recheck windows at apply
+time between loop iterations. Failed attach keeps the previous connection usable; successful
+replace drops the old connection outside its borrow, publishes keyboard/display changes and
+settles the waiter. Graphical-to-graphical replacement requires an intervening headless state;
+dropping the returned task does not cancel an admitted request. Migrate the existing direct
+HeadlessClient power/idle-sleep consumers instead of keeping two platform ownership models.
+
+Carry the official environment custody through startup and live attach: supplied display/runtime
+variables, one-shot startup activation token and inherited WAYLAND_SOCKET, child command
+propagation, all X11 clipboard connections, activation-context selection, source deregistration,
+portal-listener cancellation and final clipboard handover joining. Qualify process-environment
+capture/removal before workers start and its safety for an already-running external Host; a
+local mutex does not make process-global environment mutation safe. GraphicalEnvironment omits
+XAUTHORITY and a D-Bus session address, so broader cross-session behavior needs evidence.
+Compare registry calloop (declared 0.14.3, currently locked 0.14.4) with official
+`3759371fee14c40066d64777e2a36b6ffcc22590` for wake/source semantics before choosing dependency
+changes. No compiler-floor increase is proved.
+
+Windows is a substantive lifecycle port: defer GPU acquisition, retain optional DirectWrite GPU
+state, validate the current interactive station/session, release and reacquire through the
+existing owners, and refuse window creation while headless. Fixed-headless constructors remain
+unswitchable. Existing native/VisualTest consumers that open before Platform::run need explicit
+initialization through the owning contract; preserve their HWND, text, actual Submitted/readback
+and retirement assertions. Fence old vsync/recovery work across switching and preserve terminal
+quit completion. Mac stores application policy, applies Accessory before launch and Regular at
+did_finish_launching, and releases platform locks before AppKit calls. Runtime mode switching
+does not implicitly activate the app; fixed-headless Mac remains unswitchable. Shared Apple
+extraction retains its separate successor.
+
+Core readiness must include retained native-window retirements, capture/presentation release and
+shutdown custody, beyond an empty App.windows collection. Revalidate at apply time without
+clearing windows to bypass retirement. Reuse ordered native app/display/keyboard ingress rather
+than direct App borrows or another event queue. Resolve quit during a pending transition and
+observer reentry/unwind. This runtime mode API does not provide external event pumping or a
+shared Nara GPU; qualify standalone behavior before selecting the separate engine adapter.
+
+Acceptance preserves all three official display-mode regressions and existing launch/display,
+embedded owner, retirement, activation-generation, power, portal and native rendering controls:
+
+1. Qualify ordinary/fixed-headless startup, explicit mode, backend masks, unavailable connection
+   and launch-time display freshness through public consumers without test support.
+2. Retain one App/entity/executor/text system through headless mutation, actual Wayland/X11
+   rendering/input, complete close/retirement, headless and another admitted display connection.
+3. Exercise same/forbidden mode, duplicate transition, open windows, windows opened between
+   admission/apply and partial failure, requiring a usable old state and successful later retry.
+4. Observe selected child/clipboard environments, unset fields, startup socket/token custody and
+   independent activation requests without rewriting live process display variables.
+5. Prove busy-App order, observer unwind/reentry, retained GPU retirement and pending-switch quit
+   cannot admit stale input or destroy the connection before native completion.
+6. Execute Windows detach/reattach/session refusal and stale recovery controls, plus Mac policy,
+   explicit activation, fixed-headless refusal and callback lifetime on their actual hosts.
+
+This is source preparation for a complete lifecycle unit. Linux/FreeBSD/Mac native execution,
+calloop equivalence, native harness initialization and terminal request settlement are not
+qualified by this source packet or by appearance tests.
 
 ## Maintained Baseline Before Engine Adaptation
+
+The [appearance record](../verification.md#native-window-appearance-and-platform-no-op)
+qualifies Core/default behavior at `0b0ea5416656c2c43c242c01e2a665e21d3814ba`. Official
+Some/None and non-Mac no-op semantics retain existing platform/notification owners, with a
+bounded retained native-window getter bridge. Windows focused/disabled 4 each, affected
+callbacks 23, corrected App-owner cohort 43, independent all/off 3/2 and actual Linux 4 pass.
+Locked workspace/consumer checks, host Clippy, Windows Rust 1.93, production wasm and final
+fmt/static gates pass. The foreign Apple attempt still stops at inherited media binding
+generation; native compilation, GUI probe, titlebar pixels and actual system-theme tracking
+remain open. Four lanes close. Continue complete live windowing, native quit/Restart Manager,
+shared Apple topology and remaining closure, then qualify the real Nara GPU/Host/View consumer.
 
 The [activity record](../verification.md#scoped-activity-and-idle-sleep-prevention) qualifies
 `2459aebecc90fb2bd2d5fefd04b7b4548f3652bc`, following separate Linux input migration
