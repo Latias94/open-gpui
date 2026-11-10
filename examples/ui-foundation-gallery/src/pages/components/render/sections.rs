@@ -1233,7 +1233,7 @@ pub(super) fn render_components_section(
                                                         .border_1()
                                                         .border_color(rgb(0xd6d8ce))
                                                         .bg(rgb(0xffffff))
-                                                        .on_scroll_wheel(|_, _, _| {
+                                                        .on_scroll(|_, _, _| {
                                                             open_gpui::ScrollWheelIntent::handled()
                                                                 .stop_propagation()
                                                         })
@@ -1351,7 +1351,7 @@ pub(super) fn render_components_section(
                                                         .border_1()
                                                         .border_color(rgb(0xd6d8ce))
                                                         .bg(rgb(0xffffff))
-                                                        .on_scroll_wheel(|_, _, _| {
+                                                        .on_scroll(|_, _, _| {
                                                             open_gpui::ScrollWheelIntent::handled()
                                                                 .stop_propagation()
                                                         })

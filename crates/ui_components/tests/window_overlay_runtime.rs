@@ -5,7 +5,7 @@ use open_gpui::{
     AnyElement, AnyView, AppContext as _, Bounds, Context, DispatchPhase, Entity, FocusHandle,
     HitboxBehavior, IntoElement, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent,
     MouseMoveEvent, MouseUpEvent, ParentElement, PinchEvent, PointerCancelEvent,
-    PointerCaptureHandle, Render, ScrollDelta, ScrollWheelEvent, StyleRefinement, Styled,
+    PointerCaptureHandle, Render, ScrollDelta, ScrollEvent, ScrollSource, StyleRefinement, Styled,
     SubtreeTransform, SubtreeTransformExt as _, TouchPhase, VisualContext as _, Window, canvas,
     div, point, prelude::*, px, size,
 };

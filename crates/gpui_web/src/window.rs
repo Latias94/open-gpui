@@ -4,6 +4,7 @@ use crate::platform::set_body_cursor;
 use crate::{
     events::{WebEventListener, WebEventListeners, WebInteractionGate, is_mac_platform},
     pointer_session::{ClickState, WebPointerCaptureState},
+    touch_session::WebTouchState,
 };
 use std::sync::Arc;
 use std::{
@@ -67,10 +68,25 @@ pub(crate) struct WebWindowInner {
     pub(crate) input_element: web_sys::HtmlInputElement,
     pub(crate) has_device_pixel_support: bool,
     pub(crate) is_mac: bool,
+    pub(crate) touch_input: bool,
     pub(crate) state: RefCell<WebWindowMutableState>,
     pub(crate) callbacks: RefCell<WebWindowCallbacks>,
     pub(crate) click_state: RefCell<ClickState>,
     pub(crate) pointer_capture: Cell<WebPointerCaptureState>,
+    pub(crate) touch_state: RefCell<WebTouchState>,
+    /// Set while restarting DOM input without synchronously re-entering activation.
+    pub(crate) suppress_focus_status_events: Cell<bool>,
+    /// The visual viewport height when the current pointer gesture began.
+    /// A mid-gesture change means the software keyboard opened or closed and
+    /// reflowed the layout, so the release position no longer refers to what
+    /// the user aimed at.
+    pub(crate) gesture_start_visual_viewport_height: Cell<f64>,
+    /// A touch that may still resolve into a tap: its pointer id and starting
+    /// position, cleared once it travels beyond touch slop. Virtual keyboard
+    /// and IME focus may only change when a touch release completes a tap;
+    /// pans must leave them untouched, or scrolling over editable content
+    /// flickers the keyboard and drags the caret around.
+    pub(crate) touch_tap_candidate: Cell<Option<(i32, Point<Pixels>)>>,
     pub(crate) last_physical_size: Cell<(u32, u32)>,
     pub(crate) notify_scale: Cell<bool>,
     pub(crate) is_composing: Cell<bool>,
@@ -121,6 +137,9 @@ impl WebWindow {
             ("display", "block"),
             ("outline", "none"),
             ("touch-action", "none"),
+            ("-webkit-touch-callout", "none"),
+            ("user-select", "none"),
+            ("-webkit-user-select", "none"),
         ] {
             canvas
                 .style()
@@ -182,12 +201,26 @@ impl WebWindow {
             .map_err(|e| anyhow::anyhow!("Created element is not an input: {e:?}"))?;
         let input_style = input_element.style();
         input_element.set_tab_index(-1);
+        let touch_input = browser_window
+            .match_media("(pointer: coarse)")
+            .ok()
+            .flatten()
+            .is_some_and(|query| query.matches());
+        if touch_input {
+            input_element
+                .set_attribute("inputmode", "none")
+                .map_err(|error| anyhow::anyhow!("Failed to configure input mode: {error:?}"))?;
+        }
         input_style.set_property("position", "fixed").ok();
         input_style.set_property("top", "0").ok();
         input_style.set_property("left", "0").ok();
         input_style.set_property("width", "1px").ok();
         input_style.set_property("height", "1px").ok();
         input_style.set_property("opacity", "0").ok();
+        // Android Chrome zooms the visual viewport onto a focused text input
+        // whose font is smaller than 16px; with page zoom disabled the user
+        // can never zoom back out, so keep the hidden IME input at 16px.
+        input_style.set_property("font-size", "16px").ok();
         root_element
             .append_child(&input_element)
             .map_err(|e| anyhow::anyhow!("Failed to append input to GPUI root: {e:?}"))?;
@@ -238,10 +271,15 @@ impl WebWindow {
             input_element,
             has_device_pixel_support,
             is_mac,
+            touch_input,
             state: RefCell::new(mutable_state),
             callbacks: RefCell::new(WebWindowCallbacks::default()),
             click_state: RefCell::new(ClickState::default()),
             pointer_capture: Cell::new(WebPointerCaptureState::default()),
+            touch_state: RefCell::new(WebTouchState::default()),
+            suppress_focus_status_events: Cell::new(false),
+            gesture_start_visual_viewport_height: Cell::new(0.0),
+            touch_tap_candidate: Cell::new(None),
             last_physical_size: Cell::new((0, 0)),
             notify_scale: Cell::new(false),
             is_composing: Cell::new(false),
@@ -451,6 +489,9 @@ impl WebWindowInner {
     }
 
     pub(crate) fn sync_dom_activation(&self) {
+        if self.suppress_focus_status_events.get() {
+            return;
+        }
         let is_active = self.input_is_focused();
 
         let changed = {
@@ -491,7 +532,14 @@ impl WebWindowInner {
         if self.interaction_gate.is_quiesced() || !self.is_mapped.get() {
             return false;
         }
-        if let Err(error) = self.input_element.focus() {
+        let options = js_sys::Object::new();
+        let focused = js_sys::Reflect::set(&options, &"preventScroll".into(), &true.into())
+            .and_then(|_| {
+                let focus = js_sys::Reflect::get(&self.input_element, &"focus".into())?
+                    .dyn_into::<js_sys::Function>()?;
+                focus.call1(&self.input_element, &options)
+            });
+        if let Err(error) = focused {
             log::warn!("failed to focus GPUI web input: {error:?}");
             return false;
         }
@@ -507,9 +555,15 @@ impl WebWindowInner {
     }
 
     pub(crate) fn focus_from_pointer(&self) {
-        if !self.interaction_gate.is_quiesced() && self.activation_policy.focus_on_click {
+        if self.allows_pointer_focus() {
             let _ = self.focus_input();
         }
+    }
+
+    pub(crate) fn allows_pointer_focus(&self) -> bool {
+        !self.interaction_gate.is_quiesced()
+            && self.is_mapped.get()
+            && self.activation_policy.focus_on_click
     }
 
     fn complete_initial_presentation(&self, activate: bool) {
@@ -685,6 +739,7 @@ impl WebWindowInner {
             "pointermove",
             "pointerenter",
             "pointerleave",
+            "touchend",
             "wheel",
             "contextmenu",
             "dragover",

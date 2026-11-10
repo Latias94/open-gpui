@@ -36,7 +36,8 @@ impl Interactivity {
         });
     }
 
-    /// Set the delay before this element's tooltip is shown.
+    /// Sets the delay before this element's tooltip is shown on hover.
+    /// Touch long presses show the tooltip immediately once the gesture is recognized.
     /// The imperative API equivalent to [`StatefulInteractiveElement::tooltip_show_delay`].
     pub fn tooltip_show_delay(&mut self, delay: Duration) {
         self.tooltip_show_delay = Some(delay);

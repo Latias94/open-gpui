@@ -104,9 +104,9 @@ use open_gpui::{
     PlatformViewportCapabilities, PlatformWindow, PlatformWindowActivationSupport,
     PlatformWindowActiveStatusObservation, PlatformWindowCapabilities,
     PlatformWindowCreationCapabilities, PlatformWindowMutationCapabilities, Point, ScrollDelta,
-    ScrollWheelEvent, SharedString, Size, TouchPhase, WindowButtonLayout, WindowCoordinateSpace,
-    WindowCreationSupport, WindowInitialPresentationOrder, WindowKind, WindowMutationSupport,
-    WindowParams, point, px, size,
+    ScrollEvent, ScrollSource, SharedString, Size, TouchPhase, WindowButtonLayout,
+    WindowCoordinateSpace, WindowCreationSupport, WindowInitialPresentationOrder, WindowKind,
+    WindowMutationSupport, WindowParams, point, px, size,
 };
 use open_gpui_wgpu::{CompositorGpuHint, GpuContext};
 use wayland_protocols::wp::linux_dmabuf::zv1::client::{
@@ -2761,11 +2761,12 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                     let discrete = state.discrete_scroll_delta.take();
                     if let Some(continuous) = continuous {
                         if let Some(window) = state.mouse_focused_window.clone() {
-                            let input = PlatformInput::ScrollWheel(ScrollWheelEvent {
+                            let input = PlatformInput::Scroll(ScrollEvent {
                                 position: state.mouse_location.unwrap(),
                                 delta: ScrollDelta::Pixels(continuous),
                                 modifiers: state.modifiers,
                                 touch_phase: TouchPhase::Moved,
+                                source: ScrollSource::Pointer,
                             });
                             drop(state);
                             window.handle_input(input);
@@ -2773,11 +2774,12 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                     } else if let Some(discrete) = discrete
                         && let Some(window) = state.mouse_focused_window.clone()
                     {
-                        let input = PlatformInput::ScrollWheel(ScrollWheelEvent {
+                        let input = PlatformInput::Scroll(ScrollEvent {
                             position: state.mouse_location.unwrap(),
                             delta: ScrollDelta::Lines(discrete),
                             modifiers: state.modifiers,
                             touch_phase: TouchPhase::Moved,
+                            source: ScrollSource::Pointer,
                         });
                         drop(state);
                         window.handle_input(input);

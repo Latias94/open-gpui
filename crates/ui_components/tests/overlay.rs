@@ -3,7 +3,7 @@ mod support;
 use open_gpui::prelude::FluentBuilder;
 use open_gpui::{
     Anchor, Context, FocusHandle, InteractiveElement, IntoElement, MouseButton, ParentElement,
-    PortalAnchorExt as _, PortalAnchorHandle, Render, ScrollDelta, ScrollWheelEvent,
+    PortalAnchorExt as _, PortalAnchorHandle, Render, ScrollDelta, ScrollEvent,
     StatefulInteractiveElement, Styled, SubtreePresentation, SubtreePresentationExt,
     SubtreeTransform, SubtreeTransformExt, VisualContext, Window, accesskit, actions, div, point,
     px,
@@ -5715,7 +5715,7 @@ fn context_menu_runtime_long_menu_scroll_stays_inside_surface(cx: &mut open_gpui
         .debug_bounds("context-menu:runtime-long-context-menu:item:0:item-00")
         .expect("runtime long context menu first item should render");
 
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: viewport.center(),
         delta: ScrollDelta::Pixels(point(px(0.0), px(-120.0))),
         ..Default::default()

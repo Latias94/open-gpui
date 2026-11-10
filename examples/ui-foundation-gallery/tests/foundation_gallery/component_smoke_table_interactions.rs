@@ -19,7 +19,7 @@ fn components_gallery_smoke_table_scroll_stays_inside_sample(cx: &mut open_gpui:
         "expected the initial release queue table window to render the first row"
     );
 
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: table_viewport.center(),
         delta: ScrollDelta::Pixels(point(px(0.0), px(-240.0))),
         ..Default::default()
@@ -143,7 +143,7 @@ fn components_gallery_smoke_faceted_filter_updates_table_rows(cx: &mut open_gpui
         settle(cx);
     }
     let popup_content = bounds(cx, CONTENT);
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: popup_content.center(),
         delta: ScrollDelta::Pixels(point(px(0.0), px(-180.0))),
         ..Default::default()
@@ -433,7 +433,7 @@ fn components_gallery_smoke_range_filter_updates_table_rows(cx: &mut open_gpui::
     click(cx, TRIGGER);
     settle(cx);
     let popup_content = bounds(cx, CONTENT);
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: popup_content.center(),
         delta: ScrollDelta::Pixels(point(px(0.0), px(-180.0))),
         ..Default::default()

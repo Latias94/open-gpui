@@ -8,7 +8,7 @@ use crate::{
     AnyView, App, AppContext, Bounds, Context, Entity, FocusClaimOutcome, FocusHandle, Hitbox,
     HitboxBehavior, InputHandler, InteractiveElement, IntoElement, Modifiers, MouseButton,
     ParentElement, Pixels, Point, PointerCaptureHandle, PrepaintPublicationId, Render, Role,
-    ScaledPixels, ScrollDelta, ScrollWheelEvent, ScrollWheelIntent, StatefulInteractiveElement,
+    ScaledPixels, ScrollDelta, ScrollEvent, ScrollWheelIntent, StatefulInteractiveElement,
     StyleRefinement, Styled, SubtreeTransform, SubtreeTransformError, SubtreeTransformExt,
     SubtreeTransformOrigin, TestAppContext, UTF16Selection, VisualContext, Window, canvas,
     deferred, div, fill, point, px, red, size, window_portal,
@@ -1086,12 +1086,12 @@ fn nonuniform_transform_exposes_explicit_click_and_wheel_coordinate_spaces(
     assert_eq!(*mouse_down.borrow(), expected);
     assert_eq!(*click.borrow(), expected);
 
-    visual.simulate_event(ScrollWheelEvent {
+    visual.simulate_event(ScrollEvent {
         position: displayed_point,
         delta: ScrollDelta::Pixels(point(px(20.0), px(40.0))),
         ..Default::default()
     });
-    visual.simulate_event(ScrollWheelEvent {
+    visual.simulate_event(ScrollEvent {
         position: displayed_point,
         delta: ScrollDelta::Lines(point(2.0, 3.0)),
         ..Default::default()

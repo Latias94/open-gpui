@@ -326,9 +326,9 @@ jobs:
           cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test images --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
           cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --features avif-encoding --test images --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
 
-      - name: Test independent layout and drawing APIs
+      - name: Test independent layout, drawing and gesture APIs
         if: matrix.name == 'windows'
-        run: cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --test layout_drawing --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+        run: cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --test layout_drawing --test gestures --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
 
       - name: Test public shared atlas without optional features
         run: cargo nextest run --locked -p open-gpui --no-default-features --test atlas --test-threads=1 --no-fail-fast --no-tests fail

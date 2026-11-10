@@ -6923,7 +6923,7 @@ mod platform_command_tests {
     use crate::{
         AppContext, Empty, FileDropEvent, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
         ModifiersChangedEvent, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MousePressureEvent,
-        MouseUpEvent, PinchEvent, PointerCancelEvent, PointerCancelReason, ScrollWheelEvent,
+        MouseUpEvent, PinchEvent, PointerCancelEvent, PointerCancelReason, ScrollEvent,
         TestAppContext, WindowActivationCancellationOutcome, WindowActivationPolicy,
         WindowActivationStatus, WindowActivationTerminal, WindowMutationDispatch,
         WindowMutationOutcome, point, px, size,
@@ -6993,7 +6993,7 @@ mod platform_command_tests {
             ),
             (
                 "scroll-wheel",
-                PlatformInput::ScrollWheel(ScrollWheelEvent::default()),
+                PlatformInput::Scroll(ScrollEvent::default()),
             ),
             ("pinch", PlatformInput::Pinch(PinchEvent::default())),
             (

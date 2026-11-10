@@ -19,6 +19,7 @@ use wasm_bindgen::JsValue;
 
 mod clipboard;
 mod platform_info;
+mod touch;
 
 const GRID_COLUMNS: usize = 128;
 const GRID_ROWS: usize = 128;
@@ -1010,6 +1011,10 @@ fn main() {
             config,
             actual_backend: observed_platform.graphics_backend(),
         };
+        if touch::requested() {
+            touch::open(cx, graphics_probe);
+            return;
+        }
         publish_startup_probe(graphics_probe, "platform-ready");
         let platform_viewport_windows = cx.viewport_capabilities().platform_viewport_windows;
         let docking_result = Rc::new(Cell::new(None));

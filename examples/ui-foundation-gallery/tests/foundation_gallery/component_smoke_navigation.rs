@@ -55,7 +55,7 @@ fn components_gallery_smoke_navigation_rail_scrolls_inside_shell(
     let before = bounds(cx, "gallery:navigation-item:components");
     let navigation_viewport = bounds(cx, "gallery:navigation-scroll");
 
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: navigation_viewport.center(),
         delta: ScrollDelta::Pixels(point(px(0.0), px(-120.0))),
         ..Default::default()
@@ -99,7 +99,7 @@ fn components_gallery_smoke_vertical_tabs_scroll_inside_sample(cx: &mut open_gpu
         "expected vertical Tabs ScrollArea viewport to stay inside the tablist shell; tablist={tablist:?} viewport={tablist_viewport:?}"
     );
 
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: tablist_position,
         delta: ScrollDelta::Pixels(point(px(0.0), px(-72.0))),
         ..Default::default()
@@ -270,7 +270,7 @@ fn components_gallery_smoke_sidebar_long_navigation_scrolls_inside_sample(
         "scroll-area:sidebar:component-sidebar%3Along-sidebar:scroll",
     );
 
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: sidebar_position,
         delta: ScrollDelta::Pixels(point(px(0.0), px(-96.0))),
         ..Default::default()
@@ -357,7 +357,7 @@ fn components_gallery_smoke_tabs_and_splitter_interactions_survive_full_page_com
         cx,
         "tabs:component-tabs:workspace-tabs:trigger:component-tabs-item:workspace-tabs:billing",
     );
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: tablist_position,
         delta: ScrollDelta::Pixels(point(px(0.0), px(-72.0))),
         ..Default::default()

@@ -662,7 +662,7 @@ impl MixedWorkload {
                     open_gpui::point(distance, open_gpui::px(0.))
                 };
                 window.dispatch_event(
-                    open_gpui::PlatformInput::ScrollWheel(open_gpui::ScrollWheelEvent {
+                    open_gpui::PlatformInput::Scroll(open_gpui::ScrollEvent {
                         position,
                         delta: open_gpui::ScrollDelta::Pixels(delta),
                         ..Default::default()

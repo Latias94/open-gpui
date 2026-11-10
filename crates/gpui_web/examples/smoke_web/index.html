@@ -116,6 +116,55 @@
                 });
             })();
         </script>
+        <script>
+            if (new URLSearchParams(location.search).get("touch") === "1") {
+                const state = {
+                    observation: "dom-pointer-events", events: [], focusChanges: 0,
+                    inputModeChanges: 0, overflow: false,
+                };
+                globalThis.__OPEN_GPUI_WEB_TOUCH_DOM__ = state;
+                const push = entry => {
+                    if (state.events.length < 256) state.events.push(entry);
+                    else state.overflow = true;
+                };
+                for (const type of [
+                    "pointerdown", "pointermove", "pointerup", "pointercancel",
+                    "lostpointercapture", "touchend", "wheel",
+                ]) {
+                    document.addEventListener(type, event => {
+                        const input = document.querySelector("input, textarea");
+                        push({
+                            kind: event.type,
+                            pointerId: event.pointerId ?? null,
+                            pointerType: event.pointerType ?? null,
+                            trusted: event.isTrusted,
+                            cancelable: event.cancelable,
+                            defaultPrevented: event.defaultPrevented,
+                            inputFocused: document.activeElement === input,
+                            inputMode: input?.getAttribute("inputmode") ?? null,
+                            userActivation: navigator.userActivation?.isActive ?? null,
+                        });
+                    }, { passive: true });
+                }
+                for (const type of ["focusin", "focusout"]) {
+                    document.addEventListener(type, event => {
+                        if (event.target.matches?.("input, textarea")) {
+                            state.focusChanges++;
+                        }
+                    }, { passive: true });
+                }
+                new MutationObserver(mutations => {
+                    for (const mutation of mutations) {
+                        if (mutation.target.matches?.("input, textarea")) {
+                            state.inputModeChanges++;
+                            push({ kind: "inputmode", value: mutation.target.getAttribute("inputmode") });
+                        }
+                    }
+                }).observe(document.documentElement, {
+                    subtree: true, attributes: true, attributeFilter: ["inputmode"],
+                });
+            }
+        </script>
         <link data-trunk rel="rust" data-bin="smoke_web" data-bindgen-target="web" data-keep-debug data-wasm-opt="0" />
         <style>
             * {

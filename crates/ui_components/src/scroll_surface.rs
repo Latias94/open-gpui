@@ -1,6 +1,7 @@
 use open_gpui::{
-    BringIntoViewOptions, RevealTargetHandle, ScrollHandle, ScrollViewportChangeSource,
-    ScrollViewportProgrammaticSource, ScrollWheelEvent, TargetedEvent, Window, WindowId, point, px,
+    BringIntoViewOptions, RevealTargetHandle, ScrollEvent, ScrollHandle,
+    ScrollViewportChangeSource, ScrollViewportProgrammaticSource, TargetedEvent, Window, WindowId,
+    point, px,
 };
 use open_gpui_ui_core::{UiPx, VirtualizerItemGeometry};
 
@@ -265,7 +266,7 @@ pub(crate) fn materialize_fixed_row(
 
 pub(crate) fn handle_vertical_wheel_scroll(
     scroll_handle: &ScrollHandle,
-    event: &TargetedEvent<ScrollWheelEvent>,
+    event: &TargetedEvent<ScrollEvent>,
     window: &mut Window,
 ) -> bool {
     let Ok(delta) = event.target_local_delta() else {

@@ -1186,7 +1186,7 @@ impl RenderOnce for Textarea {
             .overflow_y_scroll()
             .scrollbar_width(gpui_px_from_ui(metrics.scrollbar_width()))
             .track_scroll(&scroll_handle)
-            .on_scroll_wheel(|_, _, _| open_gpui::ScrollWheelIntent::handled().stop_propagation())
+            .on_scroll(|_, _, _| open_gpui::ScrollWheelIntent::handled().stop_propagation())
             .focusable()
             .tab_stop(state.tab_stop_enabled())
             .ui_semantics_with_relations(&semantics, |node_id| *node_id)

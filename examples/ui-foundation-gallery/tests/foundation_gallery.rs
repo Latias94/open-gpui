@@ -1,6 +1,6 @@
 use open_gpui::{
     Bounds, BringIntoViewAlignment, BringIntoViewOptions, Entity, MouseButton, Pixels, ScrollDelta,
-    ScrollWheelEvent, SubtreePresentation, VisualTestContext, accesskit, point, px, size,
+    ScrollEvent, SubtreePresentation, VisualTestContext, accesskit, point, px, size,
 };
 use open_gpui_command::{
     CommandKeyBindingPatchOperation, CommandKeyBindingPatchOutcome, CommandProviderState,
@@ -400,7 +400,7 @@ fn scroll_until_visible(
             }
         }
 
-        cx.simulate_event(ScrollWheelEvent {
+        cx.simulate_event(ScrollEvent {
             position: scroll_position,
             delta: ScrollDelta::Pixels(delta),
             ..Default::default()
@@ -467,7 +467,7 @@ fn scroll_page_selector_into_view(
             let handle = cx.update(|_, app| shell.read(app).page_scroll_handle().clone());
             let offset = handle.offset();
             handle.set_offset(point(offset.x, offset.y - px(160.0)));
-            cx.simulate_event(ScrollWheelEvent {
+            cx.simulate_event(ScrollEvent {
                 position: point(viewport.right() - px(6.0), viewport.center().y),
                 delta: ScrollDelta::Pixels(point(px(0.0), px(-160.0))),
                 ..Default::default()

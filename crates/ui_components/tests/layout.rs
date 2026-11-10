@@ -1,8 +1,8 @@
 use open_gpui::{
     BringIntoViewAlignment, BringIntoViewOptions, Context, InputEvent, InteractiveElement,
     IntoElement, Keystroke, Modifiers, MouseButton, ParentElement, Render, RevealTargetExt as _,
-    RevealTargetHandle, ScrollDelta, ScrollWheelEvent, Styled, VisualContext as _, Window, div,
-    point, px,
+    RevealTargetHandle, ScrollDelta, ScrollEvent, Styled, VisualContext as _, Window, div, point,
+    px,
 };
 use open_gpui_ui_components::{
     Button, ScrollArea, ScrollAreaAxis, ScrollAreaState, ScrollResetPolicy, Splitter,
@@ -1364,7 +1364,7 @@ fn virtualized_list_user_scroll_does_not_reissue_an_in_flight_builder_reveal(
     let viewport = cx
         .debug_bounds("scroll-area:virtualized-list:interrupt-list:viewport")
         .expect("virtualized-list viewport should be rendered");
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: viewport.center(),
         delta: ScrollDelta::Pixels(point(px(0.0), px(4_000.0))),
         ..Default::default()
@@ -1436,7 +1436,7 @@ fn virtualized_list_wheel_between_materialization_and_window_request_cancels_rev
         .debug_bounds("scroll-area:virtualized-list:queued-interrupt-list:viewport")
         .expect("virtualized-list viewport should be rendered");
     let before_wheel = scroll_handle.offset().y;
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: viewport.center(),
         delta: ScrollDelta::Pixels(point(px(0.0), px(4.0))),
         ..Default::default()
@@ -1566,7 +1566,7 @@ fn virtualized_list_ancestor_wheel_between_materialization_and_window_request_ca
     let outer_viewport = cx
         .debug_bounds("scroll-area:ancestor-interrupt-outer")
         .expect("outer ancestor viewport should be rendered");
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: outer_viewport.center(),
         delta: ScrollDelta::Pixels(point(px(0.0), px(-120.0))),
         ..Default::default()
@@ -1753,7 +1753,7 @@ fn virtualized_list_reorder_and_wheel_during_an_in_flight_request_does_not_retry
     let viewport = cx
         .debug_bounds("scroll-area:virtualized-list:reorder-interrupt-list:viewport")
         .expect("virtualized-list viewport should be rendered");
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: viewport.center(),
         delta: ScrollDelta::Pixels(point(px(0.0), px(4.0))),
         ..Default::default()
@@ -2070,7 +2070,7 @@ fn virtualized_list_typeahead_wheel_before_draw_cancels_materialization(
     cx.update(|window, cx| {
         window.dispatch_keystroke(Keystroke::parse("z").unwrap(), cx);
         window.dispatch_event(
-            ScrollWheelEvent {
+            ScrollEvent {
                 position: viewport.center(),
                 delta: ScrollDelta::Pixels(point(px(0.0), px(-96.0))),
                 ..Default::default()
@@ -2375,7 +2375,7 @@ fn scroll_area_default_handle_survives_reconstructed_component_values(
         .debug_bounds("scroll-row-2")
         .expect("row should be rendered before scrolling");
 
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: point(px(10.0), px(10.0)),
         delta: ScrollDelta::Pixels(point(px(0.0), px(-40.0))),
         ..Default::default()
@@ -2434,7 +2434,7 @@ fn scroll_area_reset_key_resets_default_runtime_handle(cx: &mut open_gpui::TestA
         .debug_bounds("reset-row-2")
         .expect("row should be rendered before scrolling");
 
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: point(px(10.0), px(10.0)),
         delta: ScrollDelta::Pixels(point(px(0.0), px(-40.0))),
         ..Default::default()
@@ -2534,12 +2534,12 @@ fn scroll_area_runtime_scrolls_horizontal_and_two_axis_content(cx: &mut open_gpu
         .debug_bounds("grid-row-2")
         .expect("grid row should be rendered before scrolling");
 
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: point(px(40.0), px(24.0)),
         delta: ScrollDelta::Pixels(point(px(-70.0), px(0.0))),
         ..Default::default()
     });
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: point(px(40.0), px(108.0)),
         delta: ScrollDelta::Pixels(point(px(-60.0), px(0.0))),
         ..Default::default()
@@ -2564,7 +2564,7 @@ fn scroll_area_runtime_scrolls_horizontal_and_two_axis_content(cx: &mut open_gpu
         "expected two-axis content to move left after horizontal wheel scrolling; before={grid_before_x:?} after={grid_after_x:?}"
     );
 
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: point(px(40.0), px(108.0)),
         delta: ScrollDelta::Pixels(point(px(0.0), px(-42.0))),
         ..Default::default()
@@ -2664,7 +2664,7 @@ fn scroll_area_nested_scroll_keeps_parent_static(cx: &mut open_gpui::TestAppCont
         .debug_bounds("scroll-area:nested-inner-scroll")
         .expect("inner scroll viewport should be rendered before scrolling");
 
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: inner_viewport.center(),
         delta: ScrollDelta::Pixels(point(px(0.0), px(-48.0))),
         ..Default::default()

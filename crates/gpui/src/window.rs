@@ -130,6 +130,7 @@ pub mod retained_visual;
 mod root_layout_tests;
 #[cfg(test)]
 mod spring_tests;
+mod touch_gestures;
 #[cfg(test)]
 mod underline_tests;
 mod visibility;
@@ -245,9 +246,15 @@ pub enum WindowMouseEvent<'a> {
     /// Mouse pressure changed.
     Pressure(&'a crate::MousePressureEvent),
     /// The scroll wheel was used.
-    Scroll(&'a crate::ScrollWheelEvent),
+    Scroll(&'a crate::ScrollEvent),
     /// A pinch gesture was performed.
     Pinch(&'a crate::PinchEvent),
+    /// A touch long press was recognized.
+    LongPress(&'a crate::LongPressEvent),
+    /// A claimed touch drag progressed.
+    TouchDrag(&'a crate::TouchDragEvent),
+    /// A platform back-navigation gesture progressed.
+    BackGesture(&'a crate::BackGestureEvent),
     /// A platform file drag event occurred.
     FileDrop(&'a crate::FileDropEvent),
 }
@@ -270,6 +277,12 @@ impl<'a> WindowMouseEvent<'a> {
             Some(Self::Scroll(event))
         } else if let Some(event) = event.downcast_ref() {
             Some(Self::Pinch(event))
+        } else if let Some(event) = event.downcast_ref() {
+            Some(Self::LongPress(event))
+        } else if let Some(event) = event.downcast_ref() {
+            Some(Self::TouchDrag(event))
+        } else if let Some(event) = event.downcast_ref() {
+            Some(Self::BackGesture(event))
         } else {
             event.downcast_ref().map(Self::FileDrop)
         }
@@ -1147,7 +1160,7 @@ impl Hitbox {
     /// `HitboxBehavior::BlockMouseExceptScroll` (`InteractiveElement::block_mouse_except_scroll`),
     /// or if the current input modality is keyboard (see [`Window::last_input_was_keyboard`]).
     ///
-    /// Handling of `ScrollWheelEvent` should typically use `should_handle_scroll` instead.
+    /// Handling of `ScrollEvent` should typically use `should_handle_scroll` instead.
     /// Concretely, this is due to use-cases like overlays that cause the elements under to be
     /// non-interactive while still allowing scrolling. More abstractly, this is because
     /// `is_hovered` is about physical state directly under the mouse, while scrolling is about
@@ -1257,8 +1270,10 @@ impl_targeted_event_position!(
     crate::MouseUpEvent,
     crate::MouseMoveEvent,
     crate::MousePressureEvent,
-    crate::ScrollWheelEvent,
+    crate::ScrollEvent,
     crate::PinchEvent,
+    crate::LongPressEvent,
+    crate::TouchDragEvent,
 );
 
 impl TargetedEvent<crate::ClickEvent> {
@@ -1273,7 +1288,7 @@ impl TargetedEvent<crate::ClickEvent> {
     }
 }
 
-impl TargetedEvent<crate::ScrollWheelEvent> {
+impl TargetedEvent<crate::ScrollEvent> {
     /// Returns the scroll delta in target-local layout units.
     ///
     /// Pixel deltas are inverse-projected. Line deltas remain semantic line counts.
@@ -1284,6 +1299,18 @@ impl TargetedEvent<crate::ScrollWheelEvent> {
                 .map(crate::ScrollDelta::Pixels),
             crate::ScrollDelta::Lines(delta) => Ok(crate::ScrollDelta::Lines(delta)),
         }
+    }
+}
+
+impl TargetedEvent<crate::BackGestureEvent> {
+    /// Returns the gesture's starting position relative to the target's layout origin.
+    pub fn target_local_position(&self) -> Result<Point<Pixels>, SubtreeTransformError> {
+        self.target_local_point(self.event.start_position)
+    }
+
+    /// Returns the gesture's starting position in target layout coordinates.
+    pub fn target_layout_position(&self) -> Result<Point<Pixels>, SubtreeTransformError> {
+        self.target_layout_point(self.event.start_position)
     }
 }
 
@@ -1324,7 +1351,7 @@ pub enum HitboxBehavior {
     /// [`InteractiveElement::block_mouse_except_scroll`].
     ///
     /// For mouse handlers that check those hitboxes, this behaves the same as registering a
-    /// bubble-phase handler for every mouse event type **except** `ScrollWheelEvent`:
+    /// bubble-phase handler for every mouse event type **except** `ScrollEvent`:
     ///
     /// ```ignore
     /// window.on_mouse_event(move |_: &EveryMouseEventTypeExceptScroll, phase, window, cx| {
@@ -1334,7 +1361,7 @@ pub enum HitboxBehavior {
     /// })
     /// ```
     ///
-    /// See the documentation of [`Hitbox::is_hovered`] for details of why `ScrollWheelEvent` is
+    /// See the documentation of [`Hitbox::is_hovered`] for details of why `ScrollEvent` is
     /// handled differently than other mouse events. If also blocking these scroll events is
     /// desired, then a `cx.stop_propagation()` handler like the one above can be used.
     ///
@@ -1395,6 +1422,7 @@ impl AutoscrollIntent {
 enum InputModality {
     Mouse,
     Keyboard,
+    Touch,
 }
 
 /// Diagnostic facts recorded when a [`RenderImage`] is painted into a frame.
@@ -1924,6 +1952,14 @@ pub struct Window {
     #[cfg(feature = "profiler")]
     debug_frame_overlay: crate::debug_overlay::DebugFrameOverlay,
     last_input_modality: InputModality,
+    touch_gestures: crate::TouchGestureRecognizer,
+    touch_prediction_enabled: bool,
+    long_press_timer: Option<Task<()>>,
+    long_press_capture: Option<EntityId>,
+    touch_gesture_generation: u64,
+    touch_momentum_tick_scheduled: bool,
+    pending_touch_cancellations: SmallVec<[crate::RecognizedTouchGesture; 2]>,
+    offered_touch_cancellation: Option<crate::RecognizedTouchGesture>,
     pub(crate) refreshing: bool,
     pub(crate) activation_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) focus: Option<FocusId>,
@@ -3020,6 +3056,18 @@ impl Window {
             #[cfg(feature = "profiler")]
             debug_frame_overlay: crate::debug_overlay::DebugFrameOverlay::new(),
             last_input_modality: InputModality::Mouse,
+            touch_gestures: crate::TouchGestureRecognizer::new(
+                cx.platform
+                    .gestures()
+                    .map_or_else(crate::GestureTuning::default, |gestures| gestures.tuning()),
+            ),
+            touch_prediction_enabled: true,
+            long_press_timer: None,
+            long_press_capture: None,
+            touch_gesture_generation: 0,
+            touch_momentum_tick_scheduled: false,
+            pending_touch_cancellations: SmallVec::new(),
+            offered_touch_cancellation: None,
             refreshing: false,
             activation_observers: SubscriberSet::new(),
             focus: None,
@@ -4392,12 +4440,20 @@ impl Window {
         );
         cx.stop_propagation();
         self.default_prevented = true;
+
         let removal_state = if self.input_transaction_depth.get() > 0 {
             WindowRemovalState::PendingAfterInput
         } else {
             WindowRemovalState::Removing
         };
         self.removal_state = removal_state;
+        retain_first_window_cleanup_panic(
+            &mut first_panic,
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                self.cancel_touch_gestures(cx);
+            })),
+            "window-removal touch cancellation",
+        );
         retain_first_window_cleanup_panic(
             &mut first_panic,
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -4453,22 +4509,42 @@ impl Window {
     }
 
     pub(crate) fn finish_pending_interaction_quiescence(&mut self, cx: &mut App) -> bool {
-        if self.interaction_authority.is_admitted() {
-            return false;
+        let had_touch_cancellations = !self.pending_touch_cancellations.is_empty();
+        let mut first_panic = None;
+        retain_first_window_cleanup_panic(
+            &mut first_panic,
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                self.flush_touch_cancellations(cx);
+            })),
+            "pending touch cancellation",
+        );
+        let mut cleaned_up = had_touch_cancellations;
+        if !self.interaction_authority.is_admitted() {
+            retain_first_window_cleanup_panic(
+                &mut first_panic,
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    cleaned_up |= self.finish_interaction_quiescence(true, cx);
+                })),
+                "pending interaction quiescence",
+            );
         }
-        self.finish_interaction_quiescence(true, cx)
+        if let Some(payload) = first_panic {
+            std::panic::resume_unwind(payload);
+        }
+        cleaned_up
     }
 
     pub(crate) fn has_pending_interaction_quiescence_cleanup(&self) -> bool {
-        !self.interaction_authority.is_admitted()
-            && (self.interaction_authority.has_pending_platform_revocation()
-                || self.interaction_quiescence_non_pointer_cleanup
-                    == WindowInteractionCleanupState::Pending
-                || (self.interaction_quiescence_pointer_cleanup
-                    == WindowInteractionCleanupState::Pending
-                    && !self
-                        .interaction_authority
-                        .pointer_cleanup_is_deferred_to_native_capture()))
+        !self.pending_touch_cancellations.is_empty()
+            || (!self.interaction_authority.is_admitted()
+                && (self.interaction_authority.has_pending_platform_revocation()
+                    || self.interaction_quiescence_non_pointer_cleanup
+                        == WindowInteractionCleanupState::Pending
+                    || (self.interaction_quiescence_pointer_cleanup
+                        == WindowInteractionCleanupState::Pending
+                        && !self
+                            .interaction_authority
+                            .pointer_cleanup_is_deferred_to_native_capture())))
     }
 
     /// Revokes interaction without consuming an exact native captured-drag release authority.
@@ -4496,6 +4572,14 @@ impl Window {
         };
         cx.stop_propagation();
         self.default_prevented = true;
+
+        retain_first_window_cleanup_panic(
+            &mut first_panic,
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                self.cancel_touch_gestures(cx);
+            })),
+            "interaction-quiescence touch cancellation",
+        );
 
         let mut cleanup_ran = false;
         if self.interaction_quiescence_non_pointer_cleanup == WindowInteractionCleanupState::Pending
@@ -4651,6 +4735,14 @@ impl Window {
         let mut first_panic = None;
 
         self.terminate_provisional_presentation_for_window_close();
+
+        retain_first_window_cleanup_panic(
+            &mut first_panic,
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                self.cancel_touch_gestures(cx);
+            })),
+            "touch-session terminal cleanup",
+        );
 
         retain_first_window_cleanup_panic(
             &mut first_panic,
@@ -6812,17 +6904,47 @@ impl Window {
             return;
         }
         self.active.set(active);
+        let mut first_panic = None;
         if !active {
-            self.cancel_pointer_session(PointerCancelReason::WindowDeactivated, cx);
+            retain_first_window_cleanup_panic(
+                &mut first_panic,
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    self.cancel_touch_gestures(cx);
+                })),
+                "window-deactivation touch cancellation",
+            );
+            retain_first_window_cleanup_panic(
+                &mut first_panic,
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    self.cancel_pointer_session(PointerCancelReason::WindowDeactivated, cx);
+                })),
+                "window-deactivation pointer cancellation",
+            );
+            retain_first_window_cleanup_panic(
+                &mut first_panic,
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    self.clear_pointer_session(PointerCancelReason::WindowDeactivated, cx);
+                })),
+                "window-deactivation pointer cleanup",
+            );
         }
-        self.modifiers = self.platform_window.modifiers();
-        self.capslock = self.platform_window.capslock();
-        self.activation_observers
-            .clone()
-            .retain(&(), |callback| callback(self, cx));
-        self.bounds_changed(cx);
-        self.refresh();
-        SystemWindowTabController::update_last_active(cx, self.handle.id);
+        retain_first_window_cleanup_panic(
+            &mut first_panic,
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                self.modifiers = self.platform_window.modifiers();
+                self.capslock = self.platform_window.capslock();
+                self.activation_observers
+                    .clone()
+                    .retain(&(), |callback| callback(self, cx));
+                self.bounds_changed(cx);
+                self.refresh();
+                SystemWindowTabController::update_last_active(cx, self.handle.id);
+            })),
+            "window activation update",
+        );
+        if let Some(payload) = first_panic {
+            std::panic::resume_unwind(payload);
+        }
     }
 
     pub(crate) fn native_hover_status_changed(&mut self, hovered: bool, cx: &mut App) {
@@ -7237,6 +7359,18 @@ impl Window {
         self.mouse_in_window
     }
 
+    /// Captures subsequent long-press phases for the given entity.
+    ///
+    /// The listener must also prevent the started event's default behavior to claim it.
+    pub fn capture_long_press<T: 'static>(&mut self, entity: &Entity<T>) {
+        self.long_press_capture = Some(entity.entity_id());
+    }
+
+    /// Returns whether the entity captured the current long press.
+    pub fn has_long_press_capture<T: 'static>(&self, entity: &Entity<T>) -> bool {
+        self.long_press_capture == Some(entity.entity_id())
+    }
+
     /// The current state of the keyboard's modifiers
     pub fn modifiers(&self) -> Modifiers {
         self.modifiers
@@ -7246,6 +7380,11 @@ impl Window {
     /// This is used for focus-visible styling to show focus indicators only for keyboard navigation.
     pub fn last_input_was_keyboard(&self) -> bool {
         self.last_input_modality == InputModality::Keyboard
+    }
+
+    /// Returns whether the last input event came from a touch screen.
+    pub fn last_input_was_touch(&self) -> bool {
+        self.last_input_modality == InputModality::Touch
     }
 
     /// The current state of the keyboard's capslock
@@ -12786,6 +12925,8 @@ impl Window {
                 window.commit_native_window_control_area(cx);
             } else if let Some(any_key_event) = event.keyboard_event() {
                 window.dispatch_key_event(any_key_event, cx);
+            } else if let Some(touch_event) = event.touch_event() {
+                window.dispatch_touch_event(touch_event, cx);
             }
         };
 
@@ -12832,12 +12973,16 @@ impl Window {
     }
 
     fn dispatch_mouse_event(&mut self, event: &dyn Any, cx: &mut App) {
+        if event.is::<PointerCancelEvent>() {
+            self.cancel_touch_gestures(cx);
+        }
         if let Some(event) = event.downcast_ref::<crate::MouseDownEvent>() {
             self.pressed_mouse_buttons.insert(event.button);
         }
         cx.lock_native_captured_drag_event(self.handle.window_id(), self, event);
         let dispatch = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let is_pointer_cancel = event.is::<PointerCancelEvent>();
+            let is_touch_cancel = touch_gestures::is_touch_cancellation(event);
             let exited_window = event.is::<crate::MouseExitEvent>();
             let hit_test = if exited_window {
                 HitTest::default()
@@ -12863,7 +13008,8 @@ impl Window {
                 });
 
             #[cfg(any(feature = "inspector", debug_assertions))]
-            let inspector_picking = !is_pointer_cancel && self.is_inspector_picking(cx);
+            let inspector_picking =
+                !is_pointer_cancel && !is_touch_cancel && self.is_inspector_picking(cx);
             #[cfg(not(any(feature = "inspector", debug_assertions)))]
             let inspector_picking = false;
             #[cfg(any(feature = "inspector", debug_assertions))]
@@ -12874,10 +13020,11 @@ impl Window {
             if !inspector_picking && let Some(event) = WindowMouseEvent::from_any(event) {
                 self.mouse_interceptors.clone().retain(&(), |interceptor| {
                     if is_pointer_cancel
+                        || is_touch_cancel
                         || (cx.propagate_event && self.user_interaction_is_admitted())
                     {
                         let retain = interceptor(event, self, cx);
-                        if !is_pointer_cancel {
+                        if !is_pointer_cancel && !is_touch_cancel {
                             self.interaction_dispatch_continues(cx);
                         }
                         retain
@@ -12916,7 +13063,7 @@ impl Window {
                     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         // Capture phase, events bubble from back to front. Handlers for this phase are
                         // used for special purposes, such as detecting events outside of a given Bounds.
-                        if cx.propagate_event {
+                        if cx.propagate_event || is_touch_cancel {
                             for output in &mut listeners {
                                 if !output.is_valid() {
                                     continue;
@@ -12925,14 +13072,14 @@ impl Window {
                                     continue;
                                 };
                                 listener(event, DispatchPhase::Capture, self, cx);
-                                if !self.interaction_dispatch_continues(cx) {
+                                if !is_touch_cancel && !self.interaction_dispatch_continues(cx) {
                                     break;
                                 }
                             }
                         }
 
                         // Bubble phase, where most normal handlers do their work.
-                        if cx.propagate_event {
+                        if cx.propagate_event || is_touch_cancel {
                             for output in listeners.iter_mut().rev() {
                                 if !output.is_valid() {
                                     continue;
@@ -12941,7 +13088,7 @@ impl Window {
                                     continue;
                                 };
                                 listener(event, DispatchPhase::Bubble, self, cx);
-                                if !self.interaction_dispatch_continues(cx) {
+                                if !is_touch_cancel && !self.interaction_dispatch_continues(cx) {
                                     break;
                                 }
                             }
@@ -12955,6 +13102,8 @@ impl Window {
         }));
         let cleanup = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             self.finish_mouse_session_event(event, cx);
+            self.finish_touch_gesture_event(event);
+            self.flush_touch_cancellations(cx);
         }));
         match (dispatch, cleanup) {
             (Ok(()), Ok(())) => {}
@@ -14308,7 +14457,7 @@ impl Window {
                     inspector.select(inspector_id, self);
                 }
             });
-        } else if let Some(event) = event.downcast_ref::<crate::ScrollWheelEvent>() {
+        } else if let Some(event) = event.downcast_ref::<crate::ScrollEvent>() {
             // This should be kept in sync with SCROLL_LINES in x11 platform.
             const SCROLL_LINES: f32 = 3.0;
             const SCROLL_PIXELS_PER_LAYER: f32 = 36.0;

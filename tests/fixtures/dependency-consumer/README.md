@@ -1783,3 +1783,42 @@ establish a returning native engine loop, an external Host/View adapter, shared 
 native rendering/input, successful detach/reattach, compositor presentation or performance.
 Backend-specific session refusal, display freshness, activation, GPU retirement and switching
 qualification retain their separate native gates.
+
+## Ordinary public gesture consumer
+
+The `gestures` target consumes the gesture vocabulary from fixed official target
+[`635026fabc38440fce5e1767d125026a17b12012`](https://github.com/zed-industries/zed/tree/635026fabc38440fce5e1767d125026a17b12012)
+through ordinary public reexports. It needs neither `test-support` nor `bench-support` and adds
+no application, renderer, engine integration or dependency.
+
+Its pure tests execute `ScrollEvent`/`ScrollSource` conversion to `PlatformInput::Scroll`, raw
+touch identity/prediction/cancellation, long-press/touch-drag/back-gesture payload conversion,
+`OngoingScroll::filter`, and default/custom `PlatformGestures` tuning. The target also constructs
+actual typed/raw scroll and back-gesture listener interfaces and inspects the style produced by
+`restrict_scroll_to_axis`. Registered callbacks are not dispatched. The `Window::on_mouse_event`
+closure for long press and touch drag is explicitly type-only and is never invoked, because those
+listeners require a real paint phase.
+
+Additional unexecuted closures consume `Platform::gestures` as optional public services and
+`Window::intercept_window_mouse_events` with its `Subscription` return type. The interceptor matches
+borrowed `WindowMouseEvent::{LongPress, TouchDrag, BackGesture}` payloads with a wildcard for the
+external `non_exhaustive` enum. Long-press capture/query, touch-modality detection and prediction
+controls are type-only consumers too. No Platform, App or Window is created to exercise them;
+their runtime behavior remains Core-owned. The event conversion test expects the official
+canonical `PlatformInput::Scroll` diagnostic name `"scroll"`, independently of domain diagnostics.
+
+`TouchGestureRecognizer` and `RecognizedTouchGesture` are `pub(crate)` in the fixed official
+source. This external consumer does not expose or duplicate them. Core owns recognition,
+long-press timers, gesture competition, momentum, cancellation and runtime dispatch regressions;
+native/browser input and hit-testing retain their separate platform gates.
+
+Run the feature-free target serially with `CARGO_BUILD_JOBS=1`, the existing consumer lockfile
+and the shared build directory:
+
+```text
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --test gestures --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+This command is a verification instruction. Results belong in the main qualification record;
+constructing listeners alone does not qualify input dispatch, scrolling, tooltip behavior or
+native presentation.

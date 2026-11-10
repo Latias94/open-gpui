@@ -41,11 +41,11 @@ use crate::{
     Bounds, DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, FocusId, Font, FontId,
     FontMetrics, FontRun, ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap,
     LineLayout, ModifiersChangedEvent, MouseButton, NativeInputBoundary,
-    NativeInputHandlerOperation, NativeInvariantFailure, Pixels, PlatformInput, Point,
-    PointerCancelReason, Priority, RenderGlyphParams, RenderImage, RenderImageParams,
+    NativeInputHandlerOperation, NativeInvariantFailure, Pixels, PlatformGestures, PlatformInput,
+    Point, PointerCancelReason, Priority, RenderGlyphParams, RenderImage, RenderImageParams,
     RenderSvgParams, Scene, ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer,
-    SystemWindowTab, Task, Window, WindowControlArea, WindowId, WindowMutationRequest,
-    geometry::ResolvedSubtreeTransform, hash, point, px, size,
+    SystemWindowTab, Task, TouchEvent, TouchPhase, Window, WindowControlArea, WindowId,
+    WindowMutationRequest, geometry::ResolvedSubtreeTransform, hash, point, px, size,
 };
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use anyhow::bail;
@@ -3707,6 +3707,12 @@ pub trait Platform: 'static {
     fn foreground_executor(&self) -> ForegroundExecutor;
     fn text_system(&self) -> Arc<dyn PlatformTextSystem>;
 
+    /// The platform's gesture recognition services, if it provides any
+    /// beyond GPUI's portable recognizers.
+    fn gestures(&self) -> Option<Rc<dyn PlatformGestures>> {
+        None
+    }
+
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>);
     fn quit(&self);
     /// Selects the initial mode before the platform starts its run loop.
@@ -4736,6 +4742,21 @@ struct NativeInputDiagnosticTarget {
 }
 
 impl NativeInputDiagnosticTarget {
+    fn reserve_reentrant_touch_cancel(
+        &self,
+        source: PlatformInputCallbackSource,
+        event: TouchEvent,
+    ) -> NativePointerCancelReservation {
+        let Some(app) = self.app.upgrade() else {
+            return NativePointerCancelReservation::ApplicationGone;
+        };
+        if app.reserve_reentrant_touch_cancel(self.window_id, source, event) {
+            NativePointerCancelReservation::Reserved
+        } else {
+            NativePointerCancelReservation::IngressClosed
+        }
+    }
+
     fn reserve_reentrant_pointer_cancel(
         &self,
         slot_generation: u64,
@@ -4783,6 +4804,7 @@ impl NativeInputDiagnosticTarget {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NativePointerCancelReservation {
     Reserved,
+    InvalidTouchPhase,
     UnleasedTestFallback,
     NoActiveCallback,
     MissingDiagnosticTarget,
@@ -4907,6 +4929,25 @@ pub struct PlatformInputCallbackSlot {
     state: Rc<RefCell<PlatformInputCallbackSlotState>>,
 }
 
+/// The exact callback generation that reserved one terminal touch event.
+pub(crate) struct PlatformInputCallbackSource {
+    state: Weak<RefCell<PlatformInputCallbackSlotState>>,
+    generation: u64,
+}
+
+impl PlatformInputCallbackSource {
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    pub(crate) fn is_current(&self) -> bool {
+        self.state.upgrade().is_some_and(|state| {
+            let state = state.borrow();
+            !state.terminal && state.generation == self.generation
+        })
+    }
+}
+
 impl PlatformInputCallbackSlot {
     /// Installs a callback and invalidates any callback currently checked out by a native stack.
     pub fn set(&self, callback: PlatformInputCallback) {
@@ -4965,6 +5006,48 @@ impl PlatformInputCallbackSlot {
             (slot_generation, target)
         };
         target.reserve_reentrant_pointer_cancel(slot_generation, reason)
+    }
+
+    /// Reserves a cancelled touch while its native input callback is checked out.
+    ///
+    /// Ordinary touch input must be dispatched immediately. This terminal-only path preserves
+    /// native ingress order and the exact callback generation without cancelling mouse capture.
+    /// A retired or replaced callback cannot deliver its cancellation into a later session.
+    #[doc(hidden)]
+    pub fn reserve_reentrant_touch_cancel(
+        &self,
+        event: TouchEvent,
+    ) -> NativePointerCancelReservation {
+        if event.phase != TouchPhase::Cancelled {
+            return NativePointerCancelReservation::InvalidTouchPhase;
+        }
+        let (source, target) = {
+            let state = self.state.borrow();
+            if state.terminal {
+                return NativePointerCancelReservation::RetiredSlot;
+            }
+            let Some(generation) = state.checked_out_generation else {
+                return NativePointerCancelReservation::NoActiveCallback;
+            };
+            if state.generation != generation {
+                return NativePointerCancelReservation::RetiredSlot;
+            }
+            let Some(target) = state.diagnostic_target.clone() else {
+                return if state.allow_unleased_test_dispatch {
+                    NativePointerCancelReservation::UnleasedTestFallback
+                } else {
+                    NativePointerCancelReservation::MissingDiagnosticTarget
+                };
+            };
+            (
+                PlatformInputCallbackSource {
+                    state: Rc::downgrade(&self.state),
+                    generation,
+                },
+                target,
+            )
+        };
+        target.reserve_reentrant_touch_cancel(source, event)
     }
 
     /// Locks a terminal cancellation after a native backend catches an input panic.
@@ -7345,6 +7428,16 @@ impl PlatformInputHandler {
         .and_then(|bounds| transform.try_project_bounds(bounds).ok())
     }
 
+    /// Returns the focused element's bounds projected into platform window coordinates.
+    pub fn element_bounds(&mut self) -> Option<Bounds<Pixels>> {
+        let transform = self.transform;
+        self.native_callback(
+            NativeInputHandlerOperation::ElementBounds,
+            |handler, window, cx| handler.element_bounds(window, cx),
+        )
+        .and_then(|bounds| transform.try_project_bounds(bounds).ok())
+    }
+
     #[allow(dead_code)]
     pub fn apple_press_and_hold_enabled(&mut self) -> bool {
         self.native_callback(
@@ -7562,6 +7655,14 @@ pub trait InputHandler: 'static {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<Bounds<Pixels>>;
+
+    /// Get the focused text element's bounds in untransformed window-layout coordinates, if known.
+    ///
+    /// GPUI projects the result through the focused element's committed subtree transform before
+    /// passing it to the platform for text-interaction UI positioning.
+    fn element_bounds(&mut self, _window: &mut Window, _cx: &mut App) -> Option<Bounds<Pixels>> {
+        None
+    }
 
     /// Get the character offset for an untransformed window-layout point in UTF-16 characters.
     ///

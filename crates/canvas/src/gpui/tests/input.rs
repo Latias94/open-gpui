@@ -127,10 +127,10 @@ fn editor_adapter_inverse_projects_transformed_pointer_and_pixel_wheel_input(
 
     let displayed_position = point(px(140.0), px(90.0));
     cx.simulate_mouse_down(displayed_position, MouseButton::Left, Modifiers::none());
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: displayed_position,
         delta: ScrollDelta::Pixels(point(px(20.0), px(40.0))),
-        ..ScrollWheelEvent::default()
+        ..ScrollEvent::default()
     });
 
     assert_eq!(
@@ -348,20 +348,20 @@ fn input_mapper_converts_scroll_delta_to_canvas_wheel() {
     .with_line_height(px(20.0));
 
     assert_eq!(
-        mapper.scroll_wheel(&ScrollWheelEvent {
+        mapper.scroll_wheel(&ScrollEvent {
             position: point(px(120.0), px(80.0)),
             delta: ScrollDelta::Lines(point(1.0, -2.0)),
-            ..ScrollWheelEvent::default()
+            ..ScrollEvent::default()
         }),
         Some(CanvasEvent::Wheel {
             delta: point(px(20.0), px(-40.0)),
         })
     );
     assert_eq!(
-        mapper.scroll_wheel(&ScrollWheelEvent {
+        mapper.scroll_wheel(&ScrollEvent {
             position: point(px(20.0), px(80.0)),
             delta: ScrollDelta::Pixels(point(px(1.0), px(2.0))),
-            ..ScrollWheelEvent::default()
+            ..ScrollEvent::default()
         }),
         None
     );

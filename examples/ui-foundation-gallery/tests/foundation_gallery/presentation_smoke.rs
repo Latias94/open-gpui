@@ -231,7 +231,7 @@ fn assert_presentation_channels_suppressed(
         data: None,
     }));
     // Keep wheel input last because a parent scroll surface may also consume it and move the page.
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: scroll_position,
         delta: ScrollDelta::Pixels(point(px(0.0), px(-48.0))),
         ..Default::default()
@@ -361,7 +361,7 @@ fn presentation_page_commits_geometry_and_routes_transformed_interactions(
     scroll_page_selector_into_view(&shell, cx, "gallery:presentation-scroll");
     let scroll_before = cx.update(|_, app| shell.read(app).presentation_scroll_handle().offset());
     let scroll_position = visible_page_interaction_point(cx, "gallery:presentation-scroll");
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: scroll_position,
         delta: ScrollDelta::Pixels(point(px(0.0), px(-48.0))),
         ..Default::default()
@@ -441,7 +441,7 @@ fn presentation_page_commits_geometry_and_routes_transformed_interactions(
     let final_scroll_before =
         cx.update(|_, app| shell.read(app).presentation_scroll_handle().offset());
     let final_scroll_position = visible_page_interaction_point(cx, "gallery:presentation-scroll");
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: final_scroll_position,
         delta: ScrollDelta::Pixels(point(px(0.0), px(32.0))),
         ..Default::default()
@@ -555,7 +555,7 @@ fn presentation_bring_into_view_unifies_all_entry_paths_and_virtual_materializat
     advance_and_redraw(cx, Duration::from_millis(100));
     let scroll_position =
         visible_page_interaction_point(cx, "gallery:bring-into-view:outer-scrollport");
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: scroll_position,
         delta: ScrollDelta::Pixels(point(px(0.0), px(-16.0))),
         ..Default::default()

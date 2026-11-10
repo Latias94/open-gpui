@@ -2266,6 +2266,25 @@ impl AppCell {
             .start_is_unfenced(source_window, source_sequence)
     }
 
+    pub(crate) fn reserve_reentrant_touch_cancel(
+        &self,
+        window_id: WindowId,
+        source: crate::platform::PlatformInputCallbackSource,
+        event: crate::TouchEvent,
+    ) -> bool {
+        if self.native_events.is_terminated() {
+            return false;
+        }
+        let sequence = self.native_events.reserve_input_sequence();
+        let envelope = self.native_events.prepare_presequenced(
+            sequence,
+            window_id,
+            NativeWindowEvent::TouchCancelled { event, source },
+        );
+        self.native_events.enqueue_envelope(envelope);
+        true
+    }
+
     pub(crate) fn reserve_reentrant_pointer_cancel(
         self: &Rc<Self>,
         window_id: WindowId,

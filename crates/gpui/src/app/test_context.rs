@@ -1907,7 +1907,7 @@ impl VisualTestContext {
         })
     }
 
-    /// Simulate an event from the platform, e.g. a ScrollWheelEvent
+    /// Simulate an event from the platform, e.g. a ScrollEvent
     /// Make sure you've called [VisualTestContext::draw] first!
     pub fn simulate_event<E: InputEvent>(&mut self, event: E) {
         self.simulate_event_with_dispatch_snapshot(event);
@@ -2143,6 +2143,9 @@ mod clipboard_tests;
 mod pointer_session_tests;
 
 #[cfg(test)]
+mod touch_ingress_tests;
+
+#[cfg(test)]
 mod portal_anchor_tests;
 
 #[cfg(test)]
@@ -2168,7 +2171,7 @@ mod tests {
         Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement,
         PathPromptOptions, Platform, PlatformHoveredWindow, PlatformInput, PlatformWindowHit,
         PlatformWindowHitStack, PlatformWindowPhysicalCoverage, PlatformWindowPhysicalGeometry,
-        PointerCaptureHandle, QuitMode, Render, ScrollDelta, ScrollWheelEvent,
+        PointerCaptureHandle, QuitMode, Render, ScrollDelta, ScrollEvent,
         StatefulInteractiveElement, StyleRefinement, Styled, Subscription, TestAppContext,
         TestInputDispatchSnapshot, TouchPhase, VisualContext, VisualTestContext, Window,
         WindowMouseEvent, canvas, deferred, div, point, px, size,
@@ -2696,11 +2699,12 @@ mod tests {
                 (
                     "interceptor-scroll",
                     "node-scroll",
-                    PlatformInput::ScrollWheel(ScrollWheelEvent {
+                    PlatformInput::Scroll(ScrollEvent {
                         position,
                         delta: ScrollDelta::Pixels(point(px(0.0), px(1.0))),
                         modifiers: Modifiers::none(),
                         touch_phase: TouchPhase::Moved,
+                        source: crate::ScrollSource::Pointer,
                     }),
                 ),
             ]
@@ -2737,6 +2741,9 @@ mod tests {
                         WindowMouseEvent::Pressure(_) => "interceptor-pressure",
                         WindowMouseEvent::Scroll(_) => "interceptor-scroll",
                         WindowMouseEvent::Pinch(_) => "interceptor-pinch",
+                        WindowMouseEvent::LongPress(_) => "interceptor-long-press",
+                        WindowMouseEvent::TouchDrag(_) => "interceptor-touch-drag",
+                        WindowMouseEvent::BackGesture(_) => "interceptor-back-gesture",
                         WindowMouseEvent::FileDrop(_) => "interceptor-file-drop",
                     };
                     events.borrow_mut().push(label);
@@ -3128,11 +3135,12 @@ mod tests {
         cx.clear_last_input_dispatch();
         assert_eq!(cx.last_input_dispatch(), None);
 
-        let dispatch = cx.simulate_event_with_dispatch_snapshot(ScrollWheelEvent {
+        let dispatch = cx.simulate_event_with_dispatch_snapshot(ScrollEvent {
             position: point(px(10.0), px(10.0)),
             delta: ScrollDelta::Pixels(point(px(0.0), px(-24.0))),
             modifiers: Modifiers::none(),
             touch_phase: TouchPhase::Moved,
+            source: crate::ScrollSource::Pointer,
         });
 
         assert_eq!(cx.last_input_dispatch(), Some(dispatch));

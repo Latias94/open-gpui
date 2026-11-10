@@ -69,7 +69,7 @@ pub(in crate::table::faceted_filter) fn table_faceted_filter_content_element(
         .flex_col()
         .gap_2()
         .text_color(theme.resolve(state.popover().colors().foreground()))
-        .on_scroll_wheel(|_, _, _| open_gpui::ScrollWheelIntent::handled().stop_propagation())
+        .on_scroll(|_, _, _| open_gpui::ScrollWheelIntent::handled().stop_propagation())
         .child(
             div()
                 .flex()

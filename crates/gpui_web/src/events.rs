@@ -5,13 +5,15 @@ use std::{
 
 use open_gpui::{
     Capslock, ClipboardEntry, ClipboardItem, ClipboardString, DispatchEventResult, ExternalPaths,
-    FileDropEvent, Image, ImageFormat, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
-    ModifiersChangedEvent, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    PlatformInput, Point, PointerCancelEvent, PointerCancelReason, ScrollDelta, ScrollWheelEvent,
-    TouchPhase, point, px,
+    FileDropEvent, GestureTuning, Image, ImageFormat, KeyDownEvent, KeyUpEvent, Keystroke,
+    Modifiers, ModifiersChangedEvent, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent,
+    Pixels, PlatformInput, Point, PointerCancelEvent, PointerCancelReason, ScrollDelta,
+    ScrollEvent, ScrollSource, TouchEvent, TouchPhase, point, px,
 };
 use smallvec::smallvec;
 use wasm_bindgen::prelude::*;
+
+pub(crate) use crate::interaction::WebInteractionGate;
 
 use crate::{
     pointer_session::{
@@ -25,30 +27,14 @@ pub struct WebEventListeners {
     _listeners: Vec<WebEventListener>,
 }
 
-#[derive(Default)]
-pub(crate) struct WebInteractionGate(Cell<bool>);
-
 impl WebInteractionGate {
-    pub(crate) fn quiesce(&self) {
-        self.0.set(true);
-    }
-
-    pub(crate) fn is_quiesced(&self) -> bool {
-        self.0.get()
-    }
-
     fn dispatch_input(
         &self,
         callbacks: &RefCell<WebWindowCallbacks>,
         input: PlatformInput,
     ) -> DispatchEventResult {
-        let terminal_cleanup = matches!(&input, PlatformInput::PointerCanceled(_));
-        if self.is_quiesced() && !terminal_cleanup {
-            return DispatchEventResult::default();
-        }
-
         let input_callback = callbacks.borrow().input.clone();
-        input_callback.dispatch(input)
+        self.dispatch_callback(&input_callback, input)
     }
 }
 
@@ -163,6 +149,7 @@ impl WebWindowInner {
             self.register_pointer_up(),
             self.register_pointer_cancel(),
             self.register_lost_pointer_capture(),
+            self.register_touch_end(),
             self.register_pointer_move(),
             self.register_pointer_leave(),
             self.register_wheel(),
@@ -298,8 +285,148 @@ impl WebWindowInner {
     }
 
     pub(crate) fn cleanup_pointer_capture(&self, reason: PointerCancelReason) {
+        self.touch_tap_candidate.set(None);
+        let touches = self.touch_state.borrow_mut().cancel_all();
+        for (pointer_id, event) in touches {
+            self.dispatch_input(PlatformInput::Touch(event));
+            self.canvas.release_pointer_capture(pointer_id).ok();
+        }
         let (next_state, transition) = self.pointer_capture.get().cleanup(reason);
         self.apply_pointer_transition(next_state, transition);
+    }
+
+    fn cancel_touch_pointer(&self, pointer_id: i32) {
+        let event = self.touch_state.borrow_mut().cancel(pointer_id);
+        let Some(event) = event else {
+            return;
+        };
+        if let Some((candidate, _)) = self.touch_tap_candidate.get()
+            && candidate == pointer_id
+        {
+            self.touch_tap_candidate.set(None);
+        }
+        self.dispatch_input(PlatformInput::Touch(event));
+        self.canvas.release_pointer_capture(pointer_id).ok();
+    }
+
+    fn pointer_targets_text_input(&self, position: Point<Pixels>) -> bool {
+        self.with_input_handler(|handler| {
+            handler.query_accepts_text_input()
+                && handler
+                    .element_bounds()
+                    .is_some_and(|bounds| bounds.contains(&position))
+        })
+        .unwrap_or(false)
+    }
+
+    /// The visual viewport's current height in layout pixels, or zero when
+    /// the API is unavailable.
+    fn visual_viewport_height(&self) -> f64 {
+        self.browser_window
+            .visual_viewport()
+            .map_or(0.0, |viewport| viewport.height() * viewport.scale())
+    }
+
+    /// Infers dismissal only when the visual viewport fills the layout viewport.
+    ///
+    /// This fallback requires `interactive-widget=resizes-visual` (the modern
+    /// browser default). It deliberately makes no inference while zoomed, or
+    /// when the host opts into another resize policy. Floating keyboards can
+    /// still overlay both viewports; this is not authoritative keyboard state.
+    fn keyboard_likely_dismissed(&self) -> bool {
+        if !self.touch_input {
+            return false;
+        }
+        let Some(viewport) = self.browser_window.visual_viewport() else {
+            return false;
+        };
+        let Some(document) = self.browser_window.document() else {
+            return false;
+        };
+        if let Ok(Some(meta)) = document.query_selector("meta[name=viewport]")
+            && let Some(content) = meta.get_attribute("content")
+            && content.split(',').any(|directive| {
+                directive.split_once('=').is_some_and(|(key, value)| {
+                    key.trim().eq_ignore_ascii_case("interactive-widget")
+                        && !value.trim().eq_ignore_ascii_case("resizes-visual")
+                })
+            })
+        {
+            return false;
+        }
+        let Some(root) = document.document_element() else {
+            return false;
+        };
+        (viewport.scale() - 1.).abs() < 0.001
+            && viewport.offset_top().abs() < 1.
+            && viewport.offset_left().abs() < 1.
+            && (viewport.height() - root.client_height() as f64).abs() < 1.
+            && (viewport.width() - root.client_width() as f64).abs() < 1.
+    }
+
+    fn set_virtual_keyboard_enabled(&self, enabled: bool) {
+        if let Err(error) = self
+            .input_element
+            .set_attribute("inputmode", if enabled { "text" } else { "none" })
+        {
+            log::warn!("Failed to configure input mode: {error:?}");
+        }
+    }
+
+    /// Summons the touch keyboard synchronously inside the recognized tap's user gesture.
+    pub(crate) fn show_virtual_keyboard(self: &Rc<Self>) {
+        if !self.touch_input || !self.allows_pointer_focus() {
+            return;
+        }
+        let was_enabled = self.input_element.get_attribute("inputmode").as_deref() != Some("none");
+        self.set_virtual_keyboard_enabled(true);
+        // Trigger a focus event only when the keyboard actually needs
+        // summoning. Cycling focus on every tap would restart the IME
+        // connection right as the keyboard reads the tapped caret's context,
+        // racing its word segmentation. But `focus()` on an already-focused
+        // element is a no-op, so a dismissed keyboard would otherwise never
+        // return for taps that stay within editable content: detect that
+        // through the visual viewport and force a fresh focus event.
+        if !was_enabled || !self.input_is_focused() || self.keyboard_likely_dismissed() {
+            self.focus_touch_input();
+        }
+    }
+
+    /// Restarts DOM input without synchronously re-entering GPUI activation.
+    fn focus_touch_input(self: &Rc<Self>) {
+        self.suppress_focus_status_events.set(true);
+        if self.input_is_focused() {
+            self.input_element.blur().ok();
+        }
+        self.focus_from_pointer();
+        self.suppress_focus_status_events.set(false);
+
+        let callback = wasm_bindgen::closure::Closure::once_into_js({
+            let this = Rc::downgrade(self);
+            move || {
+                if let Some(this) = this.upgrade() {
+                    this.sync_dom_activation();
+                }
+            }
+        });
+        if let Err(error) = self
+            .browser_window
+            .set_timeout_with_callback(callback.unchecked_ref())
+        {
+            log::warn!("failed to defer web window activation: {error:?}");
+        }
+    }
+
+    /// Cancels touch default handling separately because iOS does not consistently
+    /// transfer pointer-event cancellation to the corresponding touch event.
+    /// During native scrolling, touchend may be non-cancelable.
+    fn register_touch_end(self: &Rc<Self>) -> WebEventListener {
+        self.listen_non_passive("touchend", move |event: JsValue| {
+            let event: web_sys::Event = event.unchecked_into();
+            if event.cancelable() {
+                event.prevent_default();
+            }
+        })
     }
 
     fn register_pointer_down(self: &Rc<Self>) -> WebEventListener {
@@ -307,6 +434,50 @@ impl WebWindowInner {
         self.listen("pointerdown", move |event: JsValue| {
             let event: web_sys::PointerEvent = event.unchecked_into();
             event.prevent_default();
+            if this.interaction_gate.is_quiesced() {
+                return;
+            }
+            let position = pointer_position_in_element(&event);
+            this.gesture_start_visual_viewport_height
+                .set(this.visual_viewport_height());
+
+            if event.pointer_type() == "touch" {
+                // Android can reopen a manually dismissed keyboard on the
+                // next touch even without another focus() call. Disarm the
+                // still-focused mirror before the browser handles that
+                // gesture; only an editable tap may enable its keyboard again.
+                if this.keyboard_likely_dismissed() {
+                    this.set_virtual_keyboard_enabled(false);
+                }
+                let Some(touch_id) = this
+                    .touch_state
+                    .borrow_mut()
+                    .start(event.pointer_id(), position)
+                else {
+                    log::error!("exhausted touch identifiers");
+                    return;
+                };
+                this.canvas.set_pointer_capture(event.pointer_id()).ok();
+                this.state.borrow_mut().mouse_position = position;
+                if this.touch_tap_candidate.get().is_none() {
+                    this.touch_tap_candidate
+                        .set(Some((event.pointer_id(), position)));
+                }
+                this.dispatch_input(PlatformInput::Touch(TouchEvent {
+                    id: touch_id,
+                    phase: TouchPhase::Started,
+                    position,
+                    predicted_position: None,
+                    force: None,
+                }));
+                // Keyboard and IME focus intentionally do not change here:
+                // whether this touch is a tap or a pan is only known at
+                // release, and only a tap may affect them (see
+                // `touch_tap_candidate`). The release handler still runs
+                // within a user gesture, as keyboard summoning requires.
+                return;
+            }
+
             this.focus_from_pointer();
 
             let event = WebPointerEventData {
@@ -334,6 +505,53 @@ impl WebWindowInner {
         self.listen("pointerup", move |event: JsValue| {
             let event: web_sys::PointerEvent = event.unchecked_into();
             event.prevent_default();
+            if this.interaction_gate.is_quiesced() {
+                return;
+            }
+
+            let position = pointer_position_in_element(&event);
+            if event.pointer_type() == "touch" {
+                let Some(touch_id) = this.touch_state.borrow_mut().end(event.pointer_id()) else {
+                    return;
+                };
+                this.state.borrow_mut().mouse_position = position;
+                let completes_tap = match this.touch_tap_candidate.get() {
+                    Some((pointer_id, _)) if pointer_id == event.pointer_id() => {
+                        this.touch_tap_candidate.set(None);
+                        true
+                    }
+                    _ => false,
+                };
+                // A recognized tap is dispatched synchronously inside this
+                // call, so the text-input check below sees the state the tap
+                // produced.
+                let dispatch_result = this.dispatch_input(PlatformInput::Touch(TouchEvent {
+                    id: touch_id,
+                    phase: TouchPhase::Ended,
+                    position,
+                    predicted_position: None,
+                    force: None,
+                }));
+                this.canvas.release_pointer_capture(event.pointer_id()).ok();
+
+                // A keyboard opening or closing mid-gesture reflows the
+                // layout, so the release position no longer refers to the
+                // content the user aimed at. Do not summon the keyboard
+                // from that stale position, or from pans and flings.
+                let viewport_stable = this.gesture_start_visual_viewport_height.get()
+                    == this.visual_viewport_height();
+                // A consumed tap may navigate to an editor under this same
+                // coordinate. Do not reinterpret that navigation as editing.
+                // Controls that intend typing can explicitly request a keyboard.
+                if completes_tap
+                    && viewport_stable
+                    && !dispatch_result.default_prevented
+                    && this.pointer_targets_text_input(position)
+                {
+                    this.show_virtual_keyboard();
+                }
+                return;
+            }
 
             let event = WebPointerEventData {
                 pointer_id: event.pointer_id(),
@@ -360,6 +578,13 @@ impl WebWindowInner {
         self.listen("pointercancel", move |event: JsValue| {
             let event: web_sys::PointerEvent = event.unchecked_into();
             event.prevent_default();
+            if event.pointer_type() == "touch" {
+                this.touch_state
+                    .borrow_mut()
+                    .moved(event.pointer_id(), pointer_position_in_element(&event));
+                this.cancel_touch_pointer(event.pointer_id());
+                return;
+            }
             let (next_state, transition) = this
                 .pointer_capture
                 .get()
@@ -372,6 +597,7 @@ impl WebWindowInner {
         let this = Rc::clone(self);
         self.listen("lostpointercapture", move |event: JsValue| {
             let event: web_sys::PointerEvent = event.unchecked_into();
+            this.cancel_touch_pointer(event.pointer_id());
             let (next_state, transition) = this
                 .pointer_capture
                 .get()
@@ -385,6 +611,41 @@ impl WebWindowInner {
         self.listen("pointermove", move |event: JsValue| {
             let event: web_sys::PointerEvent = event.unchecked_into();
             event.prevent_default();
+            if this.interaction_gate.is_quiesced() {
+                return;
+            }
+            let position = pointer_position_in_element(&event);
+            if event.pointer_type() == "touch" {
+                let Some(touch_id) = this
+                    .touch_state
+                    .borrow_mut()
+                    .moved(event.pointer_id(), position)
+                else {
+                    return;
+                };
+                this.state.borrow_mut().mouse_position = position;
+                // Mirror the slop rule of gpui's tap recognizer: once the
+                // touch travels beyond it, its release must not affect the
+                // keyboard. Only gpui knows what the gesture truly resolved
+                // to; this platform-side shadow exists because the keyboard
+                // decision must be made synchronously inside the browser's
+                // pointerup handler.
+                if let Some((pointer_id, start_position)) = this.touch_tap_candidate.get()
+                    && pointer_id == event.pointer_id()
+                    && (position - start_position).magnitude()
+                        > f64::from(GestureTuning::default().touch_slop)
+                {
+                    this.touch_tap_candidate.set(None);
+                }
+                this.dispatch_input(PlatformInput::Touch(TouchEvent {
+                    id: touch_id,
+                    phase: TouchPhase::Moved,
+                    position,
+                    predicted_position: predicted_pointer_position(&event, position),
+                    force: None,
+                }));
+                return;
+            }
 
             let event = WebPointerEventData {
                 pointer_id: event.pointer_id(),
@@ -411,6 +672,9 @@ impl WebWindowInner {
         let this = Rc::clone(self);
         self.listen("pointerleave", move |event: JsValue| {
             let event: web_sys::PointerEvent = event.unchecked_into();
+            if event.pointer_type() == "touch" {
+                return;
+            }
 
             let event = WebPointerEventData {
                 pointer_id: event.pointer_id(),
@@ -461,11 +725,12 @@ impl WebWindowInner {
                 current_state.modifiers = modifiers;
             }
 
-            this.dispatch_input(PlatformInput::ScrollWheel(ScrollWheelEvent {
+            this.dispatch_input(PlatformInput::Scroll(ScrollEvent {
                 position,
                 delta,
                 modifiers,
                 touch_phase: TouchPhase::Moved,
+                source: ScrollSource::Pointer,
             }));
         })
     }
@@ -1142,6 +1407,63 @@ fn compute_key_char(
 fn pointer_position_in_element(event: &web_sys::PointerEvent) -> Point<Pixels> {
     let mouse_event: &web_sys::MouseEvent = event.as_ref();
     mouse_position_in_element(mouse_event)
+}
+
+/// How far ahead of the raw pointer position predictions may reach.
+///
+/// Browsers predict much further (Chrome offers samples out to 25ms), but
+/// prediction error grows with the horizon and surfaces as jitter: the
+/// emitted pan deltas gain a term proportional to lead x change in velocity,
+/// which at long leads visibly reverses direction mid-drag. Measurements
+/// show leads up to ~10ms track at or below the raw stream's frame-to-frame
+/// variation; AOSP similarly caps touch resampling extrapolation at 8ms
+/// (`RESAMPLE_MAX_PREDICTION` in `InputTransport.cpp`).
+const MAX_PREDICTION_LEAD_MS: f64 = 10.;
+
+/// The predicted pointer position closest to [`MAX_PREDICTION_LEAD_MS`]
+/// ahead of `event`, from `getPredictedEvents()`, or `None` when the browser
+/// offers no prediction (Safari lacks the method, Firefox returns an empty
+/// array). A prediction further out than the cap is linearly scaled back to
+/// it.
+///
+/// Accessed through `Reflect` because calling a missing method through the
+/// web-sys binding would throw, and predicted events' `offsetX`/`offsetY`
+/// are unreliable across browsers (their target may be detached), so the
+/// position is derived from the client-coordinate delta against the parent
+/// event, anchored to the parent's element-relative `position`.
+fn predicted_pointer_position(
+    event: &web_sys::PointerEvent,
+    position: Point<Pixels>,
+) -> Option<Point<Pixels>> {
+    let method = js_sys::Reflect::get(event, &JsValue::from_str("getPredictedEvents")).ok()?;
+    let method = method.dyn_ref::<js_sys::Function>()?;
+    let predicted_events: js_sys::Array = method.call0(event).ok()?.dyn_into().ok()?;
+    let mut best: Option<(f64, web_sys::PointerEvent)> = None;
+    for predicted in predicted_events.iter() {
+        let Ok(predicted) = predicted.dyn_into::<web_sys::PointerEvent>() else {
+            continue;
+        };
+        let lead = predicted.time_stamp() - event.time_stamp();
+        if lead <= 0. {
+            continue;
+        }
+        let distance_to_cap = (lead - MAX_PREDICTION_LEAD_MS).abs();
+        if best
+            .as_ref()
+            .is_none_or(|(best_distance, _)| distance_to_cap < *best_distance)
+        {
+            best = Some((distance_to_cap, predicted));
+        }
+    }
+    let (_, predicted) = best?;
+    let lead = predicted.time_stamp() - event.time_stamp();
+    let scale = (MAX_PREDICTION_LEAD_MS / lead).min(1.) as f32;
+    let event: &web_sys::MouseEvent = event.as_ref();
+    let predicted: &web_sys::MouseEvent = predicted.as_ref();
+    Some(point(
+        position.x + px((predicted.client_x() - event.client_x()) as f32 * scale),
+        position.y + px((predicted.client_y() - event.client_y()) as f32 * scale),
+    ))
 }
 
 fn mouse_position_in_element(event: &web_sys::MouseEvent) -> Point<Pixels> {

@@ -337,8 +337,8 @@ mod tests {
     use std::{cell::RefCell, rc::Rc};
 
     use open_gpui::{
-        AppContext as _, Context, InputEvent, MouseMoveEvent, Render, ScrollDelta,
-        ScrollViewportChangeSource, ScrollWheelEvent, TestAppContext, TouchPhase, div, point, px,
+        AppContext as _, Context, InputEvent, MouseMoveEvent, Render, ScrollDelta, ScrollEvent,
+        ScrollSource, ScrollViewportChangeSource, TestAppContext, TouchPhase, div, point, px,
     };
 
     use super::*;
@@ -400,11 +400,12 @@ mod tests {
                     cx,
                 );
                 window.dispatch_event(
-                    ScrollWheelEvent {
+                    ScrollEvent {
                         position: point(px(10.), px(10.)),
                         delta: ScrollDelta::Pixels(point(px(0.), px(-24.))),
                         modifiers: Default::default(),
                         touch_phase: TouchPhase::Moved,
+                        source: ScrollSource::Pointer,
                     }
                     .to_platform_input(),
                     cx,

@@ -2919,6 +2919,48 @@ production code does not change in response. Scoped image/List review finds no o
 P1/P2 and all five lanes close. Numeric costs, foreign execution, remaining fixed-target owners
 and the real engine consumer remain open; no engine/default selection follows.
 
+### Gestures, Scroll Sources And Hover Successor
+
+Continue from `a3155206fae6be0ae02ee30da39ddd5e58ea448c` against the fixed target. Integrate the
+complete official portable touch/gesture owner and selected-platform source path from
+`9c3273201c`, `79cc17c216`, `956a49e4ca`, `76b1096cbd`, `5e28272c14`, `0855410ccd`, `a85cf449ec`,
+`b3326e13c1`, `7699cb8bb8`, `e39fb7c2e0` and the final BackGesture vocabulary. Include complete
+device-snapped padding (`b1a7ef0cf6`) and listener-only HoverListenerMode (`f0d8b0b0cd`).
+
+Preserve official OngoingScroll, tuning/physics, touch prediction correction, tap/pan/long-press/
+drag/momentum and phase/source rules. Core uses canonical ScrollEvent/ScrollSource and
+PlatformInput::Scroll; retain the official deprecated ScrollWheelEvent type alias while migrating
+workspace callers to the canonical name. It adds no second implementation or authority.
+Platform::gestures defaults to None; Web uses its official tuning service. Independent iOS backend
+selection remains outside this unit, without excluding the shared Core/Web contracts.
+
+Use existing Window input transactions, persistent interceptors, admitted FrameOutput listeners,
+pointer cleanup and native ingress. Timer deadlines and recognizer updates must use the same
+executor clock. On close, quiescence or deactivation, cancel active gesture output and pending
+timers, invalidate queued momentum callbacks and finish terminal phases through the existing
+Window listener custody. A Started callback may retire its own Window before claim resolution;
+retain that offered phase only until dispatch returns so it can receive cancellation after the
+checked-out listeners are restored. A terminal callback must not admit fresh user interaction.
+
+Div/InteractiveText gestures and tooltips preserve target-local geometry, committed hitbox source,
+presentation and candidate refusal. Axis locking modifies the existing scroll path; hover listener
+modality choice does not change visual hover or tooltip policy. Keep Web touch capture/default
+suppression and keyboard user-gesture handling in the actual input/DOM owners rather than adding
+an independent IME or event queue.
+
+The Web producer needs the official input-handler element bounds query. Give ordinary custom
+handlers the official None default and project ElementInputHandler bounds through the existing
+committed transform and native handler lease. A reentrant touch cancellation retains the exact
+checked-out input callback generation and original Window through existing ingress ordering.
+It cannot acquire or promote an unrelated captured-mouse cancellation. Complete Web text/IME
+mirroring remains a separate owner; these prerequisites do not claim that path is synchronized.
+
+Trust official recognizer math and existing regressions. Compile affected public/platform
+consumers and run focused fork clock, lifecycle, routing, scroll and tooltip controls. Qualify the
+changed Web producer on its actual browser path where available; source/wasm compilation does
+not establish trusted OS touch or native platform execution. No unrelated component/compiler/
+platform matrix or measured latency/performance claim follows from this unit.
+
 ## Maintained Baseline Before Engine Adaptation
 
 The [element layout/drawing record](../verification.md#element-layout-svg-and-provisional-list-measurement)

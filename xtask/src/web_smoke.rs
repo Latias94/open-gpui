@@ -147,7 +147,11 @@ const SMOKE_STATE_EXPRESSION: &str = r#"
         input: input ? {
             count: document.querySelectorAll("input").length,
             focused: document.activeElement === input,
+            mode: input.getAttribute("inputmode"),
         } : null,
+        coarsePointer: matchMedia("(pointer: coarse)").matches,
+        touchCore: globalThis.__OPEN_GPUI_WEB_TOUCH_CORE__ ?? null,
+        touchDom: globalThis.__OPEN_GPUI_WEB_TOUCH_DOM__ ?? null,
         probe,
         canvases: globalThis.__OPEN_GPUI_WEB_SMOKE_CANVASES__ ?? null,
         diagnostics,
@@ -217,6 +221,30 @@ fn qualify_browser(cdp: &mut CdpClient, url: &str, allow_unavailable: bool) -> R
         }
     };
     let mut cases = Vec::new();
+    if let Ok(requested) = env::var("OPEN_GPUI_WEB_SMOKE_TOUCH_BACKEND") {
+        let actual = match requested.as_str() {
+            "auto" => {
+                if webgpu {
+                    "WebGPU"
+                } else {
+                    "Gl"
+                }
+            }
+            "webgl" if webgl => "Gl",
+            "webgpu" if webgpu => "WebGPU",
+            "webgl" | "webgpu" => {
+                return Err(format!(
+                    "requested touch smoke backend `{requested}` is unavailable"
+                ));
+            }
+            _ => {
+                return Err(format!(
+                    "OPEN_GPUI_WEB_SMOKE_TOUCH_BACKEND must be auto, webgl, or webgpu; got `{requested}`"
+                ));
+            }
+        };
+        return run_touch_smoke_case(cdp, url, &requested, actual);
+    }
     if webgl {
         cases.push(("webgl", "Gl"));
     }
@@ -270,6 +298,12 @@ fn qualify_browser(cdp: &mut CdpClient, url: &str, allow_unavailable: bool) -> R
             if webgl { "webgl" } else { "webgpu" },
             !webgl
         ),
+    )?;
+    run_touch_smoke_case(
+        cdp,
+        url,
+        if webgl { "webgl" } else { "webgpu" },
+        if webgl { "Gl" } else { "WebGPU" },
     )?;
     if webgl {
         expect_graphics_refusal(
@@ -959,6 +993,386 @@ fn check_renderer_pixels(pixels: &Value) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+fn run_touch_smoke_case(
+    cdp: &mut CdpClient,
+    url: &str,
+    requested: &str,
+    actual: &str,
+) -> Result<(), String> {
+    cdp.call(
+        "Emulation.setTouchEmulationEnabled",
+        json!({
+            "enabled": true, "maxTouchPoints": 2,
+        }),
+    )?;
+    let result = (|| {
+        cdp.call(
+            "Emulation.setDeviceMetricsOverride",
+            json!({
+                "width": 800, "height": 600, "deviceScaleFactor": 1,
+                "mobile": true, "screenWidth": 800, "screenHeight": 600,
+            }),
+        )?;
+        let case_url = format!(
+            "{url}&backend={requested}&software={}&touch=1",
+            actual != "Gl"
+        );
+        navigate_case(cdp, &case_url)?;
+        let ready = wait_for_state(
+            cdp,
+            "Core gesture consumer and editable scroll target",
+            |state| {
+                state.pointer("/touchCore/ready").and_then(Value::as_bool) == Some(true)
+                    && state.get("coarsePointer").and_then(Value::as_bool) == Some(true)
+                    && state.pointer("/input/mode").and_then(Value::as_str) == Some("none")
+            },
+        )?;
+        if ready
+            .pointer("/probe/graphicsBackend")
+            .and_then(Value::as_str)
+            != Some(actual)
+        {
+            return Err(format!("touch smoke selected unexpected renderer: {ready}"));
+        }
+        run_touch_smoke(cdp)?;
+        println!(
+            "web touch smoke backend={requested} actual={actual}: trusted DOM pointer phases/IDs, recognized Core outputs, pointer/touch scroll sources and unique scroll cancellation passed; Core TouchId identity is covered separately by portable/ingress tests"
+        );
+        Ok(())
+    })();
+    let reset_touch = cdp.call(
+        "Emulation.setTouchEmulationEnabled",
+        json!({ "enabled": false }),
+    );
+    let reset_viewport = set_viewport(cdp, 800, 600);
+    if let Err(error) = result {
+        return Err(format!(
+            "{error}; touch reset: {reset_touch:?}; viewport reset: {reset_viewport:?}"
+        ));
+    }
+    reset_touch?;
+    reset_viewport
+}
+
+fn dom_touch_count(state: &Value, kind: &str) -> usize {
+    state
+        .pointer("/touchDom/events")
+        .and_then(Value::as_array)
+        .map_or(0, |events| {
+            events
+                .iter()
+                .filter(|event| event["pointerType"] == "touch" && event["kind"] == kind)
+                .count()
+        })
+}
+
+fn recognized_touch_count(state: &Value, phase: &str) -> usize {
+    state
+        .pointer("/touchCore/scroll")
+        .and_then(Value::as_array)
+        .map_or(0, |events| {
+            events
+                .iter()
+                .filter(|event| event["source"] == "touch" && event["phase"] == phase)
+                .count()
+        })
+}
+
+fn run_touch_smoke(cdp: &mut CdpClient) -> Result<(), String> {
+    let ready = cdp.evaluate(SMOKE_STATE_EXPRESSION)?;
+    let rect = ready
+        .pointer("/canvas/rect")
+        .ok_or("touch smoke canvas bounds are missing")?;
+    let x = number_field(rect, "left")? + number_field(rect, "width")? * 0.5;
+    let y = number_field(rect, "top")? + number_field(rect, "height")? * 0.5;
+    cdp.touch("touchStart", &[(7, x, y)])?;
+    cdp.touch("touchEnd", &[])?;
+    wait_for_state(
+        cdp,
+        "trusted tap reaches Core and focuses the editable target",
+        |state| {
+            dom_touch_count(state, "pointerup") == 1
+                && state.pointer("/touchCore/clicks").and_then(Value::as_u64) == Some(1)
+                && state.pointer("/input/focused").and_then(Value::as_bool) == Some(true)
+                && state.pointer("/input/mode").and_then(Value::as_str) == Some("text")
+        },
+    )?;
+    cdp.evaluate(
+        r#"(async () => {
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        const input = document.querySelector("input");
+        input.blur();
+        input.setAttribute("inputmode", "none");
+        return true;
+    })()"#,
+    )?;
+    let baseline = wait_for_state(cdp, "dismissed keyboard control before panning", |state| {
+        state.pointer("/input/focused").and_then(Value::as_bool) == Some(false)
+            && state.pointer("/input/mode").and_then(Value::as_str) == Some("none")
+    })?;
+    let focus_changes = baseline
+        .pointer("/touchDom/focusChanges")
+        .and_then(Value::as_u64)
+        .ok_or("DOM focus trace is missing")?;
+    let pan_dom_start = baseline
+        .pointer("/touchDom/events")
+        .and_then(Value::as_array)
+        .ok_or("DOM touch trace is missing")?
+        .len();
+
+    cdp.touch("touchStart", &[(7, x, y)])?;
+    cdp.touch("touchMove", &[(7, x, y - 40.)])?;
+    cdp.touch("touchMove", &[(7, x, y - 80.)])?;
+    wait_for_state(
+        cdp,
+        "trusted DOM touch pan scrolls the real Core consumer",
+        |state| {
+            recognized_touch_count(state, "started") == 1
+                && state
+                    .pointer("/touchCore/offsetY")
+                    .and_then(Value::as_f64)
+                    .is_some_and(|y| y < 0.)
+        },
+    )?;
+    cdp.touch("touchCancel", &[])?;
+    wait_for_state(
+        cdp,
+        "trusted DOM touchcancel terminates Core touch scrolling",
+        |state| {
+            dom_touch_count(state, "pointercancel") == 1
+                && recognized_touch_count(state, "cancelled") == 1
+        },
+    )?;
+
+    cdp.touch("touchStart", &[(7, x, y)])?;
+    cdp.touch("touchMove", &[(7, x, y - 40.)])?;
+    wait_for_state(cdp, "second touch pan before capture loss", |state| {
+        recognized_touch_count(state, "started") == 2
+    })?;
+    let released_pointer_id = cdp
+        .evaluate(
+            r#"(() => {
+        const downs = __OPEN_GPUI_WEB_TOUCH_DOM__.events.filter(
+            event => event.kind === "pointerdown" && event.pointerType === "touch");
+        const pointerId = downs.at(-1)?.pointerId;
+        const canvas = document.querySelector("canvas");
+        if (pointerId == null || !canvas.hasPointerCapture(pointerId)) {
+            throw new Error("touch smoke canvas does not own the live touch pointer");
+        }
+        canvas.releasePointerCapture(pointerId);
+        return pointerId;
+    })()"#,
+        )?
+        .as_i64()
+        .ok_or("capture-loss control did not return a real pointer ID")?;
+    cdp.touch("touchMove", &[(7, x, y - 60.)])?;
+    wait_for_state(
+        cdp,
+        "capture loss cancels Core touch scrolling exactly once",
+        |state| recognized_touch_count(state, "cancelled") == 2,
+    )?;
+    cdp.touch("touchEnd", &[])?;
+
+    cdp.touch("touchStart", &[(7, x - 20., y), (8, x + 20., y)])?;
+    cdp.touch("touchCancel", &[])?;
+    wait_for_state(
+        cdp,
+        "both simultaneous DOM touch pointers terminate",
+        |state| {
+            dom_touch_count(state, "pointerdown") == 5
+                && dom_touch_count(state, "pointercancel") == 3
+        },
+    )?;
+    cdp.mouse_move(x, y, 0)?;
+    cdp.call(
+        "Input.dispatchMouseEvent",
+        json!({
+            "type": "mouseWheel", "x": x, "y": y, "deltaX": 0, "deltaY": 40,
+            "button": "none", "buttons": 0,
+        }),
+    )?;
+    wait_for_state(
+        cdp,
+        "trusted wheel retains Pointer source through Core",
+        |state| {
+            state
+                .pointer("/touchCore/scroll")
+                .and_then(Value::as_array)
+                .is_some_and(|events| events.iter().any(|event| event["source"] == "pointer"))
+        },
+    )?;
+    cdp.evaluate(
+        r#"(async () => {
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        return true;
+    })()"#,
+    )?;
+    let state = cdp.evaluate(SMOKE_STATE_EXPRESSION)?;
+    validate_touch_smoke(&state, focus_changes, pan_dom_start, released_pointer_id)?;
+    println!(
+        "web touch metadata trace: {}",
+        json!({
+            "core": state.get("touchCore"), "dom": state.get("touchDom"),
+        })
+    );
+    Ok(())
+}
+
+fn validate_touch_smoke(
+    state: &Value,
+    focus_changes: u64,
+    pan_dom_start: usize,
+    released_pointer_id: i64,
+) -> Result<(), String> {
+    let require = |condition: bool, label: &str| {
+        if condition {
+            Ok(())
+        } else {
+            Err(format!("touch smoke {label}; state: {state}"))
+        }
+    };
+    let scroll = state
+        .pointer("/touchCore/scroll")
+        .and_then(Value::as_array)
+        .ok_or("actual Core scroll trace is missing")?;
+    let dom = state
+        .pointer("/touchDom/events")
+        .and_then(Value::as_array)
+        .ok_or("DOM touch observations are missing")?;
+    require(
+        state
+            .pointer("/touchCore/clickObservation")
+            .and_then(Value::as_str)
+            == Some("core-element-on-click")
+            && state
+                .pointer("/touchCore/scrollObservation")
+                .and_then(Value::as_str)
+                == Some("core-window-interceptor"),
+        "did not install supported Core consumer observations",
+    )?;
+    require(
+        state.pointer("/touchCore/overflow") == Some(&json!(false))
+            && state.pointer("/touchDom/overflow") == Some(&json!(false)),
+        "trace overflowed",
+    )?;
+    require(
+        recognized_touch_count(state, "started") == 2
+            && recognized_touch_count(state, "cancelled") == 2
+            && recognized_touch_count(state, "ended") == 0,
+        "touch scroll source or terminal phases were lost",
+    )?;
+    let touch_phases: Vec<_> = scroll
+        .iter()
+        .filter(|event| event["source"] == "touch")
+        .filter_map(|event| event["phase"].as_str())
+        .collect();
+    let sessions: Vec<_> = touch_phases
+        .split_inclusive(|phase| *phase == "cancelled")
+        .collect();
+    require(
+        sessions.len() == 2
+            && sessions.iter().all(|phases| {
+                phases.len() >= 2
+                    && phases.first() == Some(&"started")
+                    && phases.last() == Some(&"cancelled")
+                    && phases[1..phases.len() - 1]
+                        .iter()
+                        .all(|phase| *phase == "moved")
+            }),
+        "recognized scroll continued or cancelled twice after a terminal phase",
+    )?;
+    require(
+        scroll.iter().any(|event| event["source"] == "pointer"),
+        "wheel did not preserve Pointer source in the actual Core consumer",
+    )?;
+    let touch_dom: Vec<_> = dom
+        .iter()
+        .filter(|event| {
+            event["pointerType"] == "touch"
+                || event["kind"] == "touchend"
+                || event["kind"] == "wheel"
+        })
+        .collect();
+    require(
+        !touch_dom.is_empty() && touch_dom.iter().all(|event| event["trusted"] == true),
+        "used synthetic DOM input instead of trusted browser input",
+    )?;
+    require(
+        dom_touch_count(state, "pointerdown") == 5
+            && dom_touch_count(state, "pointerup") == 2
+            && dom_touch_count(state, "pointercancel") == 3,
+        "DOM pointer phase trajectory differs from the browser-injected contacts",
+    )?;
+    require(
+        touch_dom
+            .iter()
+            .filter(|event| event["pointerType"] == "touch")
+            .all(|event| event["pointerId"].as_i64().is_some()),
+        "DOM pointerId metadata is missing",
+    )?;
+    require(
+        touch_dom
+            .iter()
+            .any(|event| event["kind"] == "pointerup" && event["userActivation"] == true),
+        "DOM tap did not retain browser user activation",
+    )?;
+    require(
+        touch_dom
+            .iter()
+            .filter(|event| {
+                event["cancelable"] == true
+                    && matches!(
+                        event["kind"].as_str(),
+                        Some("pointerdown" | "pointermove" | "pointerup" | "touchend" | "wheel")
+                    )
+            })
+            .all(|event| event["defaultPrevented"] == true),
+        "browser defaults were not suppressed",
+    )?;
+    require(
+        touch_dom.iter().any(|event| {
+            event["kind"] == "touchend"
+                && event["cancelable"] == true
+                && event["defaultPrevented"] == true
+        }),
+        "never exercised the non-passive touchend default suppression",
+    )?;
+    require(
+        touch_dom
+            .iter()
+            .any(|event| event["kind"] == "pointercancel")
+            && touch_dom.iter().any(|event| {
+                event["kind"] == "lostpointercapture"
+                    && event["pointerId"].as_i64() == Some(released_pointer_id)
+            }),
+        "did not exercise both OS cancellation and capture loss",
+    )?;
+    require(
+        state.pointer("/input/focused") == Some(&json!(false))
+            && state.pointer("/input/mode") == Some(&json!("none"))
+            && state
+                .pointer("/touchDom/focusChanges")
+                .and_then(Value::as_u64)
+                == Some(focus_changes)
+            && dom.get(pan_dom_start..).is_some_and(|events| {
+                events
+                    .iter()
+                    .all(|event| event["kind"] != "inputmode" || event["value"] != "text")
+            }),
+        "pan or cancellation changed focus or re-enabled the keyboard",
+    )?;
+    require(
+        state.pointer("/touchCore/clicks").and_then(Value::as_u64) == Some(1),
+        "pan or cancelled contact produced a phantom tap",
+    )?;
+    require(
+        state.pointer("/viewport/scale").and_then(Value::as_f64) == Some(1.)
+            && state.pointer("/viewport/scrollX").and_then(Value::as_f64) == Some(0.)
+            && state.pointer("/viewport/scrollY").and_then(Value::as_f64) == Some(0.),
+        "browser defaults scrolled or zoomed the document",
+    )
 }
 
 fn run_browser_smoke(cdp: &mut CdpClient) -> Result<(), String> {
@@ -2132,6 +2546,24 @@ impl CdpClient {
             .pointer("/result/value")
             .cloned()
             .ok_or_else(|| format!("browser evaluation returned no JSON value: {result}"))
+    }
+
+    fn touch(&mut self, event_type: &str, points: &[(i32, f64, f64)]) -> Result<(), String> {
+        let points: Vec<_> = points
+            .iter()
+            .map(|(id, x, y)| {
+                json!({
+                    "id": id, "x": x, "y": y, "radiusX": 1, "radiusY": 1, "force": 1,
+                })
+            })
+            .collect();
+        self.call(
+            "Input.dispatchTouchEvent",
+            json!({
+                "type": event_type, "touchPoints": points,
+            }),
+        )?;
+        Ok(())
     }
 
     fn mouse_click(&mut self, x: f64, y: f64) -> Result<(), String> {

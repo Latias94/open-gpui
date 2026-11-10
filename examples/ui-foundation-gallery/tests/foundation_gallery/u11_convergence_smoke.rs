@@ -18,7 +18,7 @@ fn navigate_to_page(shell: &Entity<GalleryShell>, cx: &mut VisualTestContext, pa
         } else {
             px(-120.0)
         };
-        cx.simulate_event(ScrollWheelEvent {
+        cx.simulate_event(ScrollEvent {
             position: viewport.center(),
             delta: ScrollDelta::Pixels(point(px(0.0), delta_y)),
             ..Default::default()

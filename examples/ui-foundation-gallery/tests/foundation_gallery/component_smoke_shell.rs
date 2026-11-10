@@ -272,7 +272,7 @@ fn components_gallery_smoke_focused_table_scroll_stays_inside_sample(
         "expected the focused Table window to render the first row"
     );
 
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: table_viewport.center(),
         delta: ScrollDelta::Pixels(point(px(0.0), px(-240.0))),
         ..Default::default()
@@ -314,7 +314,7 @@ fn components_gallery_smoke_textarea_scroll_stays_inside_sample(
     let line_before = bounds(cx, LINE);
     let viewport_position = visible_page_interaction_point(cx, VIEWPORT);
 
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: viewport_position,
         delta: ScrollDelta::Pixels(point(px(0.0), px(-120.0))),
         ..Default::default()
@@ -493,7 +493,7 @@ fn components_gallery_smoke_focused_command_samples_cover_depth_behaviors(
         "expected initial virtualized Command row to render"
     );
 
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: command_viewport.center(),
         delta: ScrollDelta::Pixels(point(px(0.0), px(-520.0))),
         ..Default::default()
@@ -780,7 +780,7 @@ fn components_gallery_smoke_scroll_area_samples_scroll_inside_page(
     let queue_position =
         visible_page_interaction_point(cx, "scroll-area:component-scroll-area:release-queue");
 
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: queue_position,
         delta: ScrollDelta::Pixels(point(px(-72.0), px(0.0))),
         ..Default::default()
@@ -816,7 +816,7 @@ fn components_gallery_smoke_release_queue_scroll_stays_inside_sample(
     let queue_position =
         visible_page_interaction_point(cx, "scroll-area:component-scroll-area:release-queue");
 
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: queue_position,
         delta: ScrollDelta::Pixels(point(px(0.0), px(-56.0))),
         ..Default::default()
@@ -852,7 +852,7 @@ fn components_gallery_smoke_release_queue_card_wheel_does_not_leak_to_page(
     let sample_before = bounds(cx, "gallery:component-scroll-area-sample:release-queue");
     let queue_before = bounds(cx, "gallery:component-scroll-area-item:release-queue:2");
 
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: point(
             sample_before.left() + px(24.0),
             sample_before.top() + px(24.0),

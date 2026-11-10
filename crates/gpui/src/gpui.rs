@@ -45,6 +45,7 @@ mod executor;
 mod platform_scheduler;
 pub(crate) use platform_scheduler::PlatformScheduler;
 mod geometry;
+mod gestures;
 mod global;
 #[cfg(gpui_hot_reload)]
 mod hot_reload;
@@ -131,6 +132,7 @@ pub use element::*;
 pub use elements::*;
 pub use executor::*;
 pub use geometry::*;
+pub use gestures::*;
 pub use global::*;
 pub use open_gpui_macros::{
     AppContext, IntoElement, Render, VisualContext, bench, property_test, register_action, test,

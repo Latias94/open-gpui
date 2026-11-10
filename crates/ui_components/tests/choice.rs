@@ -2,7 +2,7 @@ mod support;
 
 use open_gpui::{
     Context, InteractiveElement, IntoElement, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
-    MouseButton, OperatingSystem, ParentElement, Render, ScrollDelta, ScrollWheelEvent,
+    MouseButton, OperatingSystem, ParentElement, Render, ScrollDelta, ScrollEvent,
     StatefulInteractiveElement, Styled, VisualContext, Window, accesskit, actions, div, point, px,
 };
 use open_gpui_ui_components::{
@@ -5530,7 +5530,7 @@ fn command_runtime_virtualized_results_scroll_inside_viewport_and_reveal_keyboar
         .debug_bounds("scroll-area:Commands:command-list-scroll")
         .expect("command result viewport should expose a stable scroll selector");
 
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: viewport.center(),
         delta: ScrollDelta::Pixels(point(px(0.0), px(-240.0))),
         ..Default::default()

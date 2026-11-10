@@ -5,8 +5,7 @@ mod radio;
 
 use open_gpui::{
     Context, InteractiveElement, IntoElement, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
-    ParentElement, Render, ScrollDelta, ScrollWheelEvent, Styled, Window, accesskit, div, point,
-    px,
+    ParentElement, Render, ScrollDelta, ScrollEvent, Styled, Window, accesskit, div, point, px,
 };
 use open_gpui_ui_components::{
     ActionDescriptor, Button, CommandItemDescriptor, IconButton, Menu, MenuItem,
@@ -274,7 +273,7 @@ fn tabs_vertical_tablist_scrolls_when_constrained(cx: &mut open_gpui::TestAppCon
         "expected ScrollArea viewport to stay inside the tablist shell; tablist={tablist:?} viewport={tablist_viewport:?}"
     );
 
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: tablist_viewport.center(),
         delta: ScrollDelta::Pixels(point(px(0.0), px(-64.0))),
         ..Default::default()
@@ -970,7 +969,7 @@ fn sidebar_long_navigation_scrolls_inside_shared_scroll_area(cx: &mut open_gpui:
         "expected Sidebar ScrollArea viewport to stay inside the sidebar shell; sidebar={sidebar:?} viewport={sidebar_viewport:?}"
     );
 
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: sidebar_viewport.center(),
         delta: ScrollDelta::Pixels(point(px(0.0), px(-72.0))),
         ..Default::default()

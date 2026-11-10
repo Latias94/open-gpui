@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- Official portable touch gestures synthesize taps, source-aware pans with momentum, long presses and claimed touch drags. Platform gesture tuning, back-gesture vocabulary and Window long-press/prediction controls use the existing input owners. Stateful hover listeners can opt into input-modality-independent tracking without changing visual hover or tooltip policy.
+
+- Input handlers can report their editable element bounds through `element_bounds`, defaulting to `None`; `ElementInputHandler` projects its committed bounds into window coordinates. The Web touch producer preserves contact identity, capture cancellation and tap-only keyboard activation through the existing native input lifecycle.
+
 - `container_query` builds its contents from its allocated size in the same frame. `Anchored::attach` places content against a target corner and flips to the side with more room. SVG elements accept byte data; parsed SVGs can be reused and rasterized at exact dimensions.
 
 - Variable-height lists support measurement readiness, provisional and pending-end anchors, uniform item-height hints/reset, `scroll_to_item` for direct indexed scrolling and explicit pause-following-tail through their existing state owner.
@@ -40,6 +44,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Optional native debug hot reload follows the official GPUI/Subsecond 0.7.10 mechanism: build/process-matched patches, foreground application, window refresh, and typed, stateless and stored erased View render boundaries. Run with `dx serve --hot-patch`; compatible render-body edits preserve existing model state. Release/WebAssembly transport exclusion, failed loads, required restarts and disconnects remain explicit. The independently locked native consumer provides an actual edit/build/apply and Submitted-scene pixel acceptance procedure, including the required upstream dx x64 jump-stub backport for the qualified Windows tool.
 
 ### Breaking Changes and Migration Notes
+
+- `PlatformInput::ScrollWheel` becomes `PlatformInput::Scroll`; use `ScrollEvent` and initialize its `source` field in complete literals. The official deprecated `ScrollWheelEvent` type alias remains available. Handle `TouchPhase::Cancelled` and the new touch/long-press/drag/back-gesture variants in exhaustive matches.
 
 - `Window::paint_image` now takes both the element bounds and the image layout bounds. Pass the same bounds twice for an uncropped low-level image. Handle `SvgSize::ExactSize` in exhaustive matches.
 
@@ -197,6 +203,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - `open-gpui-devtools` now projects Table behavior through a pre-capture allowlist with session-scoped opaque table, column, and row ordinals plus derived cell ids; raw ids, values, diagnostic source identities, selectors, and deterministic hashes are excluded from live, history, diff, Inspector, export, artifact, report, and Gallery fixture output, while sanitized diagnostic kinds and counts remain observable.
 
 ### Fixed
+
+- Scroll clamping snaps recomputed padding to the same device-pixel grid as layout, avoiding phantom sub-pixel scroll ranges. Touch timer and lifecycle integration use the existing executor clock, input transactions and Window retirement boundaries.
 
 - Image object-fit preserves explicit aspect ratios and crops Cover content before applying visible-box rounded corners. SVG rasterization caps both dimensions at the official 8192px limit.
 

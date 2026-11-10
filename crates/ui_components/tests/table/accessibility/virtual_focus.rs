@@ -107,7 +107,7 @@ fn table_virtual_focus_proxy_preserves_keyboard_claim_without_stealing_focus(
             &TableColumnId::new("name"),
         ))
         .expect("focused first row should render");
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: row_zero_cell.center(),
         delta: ScrollDelta::Pixels(point(px(0.0), px(-240.0))),
         ..Default::default()
@@ -155,7 +155,7 @@ fn table_virtual_focus_proxy_preserves_keyboard_claim_without_stealing_focus(
             &TableColumnId::new("name"),
         ))
         .expect("proxy keyboard navigation should reveal the next logical row");
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: row_one_cell.center(),
         delta: ScrollDelta::Pixels(point(px(0.0), px(-240.0))),
         ..Default::default()
@@ -168,7 +168,7 @@ fn table_virtual_focus_proxy_preserves_keyboard_claim_without_stealing_focus(
     let table_bounds = cx
         .debug_bounds("table:virtual-focus-table:root")
         .expect("table root should remain rendered while its rows recycle");
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: table_bounds.center(),
         delta: ScrollDelta::Pixels(point(px(0.0), px(10_000.0))),
         ..Default::default()
@@ -201,7 +201,7 @@ fn table_virtual_focus_proxy_preserves_keyboard_claim_without_stealing_focus(
             &TableColumnId::new("name"),
         ))
         .expect("refocused first row should render");
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: row_zero_cell.center(),
         delta: ScrollDelta::Pixels(point(px(0.0), px(-240.0))),
         ..Default::default()
@@ -323,7 +323,7 @@ fn table_virtual_focus_proxy_preserves_claim_from_cell_editor_descendant(
         "the editor descendant, rather than the row focus handle itself, should own focus"
     );
 
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: focused_editor.center(),
         delta: ScrollDelta::Pixels(point(px(0.0), px(-320.0))),
         ..Default::default()

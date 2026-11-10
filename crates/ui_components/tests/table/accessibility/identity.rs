@@ -240,7 +240,7 @@ fn table_virtual_windows_recycle_without_reusing_semantic_identity(
             "row-0000",
         ))
         .expect("body center lane should expose a horizontal viewport");
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: horizontal_viewport.center(),
         delta: ScrollDelta::Pixels(point(px(-440.0), px(0.0))),
         ..Default::default()
@@ -277,7 +277,7 @@ fn table_virtual_windows_recycle_without_reusing_semantic_identity(
             "name",
         ))
         .expect("left pinned cell should remain mounted");
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: pinned_cell.center(),
         delta: ScrollDelta::Pixels(point(px(0.0), px(-240.0))),
         ..Default::default()
@@ -315,7 +315,7 @@ fn table_virtual_windows_recycle_without_reusing_semantic_identity(
             "row-0010",
         ))
         .expect("visible recycled row should expose its center viewport");
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: horizontal_return_viewport.center(),
         delta: ScrollDelta::Pixels(point(px(10_000.0), px(0.0))),
         ..Default::default()
@@ -329,7 +329,7 @@ fn table_virtual_windows_recycle_without_reusing_semantic_identity(
             "name",
         ))
         .expect("visible recycled row should retain its pinned cell");
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: vertical_return_cell.center(),
         delta: ScrollDelta::Pixels(point(px(0.0), px(10_000.0))),
         ..Default::default()

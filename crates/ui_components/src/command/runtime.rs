@@ -303,7 +303,7 @@ pub(super) fn command_content_element(
         ))
         .when(dialog_state.is_some(), |this| this.occlude())
         .ui_semantics(&content_semantics)
-        .on_scroll_wheel(|_, _, _| open_gpui::ScrollWheelIntent::handled().stop_propagation())
+        .on_scroll(|_, _, _| open_gpui::ScrollWheelIntent::handled().stop_propagation())
         .on_key_down(move |event: &KeyDownEvent, window, cx| {
             if event.prefer_character_input || window.default_prevented() {
                 return;
@@ -448,9 +448,7 @@ pub(super) fn command_content_element(
                 .flex_1()
                 .min_h(px(0.0))
                 .overflow_hidden()
-                .on_scroll_wheel(|_, _, _| {
-                    open_gpui::ScrollWheelIntent::handled().stop_propagation()
-                })
+                .on_scroll(|_, _, _| open_gpui::ScrollWheelIntent::handled().stop_propagation())
                 .child(
                     ScrollArea::new(
                         scroll_viewport_id,

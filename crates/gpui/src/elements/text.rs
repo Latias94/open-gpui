@@ -1,10 +1,10 @@
 use crate::{
     ActiveTooltip, AnyView, App, Bounds, CommittedHitbox, DispatchPhase, Element, ElementId,
     GlobalElementId, HighlightStyle, Hitbox, HitboxBehavior, InspectorElementId, IntoElement,
-    LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, PointerCancelEvent,
-    SharedString, Size, TextOverflow, TextRun, TextStyle, TooltipId, TruncateFrom, WhiteSpace,
-    Window, WrappedLine, WrappedLineLayout, clear_active_tooltip, register_tooltip_mouse_handlers,
-    set_tooltip_on_window,
+    LayoutId, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
+    PointerCancelEvent, PrepaintPublicationId, SharedString, Size, TextOverflow, TextRun,
+    TextStyle, TooltipId, TruncateFrom, WhiteSpace, Window, WrappedLine, WrappedLineLayout,
+    clear_active_tooltip, register_tooltip_mouse_handlers, set_tooltip_on_window,
 };
 use anyhow::Context as _;
 use itertools::Itertools;
@@ -1022,7 +1022,7 @@ pub struct InteractiveText {
     text: StyledText,
     click_listener:
         Option<Box<dyn Fn(&[Range<usize>], InteractiveTextClickEvent, &mut Window, &mut App)>>,
-    hover_listener: Option<Box<dyn Fn(Option<usize>, MouseMoveEvent, &mut Window, &mut App)>>,
+    hover_listener: Option<Rc<dyn Fn(Option<usize>, MouseMoveEvent, &mut Window, &mut App)>>,
     tooltip_builder: Option<Rc<dyn Fn(usize, &mut Window, &mut App) -> Option<AnyView>>>,
     tooltip_id: Option<TooltipId>,
     clickable_ranges: Vec<Range<usize>>,
@@ -1040,7 +1040,9 @@ pub struct InteractiveTextState {
     hovered_index: Rc<Cell<Option<usize>>>,
     last_hover_event: Rc<RefCell<Option<MouseMoveEvent>>>,
     active_tooltip: Rc<RefCell<Option<ActiveTooltip>>>,
+    long_press_tooltip_active: Rc<Cell<bool>>,
     committed_tooltip_hitbox: CommittedHitbox,
+    interaction_publication: PrepaintPublicationId,
 }
 
 /// InteractiveTest is a wrapper around StyledText that adds mouse interactions.
@@ -1083,7 +1085,7 @@ impl InteractiveText {
         mut self,
         listener: impl Fn(Option<usize>, MouseMoveEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
-        self.hover_listener = Some(Box::new(listener));
+        self.hover_listener = Some(Rc::new(listener));
         self
     }
 
@@ -1127,25 +1129,8 @@ impl Element for InteractiveText {
         window.with_optional_element_state::<InteractiveTextState, _>(
             global_id,
             |interactive_state, window| {
-                let mut interactive_state = interactive_state
+                let interactive_state = interactive_state
                     .map(|interactive_state| interactive_state.unwrap_or_default());
-                if !window.subtree_presentation().is_interactive()
-                    && let Some(interactive_state) = interactive_state.as_mut()
-                {
-                    interactive_state.mouse_down_index.take();
-                    let hovered_index = interactive_state.hovered_index.take();
-                    let last_hover_event = interactive_state.last_hover_event.borrow_mut().take();
-                    if hovered_index.is_some()
-                        && let Some(hover_listener) = self.hover_listener.take()
-                        && let Some(event) = last_hover_event
-                    {
-                        window.defer(cx, move |window, cx| {
-                            hover_listener(None, event, window, cx)
-                        });
-                    }
-                    clear_active_tooltip(&interactive_state.active_tooltip, window);
-                    interactive_state.committed_tooltip_hitbox = CommittedHitbox::default();
-                }
                 let layout = self.text.request_layout(None, inspector_id, window, cx);
                 (layout, interactive_state)
             },
@@ -1164,18 +1149,16 @@ impl Element for InteractiveText {
         window.with_optional_element_state::<InteractiveTextState, _>(
             global_id,
             |interactive_state, window| {
-                let mut interactive_state = interactive_state
+                let interactive_state = interactive_state
                     .map(|interactive_state| interactive_state.unwrap_or_default());
                 let interactive = window.subtree_presentation().is_interactive();
 
-                if let Some(interactive_state) = interactive_state.as_mut() {
-                    if interactive && self.tooltip_builder.is_some() {
-                        self.tooltip_id =
-                            set_tooltip_on_window(&interactive_state.active_tooltip, window);
-                    } else if interactive {
-                        // If there is no longer a tooltip builder, remove the active tooltip.
-                        interactive_state.active_tooltip.take();
-                    }
+                if interactive
+                    && self.tooltip_builder.is_some()
+                    && let Some(interactive_state) = interactive_state.as_ref()
+                {
+                    self.tooltip_id =
+                        set_tooltip_on_window(&interactive_state.active_tooltip, window);
                 }
 
                 self.text
@@ -1188,6 +1171,50 @@ impl Element for InteractiveText {
                     interactive_state
                         .committed_tooltip_hitbox
                         .record(&hitbox, window);
+                }
+                if interactive
+                    && hitbox.is_active()
+                    && let Some(interactive_state) = interactive_state.as_ref()
+                {
+                    let active_tooltip = interactive_state.active_tooltip.clone();
+                    let long_press_tooltip_active =
+                        interactive_state.long_press_tooltip_active.clone();
+                    let committed_hitbox = interactive_state.committed_tooltip_hitbox.clone();
+                    let mouse_down = interactive_state.mouse_down_index.clone();
+                    let hovered_index = interactive_state.hovered_index.clone();
+                    let last_hover_event = interactive_state.last_hover_event.clone();
+                    let hover_listener = self.hover_listener.clone();
+                    let retire_tooltip = {
+                        let active_tooltip = active_tooltip.clone();
+                        let long_press_tooltip_active = long_press_tooltip_active.clone();
+                        let committed_hitbox = committed_hitbox.clone();
+                        let has_tooltip = self.tooltip_builder.is_some();
+                        move |_, window: &mut Window, _: &mut App| {
+                            if !has_tooltip {
+                                long_press_tooltip_active.set(false);
+                                clear_active_tooltip(&active_tooltip, window);
+                                committed_hitbox.clear();
+                            }
+                        }
+                    };
+                    window.record_prepaint_window_transaction(
+                        interactive_state.interaction_publication,
+                        retire_tooltip,
+                        move |_, window, cx| {
+                            mouse_down.take();
+                            long_press_tooltip_active.set(false);
+                            clear_active_tooltip(&active_tooltip, window);
+                            committed_hitbox.clear();
+                            let was_hovered = hovered_index.take().is_some();
+                            let last_event = last_hover_event.borrow_mut().take();
+                            if was_hovered
+                                && let Some(listener) = &hover_listener
+                                && let Some(event) = last_event
+                            {
+                                listener(None, event, window, cx);
+                            }
+                        },
+                    );
                 }
                 (hitbox, interactive_state)
             },
@@ -1209,7 +1236,7 @@ impl Element for InteractiveText {
         window.with_element_state::<InteractiveTextState, _>(
             global_id.unwrap(),
             |interactive_state, window| {
-                let mut interactive_state = interactive_state.unwrap_or_default();
+                let interactive_state = interactive_state.unwrap_or_default();
                 if let Some(click_listener) = self.click_listener.take() {
                     if let Ok(mouse_position) =
                         hitbox.window_to_layout_point(window.mouse_position())
@@ -1232,12 +1259,20 @@ impl Element for InteractiveText {
                             }
                         }
                     });
-                    if let Some(mouse_down_index) = mouse_down.get() {
+                    {
                         let hitbox = hitbox.clone();
                         let clickable_ranges = mem::take(&mut self.clickable_ranges);
+                        let mouse_down = mouse_down.clone();
+                        let text_layout = text_layout.clone();
+                        let mut captured_mouse_down = None;
                         window.on_mouse_event(
                             move |event: &MouseUpEvent, phase, window: &mut Window, cx| {
-                                if phase == DispatchPhase::Bubble
+                                if phase == DispatchPhase::Capture {
+                                    captured_mouse_down = mouse_down.take();
+                                    if captured_mouse_down.is_some() {
+                                        window.refresh();
+                                    }
+                                } else if let Some(mouse_down_index) = captured_mouse_down.take()
                                     && hitbox.is_mouse_event_target(window)
                                 {
                                     if let Ok(position) =
@@ -1255,13 +1290,11 @@ impl Element for InteractiveText {
                                             cx,
                                         )
                                     }
-
-                                    mouse_down.take();
-                                    window.refresh();
                                 }
                             },
                         );
-                    } else {
+                    }
+                    {
                         let hitbox = hitbox.clone();
                         window.on_mouse_event(move |event: &MouseDownEvent, phase, window, _| {
                             if phase == DispatchPhase::Bubble
@@ -1278,18 +1311,21 @@ impl Element for InteractiveText {
                 }
 
                 window.on_mouse_event({
-                    let mut hover_listener = self.hover_listener.take();
+                    let hover_listener = self.hover_listener.clone();
                     let hitbox = hitbox.clone();
                     let text_layout = text_layout.clone();
                     let hovered_index = interactive_state.hovered_index.clone();
                     let last_hover_event = interactive_state.last_hover_event.clone();
                     move |event: &MouseMoveEvent, phase, window, cx| {
-                        if phase == DispatchPhase::Bubble && hitbox.is_hovered(window) {
+                        if phase == DispatchPhase::Bubble {
                             let current = hovered_index.get();
-                            let updated = hitbox
-                                .window_to_layout_point(event.position)
-                                .ok()
-                                .and_then(|position| text_layout.index_for_position(position).ok());
+                            let updated = if hitbox.is_hovered(window) {
+                                hitbox.window_to_layout_point(event.position).ok().and_then(
+                                    |position| text_layout.index_for_position(position).ok(),
+                                )
+                            } else {
+                                None
+                            };
                             if current != updated {
                                 hovered_index.set(updated);
                                 if updated.is_some() {
@@ -1305,6 +1341,20 @@ impl Element for InteractiveText {
                         }
                     }
                 });
+
+                if let Some(hover_listener) = self.hover_listener.take() {
+                    let hovered_index = interactive_state.hovered_index.clone();
+                    let last_hover_event = interactive_state.last_hover_event.clone();
+                    window.on_mouse_event(move |_: &MouseExitEvent, phase, window, cx| {
+                        if phase == DispatchPhase::Bubble && hovered_index.take().is_some() {
+                            let event = last_hover_event.borrow_mut().take();
+                            if let Some(event) = event {
+                                hover_listener(None, event, window, cx);
+                            }
+                            cx.notify(current_view);
+                        }
+                    });
+                }
 
                 if let Some(tooltip_builder) = self.tooltip_builder.clone() {
                     let active_tooltip = interactive_state.active_tooltip.clone();
@@ -1332,18 +1382,20 @@ impl Element for InteractiveText {
                         let text_layout = text_layout.clone();
                         let pending_mouse_down = interactive_state.mouse_down_index.clone();
                         move |window: &Window| {
-                            committed_hitbox
-                                .current(window)
-                                .and_then(|hitbox| {
-                                    hitbox
-                                        .window_to_layout_point(window.mouse_position())
-                                        .ok()
-                                        .map(|position| (hitbox, position))
-                                })
-                                .is_some_and(|(hitbox, position)| {
-                                    text_layout.index_for_position(position).is_ok()
-                                        && hitbox.contains_window_point(window.mouse_position())
-                                })
+                            !window.last_input_was_keyboard()
+                                && !window.last_input_was_touch()
+                                && committed_hitbox
+                                    .current(window)
+                                    .and_then(|hitbox| {
+                                        hitbox
+                                            .window_to_layout_point(window.mouse_position())
+                                            .ok()
+                                            .map(|position| (hitbox, position))
+                                    })
+                                    .is_some_and(|(hitbox, position)| {
+                                        text_layout.index_for_position(position).is_ok()
+                                            && hitbox.contains_window_point(window.mouse_position())
+                                    })
                                 && pending_mouse_down.get().is_none()
                         }
                     });
@@ -1374,6 +1426,7 @@ impl Element for InteractiveText {
                         build_tooltip,
                         check_is_hovered,
                         check_is_hovered_during_prepaint,
+                        interactive_state.long_press_tooltip_active.clone(),
                         None,
                         window,
                     );
@@ -1840,9 +1893,10 @@ mod text_layer_tests {
 mod tests {
     use super::*;
     use crate::{
-        AppContext as _, Context, Modifiers, MouseButton, ParentElement as _, Render, Styled as _,
-        SubtreePresentation, SubtreePresentationExt as _, SubtreeTransform,
-        SubtreeTransformExt as _, TestAppContext, VisualContext as _, Window, div, point, px,
+        AppContext as _, Context, GestureTuning, InputEvent, Modifiers, MouseButton,
+        ParentElement as _, Render, Styled as _, SubtreePresentation, SubtreePresentationExt as _,
+        SubtreeTransform, SubtreeTransformExt as _, TestAppContext, TouchEvent, TouchId,
+        TouchPhase, VisualContext as _, Window, div, point, px,
     };
     use std::{
         cell::{Cell, RefCell},
@@ -2121,6 +2175,104 @@ mod tests {
         cx.simulate_mouse_down(position, MouseButton::Left, Modifiers::none());
         cx.simulate_mouse_up(position, MouseButton::Left, Modifiers::none());
         assert_eq!(activations.get(), 1);
+    }
+
+    #[crate::test]
+    fn touch_tap_activates_text_without_an_intermediate_frame(cx: &mut TestAppContext) {
+        let activations = Rc::new(Cell::new(0));
+        let (_, cx) = cx.add_window_view({
+            let activations = activations.clone();
+            move |_, _| ClickableTextPresentationProbe {
+                presentation: SubtreePresentation::Visible,
+                activations,
+            }
+        });
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            let started = TouchEvent {
+                id: TouchId(1),
+                phase: TouchPhase::Started,
+                position: point(px(4.), px(4.)),
+                force: None,
+                predicted_position: None,
+            };
+            window.dispatch_event(started.clone().to_platform_input(), cx);
+            window.dispatch_event(
+                TouchEvent {
+                    phase: TouchPhase::Ended,
+                    ..started
+                }
+                .to_platform_input(),
+                cx,
+            );
+        });
+        assert_eq!(activations.get(), 1);
+    }
+
+    #[crate::test]
+    fn long_press_tooltip_is_retired_with_text_presentation(cx: &mut TestAppContext) {
+        let tooltip_builds = Rc::new(Cell::new(0));
+        let (view, cx) = cx.add_window_view({
+            let tooltip_builds = tooltip_builds.clone();
+            move |_, _| VisibleTooltipPresentationProbe {
+                presentation: SubtreePresentation::Visible,
+                tooltip_builds,
+            }
+        });
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            window.dispatch_event(
+                TouchEvent {
+                    id: TouchId(1),
+                    phase: TouchPhase::Started,
+                    position: point(px(4.), px(4.)),
+                    force: None,
+                    predicted_position: None,
+                }
+                .to_platform_input(),
+                cx,
+            );
+        });
+        cx.dispatcher
+            .advance_clock(GestureTuning::default().long_press_duration + Duration::from_millis(1));
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert_eq!(tooltip_builds.get(), 1);
+        assert!(cx.update(|window, _| window.tooltip_bounds.is_some()));
+
+        cx.update_window_entity(&view, |view, _, cx| {
+            view.presentation = SubtreePresentation::Inert;
+            cx.notify();
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert!(cx.update(|window, _| window.tooltip_bounds.is_none()));
+        cx.update_window_entity(&view, |view, _, cx| {
+            view.presentation = SubtreePresentation::Visible;
+            cx.notify();
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert_eq!(tooltip_builds.get(), 1);
+        assert!(cx.update(|window, _| window.tooltip_bounds.is_none()));
+    }
+
+    #[crate::test]
+    fn interactive_text_emits_terminal_hover_when_pointer_leaves(cx: &mut TestAppContext) {
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let (_, cx) = cx.add_window_view({
+            let events = events.clone();
+            move |_, _| HoverableTextPresentationProbe {
+                presentation: SubtreePresentation::Visible,
+                events,
+            }
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.simulate_mouse_move(point(px(4.), px(4.)), None, Modifiers::none());
+        assert!(events.borrow().last().is_some_and(Option::is_some));
+        cx.simulate_mouse_move(point(px(400.), px(400.)), None, Modifiers::none());
+        assert_eq!(events.borrow().last(), Some(&None));
+        let count = events.borrow().len();
+        cx.simulate_mouse_move(point(px(401.), px(400.)), None, Modifiers::none());
+        assert_eq!(events.borrow().len(), count);
     }
 
     #[crate::test]

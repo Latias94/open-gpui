@@ -518,7 +518,7 @@ dependencies = [
  "anyhow",
  "arrayvec",
  "log",
- "nom 8.0.0",
+ "nom",
  "num-rational",
  "v_frame",
 ]
@@ -552,26 +552,6 @@ name = "base64"
 version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
-
-[[package]]
-name = "bindgen"
-version = "0.72.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "993776b509cfb49c750f11b8f07a46fa23e0a1386ffc01fb1e7d343efc387895"
-dependencies = [
- "bitflags 2.13.0",
- "cexpr",
- "clang-sys",
- "itertools 0.13.0",
- "log",
- "prettyplease",
- "proc-macro2",
- "quote",
- "regex",
- "rustc-hash 2.1.3",
- "shlex 1.3.0",
- "syn 2.0.118",
-]
 
 [[package]]
 name = "bit-set"
@@ -795,15 +775,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cexpr"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6fac387a98bb7c37292057cffc56d62ecb629900026402633ae9160df93a8766"
-dependencies = [
- "nom 7.1.3",
-]
-
-[[package]]
 name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -838,17 +809,6 @@ dependencies = [
  "crypto-common",
  "inout",
  "zeroize",
-]
-
-[[package]]
-name = "clang-sys"
-version = "1.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b023947811758c97c59bf9d1c188fd619ad4718dcaa767947df1cadb14f39f4"
-dependencies = [
- "glob",
- "libc",
- "libloading",
 ]
 
 [[package]]
@@ -962,18 +922,6 @@ checksum = "3d44a101f213f6c4cdc1853d4b78aef6db6bdfa3468798cc1d9912f4735013eb"
 dependencies = [
  "bitflags 2.13.0",
  "core-foundation",
- "libc",
-]
-
-[[package]]
-name = "core-text"
-version = "21.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a593227b66cbd4007b2a050dfdd9e1d1318311409c8d600dc82ba1b15ca9c130"
-dependencies = [
- "core-foundation",
- "core-graphics",
- "foreign-types",
  "libc",
 ]
 
@@ -1742,12 +1690,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "glob"
-version = "0.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0cc23270f6e1808e30a928bdc84dea0b9b4136a8bc82338574f23baf47bbd280"
-
-[[package]]
 name = "globset"
 version = "0.4.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2187,15 +2129,6 @@ dependencies = [
 
 [[package]]
 name = "itertools"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "413ee7dfc52ee1a4949ceeb7dbc8a33f2d6c088194d9f922fb8318faf1f01186"
-dependencies = [
- "either",
-]
-
-[[package]]
-name = "itertools"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2b192c782037fadd9cfa75548310488aabdbf3d2da73885b31bd0abd03351285"
@@ -2555,12 +2488,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "minimal-lexical"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
-
-[[package]]
 name = "miniz_oxide"
 version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2662,16 +2589,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "418abd1b6d34fbf6cae440dc874771b0525a604428704c76e48b29a5e67b8003"
 dependencies = [
  "memchr",
-]
-
-[[package]]
-name = "nom"
-version = "7.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d273983c5a657a70a3e8f2a01329822f3b8c8172b73826411a55751e404a0a4a"
-dependencies = [
- "memchr",
- "minimal-lexical",
 ]
 
 [[package]]
@@ -2914,10 +2831,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e022c9d066895efa1345f8e33e584b9f958da2fd4cd116792e15e07e4720a807"
 dependencies = [
  "bitflags 2.13.0",
+ "block2 0.6.2",
  "dispatch2",
+ "libc",
  "objc2 0.6.4",
  "objc2-core-foundation",
  "objc2-io-surface",
+ "objc2-metal 0.3.2",
 ]
 
 [[package]]
@@ -3124,12 +3044,8 @@ dependencies = [
  "async-channel",
  "async-task 4.7.1 (git+https://github.com/zed-industries/async-task.git?rev=015845a19fc31752c02367567d3b8900a406f9da)",
  "backtrace",
- "bindgen",
  "bitflags 2.13.0",
- "cbindgen",
  "chrono",
- "core-graphics",
- "core-text",
  "ctor",
  "derive_more",
  "embed-resource",
@@ -3141,7 +3057,7 @@ dependencies = [
  "icu_segmenter",
  "image",
  "inventory",
- "itertools 0.14.0",
+ "itertools",
  "libc",
  "log",
  "lyon",
@@ -3152,7 +3068,6 @@ dependencies = [
  "open-gpui-core-util",
  "open-gpui-http-client",
  "open-gpui-macros",
- "open-gpui-media",
  "open-gpui-motion",
  "open-gpui-refineable",
  "open-gpui-scheduler",
@@ -3188,6 +3103,41 @@ dependencies = [
  "waker-fn",
  "web-time",
  "windows",
+]
+
+[[package]]
+name = "open-gpui-apple"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "async-task 4.7.1 (git+https://github.com/zed-industries/async-task.git?rev=015845a19fc31752c02367567d3b8900a406f9da)",
+ "block2 0.6.2",
+ "cbindgen",
+ "core-foundation",
+ "core-foundation-sys",
+ "core-graphics",
+ "dispatch2",
+ "etagere",
+ "futures",
+ "image",
+ "libc",
+ "log",
+ "mach2",
+ "objc2 0.6.4",
+ "objc2-core-foundation",
+ "objc2-core-graphics",
+ "objc2-core-video",
+ "objc2-foundation 0.3.2",
+ "objc2-metal 0.3.2",
+ "objc2-quartz-core 0.3.2",
+ "objc2-security",
+ "open-gpui",
+ "open-gpui-collections",
+ "open-gpui-scheduler",
+ "open-gpui-util",
+ "parking_lot",
+ "smallvec",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -3259,7 +3209,7 @@ dependencies = [
  "calloop",
  "futures",
  "image",
- "itertools 0.14.0",
+ "itertools",
  "libc",
  "log",
  "notify-rust",
@@ -3288,47 +3238,38 @@ dependencies = [
  "accesskit",
  "accesskit_macos",
  "anyhow",
- "async-task 4.7.1 (git+https://github.com/zed-industries/async-task.git?rev=015845a19fc31752c02367567d3b8900a406f9da)",
  "bitflags 2.13.0",
  "block2 0.6.2",
- "cbindgen",
  "core-foundation",
  "core-foundation-sys",
  "core-graphics",
- "core-text",
  "ctor",
  "derive_more",
  "dispatch2",
- "etagere",
  "foreign-types",
  "futures",
  "image",
- "itertools 0.14.0",
+ "itertools",
  "libc",
  "log",
- "mach2",
  "objc",
  "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
  "objc2-core-foundation",
  "objc2-core-video",
  "objc2-foundation 0.3.2",
- "objc2-metal 0.3.2",
  "objc2-quartz-core 0.3.2",
- "objc2-security",
  "objc2-user-notifications",
  "open-gpui",
+ "open-gpui-apple",
  "open-gpui-collections",
- "open-gpui-media",
  "open-gpui-scheduler",
  "open-gpui-util",
  "parking_lot",
- "pathfinder_geometry",
  "raw-window-handle",
  "semver",
  "smallvec",
  "strum",
- "thiserror 2.0.18",
  "uuid",
 ]
 
@@ -3343,19 +3284,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "open-gpui-media"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "bindgen",
- "core-foundation",
- "ctor",
- "objc",
- "objc2-core-foundation",
- "objc2-core-video",
-]
-
-[[package]]
 name = "open-gpui-motion"
 version = "0.2.0"
 
@@ -3366,6 +3294,7 @@ dependencies = [
  "anyhow",
  "console_error_panic_hook",
  "open-gpui",
+ "open-gpui-apple",
  "open-gpui-linux",
  "open-gpui-macos",
  "open-gpui-web",
@@ -3441,7 +3370,7 @@ dependencies = [
  "futures",
  "futures-lite",
  "globset",
- "itertools 0.14.0",
+ "itertools",
  "libc",
  "log",
  "mach2",
@@ -3508,7 +3437,7 @@ dependencies = [
  "bytemuck",
  "cosmic-text",
  "etagere",
- "itertools 0.14.0",
+ "itertools",
  "js-sys",
  "log",
  "open-gpui",
@@ -3538,7 +3467,7 @@ dependencies = [
  "etagere",
  "futures",
  "image",
- "itertools 0.14.0",
+ "itertools",
  "log",
  "open-gpui",
  "open-gpui-collections",
@@ -3880,16 +3809,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e8cf8e6a8aa66ce33f63993ffc4ea4271eb5b0530a9002db8455ea6050c77bfa"
 
 [[package]]
-name = "prettyplease"
-version = "0.2.37"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "479ca8adacdd7ce8f1fb39ce9ecccbfe93a3f1344b3d0d97f20bc0196208f62b"
-dependencies = [
- "proc-macro2",
- "syn 2.0.118",
-]
-
-[[package]]
 name = "proc-macro-crate"
 version = "3.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4035,7 +3954,7 @@ dependencies = [
  "built",
  "cfg-if",
  "interpolate_name",
- "itertools 0.14.0",
+ "itertools",
  "libc",
  "libfuzzer-sys",
  "log",

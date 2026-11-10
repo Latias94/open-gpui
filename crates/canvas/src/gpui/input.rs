@@ -2,7 +2,7 @@ use crate::{CanvasEvent, CanvasKey, CanvasKeyModifiers, PointerButton};
 use open_gpui::{
     Bounds, Context, DispatchPhase, ElementGeometry, Entity, FocusHandle, Hitbox, KeyDownEvent,
     Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
-    ScrollDelta, ScrollWheelEvent, Window, px,
+    ScrollDelta, ScrollEvent, Window, px,
 };
 use std::rc::Rc;
 
@@ -62,7 +62,7 @@ impl CanvasInputMapper {
         })
     }
 
-    pub fn scroll_wheel(&self, event: &ScrollWheelEvent) -> Option<CanvasEvent> {
+    pub fn scroll_wheel(&self, event: &ScrollEvent) -> Option<CanvasEvent> {
         if self.local_position(event.position).is_none() {
             return None;
         }
@@ -174,7 +174,7 @@ impl CanvasEditorInputMapper {
         self.mapper.mouse_up(event)
     }
 
-    pub fn scroll_wheel(&self, event: &ScrollWheelEvent) -> Option<CanvasEvent> {
+    pub fn scroll_wheel(&self, event: &ScrollEvent) -> Option<CanvasEvent> {
         self.mapper.scroll_wheel(event)
     }
 }
@@ -307,7 +307,7 @@ pub fn register_canvas_editor_input<T>(
     window.on_mouse_event({
         let entity = entity.clone();
         let handler = handler.clone();
-        move |event: &ScrollWheelEvent, phase, window, cx| {
+        move |event: &ScrollEvent, phase, window, cx| {
             if phase != DispatchPhase::Bubble || !hitbox.should_handle_scroll(window) {
                 return;
             }

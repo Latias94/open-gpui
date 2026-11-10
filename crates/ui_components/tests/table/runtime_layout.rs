@@ -368,7 +368,7 @@ fn table_runtime_pinned_center_scrolls_without_moving_fixed_lanes(
         ))
         .expect("body center lane should expose a horizontal scroll viewport");
 
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: body_center_viewport.center(),
         delta: ScrollDelta::Pixels(point(px(-64.0), px(0.0))),
         ..Default::default()
@@ -503,7 +503,7 @@ fn table_runtime_center_column_window_mounts_only_rendered_center_cells(
         ))
         .expect("body center lane should expose a horizontal scroll viewport");
 
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: body_center_viewport.center(),
         delta: ScrollDelta::Pixels(point(px(-440.0), px(0.0))),
         ..Default::default()
@@ -613,7 +613,7 @@ fn table_runtime_center_column_window_still_emits_sort_for_rendered_center_heade
             "row-0000",
         ))
         .expect("body center lane should expose a horizontal scroll viewport");
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: body_center_viewport.center(),
         delta: ScrollDelta::Pixels(point(px(-440.0), px(0.0))),
         ..Default::default()
@@ -722,7 +722,7 @@ fn table_runtime_center_column_window_keeps_row_virtualizer_independent(
             "row-0000",
         ))
         .expect("body center lane should expose a horizontal scroll viewport");
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: body_center_viewport.center(),
         delta: ScrollDelta::Pixels(point(px(-440.0), px(0.0))),
         ..Default::default()
@@ -747,7 +747,7 @@ fn table_runtime_center_column_window_keeps_row_virtualizer_independent(
             "name",
         ))
         .expect("left pinned cell should remain reachable before vertical scrolling");
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: first_row_pinned_cell.center(),
         delta: ScrollDelta::Pixels(point(px(0.0), px(-240.0))),
         ..Default::default()
@@ -881,7 +881,7 @@ fn table_runtime_pinned_body_scrolls_without_moving_parent(cx: &mut open_gpui::T
         ))
         .expect("first pinned body row cell should render before vertical scrolling");
 
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: first_row_cell.center(),
         delta: ScrollDelta::Pixels(point(px(0.0), px(-240.0))),
         ..Default::default()
@@ -1044,7 +1044,7 @@ fn table_runtime_row_pinning_keeps_bands_fixed_while_center_scrolls(
         ))
         .expect("top pinned row should expose a horizontal center lane");
 
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: top_center_viewport.center(),
         delta: ScrollDelta::Pixels(point(px(-440.0), px(0.0))),
         ..Default::default()
@@ -1087,7 +1087,7 @@ fn table_runtime_row_pinning_keeps_bands_fixed_while_center_scrolls(
         ))
         .expect("first center row left-pinned cell should render before center scrolling");
 
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: center_row_cell.center(),
         delta: ScrollDelta::Pixels(point(px(0.0), px(-240.0))),
         ..Default::default()
@@ -1272,7 +1272,7 @@ fn table_runtime_pinned_headers_still_sort_after_center_scroll(cx: &mut open_gpu
             0,
         ))
         .expect("header center lane should expose a horizontal scroll viewport");
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: body_center_viewport.center(),
         delta: ScrollDelta::Pixels(point(px(-160.0), px(0.0))),
         ..Default::default()
@@ -1373,7 +1373,7 @@ fn table_runtime_pinned_header_drag_emits_controlled_column_order_change(
             0,
         ))
         .expect("center header should expose a horizontal scroll viewport");
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: center_viewport.center(),
         delta: ScrollDelta::Pixels(point(px(-180.0), px(0.0))),
         ..Default::default()
@@ -1633,7 +1633,7 @@ fn table_runtime_virtualized_body_scrolls_without_moving_parent(
         .debug_bounds(&TableDebugSelector::body_scroll("runtime-table"))
         .expect("table body viewport should expose a stable scroll selector");
 
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: viewport.center(),
         delta: ScrollDelta::Pixels(point(px(0.0), px(-240.0))),
         ..Default::default()

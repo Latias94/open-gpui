@@ -60,9 +60,7 @@ pub(super) fn component_tree_samples_section(
                 .border_1()
                 .border_color(rgb(0xd6d8ce))
                 .bg(rgb(0xffffff))
-                .on_scroll_wheel(|_, _, _| {
-                    open_gpui::ScrollWheelIntent::handled().stop_propagation()
-                })
+                .on_scroll(|_, _, _| open_gpui::ScrollWheelIntent::handled().stop_propagation())
                 .p_3()
                 .child(
                     div()

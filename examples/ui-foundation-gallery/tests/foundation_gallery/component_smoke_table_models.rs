@@ -59,7 +59,7 @@ fn components_gallery_smoke_grouped_table_scroll_stays_inside_sample(
         "expected grouped Table row `{later_row_label}` to start outside the rendered window"
     );
 
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: scroll_target,
         delta: ScrollDelta::Pixels(point(px(0.0), px(-520.0))),
         ..Default::default()
@@ -144,7 +144,7 @@ fn components_gallery_smoke_grouped_table_pinned_center_scroll_stays_inside_samp
         "expected release-rollup header center lane to expose the shared horizontal viewport"
     );
 
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: center_viewport.center(),
         delta: ScrollDelta::Pixels(point(px(-180.0), px(0.0))),
         ..Default::default()
@@ -207,7 +207,7 @@ fn components_gallery_smoke_grouped_table_column_reorder_updates_sample(
     focus_components_catalog_entry(&shell, cx, table_entry);
     scroll_page_selector_into_view(&shell, cx, SAMPLE);
     let center_viewport = bounds(cx, &header_center_scroll_selector);
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: center_viewport.center(),
         delta: ScrollDelta::Pixels(point(px(-180.0), px(0.0))),
         ..Default::default()
@@ -351,7 +351,7 @@ fn components_gallery_smoke_matrix_table_center_column_window_stays_inside_sampl
             break;
         }
 
-        cx.simulate_event(ScrollWheelEvent {
+        cx.simulate_event(ScrollEvent {
             position: center_viewport.center(),
             delta: ScrollDelta::Pixels(point(px(-360.0), px(0.0))),
             ..Default::default()
@@ -483,7 +483,7 @@ fn components_gallery_smoke_column_visibility_updates_release_matrix(
     );
 
     let popup_content = bounds(cx, CONTENT);
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: popup_content.center(),
         delta: ScrollDelta::Pixels(point(px(0.0), px(-80.0))),
         ..Default::default()
@@ -618,7 +618,7 @@ fn components_gallery_smoke_row_pinning_table_scroll_stays_inside_sample(
     let bottom_row_before = bounds(cx, &bottom_row_selector);
     let top_name_before = bounds(cx, &top_name_selector);
     let center_rows_before = collect_center_cells(cx);
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: interaction_target.center(),
         delta: ScrollDelta::Pixels(point(px(0.0), px(-240.0))),
         ..Default::default()

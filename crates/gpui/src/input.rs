@@ -186,6 +186,10 @@ impl<V: EntityInputHandler> InputHandler for ElementInputHandler<V> {
         })
     }
 
+    fn element_bounds(&mut self, _window: &mut Window, _cx: &mut App) -> Option<Bounds<Pixels>> {
+        Some(self.element_bounds)
+    }
+
     fn character_index_for_point(
         &mut self,
         point: crate::Point<Pixels>,

@@ -22,7 +22,7 @@ use crate::{
 };
 use open_gpui::{
     Bounds, Hsla, KeyDownEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, ScrollDelta, ScrollWheelEvent, point, px, rgb, size,
+    MouseUpEvent, Pixels, ScrollDelta, ScrollEvent, point, px, rgb, size,
 };
 
 mod feedback;

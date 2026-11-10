@@ -4,7 +4,7 @@ use open_gpui::prelude::FluentBuilder;
 use open_gpui::{
     AnyView, AppContext, Context, Entity, FocusHandle, InputEvent, InteractiveElement, IntoElement,
     KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, MouseButton, ParentElement, Render,
-    ScrollDelta, ScrollHandle, ScrollWheelEvent, StatefulInteractiveElement, Styled,
+    ScrollDelta, ScrollEvent, ScrollHandle, StatefulInteractiveElement, Styled,
     SubtreePresentation, SubtreePresentationExt, VisualContext, VisualTestContext, Window, canvas,
     div, point, px, size,
 };
@@ -741,7 +741,7 @@ fn virtualized_tree_wheel_before_the_next_draw_cancels_materialization(
     cx.update(|window, cx| {
         window.dispatch_keystroke(Keystroke::parse("end").unwrap(), cx);
         window.dispatch_event(
-            ScrollWheelEvent {
+            ScrollEvent {
                 position: point(
                     outer_viewport.left() + px(220.0),
                     outer_viewport.top() + px(8.0),
@@ -803,7 +803,7 @@ fn virtualized_tree_static_handoff_retains_the_interrupted_scroll_fence(
     cx.update(|window, cx| {
         window.dispatch_keystroke(Keystroke::parse("end").unwrap(), cx);
         window.dispatch_event(
-            ScrollWheelEvent {
+            ScrollEvent {
                 position: point(
                     outer_viewport.left() + px(220.0),
                     outer_viewport.top() + px(8.0),

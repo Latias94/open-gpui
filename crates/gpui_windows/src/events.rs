@@ -1639,7 +1639,7 @@ impl WindowsWindowInner {
         unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
         let position = logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor);
         self.state.last_client_pointer_position.set(Some(position));
-        let input = PlatformInput::ScrollWheel(ScrollWheelEvent {
+        let input = PlatformInput::Scroll(ScrollEvent {
             position,
             delta: ScrollDelta::Lines(match modifiers.shift {
                 true => Point {
@@ -1653,6 +1653,7 @@ impl WindowsWindowInner {
             }),
             modifiers,
             touch_phase: TouchPhase::Moved,
+            source: ScrollSource::Pointer,
         });
         let result = self.dispatch_input(input);
         let handled = !result.propagate;
@@ -1682,7 +1683,7 @@ impl WindowsWindowInner {
         unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
         let position = logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor);
         self.state.last_client_pointer_position.set(Some(position));
-        let event = PlatformInput::ScrollWheel(ScrollWheelEvent {
+        let event = PlatformInput::Scroll(ScrollEvent {
             position,
             delta: ScrollDelta::Lines(Point {
                 x: wheel_distance,
@@ -1690,6 +1691,7 @@ impl WindowsWindowInner {
             }),
             modifiers: current_modifiers(),
             touch_phase: TouchPhase::Moved,
+            source: ScrollSource::Pointer,
         });
         let result = self.dispatch_input(event);
         let handled = !result.propagate;

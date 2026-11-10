@@ -1520,7 +1520,7 @@ impl RenderOnce for VirtualizedList {
                     }
                 }
             })
-            .on_scroll_wheel(|_, _, _| open_gpui::ScrollWheelIntent::handled().stop_propagation())
+            .on_scroll(|_, _, _| open_gpui::ScrollWheelIntent::handled().stop_propagation())
             .on_key_down({
                 let runtime = runtime.clone();
                 let on_activate = on_activate.clone();

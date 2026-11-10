@@ -434,7 +434,7 @@ impl RenderOnce for Table {
                     },
                 )
             })
-            .capture_scroll_wheel({
+            .capture_scroll({
                 let scroll_handle = scroll_handle.clone();
                 move |event, window, _| {
                     if handle_vertical_wheel_scroll(&scroll_handle, event, window) {

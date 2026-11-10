@@ -7,13 +7,14 @@ use anyhow::Result;
 use futures::channel::oneshot;
 use open_gpui::{
     Action, ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardEntry, ClipboardItem,
-    ClipboardReadError, ClipboardString, DisplayId, DummyKeyboardMapper, ForegroundExecutor, Image,
-    ImageFormat, Keymap, Menu, MenuItem, NativeAppNotificationHandler, PathPromptOptions, Platform,
-    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PlatformWindow, PlatformWindowActivationSupport, PlatformWindowCapabilities,
-    PlatformWindowCreationCapabilities, PlatformWindowMutationCapabilities, Task, ThermalState,
-    WindowAppearance, WindowCreationSupport, WindowInitialPresentationOrder, WindowKind,
-    WindowMutationSupport, WindowParams,
+    ClipboardReadError, ClipboardString, DisplayId, DummyKeyboardMapper, ForegroundExecutor,
+    GestureTuning, Image, ImageFormat, Keymap, Menu, MenuItem, NativeAppNotificationHandler,
+    PathPromptOptions, Platform, PlatformDisplay, PlatformGestures, PlatformKeyboardLayout,
+    PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, PlatformWindowActivationSupport,
+    PlatformWindowCapabilities, PlatformWindowCreationCapabilities,
+    PlatformWindowMutationCapabilities, ScrollPhysics, Task, ThermalState, WindowAppearance,
+    WindowCreationSupport, WindowInitialPresentationOrder, WindowKind, WindowMutationSupport,
+    WindowParams,
 };
 use open_gpui_wgpu::{
     PreparedWebGraphics, WebBackendPreference, WebGpuContextOptions, WgpuContext, wgpu,
@@ -45,7 +46,40 @@ pub struct WebPlatform {
     window_lifecycle: Rc<Cell<WebWindowLifecycle>>,
     cursor_visible: Rc<Cell<bool>>,
     last_cursor_css: Rc<Cell<&'static str>>,
+    gestures: Rc<WebGestures>,
     _cursor_restore_listeners: Vec<EventListenerHandle>,
+}
+
+/// Gesture feel for the browser, chosen so touch scrolling matches the host
+/// OS's native applications.
+struct WebGestures {
+    tuning: GestureTuning,
+}
+
+impl WebGestures {
+    fn from_user_agent(user_agent: &str) -> Self {
+        let scroll_physics = if user_agent.contains("Android") {
+            ScrollPhysics::android()
+        } else {
+            // iOS, and also desktops: the default exponential decay. Desktop
+            // browsers rarely reach the portable fling at all (trackpads
+            // deliver their own momentum events), so the distinction only
+            // matters for touch screens.
+            ScrollPhysics::ios()
+        };
+        Self {
+            tuning: GestureTuning {
+                scroll_physics,
+                ..GestureTuning::default()
+            },
+        }
+    }
+}
+
+impl PlatformGestures for WebGestures {
+    fn tuning(&self) -> GestureTuning {
+        self.tuning
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -152,6 +186,9 @@ impl WebPlatform {
             cursor_visible.clone(),
             last_cursor_css.clone(),
         );
+        let gestures = Rc::new(WebGestures::from_user_agent(
+            &browser_window.navigator().user_agent().unwrap_or_default(),
+        ));
 
         Self {
             browser_window,
@@ -172,6 +209,7 @@ impl WebPlatform {
             window_lifecycle: Rc::new(Cell::new(WebWindowLifecycle::Available)),
             cursor_visible,
             last_cursor_css,
+            gestures,
             _cursor_restore_listeners: cursor_restore_listeners,
         }
     }
@@ -276,6 +314,10 @@ impl Platform for WebPlatform {
 
     fn background_executor(&self) -> BackgroundExecutor {
         self.background_executor.clone()
+    }
+
+    fn gestures(&self) -> Option<Rc<dyn PlatformGestures>> {
+        Some(self.gestures.clone())
     }
 
     fn foreground_executor(&self) -> ForegroundExecutor {

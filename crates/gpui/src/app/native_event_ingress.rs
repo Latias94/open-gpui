@@ -1737,6 +1737,19 @@ impl NativeEventEnvelope {
                     }
                 }
             }
+            NativeWindowEvent::TouchCancelled { event, source } => {
+                deliver_window_event_if(app, window_id, ingress_sequence, |window, cx| {
+                    if !source.is_current() {
+                        return false;
+                    }
+                    if window.user_interaction_is_admitted() {
+                        let _ = window.dispatch_event(PlatformInput::Touch(event), cx);
+                    } else {
+                        window.dispatch_reserved_native_touch_cancel(event, cx);
+                    }
+                    true
+                })
+            }
             NativeWindowEvent::ModifiersChanged(event) => {
                 deliver_window_event(app, window_id, ingress_sequence, |window, cx| {
                     let _ = window.dispatch_event(PlatformInput::ModifiersChanged(event), cx);
@@ -1900,7 +1913,10 @@ impl NativeEventEnvelope {
     fn is_shutdown_critical(&self) -> bool {
         match &self.target {
             NativeEventTarget::Window {
-                event: NativeWindowEvent::PointerCanceled(_) | NativeWindowEvent::Closed,
+                event:
+                    NativeWindowEvent::PointerCanceled(_)
+                    | NativeWindowEvent::TouchCancelled { .. }
+                    | NativeWindowEvent::Closed,
                 ..
             } => true,
             NativeEventTarget::App(NativeAppEvent::Quit) => true,
@@ -2161,6 +2177,10 @@ pub(super) enum NativeWindowEvent {
     ActiveChanged(PlatformWindowActiveStatusObservation),
     VisibilityChanged(crate::WindowVisibility),
     PointerCanceled(ReservedPointerCancel),
+    TouchCancelled {
+        event: crate::TouchEvent,
+        source: crate::platform::PlatformInputCallbackSource,
+    },
     ModifiersChanged(ModifiersChangedEvent),
     AppearanceChanged,
     InitialPresentationCompleted,
@@ -2204,6 +2224,7 @@ impl NativeWindowEvent {
             Self::ActiveChanged(_)
             | Self::VisibilityChanged(_)
             | Self::PointerCanceled(_)
+            | Self::TouchCancelled { .. }
             | Self::ModifiersChanged(_)
             | Self::InitialPresentationCompleted
             | Self::InitialPresentationFailed
@@ -2244,6 +2265,13 @@ impl NativeWindowEvent {
             Self::ActiveChanged(_) => (NativeCallbackKind::ActiveChanged, None),
             Self::VisibilityChanged(_) => (NativeCallbackKind::VisibilityChanged, None),
             Self::PointerCanceled(reservation) => reservation.diagnostic_metadata(),
+            Self::TouchCancelled { source, .. } => (
+                NativeCallbackKind::PlatformInput,
+                Some(NativeBoundaryGeneration::InputSlot {
+                    boundary: crate::NativeInputBoundary::PlatformInput,
+                    generation: source.generation(),
+                }),
+            ),
             Self::ModifiersChanged(_) => (NativeCallbackKind::ModifiersChanged, None),
             Self::AppearanceChanged => (NativeCallbackKind::AppearanceChanged, None),
             Self::InitialPresentationCompleted => {

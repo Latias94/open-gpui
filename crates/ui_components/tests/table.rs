@@ -2,7 +2,7 @@ mod support;
 
 use open_gpui::{
     Context, FocusHandle, InteractiveElement, IntoElement, MouseButton, ParentElement, Render,
-    ScrollDelta, ScrollWheelEvent, StatefulInteractiveElement, Styled, Window, div, point, px,
+    ScrollDelta, ScrollEvent, StatefulInteractiveElement, Styled, Window, div, point, px,
 };
 use open_gpui_ui_components::{
     PopoverOpenMode, ScrollArea, Table, TableCellEditApplyOutcome, TableCellEditRequest,

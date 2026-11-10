@@ -1058,11 +1058,12 @@ fn transparent_layers_skip_ownership_but_descendant_geometry_still_protects_ance
     let transparent_outside_modal =
         cx.simulate_event_with_dispatch_snapshot(mouse_down(260.0, 260.0));
     assert!(transparent_outside_modal.default_prevented());
-    let scroll_outside_modal = cx.simulate_event_with_dispatch_snapshot(ScrollWheelEvent {
+    let scroll_outside_modal = cx.simulate_event_with_dispatch_snapshot(ScrollEvent {
         position: point(px(260.0), px(260.0)),
         delta: ScrollDelta::Pixels(point(px(0.0), px(-24.0))),
         modifiers: Default::default(),
         touch_phase: TouchPhase::Moved,
+        source: ScrollSource::Pointer,
     });
     let pinch_outside_modal = cx.simulate_event_with_dispatch_snapshot(PinchEvent {
         position: point(px(260.0), px(260.0)),

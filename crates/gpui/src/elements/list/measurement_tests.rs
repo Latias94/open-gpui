@@ -213,10 +213,10 @@ fn test_navigation_cancels_provisional_and_paints_destination(cx: &mut TestAppCo
         ] {
             if measurement_ready {
                 match name {
-                    "horizontal" => cx.simulate_event(ScrollWheelEvent {
+                    "horizontal" => cx.simulate_event(ScrollEvent {
                         position: point(px(50.), px(100.)),
                         delta: ScrollDelta::Pixels(point(px(20.), px(0.))),
-                        ..ScrollWheelEvent::default()
+                        ..ScrollEvent::default()
                     }),
                     "pause_tail" => state.pause_following_tail(),
                     "disable_tail" => state.set_follow_mode(FollowMode::Normal),
@@ -723,10 +723,10 @@ fn test_scroll_after_remeasure_clamps_to_shrunk_item_height(cx: &mut TestAppCont
             draw(100., cx);
         }
         ready.set(true);
-        cx.simulate_event(ScrollWheelEvent {
+        cx.simulate_event(ScrollEvent {
             position: point(px(50.), px(100.)),
             delta: ScrollDelta::Pixels(point(px(0.), px(-30.))),
-            ..ScrollWheelEvent::default()
+            ..ScrollEvent::default()
         });
         assert_eq!(state.logical_scroll_top(), list_offset(5, 70.));
         for _ in 0..2 {

@@ -292,7 +292,7 @@ fn components_gallery_smoke_tree_card_wheel_does_not_leak_to_page(
     let item_before = bounds(cx, ITEM);
     let viewport_position = visible_page_interaction_point(cx, VIEWPORT);
 
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: viewport_position,
         delta: ScrollDelta::Pixels(point(px(0.0), px(-120.0))),
         ..Default::default()
@@ -384,7 +384,7 @@ fn components_gallery_smoke_virtualized_list_scroll_stays_inside_sample(
         "expected row 0016 to start outside the initial rendered window"
     );
     let row_0_before = row_0;
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: point(
             sample_before.left() + px(24.0),
             sample_before.top() + px(24.0),
@@ -441,7 +441,7 @@ fn components_gallery_smoke_virtualized_list_scroll_stays_inside_sample(
         cx,
         "scroll-area:virtualized-list:component-virtualized-list:release-navigation:viewport",
     );
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: viewport.center(),
         delta: ScrollDelta::Pixels(point(px(0.0), px(-240.0))),
         ..Default::default()
@@ -487,7 +487,7 @@ fn components_gallery_smoke_virtualized_list_card_wheel_does_not_leak_to_page(
         "virtualized-list:component-virtualized-list:release-navigation:row:release-nav-0000",
     );
 
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: point(
             sample_before.left() + px(24.0),
             sample_before.top() + px(24.0),

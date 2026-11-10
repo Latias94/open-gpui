@@ -25,6 +25,7 @@ fn update_input_modality(window: &mut Window, event: &PlatformInput) {
     window.last_input_modality = match event {
         PlatformInput::KeyDown(_) => InputModality::Keyboard,
         PlatformInput::MouseMove(_) | PlatformInput::MouseDown(_) => InputModality::Mouse,
+        PlatformInput::Touch(_) => InputModality::Touch,
         _ => window.last_input_modality,
     };
     if window.last_input_modality != old_modality {
@@ -77,11 +78,11 @@ fn normalize_platform_input(
             window.capslock = modifiers_changed.capslock;
             PlatformInput::ModifiersChanged(modifiers_changed)
         }
-        PlatformInput::ScrollWheel(scroll_wheel) => {
+        PlatformInput::Scroll(scroll_wheel) => {
             window.mouse_position = scroll_wheel.position;
             window.mouse_in_window = true;
             window.modifiers = scroll_wheel.modifiers;
-            PlatformInput::ScrollWheel(scroll_wheel)
+            PlatformInput::Scroll(scroll_wheel)
         }
         PlatformInput::Pinch(pinch) => {
             window.mouse_position = pinch.position;
@@ -89,6 +90,27 @@ fn normalize_platform_input(
             window.modifiers = pinch.modifiers;
             PlatformInput::Pinch(pinch)
         }
+        PlatformInput::LongPress(long_press) => {
+            window.mouse_position = if long_press.phase == crate::TouchPhase::Started {
+                window.long_press_capture = None;
+                long_press.start_position
+            } else {
+                long_press.position
+            };
+            window.mouse_in_window = true;
+            PlatformInput::LongPress(long_press)
+        }
+        PlatformInput::TouchDrag(touch_drag) => {
+            window.mouse_position = touch_drag.start_position;
+            window.mouse_in_window = true;
+            PlatformInput::TouchDrag(touch_drag)
+        }
+        PlatformInput::BackGesture(back) => {
+            window.mouse_position = back.start_position;
+            window.mouse_in_window = true;
+            PlatformInput::BackGesture(back)
+        }
+        PlatformInput::Touch(touch) => PlatformInput::Touch(touch),
         PlatformInput::FileDrop(file_drop) => normalize_file_drop(window, cx, file_drop),
         PlatformInput::KeyDown(_) | PlatformInput::KeyUp(_) => event,
     }
