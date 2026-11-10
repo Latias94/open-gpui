@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-11T01:34:00+08:00
+timestamp: 2026-11-11T03:38:58+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -17,6 +17,23 @@ verified_by:
 ---
 
 # Current State
+
+- Native regions, layer-shell controls, simple fullscreen and anchored popups are implemented at
+  `77b56a6af1b2a80ab05c11c42def3522077fd8da`. Complete official native roles and control APIs use
+  the existing command, interaction and presentation/native retirement owners. The
+  [qualification](../../verification.md#native-regions-layer-shell-fullscreen-and-popups)
+  records Core/public 124/124, profiler-disabled close controls 6/6, Linux focused 26/26,
+  Windows native 3/3, final real nested-Wayland popup 1/1 and existing X11/Wayland windowing
+  2/2 passes, plus independent default/runtime 2/2 and 4/4. A reproduced premature-terminal
+  resource-retention defect and two reviewed request-order defects are corrected through the
+  existing FIFO; required close revokes creation admission without fabricating native destruction.
+  Host/Linux correctness Clippy, independent all-feature compilation, Linux headless compilation,
+  earlier Mac foreign/Web compilation and format/static gates pass. All nine scoped lanes close
+  without remaining P1/P2; the exact owned Weston process is stopped. Actual popup grabs,
+  compositor-generated dismissal, input-region pass-through/layer-shell and Apple fullscreen
+  execution remain unqualified. The earlier default-WSLg failure retains its separate scope.
+  Remaining backend/input/render/font/logging owners and the real Nara GPU/Host/View consumer
+  still precede maintenance handoff. Full fixed-target/foundation gates and numeric costs stay open.
 
 - Native state restoration and attention are implemented at
   `9b671ed5148ec8de27aab4ffa0f55971142c621d`. Complete official Mac archives/restoration,
@@ -1123,10 +1140,12 @@ historical scope and is not current branch or CI qualification.
   after qualified identity/diagnostics/list precision, element layout/drawing, gestures/
   scroll/padding/hover, cursor/native file drag, process/dedicated/string and HTTP/download/
   archive support, canonical paths, complete utility composition/native helpers, source-over/
-  native child composition, Windows dialog/host/input safety and native restoration/attention,
+  native child composition, Windows dialog/host/input safety, native restoration/attention and
+  native regions/layer-shell/fullscreen/popups,
   rather than treating the earlier
   public-Platform audit as exhaustive. Continue the remaining
-  supporting utility/dependency and backend/render groups, including native popup,
+  Web input/viewport, Wayland IME/effects/XKB, Mac native input/AppKit, renderer batching,
+  selected-face and logging groups, plus the final public-method/dispatch dispositions,
   in their recorded prerequisite order. Build on qualified
   [shared Apple topology](../../verification.md#shared-apple-framework-topology) and
   [native quit/session shutdown](../../verification.md#native-quit-completion-and-restart-manager).

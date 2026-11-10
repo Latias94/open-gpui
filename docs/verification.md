@@ -8530,6 +8530,178 @@ remains active, no external dependency version/source is changed by this unit, a
 publication occurs. Actual OS indicators/restoration, numerical costs, remaining fixed-target
 differences and the real Nara GPU/Host/View consumer retain separate gates.
 
+## Native Regions, Layer Shell, Fullscreen And Popups
+
+Implementation: `77b56a6af1b2a80ab05c11c42def3522077fd8da`.
+
+This successor adopts complete official `a29c0d41f4787d7cd268d4f8ad1a706af86042c7`,
+`166f044fd046e0de73cd64a027505db90f523b97`,
+`2893b86b048a6e5877eb2f61dac97c172460ba07`,
+`242fe31a399f695103dd0cfe7dcef33a59fbf596` and
+`546a16d64fa589c737a9e33dff02a129a673b21d` against the unchanged fixed target. The official
+popup options, positioner/mapping and native role mechanisms remain the baseline. Press
+serial follow-ups `dc2a339d5d04` and `4d847859f550` retain actual arrival order and original
+source-surface custody rather than selecting an unrelated current focus or numerically
+largest wrapping serial.
+
+Wayland input-region None, empty and rectangle unions compose with its existing irreversible
+interaction gate; region and layer setters do not prematurely map a hidden surface. Runtime
+exclusive zone/edge and creation validation retain the original protocol limits. Anchored
+popups own their actual XDG role, configure/reposition/dismiss/destruction path and one explicit
+original parent, supporting toplevel, layer and nested roles. Weak parent/child relationships
+retain child-before-parent native retirement and modal-dialog blocking without a new registry.
+Popup size mutations use existing placement generations and original reposition tokens.
+Unsupported backends reject the native kind before allocation/publication.
+
+Mac simple fullscreen retains original frame/style and normal client restore bounds, shared
+application presentation-option custody, native-fullscreen exclusions and close cleanup.
+The existing post-borrow command owner carries the native action; no extra foreground queue
+or portable placement ticket is introduced. Native objects stay retained across unlocked
+AppKit calls, each original handle/lifecycle is rechecked, and keyboard restoration uses the
+existing activation-policy/transient owner. Borderless style preserves NonactivatingPanel and
+the compatibility reader retains unknown native style bits. Current committed geometry and
+saved normal bounds retain separate meanings through the observation owner. Archives, titlebar
+actions and interactive move honor the simple-mode exclusion.
+
+The new ordinary popup consumer reproduces a fork error-propagation defect before correction:
+0/1 (`40698ee0-ac54-4a58-a94c-5fd4aa705842`). App::open_window now adds the original failure
+message as anyhow context around its original source, preserving direct backend downcasts;
+open_window_detailed still exposes its exact synchronous stage and typed source. A second
+0/1 (`71d798cf-98ff-4eef-af87-86603d6ffdf5`) reproduces capability checks masking the typed
+unsupported error for passive popup options. The optional backend-owned validate_window_kind
+preflight corrects that ordering, retaining native allocation guards and existing capability
+declarations. Core does not infer native support from an OS name.
+
+Initial affected Core/public checks pass 115/117
+(`18c1828b-0be8-4621-bb57-fc6273f9bf55`). Correct native-close facts expose a post-map failure
+misclassification: creation policy validation now runs only for a still-live native target;
+App's existing transaction rejects the closed target at ClosedDuringNativeCreateOrMap without
+running its root builder. The new toggle fixture is corrected to expect Core's interaction
+Rejected terminal, while direct dispatch to the closed native owner still requires WindowClosed.
+Subsequent 116/117 (`adae8681-9b1d-499d-9ed1-e814e58a40f1`) exposes a new fixture's unrestored
+capability override before ordinary-window recovery; the original capability is restored.
+An independent dispatcher control then exposes its missing asynchronous drain before checking
+delivery. After correction, Core/commands/mutation/creation/public checks pass 118/118
+(`4b77fe85-e6e8-4934-93b4-9030cc839037`). The final control counts
+dispatcher calls independently of TestWindow's own retirement refusal, preserving the Core
+admission check. Original mutation, input, close, panic and provisional assertions remain intact.
+
+Actual affected Windows native controls pass 3/3
+(`8ea96c42-c5d0-4409-a34c-71d3d6f4f5b0`). The existing native window-services trajectory now
+executes unsupported region/layer/simple-mode calls, observes the exact no-generation toggle
+refusal and unchanged bounds, and opens a popup against its actual live HWND parent. Typed
+refusal publishes neither a root nor another native registration. Its original queued-attention
+retirement and exact owner/platform release assertions remain. Existing complete windowing
+roundtrip/input/retirement and recovery/refusal/unwind workflows pass in the same run.
+
+Independent review confirms the Core and Mac ownership seams after corrections. Linux review
+finds stale popup configuration geometry and an unmapped native parent accepted before role
+creation. The correction retains initial/compositor/reposition/expired identity through actual
+surface application and revalidates around resize callback reentry; parent admission requires
+actual completed mapping and buffer presentation. Their final compilation, focused regressions
+and actual compositor trajectory remain separately qualified below. A source model or a typed
+closure alone does not prove native popup behavior, grabs, input pass-through or desktop pixels.
+
+The same review identifies passive nonactivation falsely declared unsupported. Core now
+normalizes a non-grabbing popup's effective first-appearance request to false, preserving
+official default-argument use as well as explicit false. Wayland advertises that actual passive
+policy without granting the same promise to grabbing popups. The role continues reporting
+honest false creation facts. The review verifies real protocol ordering against locked
+wayland-protocols 0.32.13: repositioned, popup.configure, then surface.configure; newer configure
+acknowledgements can consume older serials. Stale rejected configurations do not apply geometry
+or commit their old state and need not each receive a separate acknowledgement.
+
+Mac selected-feature all-target foreign correctness Clippy passes for aarch64-apple-darwin
+with `runtime_shaders,font-kit,test-support`, including the new saved-bounds/style/count
+controls. Existing LLVM 22.1.6 plus verified Zig 0.16.0 Darwin headers compile the C closure.
+This is compilation, not AppKit execution or notch/presentation-option visual qualification.
+The independent ordinary consumer passes 2/2 in default type-only mode
+(`432703ce-0940-47fe-8074-ad92134223d2`) and 4/4 with bench-support
+(`35d7e504-66cd-40ed-beaa-1ad0980316bb`), executing the existing returning headless App without
+test-support. Region/layer/no-op mode calls, typed passive/grabbing popup refusal, unchanged
+parent, replacement and shutdown retain their complete workflows. An explicit fixture wayland
+feature gates the Linux-only edge API rather than assuming that a dependency enabled it.
+
+The first Linux test build exposes a new consumer's raw-window trait import shadowing GPUI's
+inherent window_handle query. Removing that trait import and explicitly qualifying both
+raw-native queries preserves the exact logical WindowId checks. Corrected Linux X11/Wayland
+popup configuration, creation/capability and press-serial controls pass 26/26
+(`4e63b68b-dcf7-4109-8fd9-56387dda8c43`). The affected production check also passes.
+
+The actual WSLg trajectory (`c8073d87-5a5a-459e-b946-5ceccd17dae7`) creates and submits the
+parent and two popups, then truthfully refuses live reposition because that compositor exposes
+an older XDG version. Capability declarations are not widened to make the test pass. Standalone
+Weston 14.0.2 packages and their actual runtime dependencies are extracted under MySoftware,
+without installing the simulated 102-package system closure. The initial pure-headless Weston
+probe (`d2508e5c-fb72-41c4-b36d-a4ae80ba2d1d`) has no wl_seat and fails before the consumer.
+An isolated nested Wayland/pixman kiosk compositor supplies the protocol and seat; its GPUI
+client uses native WGPU with Mesa 26.1.5 lavapipe/llvmpipe, LLVM 21.1.8.
+
+The complete nested trajectory first fails 0/1 (`0526fed5-06b2-4185-9504-c8807735311d`) after
+both precise resize observations and matching Submitted frames: logical closure leaves three
+native surfaces retained and prevents headless detach. A diagnostic repeat reproduces the
+failure (`e4fc4532-0f45-4b94-bfc5-83e019002cab`): child close callbacks claim native terminal
+before their renderer shutdown, entering the existing emergency fail-closed retention. This is
+a concrete fork lifecycle mismatch with official close behavior, not an official positioner bug.
+Required logical closure now enters the existing non-coalescing, shutdown-critical FIFO through
+on_close_required. It bypasses user veto while retaining each child's original presentation and
+native retirement owner. Only actual surface destruction emits on_close; the parent waits for
+live child surfaces. No new shutdown queue or native registry is introduced, and all temporary
+diagnostic instrumentation is removed.
+
+The corrected original native trajectory passes 1/1
+(`b430325b-b7c0-44f9-a240-f4cbce8ee9c5`): unmapped-parent refusal, actual parent/two-popup
+Submitted frames, None/empty/full region requests with subsequent Submitted frames, two exact
+placement generations and matching sizes, complete native tree retirement, headless detach,
+retained App/model/TextSystem and normal platform release. This is software-rendered native
+Wayland execution, not physical GPU performance, input pass-through or independent pixel proof.
+Two further reviewed request-order cases and their qualification follow below.
+
+The first new Core regression does not compile because its raw-window trait import shadows
+the logical handle getter; explicitly using Window::window_handle corrects the test without
+changing its identity assertion. The corrected regression then fails 0/1
+(`6d008508-e134-486d-92c2-cc6ca774a7b1`): required closure during the root builder leaves
+creation admission live until FIFO delivery. The callback now revokes the existing logical
+admission synchronously, then queues removal, without setting native_closed. The same control
+requires ClosedDuringBuild, zero publication/draw and normal rollback retirement.
+
+The extended native trajectory fails 0/1 (`5a8e5d87-93ba-4c7c-9747-a6f47e915d23`) after an
+additional real popup has submitted: interaction quiescence incorrectly filters PopupDone.
+That dismissal now checks native owner/surface liveness before the interaction gate; Configure
+and Repositioned keep their original mutation gate. The control injects this protocol event into
+the original backend state and labels it simulated. It proves delivery and retirement after
+quiescence, not the compositor's choice to send PopupDone. The trajectory also closes the
+original parent inside another child's builder before its final complete headless transition.
+Bounded independent rereview closes both P2 findings without another P1/P2; executed final
+results follow, rather than treating source review as a runtime pass.
+
+Final affected Core/public checks pass 124/124
+(`17889eb3-e912-4bfc-a374-4ebe25f783bc`), retaining the original command/mutation/creation
+controls and adding four required-close cases plus two ordinary public API/runtime cases.
+The same six required-close cases pass with profiling disabled
+(`b0fae90f-b8bc-48dd-ac07-b3b037cc0b50`). The final expanded actual native trajectory passes
+1/1 (`0c72faa6-c759-41b6-b2ec-54d467669183`), including both reviewed order corrections and
+the original complete tree/resize/region/headless/lifetime assertions. Unexecuted grabbing,
+external input injection, input-region pass-through and layer-shell behavior remain explicit.
+
+Existing unchanged native hidden/presented windowing round trips pass 2/2
+(`e4b6e75e-875c-424b-a945-2328504b1e7c`) against X11 and the same nested Weston compositor,
+including actual X11 keyboard-driven Submitted output, headless transitions and normal exit.
+The earlier default-WSLg exit failure remains a separate recorded environment/result; this
+run does not claim that compositor was retested or that its failure was corrected. Final
+Core/Windows all-target/all-feature correctness Clippy and independently locked all-target/
+all-feature compilation pass after the required-close changes.
+
+Final actual Linux X11/Wayland/test-support all-target correctness Clippy and no-default-feature
+headless production compilation pass. Earlier Mac selected all-target foreign Clippy and Web
+wasm production compilation retain their stated source/platform scope. Root and independent
+format checks, existing import/public-API/doc/release scans and workflow YAML parsing pass.
+No lockfile or external package changes are introduced. All nine implementation/test/review
+lanes are closed; the exact owned Weston PID/runtime/executable is revalidated and stopped.
+No remote CI, native Apple fullscreen/Space effects, explicit popup grab, actual compositor
+dismissal, layer-shell/input-region input behavior, physical GPU cost or engine integration
+qualification follows. Continue the remaining fixed-target owners and real Nara consumer.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:

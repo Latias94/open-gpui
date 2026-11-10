@@ -3215,7 +3215,76 @@ native lifetime seams. Qualify Mac/Linux source compilation separately from actu
 state restoration, Space changes or attention indicators. Existing foreign toolchain failures
 do not justify repeating unavailable benchmark matrices or claiming native execution.
 
+### Native Regions, Layer Shell, Fullscreen And Popup Successor
+
+Continue after `9b671ed5148ec8de27aab4ffa0f55971142c621d` against the same fixed target.
+Adopt complete official input regions (`a29c0d41f4787d7cd268d4f8ad1a706af86042c7`), runtime
+layer-shell zone/edge and creation validation (`166f044fd046e0de73cd64a027505db90f523b97`),
+simple fullscreen (`2893b86b048a6e5877eb2f61dac97c172460ba07`, `242fe31a399` and target
+follow-ups), and parent-anchored native popups (`546a16d64fa589c737a9e33dff02a129a673b21d`
+with target follow-ups). Types, facade methods or transient parenting alone do not complete
+these owners.
+
+Preserve the official None/empty/rect input-region semantics. The Wayland native effective
+region must compose with its existing interaction/retirement gate; region changes cannot
+reacquire revoked input. Runtime layer-shell changes reuse the current surface and validate
+the anchored exclusive edge, including creation, without inventing a portable placement result.
+
+Simple fullscreen retains the official saved frame/style/bounds, multi-window application
+presentation options, close cleanup and native-fullscreen exclusions. The existing post-borrow
+command queue owns this native presentation action, as it already owns interactive move/resize.
+It requires interaction admission, retains exact native liveness and releases state locks before
+AppKit reentry. Mac still advertises no typed live placement support; simple fullscreen does
+not add a portable placement capability or fabricate a mutation/activation ticket. Its saved
+normal bounds and current native geometry retain their separate official meanings. Amend
+ADR 0029 rather than silently bypass its boundary.
+
+Adopt the complete official popup description, positioner and Wayland role lifecycle: XDG,
+layer-shell and nested parents; anchor geometry; configure/reposition; press-only grabs;
+dismissal; and child-before-parent destruction. Keep explicit fork transient-dialog ownership
+intact. Popup parents are exact live handles resolved within the opening App; reject mixed
+transient and popup parents. Preserve current sequenced callback, native source and retirement
+owners. Unsupported native backends return the official typed error before publication.
+
+Preserve ordinary downcasts to that backend error through App::open_window, while the detailed
+API retains its stage. Backend-owned kind validation precedes generic capability checks so a
+passive request does not mask typed unsupported behavior. A non-grabbing popup's native role
+is always nonactivating: normalize its effective first-appearance request to false, including
+the generic default true, and declare that exact supported policy for Wayland passive popups.
+Grabbing popups keep their separate explicit protocol semantics.
+
+Native dismissal and required child closure enter the existing FIFO as required logical close
+requests, retaining the original WindowId and bypassing user veto. They do not report native
+destruction. Each child completes its existing presentation shutdown before actual role/surface
+destruction; only that destruction emits the terminal callback. Parent retirement waits for its
+live child surfaces. Preserve the complete actual popup-to-headless transition as the regression
+for this fork lifecycle seam, including its original failure.
+
+Compile affected owners/public consumers and test actual fork command ordering, parent/lifetime,
+gate and callback seams. Trust unchanged official algorithms rather than repeat component or
+whole-framework matrices. Actual compositor popup/region behavior and Apple fullscreen/Space
+effects remain distinct from source compilation and TestPlatform controls. Preserve prior
+foreign/runtime failures without treating them as reasons to omit a complete official owner.
+
 ## Maintained Baseline Before Engine Adaptation
+
+The [native control/popup record](../verification.md#native-regions-layer-shell-fullscreen-and-popups)
+qualifies `77b56a6af1b2a80ab05c11c42def3522077fd8da`: complete official input regions,
+layer-shell controls, simple fullscreen and native anchored-popup roles preserve the current
+post-borrow commands and presentation/native retirement owners. A real premature-terminal
+resource-retention defect and two reviewed ordering defects are corrected without another
+shutdown queue: required closure revokes creation admission, requests logical removal through
+the existing FIFO and emits native terminal only after actual destruction. Final Core/public
+124/124, profiler-disabled close 6/6, Linux focused 26/26, Windows native 3/3, actual expanded
+nested-Wayland popup 1/1 and existing X11/Wayland windowing 2/2 pass. Independent ordinary
+default/runtime 2/2 and 4/4, affected host/consumer checks, host/Linux correctness Clippy,
+headless compilation, earlier Mac foreign/Web compilation and format/static gates pass.
+All nine scoped lanes close without P1/P2; original failures and the earlier default-WSLg
+exit result remain explicit. The exact owned compositor is stopped. Unexecuted grabs, actual
+compositor dismissal, input-region/layer-shell behavior, Apple fullscreen/Space effects and
+numeric costs stay open. Continue remaining Web/Wayland/Mac input, render/font/logging and
+public-method/dispatch dispositions before the real Nara GPU/Host/View consumer and separate
+maintenance. No full fixed-target or foundation gate closes here.
 
 The [native state/attention record](../verification.md#native-window-state-and-attention)
 qualifies `9b671ed5148ec8de27aab4ffa0f55971142c621d`: complete official restoration, attention
