@@ -8297,6 +8297,39 @@ four implementation/consumer/review lanes are closed. Actual foreign Unix shells
 descriptor capture and file-limit execution, browser runtime, numerical costs, remaining
 backend/render groups and the real Nara GPU/Host/View consumer retain separate scope.
 
+## Source-Over Alpha And Native Child Composition
+
+Implementation: `37d211ea030388e2c413bcb7301cb8588d779919`.
+
+This successor adopts complete official
+`e18de65b75901f8720ff9c9320bb013395de54e5` and
+`bc6fc117403dd6dc872072626fbc8269c0c06cf1` from fixed Zed
+`635026fabc38440fce5e1767d125026a17b12012`. DirectX ordinary and path-sprite pipelines use
+inverse-source-alpha destination alpha; WGPU path sprites use the standard premultiplied
+source-over blend state. The shared Apple renderer already contains the complete corresponding
+source-over settings. No shader, color-space policy, pass, resource owner or submission changes.
+
+The existing DirectComposition constructor creates its target below native child HWNDs.
+Ordinary renderer recreation uses that same constructor. Native children consequently remain
+above GPUI-drawn menus/popovers; native child composition does not supply an arbitrary shared
+UI layer tree or a Nara renderer adapter. Existing exact clip/resource leases, candidate
+acceptance, native generations and retirement retain their owners. Production changes match
+the official configuration without fork adaptations. No tests that merely repeat constants
+or unrelated framework/component/compiler matrix are added.
+
+Affected Windows/WGPU all-target/all-feature compilation passes on Windows/Rust 1.95. The
+selected existing consumers exercise the actual fork render paths: native DirectX scene
+pixels against the existing independent gamma oracle with notified/cached frames, and WGPU
+mixed-scene packed/storage transport pixel equality with exact clipping/resource submission.
+Both pass, 2/2 with 405 unrelated tests outside selection
+(`b10fea05-21ce-4189-b45b-bf630c8fd97b`). Bounded independent review finds no P1/P2 and its
+single lane closes. Affected formatting, whitespace and the existing import/public-API/
+document/release gates pass; no new dependencies, public signatures or test framework are added.
+These scopes do not establish an independent translucent-destination alpha oracle or desktop
+child-HWND/WebView visibility. No desktop screenshot, live device timeout, Apple/browser
+execution, numerical performance or real Nara GPU/Host/View qualification follows from source
+adoption and those existing consumer regressions.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:

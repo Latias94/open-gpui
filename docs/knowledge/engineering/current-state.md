@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-10T23:32:00+08:00
+timestamp: 2026-11-10T23:40:00+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -17,6 +17,18 @@ verified_by:
 ---
 
 # Current State
+
+- Source-over alpha/native child composition is implemented at
+  `37d211ea030388e2c413bcb7301cb8588d779919`. Complete official DirectX/WGPU settings and
+  DirectComposition below-child startup/recreation replace the remaining old configuration;
+  Apple settings were already adopted. The
+  [qualification](../../verification.md#source-over-alpha-and-native-child-composition)
+  records affected all-target/all-feature compilation, existing actual native/WGPU consumers
+  2/2 and format/static gates. One bounded reviewer closes without P1/P2. The diff changes no
+  clip/resource/candidate/submission owner. Independent translucent-destination alpha,
+  desktop child/WebView visibility and real device-loss visual proof remain unexecuted.
+  Continue remaining backend/render owners and logging disposition, then the actual Nara
+  GPU/Host/View consumer; full target/foundation gates and numerical costs stay open.
 
 - Utility composition/native helpers are implemented at
   `8e0517f56506706f1c40a76fd8ed84f6643deb55`. Complete official shell, JSON replacement/union,
@@ -1082,7 +1094,8 @@ historical scope and is not current branch or CI qualification.
 - Continue the [residual source inventory](../../imports/zed-gpui-upstream-sync-candidates.md#november-10-residual-source-reconciliation)
   after qualified identity/diagnostics/list precision, element layout/drawing, gestures/
   scroll/padding/hover, cursor/native file drag, process/dedicated/string and HTTP/download/
-  archive support, canonical paths and complete utility composition/native helpers, rather than treating the earlier
+  archive support, canonical paths, complete utility composition/native helpers and source-over/
+  native child composition, rather than treating the earlier
   public-Platform audit as exhaustive. Continue the remaining
   supporting utility/dependency and backend/render groups, including native popup,
   in their recorded prerequisite order. Build on qualified

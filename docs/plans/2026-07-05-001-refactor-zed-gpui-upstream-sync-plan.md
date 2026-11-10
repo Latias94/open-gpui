@@ -3156,6 +3156,17 @@ Record those limits without repeating unrelated whole-platform/component/compile
 
 ## Maintained Baseline Before Engine Adaptation
 
+The [source-over/native child composition record](../verification.md#source-over-alpha-and-native-child-composition)
+qualifies `37d211ea030388e2c413bcb7301cb8588d779919`: complete official DirectX/WGPU blend
+settings and the DirectComposition startup/recreation setting below child HWNDs replace old
+configuration without changing fork clip/lease/submission owners. Existing actual native and
+WGPU consumers pass 2/2; affected all-target/all-feature compilation and format/static gates
+pass. One bounded reviewer closes without P1/P2. Apple settings were already adopted. No
+independent translucent-destination alpha oracle, desktop child/WebView or real device-loss
+visual qualification follows. Continue remaining backend/render owners and logging disposition,
+then the actual Nara GPU/Host/View consumer before maintenance handoff. Full target/foundation
+closure and numeric costs remain open.
+
 The [utility composition/native helper record](../verification.md#utility-composition-shells-and-development-assets)
 qualifies `8e0517f56506706f1c40a76fd8ed84f6643deb55`: complete official shell/capture, JSON
 replacement/union, development assets, fragment/redaction and explicit Unix file-limit setup
