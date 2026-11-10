@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-10T16:37:00+08:00
+timestamp: 2026-11-10T17:08:20+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -17,6 +17,21 @@ verified_by:
 ---
 
 # Current State
+
+- Cached element identity, borrow/log diagnostics and uniform-list precision are implemented at
+  `1a14b2076edce2dbbf097cbc8ed84a961c0f9826`. Official prefix hashes retain full paths through
+  deferred/candidate rollback; public borrow origins reuse existing AppCell convergence; the
+  official f64 list calculation preserves large-offset local spacing. Final Core/public 32 and
+  logging 1 pass, as do independent all-target compilation, affected correctness Clippy,
+  formatting and existing static/document gates. The [qualification](../../verification.md#cached-element-identity-diagnostics-and-list-precision)
+  keeps earlier semantic 74 at its checkpoint scope. Bounded review/rereview closes the fork
+  raw-shared borrow seam with no outstanding P1/P2, and all six lanes close. The
+  [residual source inventory](../../imports/zed-gpui-upstream-sync-candidates.md#november-10-residual-source-reconciliation)
+  records further layout, utility/dependency and backend mechanisms. Exact target licenses
+  confirm Apache-2.0 logging crates; ADR 0001 corrects historical wording while retaining the
+  current ordinary tracing graph pending owner comparison. Trust unchanged official coverage
+  and qualify affected fork seams. Full refresh, real engine consumer, numerical costs and
+  maintenance handoff remain open; this unit adds no native execution or default selection.
 
 - Shared Apple topology is implemented at `8bd39cef78dbb7c477df08f8fc2e1ee386f22851`.
   Official shared Metal/atlas/shaders, dispatcher/activity, CoreText/OpenType, Keychain,
@@ -969,7 +984,10 @@ historical scope and is not current branch or CI qualification.
 
 # Next Action
 
-- Continue the final fixed-target difference audit after qualified
+- Continue the [residual source inventory](../../imports/zed-gpui-upstream-sync-candidates.md#november-10-residual-source-reconciliation)
+  after qualified cached identity/diagnostics/list precision, rather than treating the earlier
+  public-Platform audit as exhaustive. Complete image/SVG/layout/List/gesture owners and the
+  supporting dependency/backend groups in their recorded prerequisite order. Build on qualified
   [shared Apple topology](../../verification.md#shared-apple-framework-topology) and
   [native quit/session shutdown](../../verification.md#native-quit-completion-and-restart-manager).
   Trust unchanged official coverage and concentrate compilation/regressions on affected fork

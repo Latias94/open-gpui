@@ -54,9 +54,16 @@ The initial import set is expected to include:
 - `refineable`
 - `derive_refineable`
 
-The project must not import Zed's GPL-licensed tracing crates. Any dependency on `ztracing` or
-`ztracing_macro` must be replaced with ordinary `tracing`, feature-gated local instrumentation, or
-a new Apache-2.0 compatible crate owned by this workspace.
+The initial import excluded the then-GPL-licensed Zed tracing revisions and replaced their uses
+with ordinary `tracing` or workspace-owned instrumentation. Official `ac5af8b9e1` subsequently
+relicensed zlog, ztracing and ztracing_macro to Apache-2.0; source inspection confirms those
+licenses at the fixed November target `635026fabc38440fce5e1767d125026a17b12012`.
+The [current reconciliation queue](../imports/zed-gpui-upstream-sync-candidates.md#november-10-residual-source-reconciliation)
+records that evidence. The existing ordinary tracing graph and import check's name exclusions
+remain the selected dependency disposition pending comparison of the complete logging/profiler
+owners. They are no longer a license-based rejection of these exact official revisions.
+Any later adoption updates this disposition and its import checks with concrete consumer and
+dependency evidence. GPL application code remains outside the framework closure.
 
 For permissively licensed third-party crates, the preferred order is:
 
@@ -151,7 +158,7 @@ reference.
 
 | Risk | Severity | Likelihood | Mitigation |
 | --- | --- | --- | --- |
-| Hidden GPL dependency enters the workspace | High | Medium | Review manifests before import; reject `ztracing` and application crates |
+| Hidden GPL dependency enters the workspace | High | Medium | Review exact source licenses and dependency closure before import; exclude GPL application code |
 | Zed-specific names leak into public framework API | Medium | High | Run a Zed-name cleanup lane after the first compiling import |
 | `gpui-component` requires unstable GPUI internals | Medium | Medium | Keep initial GPUI crate names/API compatible, then migrate deliberately |
 | Platform backends increase first-import scope | Medium | High | Import native/web backends as separate lanes after core manifest closure is stable |
@@ -161,7 +168,9 @@ reference.
 
 - The repository starts as a virtual Cargo workspace with a minimal facade crate.
 - The first substantial code lane is GPUI core import and manifest normalization.
-- `ztracing` replacement is a serial blocker for any imported crate that currently depends on it.
+- The initial import's `ztracing` replacement remains the current graph. The November successor
+  compares complete owners before changing that graph; the exact official revisions above are
+  permissively licensed.
 - `gpui-component` is intentionally delayed until the core framework has a verified build surface.
 - Some dependencies may become Open GPUI-owned forks when that is the cleanest way to preserve
   framework behavior without depending on Zed-controlled fork artifacts.

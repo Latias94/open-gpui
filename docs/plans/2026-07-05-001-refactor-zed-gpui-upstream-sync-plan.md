@@ -2818,7 +2818,74 @@ probes and package/dependency checks preserve their distinct scope. All three la
 no outstanding reviewed P1/P2. Continue final fixed-target residual dispositions and then the
 real Nara GPU/Host/View consumer; Apple runtime, iOS and numeric-cost qualification remain open.
 
+## Final Fixed-Target Residual Reconciliation
+
+After shared Apple qualification, compare the full imported closure from its content-verified
+anchor to the fixed target, then map each residual to its current fork owner. Separate names,
+relocations, product exclusions and already qualified adaptations from missing mechanisms.
+Use bounded parallel source reviews for text/layout, backends and supporting crates while the
+main lane handles App/Window/Core interfaces. This is a source reconciliation, not a new
+synchronization tool or another full acceptance matrix.
+
+The initial Core pass confirms three unported official units: cached/prefix GlobalElementId
+hashing (`1dd9bbfd71cdb1eed32e3451d661de48a68493fd`), borrow/window diagnostics
+(`d94887e08e` with `c408f8efc41e51099a031d98190be773d7a5e713`) and the already queued complete
+gesture/source/axis-locking path. Implement the first two through existing element/AppCell
+owners while retaining full-path equality, exact candidate state and bounded post-borrow
+convergence. Caller-origin diagnostics must not change scheduling or borrow admission.
+Include official non-generic logging/caller diagnostics (`fc952d52da`, `20fa2fa809`), Debug-based
+AssetLogger (`dc682ef120`) and the complete uniform-list precision correction (`679ad7c304`).
+Import their existing regression scenarios without adding duplicate verification frameworks.
+The gesture successor needs complete touch recognition, timers/momentum, element listeners,
+source-aware scroll routing and existing backend/public consumers; type declarations alone
+do not implement it. Keep it queued until its complete path is integrated.
+
+The three bounded source reviews also find earlier omissions in text/layout, supporting owners
+and backends. The [residual source inventory](../imports/zed-gpui-upstream-sync-candidates.md#november-10-residual-source-reconciliation)
+records their exact sources and boundaries. The prior public-Platform inventory was not the
+complete remaining scope. Execute coherent dependency groups:
+
+1. Finish the element-ID, borrow/log diagnostics and uniform-list precision unit through affected
+   owners, ordinary consumers and existing fork cache/deferred/unwind/scroll controls.
+2. Adopt complete element/layout consumers: image geometry, SVG parse/raster, ContainerQuery,
+   attached anchoring and the List measurement/anchor successor. Integrate source-aware gestures
+   with their full platform/listener path; do not replace them with declarations or demo-only hooks.
+3. Reconcile supporting dependencies and public owners: Darwin's actual async-process reaper
+   selection, archive parser, HTTP/TLS/release downloads, portable paths, executor and utilities.
+   Preserve independently selected roots and remove superseded fork implementations.
+4. Complete backend/render groups with their Core/API prerequisites: Web text/viewport, native
+   popup/drag/regions/attention/restoration, Windows dialogs/host/alpha/layering/batching, and Mac
+   typed AppKit/input/capture. Keep exact admission, native generation and lease custody.
+
+This is dependency ordering, not a requirement to serialize unrelated source ports. Bounded
+parallel implementation may use disjoint owners; Cargo remains serial. The official September
+relicense (`ac5af8b9e1`) is source-verified: zlog/ztracing/ztracing_macro at the fixed target are
+Apache-2.0. Reconcile historical ADR/import wording before changing their dependency disposition;
+the existing ordinary tracing adaptation is not automatically obsolete or an upstream rejection.
+
+Trust unchanged official implementations and regression cases. Compile affected owners and
+ordinary consumers; execute relevant existing regressions and any concrete fork adaptation
+control. Record actual residual dispositions before declaring the fixed-target framework
+closed. The real Nara GPU/Host/View consumer remains the next dependency before maintenance
+handoff, with numerical costs and platform execution qualified only in their recorded scope.
+
+The [cached-ID/diagnostic/list qualification](../verification.md#cached-element-identity-diagnostics-and-list-precision)
+records implementation `1a14b2076edce2dbbf097cbc8ed84a961c0f9826`. Complete official mechanisms
+retain fork deferred/candidate paths, public borrow-group origin and admitted scrolling. Final
+Core/public 32 and official logging 1 pass; independent all-target compilation, affected
+correctness Clippy, formatting and existing static/document gates pass. Earlier semantic 74
+retains its checkpoint scope. The raw-shared borrow adaptation is independently rereviewed
+without outstanding P1/P2; all six lanes close. Continue the recorded complete residual units
+with targeted verification, then the real engine consumer. No whole-refresh, native/performance
+or engine/default completion follows.
+
 ## Maintained Baseline Before Engine Adaptation
+
+The [cached-ID/diagnostic/list record](../verification.md#cached-element-identity-diagnostics-and-list-precision)
+qualifies `1a14b2076edce2dbbf097cbc8ed84a961c0f9826` through affected owner/public tests and
+compilation. The expanded residual source inventory above replaces the assumption that only
+public-Platform/gesture gaps remained. Complete its coherent official units before the real
+Nara GPU/Host/View consumer and separate framework-maintenance handoff.
 
 The [shared Apple record](../verification.md#shared-apple-framework-topology) qualifies
 `8bd39cef78dbb7c477df08f8fc2e1ee386f22851` through the actual affected owner/consumer paths.
@@ -3421,7 +3488,11 @@ Finish with import-boundary scans, broad verification, and documentation updates
 
 ## Verification Contract
 
-Unit-level `Verification` entries remain required even when this table lists a broader aggregate gate.
+The July U1-U9 entries below retain their original acceptance scope. For the November maintained-
+framework continuation, the targeted upstream-trust rule above governs each port: compile affected
+owners/public consumers and exercise changed fork seams. Reuse official coverage for unchanged
+implementations. Run broader gates only for an affected contract, a failure or an integration/
+release checkpoint; this historical table does not require another full matrix for every port.
 Any unit that changes `Cargo.toml` or `Cargo.lock` must run `cargo run -p xtask -- scan-import-boundary` before its commit.
 Platform-gated checks must name the target host or target triple; a Windows-host check is not evidence for Linux, macOS, or Web target-gated backend code.
 

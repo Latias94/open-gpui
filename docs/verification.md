@@ -7617,6 +7617,53 @@ and SDK/toolchain qualification remain separate. Runtime shader source generatio
 does not compile MSL. The upstream-trust policy avoids repeating unrelated Windows, component,
 docking, browser, compiler-floor or performance matrices for this owner migration.
 
+## Cached Element Identity, Diagnostics And List Precision
+
+Implementation `1a14b2076edce2dbbf097cbc8ed84a961c0f9826`, following
+`b7eb45c0762b70d080af5a09f64536fe1bf22809`, adopts the fixed target's complete cached/prefix
+GlobalElementId mechanism (`1dd9bbfd71`), borrow/window diagnostics (`d94887e08e`,
+`c408f8efc4`), logging sink/caller corrections (`fc952d52da`, `20fa2fa809`), Debug-based
+AssetLogger (`dc682ef120`) and uniform-list precision (`679ad7c304`). The target remains Zed
+`635026fabc38440fce5e1767d125026a17b12012`.
+
+Element paths retain complete equality and immutable access; live, deferred and candidate
+checkpoint stacks carry the same prefix hashes. AccessKit derives identity from that cached
+hash. No benchmark or measured speedup is claimed. Uniform lists use official f64 range and
+local-position arithmetic while retaining existing clipping and admitted scrolling. The imported
+regression lays out actual rows near item 9,000,002, preserving their 24px local spacing.
+
+The fork-specific borrow adaptation identifies the first public shared group using its existing
+borrow-depth owner. Internal raw lifecycle borrows cannot supply a retired public origin;
+overlapping raw shared/public shared access establishes the public origin only after successful
+admission. Failed borrows do not change depth or scheduling. Existing post-borrow convergence
+and candidate rollback remain unchanged. Bounded independent rereview finds no outstanding
+P1/P2 in this adaptation or the cached-ID integration.
+
+On Windows 11/Rust 1.95.0 with one build job, final focused Core/public tests pass 32/32
+(`ccd57ccb-8c0d-4fdd-a660-560e4137111d`): official ID/borrow/list regressions, the raw lifecycle
+adaptation, existing cache/deferred/portal/refusal/unwind/quit controls, revealable offscreen
+accessibility and the crate-external low-level scroll consumer. The official synchronous/async
+logging regression passes 1/1 (`005ba4da-1ee1-449e-9ea3-e5a2f2b13572`), preserving exact caller
+lines, chained Display diagnostics and Debug backtraces. At the earlier ID/diagnostic checkpoint,
+Core accessibility/presentation passes 74/74 (`d937e4eb-e00a-4228-b2e0-999e4a486033`); that run
+precedes the final raw-shared diagnostic adjustment, which is covered by the final selection.
+
+The independently locked ordinary consumer passes all-target compilation, including its native
+platform composition. Correctness Clippy passes for open-gpui and open-gpui-core-util all targets;
+existing non-correctness warnings remain. Root and independent formatting pass. Existing
+import-boundary, public-API-tier, document-link and release-inventory checks pass. Dependencies,
+compiler floor and feature selection are unchanged. This targeted port does not repeat unrelated
+component, docking, native-input, browser or compiler/platform matrices; no new native execution
+or numerical-cost claim follows.
+
+The [residual inventory](imports/zed-gpui-upstream-sync-candidates.md#november-10-residual-source-reconciliation)
+records additional source-confirmed layout, utility and backend mechanisms rather than declaring
+the earlier public-Platform audit exhaustive. Official `ac5af8b9e1` and the exact target manifests
+confirm Apache-2.0 zlog/ztracing/ztracing_macro; ADR 0001 corrects its historical GPL description
+while retaining the currently selected ordinary tracing graph pending owner reconciliation.
+All six source-review/implementation/review lanes close. Full fixed-target closure, the real
+Nara GPU/Host/View consumer and maintenance handoff remain open. No remote publication occurs.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:

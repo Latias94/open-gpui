@@ -74,10 +74,10 @@ official mechanism remains queued until it receives an explicit disposition.
 | `c7ad65e468` | Split | Editor highlight consumers stay outside the closure. Complete measured TextLayout queries are implemented with owner/public/independent consumers; scoped qualification is recorded below. |
 | `1722fe63bc` | Split | Editor multi-cursor consumers stay outside the closure. Parameterized benchmark, real text-system and dispatcher/teardown mechanisms join the existing benchmark/report successor below. |
 | `138139f830` | Deferred | macOS traffic-light hitbox behavior appears mostly absorbed locally; revisit only if a focused diff proves a remaining framework regression. |
-| `60ed56b372` | Deferred | Miscellaneous macOS process spawning fixes need a separate utility audit after U7. |
-| `e1bfcf85db` | Deferred | macOS process file-descriptor leak fix needs a separate utility audit after U7. |
+| `60ed56b372` | Queued: complete Darwin process successor | The November 10 source audit confirms that inherited stdio under CLOEXEC_DEFAULT and SIGPIPE restoration are missing. Integrate with owned descriptors and the unified process reaper below. |
+| `e1bfcf85db` | Queued: complete Darwin process successor | The November 10 source audit confirms that pipe/dev-null ownership is missing. Integrate with the complete official process owner rather than retain the local waitpid/Unblock implementation. |
 | `137e677a05` | Deferred | Multiple-window Wayland IME handling may overlap U3, but it needs a focused diff before expanding the accepted queue. |
-| `8036a3c74b` | Deferred | Non-breaking glue character text behavior is not in the high-priority correctness queue; revisit after accepted fixes land. |
+| `8036a3c74b` | Superseded | The implemented shared UAX wrapping mechanism from `f0210f1621` supersedes the old glue-specific policy. Do not restore the obsolete branch. |
 
 ## Verification Baseline
 
@@ -314,6 +314,68 @@ browser qualifications above own their updated source and actual execution evide
 the [original failed attempt](../verification.md#connected-displays-and-window-association)
 without treating the old proptest pin as a current pending task or claiming a version difference
 alone fixed it. Foreign-native execution retains its separate platform gates.
+
+### November 10 Residual Source Reconciliation
+
+The post-Apple audit compares committed fork `b7eb45c0762b70d080af5a09f64536fe1bf22809`
+against the fixed target and the content-verified import anchor. It finds inherited omissions as
+well as later additions. The following is a source inventory, not executed qualification, an
+exhaustive completion claim or a new upstream target. Adopt complete official mechanisms by
+default; reconcile fork adaptations through their current owners. Existing qualifications remain
+valid in their recorded scope. The [owning plan](../plans/2026-07-05-001-refactor-zed-gpui-upstream-sync-plan.md#final-fixed-target-residual-reconciliation)
+orders implementation and applies targeted upstream-trust verification.
+
+| Core/layout unit | Official source | Disposition and integration boundary |
+| --- | --- | --- |
+| Cached element identity and diagnostics | `1dd9bbfd71`, `d94887e08e`, `c408f8efc4`, `fc952d52da`, `20fa2fa809`, `dc682ef120` | Implemented at `1a14b2076ed`; the [qualification](../verification.md#cached-element-identity-diagnostics-and-list-precision) records final Core/public 32, official logging 1, affected compilation/Clippy and reviewed fork borrow/cache/deferred/unwind seams. Complete ID paths, current AppCell convergence and caller/error formats remain authoritative. |
+| Uniform-list large-offset precision | `679ad7c304` | Implemented at `1a14b2076ed` in the same focused qualification. The complete official visible-range and local f64 subtraction replace old f32 arithmetic; actual large-offset rows, existing clip and public admitted-scroll controls pass. |
+| Gesture recognition and scroll source | Complete fixed-target `gestures.rs`, touch/long-press/tooltip/axis-locking successor already identified in the bounded Core inventory | Queued. Integrate recognition, timers/momentum, Div/InteractiveText listeners, source-aware routing and backend consumers together. |
+| Image element geometry | `59b2ebf103`, `58df5a14ce` | Queued. Preserve explicit aspect ratios and pass both element and image boxes to the existing crop/rounded-corner paint owner; shared decoding does not implement this behavior. |
+| Provisional List measurements and anchoring | `f41ac64812`, `d9e35975c2`, `00cba838ad` | Queued. Adopt readiness, provisional/pending-end anchors, indexed reveal, uniform height hints/reset and pause-following-tail. Preserve admitted autoscroll and direct-mutation revision custody. |
+| Container queries | `49ad06c1b4` | Queued complete `ContainerQuery` element. Build children from the allocated size in the same frame; a later measured callback is not equivalent. |
+| Attached anchoring | `ce6c5413f1` | Queued complete Placement::Attached, target/element corners, offset flipping and client-inset overflow calculation through existing portal geometry. |
+| SVG data, parse reuse and raster bounds | `ff9f114cd3`, `00cba838ad`, `03c9c4e707`, `fbd911ed3e` | Queued Svg::data, ParsedSvg/render_parsed, ExactSize and 8192px dimension cap. Rotation remains an explicit ADR 0021 gap; scale/translation already use SubtreeTransform. |
+| Padding and hover policy | `b1a7ef0cf6`, `f0d8b0b0cd` | Queued device-snapped padding and modality-independent hover-listener choice through existing layout, presentation and admission owners. |
+| Cursor and external-drag listeners | `c7bea34383`, `693962917b`, `1a84d5d92b`, `f52fd9ac44` | Queued active-drag cursor timing, post-listener reset, mouse/file-exit callbacks and external-drag resolution. Retain the fork's per-window cursor and exact native drag generation. |
+| Cosmic selected face | `7960b2a7c9` | Queued selected-face weight/style reporting, also a prerequisite for complete Web Canvas fallback. The separately recorded explicit fallback-chain limitation remains open. |
+
+| Supporting owner | Official source | Disposition and dependency boundary |
+| --- | --- | --- |
+| Darwin process and unified reaper | `e1bfcf85db`, `60ed56b372`, `d4cc8d2409` | Queued complete owned File/stdio/SIGPIPE/Async<File>/adopt_raw_pid mechanism. Official async-process `0b6d6713570af61806e1e5cb40e0f757cb93fd9d` must be selected by smol's actual dependency and the independent root; an unused direct Git dependency is insufficient. |
+| HTTP deadlines and TLS initialization | `992c7d469c`, `865318723e`, `c595091b0a` | Queued RequestTimeout/HttpRequestExt, send/read deadlines, redirect-cache configuration and fallible platform verifier with WebPKI fallback. |
+| Release-download helper | `ead2d9eac0`, `02d47bf64f`, `992c7d469c` | Queued Apache github_releases owner with deadlines, digest normalization, status checks and staging. Existing HTTP GitHub helpers are not equivalent. |
+| PAX archive parser | `87324045be`; async-tar `bd3ad6f89df9a9da7a8535958756d6bf465936a0` | Queued length-driven PAX parser. The registry newline parser is not equivalent; qualify the real dependency selection. |
+| SharedString and executor helpers | `47825fe00a`, `9dd6993e2e`; `2040e0de59`, `98c6c1403b` | Queued From<char>/SmolStr serde and complete DedicatedExecutor/nonblocking rendezvous/wasm-threads/blocking cfg. Existing synchronous spawn_dedicated does not cover the successor. |
+| Portable path owner | `f181a2f47b`, `2610332077`, `a84689073d`, `51a3a0e971`, `f929b3f7ce`, `a4a3a968d1`, `9521840152` | Queued Apache path crate with RelPath/AbsPath component semantics, normalization, root/join/prefix, empty length and nested set_extension. It is distinct from the GPL product paths crate. |
+| Path-position utilities | `a51d23c93d`, `72d073d642`, `347f171a3f`, `e21ff1b368` | Queued UNC/position parsing and public parse_path_with_position. Keep actual product file-existence fallback outside the closure without rejecting its shared parser. |
+| Shell command construction | `ce48461eaa`, `c578f4d12b`, `7ca96c2a58`, `18f9d7e731`, `b41a8b60a4`, `4c6c4750d3` | Queued malformed expansion, stdin redirect ordering, literal arguments, Csh/Nushell, Unix pwsh descriptors and Windows case/Git Bash behavior. Reconcile with already qualified restart arguments. |
+| JSON merge and development assets | `d61edb0825`, `b47d8ac455`; `ee6badf4b0`, `d3e54c97f4`, `2551721adb` | Queued array replacement versus separate deduplicating union and dev_repo_root/fs_embed/debug-embed. Keep each public utility with its actual consumers. |
+| Remaining lightweight helpers | `887149bbdd`, `d7adf3e7e2`, `54f2b5df1d`, `1102219f81`, `1057c2cf3d`, `d12e456be7` | Queued lenient globs, extension sorting, fragment positions, environment-name validation and explicit Unix soft-FD limits. Reconcile moves into gpui_util and LocalExecutor::spawn_with_dispatch rather than duplicate owners. |
+| Logging dependency provenance | `ac5af8b9e1` | Source-verified: fixed-target zlog/ztracing/ztracing_macro are now Apache-2.0. ADR 0001 corrects its historical GPL description. The ordinary tracing graph/import selection remains in force pending complete owner comparison, rather than a license rejection of these exact revisions. |
+
+| Backend/render unit | Official source | Disposition and existing owner to preserve |
+| --- | --- | --- |
+| Native state restoration and attention | `33c6212b055`; `905e955a702`, `50e399332c1`, `4d1935b8d00` | Queued Mac archiver/unarchiver/fullscreen rules and Core facade; Windows FlashWindowEx, Mac informational request and X11 hint/urgency lifecycle. Wayland attention remains the official no-op. |
+| Window regions, layer-shell and fullscreen | `a29c0d41f47`, `166f044fd04`; `2893b86b048`, `242fe31a399` | Queued Wayland None/empty/rect input regions and runtime exclusive-zone/edge validation; Mac saved frame/style and multi-window presentation-option custody. |
+| Web text and viewport | `224373ab888`, `8fc1a8a0c6f`, `d84e5d4992b`, final target follow-ups; `6ad3c7f278e` | Queued complete input configuration, textarea/beforeinput/selection/composition/editable range/keyboard and visual-viewport/safe-area snapshots. Existing browser paste does not implement these owners. |
+| Native popup and file drag-out | `546a16d64fa`; `f52fd9ac44b`, `a8491e63b54`, `72c53bf0aae`, `c7aea6cbbd4` | Queued popup facade/Wayland owner and complete Mac/Wayland drag source/session/URI/complete/cancel/reentry. Transient parenting alone is not equivalent. |
+| DirectX alpha and child layering | `e18de65b759`, `bc6fc117403` | Queued source-over destination alpha and DirectComposition child HWND layering. Shared Apple alpha qualification does not cover DirectX. |
+| Windows dialogs and host/input safety | `a0f8fa7bdbb`; `9cb5f90e3c4`, `e462f873c62`, `23c0080d1dd` | Queued dedicated STA/per-owner serialized dialogs, duplicate MouseMove correction, accelerator-host routing and nullable composition API handling. Preserve native generations, callback admission and terminal retirement. |
+| Wayland IME/effects/XKB | `5079b33d657`, `14b7b0ef376`; `c43e2d97348`, `a7c7219d5bf`, `afc13dc8e05` | Queued shared IME rectangle/serial dedup, preferred ext/KDE effect fallback/rounded regions/destruction, safe XKB/null handling and feature split. |
+| X11 metadata and dependency minimum | `5dd0666dfb6`, `dd68454633a` | Queued WM_CLASS trailing NUL and manifest API minimum; the selected Wayland lock version does not establish a downstream minimum. |
+| Mac native input, blur and typed AppKit | `d01f1258376`, `41126668013`, `db7f9ceed78`, `f6838a7c4af`, `382ff7a64b3`, `90d85140595`, `4b47ceb9d3` | Queued menu masks/Spanish ISO/tracking/physical-button drag stop, material/placement and remaining typed AppKit/capture migration. Retire cocoa_compat and Media with their actual consumers. Shared Apple extraction alone does not complete Mac-native migration. |
+| Renderer batching and overdraw | `be8c6f9fb35`, `b4ecc454225`, `0c51c7fd248` | Queued DirectX BatchParams/bounded buffers, Scene texture grouping/colocated sort keys and border-only quad work. Preserve admitted clip/texture leases and report numeric costs only after measurement. |
+
+Additional Core method-name findings still need behavioral comparison: resizable/minimizable and
+prompt queries, pending-input timeout pause, geometry helpers and Inspector getters. A missing
+symbol alone is not a missing mechanism. Likewise, Windows WinRT versus official Win32 dispatch
+needs an explicit disposition, not an assumed defect. iOS remains an unselected application
+backend; shared Core/Web mobile behavior is assessed in its own unit.
+
+Already covered mechanisms include shared image decoding, Taffy 0.15/grid-row intrinsic sizing,
+owning CachedLoad, animation/Spring parent composition and relevant collections/refineable/
+bench_metrics/macros/sum_tree behavior. Visibility is intentionally represented by Accepted
+ADR 0022 SubtreePresentation. Do not reopen these units for renamed files or test placement.
 
 ### Profiler And Platform Prerequisite Order
 
