@@ -3133,6 +3133,19 @@ GPU/Host/View consumer retain their own scope.
 
 ## Maintained Baseline Before Engine Adaptation
 
+The [utility composition/native helper record](../verification.md#utility-composition-shells-and-development-assets)
+qualifies `8e0517f56506706f1c40a76fd8ed84f6643deb55`: complete official shell/capture, JSON
+replacement/union, development assets, fragment/redaction and explicit Unix file-limit setup
+share canonical owners. Final focused 47/47, independent dev/embedded 4/4 each, release 1/1
+and existing Windows restart 11/11 pass. A concrete downstream rust-embed 8.13 trait error is
+fixed at the actual dependency/macro seam; actual compression advisories receive targeted
+patched dependencies, with root health and five independent audits passing without ignores.
+Affected compilation/correctness Clippy, core-util wasm and format/static gates pass. Four
+lanes close without P1/P2; higher-utility wasm stops at missing clang and foreign shell/
+file-limit execution remains unqualified. Continue remaining backend/render owners and the
+logging disposition, then the real Nara GPU/Host/View consumer before separate maintenance.
+No full target, numerical budget or foundation gate closes here.
+
 The [portable-path record](../verification.md#portable-paths-and-utility-consumers) qualifies
 `a4e6fd03642fdcdc25b507271682a6d1dbfeb26c`: the complete official Apache path owner replaces
 duplicate utility types through actual utility/native-dialog and independent public consumers.

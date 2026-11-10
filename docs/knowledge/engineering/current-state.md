@@ -2,7 +2,7 @@
 type: Current State
 title: Open GPUI maintained-framework development state
 status: active
-timestamp: 2026-11-10T21:50:00+08:00
+timestamp: 2026-11-10T23:32:00+08:00
 git_branch: optimize/docking-graph-transaction
 related_plan:
   - ../../plans/2026-08-21-1349-refactor-docking-kernel-parity-plan.md
@@ -17,6 +17,20 @@ verified_by:
 ---
 
 # Current State
+
+- Utility composition/native helpers are implemented at
+  `8e0517f56506706f1c40a76fd8ed84f6643deb55`. Complete official shell, JSON replacement/union,
+  development assets, fragment/redaction and explicit Unix file-limit mechanisms share their
+  canonical owners; duplicate helper/Windows discovery implementations are removed. The
+  [qualification](../../verification.md#utility-composition-shells-and-development-assets)
+  records final focused 47/47, ordinary dev/embedded 4/4 each, release 1/1 and Windows restart
+  11/11 passes, affected compilation/Clippy, core-util wasm and format/static gates. A concrete
+  rust-embed 8.13 interface failure receives one bounded adaptation; actual compression
+  advisories receive patched dependencies, passing root health and five independent audits
+  without new ignores. Four lanes close without remaining P1/P2. Higher-utility wasm is stopped
+  at missing clang; foreign shell/file-limit execution and numeric costs remain unqualified.
+  Continue remaining backend/render owners and logging disposition, then the real Nara
+  GPU/Host/View consumer before separate maintenance. Full target/foundation gates stay open.
 
 - Portable paths and utility consumers are implemented at
   `a4e6fd03642fdcdc25b507271682a6d1dbfeb26c`. The complete official Apache path package replaces
@@ -1068,7 +1082,7 @@ historical scope and is not current branch or CI qualification.
 - Continue the [residual source inventory](../../imports/zed-gpui-upstream-sync-candidates.md#november-10-residual-source-reconciliation)
   after qualified identity/diagnostics/list precision, element layout/drawing, gestures/
   scroll/padding/hover, cursor/native file drag, process/dedicated/string and HTTP/download/
-  archive support and canonical path/utility migration, rather than treating the earlier
+  archive support, canonical paths and complete utility composition/native helpers, rather than treating the earlier
   public-Platform audit as exhaustive. Continue the remaining
   supporting utility/dependency and backend/render groups, including native popup,
   in their recorded prerequisite order. Build on qualified

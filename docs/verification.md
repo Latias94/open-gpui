@@ -8178,6 +8178,125 @@ remain unqualified. Remaining utility/backend/render owners and the real Nara GP
 consumer still precede separate framework maintenance. No full fixed-target or foundation
 completion, remote CI, push or publication follows.
 
+## Utility Composition, Shells And Development Assets
+
+Implementation: `8e0517f56506706f1c40a76fd8ed84f6643deb55`.
+
+The November 10 successor follows fixed Zed `635026fabc38440fce5e1767d125026a17b12012` through
+the complete shell, low-level helper, JSON, development-asset, fragment/redaction and explicit
+Unix file-limit owners listed in the [import record](imports/zed-gpui-import.md#november-10-utility-composition-and-native-commands).
+Trust unchanged official mechanisms and regressions. Scope verification to extraction seams,
+actual public consumers and the concrete dependency error below, rather than a full framework/
+Editor/component/platform/compiler matrix.
+
+Core utilities now own native std command construction, Windows PowerShell discovery and
+UTF-8/bounded-sort helpers. Higher utility modules forward those implementations; duplicate
+definitions and the unused take-until dependency/reexport are removed. PowerShell discovery
+retains the existing private injected environment/PATH entry point and its ten tests; strategy,
+priority, caching and public Option<String> follow the target. The actual Windows restart
+consumer converts that String to its required native PathBuf. Existing restart-argument,
+Darwin reaper, Job cleanup, RAII/hash/log and callback owners remain unchanged.
+
+The complete shell builder, Markdown and redaction source match the target. Other shell
+differences are extracted dependency names, existing product-neutral executable helpers and
+one test example's branding. Csh/Nushell quoting, malformed-variable handling, literal args,
+separate-line POSIX stdin redirects and Unix PowerShell descriptor capture include the whole
+official mechanisms and follow-ups. Windows shell case behavior/Git Bash discovery and actual
+process helpers use the canonical low-level owner. Native utility modules/dependencies are
+gated away from wasm. The Unix soft-file-limit helper is explicit application startup policy;
+the framework does not mutate process limits implicitly.
+
+JSON merge replaces colliding arrays; the separate union API deduplicates contributions.
+Canonical path reexports forward the already adopted package with identical type identity,
+without restoring old unchecked behavior or a second path owner. Development assets retain
+official executable-first runtime repository lookup, include/exclude matching and public
+get/iter/trait composition. Release and debug-embed use the derive. Only the extracted macro
+crate path and the dependency adaptation below differ from the complete official asset source.
+
+The initial all-feature/all-target core-util/util/Windows check passes on Windows/Rust 1.95.
+The first focused cohort passes 47/47 (`0f62a0c7-8418-4694-83db-1c14469d08d0`) against root
+rust-embed 8.11. The ordinary independently locked macro consumer then fails compilation with
+E0046, missing compressed: its already selected rust-embed 8.13 adds a required trait method.
+That graph also requires compressed-file/include-flate derive symbols. This is an actual
+downstream dependency-interface failure, not a failure of the official asset algorithm.
+
+The supported rust-embed floor becomes 8.13. The hidden macro facade reexports that version's
+symbols and the dynamic trait implementation returns None from compressed, matching 8.13's
+own dynamic derive. No per-version branching or direct pins of proc-macro internals are added.
+The root and five independent lock roots all resolve rust-embed/impl/utils 8.13.0. Their actual
+compression closure is permissively licensed; required SHA-2/crypto and compression dependencies
+replace the removed take-until edge without unrelated package upgrades. The existing duplicate
+allowlist adds only root's actual block-buffer/crypto-common/digest/sha2 generations. New
+dependency metadata stays below the declared Rust 1.93 floor; this is not another compiler-floor
+runtime qualification.
+
+The root's original asset assertions are retained for embedding/release. Its runtime-dev fixture
+assumes its source is under the executable's repository; the shared Nara target deliberately
+violates that assumption. Development behavior is instead executed by the stronger isolated
+ordinary consumer: it launches a copied test executable inside a temporary `.git`-file checkout,
+with a different checkout as cwd. It proves executable-first root selection, actual missing/
+created/edited/deleted files and filter parity without modifying the production lookup or the
+parent process environment. Embedded mode retains compiled assets despite those runtime changes.
+
+After the dependency fix, the focused cohort passes 47/47, with 94 unrelated tests outside its
+selection (`5a2925e1-47db-4495-bb0c-222a91abe79f`). Ordinary independently locked consumers pass
+4/4 in dev (`79c95906-95be-4e9f-8408-b732255a641b`) and 4/4 in debug-embed
+(`4f990736-db97-4797-9cd7-5b393fb9b4ec`). Those execute settings replacement/extension union,
+Markdown-fragment/path navigation, environment-name acceptance/redaction and the full relocated
+asset workflow. Compressed availability is observed through the actual trait in both modes;
+get and asset_str return the expected complete contents. Trait iter parity is subsequently
+strengthened through the same workflow and retains its own final rerun evidence below.
+
+The final independent dev consumer passes 4/4 again
+(`ab76f376-e7c0-4484-bf0b-0653a56e742d`) and debug-embed passes 4/4 again
+(`c9984a87-141c-4cbc-8f92-b69dbaca5c04`), now including explicit trait/inherent iter parity.
+The focused release-only asset integration passes 1/1
+(`0c2bb9c0-ad4a-435f-a2e3-3e8758e735c5`), reading the complete embedded source with an
+intentionally unusable runtime directory. Its first optimized dependency build takes 3m12s;
+the test takes 0.040s. Those are build/correctness observations, not performance benchmarks.
+
+Affected core-util/util/Windows all-target/all-feature correctness Clippy passes on Rust 1.95,
+with existing non-correctness warnings. Windows restart controls pass 11/11
+(`1dcda0cd-402f-4705-a1c3-78ead0665883`), covering canonical native-command paths, exact argv,
+unpaired UTF-16, payload separation and missing/failed helper refusal without quit. They do not
+restart a successful live application or qualify unrelated native renderer/input behavior.
+
+The combined higher-utility wasm library check stops at the new compression closure's
+zstd-sys build because clang is absent. The compiler locations are checked; only LLVM formatting/
+analysis tools remain installed. No Rust source result or browser execution is inferred from
+that failure. Higher-utility wasm compilation with compression stays unqualified pending the
+required C toolchain, without removing compression or changing the official asset algorithm
+to make an unavailable toolchain green.
+
+The existing dependency-health gate finds RUSTSEC-2026-0391 in the initially selected zstd
+0.14.2, RUSTSEC-2026-0398/0403 in zstd-safe 8.1.0 and RUSTSEC-2026-0410 in zstd-sys
+2.1.1+zstd.1.5.7. The recorded affected functions cover abandoned-context data, seekable and
+legacy decompression memory, and wasm allocation failure. No exploitability claim is inferred
+for these asset workflows, and no advisory ignore is added. The actual published patched
+selection is zstd 0.14.3, zstd-safe 8.2.0 and zstd-sys 2.1.2+zstd.1.5.7. Root and independent
+locks receive only that targeted security update; the existing gate and affected asset
+consumers are rerun against it. These concrete failures justify the repeat, without another
+unrelated framework/platform matrix.
+
+Root dependency-health passes after that targeted update. The patched focused cohort passes
+47/47 (`2fc7afa7-0463-4d1e-9222-3211e62eb11c`), the ordinary dev consumer passes 4/4
+(`c3936d8b-a862-4ea3-9e42-fc034ec10120`) and debug-embed passes 4/4
+(`2a7a0b6c-0c7e-4e19-b733-697e0eb62e81`). Those final dependency-graph runs retain the complete
+asset and trait-parity assertions; the earlier runs are not substituted for this patched graph.
+The patched release integration also passes 1/1 (`c958b1b4-b9be-4dc5-b63f-5e9f1c7fb901`).
+Five independent lock audits report zero vulnerabilities with the existing advisory policy;
+the exact rust-embed and patched zstd family selections are inspected in all six roots.
+The separate core-util wasm library check passes, distinct from the higher-utility compression
+toolchain failure above. Root and ordinary-consumer formatting, whitespace, affected TOML/YAML
+syntax and existing import-boundary/public-API/document/release gates pass.
+
+Bounded independent review identifies the concrete dependency-interface and shared-target
+fixture issues above. Rereview closes both without new P1/P2; current lock roots are checked
+after serial metadata finishes. Source review does not itself supply runtime evidence. All
+four implementation/consumer/review lanes are closed. Actual foreign Unix shells/PowerShell
+descriptor capture and file-limit execution, browser runtime, numerical costs, remaining
+backend/render groups and the real Nara GPU/Host/View consumer retain separate scope.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:
@@ -10600,10 +10719,13 @@ Every published Open GPUI crate should include `README.md`, `LICENSE-APACHE`, an
 does not package files outside a crate root through `include`, so each publishable crate root keeps
 its own `NOTICE` copy.
 
-The import-boundary scan rejects dependency files that reintroduce Zed's GPL tracing stack
-(`ztracing`, `ztracing_macro`, `zlog`), the old `zed-sum-tree` dependency, the Zed monorepo as a
-Cargo git dependency, retired Zed Git fork sources that have already been migrated, or the removed
-Zed `perf` crate dependency. The retired `zed-scap` package and `zed-industries/scap` Git source
+The import-boundary scan retains the currently selected tracing adaptation and rejects
+`ztracing`, `ztracing_macro` and `zlog` pending complete owner comparison under
+[ADR 0001](adr/0001-open-gpui-fork-strategy.md). Their fixed-target licenses are now Apache-2.0;
+the historical GPL exclusion is not a current license rejection. The scan also rejects the old
+`zed-sum-tree` dependency, the Zed monorepo as a Cargo git dependency, retired Zed Git fork sources
+that have already been migrated, and the removed Zed `perf` crate dependency.
+The retired `zed-scap` package and `zed-industries/scap` Git source
 are also rejected now that screen capture resolves through the Open GPUI-owned
 `open-gpui-scap` fork. The old crates.io `zed-font-kit` package is retired and should not be
 reintroduced; font-kit resolves through the Open GPUI-owned fork configured in the crate manifests.
