@@ -4379,9 +4379,19 @@ impl PlatformWindow for MacWindow {
     }
 
     fn appearance(&self) -> WindowAppearance {
+        let native_window = {
+            let state = self.0.lock();
+            unsafe {
+                objc2::rc::Retained::retain(state.native_window.cast::<objc2::runtime::AnyObject>())
+            }
+        };
+        let Some(native_window) = native_window else {
+            return WindowAppearance::Light;
+        };
         unsafe {
-            let appearance: id = msg_send![self.0.lock().native_window, effectiveAppearance];
-            crate::window_appearance::window_appearance_from_native(appearance)
+            let appearance: Option<objc2::rc::Retained<objc2_app_kit::NSAppearance>> =
+                objc2::msg_send![&*native_window, effectiveAppearance];
+            crate::window_appearance::window_appearance_from_native(appearance.as_deref())
         }
     }
 

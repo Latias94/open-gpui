@@ -101,6 +101,8 @@ mod test_app;
 mod test_context;
 #[cfg(any(test, feature = "test-support"))]
 mod visual_test_context;
+#[cfg(test)]
+mod window_appearance_tests;
 mod window_registry;
 pub(crate) use cell::NativeCallbackLease;
 pub use cell::{AppCell, AppRef, AppRefMut};
@@ -2040,6 +2042,17 @@ impl App {
     /// Returns the appearance of the application's windows.
     pub fn window_appearance(&self) -> WindowAppearance {
         self.platform.window_appearance()
+    }
+
+    /// Overrides the appearance applied to the app's windows, independent of the OS setting.
+    /// Pass `None` to clear the override and follow the system again.
+    /// The current appearance is reported by [`App::window_appearance`].
+    ///
+    /// On macOS this sets `NSApplication.appearance`, so native window borders and titlebars
+    /// follow the app's appearance. Clear the override to resume following system changes.
+    /// On other platforms this is a no-op.
+    pub fn set_window_appearance(&self, appearance: Option<WindowAppearance>) {
+        self.platform.set_window_appearance(appearance);
     }
 
     /// Returns the window button layout configuration when supported.

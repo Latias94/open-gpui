@@ -177,6 +177,22 @@ jobs:
       - name: Test scoped activity ownership and public controls
         run: cargo nextest run --locked -p open-gpui --all-features --lib --test idle_sleep -E 'test(app::idle_sleep_tests::) | binary(idle_sleep)' --test-threads=1 --no-fail-fast --no-tests fail
 
+      - name: Test native appearance forwarding and public controls
+        run: |
+          cargo nextest run --locked -p open-gpui --all-features --lib --test window_appearance -E 'test(app::window_appearance_tests::) | binary(window_appearance)' --test-threads=1 --no-fail-fast --no-tests fail
+          cargo nextest run --locked -p open-gpui --no-default-features --features test-support --lib --test window_appearance -E 'test(app::window_appearance_tests::) | binary(window_appearance)' --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Test independent native appearance API
+        run: |
+          cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --all-features --test window_appearance --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+          cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test window_appearance --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Check macOS appearance native consumers
+        if: matrix.name == 'macos'
+        run: |
+          cargo nextest run --locked -p open-gpui-macos --all-features --lib -E 'test(platform::appearance_tests::)' --test-threads=1 --no-fail-fast --no-tests fail
+          cargo check --locked -p open-gpui-macos --all-features --example native_window_appearance
+
       - name: Test scoped activity without profiler
         run: cargo nextest run --locked -p open-gpui --no-default-features --features test-support --lib --test idle_sleep -E 'test(app::idle_sleep_tests::) | binary(idle_sleep)' --test-threads=1 --no-fail-fast --no-tests fail
 

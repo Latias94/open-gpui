@@ -34,6 +34,11 @@ use objc::{
     runtime::{Class, Object, Sel},
     sel, sel_impl,
 };
+use objc2::{rc::Retained, runtime::AnyObject};
+use objc2_app_kit::{
+    NSAppearance, NSAppearanceNameAqua, NSAppearanceNameDarkAqua, NSAppearanceNameVibrantDark,
+    NSAppearanceNameVibrantLight,
+};
 use objc2_foundation::NSActivityOptions;
 use open_gpui::{
     Action, ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem, DisplayId,
@@ -992,9 +997,29 @@ impl Platform for MacPlatform {
 
     fn window_appearance(&self) -> WindowAppearance {
         unsafe {
-            let app = NSApplication::sharedApplication(nil);
-            let appearance: id = msg_send![app, effectiveAppearance];
-            crate::window_appearance::window_appearance_from_native(appearance)
+            let app = NSApplication::sharedApplication(nil).cast::<AnyObject>();
+            let appearance: Option<Retained<NSAppearance>> =
+                objc2::msg_send![app, effectiveAppearance];
+            crate::window_appearance::window_appearance_from_native(appearance.as_deref())
+        }
+    }
+
+    fn set_window_appearance(&self, appearance: Option<WindowAppearance>) {
+        unsafe {
+            let app: id = msg_send![APP_CLASS, sharedApplication];
+            let app = app.cast::<AnyObject>();
+            // `None` clears the override by setting a nil appearance, so the app
+            // falls back to tracking the system-wide light/dark setting.
+            let ns_appearance = appearance.and_then(|appearance| {
+                let name = match appearance {
+                    WindowAppearance::Light => NSAppearanceNameAqua,
+                    WindowAppearance::Dark => NSAppearanceNameDarkAqua,
+                    WindowAppearance::VibrantLight => NSAppearanceNameVibrantLight,
+                    WindowAppearance::VibrantDark => NSAppearanceNameVibrantDark,
+                };
+                NSAppearance::appearanceNamed(name)
+            });
+            let _: () = objc2::msg_send![app, setAppearance: ns_appearance.as_deref()];
         }
     }
 
@@ -1799,6 +1824,10 @@ unsafe extern "C" {
 #[cfg(test)]
 #[path = "restart_arguments_tests.rs"]
 mod restart_arguments_tests;
+
+#[cfg(test)]
+#[path = "appearance_tests.rs"]
+mod appearance_tests;
 
 #[cfg(test)]
 mod window_capability_tests {

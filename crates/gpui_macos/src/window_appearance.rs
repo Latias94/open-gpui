@@ -1,35 +1,31 @@
-use cocoa::{
-    appkit::{NSAppearanceNameVibrantDark, NSAppearanceNameVibrantLight},
-    base::id,
-    foundation::NSString,
+use objc2::{msg_send, rc::Retained};
+use objc2_app_kit::{
+    NSAppearance, NSAppearanceNameAqua, NSAppearanceNameDarkAqua, NSAppearanceNameVibrantDark,
+    NSAppearanceNameVibrantLight,
 };
-use objc::{msg_send, sel, sel_impl};
+use objc2_foundation::NSString;
 use open_gpui::WindowAppearance;
-use std::ffi::CStr;
 
-pub(crate) unsafe fn window_appearance_from_native(appearance: id) -> WindowAppearance {
-    let name: id = msg_send![appearance, name];
+pub(crate) fn window_appearance_from_native(appearance: Option<&NSAppearance>) -> WindowAppearance {
+    let Some(appearance) = appearance else {
+        return WindowAppearance::Light;
+    };
     unsafe {
-        if name == NSAppearanceNameVibrantLight {
+        let name: Option<Retained<NSString>> = msg_send![appearance, name];
+        let Some(name) = name else {
+            return WindowAppearance::Light;
+        };
+        if std::ptr::eq(name.as_ref(), NSAppearanceNameVibrantLight) {
             WindowAppearance::VibrantLight
-        } else if name == NSAppearanceNameVibrantDark {
+        } else if std::ptr::eq(name.as_ref(), NSAppearanceNameVibrantDark) {
             WindowAppearance::VibrantDark
-        } else if name == NSAppearanceNameAqua {
+        } else if std::ptr::eq(name.as_ref(), NSAppearanceNameAqua) {
             WindowAppearance::Light
-        } else if name == NSAppearanceNameDarkAqua {
+        } else if std::ptr::eq(name.as_ref(), NSAppearanceNameDarkAqua) {
             WindowAppearance::Dark
         } else {
-            println!(
-                "unknown appearance: {:?}",
-                CStr::from_ptr(name.UTF8String())
-            );
+            println!("unknown appearance: {name:?}");
             WindowAppearance::Light
         }
     }
-}
-
-#[link(name = "AppKit", kind = "framework")]
-unsafe extern "C" {
-    pub static NSAppearanceNameAqua: id;
-    pub static NSAppearanceNameDarkAqua: id;
 }

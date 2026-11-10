@@ -75,6 +75,8 @@ pub(crate) struct TestPlatform {
     pub opened_url: RefCell<Option<String>>,
     pub text_system: Arc<dyn PlatformTextSystem>,
     pub expect_restart: RefCell<Option<oneshot::Sender<(Option<PathBuf>, Vec<OsString>)>>>,
+    #[cfg(test)]
+    pub(crate) window_appearance_requests: RefCell<Vec<Option<WindowAppearance>>>,
     idle_sleep_prevention_count: Arc<AtomicUsize>,
     idle_sleep_prevention_delay: Cell<Duration>,
     idle_sleep_prevention_fails: Cell<bool>,
@@ -278,6 +280,8 @@ impl TestPlatform {
             next_window_close_during_initial_presentation: RefCell::new(false),
             next_window_defer_frame_requests: RefCell::new(false),
             expect_restart: Default::default(),
+            #[cfg(test)]
+            window_appearance_requests: Default::default(),
             idle_sleep_prevention_count: Arc::new(AtomicUsize::new(0)),
             idle_sleep_prevention_delay: Cell::new(Duration::ZERO),
             idle_sleep_prevention_fails: Cell::new(false),
@@ -1236,6 +1240,13 @@ impl Platform for TestPlatform {
 
     fn window_appearance(&self) -> WindowAppearance {
         WindowAppearance::Light
+    }
+
+    #[cfg(test)]
+    fn set_window_appearance(&self, appearance: Option<WindowAppearance>) {
+        self.window_appearance_requests
+            .borrow_mut()
+            .push(appearance);
     }
 
     fn open_url(&self, url: &str) {

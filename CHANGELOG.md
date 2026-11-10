@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- `App::set_window_appearance` overrides macOS native window chrome with any `WindowAppearance`; passing `None` restores system following. Other platforms retain the default no-op through `Platform::set_window_appearance`.
+
 - `ActivityGuard` owns scoped operating-system activity until drop. `App::prevent_idle_sleep` acquires native sleep inhibition; `BackgroundExecutor::prevent_app_nap` separately prevents App Nap throttling on Apple platforms and is a no-op elsewhere. Test contexts expose acquisition counts, delay and error controls.
 
 - `Application::with_restart_arguments` configures owned native arguments for the next restart. The selected executable and each argument reach the existing platform launcher without shell-source interpolation.

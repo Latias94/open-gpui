@@ -1659,3 +1659,30 @@ cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml 
 These commands are instructions rather than results. Process resource observations do not
 measure OS power-policy enforcement or energy use. Mac activity and Linux portal acquisition/
 Request::close retain their own native gates; a Windows run cannot qualify them.
+
+## Window appearance consumer
+
+The `window_appearance` target consumes `App::set_window_appearance(&self, Option<WindowAppearance>)`
+and the Platform setter/getter without optional features or `test-support`. Its official source is
+Zed `8e4e5a39eed932d943cb7a3e7078885b75d1ea54` at fixed target
+`635026fabc38440fce5e1767d125026a17b12012`. The signature control runs on every host. On Windows,
+an actual `current_platform(true)` exercises all four variants, repeated overrides and `None`
+requests against the default no-op setter while preserving the native system appearance getter.
+It drops the platform without launching an App, opening a Window or entering the native loop.
+
+With the existing `bench-support` feature, an ordinary App and hidden headless Window execute the
+same requests on the returning benchmark platform with `NoopTextSystem` and no renderer. App,
+Platform and Window getters retain their baseline values through replacement, repetition and
+clear requests, and the Window is explicitly closed before App shutdown. This is the benchmark
+platform's no-op behavior, including on macOS; it does not establish native App/Window behavior.
+
+```text
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --test window_appearance --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+cargo nextest run --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --locked --no-default-features --features bench-support --test window_appearance --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+```
+
+These are verification instructions, not recorded results. The Windows runtime case requires the
+host's normal native platform initialization prerequisites; it changes no persistent OS setting.
+The root `test-support` consumer separately checks unchanged appearance observers and rendered
+frame revisions. macOS override/clear behavior, system tracking and native titlebars require the
+separate Mac backend gates; neither this Windows control nor the benchmark platform qualifies them.
