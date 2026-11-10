@@ -8813,6 +8813,122 @@ neither qualifies actual OS IME, mobile keyboard hardware, nonzero device safe a
 costs or physical GPU performance. Foreign native execution and the actual Nara GPU/Host/View
 consumer remain separate. This unit does not close full fixed-target or foundation gates.
 
+## Web Canvas Font Fallback
+
+This unit follows `7a79a113733e8f4aad1fb6ed2232e66ec171c26a` against fixed Zed
+`635026fabc38440fce5e1767d125026a17b12012`. Complete official `7960b2a7c9568e90fbe0727332149e5b2a5fd57a`
+and text-default emoji correction `87f65de697` supply the public immutable policy, complete-
+grapheme eligibility, OffscreenCanvas measurement/raster, stable glyph cache and in-place run
+replacement. The wrapper uses the existing Cosmic TextSystem, source indices and glyph atlas.
+Primary baseline/line spacing remains unchanged; browser ink determines raster bounds.
+
+Emoji is the default. Disabled permits only loaded fonts; EmojiAndCjk explicitly enables a
+conservative independent horizontal CJK subset. The classifier does not promise browser coverage
+or general contextual-script shaping. All 19 official portable regressions are preserved,
+including the later text-presentation cases. The five module bodies retain fixed-target source
+apart from crate aliases and the fork's required missing-sink destruction outside its state lock.
+Reporting runs after Canvas replacement, so resolved graphemes do not generate false missing
+notifications. Callbacks likewise run without a wrapper/native backend lock.
+
+The official backend/fallback constructors feed the existing options constructor. Stock
+WebPlatform retains its bundled Inter Variable/JetBrains registration for existing public consumers;
+application font installation still uses the same TextSystem owner. Selected-face weight/style
+is the complete official Cosmic API. Existing App retention and text input without keydown
+already have owning implementations and are not duplicated. Official example-gallery packaging
+is not imported; the existing public smoke App and browser driver consume this complete
+framework mechanism. No second shaper, atlas, document or browser lifetime manager is added.
+
+Cosmic focused tests pass 52/52 (`652af9fd-d712-4c4f-bffd-6535188310c8`), preserving all existing
+font installation, fallback, missing reporting and retained-face controls. The three added tests
+include the original official selected-face scenario, invalid IDs and actual regular-to-bold
+installation/reselection while the old face remains readable. Host Web tests pass 41/41
+(`a48e83df-1064-4985-9c69-16acbb07e996`), including all 19 original Canvas regressions and
+existing pointer/touch/frame controls. The first wasm check compiles the new Web wrapper but
+catches a missing closing brace in the newly imported platform convenience function; correcting
+that integration typo yields a passing locked Web/platform production check on Rust 1.95.0.
+
+The exact official unicode-properties 0.1.3 selection replaces transitive 0.1.4 in root and
+independent/example graphs; existing unicode-script/segmentation versions remain unchanged.
+Cargo's unrelated tempfile/getrandom and IANA/windows-core edge changes are removed. The
+shared-memory example's local ignored lock receives the same required policy for its own build.
+This unit changes no compiler floor or other external source/version.
+
+The independently locked ordinary consumer passes 1/1
+(`aec251f5-53da-4f75-9991-82453cb3cb52`) without optional features or test-support. It consumes
+the public policy and complete-grapheme classification values; this is not browser execution.
+Production review closes without findings in the bounded module/constructor/ownership scope.
+
+The first real browser trajectory fails its strict bundled-face check: the existing platform
+requests Inter, but Damascene's actual OpenType family is Inter Variable. The application has
+silently fallen back to a mono face. Inspection of both packaged fonts confirms their family,
+style and actual m coverage. Platform bootstrap and stock/new browser consumers now use the
+real family. This correction affects fork configuration, not official Canvas algorithms.
+
+The corrected browser reaches actual bundled, emoji, text-default spider, mixed and larger-size
+painting, then exposes an invalid fixture oracle. Cosmic typographic_bounds is advance geometry;
+real regular/italic m advances can be equal. The fixture now records actual native m raster
+bounds and nonempty bytes/fingerprint, keeping different real font IDs and italic Canvas CSS
+assertions. The same distinction matters for monospaced Regular/Bold. A bounded test review
+also strengthens F4 to compare the actual 36px Canvas measurement with positioned glyph advance,
+and makes the no-query branch consume WebPlatformOptions::default rather than echo Emoji.
+No production shaping policy changes for these fixture corrections.
+
+The next actual browser run passes the policy, cache, larger-size, real-face and two font-
+installation scenarios, then reproduces an inherited input-import defect. Replacing three
+emoji with text-default spiders produces a replacement character and retained old text in both
+the accepted Rust model and DOM. The official UTF-16 common-prefix/suffix diff can split a
+surrogate and omit unchanged text inside the selection that its caller nevertheless replaces.
+The existing single import algorithm now lives in a narrow private text_edit helper: its cuts
+contain the stored selection and preserve scalar boundaries, while the handler's fresh selection
+still supplies document coordinates. No second editable model or mutation owner is introduced.
+The driver also waits for actual DOM/accepted-model select-all agreement before inserting.
+Six targeted complete-source reconstructions pass 6/6
+(`b2f85100-f6b1-4c65-b528-ed4881c70ec9`), including shared high/low surrogates, selected common
+text, anchored repeated suffixes and deletion. The earlier browser corruption remains red evidence.
+
+The complete focused Edge/WebGL trajectory then passes. It preserves all original browser
+scenarios and exercises default/disabled/explicit Emoji/CJK policies, whole emoji/text-default
+graphemes, actual nonempty Canvas bitmap readback, raw/Window layout agreement and accepted
+atlas paint. Warm redraw performs no new measurement/raster. Real font/size changes and two
+installations refresh the correct caches and faces; post-fallback reports omit resolved text
+while an App missing-glyph observer can reenter public layout. Trusted input preserves complete
+emoji replacements and family-grapheme deletion. The spy restores its methods and removes its
+new-document registration on both success and failure.
+
+The existing complete smoke next exposes an obsolete assertion inherited from the older input
+adapter: textarea blur is expected to cancel capture and deactivate a visible browser window.
+Official e773a56d6c deliberately removes that relationship so dismissing a software keyboard
+does not throttle the page. The old driver now first verifies that textarea-only blur preserves
+activity/capture, then focuses an actual DOM button outside the App to exercise the original
+cancellation/deactivation counts. Later window/visibility/retirement assertions remain intact.
+Production activation policy is not weakened or reverted to satisfy that old expectation.
+
+The testing review closes the corrective input mapping, default-policy and measurement/raster
+oracles. Its remaining two P2 controls are also corrected: every accepted row requires a
+nonempty native m raster before comparing faces, and the separate activation-policy helper
+uses actual external DOM focus too. An earlier complete-smoke executable reproduces the latter
+old programmatic-only blur timeout; that executable predates the final helper patch and is not
+reported as final qualification. All five scoped lanes close without remaining reviewed P1/P2.
+
+The final complete Edge smoke passes on the corrected source: explicit WebGL, explicit WebGPU
+and Auto, original input/capture/docking/activation and renderer/resize controls, and all
+identity/clipboard/text/Canvas/touch workflows. Original PNG oracles retain 22/22 fixed samples
+at both 800x600 and 960x720, including the high-index quad and actual stock-font text. Explicit
+software-adapter refusal and navigator.gpu-absence fallback remain labeled controls. Canvas
+fallback's own bitmap readback and accepted atlas paint retain their separate evidence scope.
+
+Final host Web tests pass 47/47 (`44844653-5318-4da1-b691-e9b46a843c68`), including the six new
+import regressions. The earlier 52/52 Cosmic and 1/1 ordinary independent results retain their
+unchanged source coverage. Affected host/all-target and wasm production correctness Clippy
+pass, followed by a fresh xtask check after final driver edits. The existing optional nightly
+build-std/shared-memory wasm production configuration passes; stable worker mode is not
+newly claimed. No compiler-floor change is made. Root/consumer/smoke formatting and existing
+import/API/document/release scans pass. No unrelated full-framework/component matrix is rerun.
+
+Actual OS IME, mobile devices and browser font coverage elsewhere, general contextual CJK
+shaping, numerical costs, native foreign execution and the real Nara GPU/Host/View consumer
+remain unqualified. Full fixed-target and foundation gates remain open.
+
 ## Focused Product Gates
 
 The U11 authority-convergence focused gate is:

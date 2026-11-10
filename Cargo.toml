@@ -218,6 +218,7 @@ unicase = "2.6"
 unicode-bidi = "0.3.18"
 icu_segmenter = { version = "2.3.0", default-features = false, features = ["compiled_data"] }
 unicode-segmentation = "1.10"
+unicode-script = "0.5.7"
 url = "2.2"
 uuid = { version = "1.1.2", features = ["v4", "v5", "v7", "serde"] }
 walkdir = "2.5"

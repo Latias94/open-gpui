@@ -57,9 +57,40 @@ the root and inspect the actual wasm feature graph: `event-listener/std` must re
 Browser execution and stable smoke remain distinct from wasm compilation. The exact source,
 results and limits belong to the [verification record](../../docs/verification.md#sendable-foreground-submission-and-web-fetch).
 
+## Browser Font Fallback
+
+`CanvasFontFallback` is selected before platform construction. The default `Emoji` policy
+uses browser fonts for eligible complete emoji graphemes when loaded fonts lack the glyph or
+requested emoji presentation. `Disabled` uses only loaded fonts. `EmojiAndCjk` additionally
+permits approximate independent rendering of a conservative horizontal CJK subset.
+
+On `wasm32-unknown-unknown`, configure the ordinary platform directly:
+
+```rust
+use open_gpui_web::{CanvasFontFallback, WebBackendPreference, WebPlatform};
+
+let platform = WebPlatform::new_with_backend_and_font_fallback(
+    false,
+    WebBackendPreference::Auto,
+    CanvasFontFallback::EmojiAndCjk,
+);
+```
+
+`WebPlatformOptions::canvas_font_fallback` exposes the same immutable choice through the existing
+options constructor and `open-gpui-platform` factory. Stock WebPlatform registers its bundled
+Inter Variable/JetBrains fonts; applications may install additional fonts through the ordinary App API.
+The wrapper preserves actual selected-face weight/style, primary baseline/line spacing and
+source indices. Canvas measurements and rasters enter the existing glyph atlas. Missing-glyph
+notifications report unresolved text after browser fallback has run.
+
+Browser font availability and appearance depend on the environment. Independent CJK graphemes
+do not provide general contextual shaping, vertical text or complete font-feature fidelity.
+The [qualification](../../docs/verification.md#web-canvas-font-fallback) distinguishes public
+consumption, native portable tests, actual browser drawing and unmeasured performance.
+
 ## Boundaries
 
-This crate does not provide browser platform windows, docking tear-off windows, DOM component rendering, CSS animation integration, or a public web-specific component library. WebGPU availability is a required runtime fact for rendering; shared-memory worker mode is optional and must fail back to the stable single-threaded path when unavailable.
+This crate does not provide browser platform windows, docking tear-off windows, DOM component rendering, CSS animation integration, or a public web-specific component library. A supported WebGPU or WebGL2 backend is required for rendering; shared-memory worker mode is optional and must fail back to the stable single-threaded path when unavailable.
 
 Single-window Open GPUI shells can run on web through the platform selector when the renderer and
 browser capabilities are available. Docking platform viewport routes must still report unsupported

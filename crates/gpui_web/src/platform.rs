@@ -1,7 +1,9 @@
+use crate::CanvasFontFallback;
 use crate::dispatcher::{WebDispatcher, WebDispatcherMode};
 use crate::display::WebDisplay;
 use crate::http_client::FetchHttpClient;
 use crate::keyboard::WebKeyboardLayout;
+use crate::text_system::WebTextSystem;
 use crate::window::WebWindow;
 use anyhow::Result;
 use futures::channel::oneshot;
@@ -87,6 +89,7 @@ pub struct WebPlatformOptions {
     pub allow_multi_threading: bool,
     pub backend_preference: WebBackendPreference,
     pub force_fallback_adapter: bool,
+    pub canvas_font_fallback: CanvasFontFallback,
 }
 
 struct PreparedWebWindow {
@@ -144,8 +147,33 @@ struct WebPlatformCallbacks {
 
 impl WebPlatform {
     pub fn new(allow_multi_threading: bool) -> Self {
+        Self::new_with_backend(allow_multi_threading, WebBackendPreference::Auto)
+    }
+
+    pub fn new_with_backend(
+        allow_multi_threading: bool,
+        backend_preference: WebBackendPreference,
+    ) -> Self {
         Self::new_with_options(WebPlatformOptions {
             allow_multi_threading,
+            backend_preference,
+            ..Default::default()
+        })
+    }
+
+    /// Configures immutable browser fallback before fonts and layouts are cached.
+    ///
+    /// Loaded fonts remain preferred except when they cannot supply requested emoji
+    /// presentation. CJK fallback approximates independent horizontal graphemes.
+    pub fn new_with_backend_and_font_fallback(
+        allow_multi_threading: bool,
+        backend_preference: WebBackendPreference,
+        canvas_font_fallback: CanvasFontFallback,
+    ) -> Self {
+        Self::new_with_options(WebPlatformOptions {
+            allow_multi_threading,
+            backend_preference,
+            canvas_font_fallback,
             ..Default::default()
         })
     }
@@ -161,8 +189,9 @@ impl WebPlatform {
         let dispatcher_mode = dispatcher.mode();
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(dispatcher);
-        let text_system = Arc::new(open_gpui_wgpu::CosmicTextSystem::new_without_system_fonts(
-            "Inter",
+        let text_system = Arc::new(WebTextSystem::new(
+            "Inter Variable",
+            options.canvas_font_fallback,
         ));
         if BUNDLED_FONTS.is_empty() {
             log::warn!("WebPlatform started without bundled fonts");

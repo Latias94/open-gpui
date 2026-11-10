@@ -3311,6 +3311,53 @@ touch/clipboard routes. Label synthetic events separately from trusted input and
 desktop browser results do not qualify mobile keyboard hardware or numerical performance.
 Trust unchanged official mirror/viewport algorithms and avoid unrelated full-framework matrices.
 
+### Web Canvas Font Fallback Successor
+
+Continue after `7a79a113733e8f4aad1fb6ed2232e66ec171c26a` against the same fixed target.
+Adopt complete official `7960b2a7c9568e90fbe0727332149e5b2a5fd57a` and text-default emoji
+follow-up `87f65de697`. Preserve final-target Canvas eligibility, measurement/raster, glyph
+identity/cache, in-place run replacement, post-fallback missing reporting and selected-face
+weight/style reporting through the existing Web/Cosmic TextSystem and atlas owners. Retain
+all original portable regressions. Official example-gallery packaging is separate from this
+framework mechanism; the existing public smoke App provides its real browser consumer.
+
+The policy is immutable at platform construction: Emoji by default, Disabled or conservative
+EmojiAndCjk explicitly. Bundled glyphs remain preferred except for requested emoji presentation.
+Whole eligible graphemes retain source indices; browser ink affects raster bounds while primary
+baseline/line metrics remain stable. CJK independently rendered graphemes are an approximation,
+not general script shaping or a Unicode coverage promise. Preserve the official eligibility and
+ID/cache limits rather than add a second shaper or atlas authority.
+
+Expose the official backend/fallback constructors through the existing options constructor.
+The fork's stock Inter Variable/JetBrains bootstrap has concrete existing browser consumers; keep that
+font-loading choice distinct from the wrapper and ordinary App-provided font installation.
+Existing Web App retention and input-without-keydown use the already qualified App/input owners;
+do not reintroduce a second lifetime holder or document-edit path. Missing-glyph callbacks and
+sink destruction must remain outside backend locks. Font installation, old font/glyph identities,
+candidate refusal/retry and public TextSystem ownership retain their current contracts.
+
+The first actual browser run reproduces an existing bootstrap mismatch: the bundled face's
+family is Inter Variable while the platform requests Inter, silently selecting a mono fallback.
+Use the font's actual family in platform bootstrap and stock consumers; retain strict direct-
+selection/real-italic assertions rather than loosen the consumer. This correction changes no
+official Canvas algorithm or font alias table.
+
+Actual trusted emoji replacement also reproduces a fixed-target input-diff defect. Keep one
+import algorithm, extracted privately for native tests: common-prefix/suffix cuts contain the
+old mirror selection and cannot split UTF-16 scalar pairs. Fresh handler selection still owns
+document coordinates. The browser driver waits for select-all agreement and proves complete
+replacement/deletion; no input model or queue is duplicated. Existing textarea-blur smoke
+expectations must follow official e773a56d6c browser activity, with actual external DOM focus
+qualifying application deactivation and unchanged cancellation/retirement assertions.
+
+Compile affected Web/WGPU and independently locked consumers; execute original portable tests
+and focused fork font/lifetime regressions. Use the existing browser smoke driver for actual
+Canvas measure/raster/cache and accepted App paint, policy controls, residual missing reporting,
+font installation and trusted emoji input/deletion where available. Distinguish actual Canvas
+calls and accepted model output from pixel proof, OS IME and numeric performance. Trust unchanged
+official algorithms; do not repeat unrelated framework/component/compiler matrices. Record
+dependency resolution and source-specific adaptations without unrelated lockfile churn.
+
 ## Maintained Baseline Before Engine Adaptation
 
 The [Web text/viewport record](../verification.md#web-text-sessions-and-viewport) qualifies

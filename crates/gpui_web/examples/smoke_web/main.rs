@@ -13,11 +13,12 @@ use open_gpui_docking::prelude::{
     DockSurfaceViewportOpenOutcome, DockSurfaceViewportReadinessStatus,
     DockSurfaceViewportUnavailable, DockSurfaceWindowSessionStatus,
 };
-use open_gpui_web::{WebPlatform, WebPlatformOptions};
+use open_gpui_web::{CanvasFontFallback, WebPlatform, WebPlatformOptions};
 use open_gpui_wgpu::{WebBackendPreference, WgpuBackend};
 use wasm_bindgen::JsValue;
 
 mod clipboard;
+mod font_fallback;
 mod platform_info;
 mod text_input;
 mod touch;
@@ -34,6 +35,7 @@ struct BrowserConfig {
     backend_preference: WebBackendPreference,
     force_fallback_adapter: bool,
     renderer: bool,
+    canvas_font_fallback: CanvasFontFallback,
 }
 
 impl BrowserConfig {
@@ -61,6 +63,17 @@ impl BrowserConfig {
                 .and_then(|params| params.get("renderer"))
                 .as_deref()
                 == Some("1"),
+            canvas_font_fallback: match params
+                .as_ref()
+                .and_then(|params| params.get("font_fallback"))
+                .as_deref()
+            {
+                None => WebPlatformOptions::default().canvas_font_fallback,
+                Some("emoji") => CanvasFontFallback::Emoji,
+                Some("disabled") => CanvasFontFallback::Disabled,
+                Some("cjk") => CanvasFontFallback::EmojiAndCjk,
+                Some(value) => panic!("unsupported smoke font fallback: {value}"),
+            },
         }
     }
 }
@@ -807,7 +820,7 @@ fn renderer_scene(image: Arc<RenderImage>, frame_probe: Rc<FrameProbe>) -> impl 
                 .top(px(240.0))
                 .w(px(256.0))
                 .h(px(28.0))
-                .font_family("Inter")
+                .font_family("Inter Variable")
                 .text_size(px(18.0))
                 .line_height(px(24.0))
                 .text_color(rgb(0xffffff))
@@ -876,7 +889,7 @@ fn renderer_expectations() -> JsValue {
             },
             "text": {
                 "bounds": [304, 240, 256, 28],
-                "fontFamily": "Inter",
+                "fontFamily": "Inter Variable",
                 "fontSize": 18,
                 "text": "GPUI packed data",
                 "color": "#ffffff",
@@ -997,6 +1010,7 @@ fn main() {
         allow_multi_threading: false,
         backend_preference: config.backend_preference,
         force_fallback_adapter: config.force_fallback_adapter,
+        canvas_font_fallback: config.canvas_font_fallback,
     }));
     let observed_platform = platform.clone();
     Application::with_platform(platform).run(move |cx: &mut App| {
@@ -1012,6 +1026,14 @@ fn main() {
             config,
             actual_backend: observed_platform.graphics_backend(),
         };
+        if font_fallback::requested() {
+            font_fallback::open(
+                cx,
+                graphics_probe,
+                open_gpui::Platform::text_system(observed_platform.as_ref()),
+            );
+            return;
+        }
         if touch::requested() {
             touch::open(cx, graphics_probe);
             return;

@@ -139,6 +139,13 @@ jobs:
       - name: Test accepted text sessions and viewport consumers
         run: cargo nextest run --locked -p open-gpui --no-default-features --features test-support --lib --test text_input_sessions -E 'test(input::tests::) | binary(text_input_sessions)' --test-threads=1 --no-fail-fast --no-tests fail
 
+      - name: Test Canvas fallback and selected font properties
+        run: cargo nextest run --locked -p open-gpui-web -p open-gpui-wgpu --lib -E 'test(canvas_fallback::) | test(glyph_cache::) | test(run_replacements::) | test(text_edit::) | test(cosmic_text_system::font_installation_tests::)' --test-threads=1 --no-fail-fast --no-tests fail
+
+      - name: Test independent Canvas fallback policy without test support
+        if: matrix.name == 'windows'
+        run: cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test canvas_fallback --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+
       - name: Test independent text sessions without test support
         if: matrix.name == 'windows'
         run: |

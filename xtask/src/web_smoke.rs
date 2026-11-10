@@ -1,6 +1,7 @@
 use serde_json::{Value, json};
 
 mod clipboard;
+mod font_fallback;
 mod platform_info;
 mod text_input;
 use std::{
@@ -230,10 +231,11 @@ fn qualify_browser(cdp: &mut CdpClient, url: &str, allow_unavailable: bool) -> R
         );
         return match case.as_str() {
             "text-input" => text_input::qualify(cdp, &case_url),
+            "font-fallback" => font_fallback::qualify(cdp, &case_url),
             "clipboard" => clipboard::qualify(cdp, &case_url),
             "platform-info" => platform_info::qualify(cdp, &case_url),
             _ => Err(format!(
-                "OPEN_GPUI_WEB_SMOKE_CASE must be text-input, clipboard, or platform-info; got `{case}`"
+                "OPEN_GPUI_WEB_SMOKE_CASE must be text-input, font-fallback, clipboard, or platform-info; got `{case}`"
             )),
         };
     }
@@ -316,6 +318,14 @@ fn qualify_browser(cdp: &mut CdpClient, url: &str, allow_unavailable: bool) -> R
         ),
     )?;
     text_input::qualify(
+        cdp,
+        &format!(
+            "{url}&backend={}&software={}",
+            if webgl { "webgl" } else { "webgpu" },
+            !webgl
+        ),
+    )?;
+    font_fallback::qualify(
         cdp,
         &format!(
             "{url}&backend={}&software={}",
@@ -1524,16 +1534,51 @@ fn run_browser_smoke(cdp: &mut CdpClient) -> Result<(), String> {
             && state.pointer("/input/focused").and_then(Value::as_bool) == Some(true)
     })?;
     cdp.evaluate(
-        r#"(() => {
+        r#"(async () => {
             const input = document.querySelector("textarea");
             if (!input) {
                 throw new Error("web smoke input is missing");
             }
             input.blur();
+            await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
             return true;
         })()"#,
     )?;
-    wait_for_state(cdp, "input blur pointer cancellation", |state| {
+    wait_for_state(
+        cdp,
+        "textarea blur preserves browser window activity",
+        |state| {
+            state.pointer("/input/focused").and_then(Value::as_bool) == Some(false)
+                && state
+                    .pointer("/canvas/mousePointerCaptured")
+                    .and_then(Value::as_bool)
+                    == Some(true)
+                && state
+                    .pointer("/probe/pointerCancelEvents")
+                    .and_then(Value::as_u64)
+                    == Some(1)
+                && state
+                    .pointer("/probe/windowDeactivatedEvents")
+                    .and_then(Value::as_u64)
+                    == Some(0)
+        },
+    )?;
+    cdp.evaluate(
+        r#"(() => {
+            const button = document.createElement("button");
+            button.id = "open-gpui-smoke-external-focus";
+            button.textContent = "External focus control";
+            button.style.position = "fixed";
+            button.style.left = "-10000px";
+            document.body.appendChild(button);
+            button.focus();
+            if (document.activeElement !== button) {
+                throw new Error("external DOM focus control did not acquire focus");
+            }
+            return true;
+        })()"#,
+    )?;
+    wait_for_state(cdp, "external DOM focus pointer cancellation", |state| {
         state
             .pointer("/canvas/mousePointerCaptured")
             .and_then(Value::as_bool)
@@ -1922,11 +1967,20 @@ fn run_activation_policy_smoke(
             if (!input) {
                 throw new Error("activation probe input is missing");
             }
-            input.blur();
+            const button = document.createElement("button");
+            button.id = "open-gpui-activation-external-focus";
+            button.textContent = "External activation control";
+            button.style.position = "fixed";
+            button.style.left = "-10000px";
+            document.body.appendChild(button);
+            button.focus();
+            if (document.activeElement !== button) {
+                throw new Error("activation probe external control did not acquire focus");
+            }
             return true;
         })()"#,
     )?;
-    wait_for_state(cdp, &format!("{mode} input blur"), |state| {
+    wait_for_state(cdp, &format!("{mode} external DOM focus"), |state| {
         state.pointer("/input/focused").and_then(Value::as_bool) == Some(false)
             && state
                 .pointer("/probe/observedActive")

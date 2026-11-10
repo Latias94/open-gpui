@@ -21,6 +21,10 @@ const LILEX: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../tests/fixtures/fonts/Lilex-Regular.ttf"
 ));
+const LILEX_BOLD: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../tests/fixtures/fonts/Lilex-Bold.ttf"
+));
 const NOTO_EMOJI: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../tests/fixtures/fonts/NotoEmoji-Regular.ttf"
@@ -30,6 +34,77 @@ fn text_system() -> Result<CosmicTextSystem> {
     let platform = CosmicTextSystem::new_without_system_fonts("IBM Plex Sans");
     platform.add_fonts(vec![Cow::Borrowed(IBM_PLEX)])?;
     Ok(platform)
+}
+
+#[test]
+fn font_properties_describe_the_selected_face() -> Result<()> {
+    let text_system = text_system()?;
+    let regular = open_gpui::font("IBM Plex Sans");
+    let regular_id = text_system.font_id(&regular)?;
+    for (weight, style) in [
+        (open_gpui::FontWeight::MEDIUM, open_gpui::FontStyle::Normal),
+        (open_gpui::FontWeight::BOLD, open_gpui::FontStyle::Italic),
+        (open_gpui::FontWeight::NORMAL, open_gpui::FontStyle::Oblique),
+    ] {
+        let requested = Font {
+            weight,
+            style,
+            ..regular.clone()
+        };
+        let font_id = text_system.font_id(&requested)?;
+        assert_eq!(font_id, regular_id);
+        assert_eq!(
+            text_system.font_weight_and_style(font_id)?,
+            (open_gpui::FontWeight::NORMAL, open_gpui::FontStyle::Normal)
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn font_properties_reject_invalid_font_ids() -> Result<()> {
+    let platform = text_system()?;
+    platform.font_id(&font("IBM Plex Sans"))?;
+    let loaded_count = platform.0.read().loaded_fonts.len();
+
+    for font_id in [FontId(loaded_count), FontId(usize::MAX)] {
+        assert_eq!(
+            platform
+                .font_weight_and_style(font_id)
+                .unwrap_err()
+                .to_string(),
+            "invalid font ID"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn font_properties_follow_reselection_and_preserve_retained_faces() -> Result<()> {
+    let platform = CosmicTextSystem::new_without_system_fonts("Lilex");
+    platform.add_fonts(vec![Cow::Borrowed(LILEX)])?;
+    let requested = font("Lilex").bold().italic();
+    let retained_id = platform.font_id(&requested)?;
+    assert_eq!(
+        platform.font_weight_and_style(retained_id)?,
+        (open_gpui::FontWeight::NORMAL, open_gpui::FontStyle::Normal)
+    );
+
+    platform.add_fonts(vec![Cow::Borrowed(LILEX_BOLD)])?;
+
+    let selected_id = platform.font_id(&requested)?;
+    assert_ne!(selected_id, retained_id);
+    assert_eq!(platform.font_id(&requested)?, selected_id);
+    assert_eq!(
+        platform.font_weight_and_style(selected_id)?,
+        (open_gpui::FontWeight::BOLD, open_gpui::FontStyle::Normal)
+    );
+    assert_eq!(platform.font_id(&font("Lilex"))?, retained_id);
+    assert_eq!(
+        platform.font_weight_and_style(retained_id)?,
+        (open_gpui::FontWeight::NORMAL, open_gpui::FontStyle::Normal)
+    );
+    Ok(())
 }
 
 #[derive(Default)]

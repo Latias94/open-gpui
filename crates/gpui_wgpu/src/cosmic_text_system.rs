@@ -103,6 +103,29 @@ impl FontMatchProperties {
 }
 
 impl CosmicTextSystem {
+    /// Returns the selected face's weight and style, which may differ from the request.
+    pub fn font_weight_and_style(
+        &self,
+        font_id: FontId,
+    ) -> Result<(open_gpui::FontWeight, open_gpui::FontStyle)> {
+        let state = self.0.read();
+        let font = state
+            .loaded_fonts
+            .get(font_id.0)
+            .context("invalid font ID")?;
+        let face = state
+            .font_system
+            .db()
+            .face(font.font.id())
+            .context("font face not found")?;
+        let style = match face.style {
+            cosmic_text::Style::Normal => open_gpui::FontStyle::Normal,
+            cosmic_text::Style::Italic => open_gpui::FontStyle::Italic,
+            cosmic_text::Style::Oblique => open_gpui::FontStyle::Oblique,
+        };
+        Ok((open_gpui::FontWeight(face.weight.0 as f32), style))
+    }
+
     /// Builds reports for unresolved source indices after an outer text system applies fallback.
     pub fn missing_glyphs(
         &self,

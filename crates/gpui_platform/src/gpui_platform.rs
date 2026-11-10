@@ -6,7 +6,17 @@ pub use open_gpui::Platform;
 use std::rc::Rc;
 
 #[cfg(target_family = "wasm")]
-pub use open_gpui_web::WebPlatformOptions;
+pub use open_gpui_web::{CanvasFontFallback, WebBackendPreference, WebPlatformOptions};
+
+#[cfg(target_family = "wasm")]
+pub fn application_with_web_backend(
+    backend_preference: WebBackendPreference,
+) -> open_gpui::Application {
+    open_gpui::Application::with_platform(Rc::new(open_gpui_web::WebPlatform::new_with_backend(
+        true,
+        backend_preference,
+    )))
+}
 
 /// Returns a background executor for the current platform.
 pub fn background_executor() -> open_gpui::BackgroundExecutor {

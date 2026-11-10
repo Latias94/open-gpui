@@ -2024,6 +2024,18 @@ validation, native popup positioning/grab/dismissal, or Mac screen/notch coverag
 presentation-option restoration. Those behaviors retain their native backend gates; no renderer,
 fake compositor, successful popup implementation or engine-specific UI owner is introduced here.
 
+## Ordinary Canvas fallback policy
+
+The `canvas_fallback` target consumes the public `CanvasFontFallback` policy and complete-
+grapheme classifier from `open-gpui-web`, with default features disabled and no test-support.
+It checks the default Emoji selection and receives the public emoji/CJK classification values.
+This native consumer qualifies API availability and source-grapheme classification, not browser
+font coverage or Canvas rendering. The existing browser smoke owns those execution claims.
+
+```text
+cargo nextest run --locked --manifest-path tests/fixtures/dependency-consumer/Cargo.toml --no-default-features --test canvas_fallback --target-dir target --test-threads=1 --no-fail-fast --no-tests fail
+```
+
 ## Ordinary text input sessions and visible geometry
 
 The `text_input_sessions` target consumes the complete public input configuration, UTF-16

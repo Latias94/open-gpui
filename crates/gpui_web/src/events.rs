@@ -1023,9 +1023,6 @@ impl WebWindowInner {
                 return;
             }
 
-            let old_units: Vec<u16> = old_value.encode_utf16().collect();
-            let new_units: Vec<u16> = new_value.encode_utf16().collect();
-
             // A prefix/suffix diff is ambiguous when the inserted text
             // shares characters with what follows it (inserting "pactor "
             // before "pact" also reads as inserting "or pact" four units
@@ -1038,39 +1035,14 @@ impl WebWindowInner {
                 .ime_mirror
                 .selection_start()
                 .map(|caret| caret as usize);
-            let anchored_suffix_length = post_edit_caret
-                .map(|caret| new_units.len().saturating_sub(caret))
-                .filter(|&suffix_length| {
-                    suffix_length <= old_units.len()
-                        && old_units[old_units.len() - suffix_length..]
-                            == new_units[new_units.len() - suffix_length..]
-                });
-            let suffix_length = anchored_suffix_length.unwrap_or_else(|| {
-                old_units
-                    .iter()
-                    .rev()
-                    .zip(new_units.iter().rev())
-                    .take_while(|(old_unit, new_unit)| old_unit == new_unit)
-                    .count()
-            });
-            let prefix_length = old_units
-                .iter()
-                .zip(&new_units)
-                .take_while(|(old_unit, new_unit)| old_unit == new_unit)
-                .count()
-                .min(old_units.len() - suffix_length)
-                .min(new_units.len() - suffix_length);
-
-            let inserted_text = String::from_utf16_lossy(
-                &new_units[prefix_length..new_units.len() - suffix_length],
-            );
-            let replaced_old_end = old_units.len() - suffix_length;
             let (element_selection_start, element_selection_end) =
                 this.ime_mirror.stored_selection();
-            let removed_before_selection =
-                (element_selection_start as usize).saturating_sub(prefix_length);
-            let removed_after_selection =
-                replaced_old_end.saturating_sub(element_selection_end as usize);
+            let edit = crate::text_edit::imported_text_edit(
+                &old_value,
+                &new_value,
+                element_selection_start as usize..element_selection_end as usize,
+                post_edit_caret,
+            );
 
             let applied = this.with_focused_input_handler(|handler| {
                 let Some(selection) = handler.selected_text_range(false) else {
@@ -1079,9 +1051,9 @@ impl WebWindowInner {
                 let range = selection
                     .range
                     .start
-                    .saturating_sub(removed_before_selection)
-                    ..selection.range.end + removed_after_selection;
-                handler.replace_text_in_range(Some(range), &inserted_text);
+                    .saturating_sub(edit.removed_before_selection)
+                    ..selection.range.end + edit.removed_after_selection;
+                handler.replace_text_in_range(Some(range), &edit.inserted_text);
                 true
             });
             if applied != Some(true) || this.interaction_gate.is_quiesced() {

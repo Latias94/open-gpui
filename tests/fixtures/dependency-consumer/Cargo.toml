@@ -25,6 +25,7 @@ bench-support = ["open_gpui/bench-support", "open_gpui_platform/bench-support", 
 image = { version = "0.25.4", default-features = false, features = ["avif"], optional = true }
 open_gpui = { package = "open-gpui", path = "../../../crates/gpui", default-features = false }
 open_gpui_platform = { package = "open-gpui-platform", path = "../../../crates/gpui_platform", default-features = false }
+open_gpui_web = { package = "open-gpui-web", path = "../../../crates/gpui_web", default-features = false }
 open_gpui_ui_components = { package = "open-gpui-ui-components", path = "../../../crates/ui_components" }
 open_gpui_docking = { package = "open-gpui-docking", path = "../../../crates/gpui_docking" }
 open_gpui_http_client = { package = "open-gpui-http-client", path = "../../../crates/http_client" }

@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- Web text supports the official `CanvasFontFallback` policy: emoji by default, disabled or conservative horizontal CJK fallback. Whole-grapheme Canvas measurement/rasterization uses the existing glyph atlas, selected face properties and post-fallback missing-glyph reports.
+- `CosmicTextSystem::font_weight_and_style` reports the selected face. WebPlatform exposes the official backend/fallback constructors, and the platform convenience crate exposes `application_with_web_backend`.
+- WebPlatform requests the bundled font's actual `Inter Variable` family, correcting the previous `Inter` request that silently selected a monospace fallback.
+- Browser text imports preserve complete UTF-16 scalars and unchanged text inside a replaced selection, including emoji-to-emoji replacement.
+
 - Native window controls include Wayland input regions and layer-shell exclusive-zone/edge updates, macOS simple fullscreen, and the official parent-anchored popup description. Wayland owns native popup positioning, grabs, configure/reposition and dismissal; unsupported backends return `PopupNotSupportedError` for callers choosing in-window fallback.
 
 - Native windows expose opaque state query/restore and user-attention requests. macOS preserves the official workspace/fullscreen restoration policy; Windows requests one flash, X11 preserves and clears urgency hints, and unsupported backends retain no-op behavior. Restoration owns its archive bytes through the existing post-borrow command queue.
@@ -69,6 +74,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Optional native debug hot reload follows the official GPUI/Subsecond 0.7.10 mechanism: build/process-matched patches, foreground application, window refresh, and typed, stateless and stored erased View render boundaries. Run with `dx serve --hot-patch`; compatible render-body edits preserve existing model state. Release/WebAssembly transport exclusion, failed loads, required restarts and disconnects remain explicit. The independently locked native consumer provides an actual edit/build/apply and Submitted-scene pixel acceptance procedure, including the required upstream dx x64 jump-stub backport for the qualified Windows tool.
 
 ### Breaking Changes and Migration Notes
+
+- Full `WebPlatformOptions` literals must provide `canvas_font_fallback` or use `..Default::default()`. Select `CanvasFontFallback::Disabled` to retain loaded-font-only rendering.
 
 - Handle `WindowKind::AnchoredPopup(PopupOptions)` and the hidden `PlatformWindowCommand::ToggleSimpleFullscreen` / `NativePlatformCommandKind::ToggleSimpleFullscreen` in exhaustive matches. An anchored popup names one live parent in the opening App through `PopupOptions::parent`; do not also set `WindowOptions::transient_for`. Its window-bounds origin is ignored. Non-grabbing popups always use a nonactivating first appearance, including when the generic focus field keeps its default; explicit grabs retain their native focus policy. Simple fullscreen is a native presentation action through the post-borrow command queue and preserves normal restore bounds; it does not create a typed placement ticket.
 
